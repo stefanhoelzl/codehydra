@@ -12,6 +12,7 @@ import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
@@ -41,14 +42,11 @@ import type {
   DeletePipelineHookInput,
 } from "../operations/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
-import type { GetStatusHookResult, GetStatusHookInput } from "../operations/get-workspace-status";
+import type { GetStatusHookResult } from "../operations/get-workspace-status";
 import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
-import type {
-  GetAgentSessionHookResult,
-  GetAgentSessionHookInput,
-} from "../operations/get-agent-session";
+import type { GetAgentSessionHookResult } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
-import type { RestartAgentHookResult, RestartAgentHookInput } from "../operations/restart-agent";
+import type { RestartAgentHookResult } from "../operations/restart-agent";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { createOpenCodeAgentModule, type OpenCodeAgentModuleDeps } from "./opencode-agent-module";
@@ -303,69 +301,6 @@ class MinimalShutdownOperation implements Operation<
     const { results, errors } = await ctx.hooks.collect<ShutdownHookResult | undefined>(
       "shutdown",
       hookCtx
-    );
-    if (errors.length > 0) throw errors[0]!;
-    return results[0];
-  }
-}
-
-class MinimalGetStatusOperation implements Operation<Intent, GetStatusHookResult | undefined> {
-  readonly id = GET_WORKSPACE_STATUS_OPERATION_ID;
-  private readonly workspacePath: string;
-
-  constructor(workspacePath = "/test/project/.worktrees/feature-1") {
-    this.workspacePath = workspacePath;
-  }
-
-  async execute(ctx: OperationContext<Intent>): Promise<GetStatusHookResult | undefined> {
-    const { results, errors } = await ctx.hooks.collect<GetStatusHookResult | undefined>("get", {
-      intent: ctx.intent,
-      workspacePath: this.workspacePath,
-    } as GetStatusHookInput);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0];
-  }
-}
-
-class MinimalGetSessionOperation implements Operation<
-  Intent,
-  GetAgentSessionHookResult | undefined
-> {
-  readonly id = GET_AGENT_SESSION_OPERATION_ID;
-  private readonly workspacePath: string;
-
-  constructor(workspacePath = "/test/project/.worktrees/feature-1") {
-    this.workspacePath = workspacePath;
-  }
-
-  async execute(ctx: OperationContext<Intent>): Promise<GetAgentSessionHookResult | undefined> {
-    const { results, errors } = await ctx.hooks.collect<GetAgentSessionHookResult | undefined>(
-      "get",
-      {
-        intent: ctx.intent,
-        workspacePath: this.workspacePath,
-      } as GetAgentSessionHookInput
-    );
-    if (errors.length > 0) throw errors[0]!;
-    return results[0];
-  }
-}
-
-class MinimalRestartOperation implements Operation<Intent, RestartAgentHookResult | undefined> {
-  readonly id = RESTART_AGENT_OPERATION_ID;
-  private readonly workspacePath: string;
-
-  constructor(workspacePath = "/test/project/.worktrees/feature-1") {
-    this.workspacePath = workspacePath;
-  }
-
-  async execute(ctx: OperationContext<Intent>): Promise<RestartAgentHookResult | undefined> {
-    const { results, errors } = await ctx.hooks.collect<RestartAgentHookResult | undefined>(
-      "restart",
-      {
-        intent: ctx.intent,
-        workspacePath: this.workspacePath,
-      } as RestartAgentHookInput
     );
     if (errors.length > 0) throw errors[0]!;
     return results[0];
@@ -858,7 +793,11 @@ describe("OpenCodeAgentModule Integration", () => {
       const wsPath = "/test/project/.worktrees/feature-1";
       setup.dispatcher.registerOperation(
         "workspace:get-status",
-        new MinimalGetStatusOperation(wsPath)
+        createMinimalOperation<Intent, GetStatusHookResult | undefined>(
+          GET_WORKSPACE_STATUS_OPERATION_ID,
+          "get",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: wsPath }) }
+        )
       );
 
       const result = (await setup.dispatcher.dispatch({
@@ -883,7 +822,11 @@ describe("OpenCodeAgentModule Integration", () => {
       const wsPath = "/test/project/.worktrees/feature-1";
       setup.dispatcher.registerOperation(
         "agent:get-session",
-        new MinimalGetSessionOperation(wsPath)
+        createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+          GET_AGENT_SESSION_OPERATION_ID,
+          "get",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: wsPath }) }
+        )
       );
 
       const result = (await setup.dispatcher.dispatch({
@@ -906,7 +849,14 @@ describe("OpenCodeAgentModule Integration", () => {
       await activateModule(setup, null);
 
       const wsPath = "/test/project/.worktrees/feature-1";
-      setup.dispatcher.registerOperation("agent:restart", new MinimalRestartOperation(wsPath));
+      setup.dispatcher.registerOperation(
+        "agent:restart",
+        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+          RESTART_AGENT_OPERATION_ID,
+          "restart",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: wsPath }) }
+        )
+      );
 
       const result = (await setup.dispatcher.dispatch({
         type: "agent:restart",
@@ -927,7 +877,14 @@ describe("OpenCodeAgentModule Integration", () => {
         error: "server not running",
       });
 
-      setup.dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
+      setup.dispatcher.registerOperation(
+        "agent:restart",
+        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+          RESTART_AGENT_OPERATION_ID,
+          "restart",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       await expect(
         setup.dispatcher.dispatch({
@@ -968,17 +925,32 @@ describe("OpenCodeAgentModule Integration", () => {
       },
       {
         intentType: "workspace:get-status",
-        operation: () => new MinimalGetStatusOperation(),
+        operation: () =>
+          createMinimalOperation<Intent, GetStatusHookResult | undefined>(
+            GET_WORKSPACE_STATUS_OPERATION_ID,
+            "get",
+            { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          ),
         payload: { workspacePath: "/test/path" },
       },
       {
         intentType: "agent:get-session",
-        operation: () => new MinimalGetSessionOperation(),
+        operation: () =>
+          createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+            GET_AGENT_SESSION_OPERATION_ID,
+            "get",
+            { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          ),
         payload: { workspacePath: "/test/path" },
       },
       {
         intentType: "agent:restart",
-        operation: () => new MinimalRestartOperation(),
+        operation: () =>
+          createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+            RESTART_AGENT_OPERATION_ID,
+            "restart",
+            { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          ),
         payload: { workspacePath: "/test/path" },
       },
     ])(

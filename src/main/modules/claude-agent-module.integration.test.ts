@@ -13,6 +13,7 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { IntentModule } from "../intents/infrastructure/module";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
   ConfigureResult,
@@ -38,14 +39,11 @@ import type {
   DeleteWorkspaceIntent,
 } from "../operations/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
-import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
+import type { GetStatusHookResult } from "../operations/get-workspace-status";
 import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
-import type {
-  GetAgentSessionHookInput,
-  GetAgentSessionHookResult,
-} from "../operations/get-agent-session";
+import type { GetAgentSessionHookResult } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
-import type { RestartAgentHookInput, RestartAgentHookResult } from "../operations/restart-agent";
+import type { RestartAgentHookResult } from "../operations/restart-agent";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { EVENT_CONFIG_UPDATED, INTENT_CONFIG_SET_VALUES } from "../operations/config-set-values";
 import type { ConfigValues } from "../../services/config/config-values";
@@ -144,15 +142,6 @@ class MinimalStartAndActivateOperation implements Operation<Intent, readonly Act
   }
 }
 
-class MinimalStopOperation implements Operation<Intent, void> {
-  readonly id = APP_SHUTDOWN_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    // Matches real AppShutdownOperation: collect() catches errors, does not rethrow
-    await ctx.hooks.collect("stop", { intent: ctx.intent });
-  }
-}
-
 class MinimalRegisterAgentsOperation implements Operation<Intent, readonly RegisterAgentResult[]> {
   readonly id = SETUP_OPERATION_ID;
 
@@ -240,60 +229,6 @@ class MinimalShutdownOperation implements Operation<
     };
     const { results, errors } = await ctx.hooks.collect<ShutdownHookResult | undefined>(
       "shutdown",
-      hookCtx
-    );
-    if (errors.length > 0) throw errors[0]!;
-    return results[0];
-  }
-}
-
-class MinimalGetStatusOperation implements Operation<Intent, GetStatusHookResult | undefined> {
-  readonly id = GET_WORKSPACE_STATUS_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<GetStatusHookResult | undefined> {
-    const hookCtx: GetStatusHookInput = {
-      intent: ctx.intent,
-      workspacePath: "/test/workspace",
-    };
-    const { results, errors } = await ctx.hooks.collect<GetStatusHookResult | undefined>(
-      "get",
-      hookCtx
-    );
-    if (errors.length > 0) throw errors[0]!;
-    return results[0];
-  }
-}
-
-class MinimalGetSessionOperation implements Operation<
-  Intent,
-  GetAgentSessionHookResult | undefined
-> {
-  readonly id = GET_AGENT_SESSION_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<GetAgentSessionHookResult | undefined> {
-    const hookCtx: GetAgentSessionHookInput = {
-      intent: ctx.intent,
-      workspacePath: "/test/workspace",
-    };
-    const { results, errors } = await ctx.hooks.collect<GetAgentSessionHookResult | undefined>(
-      "get",
-      hookCtx
-    );
-    if (errors.length > 0) throw errors[0]!;
-    return results[0];
-  }
-}
-
-class MinimalRestartOperation implements Operation<Intent, RestartAgentHookResult | undefined> {
-  readonly id = RESTART_AGENT_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<RestartAgentHookResult | undefined> {
-    const hookCtx: RestartAgentHookInput = {
-      intent: ctx.intent,
-      workspacePath: "/test/workspace",
-    };
-    const { results, errors } = await ctx.hooks.collect<RestartAgentHookResult | undefined>(
-      "restart",
       hookCtx
     );
     if (errors.length > 0) throw errors[0]!;
@@ -1003,7 +938,14 @@ describe("ClaudeAgentModule", () => {
       const { dispatcher, mockASM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
-      dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
+      dispatcher.registerOperation(
+        "workspace:get-status",
+        createMinimalOperation<Intent, GetStatusHookResult | undefined>(
+          GET_WORKSPACE_STATUS_OPERATION_ID,
+          "get",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       const result = (await dispatcher.dispatch({
         type: "workspace:get-status",
@@ -1022,7 +964,14 @@ describe("ClaudeAgentModule", () => {
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
+      dispatcher.registerOperation(
+        "workspace:get-status",
+        createMinimalOperation<Intent, GetStatusHookResult | undefined>(
+          GET_WORKSPACE_STATUS_OPERATION_ID,
+          "get",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       const result = (await dispatcher.dispatch({
         type: "workspace:get-status",
@@ -1042,7 +991,14 @@ describe("ClaudeAgentModule", () => {
       const { dispatcher, mockASM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
-      dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
+      dispatcher.registerOperation(
+        "agent:get-session",
+        createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+          GET_AGENT_SESSION_OPERATION_ID,
+          "get",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       const result = (await dispatcher.dispatch({
         type: "agent:get-session",
@@ -1060,7 +1016,14 @@ describe("ClaudeAgentModule", () => {
       const { dispatcher, module } = createTestSetup(mockDepsResult);
       await activateModule(dispatcher, module);
 
-      dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
+      dispatcher.registerOperation(
+        "agent:get-session",
+        createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+          GET_AGENT_SESSION_OPERATION_ID,
+          "get",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       const result = (await dispatcher.dispatch({
         type: "agent:get-session",
@@ -1078,7 +1041,14 @@ describe("ClaudeAgentModule", () => {
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      dispatcher.registerOperation("agent:get-session", new MinimalGetSessionOperation());
+      dispatcher.registerOperation(
+        "agent:get-session",
+        createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
+          GET_AGENT_SESSION_OPERATION_ID,
+          "get",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       const result = (await dispatcher.dispatch({
         type: "agent:get-session",
@@ -1098,7 +1068,14 @@ describe("ClaudeAgentModule", () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
-      dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
+      dispatcher.registerOperation(
+        "agent:restart",
+        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+          RESTART_AGENT_OPERATION_ID,
+          "restart",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       const result = (await dispatcher.dispatch({
         type: "agent:restart",
@@ -1119,7 +1096,14 @@ describe("ClaudeAgentModule", () => {
       const { dispatcher, module } = createTestSetup(mockDepsResult);
       await activateModule(dispatcher, module);
 
-      dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
+      dispatcher.registerOperation(
+        "agent:restart",
+        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+          RESTART_AGENT_OPERATION_ID,
+          "restart",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       await expect(
         dispatcher.dispatch({
@@ -1136,7 +1120,14 @@ describe("ClaudeAgentModule", () => {
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      dispatcher.registerOperation("agent:restart", new MinimalRestartOperation());
+      dispatcher.registerOperation(
+        "agent:restart",
+        createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
+          RESTART_AGENT_OPERATION_ID,
+          "restart",
+          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+        )
+      );
 
       const result = (await dispatcher.dispatch({
         type: "agent:restart",
@@ -1157,7 +1148,10 @@ describe("ClaudeAgentModule", () => {
       const { dispatcher, mockSM, mockASM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
-      dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
+      dispatcher.registerOperation(
+        "app:shutdown",
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+      );
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
@@ -1172,7 +1166,10 @@ describe("ClaudeAgentModule", () => {
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
+      dispatcher.registerOperation(
+        "app:shutdown",
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+      );
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
@@ -1186,7 +1183,10 @@ describe("ClaudeAgentModule", () => {
       const { dispatcher, module } = createTestSetup(mockDepsResult);
       await activateModule(dispatcher, module);
 
-      dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
+      dispatcher.registerOperation(
+        "app:shutdown",
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+      );
 
       // Handler throws directly, but collect() catches the error
       await expect(

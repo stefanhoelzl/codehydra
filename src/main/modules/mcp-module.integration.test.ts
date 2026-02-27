@@ -19,7 +19,7 @@ import {
   APP_SHUTDOWN_OPERATION_ID,
 } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { createMcpModule, type McpModuleDeps } from "./mcp-module";
 
@@ -42,23 +42,6 @@ function createMockMcpServerManager(port = 9999): MockMcpServerManager {
 }
 
 // =============================================================================
-// Minimal operations for testing
-// =============================================================================
-
-/**
- * Minimal app:start that only runs the "start" hook point.
- * The real AppStartOperation has many hook points (show-ui, check-config, etc.)
- * but we only need "start" for MCP module testing.
- */
-class MinimalAppStartOperation implements Operation<AppStartIntent, void> {
-  readonly id = APP_START_OPERATION_ID;
-
-  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
-    await ctx.hooks.collect("start", { intent: ctx.intent });
-  }
-}
-
-// =============================================================================
 // Test Setup
 // =============================================================================
 
@@ -75,7 +58,10 @@ function createTestSetup(): TestSetup {
   const mcpServerManager = createMockMcpServerManager();
 
   // Register operations
-  dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+  dispatcher.registerOperation(
+    INTENT_APP_START,
+    createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
+  );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
   const mcpModule = createMcpModule({
@@ -123,7 +109,10 @@ describe("McpModule Integration", () => {
       const hookRegistry = new HookRegistry();
       const shutdownDispatcher = new Dispatcher(hookRegistry);
       shutdownDispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-      shutdownDispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+      shutdownDispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
+      );
 
       const msm = createMockMcpServerManager();
       const mcpModule = createMcpModule({

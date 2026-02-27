@@ -10,13 +10,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
-import {
-  OPEN_WORKSPACE_OPERATION_ID,
-  type SetupHookInput,
-  type SetupHookResult,
-} from "../operations/open-workspace";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
+import { OPEN_WORKSPACE_OPERATION_ID, type SetupHookResult } from "../operations/open-workspace";
 import { createKeepFilesModule } from "./keepfiles-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
@@ -39,30 +35,6 @@ function createMockKeepFilesService() {
 }
 
 // =============================================================================
-// Minimal Test Operation
-// =============================================================================
-
-/**
- * Minimal operation that runs only the "setup" hook point.
- * Avoids needing stubs for resolve-project, create, finalize.
- */
-class MinimalSetupOperation implements Operation<Intent, SetupHookResult> {
-  readonly id = OPEN_WORKSPACE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<SetupHookResult> {
-    const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
-    const input: SetupHookInput = {
-      intent: ctx.intent,
-      projectPath: payload.projectPath,
-      workspacePath: payload.workspacePath,
-    };
-    const { results, errors } = await ctx.hooks.collect<SetupHookResult>("setup", input);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
-  }
-}
-
-// =============================================================================
 // Test Setup
 // =============================================================================
 
@@ -77,7 +49,19 @@ function createTestSetup(logger = SILENT_LOGGER): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  dispatcher.registerOperation("workspace:open", new MinimalSetupOperation());
+  dispatcher.registerOperation(
+    "workspace:open",
+    createMinimalOperation<Intent, SetupHookResult>(OPEN_WORKSPACE_OPERATION_ID, "setup", {
+      hookContext: (ctx) => {
+        const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
+        return {
+          intent: ctx.intent,
+          projectPath: payload.projectPath,
+          workspacePath: payload.workspacePath,
+        };
+      },
+    })
+  );
 
   const module = createKeepFilesModule({
     keepFilesService: keepFilesService as unknown as IKeepFilesService,

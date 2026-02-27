@@ -13,6 +13,7 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
@@ -106,15 +107,6 @@ class MinimalStartOperation implements Operation<Intent, StartHookResult> {
       }
     }
     return merged;
-  }
-}
-
-class MinimalStopOperation implements Operation<Intent, void> {
-  readonly id = APP_SHUTDOWN_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    // Matches real AppShutdownOperation: collect() catches errors, does not rethrow
-    await ctx.hooks.collect("stop", { intent: ctx.intent });
   }
 }
 
@@ -500,7 +492,10 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
+      dispatcher.registerOperation(
+        "app:shutdown",
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+      );
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
@@ -515,7 +510,10 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:shutdown", new MinimalStopOperation());
+      dispatcher.registerOperation(
+        "app:shutdown",
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+      );
 
       // Handler throws directly, but collect() catches the error
       await expect(

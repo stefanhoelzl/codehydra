@@ -41,6 +41,7 @@ import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../operations
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { createBadgeModule } from "./badge-module";
 import { BadgeManager } from "../managers/badge-manager";
@@ -85,19 +86,6 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
     };
     ctx.emit(event);
     return { started: true };
-  }
-}
-
-/**
- * Minimal shutdown operation that runs the "stop" hook point.
- * Used to trigger app:shutdown/stop through the public dispatcher API.
- */
-class MinimalStopOperation implements Operation<AppShutdownIntent, void> {
-  readonly id = APP_SHUTDOWN_OPERATION_ID;
-
-  async execute(ctx: OperationContext<AppShutdownIntent>): Promise<void> {
-    // Matches real AppShutdownOperation: collect() catches errors, does not rethrow
-    await ctx.hooks.collect("stop", { intent: ctx.intent });
   }
 }
 
@@ -337,7 +325,10 @@ describe("BadgeModule Integration", () => {
       expect(appLayer).toHaveDockBadge("\u25CF");
 
       // Register shutdown operation and dispatch
-      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new MinimalStopOperation());
+      dispatcher.registerOperation(
+        INTENT_APP_SHUTDOWN,
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+      );
       await dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent);
 
       // Badge should be cleared by dispose()
@@ -353,7 +344,10 @@ describe("BadgeModule Integration", () => {
         throw new Error("dispose failed");
       });
 
-      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new MinimalStopOperation());
+      dispatcher.registerOperation(
+        INTENT_APP_SHUTDOWN,
+        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
+      );
 
       // Should not throw - collect() catches the error
       await expect(

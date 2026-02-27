@@ -22,6 +22,7 @@ import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../operations/set-mode";
 import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
@@ -180,17 +181,6 @@ class MinimalShowUIOperation implements Operation<Intent, ShowUIHookResult> {
       }
     }
     return merged;
-  }
-}
-
-/** Runs "init" hook point only. */
-class MinimalInitOperation implements Operation<Intent, void> {
-  readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<void>("init", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
   }
 }
 
@@ -1115,7 +1105,10 @@ describe("ViewModule Integration", () => {
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "init")
+      );
 
       const menuLayer = { setApplicationMenu: vi.fn() };
       const windowManager = {
@@ -1161,7 +1154,10 @@ describe("ViewModule Integration", () => {
       const dispatcher = new Dispatcher(hookRegistry);
       const viewManager = createMockViewManager();
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "init")
+      );
 
       const { module } = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],

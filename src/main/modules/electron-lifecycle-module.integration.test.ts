@@ -13,6 +13,7 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent, ConfigureResult } from "../operations/app-start";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
@@ -27,17 +28,6 @@ import {
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
-
-/** Runs "await-ready" hook point only. */
-class MinimalAwaitReadyOperation implements Operation<Intent, void> {
-  readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<void>("await-ready", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-  }
-}
 
 /** Runs "before-ready" hook point only. */
 class MinimalBeforeReadyOperation implements Operation<Intent, ConfigureResult> {
@@ -84,7 +74,10 @@ describe("ElectronLifecycleModule Integration", () => {
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAwaitReadyOperation());
+    dispatcher.registerOperation(
+      INTENT_APP_START,
+      createMinimalOperation(APP_START_OPERATION_ID, "await-ready")
+    );
 
     const module = createElectronLifecycleModule({ app: mockApp, logger: SILENT_LOGGER });
     dispatcher.registerModule(module);
@@ -104,7 +97,10 @@ describe("ElectronLifecycleModule Integration", () => {
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
 
-    dispatcher.registerOperation(INTENT_APP_START, new MinimalAwaitReadyOperation());
+    dispatcher.registerOperation(
+      INTENT_APP_START,
+      createMinimalOperation(APP_START_OPERATION_ID, "await-ready")
+    );
 
     const module = createElectronLifecycleModule({ app: mockApp, logger: SILENT_LOGGER });
     dispatcher.registerModule(module);

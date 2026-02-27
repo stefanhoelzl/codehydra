@@ -18,12 +18,12 @@ import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-  type StartHookResult,
 } from "../operations/app-start";
 import {
   AppShutdownOperation,
@@ -37,27 +37,6 @@ import {
 import { createTelemetryModule } from "./telemetry-module";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
 import type { TelemetryService, TelemetryConfigureOptions } from "../../services/telemetry/types";
-
-// =============================================================================
-// Minimal Start Operation
-// =============================================================================
-
-/**
- * Minimal start operation that only runs the "start" hook point.
- * Avoids the full AppStartOperation pipeline (check-config, check-deps, etc.)
- * while still exercising the telemetry module's start hook through the dispatcher.
- */
-class MinimalStartOperation implements Operation<AppStartIntent, void> {
-  readonly id = APP_START_OPERATION_ID;
-
-  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
-    const hookCtx: HookContext = { intent: ctx.intent };
-    const { errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
-  }
-}
 
 /**
  * Minimal config set-values operation that runs the "set" hook and emits
@@ -163,7 +142,10 @@ function createTestSetup(overrides?: { telemetryService?: TelemetryService | nul
     dispatcher,
   });
 
-  dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
+  dispatcher.registerOperation(
+    INTENT_APP_START,
+    createMinimalOperation(APP_START_OPERATION_ID, "start")
+  );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new MinimalConfigSetValuesOperation());
 
@@ -437,7 +419,7 @@ describe("TelemetryModule Integration", () => {
       const { dispatcher } = createTestSetup({ telemetryService: null });
 
       await dispatcher.dispatch(configSetValuesIntent({ agent: "opencode" }));
-      await expect(dispatcher.dispatch(startIntent())).resolves.toBeUndefined();
+      await dispatcher.dispatch(startIntent());
     });
   });
 
