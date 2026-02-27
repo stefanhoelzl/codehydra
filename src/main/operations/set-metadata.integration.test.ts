@@ -65,27 +65,7 @@ import type { HookContext } from "../intents/infrastructure/operation";
 const PROJECT_ROOT = new Path("/project");
 const WORKSPACES_DIR = new Path("/workspaces");
 
-// =============================================================================
-// Mock ApiRegistry for IpcEventBridge
-// =============================================================================
-
-interface MockApiRegistry {
-  emit: ReturnType<typeof vi.fn>;
-  register: ReturnType<typeof vi.fn>;
-  on: ReturnType<typeof vi.fn>;
-  getInterface: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-}
-
-function createMockApiRegistry(): MockApiRegistry {
-  return {
-    emit: vi.fn(),
-    register: vi.fn(),
-    on: vi.fn().mockReturnValue(() => {}),
-    getInterface: vi.fn(),
-    dispose: vi.fn(),
-  };
-}
+import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-utils";
 
 // =============================================================================
 // Test Setup Helper
@@ -209,9 +189,9 @@ function createTestSetup(): TestSetup {
   };
 
   // Wire IpcEventBridge
-  const mockApiRegistry = createMockApiRegistry();
+  const mockApiRegistry = createMockRegistry();
   const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry,
+    apiRegistry: mockApiRegistry,
     getApi: () => {
       throw new Error("not wired");
     },

@@ -11,25 +11,7 @@ import {
   type MockImageLayer,
 } from "../../services/platform/image.state-mock";
 import type { WindowManager } from "./window-manager";
-import type { ImageHandle } from "../../services/platform/types";
-
-/**
- * Mock WindowManager for BadgeManager testing.
- */
-interface MockWindowManager {
-  setOverlayIcon: (image: ImageHandle | null, description: string) => void;
-  setOverlayIconCalls: Array<{ image: ImageHandle | null; description: string }>;
-}
-
-function createMockWindowManager(): MockWindowManager {
-  const setOverlayIconCalls: Array<{ image: ImageHandle | null; description: string }> = [];
-  return {
-    setOverlayIcon: (image: ImageHandle | null, description: string) => {
-      setOverlayIconCalls.push({ image, description });
-    },
-    setOverlayIconCalls,
-  };
-}
+import { createMockWindowManager, type MockWindowManager } from "./window-manager.test-utils";
 
 describe("BadgeManager", () => {
   let appLayer: MockAppLayer;
@@ -110,8 +92,8 @@ describe("BadgeManager", () => {
       manager.updateBadge("all-working");
 
       expect(imageLayer).toHaveImages([{ id: "image-1" }]);
-      expect(windowManager.setOverlayIconCalls).toHaveLength(1);
-      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("All workspaces working");
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(1);
+      expect(windowManager.getOverlayIconCalls()[0]?.description).toBe("All workspaces working");
     });
 
     it("generates image for mixed state", () => {
@@ -128,8 +110,8 @@ describe("BadgeManager", () => {
       manager.updateBadge("mixed");
 
       expect(imageLayer).toHaveImages([{ id: "image-1" }]);
-      expect(windowManager.setOverlayIconCalls).toHaveLength(1);
-      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("Some workspaces ready");
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(1);
+      expect(windowManager.getOverlayIconCalls()[0]?.description).toBe("Some workspaces ready");
     });
 
     it("clears overlay for none state", () => {
@@ -146,33 +128,28 @@ describe("BadgeManager", () => {
       manager.updateBadge("none");
 
       expect(imageLayer).toHaveImages([]);
-      expect(windowManager.setOverlayIconCalls).toHaveLength(1);
-      expect(windowManager.setOverlayIconCalls[0]?.image).toBeNull();
-      expect(windowManager.setOverlayIconCalls[0]?.description).toBe("");
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(1);
+      expect(windowManager.getOverlayIconCalls()[0]?.image).toBeNull();
+      expect(windowManager.getOverlayIconCalls()[0]?.description).toBe("");
     });
 
     it("creates image in shared ImageLayer that WindowLayer would use for lookup", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
       appLayer = createAppLayerMock({ platform: "win32" });
       const sharedImageLayer = createImageLayerMock();
-
-      let capturedImageHandle: ImageHandle | null = null;
-      const mockWindowManager = {
-        setOverlayIcon: (image: ImageHandle | null) => {
-          capturedImageHandle = image;
-        },
-      };
+      const mockWm = createMockWindowManager();
 
       const manager = new BadgeManager(
         platformInfo,
         appLayer,
         sharedImageLayer,
-        mockWindowManager as unknown as WindowManager,
+        mockWm as unknown as WindowManager,
         SILENT_LOGGER
       );
 
       manager.updateBadge("all-working");
 
+      const capturedImageHandle = mockWm.getOverlayIconCalls()[0]?.image ?? null;
       expect(capturedImageHandle).not.toBeNull();
       expect(sharedImageLayer).toHaveImage(capturedImageHandle!.id, {
         isEmpty: false,
@@ -318,7 +295,7 @@ describe("BadgeManager", () => {
       manager.updateBadge("all-working");
 
       expect(imageLayer).toHaveImages([{ id: "image-1" }]);
-      expect(windowManager.setOverlayIconCalls).toHaveLength(3);
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(3);
     });
 
     it("creates new images for different states", () => {
@@ -373,12 +350,12 @@ describe("BadgeManager", () => {
       );
 
       manager.updateBadge("all-working");
-      const callsAfterUpdate = windowManager.setOverlayIconCalls.length;
+      const callsAfterUpdate = windowManager.getOverlayIconCalls().length;
       expect(callsAfterUpdate).toBeGreaterThan(0);
 
       manager.dispose();
 
-      const lastCall = windowManager.setOverlayIconCalls.at(-1);
+      const lastCall = windowManager.getOverlayIconCalls().at(-1);
       expect(lastCall?.image).toBeNull();
     });
 

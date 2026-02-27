@@ -63,27 +63,7 @@ import type { UpdateAvailableIntent } from "./update-available";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 
-// =============================================================================
-// Mock ApiRegistry for IpcEventBridge
-// =============================================================================
-
-interface MockApiRegistry {
-  emit: ReturnType<typeof vi.fn>;
-  register: ReturnType<typeof vi.fn>;
-  on: ReturnType<typeof vi.fn>;
-  getInterface: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-}
-
-function createMockApiRegistry(): MockApiRegistry {
-  return {
-    emit: vi.fn(),
-    register: vi.fn(),
-    on: vi.fn().mockReturnValue(() => {}),
-    getInterface: vi.fn(),
-    dispose: vi.fn(),
-  };
-}
+import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-utils";
 
 // =============================================================================
 // Behavioral Mocks
@@ -293,7 +273,7 @@ function createTestSetup(opts?: {
     },
   };
 
-  const mockApiRegistry = createMockApiRegistry();
+  const mockApiRegistry = createMockRegistry();
   const modules: IntentModule[] = [resolveModule, resolveProjectModule, switchViewModule];
 
   if (opts?.withAutoSelect) {
@@ -344,7 +324,7 @@ function createTestSetup(opts?: {
 
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry,
+      apiRegistry: mockApiRegistry,
       getApi: () => {
         throw new Error("not wired");
       },

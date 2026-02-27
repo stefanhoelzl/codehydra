@@ -21,6 +21,7 @@ import {
   type MockWindowLayerInternal,
 } from "../../services/shell/window.state-mock";
 import type { WindowHandle } from "../../services/shell/types";
+import { createMockWindowManager } from "./window-manager.test-utils";
 
 // Mock external-url
 const mockOpenExternal = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -28,17 +29,6 @@ const mockOpenExternal = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock("../utils/external-url", () => ({
   openExternal: mockOpenExternal,
 }));
-
-/**
- * Creates a mock WindowManager for testing.
- */
-function createMockWindowManager(windowHandle: WindowHandle) {
-  return {
-    getWindowHandle: vi.fn(() => windowHandle),
-    getBounds: vi.fn(() => ({ width: 1200, height: 800 })),
-    onResize: vi.fn(() => vi.fn()),
-  } as unknown as WindowManager;
-}
 
 /**
  * Creates a test window layer with a pre-created window for ViewManager tests.
@@ -72,7 +62,9 @@ function createViewManagerDeps(): ViewManagerDeps & {
   const windowLayer = createViewManagerWindowLayer();
   const viewLayer = createViewLayerMock();
   const sessionLayer = createSessionLayerMock();
-  const windowManager = createMockWindowManager(windowLayer._createdWindowHandle);
+  const windowManager = createMockWindowManager({
+    windowHandle: windowLayer._createdWindowHandle,
+  }) as unknown as WindowManager;
 
   return {
     windowManager,
