@@ -61,6 +61,7 @@ import {
 } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { SetupOperation, INTENT_SETUP } from "../operations/setup";
 import type { SetupIntent } from "../operations/setup";
 import { createIpcEventBridge, type IpcEventBridgeDeps } from "./ipc-event-bridge";
@@ -134,14 +135,6 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
     };
     ctx.emit(event);
     return { started: true };
-  }
-}
-
-class MinimalAppStartOperation implements Operation<AppStartIntent, void> {
-  readonly id = APP_START_OPERATION_ID;
-
-  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
-    await ctx.hooks.collect("start", { intent: ctx.intent });
   }
 }
 
@@ -280,7 +273,10 @@ function createLifecycleTestSetup(
     INTENT_DELETE_WORKSPACE,
     new MinimalDeleteOperation(TEST_PROJECT_ID, TEST_WORKSPACE_NAME, TEST_PROJECT_PATH)
   );
-  dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+  dispatcher.registerOperation(
+    INTENT_APP_START,
+    createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
+  );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
   const mockApiRegistry = createMockApiRegistry();
@@ -620,7 +616,10 @@ describe("IpcEventBridge - lifecycle", () => {
 
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
+      );
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
       const mockApiRegistry = createMockApiRegistry();
@@ -690,7 +689,10 @@ describe("IpcEventBridge - lifecycle", () => {
 
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
+      );
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
       const mockApiRegistry = createMockApiRegistry();

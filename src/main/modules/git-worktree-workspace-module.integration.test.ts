@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -19,12 +20,11 @@ import type { GitWorktreeProvider } from "../../services/git/git-worktree-provid
 import type { PathProvider } from "../../services/platform/path-provider";
 import type { Workspace } from "../../services/git/types";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
-import type { DiscoverHookResult, DiscoverHookInput } from "../operations/open-project";
+import type { DiscoverHookResult } from "../operations/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
-import type { CloseHookInput } from "../operations/close-project";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent } from "../operations/open-workspace";
-import type { CreateHookInput, CreateHookResult } from "../operations/open-workspace";
+import type { CreateHookResult } from "../operations/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
@@ -69,59 +69,39 @@ function createMockPathProvider(): PathProvider {
 // Minimal Test Operations
 // =============================================================================
 
-/**
- * Open-project operation: runs "discover" hook point.
- */
-class MinimalOpenProjectOperation implements Operation<Intent, DiscoverHookResult> {
-  readonly id = OPEN_PROJECT_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<DiscoverHookResult> {
-    const input: DiscoverHookInput = {
+const openProjectOperation = createMinimalOperation<Intent, DiscoverHookResult>(
+  OPEN_PROJECT_OPERATION_ID,
+  "discover",
+  {
+    hookContext: (ctx) => ({
       intent: ctx.intent,
       projectPath: (ctx.intent.payload as { projectPath: string }).projectPath,
-    };
-    const { results, errors } = await ctx.hooks.collect<DiscoverHookResult>("discover", input);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? { workspaces: [] };
+    }),
   }
-}
+);
 
-/**
- * Close-project operation: runs "close" hook point.
- */
-class MinimalCloseProjectOperation implements Operation<Intent, Record<string, never>> {
-  readonly id = CLOSE_PROJECT_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<Record<string, never>> {
-    const payload = ctx.intent.payload as { projectPath: string };
-    const input: CloseHookInput = {
+const closeProjectOperation = createMinimalOperation<Intent, Record<string, never>>(
+  CLOSE_PROJECT_OPERATION_ID,
+  "close",
+  {
+    hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: payload.projectPath,
+      projectPath: (ctx.intent.payload as { projectPath: string }).projectPath,
       removeLocalRepo: false,
-    };
-    const { results, errors } = await ctx.hooks.collect<Record<string, never>>("close", input);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
+    }),
   }
-}
+);
 
-/**
- * Open-workspace operation: runs "create" hook point.
- */
-class MinimalOpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, CreateHookResult> {
-  readonly id = OPEN_WORKSPACE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<CreateHookResult> {
-    const payload = ctx.intent.payload as { projectPath?: string };
-    const input: CreateHookInput = {
+const openWorkspaceOperation = createMinimalOperation<OpenWorkspaceIntent, CreateHookResult>(
+  OPEN_WORKSPACE_OPERATION_ID,
+  "create",
+  {
+    hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: payload.projectPath ?? "",
-    };
-    const { results, errors } = await ctx.hooks.collect<CreateHookResult>("create", input);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0]!;
+      projectPath: (ctx.intent.payload as { projectPath?: string }).projectPath ?? "",
+    }),
   }
-}
+);
 
 /** Extended delete result that includes the resolved path and possible error. */
 interface DeleteResult extends DeleteHookResult {
@@ -198,23 +178,16 @@ class MinimalResolveWorkspaceOperation implements Operation<Intent, ResolveResul
   }
 }
 
-/**
- * Fetch-bases operation: runs "fetch-bases" hook point on the open-workspace operation.
- */
-class MinimalFetchBasesOperation implements Operation<Intent, FetchBasesHookResult> {
-  readonly id = OPEN_WORKSPACE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<FetchBasesHookResult> {
-    const payload = ctx.intent.payload as { projectPath: string };
-    const input = {
+const fetchBasesOperation = createMinimalOperation<Intent, FetchBasesHookResult>(
+  OPEN_WORKSPACE_OPERATION_ID,
+  "fetch-bases",
+  {
+    hookContext: (ctx) => ({
       intent: ctx.intent,
-      projectPath: payload.projectPath,
-    };
-    const { results, errors } = await ctx.hooks.collect<FetchBasesHookResult>("fetch-bases", input);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? { bases: [] };
+      projectPath: (ctx.intent.payload as { projectPath: string }).projectPath,
+    }),
   }
-}
+);
 
 /** Result from get-workspace-status: resolve-workspace + get. */
 interface GetStatusResult {
@@ -274,12 +247,12 @@ function createTestSetup(): TestSetup {
   const dispatcher = new Dispatcher(hookRegistry);
 
   // Register operations
-  dispatcher.registerOperation("project:open", new MinimalOpenProjectOperation());
-  dispatcher.registerOperation("project:close", new MinimalCloseProjectOperation());
-  dispatcher.registerOperation("workspace:open", new MinimalOpenWorkspaceOperation());
+  dispatcher.registerOperation("project:open", openProjectOperation);
+  dispatcher.registerOperation("project:close", closeProjectOperation);
+  dispatcher.registerOperation("workspace:open", openWorkspaceOperation);
   dispatcher.registerOperation("workspace:delete", new MinimalDeleteWorkspaceOperation());
   dispatcher.registerOperation("workspace:resolve", new MinimalResolveWorkspaceOperation());
-  dispatcher.registerOperation("open-workspace", new MinimalFetchBasesOperation());
+  dispatcher.registerOperation("open-workspace", fetchBasesOperation);
   dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
 
   // Wire the module under test

@@ -14,12 +14,12 @@ import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-  type StartHookResult,
 } from "../operations/app-start";
 import {
   AppShutdownOperation,
@@ -36,27 +36,6 @@ import type { DomainEvent } from "../intents/infrastructure/types";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { ConfigValues } from "../../services/config/config-values";
 import type { AutoUpdater, UpdateAvailableCallback } from "../../services/auto-updater";
-
-// =============================================================================
-// Minimal Start Operation
-// =============================================================================
-
-/**
- * Minimal start operation that only runs the "start" hook point.
- * Avoids the full AppStartOperation pipeline (check-config, check-deps, etc.)
- * while still exercising the auto-updater module's start hook through the dispatcher.
- */
-class MinimalStartOperation implements Operation<AppStartIntent, void> {
-  readonly id = APP_START_OPERATION_ID;
-
-  async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
-    const hookCtx: HookContext = { intent: ctx.intent };
-    const { errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
-  }
-}
 
 // =============================================================================
 // Tracking Update Operation
@@ -143,7 +122,10 @@ function createTestSetup(overrides?: { disposeThrows?: Error }): TestSetup {
     dispatcher,
   });
 
-  dispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
+  dispatcher.registerOperation(
+    INTENT_APP_START,
+    createMinimalOperation(APP_START_OPERATION_ID, "start")
+  );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, updateOperation);
 

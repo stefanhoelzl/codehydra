@@ -12,10 +12,10 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   type DeleteWorkspaceIntent,
-  type DeletePipelineHookInput,
   type ReleaseHookResult,
   type DetectHookResult,
   type FlushHookResult,
@@ -60,43 +60,33 @@ function makeDeleteIntent(overrides?: Partial<DeleteWorkspaceIntent["payload"]>)
 // Minimal Test Operations
 // =============================================================================
 
-/**
- * Runs only the "release" hook point.
- */
-class ReleaseOperation implements Operation<Intent, ReleaseHookResult> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<ReleaseHookResult> {
-    const { payload } = ctx.intent as DeleteWorkspaceIntent;
-    const hookCtx: DeletePipelineHookInput = {
+const releaseOperation = createMinimalOperation<Intent, ReleaseHookResult>(
+  DELETE_WORKSPACE_OPERATION_ID,
+  "release",
+  {
+    hookContext: (ctx) => ({
       intent: ctx.intent,
       projectPath: "/projects/my-app",
-      workspacePath: payload.workspacePath ?? "",
-    };
-    const { results, errors } = await ctx.hooks.collect<ReleaseHookResult>("release", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
+      workspacePath:
+        ((ctx.intent as DeleteWorkspaceIntent).payload as { workspacePath?: string })
+          .workspacePath ?? "",
+    }),
   }
-}
+);
 
-/**
- * Runs only the "detect" hook point.
- */
-class DetectOperation implements Operation<Intent, DetectHookResult> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<Intent>): Promise<DetectHookResult> {
-    const { payload } = ctx.intent as DeleteWorkspaceIntent;
-    const hookCtx: DeletePipelineHookInput = {
+const detectOperation = createMinimalOperation<Intent, DetectHookResult>(
+  DELETE_WORKSPACE_OPERATION_ID,
+  "detect",
+  {
+    hookContext: (ctx) => ({
       intent: ctx.intent,
       projectPath: "/projects/my-app",
-      workspacePath: payload.workspacePath ?? "",
-    };
-    const { results, errors } = await ctx.hooks.collect<DetectHookResult>("detect", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
+      workspacePath:
+        ((ctx.intent as DeleteWorkspaceIntent).payload as { workspacePath?: string })
+          .workspacePath ?? "",
+    }),
   }
-}
+);
 
 /**
  * Runs only the "flush" hook point with provided blockingPids.
@@ -126,7 +116,7 @@ class FlushOperation implements Operation<Intent, FlushHookResult> {
 function createReleaseSetup(lockHandler: WorkspaceLockHandler | undefined, logger = SILENT_LOGGER) {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
-  dispatcher.registerOperation("workspace:delete", new ReleaseOperation());
+  dispatcher.registerOperation("workspace:delete", releaseOperation);
 
   const module = createWindowsFileLockModule({
     workspaceLockHandler: lockHandler,
@@ -140,7 +130,7 @@ function createReleaseSetup(lockHandler: WorkspaceLockHandler | undefined, logge
 function createDetectSetup(lockHandler: WorkspaceLockHandler | undefined, logger = SILENT_LOGGER) {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
-  dispatcher.registerOperation("workspace:delete", new DetectOperation());
+  dispatcher.registerOperation("workspace:delete", detectOperation);
 
   const module = createWindowsFileLockModule({
     workspaceLockHandler: lockHandler,
