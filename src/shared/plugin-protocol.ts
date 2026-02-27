@@ -54,6 +54,8 @@ export interface PluginConfig {
   readonly env: Record<string, string> | null;
   /** Agent type for terminal launching (null if no agent configured) */
   readonly agentType: AgentType | null;
+  /** True for new workspaces (reset editor layout), false for reopened (preserve layout) */
+  readonly resetWorkspace: boolean;
 }
 
 // ============================================================================

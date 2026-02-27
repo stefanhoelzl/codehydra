@@ -35,6 +35,8 @@ export interface PluginConfig {
   readonly isDevelopment: boolean;
   readonly env: Record<string, string> | null;
   readonly agentType: AgentType | null;
+  /** True for new workspaces (reset editor layout), false for reopened (preserve layout) */
+  readonly resetWorkspace: boolean;
 }
 
 export interface SetMetadataRequest {

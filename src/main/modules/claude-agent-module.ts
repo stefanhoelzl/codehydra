@@ -375,6 +375,11 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
               ...(agentProvider?.getEnvironmentVariables() ?? {}),
             };
 
+            // Signal reopened workspaces to use --continue for session resume
+            if (intent.payload.existingWorkspace !== undefined) {
+              envVars._CH_CLAUDE_CONTINUE = "1";
+            }
+
             return { envVars, agentType: "claude" };
           },
         },

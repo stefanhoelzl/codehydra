@@ -68,27 +68,49 @@ let terminalCloseListener: vscode.Disposable | null = null;
 /**
  * Open agent terminal in the editor area.
  * Creates a new terminal if none exists, otherwise focuses the existing one.
+ * On reopened workspaces (show=false), disposes any stale restored terminals
+ * (which have lost their name/env after code-server restart) and creates a
+ * fresh terminal with correct name, env vars, and command.
  *
  * @param agentType - The type of agent ("opencode" or "claude")
  * @param env - Environment variables to set for the terminal
+ * @param show - Whether to show/focus the terminal (default: true)
  */
-function openAgentTerminal(agentType: AgentType, env: Record<string, string>): void {
-  // If terminal exists and not disposed, just focus it
+function openAgentTerminal(
+  agentType: AgentType,
+  env: Record<string, string>,
+  show: boolean = true
+): void {
   if (agentTerminal) {
-    agentTerminal.show();
+    if (show) agentTerminal.show();
     return;
   }
 
   const terminalName = agentType === "claude" ? "Claude" : "OpenCode";
   const command = agentType === "claude" ? "ch-claude" : "ch-opencode";
 
-  // Create terminal in editor area using viewColumn
-  // isTransient prevents the terminal from being restored on VS Code restart
+  if (!show) {
+    // Reopened workspace: dispose stale restored terminals (empty creationOptions
+    // indicate a terminal restored after pty host reconnection failure)
+    let hadRestoredTerminal = false;
+    for (const t of vscode.window.terminals) {
+      const opts = t.creationOptions as vscode.TerminalOptions | undefined;
+      if (opts?.name === undefined) {
+        hadRestoredTerminal = true;
+        t.dispose();
+      }
+    }
+
+    if (!hadRestoredTerminal) {
+      // User had closed the terminal before restart — don't recreate it
+      return;
+    }
+  }
+
   agentTerminal = vscode.window.createTerminal({
     name: terminalName,
     location: { viewColumn: vscode.ViewColumn.Active },
     env: env,
-    isTransient: true,
   });
 
   agentTerminal.show();
@@ -471,20 +493,22 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 
     await vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
 
-    // Execute pre-terminal layout commands
-    const preLayoutCommands = [
-      "workbench.action.closeSidebar",
-      "workbench.action.closeAuxiliaryBar",
-      "workbench.action.editorLayoutSingle",
-      "workbench.action.closeAllEditors",
-      "codehydra.dictation.openPanel",
-    ];
-    for (const command of preLayoutCommands) {
-      try {
-        await vscode.commands.executeCommand(command);
-      } catch (err: unknown) {
-        const error = err instanceof Error ? err.message : String(err);
-        codehydraApi.log.warn("Layout command failed", { command, error });
+    // Execute pre-terminal layout commands (only for new workspaces)
+    if (config.resetWorkspace) {
+      const preLayoutCommands = [
+        "workbench.action.closeSidebar",
+        "workbench.action.closeAuxiliaryBar",
+        "workbench.action.editorLayoutSingle",
+        "workbench.action.closeAllEditors",
+        "codehydra.dictation.openPanel",
+      ];
+      for (const command of preLayoutCommands) {
+        try {
+          await vscode.commands.executeCommand(command);
+        } catch (err: unknown) {
+          const error = err instanceof Error ? err.message : String(err);
+          codehydraApi.log.warn("Layout command failed", { command, error });
+        }
       }
     }
 
@@ -492,10 +516,13 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     if (config.env !== null && config.agentType !== null) {
       currentAgentType = config.agentType;
       currentAgentEnv = config.env;
-      openAgentTerminal(config.agentType, config.env);
-      // Wait for terminal to be ready before focusing
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await vscode.commands.executeCommand("workbench.action.terminal.focus");
+      openAgentTerminal(config.agentType, config.env, config.resetWorkspace);
+
+      // Focus the terminal only for new workspaces
+      if (config.resetWorkspace) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await vscode.commands.executeCommand("workbench.action.terminal.focus");
+      }
     }
 
     // Register debug commands in development mode

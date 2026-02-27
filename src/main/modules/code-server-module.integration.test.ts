@@ -773,7 +773,53 @@ describe("CodeServerModule", () => {
       expect(deps.pluginServer!.setWorkspaceConfig).toHaveBeenCalledWith(
         "/test/project/.worktrees/feature-1",
         { OPENCODE_PORT: "8080" },
-        "opencode"
+        "opencode",
+        true
+      );
+    });
+
+    it("passes resetWorkspace=false for existing (reopened) workspaces", async () => {
+      const deps = createMockDeps();
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const module = createCodeServerModule(deps);
+      dispatcher.registerModule(module);
+
+      // Start to set port
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Finalize with agentType
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalFinalizeOperation({
+          workspacePath: "/test/project/.worktrees/feature-1",
+          envVars: { OPENCODE_PORT: "8080" },
+          agentType: "opencode",
+        })
+      );
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectId: "test-12345678" as ProjectId,
+          workspaceName: "feature-1",
+          base: "main",
+          existingWorkspace: {
+            path: "/test/project/.worktrees/feature-1",
+            name: "feature-1",
+            branch: "feature-1",
+            metadata: {},
+          },
+        },
+      } as OpenWorkspaceIntent);
+
+      expect(deps.pluginServer!.setWorkspaceConfig).toHaveBeenCalledWith(
+        "/test/project/.worktrees/feature-1",
+        { OPENCODE_PORT: "8080" },
+        "opencode",
+        false
       );
     });
   });

@@ -192,7 +192,7 @@ export class PluginServer {
    */
   private readonly workspaceConfigs = new Map<
     string,
-    { env: Record<string, string>; agentType: AgentType }
+    { env: Record<string, string>; agentType: AgentType; resetWorkspace: boolean }
   >();
 
   /**
@@ -332,14 +332,16 @@ export class PluginServer {
    * @param workspacePath - Workspace path (will be normalized)
    * @param env - Environment variables for terminal integration
    * @param agentType - Agent type for terminal launching
+   * @param resetWorkspace - True for new workspaces (reset layout), false for reopened
    */
   setWorkspaceConfig(
     workspacePath: string,
     env: Record<string, string>,
-    agentType: AgentType
+    agentType: AgentType,
+    resetWorkspace: boolean
   ): void {
     const normalized = new Path(workspacePath).toString();
-    this.workspaceConfigs.set(normalized, { env, agentType });
+    this.workspaceConfigs.set(normalized, { env, agentType, resetWorkspace });
   }
 
   /**
@@ -551,12 +553,14 @@ export class PluginServer {
       const storedConfig = this.workspaceConfigs.get(workspacePath);
       const env: Record<string, string> | null = storedConfig?.env ?? null;
       const agentType: AgentType | null = storedConfig?.agentType ?? null;
+      const resetWorkspace: boolean = storedConfig?.resetWorkspace ?? true;
 
       // Send config event with all startup data
       const config: PluginConfig = {
         isDevelopment: this.isDevelopment,
         env,
         agentType,
+        resetWorkspace,
       };
       socket.emit("config", config);
       this.logger.debug("Config sent", {

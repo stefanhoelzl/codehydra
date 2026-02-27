@@ -33,7 +33,11 @@ import type {
   RegisterConfigResult,
 } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
-import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
+import type {
+  FinalizeHookInput,
+  FinalizeHookResult,
+  OpenWorkspaceIntent,
+} from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
@@ -308,10 +312,13 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
             // Push config to PluginServer so connecting extensions get env vars + agent type
             if (pluginServer && finalizeCtx.agentType) {
+              const intent = ctx.intent as OpenWorkspaceIntent;
+              const resetWorkspace = intent.payload.existingWorkspace === undefined;
               pluginServer.setWorkspaceConfig(
                 finalizeCtx.workspacePath,
                 finalizeCtx.envVars,
-                finalizeCtx.agentType
+                finalizeCtx.agentType,
+                resetWorkspace
               );
             }
 
