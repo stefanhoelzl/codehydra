@@ -200,6 +200,44 @@ The script handles:
 - 1: FAILED
 - 2: TIMEOUT
 
+### 5.5. CI failure retry (one attempt)
+
+If ship-wait exited with code 1 and the output contains "CI failed":
+
+1. Find the failed run:
+
+   ```bash
+   BRANCH=$(git branch --show-current)
+   gh run list --repo stefanhoelzl/codehydra --workflow=ci.yaml --branch=$BRANCH --limit=1 --json databaseId
+   ```
+
+2. Get the failed job logs:
+
+   ```bash
+   gh run view --repo stefanhoelzl/codehydra <run-id> --log-failed
+   ```
+
+3. **Analyze the logs.** Determine if the failure is an infrastructure issue or a code issue.
+
+   Infrastructure issues (retry): runner provisioning failures, network timeouts, GitHub service errors, OOM on runner, docker pull failures, checkout rate limiting, flaky runner environment.
+
+   Code issues (do NOT retry): test failures, lint errors, build errors, type errors.
+
+4. If infrastructure issue:
+
+   - Rerun the failed job(s):
+     ```bash
+     gh run rerun --repo stefanhoelzl/codehydra <run-id> --failed
+     ```
+   - Wait 10 seconds for GitHub to register the rerun
+   - Re-run ship-wait:
+     ```bash
+     npx tsx .claude/commands/ship-wait.ts <number>
+     ```
+   - Use the exit code from this second ship-wait run as the final result
+
+5. If code issue: proceed to FAILED report as usual.
+
 ### 6. Delete workspace
 
 If `--keep-workspace` was NOT passed and merge succeeded (exit code 0):
