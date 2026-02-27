@@ -3,15 +3,15 @@
  */
 
 export {
-  CONFIG,
-  type ConfigValues,
-  type ConfigKey,
+  type ConfigKeyDefinition,
+  type ComputedDefaultContext,
+  parseBool,
+} from "./config-definition";
+
+export {
   type ConfigAgentType,
-  CONFIG_KEYS,
-  DEFAULT_CONFIG_VALUES,
+  type AutoUpdatePreference,
   envVarToConfigKey,
-  parseConfigValue,
-  validateConfigValue,
   generateHelpText,
 } from "./config-values";
 

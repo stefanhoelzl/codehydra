@@ -12,7 +12,6 @@
 
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { ConfigValues } from "../../services/config/config-values";
 
 // =============================================================================
 // Intent + Event Types
@@ -20,7 +19,7 @@ import type { ConfigValues } from "../../services/config/config-values";
 
 export interface ConfigSetValuesPayload {
   /** Values to set. null value = delete key (revert to default). */
-  readonly values: Partial<ConfigValues>;
+  readonly values: Readonly<Record<string, unknown>>;
   /** When false, values are stored as runtime overrides (not written to disk). Default: true. */
   readonly persist?: boolean;
 }
@@ -32,7 +31,7 @@ export interface ConfigSetValuesIntent extends Intent<void> {
 
 export interface ConfigUpdatedPayload {
   /** Only the values that actually changed. */
-  readonly values: Partial<Readonly<ConfigValues>>;
+  readonly values: Readonly<Record<string, unknown>>;
 }
 
 export interface ConfigUpdatedEvent extends DomainEvent {
@@ -53,7 +52,7 @@ export const CONFIG_SET_VALUES_OPERATION_ID = "config-set-values";
  * Input context for the "set" hook — carries the values to be set.
  */
 export interface ConfigSetHookInput extends HookContext {
-  readonly values: Partial<ConfigValues>;
+  readonly values: Readonly<Record<string, unknown>>;
   readonly persist: boolean;
 }
 
@@ -61,7 +60,7 @@ export interface ConfigSetHookInput extends HookContext {
  * Result from the "set" hook — returns the changed values for the event.
  */
 export interface ConfigSetHookResult {
-  readonly changedValues: Partial<ConfigValues>;
+  readonly changedValues: Readonly<Record<string, unknown>>;
 }
 
 // =============================================================================
@@ -84,7 +83,7 @@ export class ConfigSetValuesOperation implements Operation<ConfigSetValuesIntent
     if (errors.length > 0) throw errors[0]!;
 
     // Merge changed values from all handlers (only config module responds)
-    let changedValues: Partial<ConfigValues> = {};
+    let changedValues: Readonly<Record<string, unknown>> = {};
     for (const result of results) {
       changedValues = { ...changedValues, ...result.changedValues };
     }

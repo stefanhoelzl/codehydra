@@ -15,7 +15,7 @@ import type { AsyncWatcher } from "../../services/platform/async-watcher";
 import type { Logger } from "../../services/logging";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
-import type { ConfigureResult } from "../operations/app-start";
+import type { ConfigureResult, RegisterConfigResult } from "../operations/app-start";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
@@ -88,6 +88,18 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
     name: "electron-lifecycle",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "electron.flags",
+                default: undefined,
+                parse: (s: string) => (s === "" ? undefined : s),
+                validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+              },
+            ],
+          }),
+        },
         "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
             // Disable ASAR when not packaged
@@ -124,7 +136,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
       [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
         const { values } = (event as ConfigUpdatedEvent).payload;
         if (values["electron.flags"] !== undefined) {
-          const flags = parseElectronFlags(values["electron.flags"]);
+          const flags = parseElectronFlags(values["electron.flags"] as string | undefined);
           for (const flag of flags) {
             deps.app.commandLine.appendSwitch(
               flag.name,

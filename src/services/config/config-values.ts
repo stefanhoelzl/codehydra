@@ -1,37 +1,19 @@
 /**
- * Schema-driven configuration values.
+ * Configuration value utilities and type aliases.
  *
- * Every config key is defined once in the CONFIG object with its default
- * value and string parser. The TypeScript type, defaults, and key set
- * are all derived mechanically — no hand-written interface to maintain.
+ * Config key definitions are owned by individual modules and registered
+ * via the "register-config" hook in app:start. This file provides shared
+ * utilities for config key name derivation and help text generation.
  *
  * Naming conventions:
  *   Config key / CLI flag:  dot-separated, kebab-case  (e.g. "version.code-server")
  *   Env var:                CH_ prefix, . → __, - → _, UPPER  (e.g. CH_VERSION__CODE_SERVER)
  */
 
-import { parseLogLevelSpec, parseLogOutput } from "../logging/electron-log-service";
+import type { ConfigKeyDefinition } from "./config-definition";
 
 // =============================================================================
-// Schema Helpers
-// =============================================================================
-
-interface ConfigKeyDef<T> {
-  readonly default: T;
-  readonly parse: (raw: string) => T | undefined; // undefined = invalid
-  readonly validate: (value: unknown) => T | undefined; // undefined = invalid
-}
-
-function key<T>(def: ConfigKeyDef<T>): ConfigKeyDef<T> {
-  return def;
-}
-
-function parseBool(s: string): boolean | undefined {
-  return s === "true" || s === "1" ? true : s === "false" || s === "0" ? false : undefined;
-}
-
-// =============================================================================
-// Config Schema
+// Type Aliases
 // =============================================================================
 
 /**
@@ -47,102 +29,6 @@ export type ConfigAgentType = "claude" | "opencode" | null;
  */
 export type AutoUpdatePreference = "always" | "never";
 
-/**
- * The single source of truth for all configuration keys.
- *
- * Any key can appear in config.json, env vars, or CLI flags.
- * Precedence (highest wins): CLI flag > env var > config.json > computed defaults > static defaults.
- */
-export const CONFIG = {
-  agent: key<ConfigAgentType>({
-    default: null,
-    parse: (s) => (s === "claude" || s === "opencode" ? s : s === "" ? null : undefined),
-    validate: (v) => (v === null || v === "claude" || v === "opencode" ? v : undefined),
-  }),
-  "auto-update": key<AutoUpdatePreference>({
-    default: "always",
-    parse: (s) => (s === "always" || s === "never" ? s : undefined),
-    validate: (v) => (v === "always" || v === "never" ? v : undefined),
-  }),
-  "version.claude": key<string | null>({
-    default: null,
-    parse: (s) => (s === "" ? null : s),
-    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
-  }),
-  "version.opencode": key<string | null>({
-    default: null,
-    parse: (s) => (s === "" ? null : s),
-    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
-  }),
-  "version.code-server": key<string | null>({
-    default: null,
-    parse: (s) => (s === "" ? null : s),
-    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
-  }),
-  "telemetry.enabled": key<boolean>({
-    default: true,
-    parse: parseBool,
-    validate: (v) => (typeof v === "boolean" ? v : undefined),
-  }),
-  "telemetry.distinct-id": key<string | undefined>({
-    default: undefined,
-    parse: (s) => (s === "" ? undefined : s),
-    validate: (v) => (typeof v === "string" ? v : undefined),
-  }),
-  "log.level": key<string>({
-    default: "warn",
-    parse: parseLogLevelSpec,
-    validate: (v) => (typeof v === "string" ? parseLogLevelSpec(v) : undefined),
-  }),
-  "log.output": key<string>({
-    default: "file",
-    parse: parseLogOutput,
-    validate: (v) => (typeof v === "string" ? parseLogOutput(v) : undefined),
-  }),
-  "electron.flags": key<string | undefined>({
-    default: undefined,
-    parse: (s) => (s === "" ? undefined : s),
-    validate: (v) => (typeof v === "string" ? v : undefined),
-  }),
-  "experimental.auto-pr-workspaces": key<boolean>({
-    default: false,
-    parse: parseBool,
-    validate: (v) => (typeof v === "boolean" ? v : undefined),
-  }),
-  "experimental.pr-auto-workspace.template-path": key<string | null>({
-    default: null,
-    parse: (s) => (s === "" ? null : s),
-    validate: (v) => (v === null || typeof v === "string" ? v : undefined),
-  }),
-  help: key<boolean>({
-    default: false,
-    parse: parseBool,
-    validate: (v) => (typeof v === "boolean" ? v : undefined),
-  }),
-} as const satisfies Record<string, ConfigKeyDef<unknown>>;
-
-// =============================================================================
-// Derived Types
-// =============================================================================
-
-export type ConfigKey = keyof typeof CONFIG;
-
-export type ConfigValues = {
-  readonly [K in ConfigKey]: (typeof CONFIG)[K] extends ConfigKeyDef<infer T> ? T : never;
-};
-
-/**
- * Set of all valid config keys, derived from the schema.
- */
-export const CONFIG_KEYS: ReadonlySet<ConfigKey> = new Set(Object.keys(CONFIG) as ConfigKey[]);
-
-/**
- * Default configuration values, derived from the schema.
- */
-export const DEFAULT_CONFIG_VALUES: Readonly<ConfigValues> = Object.fromEntries(
-  (Object.keys(CONFIG) as ConfigKey[]).map((k) => [k, CONFIG[k].default])
-) as ConfigValues;
-
 // =============================================================================
 // Name Derivation
 // =============================================================================
@@ -156,29 +42,6 @@ export function envVarToConfigKey(envVar: string): string | undefined {
   return envVar.slice(3).toLowerCase().replace(/__/g, ".").replace(/_/g, "-");
 }
 
-/**
- * Parse a raw string value for a given config key using the schema's parser.
- * Returns undefined if the key is unknown or the value is invalid.
- */
-export function parseConfigValue(key: ConfigKey, raw: string): ConfigValues[ConfigKey] | undefined {
-  const def = CONFIG[key];
-  if (!def) return undefined;
-  return def.parse(raw) as ConfigValues[ConfigKey] | undefined;
-}
-
-/**
- * Validate an unknown JSON value for a given config key using the schema's validator.
- * Returns undefined if the key is unknown or the value is invalid.
- */
-export function validateConfigValue(
-  key: ConfigKey,
-  value: unknown
-): ConfigValues[ConfigKey] | undefined {
-  const def = CONFIG[key];
-  if (!def) return undefined;
-  return def.validate(value) as ConfigValues[ConfigKey] | undefined;
-}
-
 // =============================================================================
 // Help Text
 // =============================================================================
@@ -186,11 +49,16 @@ export function validateConfigValue(
 /**
  * Generate a human-readable config usage guide.
  *
- * `defaults` should be the effective config values (accounting for
+ * `definitions` provides the set of registered config keys.
+ * `defaults` should be the effective default values (accounting for
  * isDevelopment, isPackaged, etc.) so users see the actual defaults
  * that apply to their environment.
  */
-export function generateHelpText(configFilePath: string, defaults: Readonly<ConfigValues>): string {
+export function generateHelpText(
+  configFilePath: string,
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
+  defaults: Readonly<Record<string, unknown>>
+): string {
   const lines: string[] = [
     "CodeHydra Configuration",
     "=======================",
@@ -204,7 +72,7 @@ export function generateHelpText(configFilePath: string, defaults: Readonly<Conf
     "",
   ];
 
-  for (const key of Object.keys(CONFIG) as ConfigKey[]) {
+  for (const key of definitions.keys()) {
     const value = defaults[key];
     const valueStr = value === undefined ? "—" : String(value);
     lines.push(`  ${key.padEnd(24)} default: ${valueStr}`);

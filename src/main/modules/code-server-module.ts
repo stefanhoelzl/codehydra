@@ -26,7 +26,12 @@ import type { DomainEvent } from "../intents/infrastructure/types";
 import type { SupportedPlatform, SupportedArch } from "../../agents/types";
 import type { DownloadRequest } from "../../services/binary-download";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
-import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
+import type {
+  CheckDepsResult,
+  ConfigureResult,
+  StartHookResult,
+  RegisterConfigResult,
+} from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
 import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
@@ -100,6 +105,22 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     name: "code-server",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        // -------------------------------------------------------------------
+        // app-start → register-config: declare version.code-server key
+        // -------------------------------------------------------------------
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "version.code-server",
+                default: null,
+                parse: (s: string) => (s === "" ? null : s),
+                validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+              },
+            ],
+          }),
+        },
+
         // -------------------------------------------------------------------
         // app-start → before-ready: declare required scripts
         // -------------------------------------------------------------------

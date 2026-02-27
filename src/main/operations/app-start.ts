@@ -40,6 +40,7 @@ import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
+import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 import { INTENT_SETUP } from "./setup";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
 import { Path } from "../../services/platform/path";
@@ -88,6 +89,21 @@ export interface CheckDepsResult {
   readonly missingBinaries?: readonly BinaryType[];
   readonly missingExtensions?: readonly string[];
   readonly outdatedExtensions?: readonly string[];
+}
+
+/**
+ * Per-handler result for "register-config" hook point.
+ * Modules return their config key definitions.
+ */
+export interface RegisterConfigResult {
+  readonly definitions?: readonly ConfigKeyDefinition<unknown>[];
+}
+
+/**
+ * Input context for "before-ready" — carries config definitions collected from register-config.
+ */
+export interface BeforeReadyHookContext extends HookContext {
+  readonly configDefinitions: readonly ConfigKeyDefinition<unknown>[];
 }
 
 /**
@@ -167,10 +183,17 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       intent: ctx.intent,
     };
 
+    // --- Hook 0: "register-config" — collect config definitions from all modules ---
+    const { results: regResults, errors: regErrors } =
+      await ctx.hooks.collect<RegisterConfigResult>("register-config", hookCtx);
+    if (regErrors.length > 0) throw regErrors[0]!;
+    const configDefinitions = regResults.flatMap((r) => r.definitions ?? []);
+
     // --- Hook 1: "before-ready" (pre-ready, no I/O) ---
     // Env config + script declarations. All independent.
+    const beforeReadyCtx: BeforeReadyHookContext = { ...hookCtx, configDefinitions };
     const { results: configResults, errors: configErrors } =
-      await ctx.hooks.collect<ConfigureResult>("before-ready", hookCtx);
+      await ctx.hooks.collect<ConfigureResult>("before-ready", beforeReadyCtx);
     if (configErrors.length > 0) throw configErrors[0]!;
     const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
 

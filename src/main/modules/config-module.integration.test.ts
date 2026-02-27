@@ -3,8 +3,9 @@
  * Integration tests for ConfigModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
- * Covers all three hook points:
- * - app:start / "before-ready" -- dispatches full merged config (defaults + computed + env + CLI)
+ * Covers all hook points:
+ * - app:start / "register-config" -- modules return config key definitions
+ * - app:start / "before-ready" -- collects definitions, dispatches full merged config
  * - app:start / "init" -- reads config.json, dispatches only delta
  * - config-set-values / "set" -- merges values into effective, optionally persists to disk
  *
@@ -12,6 +13,11 @@
  * - parseEnvVars / parseCliArgs standalone
  * - Precedence (CLI > env > file > computed > defaults)
  * - Config file migration (old keys → new keys)
+ *
+ * Most tests use test-specific config definitions (test.string, test.level, etc.)
+ * to verify config-module mechanics independently of real module definitions.
+ * Migration tests use additional real-key definitions because parseConfigFile
+ * is tied to production key names.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -22,8 +28,15 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import type { IntentModule } from "../intents/infrastructure/module";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
-import type { AppStartIntent, ConfigureResult, InitHookContext } from "../operations/app-start";
+import type {
+  AppStartIntent,
+  ConfigureResult,
+  InitHookContext,
+  RegisterConfigResult,
+  BeforeReadyHookContext,
+} from "../operations/app-start";
 import {
   ConfigSetValuesOperation,
   INTENT_CONFIG_SET_VALUES,
@@ -37,27 +50,198 @@ import {
   directory,
 } from "../../services/platform/filesystem.state-mock";
 import { createConfigModule, parseEnvVars, parseCliArgs } from "./config-module";
-import {
-  CONFIG_KEYS,
-  DEFAULT_CONFIG_VALUES,
-  generateHelpText,
-} from "../../services/config/config-values";
+import { generateHelpText } from "../../services/config/config-values";
+import { parseBool } from "../../services/config/config-definition";
+import type { ConfigKeyDefinition } from "../../services/config/config-definition";
+
+// =============================================================================
+// Test Config Definitions
+// =============================================================================
+
+/**
+ * Test-specific config key definitions for config mechanics testing.
+ * These verify config-module behavior without duplicating real module definitions.
+ *
+ * Env var mapping (via envVarToConfigKey):
+ *   test.string       → CH_TEST__STRING
+ *   test.dev-flag     → CH_TEST__DEV_FLAG
+ *   test.nullable     → CH_TEST__NULLABLE
+ *   test.enum         → CH_TEST__ENUM
+ *   test.level        → CH_TEST__LEVEL
+ *   test.optional     → CH_TEST__OPTIONAL
+ */
+function testDefinitions(): ConfigKeyDefinition<unknown>[] {
+  return [
+    {
+      name: "test.string",
+      default: "default-val",
+      parse: (s: string) => (s === "" ? undefined : s),
+      validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+    },
+    {
+      name: "test.dev-flag",
+      default: true,
+      parse: parseBool,
+      validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+      computedDefault: (ctx) => (ctx.isDevelopment || !ctx.isPackaged ? false : undefined),
+    },
+    {
+      name: "test.nullable",
+      default: null,
+      parse: (s: string) => (s === "" ? null : s),
+      validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+    },
+    {
+      name: "test.enum",
+      default: "always",
+      parse: (s: string) => (s === "always" || s === "never" ? s : undefined),
+      validate: (v: unknown) => (v === "always" || v === "never" ? v : undefined),
+    },
+    {
+      name: "test.level",
+      default: "warn",
+      parse: (s: string) => {
+        const valid = ["silly", "debug", "info", "warn", "error"];
+        return valid.includes(s) ? s : undefined;
+      },
+      validate: (v: unknown) => {
+        if (typeof v !== "string") return undefined;
+        const valid = ["silly", "debug", "info", "warn", "error"];
+        return valid.includes(v) ? v : undefined;
+      },
+      computedDefault: (ctx) => (ctx.isDevelopment ? "debug" : undefined),
+    },
+    {
+      name: "test.optional",
+      default: undefined,
+      parse: (s: string) => (s === "" ? undefined : s),
+      validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+    },
+  ];
+}
+
+/**
+ * Definitions matching real keys used by config file migration logic.
+ * parseConfigFile references these key names in KEY_RENAMES and LegacyConfig.
+ * Only used by migration-specific tests.
+ */
+function migrationDefinitions(): ConfigKeyDefinition<unknown>[] {
+  return [
+    {
+      name: "version.claude",
+      default: null,
+      parse: (s: string) => (s === "" ? null : s),
+      validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+    },
+    {
+      name: "version.opencode",
+      default: null,
+      parse: (s: string) => (s === "" ? null : s),
+      validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+    },
+    {
+      name: "version.code-server",
+      default: null,
+      parse: (s: string) => (s === "" ? null : s),
+      validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+    },
+    {
+      name: "telemetry.enabled",
+      default: true,
+      parse: parseBool,
+      validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+    },
+    {
+      name: "telemetry.distinct-id",
+      default: undefined,
+      parse: (s: string) => (s === "" ? undefined : s),
+      validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+    },
+  ];
+}
+
+/**
+ * Module that registers test config definitions via the register-config hook.
+ */
+function createTestDefinitionsModule(defs: ConfigKeyDefinition<unknown>[]): IntentModule {
+  return {
+    name: "test-definitions",
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: defs,
+          }),
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Build a definitions map from config-module's own definitions + test definitions.
+ * Used for standalone parseEnvVars/parseCliArgs tests.
+ */
+function buildTestDefinitionsMap(): Map<string, ConfigKeyDefinition<unknown>> {
+  const configModuleDefs: ConfigKeyDefinition<unknown>[] = [
+    {
+      name: "agent",
+      default: null,
+      parse: (s: string) => (s === "claude" || s === "opencode" ? s : s === "" ? null : undefined),
+      validate: (v: unknown) => (v === null || v === "claude" || v === "opencode" ? v : undefined),
+    },
+    {
+      name: "help",
+      default: false,
+      parse: parseBool,
+      validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+    },
+  ];
+  const allDefs = [...configModuleDefs, ...testDefinitions()];
+  return new Map(allDefs.map((d) => [d.name, d]));
+}
+
+/**
+ * All test config key names (config-module's own + test definitions).
+ */
+const ALL_TEST_KEYS = [
+  "agent",
+  "help",
+  "test.string",
+  "test.dev-flag",
+  "test.nullable",
+  "test.enum",
+  "test.level",
+  "test.optional",
+];
 
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
 
 /**
- * Runs "before-ready" hook point only.
+ * Runs "register-config" then "before-ready" hook points.
  * The before-ready hook dispatches config:set-values internally,
  * so the dispatcher must have ConfigSetValuesOperation registered.
  */
 class MinimalBeforeReadyOperation implements Operation<Intent, ConfigureResult> {
   readonly id = APP_START_OPERATION_ID;
   async execute(ctx: OperationContext<Intent>): Promise<ConfigureResult> {
-    const { results, errors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
+    // Run register-config first
+    const { results: regResults, errors: regErrors } =
+      await ctx.hooks.collect<RegisterConfigResult>("register-config", { intent: ctx.intent });
+    if (regErrors.length > 0) throw regErrors[0]!;
+    const configDefinitions = regResults.flatMap((r) => r.definitions ?? []);
+
+    // Run before-ready with definitions
+    const beforeReadyCtx: BeforeReadyHookContext = {
       intent: ctx.intent,
-    });
+      configDefinitions,
+    };
+    const { results, errors } = await ctx.hooks.collect<ConfigureResult>(
+      "before-ready",
+      beforeReadyCtx
+    );
     if (errors.length > 0) throw errors[0]!;
     const merged: ConfigureResult = {};
     for (const r of results) {
@@ -73,12 +257,27 @@ class MinimalBeforeReadyOperation implements Operation<Intent, ConfigureResult> 
 }
 
 /**
- * Runs "init" hook point only.
- * The init hook dispatches config:set-values internally.
+ * Runs "register-config", "before-ready", then "init" hook points.
+ * init depends on before-ready having run to populate definitions.
  */
 class MinimalInitOperation implements Operation<Intent, { configuredAgent?: string | null }> {
   readonly id = APP_START_OPERATION_ID;
   async execute(ctx: OperationContext<Intent>): Promise<{ configuredAgent?: string | null }> {
+    const { results: regResults, errors: regErrors } =
+      await ctx.hooks.collect<RegisterConfigResult>("register-config", { intent: ctx.intent });
+    if (regErrors.length > 0) throw regErrors[0]!;
+    const configDefinitions = regResults.flatMap((r) => r.definitions ?? []);
+
+    const beforeReadyCtx: BeforeReadyHookContext = {
+      intent: ctx.intent,
+      configDefinitions,
+    };
+    const { errors: brErrors } = await ctx.hooks.collect<ConfigureResult>(
+      "before-ready",
+      beforeReadyCtx
+    );
+    if (brErrors.length > 0) throw brErrors[0]!;
+
     const initCtx: InitHookContext = {
       intent: ctx.intent,
       requiredScripts: [],
@@ -88,6 +287,42 @@ class MinimalInitOperation implements Operation<Intent, { configuredAgent?: stri
       initCtx
     );
     if (errors.length > 0) throw errors[0]!;
+    let configuredAgent: string | null = null;
+    for (const result of results) {
+      if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
+    }
+    return { configuredAgent };
+  }
+}
+
+/**
+ * Runs all three hook points: register-config → before-ready → init.
+ * Used by tests that need the full pipeline (precedence, computed defaults).
+ */
+class CombinedStartOperation implements Operation<Intent, { configuredAgent?: string | null }> {
+  readonly id = APP_START_OPERATION_ID;
+  async execute(ctx: OperationContext<Intent>): Promise<{ configuredAgent?: string | null }> {
+    const { results: regResults, errors: regErrors } =
+      await ctx.hooks.collect<RegisterConfigResult>("register-config", { intent: ctx.intent });
+    if (regErrors.length > 0) throw regErrors[0]!;
+    const configDefinitions = regResults.flatMap((r) => r.definitions ?? []);
+
+    const beforeReadyCtx: BeforeReadyHookContext = {
+      intent: ctx.intent,
+      configDefinitions,
+    };
+    const { errors: brErrors } = await ctx.hooks.collect<ConfigureResult>(
+      "before-ready",
+      beforeReadyCtx
+    );
+    if (brErrors.length > 0) throw brErrors[0]!;
+
+    const initCtx: InitHookContext = { intent: ctx.intent, requiredScripts: [] };
+    const { results, errors } = await ctx.hooks.collect<{
+      configuredAgent?: string | null;
+    }>("init", initCtx);
+    if (errors.length > 0) throw errors[0]!;
+
     let configuredAgent: string | null = null;
     for (const result of results) {
       if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
@@ -109,6 +344,7 @@ function createTestSetup(options?: {
   noConfigFile?: boolean;
   env?: Record<string, string | undefined>;
   argv?: string[];
+  extraDefinitions?: ConfigKeyDefinition<unknown>[];
 }) {
   const fileSystem = createFileSystemMock({
     entries: {
@@ -143,6 +379,10 @@ function createTestSetup(options?: {
 
   dispatcher.registerModule(module);
 
+  // Register test definitions module
+  const defs = [...testDefinitions(), ...(options?.extraDefinitions ?? [])];
+  dispatcher.registerModule(createTestDefinitionsModule(defs));
+
   return { fileSystem, hookRegistry, dispatcher, module, stdout };
 }
 
@@ -155,58 +395,57 @@ describe("ConfigModule Integration", () => {
   // parseEnvVars standalone
   // ---------------------------------------------------------------------------
   describe("parseEnvVars", () => {
-    it("maps CH_LOG__LEVEL to log.level", () => {
-      const result = parseEnvVars({ CH_LOG__LEVEL: "debug" });
-      expect(result["log.level"]).toBe("debug");
+    const definitions = buildTestDefinitionsMap();
+
+    it("maps CH_TEST__STRING to test.string", () => {
+      const result = parseEnvVars({ CH_TEST__STRING: "custom" }, definitions);
+      expect(result["test.string"]).toBe("custom");
     });
 
-    it("maps CH_LOG__OUTPUT to log.output", () => {
-      const result = parseEnvVars({ CH_LOG__OUTPUT: "console" });
-      expect(result["log.output"]).toBe("console");
+    it("maps CH_TEST__LEVEL to test.level", () => {
+      const result = parseEnvVars({ CH_TEST__LEVEL: "debug" }, definitions);
+      expect(result["test.level"]).toBe("debug");
     });
 
-    it("parses combined CH_LOG__LEVEL with filter", () => {
-      const result = parseEnvVars({ CH_LOG__LEVEL: "debug:git,process" });
-      expect(result["log.level"]).toBe("debug:git,process");
+    it("maps CH_TEST__ENUM to test.enum", () => {
+      const result = parseEnvVars({ CH_TEST__ENUM: "never" }, definitions);
+      expect(result["test.enum"]).toBe("never");
     });
 
-    it("maps CH_ELECTRON__FLAGS to electron.flags", () => {
-      const result = parseEnvVars({ CH_ELECTRON__FLAGS: "--disable-gpu" });
-      expect(result["electron.flags"]).toBe("--disable-gpu");
+    it("maps CH_TEST__OPTIONAL to test.optional", () => {
+      const result = parseEnvVars({ CH_TEST__OPTIONAL: "some-value" }, definitions);
+      expect(result["test.optional"]).toBe("some-value");
     });
 
-    it("maps CH_VERSION__CODE_SERVER to version.code-server", () => {
-      const result = parseEnvVars({ CH_VERSION__CODE_SERVER: "5.0.0" });
-      expect(result["version.code-server"]).toBe("5.0.0");
+    it("maps CH_TEST__NULLABLE to test.nullable", () => {
+      const result = parseEnvVars({ CH_TEST__NULLABLE: "override-val" }, definitions);
+      expect(result["test.nullable"]).toBe("override-val");
     });
 
-    it("maps CH_TELEMETRY__DISTINCT_ID to telemetry.distinct-id", () => {
-      const result = parseEnvVars({ CH_TELEMETRY__DISTINCT_ID: "user-abc" });
-      expect(result["telemetry.distinct-id"]).toBe("user-abc");
+    it("maps CH_TEST__DEV_FLAG to test.dev-flag", () => {
+      const result = parseEnvVars({ CH_TEST__DEV_FLAG: "false" }, definitions);
+      expect(result["test.dev-flag"]).toBe(false);
     });
 
     it("ignores _CH_ prefixed vars (internal)", () => {
-      const result = parseEnvVars({ _CH_INTERNAL: "value" });
+      const result = parseEnvVars({ _CH_INTERNAL: "value" }, definitions);
       expect(Object.keys(result)).toHaveLength(0);
     });
 
     it("ignores non-CH_ vars", () => {
-      const result = parseEnvVars({ HOME: "/home/user", PATH: "/usr/bin" });
+      const result = parseEnvVars({ HOME: "/home/user", PATH: "/usr/bin" }, definitions);
       expect(Object.keys(result)).toHaveLength(0);
     });
 
     it("throws on unknown CH_ env var", () => {
-      expect(() => parseEnvVars({ CH_UNKNOWN_VAR: "value" })).toThrow(/Unknown config env var/);
+      expect(() => parseEnvVars({ CH_UNKNOWN_VAR: "value" }, definitions)).toThrow(
+        /Unknown config env var/
+      );
     });
 
     it("skips invalid values without throwing", () => {
-      const result = parseEnvVars({ CH_LOG__LEVEL: "not-a-level" });
-      expect(result["log.level"]).toBeUndefined();
-    });
-
-    it("maps CH_AUTO_UPDATE=never to auto-update", () => {
-      const result = parseEnvVars({ CH_AUTO_UPDATE: "never" });
-      expect(result["auto-update"]).toBe("never");
+      const result = parseEnvVars({ CH_TEST__LEVEL: "not-a-level" }, definitions);
+      expect(result["test.level"]).toBeUndefined();
     });
   });
 
@@ -214,36 +453,41 @@ describe("ConfigModule Integration", () => {
   // parseCliArgs standalone
   // ---------------------------------------------------------------------------
   describe("parseCliArgs", () => {
+    const definitions = buildTestDefinitionsMap();
+
     it("parses --key=value format", () => {
-      const result = parseCliArgs(["--log.level=debug"]);
-      expect(result["log.level"]).toBe("debug");
+      const result = parseCliArgs(["--test.level=debug"], definitions);
+      expect(result["test.level"]).toBe("debug");
     });
 
     it("parses --key value format", () => {
-      const result = parseCliArgs(["--log.level", "debug"]);
-      expect(result["log.level"]).toBe("debug");
+      const result = parseCliArgs(["--test.level", "debug"], definitions);
+      expect(result["test.level"]).toBe("debug");
     });
 
-    it("parses --log.output flag", () => {
-      const result = parseCliArgs(["--log.output=console"]);
-      expect(result["log.output"]).toBe("console");
+    it("parses --test.enum flag", () => {
+      const result = parseCliArgs(["--test.enum=never"], definitions);
+      expect(result["test.enum"]).toBe("never");
     });
 
     it("ignores unknown flags silently", () => {
-      const result = parseCliArgs(["--unknown-flag=value"]);
+      const result = parseCliArgs(["--unknown-flag=value"], definitions);
       expect(Object.keys(result)).toHaveLength(0);
     });
 
     it("parses multiple flags", () => {
-      const result = parseCliArgs(["--log.level=debug", "--log.output=console", "--agent=claude"]);
-      expect(result["log.level"]).toBe("debug");
-      expect(result["log.output"]).toBe("console");
+      const result = parseCliArgs(
+        ["--test.level=debug", "--test.enum=never", "--agent=claude"],
+        definitions
+      );
+      expect(result["test.level"]).toBe("debug");
+      expect(result["test.enum"]).toBe("never");
       expect(result.agent).toBe("claude");
     });
 
-    it("parses --auto-update=never flag", () => {
-      const result = parseCliArgs(["--auto-update=never"]);
-      expect(result["auto-update"]).toBe("never");
+    it("parses boolean flag without value as true", () => {
+      const result = parseCliArgs(["--help"], definitions);
+      expect(result.help).toBe(true);
     });
   });
 
@@ -251,7 +495,7 @@ describe("ConfigModule Integration", () => {
   // app-start / "before-ready"
   // ---------------------------------------------------------------------------
   describe('app-start / "before-ready"', () => {
-    it("dispatches full merged config including computed defaults (isDevelopment)", async () => {
+    it("dispatches computed defaults when isDevelopment=true", async () => {
       const { dispatcher } = createTestSetup({ isDevelopment: true });
 
       const events: ConfigUpdatedEvent[] = [];
@@ -259,22 +503,21 @@ describe("ConfigModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const result = await dispatcher.dispatch({
+      await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
 
-      expect(result).toEqual({});
-      // Computed defaults differ from static defaults → config:updated emitted
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.level"]).toBe("debug");
-      expect(events[0]!.payload.values["telemetry.enabled"]).toBe(false);
+      expect(events[0]!.payload.values["test.level"]).toBe("debug");
+      expect(events[0]!.payload.values["test.dev-flag"]).toBe(false);
     });
 
-    it("parses CH_LOG__LEVEL env var", async () => {
+    it("parses env var and applies to config", async () => {
       const { dispatcher } = createTestSetup({
         isDevelopment: false,
-        env: { CH_LOG__LEVEL: "silly" },
+        isPackaged: true,
+        env: { CH_TEST__LEVEL: "silly" },
       });
 
       const events: ConfigUpdatedEvent[] = [];
@@ -288,13 +531,13 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.level"]).toBe("silly");
+      expect(events[0]!.payload.values["test.level"]).toBe("silly");
     });
 
-    it("CH_LOG__LEVEL overrides isDevelopment default", async () => {
+    it("env var overrides computed default", async () => {
       const { dispatcher } = createTestSetup({
         isDevelopment: true,
-        env: { CH_LOG__LEVEL: "error" },
+        env: { CH_TEST__LEVEL: "error" },
       });
 
       const events: ConfigUpdatedEvent[] = [];
@@ -308,11 +551,14 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.level"]).toBe("error");
+      expect(events[0]!.payload.values["test.level"]).toBe("error");
     });
 
-    it("sets log.output from CH_LOG__OUTPUT env var", async () => {
-      const { dispatcher } = createTestSetup({ env: { CH_LOG__OUTPUT: "console" } });
+    it("sets enum value from env var", async () => {
+      const { dispatcher } = createTestSetup({
+        isPackaged: true,
+        env: { CH_TEST__ENUM: "never" },
+      });
 
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
@@ -325,11 +571,14 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.output"]).toBe("console");
+      expect(events[0]!.payload.values["test.enum"]).toBe("never");
     });
 
-    it("sets combined log.level with filter from CH_LOG__LEVEL env var", async () => {
-      const { dispatcher } = createTestSetup({ env: { CH_LOG__LEVEL: "debug:git,process" } });
+    it("sets optional value from env var", async () => {
+      const { dispatcher } = createTestSetup({
+        isPackaged: true,
+        env: { CH_TEST__OPTIONAL: "some-flags" },
+      });
 
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
@@ -342,30 +591,14 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.level"]).toBe("debug:git,process");
-    });
-
-    it("sets electron.flags from CH_ELECTRON__FLAGS env var", async () => {
-      const { dispatcher } = createTestSetup({ env: { CH_ELECTRON__FLAGS: "--disable-gpu" } });
-
-      const events: ConfigUpdatedEvent[] = [];
-      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["electron.flags"]).toBe("--disable-gpu");
+      expect(events[0]!.payload.values["test.optional"]).toBe("some-flags");
     });
 
     it("CLI flags override env vars", async () => {
       const { dispatcher } = createTestSetup({
-        env: { CH_LOG__LEVEL: "silly" },
-        argv: ["--log.level=error"],
+        isPackaged: true,
+        env: { CH_TEST__LEVEL: "silly" },
+        argv: ["--test.level=error"],
       });
 
       const events: ConfigUpdatedEvent[] = [];
@@ -379,7 +612,7 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["log.level"]).toBe("error");
+      expect(events[0]!.payload.values["test.level"]).toBe("error");
     });
 
     it("returns empty ConfigureResult (no scripts)", async () => {
@@ -419,23 +652,24 @@ describe("ConfigModule Integration", () => {
   // app-start / "init"
   // ---------------------------------------------------------------------------
   describe('app-start / "init"', () => {
-    it("reads config.json from disk and dispatches config:set-values with file values", async () => {
+    it("reads config.json from disk and dispatches delta", async () => {
       const configContent = JSON.stringify({
         agent: "claude",
-        "version.code-server": "4.200.0",
-        "telemetry.enabled": true,
+        "test.nullable": "custom-val",
+        "test.enum": "never",
       });
 
-      // Use isPackaged=true so telemetry.enabled defaults to true (static default)
+      // Use isPackaged=true so computed defaults don't interfere
       const { dispatcher } = createTestSetup({
         configFileContent: configContent,
         isPackaged: true,
       });
 
+      // Subscribe after setup — before-ready events are internal to MinimalInitOperation
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
       const result = (await dispatcher.dispatch({
         type: INTENT_APP_START,
@@ -443,31 +677,35 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent)) as unknown as { configuredAgent?: string | null };
 
       expect(result.configuredAgent).toBe("claude");
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values.agent).toBe("claude");
-      expect(events[0]!.payload.values["version.code-server"]).toBe("4.200.0");
+      // Only init should produce changes (agent, test.nullable, test.enum from file)
+      const initEvents = events.filter((e) => e.payload.values.agent !== undefined);
+      expect(initEvents).toHaveLength(1);
+      expect(initEvents[0]!.payload.values.agent).toBe("claude");
+      expect(initEvents[0]!.payload.values["test.nullable"]).toBe("custom-val");
+      expect(initEvents[0]!.payload.values["test.enum"]).toBe("never");
     });
 
-    it("auto-update value from config.json round-trips through init", async () => {
-      const configContent = JSON.stringify({ "auto-update": "never" });
+    it("enum value from config.json round-trips through init", async () => {
+      const configContent = JSON.stringify({ "test.enum": "never" });
 
       const { dispatcher } = createTestSetup({
         configFileContent: configContent,
         isPackaged: true,
       });
 
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
       await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
 
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["auto-update"]).toBe("never");
+      const enumEvents = events.filter((e) => e.payload.values["test.enum"] !== undefined);
+      expect(enumEvents).toHaveLength(1);
+      expect(enumEvents[0]!.payload.values["test.enum"]).toBe("never");
     });
 
     it("returns configuredAgent from effective config", async () => {
@@ -489,10 +727,10 @@ describe("ConfigModule Integration", () => {
       // Use isPackaged=true so computed defaults don't interfere
       const { dispatcher } = createTestSetup({ noConfigFile: true, isPackaged: true });
 
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
       const result = (await dispatcher.dispatch({
         type: INTENT_APP_START,
@@ -510,10 +748,10 @@ describe("ConfigModule Integration", () => {
         isPackaged: true,
       });
 
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
       const result = (await dispatcher.dispatch({
         type: INTENT_APP_START,
@@ -524,181 +762,212 @@ describe("ConfigModule Integration", () => {
       expect(events).toHaveLength(0);
     });
 
-    it("handles legacy nested format (backwards compat)", async () => {
-      const legacyConfig = JSON.stringify({
-        agent: "claude",
-        versions: {
-          claude: "1.0.0",
-          opencode: null,
-          codeServer: "4.150.0",
-        },
-        telemetry: {
-          enabled: false,
-          distinctId: "user-123",
-        },
+    // -------------------------------------------------------------------------
+    // Config file migration (uses real key definitions)
+    // -------------------------------------------------------------------------
+    describe("config file migration", () => {
+      it("handles legacy nested format (backwards compat)", async () => {
+        const legacyConfig = JSON.stringify({
+          agent: "claude",
+          versions: {
+            claude: "1.0.0",
+            opencode: null,
+            codeServer: "4.150.0",
+          },
+          telemetry: {
+            enabled: false,
+            distinctId: "user-123",
+          },
+        });
+
+        const { dispatcher } = createTestSetup({
+          configFileContent: legacyConfig,
+          extraDefinitions: migrationDefinitions(),
+        });
+
+        dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
+        const events: ConfigUpdatedEvent[] = [];
+        dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+
+        const result = (await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent)) as unknown as { configuredAgent?: string | null };
+
+        expect(result.configuredAgent).toBe("claude");
+
+        // Find the init event that has agent
+        const initEvent = events.find((e) => e.payload.values.agent !== undefined);
+        expect(initEvent).toBeDefined();
+        const values = initEvent!.payload.values;
+        expect(values.agent).toBe("claude");
+        expect(values["version.claude"]).toBe("1.0.0");
+        expect(values["version.code-server"]).toBe("4.150.0");
+        expect(values["telemetry.distinct-id"]).toBe("user-123");
+        // version.opencode is null (same as default), so not in changed values
+        expect(values["version.opencode"]).toBeUndefined();
       });
 
-      const { dispatcher } = createTestSetup({ configFileContent: legacyConfig });
+      it("migrates old flat key names to new names", async () => {
+        const oldFlatConfig = JSON.stringify({
+          agent: "claude",
+          "versions.codeServer": "4.200.0",
+          "versions.claude": "1.5.0",
+          "versions.opencode": null,
+          "telemetry.enabled": true,
+          "telemetry.distinctId": "user-456",
+        });
 
-      const events: ConfigUpdatedEvent[] = [];
-      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+        const { dispatcher, fileSystem } = createTestSetup({
+          configFileContent: oldFlatConfig,
+          extraDefinitions: migrationDefinitions(),
+        });
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+        dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
-      const result = (await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent)) as unknown as { configuredAgent?: string | null };
+        const events: ConfigUpdatedEvent[] = [];
+        dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
 
-      expect(result.configuredAgent).toBe("claude");
-      expect(events).toHaveLength(1);
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
 
-      const values = events[0]!.payload.values;
-      expect(values.agent).toBe("claude");
-      expect(values["version.claude"]).toBe("1.0.0");
-      expect(values["version.code-server"]).toBe("4.150.0");
-      expect(values["telemetry.distinct-id"]).toBe("user-123");
-      // version.opencode is null (same as default), so not in changed values
-      expect(values["version.opencode"]).toBeUndefined();
-    });
+        const initEvent = events.find((e) => e.payload.values["version.code-server"] !== undefined);
+        expect(initEvent).toBeDefined();
+        const values = initEvent!.payload.values;
+        expect(values["version.code-server"]).toBe("4.200.0");
+        expect(values["version.claude"]).toBe("1.5.0");
+        expect(values["telemetry.distinct-id"]).toBe("user-456");
 
-    it("migrates old flat key names to new names", async () => {
-      const oldFlatConfig = JSON.stringify({
-        agent: "claude",
-        "versions.codeServer": "4.200.0",
-        "versions.claude": "1.5.0",
-        "versions.opencode": null,
-        "telemetry.enabled": true,
-        "telemetry.distinctId": "user-456",
+        // Migration should have persisted new key names to disk
+        const content = await fileSystem.readFile(CONFIG_PATH);
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        // Use bracket notation — toHaveProperty("a.b") does nested lookup
+        expect(parsed["version.code-server"]).toBe("4.200.0");
+        expect(parsed["version.claude"]).toBe("1.5.0");
+        expect(parsed["telemetry.distinct-id"]).toBe("user-456");
+
+        // Old keys should NOT be present
+        expect(parsed["versions.codeServer"]).toBeUndefined();
+        expect(parsed["telemetry.distinctId"]).toBeUndefined();
       });
 
-      const { dispatcher, fileSystem } = createTestSetup({ configFileContent: oldFlatConfig });
+      it("converts legacy nested codeServer old default to null", async () => {
+        const legacyConfig = JSON.stringify({
+          agent: "claude",
+          versions: { claude: null, opencode: null, codeServer: "4.107.0" },
+        });
 
-      const events: ConfigUpdatedEvent[] = [];
-      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+        const { dispatcher } = createTestSetup({
+          configFileContent: legacyConfig,
+          extraDefinitions: migrationDefinitions(),
+        });
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+        dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
+        const events: ConfigUpdatedEvent[] = [];
+        dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
 
-      expect(events).toHaveLength(1);
-      const values = events[0]!.payload.values;
-      expect(values["version.code-server"]).toBe("4.200.0");
-      expect(values["version.claude"]).toBe("1.5.0");
-      expect(values["telemetry.distinct-id"]).toBe("user-456");
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
 
-      // Migration should have persisted new key names to disk
-      const content = await fileSystem.readFile(CONFIG_PATH);
-      const parsed = JSON.parse(content) as Record<string, unknown>;
-      // Use bracket notation — toHaveProperty("a.b") does nested lookup
-      expect(parsed["version.code-server"]).toBe("4.200.0");
-      expect(parsed["version.claude"]).toBe("1.5.0");
-      expect(parsed["telemetry.distinct-id"]).toBe("user-456");
-      // Old keys should NOT be present
-      expect(parsed["versions.codeServer"]).toBeUndefined();
-      expect(parsed["telemetry.distinctId"]).toBeUndefined();
-    });
-
-    it("converts legacy nested codeServer old default to null", async () => {
-      const legacyConfig = JSON.stringify({
-        agent: "claude",
-        versions: { claude: null, opencode: null, codeServer: "4.107.0" },
+        // "4.107.0" becomes null (= default), so version.code-server should NOT be in changed values
+        const initEvent = events.find((e) => e.payload.values.agent !== undefined);
+        expect(initEvent).toBeDefined();
+        expect(initEvent!.payload.values["version.code-server"]).toBeUndefined();
       });
 
-      const { dispatcher } = createTestSetup({ configFileContent: legacyConfig });
+      it("preserves legacy nested codeServer explicit override", async () => {
+        const legacyConfig = JSON.stringify({
+          agent: "claude",
+          versions: { claude: null, opencode: null, codeServer: "4.150.0" },
+        });
 
-      const events: ConfigUpdatedEvent[] = [];
-      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+        const { dispatcher } = createTestSetup({
+          configFileContent: legacyConfig,
+          extraDefinitions: migrationDefinitions(),
+        });
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+        dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
+        const events: ConfigUpdatedEvent[] = [];
+        dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
 
-      // "4.107.0" becomes null (= default), so version.code-server should NOT be in changed values
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["version.code-server"]).toBeUndefined();
-    });
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
 
-    it("preserves legacy nested codeServer explicit override", async () => {
-      const legacyConfig = JSON.stringify({
-        agent: "claude",
-        versions: { claude: null, opencode: null, codeServer: "4.150.0" },
+        const initEvent = events.find((e) => e.payload.values.agent !== undefined);
+        expect(initEvent).toBeDefined();
+        expect(initEvent!.payload.values["version.code-server"]).toBe("4.150.0");
       });
 
-      const { dispatcher } = createTestSetup({ configFileContent: legacyConfig });
+      it("converts old flat versions.codeServer old default to null", async () => {
+        const oldFlatConfig = JSON.stringify({
+          agent: "claude",
+          "versions.codeServer": "4.107.0",
+        });
 
-      const events: ConfigUpdatedEvent[] = [];
-      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+        const { dispatcher, fileSystem } = createTestSetup({
+          configFileContent: oldFlatConfig,
+          extraDefinitions: migrationDefinitions(),
+        });
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+        dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
+        const events: ConfigUpdatedEvent[] = [];
+        dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
 
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["version.code-server"]).toBe("4.150.0");
-    });
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
 
-    it("converts old flat versions.codeServer old default to null", async () => {
-      const oldFlatConfig = JSON.stringify({
-        agent: "claude",
-        "versions.codeServer": "4.107.0",
+        // "4.107.0" becomes null (= default), so not in changed values
+        const initEvent = events.find((e) => e.payload.values.agent !== undefined);
+        expect(initEvent).toBeDefined();
+        expect(initEvent!.payload.values["version.code-server"]).toBeUndefined();
+
+        // Migrated file should have null
+        const content = await fileSystem.readFile(CONFIG_PATH);
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        expect(parsed["version.code-server"]).toBeNull();
       });
 
-      const { dispatcher, fileSystem } = createTestSetup({ configFileContent: oldFlatConfig });
+      it("preserves old flat versions.codeServer explicit override", async () => {
+        const oldFlatConfig = JSON.stringify({
+          agent: "claude",
+          "versions.codeServer": "4.200.0",
+        });
 
-      const events: ConfigUpdatedEvent[] = [];
-      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
+        const { dispatcher, fileSystem } = createTestSetup({
+          configFileContent: oldFlatConfig,
+          extraDefinitions: migrationDefinitions(),
+        });
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+        dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
+        const events: ConfigUpdatedEvent[] = [];
+        dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
 
-      // "4.107.0" becomes null (= default), so not in changed values
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["version.code-server"]).toBeUndefined();
+        await dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent);
 
-      // Migrated file should have null
-      const content = await fileSystem.readFile(CONFIG_PATH);
-      const parsed = JSON.parse(content) as Record<string, unknown>;
-      expect(parsed["version.code-server"]).toBeNull();
-    });
+        const initEvent = events.find((e) => e.payload.values["version.code-server"] !== undefined);
+        expect(initEvent).toBeDefined();
+        expect(initEvent!.payload.values["version.code-server"]).toBe("4.200.0");
 
-    it("preserves old flat versions.codeServer explicit override", async () => {
-      const oldFlatConfig = JSON.stringify({
-        agent: "claude",
-        "versions.codeServer": "4.200.0",
+        const content = await fileSystem.readFile(CONFIG_PATH);
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        expect(parsed["version.code-server"]).toBe("4.200.0");
       });
-
-      const { dispatcher, fileSystem } = createTestSetup({ configFileContent: oldFlatConfig });
-
-      const events: ConfigUpdatedEvent[] = [];
-      dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["version.code-server"]).toBe("4.200.0");
-
-      const content = await fileSystem.readFile(CONFIG_PATH);
-      const parsed = JSON.parse(content) as Record<string, unknown>;
-      expect(parsed["version.code-server"]).toBe("4.200.0");
     });
   });
 
@@ -748,7 +1017,7 @@ describe("ConfigModule Integration", () => {
       await dispatcher.dispatch({
         type: INTENT_CONFIG_SET_VALUES,
         payload: {
-          values: { "log.level": "debug", "log.output": "console" },
+          values: { "test.level": "debug", "test.enum": "never" },
           persist: false,
         },
       } as ConfigSetValuesIntent);
@@ -781,7 +1050,7 @@ describe("ConfigModule Integration", () => {
 
       expect(events).toHaveLength(1);
       expect(events[0]!.payload.values.agent).toBe("claude");
-      expect(events[0]!.payload.values["version.code-server"]).toBeUndefined();
+      expect(events[0]!.payload.values["test.nullable"]).toBeUndefined();
     });
 
     it("persist=true always writes to disk (read-modify-write)", async () => {
@@ -807,7 +1076,7 @@ describe("ConfigModule Integration", () => {
       expect(parsed.agent).toBe("claude");
     });
 
-    it("writes flat format JSON to disk with new key names", async () => {
+    it("writes only dispatched keys to disk (flat format)", async () => {
       const { dispatcher, fileSystem } = createTestSetup();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
@@ -824,8 +1093,8 @@ describe("ConfigModule Integration", () => {
         payload: {
           values: {
             agent: "claude",
-            "version.claude": "2.0.0",
-            "telemetry.enabled": false,
+            "test.string": "custom-val",
+            "test.dev-flag": false,
           },
         },
       } as ConfigSetValuesIntent);
@@ -835,17 +1104,13 @@ describe("ConfigModule Integration", () => {
 
       // Should be flat format with only the dispatched keys
       expect(parsed["agent"]).toBe("claude");
-      expect(parsed["version.claude"]).toBe("2.0.0");
-      expect(parsed["telemetry.enabled"]).toBe(false);
-
-      // Should NOT have nested structure or old key names
-      expect(parsed["versions"]).toBeUndefined();
-      expect(parsed["versions.codeServer"]).toBeUndefined();
+      expect(parsed["test.string"]).toBe("custom-val");
+      expect(parsed["test.dev-flag"]).toBe(false);
 
       // Should not contain keys that were not in the dispatch
-      expect(parsed["log.level"]).toBeUndefined();
-      expect(parsed["log.output"]).toBeUndefined();
-      expect(parsed["electron.flags"]).toBeUndefined();
+      expect(parsed["test.level"]).toBeUndefined();
+      expect(parsed["test.enum"]).toBeUndefined();
+      expect(parsed["test.optional"]).toBeUndefined();
     });
 
     it("does not emit config:updated when no values actually changed", async () => {
@@ -879,41 +1144,12 @@ describe("ConfigModule Integration", () => {
   describe("precedence", () => {
     it("CLI override takes precedence over file layer", async () => {
       // Config file sets agent to claude, CLI overrides to opencode.
-      // Use a combined operation that runs both before-ready and init.
       const configContent = JSON.stringify({ agent: "claude" });
 
       const { dispatcher } = createTestSetup({
         configFileContent: configContent,
         argv: ["--agent=opencode"],
       });
-
-      // Combined operation: before-ready then init
-      class CombinedStartOperation implements Operation<
-        Intent,
-        { configuredAgent?: string | null }
-      > {
-        readonly id = APP_START_OPERATION_ID;
-        async execute(ctx: OperationContext<Intent>): Promise<{ configuredAgent?: string | null }> {
-          // before-ready
-          const { errors: brErrors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
-            intent: ctx.intent,
-          });
-          if (brErrors.length > 0) throw brErrors[0]!;
-
-          // init
-          const initCtx: InitHookContext = { intent: ctx.intent, requiredScripts: [] };
-          const { results, errors } = await ctx.hooks.collect<{
-            configuredAgent?: string | null;
-          }>("init", initCtx);
-          if (errors.length > 0) throw errors[0]!;
-
-          let configuredAgent: string | null = null;
-          for (const result of results) {
-            if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
-          }
-          return { configuredAgent };
-        }
-      }
 
       dispatcher.registerOperation(INTENT_APP_START, new CombinedStartOperation());
 
@@ -927,33 +1163,12 @@ describe("ConfigModule Integration", () => {
     });
 
     it("env var takes precedence over file defaults", async () => {
-      // No config file, env sets log.level to silly (overrides default "warn")
+      // No config file, env sets test.level to silly (overrides default "warn")
       const { dispatcher } = createTestSetup({
         noConfigFile: true,
-        env: { CH_LOG__LEVEL: "silly" },
+        isPackaged: true,
+        env: { CH_TEST__LEVEL: "silly" },
       });
-
-      // Combined operation
-      class CombinedStartOperation implements Operation<
-        Intent,
-        { configuredAgent?: string | null }
-      > {
-        readonly id = APP_START_OPERATION_ID;
-        async execute(ctx: OperationContext<Intent>): Promise<{ configuredAgent?: string | null }> {
-          const { errors: brErrors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
-            intent: ctx.intent,
-          });
-          if (brErrors.length > 0) throw brErrors[0]!;
-
-          const initCtx: InitHookContext = { intent: ctx.intent, requiredScripts: [] };
-          const { errors } = await ctx.hooks.collect<{ configuredAgent?: string | null }>(
-            "init",
-            initCtx
-          );
-          if (errors.length > 0) throw errors[0]!;
-          return {};
-        }
-      }
 
       dispatcher.registerOperation(INTENT_APP_START, new CombinedStartOperation());
 
@@ -966,9 +1181,9 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       // Env var should override the default "warn"
-      const logLevelEvent = events.find((e) => e.payload.values["log.level"] !== undefined);
-      expect(logLevelEvent).toBeDefined();
-      expect(logLevelEvent!.payload.values["log.level"]).toBe("silly");
+      const levelEvent = events.find((e) => e.payload.values["test.level"] !== undefined);
+      expect(levelEvent).toBeDefined();
+      expect(levelEvent!.payload.values["test.level"]).toBe("silly");
     });
   });
 
@@ -976,49 +1191,51 @@ describe("ConfigModule Integration", () => {
   // Computed defaults
   // ---------------------------------------------------------------------------
   describe("computed defaults", () => {
-    it("isDevelopment=true: effective telemetry.enabled=false and log.level=debug", async () => {
-      // Computed defaults set telemetry.enabled=false and log.level=debug.
-      // Verify via config:updated event from init (which applies computed defaults).
+    it("isDevelopment=true sets computed defaults", async () => {
       const { dispatcher } = createTestSetup({ isDevelopment: true });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
       await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
 
-      // Init dispatches delta: computed defaults differ from static defaults
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["telemetry.enabled"]).toBe(false);
-      expect(events[0]!.payload.values["log.level"]).toBe("debug");
+      // before-ready dispatches computed defaults as delta
+      const devFlagEvent = events.find((e) => e.payload.values["test.dev-flag"] !== undefined);
+      expect(devFlagEvent).toBeDefined();
+      expect(devFlagEvent!.payload.values["test.dev-flag"]).toBe(false);
+
+      const levelEvent = events.find((e) => e.payload.values["test.level"] !== undefined);
+      expect(levelEvent).toBeDefined();
+      expect(levelEvent!.payload.values["test.level"]).toBe("debug");
     });
 
-    it("isPackaged=false sets telemetry.enabled=false even when not dev", async () => {
+    it("isPackaged=false sets test.dev-flag=false even when not dev", async () => {
       const { dispatcher } = createTestSetup({
         isDevelopment: false,
         isPackaged: false,
       });
 
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
+
       const events: ConfigUpdatedEvent[] = [];
       dispatcher.subscribe(EVENT_CONFIG_UPDATED, (e) => events.push(e as ConfigUpdatedEvent));
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
 
       await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
 
-      // Init dispatches delta: computed telemetry.enabled=false differs from static default true
-      expect(events).toHaveLength(1);
-      expect(events[0]!.payload.values["telemetry.enabled"]).toBe(false);
+      const devFlagEvent = events.find((e) => e.payload.values["test.dev-flag"] !== undefined);
+      expect(devFlagEvent).toBeDefined();
+      expect(devFlagEvent!.payload.values["test.dev-flag"]).toBe(false);
     });
 
-    it("isPackaged=true and isDevelopment=false leaves telemetry.enabled=true (static default)", async () => {
+    it("isPackaged=true and isDevelopment=false leaves static defaults unchanged", async () => {
       const { dispatcher } = createTestSetup({ isDevelopment: false, isPackaged: true });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
@@ -1031,48 +1248,20 @@ describe("ConfigModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      // No computed defaults override telemetry.enabled, and file defaults match static defaults.
+      // No computed defaults override static defaults, and file defaults match static defaults.
       // No changes should be emitted.
       expect(events).toHaveLength(0);
     });
 
     it("config file overrides computed defaults", async () => {
-      // isDevelopment=true sets computed telemetry.enabled=false + log.level=debug.
-      // Config file sets telemetry.enabled=true which overrides computed false.
       const configContent = JSON.stringify({
-        "telemetry.enabled": true,
+        "test.dev-flag": true,
       });
 
       const { dispatcher } = createTestSetup({
         isDevelopment: true,
         configFileContent: configContent,
       });
-
-      // Combined operation: before-ready sets computed defaults, init loads file
-      class CombinedStartOperation implements Operation<
-        Intent,
-        { configuredAgent?: string | null }
-      > {
-        readonly id = APP_START_OPERATION_ID;
-        async execute(ctx: OperationContext<Intent>): Promise<{ configuredAgent?: string | null }> {
-          const { errors: brErrors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
-            intent: ctx.intent,
-          });
-          if (brErrors.length > 0) throw brErrors[0]!;
-
-          const initCtx: InitHookContext = { intent: ctx.intent, requiredScripts: [] };
-          const { results, errors } = await ctx.hooks.collect<{
-            configuredAgent?: string | null;
-          }>("init", initCtx);
-          if (errors.length > 0) throw errors[0]!;
-
-          let configuredAgent: string | null = null;
-          for (const result of results) {
-            if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
-          }
-          return { configuredAgent };
-        }
-      }
 
       dispatcher.registerOperation(INTENT_APP_START, new CombinedStartOperation());
 
@@ -1084,49 +1273,21 @@ describe("ConfigModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      // Event 1: before-ready sets computed defaults (log.level=debug, telemetry.enabled=false)
-      // Event 2: init delta — file's telemetry.enabled=true overrides computed false
+      // Event 1: before-ready sets computed defaults (test.level=debug, test.dev-flag=false)
+      // Event 2: init delta — file's test.dev-flag=true overrides computed false
       expect(events).toHaveLength(2);
       // before-ready event has computed defaults
-      expect(events[0]!.payload.values["log.level"]).toBe("debug");
-      expect(events[0]!.payload.values["telemetry.enabled"]).toBe(false);
+      expect(events[0]!.payload.values["test.level"]).toBe("debug");
+      expect(events[0]!.payload.values["test.dev-flag"]).toBe(false);
       // init event has file override
-      expect(events[1]!.payload.values["telemetry.enabled"]).toBe(true);
+      expect(events[1]!.payload.values["test.dev-flag"]).toBe(true);
     });
 
     it("CLI flag overrides computed defaults", async () => {
-      // isDevelopment=true sets computed log.level=debug,
-      // CLI --log.level=error should override it.
       const { dispatcher } = createTestSetup({
         isDevelopment: true,
-        argv: ["--log.level=error"],
+        argv: ["--test.level=error"],
       });
-
-      // Combined operation: before-ready then init
-      class CombinedStartOperation implements Operation<
-        Intent,
-        { configuredAgent?: string | null }
-      > {
-        readonly id = APP_START_OPERATION_ID;
-        async execute(ctx: OperationContext<Intent>): Promise<{ configuredAgent?: string | null }> {
-          const { errors: brErrors } = await ctx.hooks.collect<ConfigureResult>("before-ready", {
-            intent: ctx.intent,
-          });
-          if (brErrors.length > 0) throw brErrors[0]!;
-
-          const initCtx: InitHookContext = { intent: ctx.intent, requiredScripts: [] };
-          const { results, errors } = await ctx.hooks.collect<{
-            configuredAgent?: string | null;
-          }>("init", initCtx);
-          if (errors.length > 0) throw errors[0]!;
-
-          let configuredAgent: string | null = null;
-          for (const result of results) {
-            if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
-          }
-          return { configuredAgent };
-        }
-      }
 
       dispatcher.registerOperation(INTENT_APP_START, new CombinedStartOperation());
 
@@ -1139,9 +1300,9 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       // CLI override should win over computed default
-      const logLevelEvent = events.find((e) => e.payload.values["log.level"] !== undefined);
-      expect(logLevelEvent).toBeDefined();
-      expect(logLevelEvent!.payload.values["log.level"]).toBe("error");
+      const levelEvent = events.find((e) => e.payload.values["test.level"] !== undefined);
+      expect(levelEvent).toBeDefined();
+      expect(levelEvent!.payload.values["test.level"]).toBe("error");
     });
   });
 
@@ -1181,9 +1342,9 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent);
 
       const output = stdout.write.mock.calls[0]![0] as string;
-      // isDevelopment=true computes log.level=debug (not static default "warn")
-      expect(output).toContain("log.level");
-      expect(output).toMatch(/log\.level\s+default: debug/);
+      // isDevelopment=true computes test.level=debug (not static default "warn")
+      expect(output).toContain("test.level");
+      expect(output).toMatch(/test\.level\s+default: debug/);
     });
 
     it("CH_HELP=1 env var prints help and dispatches shutdown", async () => {
@@ -1221,34 +1382,40 @@ describe("ConfigModule Integration", () => {
   // generateHelpText
   // ---------------------------------------------------------------------------
   describe("generateHelpText", () => {
+    const definitions = buildTestDefinitionsMap();
+    const defaultValues: Record<string, unknown> = {};
+    for (const [key, def] of definitions) {
+      defaultValues[key] = def.default;
+    }
+
     it("contains every config key", () => {
-      const text = generateHelpText("/some/config.json", DEFAULT_CONFIG_VALUES);
-      for (const key of CONFIG_KEYS) {
+      const text = generateHelpText("/some/config.json", definitions, defaultValues);
+      for (const key of ALL_TEST_KEYS) {
         expect(text).toContain(key);
       }
     });
 
     it("contains the config file path", () => {
-      const text = generateHelpText("/custom/path/config.json", DEFAULT_CONFIG_VALUES);
+      const text = generateHelpText("/custom/path/config.json", definitions, defaultValues);
       expect(text).toContain("/custom/path/config.json");
     });
 
     it("shows static defaults", () => {
-      const text = generateHelpText("/some/config.json", DEFAULT_CONFIG_VALUES);
+      const text = generateHelpText("/some/config.json", definitions, defaultValues);
       expect(text).toContain("default: warn");
       expect(text).toContain("default: false");
       expect(text).toContain("default: true");
     });
 
     it("shows computed effective values when provided", () => {
-      const defaults = {
-        ...DEFAULT_CONFIG_VALUES,
-        "log.level": "debug" as const,
-        "telemetry.enabled": false,
+      const computedDefaults = {
+        ...defaultValues,
+        "test.level": "debug",
+        "test.dev-flag": false,
       };
-      const text = generateHelpText("/some/config.json", defaults);
-      expect(text).toMatch(/log\.level\s+default: debug/);
-      expect(text).toMatch(/telemetry\.enabled\s+default: false/);
+      const text = generateHelpText("/some/config.json", definitions, computedDefaults);
+      expect(text).toMatch(/test\.level\s+default: debug/);
+      expect(text).toMatch(/test\.dev-flag\s+default: false/);
     });
   });
 });

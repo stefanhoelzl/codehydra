@@ -28,6 +28,7 @@ import type {
   StartHookResult,
   ActivateHookContext,
   ActivateHookResult,
+  RegisterConfigResult,
 } from "../operations/app-start";
 import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../operations/setup";
 import type {
@@ -190,6 +191,19 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
     name: "claude-agent",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "version.claude",
+                default: null,
+                parse: (s: string) => (s === "" ? null : s),
+                validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+              },
+            ],
+          }),
+        },
+
         "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
             return {
@@ -446,7 +460,7 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
         const { values } = (event as ConfigUpdatedEvent).payload;
         if (values.agent !== undefined) {
           // Agent value received — check if this module should be active
-          const agentType = values.agent ?? "opencode";
+          const agentType = (values.agent as string | null) ?? "opencode";
           active = agentType === "claude";
         }
       },

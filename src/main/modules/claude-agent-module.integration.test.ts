@@ -46,7 +46,6 @@ import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import type { RestartAgentHookResult } from "../operations/restart-agent";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { EVENT_CONFIG_UPDATED, INTENT_CONFIG_SET_VALUES } from "../operations/config-set-values";
-import type { ConfigValues } from "../../services/config/config-values";
 import { createClaudeAgentModule, type ClaudeAgentModuleDeps } from "./claude-agent-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { SetupError } from "../../services/errors";
@@ -338,7 +337,7 @@ function createTestSetup(mockDepsResult?: ReturnType<typeof createMockDeps>) {
 function simulateConfigUpdated(module: IntentModule, agent: string | null): void {
   const event: ConfigUpdatedEvent = {
     type: EVENT_CONFIG_UPDATED,
-    payload: { values: { agent } as Partial<Readonly<ConfigValues>> },
+    payload: { values: { agent } as Readonly<Record<string, unknown>> },
   };
   module.events![EVENT_CONFIG_UPDATED]!(event as DomainEvent);
 }

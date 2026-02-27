@@ -12,7 +12,11 @@
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
-import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
+import {
+  APP_START_OPERATION_ID,
+  type StartHookResult,
+  type RegisterConfigResult,
+} from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import {
   INTENT_UPDATE_AVAILABLE,
@@ -35,6 +39,20 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     name: "auto-updater",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "auto-update",
+                default: "always" as AutoUpdatePreference,
+                parse: (s: string) =>
+                  s === "always" || s === "never" ? (s as AutoUpdatePreference) : undefined,
+                validate: (v: unknown) =>
+                  v === "always" || v === "never" ? (v as AutoUpdatePreference) : undefined,
+              },
+            ],
+          }),
+        },
         start: {
           handler: async (): Promise<StartHookResult> => {
             if (autoUpdate === "never") {
@@ -66,7 +84,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
         const { values } = event.payload as ConfigUpdatedPayload;
         if (values["auto-update"] !== undefined) {
-          autoUpdate = values["auto-update"];
+          autoUpdate = values["auto-update"] as AutoUpdatePreference;
         }
       },
     },
