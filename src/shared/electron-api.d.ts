@@ -13,6 +13,7 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo as ApiBaseInfo,
+  InitialPrompt,
 } from "./api/types";
 
 /**
@@ -38,7 +39,12 @@ export interface Api {
     fetchBases(projectPath: string): Promise<{ readonly bases: readonly ApiBaseInfo[] }>;
   };
   workspaces: {
-    create(projectPath: string, name: string, base: string): Promise<Workspace>;
+    create(
+      projectPath: string,
+      name: string,
+      base: string,
+      options?: { initialPrompt?: InitialPrompt; stealFocus?: boolean }
+    ): Promise<Workspace>;
     /**
      * Start workspace removal (fire-and-forget).
      * Progress is emitted via workspace:deletion-progress events.

@@ -79,4 +79,10 @@ describe("buildInitialPromptArgs", () => {
     const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["Line 1\nLine 2\nLine 3"]);
   });
+
+  it("omits empty prompt but includes agent flag", () => {
+    const config: InitialPromptConfig = { prompt: "", agent: "plan" };
+    const args = buildInitialPromptArgs(config);
+    expect(args).toEqual(["--agent", "plan"]);
+  });
 });

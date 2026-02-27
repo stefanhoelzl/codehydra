@@ -16,7 +16,6 @@ const {
   mockCloseDialog,
   mockProjectsStore,
   mockGetProjectById,
-  mockSwitchWorkspace,
   basesUpdatedHandlers,
 } = vi.hoisted(() => ({
   mockCreateWorkspace: vi.fn(),
@@ -24,7 +23,6 @@ const {
   mockCloseDialog: vi.fn(),
   mockProjectsStore: vi.fn(),
   mockGetProjectById: vi.fn(),
-  mockSwitchWorkspace: vi.fn(),
   // Store handlers to trigger bases-updated events in tests
   basesUpdatedHandlers: new Set<(event: { projectPath: string; bases: BaseInfo[] }) => void>(),
 }));
@@ -52,9 +50,6 @@ vi.mock("$lib/api", () => ({
   },
   projects: {
     fetchBases: mockFetchBases,
-  },
-  ui: {
-    switchWorkspace: mockSwitchWorkspace,
   },
   // Event subscription mock for BranchDropdown
   on: (event: string, handler: (event: { projectPath: string; bases: BaseInfo[] }) => void) => {
@@ -197,7 +192,6 @@ describe("CreateWorkspaceDialog component", () => {
       branch: name,
       projectId: testProjectId,
     }));
-    mockSwitchWorkspace.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -495,7 +489,8 @@ describe("CreateWorkspaceDialog component", () => {
       expect(mockCreateWorkspace).toHaveBeenCalledWith(
         "/test/project",
         "valid-name",
-        expect.any(String)
+        expect.any(String),
+        undefined
       );
     });
 
@@ -535,7 +530,12 @@ describe("CreateWorkspaceDialog component", () => {
       await completeAllLoading();
 
       // Form should submit because name is valid and branch is pre-selected
-      expect(mockCreateWorkspace).toHaveBeenCalledWith("/test/project", "my-feature", "main");
+      expect(mockCreateWorkspace).toHaveBeenCalledWith(
+        "/test/project",
+        "my-feature",
+        "main",
+        undefined
+      );
     });
 
     it("form does not submit while already submitting", async () => {
@@ -650,7 +650,7 @@ describe("CreateWorkspaceDialog component", () => {
       await completeAllLoading();
     });
 
-    it("api.createWorkspace called with correct params", async () => {
+    it("api.createWorkspace called with correct params (no options when collapsed)", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await completeAllLoading();
 
@@ -663,10 +663,15 @@ describe("CreateWorkspaceDialog component", () => {
 
       await completeAllLoading();
 
-      expect(workspaces.create).toHaveBeenCalledWith("/test/project", "my-feature", "main");
+      expect(workspaces.create).toHaveBeenCalledWith(
+        "/test/project",
+        "my-feature",
+        "main",
+        undefined
+      );
     });
 
-    it("success switches to new workspace and closes dialog", async () => {
+    it("success closes dialog", async () => {
       render(CreateWorkspaceDialog, { props: defaultProps });
       await completeAllLoading();
 
@@ -679,8 +684,7 @@ describe("CreateWorkspaceDialog component", () => {
 
       await completeAllLoading();
 
-      // Should switch to the newly created workspace (uses workspace.path)
-      expect(mockSwitchWorkspace).toHaveBeenCalledWith("/test/project/.worktrees/my-feature");
+      // Workspace switching is handled by backend/domain events, dialog just closes
       expect(mockCloseDialog).toHaveBeenCalled();
     });
   });
@@ -1091,7 +1095,205 @@ describe("CreateWorkspaceDialog component", () => {
       await completeAllLoading();
 
       // Form should be submitted because name is valid and branch is pre-selected
-      expect(mockCreateWorkspace).toHaveBeenCalledWith("/test/project", "my-feature", "main");
+      expect(mockCreateWorkspace).toHaveBeenCalledWith(
+        "/test/project",
+        "my-feature",
+        "main",
+        undefined
+      );
+    });
+  });
+
+  describe("more options", () => {
+    // Helper to fill a valid form (name + branch selection)
+    async function fillValidForm(nameValue: string = "valid-name"): Promise<void> {
+      const nameInput = getNameInput();
+      await fireEvent.input(nameInput, { target: { value: nameValue } });
+      await fireEvent.keyDown(nameInput, { key: "Enter" });
+
+      const branchDropdown = getBranchDropdown();
+      await fireEvent.focus(branchDropdown);
+      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
+      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
+      await completeAllLoading();
+    }
+
+    /**
+     * Helper to get the "More options" toggle button.
+     */
+    function getMoreOptionsToggle(): HTMLButtonElement {
+      const button = document.querySelector(".more-options-toggle") as HTMLButtonElement;
+      if (!button) throw new Error("More options toggle not found");
+      return button;
+    }
+
+    it("renders 'More options' toggle in collapsed state by default", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await completeAllLoading();
+
+      const toggle = getMoreOptionsToggle();
+      expect(toggle).toBeInTheDocument();
+      expect(toggle.textContent).toContain("More options");
+
+      // Options box should not be visible
+      expect(document.querySelector(".more-options-box")).not.toBeInTheDocument();
+    });
+
+    it("toggle shows and hides the options box", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await completeAllLoading();
+
+      const toggle = getMoreOptionsToggle();
+
+      // Click to expand
+      await fireEvent.click(toggle);
+      expect(document.querySelector(".more-options-box")).toBeInTheDocument();
+
+      // Click again to collapse
+      const toggleAfter = getMoreOptionsToggle();
+      await fireEvent.click(toggleAfter);
+      expect(document.querySelector(".more-options-box")).not.toBeInTheDocument();
+    });
+
+    it("submitting with initial prompt passes string-form options", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await completeAllLoading();
+
+      // Expand more options
+      await fireEvent.click(getMoreOptionsToggle());
+
+      // Fill initial prompt
+      const textarea = document.querySelector("#initial-prompt") as HTMLTextAreaElement;
+      await fireEvent.input(textarea, { target: { value: "Build the login page" } });
+
+      // Fill valid form
+      await fillValidForm("my-feature");
+
+      // Submit
+      const okButton = screen.getByRole("button", { name: /create/i });
+      await fireEvent.click(okButton);
+      await completeAllLoading();
+
+      expect(workspaces.create).toHaveBeenCalledWith("/test/project", "my-feature", "main", {
+        initialPrompt: "Build the login page",
+      });
+    });
+
+    it("submitting with agent mode builds object-form InitialPrompt", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await completeAllLoading();
+
+      // Expand more options
+      await fireEvent.click(getMoreOptionsToggle());
+
+      // Fill initial prompt
+      const textarea = document.querySelector("#initial-prompt") as HTMLTextAreaElement;
+      await fireEvent.input(textarea, { target: { value: "Plan the feature" } });
+
+      // Select plan mode - dispatch a non-bubbling change event like the real
+      // vscode-single-select does (vscode-select-base.js dispatches new Event('change')
+      // without { bubbles: true }). This verifies the component handles non-bubbling
+      // events correctly (Svelte 5 delegates 'change' events to the document root,
+      // so onchange= handlers miss non-bubbling events).
+      const select = document.querySelector("#agent-mode") as HTMLElement;
+      Object.defineProperty(select, "value", { value: "plan", writable: true, configurable: true });
+      select.dispatchEvent(new Event("change"));
+
+      // Fill valid form
+      await fillValidForm("my-feature");
+
+      // Submit
+      const okButton = screen.getByRole("button", { name: /create/i });
+      await fireEvent.click(okButton);
+      await completeAllLoading();
+
+      expect(workspaces.create).toHaveBeenCalledWith("/test/project", "my-feature", "main", {
+        initialPrompt: { prompt: "Plan the feature", agent: "plan" },
+      });
+    });
+
+    it("submitting with open in background passes stealFocus: false", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await completeAllLoading();
+
+      // Expand more options
+      await fireEvent.click(getMoreOptionsToggle());
+
+      // Check open in background
+      const checkbox = document.querySelector("vscode-checkbox") as HTMLElement & {
+        checked: boolean;
+      };
+      await fireEvent.change(checkbox, { target: { checked: true } });
+
+      // Fill valid form
+      await fillValidForm("my-feature");
+
+      // Submit
+      const okButton = screen.getByRole("button", { name: /create/i });
+      await fireEvent.click(okButton);
+      await completeAllLoading();
+
+      expect(workspaces.create).toHaveBeenCalledWith("/test/project", "my-feature", "main", {
+        stealFocus: false,
+      });
+      expect(mockCloseDialog).toHaveBeenCalled();
+    });
+
+    it("submitting with agent mode but no prompt passes object-form InitialPrompt with empty prompt", async () => {
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await completeAllLoading();
+
+      // Expand more options
+      await fireEvent.click(getMoreOptionsToggle());
+
+      // Select plan mode without entering a prompt (non-bubbling event like real element)
+      const select = document.querySelector("#agent-mode") as HTMLElement;
+      Object.defineProperty(select, "value", { value: "plan", writable: true, configurable: true });
+      select.dispatchEvent(new Event("change"));
+
+      // Fill valid form
+      await fillValidForm("my-feature");
+
+      // Submit
+      const okButton = screen.getByRole("button", { name: /create/i });
+      await fireEvent.click(okButton);
+      await completeAllLoading();
+
+      expect(workspaces.create).toHaveBeenCalledWith("/test/project", "my-feature", "main", {
+        initialPrompt: { prompt: "", agent: "plan" },
+      });
+    });
+
+    it("more options fields are disabled when submitting", async () => {
+      mockCreateWorkspace.mockImplementation(
+        () => new Promise((resolve) => setTimeout(resolve, 1000))
+      );
+
+      render(CreateWorkspaceDialog, { props: defaultProps });
+      await completeAllLoading();
+
+      // Expand more options
+      await fireEvent.click(getMoreOptionsToggle());
+
+      // Fill valid form
+      await fillValidForm("my-feature");
+
+      // Submit
+      const okButton = screen.getByRole("button", { name: /create/i });
+      await fireEvent.click(okButton);
+
+      // Check fields are disabled
+      const textarea = document.querySelector("#initial-prompt") as HTMLElement;
+      const select = document.querySelector("#agent-mode") as HTMLElement;
+      const checkbox = document.querySelector("vscode-checkbox") as HTMLElement;
+      const toggle = getMoreOptionsToggle();
+
+      expect(textarea).toHaveAttribute("disabled");
+      expect(select).toHaveAttribute("disabled");
+      expect(checkbox).toHaveAttribute("disabled");
+      expect(toggle).toBeDisabled();
+
+      await completeAllLoading();
     });
   });
 
