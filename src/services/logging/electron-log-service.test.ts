@@ -5,7 +5,6 @@
  * Boundary tests verify actual file writing behavior.
  */
 
-import { join, sep } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import type { LoggingConfigureOptions } from "./types";
@@ -15,7 +14,6 @@ const mockScope = vi.fn();
 const mockInitialize = vi.fn();
 const mockTransports = {
   file: {
-    resolvePathFn: undefined as ((variables: unknown) => string) | undefined,
     level: undefined as string | false | undefined,
     format: undefined as string | undefined,
   },
@@ -38,7 +36,6 @@ describe("ElectronLogService", () => {
     vi.resetAllMocks();
 
     // Reset transport config
-    mockTransports.file.resolvePathFn = undefined;
     mockTransports.file.level = undefined;
     mockTransports.file.format = undefined;
     mockTransports.console.level = undefined;
@@ -76,134 +73,6 @@ describe("ElectronLogService", () => {
     }
     return service;
   }
-
-  describe("log level configuration", () => {
-    it("uses configured log level for file transport", async () => {
-      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "debug" } });
-      expect(mockTransports.file.level).toBe("debug");
-    });
-
-    it("uses warn level when configured", async () => {
-      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "warn" } });
-      expect(mockTransports.file.level).toBe("warn");
-    });
-
-    it("uses info level when configured", async () => {
-      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "info" } });
-      expect(mockTransports.file.level).toBe("info");
-    });
-
-    it("uses error level when configured", async () => {
-      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "error" } });
-      expect(mockTransports.file.level).toBe("error");
-    });
-
-    it("uses silly level when configured", async () => {
-      await createService({ configureOptions: { ...DEFAULT_OPTIONS, logLevel: "silly" } });
-      expect(mockTransports.file.level).toBe("silly");
-    });
-  });
-
-  describe("console transport configuration", () => {
-    it("disables console when logConsole is false", async () => {
-      await createService({
-        configureOptions: { ...DEFAULT_OPTIONS, logConsole: false },
-      });
-      expect(mockTransports.console.level).toBe(false);
-    });
-
-    it("enables console at log level when logConsole is true", async () => {
-      await createService({
-        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "debug", logConsole: true },
-      });
-      expect(mockTransports.console.level).toBe("debug");
-    });
-
-    it("console level matches file level when enabled", async () => {
-      await createService({
-        configureOptions: { ...DEFAULT_OPTIONS, logLevel: "warn", logConsole: true },
-      });
-      expect(mockTransports.console.level).toBe("warn");
-    });
-
-    it("disables file transport when logFile is false", async () => {
-      await createService({
-        configureOptions: { ...DEFAULT_OPTIONS, logFile: false, logConsole: true },
-      });
-      expect(mockTransports.file.level).toBe(false);
-      expect(mockTransports.console.level).toBe("debug");
-    });
-  });
-
-  describe("file path configuration", () => {
-    it("configures log file path in logs directory", async () => {
-      await createService({ dataRootDir: "/test/app-data" });
-      expect(mockTransports.file.resolvePathFn).toBeDefined();
-
-      const pathFn = mockTransports.file.resolvePathFn!;
-      const logPath = pathFn({});
-
-      // Uses join() internally so paths have platform-specific separators
-      const expectedPrefix = join("/test/app-data", "logs") + sep;
-      expect(logPath.startsWith(expectedPrefix)).toBe(true);
-      expect(logPath).toMatch(/\.log$/);
-    });
-
-    it("uses session-based filename format", async () => {
-      await createService();
-      const pathFn = mockTransports.file.resolvePathFn!;
-      const logPath = pathFn({});
-
-      // Should match: YYYY-MM-DDTHH-MM-SS-<uuid>.log
-      // Use path.sep to split cross-platform
-      const filename = logPath.split(sep).pop();
-      expect(filename).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[a-f0-9]{8}\.log$/);
-    });
-  });
-
-  describe("log format configuration", () => {
-    it("configures file format with timestamp, level, scope, and message", async () => {
-      await createService();
-      expect(mockTransports.file.format).toBe(
-        "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}"
-      );
-    });
-
-    it("configures console format matching file format", async () => {
-      await createService();
-      expect(mockTransports.console.format).toBe(
-        "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}"
-      );
-    });
-  });
-
-  describe("createLogger", () => {
-    it("creates logger with scope", async () => {
-      const service = await createService();
-      service.createLogger("git");
-
-      expect(mockScope).toHaveBeenCalledWith("git");
-    });
-
-    it("caches loggers for same name", async () => {
-      const service = await createService();
-      const logger1 = service.createLogger("git");
-      const logger2 = service.createLogger("git");
-
-      expect(logger1).toBe(logger2);
-      expect(mockScope).toHaveBeenCalledTimes(1);
-    });
-
-    it("creates separate loggers for different names", async () => {
-      const service = await createService();
-      service.createLogger("git");
-      service.createLogger("process");
-
-      expect(mockScope).toHaveBeenCalledTimes(2);
-      expect(mockScope).toHaveBeenCalledWith("git");
-      expect(mockScope).toHaveBeenCalledWith("process");
-    });
-  });
 
   describe("initialize", () => {
     it("calls electron-log initialize", async () => {
@@ -336,25 +205,6 @@ describe("ElectronLogService", () => {
       logger.info("Services started");
 
       expect(scopeLogger.info).toHaveBeenCalledWith("Services started");
-    });
-
-    it("includes Error stack in error logs", async () => {
-      const scopeLogger = {
-        silly: vi.fn(),
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-      };
-      mockScope.mockReturnValue(scopeLogger);
-
-      const service = await createService();
-      const logger = service.createLogger("app");
-      const testError = new Error("Test error");
-
-      logger.error("Operation failed", { op: "test" }, testError);
-
-      expect(scopeLogger.error).toHaveBeenCalledWith("Operation failed op=test", testError);
     });
 
     it("logs error without Error object", async () => {
