@@ -2,12 +2,15 @@
  * ConfigModule - Manages application configuration via the intent dispatcher.
  *
  * Single merged config. Precedence is handled by dispatch order:
- * - before-ready: defaults + computed defaults + env vars + CLI args
+ * - register-config: modules return their config key definitions
+ * - before-ready: build definition map, compute defaults + env vars + CLI args
  * - init: file values merged in (only changed values dispatched)
  * - set: external callers merge values; persist=true does read-modify-write on config.json
  *
  * Hooks:
- * - app:start / "before-ready" — parses env vars + CLI flags, dispatches full merged config
+ * - app:start / "register-config" — returns definitions for `agent` and `help`
+ * - app:start / "before-ready" — collects definitions, parses env vars + CLI flags,
+ *   dispatches full merged config
  * - app:start / "init" — reads config.json, dispatches only delta from file values
  * - config-set-values / "set" — merges values into effective, optionally persists to disk
  */
@@ -18,21 +21,24 @@ import type { Logger } from "../../services/logging/types";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Path } from "../../services/platform/path";
-import type { ConfigValues, ConfigAgentType, ConfigKey } from "../../services/config/config-values";
+import type {
+  ConfigKeyDefinition,
+  ComputedDefaultContext,
+} from "../../services/config/config-definition";
+import { parseBool } from "../../services/config/config-definition";
+import type { ConfigAgentType } from "../../services/config/config-values";
+import { envVarToConfigKey, generateHelpText } from "../../services/config/config-values";
 import type {
   ConfigSetHookInput,
   ConfigSetHookResult,
   ConfigSetValuesIntent,
 } from "../operations/config-set-values";
-import type { ConfigureResult, InitHookContext } from "../operations/app-start";
-import {
-  CONFIG_KEYS,
-  DEFAULT_CONFIG_VALUES,
-  envVarToConfigKey,
-  parseConfigValue,
-  validateConfigValue,
-  generateHelpText,
-} from "../../services/config/config-values";
+import type {
+  ConfigureResult,
+  InitHookContext,
+  RegisterConfigResult,
+  BeforeReadyHookContext,
+} from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import {
   CONFIG_SET_VALUES_OPERATION_ID,
@@ -63,9 +69,12 @@ export interface ConfigModuleDeps {
 
 /**
  * Scan an env object for CH_* keys (not _CH_*), convert to config keys,
- * validate against schema, parse values.
+ * validate against definition map, parse values.
  */
-export function parseEnvVars(env: Record<string, string | undefined>): Partial<ConfigValues> {
+export function parseEnvVars(
+  env: Record<string, string | undefined>,
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (const [envKey, rawValue] of Object.entries(env)) {
@@ -75,11 +84,12 @@ export function parseEnvVars(env: Record<string, string | undefined>): Partial<C
     const configKey = envVarToConfigKey(envKey);
     if (configKey === undefined) continue;
 
-    if (!CONFIG_KEYS.has(configKey as ConfigKey)) {
+    const def = definitions.get(configKey);
+    if (!def) {
       throw new Error(`Unknown config env var: ${envKey} (maps to "${configKey}")`);
     }
 
-    const parsed = parseConfigValue(configKey as ConfigKey, rawValue);
+    const parsed = def.parse(rawValue);
     if (parsed === undefined && rawValue !== "") {
       // Invalid value — skip (don't throw, env vars may come from external sources)
       continue;
@@ -89,14 +99,17 @@ export function parseEnvVars(env: Record<string, string | undefined>): Partial<C
     }
   }
 
-  return result as Partial<ConfigValues>;
+  return result;
 }
 
 /**
  * Parse CLI args in the form --key=value or --key value.
  * Key is the config key directly (e.g. --log.level=debug).
  */
-export function parseCliArgs(argv: readonly string[]): Partial<ConfigValues> {
+export function parseCliArgs(
+  argv: readonly string[],
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 
   for (let i = 0; i < argv.length; i++) {
@@ -123,18 +136,19 @@ export function parseCliArgs(argv: readonly string[]): Partial<ConfigValues> {
       }
     }
 
-    if (!CONFIG_KEYS.has(key as ConfigKey)) {
+    const def = definitions.get(key);
+    if (!def) {
       // Unknown flag — skip silently (may be an Electron/Node flag)
       continue;
     }
 
-    const parsed = parseConfigValue(key as ConfigKey, value);
+    const parsed = def.parse(value);
     if (parsed !== undefined) {
       result[key] = parsed;
     }
   }
 
-  return result as Partial<ConfigValues>;
+  return result;
 }
 
 // =============================================================================
@@ -144,7 +158,7 @@ export function parseCliArgs(argv: readonly string[]): Partial<ConfigValues> {
 /**
  * Key rename map: old flat key → new flat key.
  */
-const KEY_RENAMES: ReadonlyMap<string, ConfigKey> = new Map([
+const KEY_RENAMES: ReadonlyMap<string, string> = new Map([
   ["versions.codeServer", "version.code-server"],
   ["versions.claude", "version.claude"],
   ["versions.opencode", "version.opencode"],
@@ -175,13 +189,16 @@ interface LegacyConfig {
 
 /**
  * Parse a config.json object (legacy nested, old flat, or new flat format)
- * into file-layer ConfigValues. Unknown keys are ignored.
+ * into file-layer config values. Unknown keys are ignored.
  *
  * Returns { values, migrated } where migrated is true if old key names
  * were found and renamed.
  */
-function parseConfigFile(data: unknown): {
-  values: Partial<ConfigValues>;
+function parseConfigFile(
+  data: unknown,
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
+): {
+  values: Record<string, unknown>;
   migrated: boolean;
 } {
   if (typeof data !== "object" || data === null) return { values: {}, migrated: false };
@@ -218,7 +235,7 @@ function parseConfigFile(data: unknown): {
         result["telemetry.distinct-id"] = legacy.telemetry.distinctId;
     }
 
-    return { values: validateFileValues(result), migrated };
+    return { values: validateFileValues(result, definitions), migrated };
   }
 
   // Flat format — apply key renames if needed, then copy known file-layer keys
@@ -228,27 +245,31 @@ function parseConfigFile(data: unknown): {
       result[renamedKey] =
         renamedKey === "version.code-server" && value === OLD_CODE_SERVER_DEFAULT ? null : value;
       migrated = true;
-    } else if (CONFIG_KEYS.has(key as ConfigKey)) {
+    } else if (definitions.has(key)) {
       result[key] = value;
     }
   }
 
-  return { values: validateFileValues(result), migrated };
+  return { values: validateFileValues(result, definitions), migrated };
 }
 
 /**
- * Validate file-layer values using the schema's validators. Returns only valid entries.
+ * Validate file-layer values using the definition map's validators. Returns only valid entries.
  */
-function validateFileValues(values: Record<string, unknown>): Partial<ConfigValues> {
+function validateFileValues(
+  values: Record<string, unknown>,
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
+): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(values)) {
-    if (!CONFIG_KEYS.has(key as ConfigKey) || value === undefined) continue;
-    const validated = validateConfigValue(key as ConfigKey, value);
+    const def = definitions.get(key);
+    if (!def || value === undefined) continue;
+    const validated = def.validate(value);
     if (validated !== undefined) {
       result[key] = validated;
     }
   }
-  return result as Partial<ConfigValues>;
+  return result;
 }
 
 // =============================================================================
@@ -258,56 +279,114 @@ function validateFileValues(values: Record<string, unknown>): Partial<ConfigValu
 export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
   const { fileSystem, configPath, dispatcher, logger } = deps;
 
-  // Computed defaults: build-dependent values
-  const _computedDefaults: Record<string, unknown> = {};
-  if (deps.isDevelopment) {
-    _computedDefaults["log.level"] = "debug";
-  }
-  if (deps.isDevelopment || !deps.isPackaged) {
-    _computedDefaults["telemetry.enabled"] = false;
-  }
-  const computedDefaults = _computedDefaults as Partial<ConfigValues>;
+  // Stored definition map — populated by before-ready from register-config results
+  let definitionMap: Map<string, ConfigKeyDefinition<unknown>> = new Map();
 
   // Internal state: single merged config
-  let envValues: Partial<ConfigValues> = {};
-  let cliValues: Partial<ConfigValues> = {};
-  const effective: ConfigValues = { ...DEFAULT_CONFIG_VALUES };
+  let envValues: Record<string, unknown> = {};
+  let cliValues: Record<string, unknown> = {};
+  const effective: Record<string, unknown> = {};
 
   /**
    * Compute which keys changed between old and new values.
    */
   function computeChanges(
-    oldValues: ConfigValues,
-    newValues: ConfigValues
-  ): Partial<ConfigValues> | null {
+    oldValues: Record<string, unknown>,
+    newValues: Record<string, unknown>
+  ): Record<string, unknown> | null {
     const changes: Record<string, unknown> = {};
     let hasChanges = false;
-    for (const key of Object.keys(newValues) as (keyof ConfigValues)[]) {
+    for (const key of Object.keys(newValues)) {
       if (oldValues[key] !== newValues[key]) {
         changes[key] = newValues[key];
         hasChanges = true;
       }
     }
-    return hasChanges ? (changes as Partial<ConfigValues>) : null;
+    return hasChanges ? changes : null;
+  }
+
+  /**
+   * Build default values from definitions, applying computedDefault where available.
+   */
+  function buildDefaults(
+    definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
+    ctx: ComputedDefaultContext
+  ): Record<string, unknown> {
+    const defaults: Record<string, unknown> = {};
+    for (const [key, def] of definitions) {
+      defaults[key] = def.default;
+      if (def.computedDefault) {
+        const computed = def.computedDefault(ctx);
+        if (computed !== undefined) {
+          defaults[key] = computed;
+        }
+      }
+    }
+    return defaults;
   }
 
   return {
     name: "config",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "before-ready": {
-          handler: async (): Promise<ConfigureResult> => {
-            // Parse env vars and CLI args (no I/O — pure computation)
-            envValues = parseEnvVars(deps.env);
-            cliValues = parseCliArgs(deps.argv);
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "agent",
+                default: null,
+                parse: (s: string) =>
+                  s === "claude" || s === "opencode" ? s : s === "" ? null : undefined,
+                validate: (v: unknown) =>
+                  v === null || v === "claude" || v === "opencode"
+                    ? (v as ConfigAgentType)
+                    : undefined,
+              },
+              {
+                name: "help",
+                default: false,
+                parse: parseBool,
+                validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+              },
+            ],
+          }),
+        },
 
-            // Full merged config: defaults + computed + env + CLI
+        "before-ready": {
+          handler: async (ctx: HookContext): Promise<ConfigureResult> => {
+            const { configDefinitions } = ctx as BeforeReadyHookContext;
+
+            // Build definition map from collected definitions, check for duplicates
+            definitionMap = new Map();
+            for (const def of configDefinitions) {
+              if (definitionMap.has(def.name)) {
+                throw new Error(`Duplicate config key definition: "${def.name}"`);
+              }
+              definitionMap.set(def.name, def);
+            }
+
+            // Seed effective with static defaults so first dispatch only reports actual changes
+            for (const [key, def] of definitionMap) {
+              effective[key] = def.default;
+            }
+
+            // Build defaults (static + computed)
+            const computedDefaultCtx: ComputedDefaultContext = {
+              isDevelopment: deps.isDevelopment,
+              isPackaged: deps.isPackaged,
+            };
+            const defaults = buildDefaults(definitionMap, computedDefaultCtx);
+
+            // Parse env vars and CLI args (no I/O — pure computation)
+            envValues = parseEnvVars(deps.env, definitionMap);
+            cliValues = parseCliArgs(deps.argv, definitionMap);
+
+            // Full merged config: defaults + env + CLI
             const merged = {
-              ...DEFAULT_CONFIG_VALUES,
-              ...computedDefaults,
+              ...defaults,
               ...envValues,
               ...cliValues,
-            } as Partial<ConfigValues>;
+            };
 
             await dispatcher.dispatch({
               type: INTENT_CONFIG_SET_VALUES,
@@ -315,7 +394,9 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
             } as ConfigSetValuesIntent);
 
             if (effective.help === true) {
-              deps.stdout.write(generateHelpText(deps.configPath.toString(), effective));
+              deps.stdout.write(
+                generateHelpText(deps.configPath.toString(), definitionMap, effective)
+              );
               await dispatcher.dispatch({
                 type: INTENT_APP_SHUTDOWN,
                 payload: {},
@@ -331,13 +412,20 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
             const initCtx = _ctx as InitHookContext;
             void initCtx; // consume ctx
 
+            // Build defaults again for merging (same as before-ready)
+            const computedDefaultCtx: ComputedDefaultContext = {
+              isDevelopment: deps.isDevelopment,
+              isPackaged: deps.isPackaged,
+            };
+            const defaults = buildDefaults(definitionMap, computedDefaultCtx);
+
             // Read config.json from disk
-            let fileValues: Partial<ConfigValues> = {};
+            let fileValues: Record<string, unknown> = {};
             let migrated = false;
             try {
               const content = await fileSystem.readFile(configPath);
               const parsed = JSON.parse(content) as unknown;
-              ({ values: fileValues, migrated } = parseConfigFile(parsed));
+              ({ values: fileValues, migrated } = parseConfigFile(parsed, definitionMap));
               logger.debug("Config loaded from disk", { path: configPath.toString() });
             } catch (error) {
               if (error instanceof Error && "fsCode" in error && error.fsCode === "ENOENT") {
@@ -362,16 +450,15 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
 
             // Rebuild full effective with file values included
             const merged = {
-              ...DEFAULT_CONFIG_VALUES,
-              ...computedDefaults,
+              ...defaults,
               ...fileValues,
               ...envValues,
               ...cliValues,
-            } as ConfigValues;
+            };
 
             // Only dispatch values that actually changed since before-ready
             const delta: Record<string, unknown> = {};
-            for (const key of Object.keys(merged) as (keyof ConfigValues)[]) {
+            for (const key of Object.keys(merged)) {
               if (merged[key] !== effective[key]) {
                 delta[key] = merged[key];
               }
@@ -380,11 +467,11 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
             if (Object.keys(delta).length > 0) {
               await dispatcher.dispatch({
                 type: INTENT_CONFIG_SET_VALUES,
-                payload: { values: delta as Partial<ConfigValues>, persist: false },
+                payload: { values: delta, persist: false },
               } as ConfigSetValuesIntent);
             }
 
-            return { configuredAgent: effective.agent };
+            return { configuredAgent: effective.agent as ConfigAgentType };
           },
         },
       },
@@ -400,7 +487,7 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
             // Merge into effective
             for (const [key, value] of Object.entries(values)) {
               if (value !== undefined) {
-                (effective as Record<string, unknown>)[key] = value;
+                effective[key] = value;
               }
             }
 

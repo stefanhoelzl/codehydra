@@ -34,7 +34,6 @@ import { createAutoUpdaterModule } from "./auto-updater-module";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
-import type { ConfigValues } from "../../services/config/config-values";
 import type { AutoUpdater, UpdateAvailableCallback } from "../../services/auto-updater";
 
 // =============================================================================
@@ -139,7 +138,7 @@ function createTestSetup(overrides?: { disposeThrows?: Error }): TestSetup {
  */
 function simulateConfigUpdated(
   module: IntentModule,
-  values: Partial<Readonly<ConfigValues>>
+  values: Readonly<Record<string, unknown>>
 ): void {
   const event: ConfigUpdatedEvent = {
     type: EVENT_CONFIG_UPDATED,

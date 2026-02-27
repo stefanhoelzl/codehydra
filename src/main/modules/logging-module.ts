@@ -17,7 +17,12 @@ import type { Logger } from "../../services/logging/types";
 import type { BuildInfo } from "../../services/platform/build-info";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
-import { splitLogLevelSpec } from "../../services/logging/electron-log-service";
+import type { RegisterConfigResult } from "../operations/app-start";
+import {
+  parseLogLevelSpec,
+  parseLogOutput,
+  splitLogLevelSpec,
+} from "../../services/logging/electron-log-service";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 
@@ -47,6 +52,26 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
     name: "logging",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "log.level",
+                default: "warn",
+                parse: parseLogLevelSpec,
+                validate: (v: unknown) =>
+                  typeof v === "string" ? parseLogLevelSpec(v) : undefined,
+                computedDefault: (ctx) => (ctx.isDevelopment ? "debug" : undefined),
+              },
+              {
+                name: "log.output",
+                default: "file",
+                parse: parseLogOutput,
+                validate: (v: unknown) => (typeof v === "string" ? parseLogOutput(v) : undefined),
+              },
+            ],
+          }),
+        },
         "before-ready": {
           handler: async (): Promise<void> => {
             deps.logger.info("App starting", {
@@ -73,7 +98,7 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
         // Log all config changes
         const context: Record<string, string | number | boolean | null> = {};
         for (const [key, value] of Object.entries(values)) {
-          context[key] = value ?? null;
+          context[key] = (value ?? null) as string | number | boolean | null;
         }
         deps.logger.info("Config updated", context);
 

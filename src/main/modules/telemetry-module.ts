@@ -13,12 +13,13 @@
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
-import type { StartHookResult } from "../operations/app-start";
+import type { StartHookResult, RegisterConfigResult } from "../operations/app-start";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { ConfigSetValuesIntent } from "../operations/config-set-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import { parseBool } from "../../services/config/config-definition";
 import type { TelemetryService } from "../../services/telemetry/types";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { BuildInfo } from "../../services/platform/build-info";
@@ -58,6 +59,26 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
     name: "telemetry",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "telemetry.enabled",
+                default: true,
+                parse: parseBool,
+                validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+                computedDefault: (ctx) =>
+                  ctx.isDevelopment || !ctx.isPackaged ? false : undefined,
+              },
+              {
+                name: "telemetry.distinct-id",
+                default: undefined,
+                parse: (s: string) => (s === "" ? undefined : s),
+                validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+              },
+            ],
+          }),
+        },
         start: {
           handler: async (): Promise<StartHookResult> => {
             if (configuredAgent !== undefined) {
@@ -87,15 +108,15 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
         const { values } = (event as ConfigUpdatedEvent).payload;
 
         if (values.agent !== undefined) {
-          configuredAgent = values.agent;
+          configuredAgent = values.agent as ConfigAgentType;
         }
 
         if (values["telemetry.enabled"] !== undefined) {
-          telemetryEnabled = values["telemetry.enabled"];
+          telemetryEnabled = values["telemetry.enabled"] as boolean;
         }
 
         if (values["telemetry.distinct-id"] !== undefined) {
-          distinctId = values["telemetry.distinct-id"];
+          distinctId = values["telemetry.distinct-id"] as string;
         }
 
         // Configure telemetry service when relevant values arrive

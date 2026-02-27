@@ -16,7 +16,11 @@
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { DomainEvent } from "../intents/infrastructure/types";
-import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
+import {
+  APP_START_OPERATION_ID,
+  type ActivateHookResult,
+  type RegisterConfigResult,
+} from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../operations/open-workspace";
 import {
@@ -35,6 +39,7 @@ import type { InitialPrompt } from "../../shared/api/types";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../services/template/liquid-renderer";
+import { parseBool, type ConfigKeyDefinition } from "../../services/config/config-definition";
 
 // =============================================================================
 // Persistence Types
@@ -500,6 +505,24 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     name: "auto-pr",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "experimental.auto-pr-workspaces",
+                default: false,
+                parse: parseBool,
+                validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+              },
+              {
+                name: "experimental.pr-auto-workspace.template-path",
+                default: null,
+                parse: (s: string) => (s === "" ? null : s),
+                validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+              },
+            ] satisfies ConfigKeyDefinition<unknown>[],
+          }),
+        },
         activate: {
           handler: async (): Promise<ActivateHookResult> => {
             await activate();
