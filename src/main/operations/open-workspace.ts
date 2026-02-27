@@ -40,6 +40,7 @@ import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 
 // =============================================================================
 // Intent Types
@@ -337,8 +338,21 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     };
     ctx.emit(event);
 
-    // Dispatch workspace:switch if stealFocus is not explicitly false
+    // Switch to new workspace unless stealFocus is false with an existing active workspace.
+    // When stealFocus is false but no workspace is active, still switch so the user
+    // sees the new workspace rather than an empty view.
+    let shouldSwitch: boolean;
     if (ctx.intent.payload.stealFocus !== false) {
+      shouldSwitch = true;
+    } else {
+      const activeWorkspace = await ctx.dispatch({
+        type: INTENT_GET_ACTIVE_WORKSPACE,
+        payload: {},
+      } as GetActiveWorkspaceIntent);
+      shouldSwitch = activeWorkspace === null;
+    }
+
+    if (shouldSwitch) {
       await ctx.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
         payload: { workspacePath, focus: true },
