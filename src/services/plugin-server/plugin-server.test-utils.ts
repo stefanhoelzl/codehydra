@@ -19,7 +19,9 @@ import type {
   ProjectId,
   AgentSession,
 } from "../../shared/api/types";
-import type { ApiCallHandlers } from "./plugin-server";
+import { PluginServer, type ApiCallHandlers, type PluginServerOptions } from "./plugin-server";
+import { DefaultNetworkLayer } from "../platform/network";
+import { SILENT_LOGGER } from "../logging/logging.test-utils";
 
 // ============================================================================
 // Mock Socket Types
@@ -179,6 +181,46 @@ export function createMockCommandHandler(
       ack(result);
     }
   });
+}
+
+// ============================================================================
+// PluginServer Test Environment
+// ============================================================================
+
+/**
+ * Create a PluginServer test environment with real Socket.IO (polling transport).
+ *
+ * The returned object is mutable — tests can reassign `server` and `port` for
+ * server recreation scenarios (e.g. testing isDevelopment option).
+ */
+export async function createPluginServerEnv(options?: PluginServerOptions) {
+  const networkLayer = new DefaultNetworkLayer(SILENT_LOGGER);
+  const server = new PluginServer(networkLayer, SILENT_LOGGER, {
+    transports: ["polling"],
+    ...options,
+  });
+  const port = await server.start();
+  const clients: TestClientSocket[] = [];
+
+  return {
+    server,
+    networkLayer,
+    port,
+
+    createClient(workspacePath: string): TestClientSocket {
+      const client = createTestClient(this.port, { workspacePath });
+      clients.push(client);
+      return client;
+    },
+
+    async cleanup(): Promise<void> {
+      for (const client of clients) {
+        if (client.connected) client.disconnect();
+      }
+      clients.length = 0;
+      await this.server.close();
+    },
+  };
 }
 
 // ============================================================================
