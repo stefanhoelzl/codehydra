@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AgentStatusManager, OpenCodeProvider } from "./status-manager";
+import { AgentStatusManager } from "./status-manager";
+import { OpenCodeProvider } from "./provider";
 import type { WorkspacePath } from "../../shared/ipc";
 import {
   createSdkClientMock,

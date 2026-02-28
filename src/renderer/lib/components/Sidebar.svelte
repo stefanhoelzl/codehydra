@@ -13,10 +13,10 @@
     getShortcutHint,
     getStatusText,
   } from "$lib/utils/sidebar-utils.js";
-  import type { ProjectWithId } from "$lib/stores/projects.svelte.js";
+  import type { Project } from "$lib/api";
 
   interface SidebarProps {
-    projects: readonly ProjectWithId[];
+    projects: readonly Project[];
     activeWorkspacePath: string | null;
     loadingState: "loading" | "loaded" | "error";
     loadingError: string | null;

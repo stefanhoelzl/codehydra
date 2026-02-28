@@ -5,7 +5,6 @@
  */
 
 import type { PortManager } from "../platform/network";
-import type { PathProvider } from "../platform/path-provider";
 import type { ICoreApi } from "../../shared/api/interfaces";
 import type { Logger } from "../logging";
 import { SILENT_LOGGER } from "../logging";
@@ -39,12 +38,10 @@ export class McpServerManager implements IDisposable {
 
   constructor(
     portManager: PortManager,
-    pathProvider: PathProvider,
     apiFactory: () => ICoreApi,
     logger?: Logger,
     config?: McpServerManagerConfig
   ) {
-    void pathProvider; // Kept in constructor signature for backward compatibility
     this.portManager = portManager;
     this.apiFactory = apiFactory;
     this.logger = logger ?? SILENT_LOGGER;

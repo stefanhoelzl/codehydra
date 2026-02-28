@@ -10,7 +10,6 @@
  * 2. create(): creates the BaseWindow and wires event listeners
  */
 
-import type { BaseWindow } from "electron";
 import type { Logger } from "../../services/logging";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { ImageLayer } from "../../services/platform/image";
@@ -121,16 +120,6 @@ export class WindowManager {
     for (const callback of this.resizeCallbacks) {
       callback();
     }
-  }
-
-  /**
-   * Returns the underlying BaseWindow instance.
-   *
-   * @deprecated This method is for backward compatibility during migration.
-   * Use WindowLayer methods instead when possible.
-   */
-  getWindow(): BaseWindow {
-    return this.windowLayer._getRawWindow(this.windowHandle);
   }
 
   /**

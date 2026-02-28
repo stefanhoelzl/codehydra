@@ -149,7 +149,6 @@ describe("projects store", () => {
       addProject(project);
       setActiveWorkspace("/test/project/.worktrees/ws1");
 
-      // activeProject now returns ProjectWithId (includes generated id)
       expect(activeProject.value).toMatchObject({
         ...project,
         // id is generated from path, just verify it exists

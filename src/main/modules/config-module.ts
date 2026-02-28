@@ -152,105 +152,29 @@ export function parseCliArgs(
 }
 
 // =============================================================================
-// Config File Migration
+// Config File Parsing
 // =============================================================================
 
 /**
- * Key rename map: old flat key → new flat key.
- */
-const KEY_RENAMES: ReadonlyMap<string, string> = new Map([
-  ["versions.codeServer", "version.code-server"],
-  ["versions.claude", "version.claude"],
-  ["versions.opencode", "version.opencode"],
-  ["telemetry.distinctId", "telemetry.distinct-id"],
-]);
-
-/**
- * Old stale default for version.code-server. During migration, this value
- * is converted to null (= use built-in CODE_SERVER_VERSION).
- */
-const OLD_CODE_SERVER_DEFAULT = "4.107.0";
-
-/**
- * Legacy nested config format (pre-migration).
- */
-interface LegacyConfig {
-  agent?: ConfigAgentType;
-  versions?: {
-    claude?: string | null;
-    opencode?: string | null;
-    codeServer?: string;
-  };
-  telemetry?: {
-    enabled?: boolean;
-    distinctId?: string;
-  };
-}
-
-/**
- * Parse a config.json object (legacy nested, old flat, or new flat format)
- * into file-layer config values. Unknown keys are ignored.
- *
- * Returns { values, migrated } where migrated is true if old key names
- * were found and renamed.
+ * Parse a config.json object (flat kebab-case format) into file-layer config values.
+ * Unknown keys are ignored.
  */
 function parseConfigFile(
   data: unknown,
   definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
-): {
-  values: Record<string, unknown>;
-  migrated: boolean;
-} {
-  if (typeof data !== "object" || data === null) return { values: {}, migrated: false };
+): Record<string, unknown> {
+  if (typeof data !== "object" || data === null) return {};
 
   const obj = data as Record<string, unknown>;
   const result: Record<string, unknown> = {};
-  let migrated = false;
 
-  // Check for legacy nested format (has a "versions" or "telemetry" sub-object)
-  const legacy = obj as LegacyConfig;
-  const hasNestedVersions = typeof legacy.versions === "object" && legacy.versions !== null;
-  const hasNestedTelemetry = typeof legacy.telemetry === "object" && legacy.telemetry !== null;
-
-  if (hasNestedVersions || hasNestedTelemetry) {
-    migrated = true;
-
-    if (legacy.agent !== undefined) {
-      result.agent = legacy.agent;
-    }
-    if (legacy.versions) {
-      if (legacy.versions.claude !== undefined) result["version.claude"] = legacy.versions.claude;
-      if (legacy.versions.opencode !== undefined)
-        result["version.opencode"] = legacy.versions.opencode;
-      if (legacy.versions.codeServer !== undefined)
-        result["version.code-server"] =
-          legacy.versions.codeServer === OLD_CODE_SERVER_DEFAULT
-            ? null
-            : legacy.versions.codeServer;
-    }
-    if (legacy.telemetry) {
-      if (legacy.telemetry.enabled !== undefined)
-        result["telemetry.enabled"] = legacy.telemetry.enabled;
-      if (legacy.telemetry.distinctId !== undefined)
-        result["telemetry.distinct-id"] = legacy.telemetry.distinctId;
-    }
-
-    return { values: validateFileValues(result, definitions), migrated };
-  }
-
-  // Flat format — apply key renames if needed, then copy known file-layer keys
   for (const [key, value] of Object.entries(obj)) {
-    const renamedKey = KEY_RENAMES.get(key);
-    if (renamedKey !== undefined) {
-      result[renamedKey] =
-        renamedKey === "version.code-server" && value === OLD_CODE_SERVER_DEFAULT ? null : value;
-      migrated = true;
-    } else if (definitions.has(key)) {
+    if (definitions.has(key)) {
       result[key] = value;
     }
   }
 
-  return { values: validateFileValues(result, definitions), migrated };
+  return validateFileValues(result, definitions);
 }
 
 /**
@@ -421,11 +345,10 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
 
             // Read config.json from disk
             let fileValues: Record<string, unknown> = {};
-            let migrated = false;
             try {
               const content = await fileSystem.readFile(configPath);
               const parsed = JSON.parse(content) as unknown;
-              ({ values: fileValues, migrated } = parseConfigFile(parsed, definitionMap));
+              fileValues = parseConfigFile(parsed, definitionMap);
               logger.debug("Config loaded from disk", { path: configPath.toString() });
             } catch (error) {
               if (error instanceof Error && "fsCode" in error && error.fsCode === "ENOENT") {
@@ -438,14 +361,6 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
                   error: error instanceof Error ? error.message : String(error),
                 });
               }
-            }
-
-            // Migration: write directly to disk, no dispatch
-            if (migrated) {
-              const json = JSON.stringify(Object.fromEntries(Object.entries(fileValues)), null, 2);
-              await fileSystem.mkdir(configPath.dirname);
-              await fileSystem.writeFile(configPath, json);
-              logger.debug("Config migrated", { path: configPath.toString() });
             }
 
             // Rebuild full effective with file values included

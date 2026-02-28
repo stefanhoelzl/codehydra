@@ -362,12 +362,3 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     return workspace;
   }
 }
-
-// =============================================================================
-// Backward-compat re-exports (from create-workspace.ts)
-// =============================================================================
-
-export { INTENT_OPEN_WORKSPACE as INTENT_CREATE_WORKSPACE };
-export { OPEN_WORKSPACE_OPERATION_ID as CREATE_WORKSPACE_OPERATION_ID };
-export type { OpenWorkspacePayload as CreateWorkspacePayload };
-export type { OpenWorkspaceIntent as CreateWorkspaceIntent };

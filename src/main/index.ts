@@ -104,7 +104,6 @@ import { createWindowTitleModule } from "./modules/window-title-module";
 import { createTelemetryModule } from "./modules/telemetry-module";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
-import { createMigrationModule } from "./modules/migration-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createBadgeModule } from "./modules/badge-module";
@@ -383,7 +382,6 @@ let codeHydraApi: ICodeHydraApi | null = null;
 // McpServerManager with lazy API factory (API is not available until after module wiring)
 const mcpServerManager = new McpServerManager(
   networkLayer,
-  pathProvider,
   () => {
     if (!codeHydraApi) {
       throw new Error("API not initialized");
@@ -495,11 +493,6 @@ const telemetryLifecycleModule = createTelemetryModule({
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
   dispatcher,
-});
-const migrationModule = createMigrationModule({
-  projectsDir: pathProvider.projectsDir.toString(),
-  remotesDir: pathProvider.remotesDir.toString(),
-  fs: fileSystemLayer,
 });
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.projectsDir.toString(),
@@ -639,7 +632,6 @@ dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(keepFilesModule);
 dispatcher.registerModule(deleteWindowsLockModule);
 dispatcher.registerModule(remoteProjectModule);
-dispatcher.registerModule(migrationModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
 dispatcher.registerModule(windowTitleModule);

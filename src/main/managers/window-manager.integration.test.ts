@@ -176,17 +176,6 @@ describe("WindowManager", () => {
     });
   });
 
-  describe("getWindow", () => {
-    it("returns the underlying BaseWindow", () => {
-      const deps = createWindowManagerDeps();
-      const manager = createWindowManager(deps);
-
-      // The behavioral mock doesn't have _getRawWindow, so this will throw
-      // In production, this returns the real BaseWindow
-      expect(() => manager.getWindow()).toThrow();
-    });
-  });
-
   describe("getWindowHandle", () => {
     it("returns the WindowHandle", () => {
       const deps = createWindowManagerDeps();

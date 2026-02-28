@@ -98,9 +98,6 @@ export interface McpConfig {
   readonly port: number;
 }
 
-// Re-export result types from agent types for backward compatibility
-export type { StopServerResult, RestartServerResult } from "../types";
-
 /**
  * Manages OpenCode server instances for workspaces.
  * One server per workspace, with health check. Port stored in memory only.
