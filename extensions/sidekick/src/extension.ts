@@ -111,6 +111,7 @@ function openAgentTerminal(
     name: terminalName,
     location: { viewColumn: vscode.ViewColumn.Active },
     env: env,
+    isTransient: true,
   });
 
   agentTerminal.show();
