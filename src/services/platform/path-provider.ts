@@ -33,6 +33,9 @@ export interface PathProvider {
   /** `<assetsRoot>/subpath` — bundled assets inside ASAR (appPath/out/main/assets) */
   assetPath(subpath: string): Path;
 
+  /** `<dataRoot>/temp/subpath` — temporary files, cleaned on startup and shutdown */
+  tempPath(subpath: string): Path;
+
   /** Application icon (process.cwd()-based, fixed) */
   readonly appIconPath: Path;
 
@@ -66,6 +69,8 @@ export class DefaultPathProvider implements PathProvider {
   private readonly assetsRoot: Path;
   /** Runtime root: resourcesPath (prod) or assetsRoot (dev) */
   private readonly runtimeRoot: Path;
+  /** Temp root for ephemeral files */
+  private readonly tempRoot: Path;
   /** Platform for platform-specific path construction */
   private readonly platform: "darwin" | "linux" | "win32";
 
@@ -79,6 +84,7 @@ export class DefaultPathProvider implements PathProvider {
     this.runtimeRoot = buildInfo.resourcesPath
       ? new Path(buildInfo.resourcesPath)
       : this.assetsRoot;
+    this.tempRoot = new Path(this.dataRoot, "temp");
     this.appIconPath = this.computeAppIconPath(buildInfo);
   }
 
@@ -97,6 +103,10 @@ export class DefaultPathProvider implements PathProvider {
 
   assetPath(subpath: string): Path {
     return new Path(this.assetsRoot, subpath);
+  }
+
+  tempPath(subpath: string): Path {
+    return new Path(this.tempRoot, subpath);
   }
 
   getProjectWorkspacesDir(projectPath: string | Path): Path {
