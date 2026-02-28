@@ -45,6 +45,8 @@ export interface ClaudeCodeHookPayload {
   readonly tool_input?: unknown;
   /** Tool result for PostToolUse hook */
   readonly tool_result?: unknown;
+  /** Notification type for Notification hook */
+  readonly notification_type?: string;
 }
 
 /**

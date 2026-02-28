@@ -652,6 +652,20 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       state.ignoreNextSessionStart = false;
     }
 
+    // Notification types that indicate the agent is waiting for user input.
+    // idle_prompt: agent is at its idle prompt (recovers from failed compaction).
+    // permission_prompt: agent is waiting for permission (redundant with PermissionRequest).
+    // elicitation_dialog: agent is waiting for MCP elicitation input.
+    if (
+      hookName === "Notification" &&
+      (payload.notification_type === "idle_prompt" ||
+        payload.notification_type === "permission_prompt" ||
+        payload.notification_type === "elicitation_dialog")
+    ) {
+      newStatus = "idle";
+      state.ignoreNextSessionStart = false;
+    }
+
     this.logger.debug("Hook received", {
       hookName,
       workspacePath: normalizedPath,

@@ -391,6 +391,130 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
+    it("Notification(idle_prompt) recovers from failed compaction", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Automatic compaction: busy → PreCompact (stays busy, sets flag)
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
+
+      // Compaction fails — no SessionStart follows, only a Notification
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "idle_prompt",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("Notification(idle_prompt) clears ignoreNextSessionStart flag", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Automatic compaction sets flag
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
+
+      // idle_prompt clears the flag
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "idle_prompt",
+      });
+
+      // Next SessionStart should go idle normally (flag was cleared)
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy", "idle"]);
+    });
+
+    it("Notification(permission_prompt) transitions to idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "permission_prompt",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("Notification(elicitation_dialog) transitions to idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "elicitation_dialog",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("Notification(auth_success) does not change status", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "auth_success",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("Notification(idle_prompt) is no-op when already idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Get to idle state
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+
+      // idle_prompt when already idle should not fire callback
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "idle_prompt",
+      });
+
+      expect(statusChanges).toEqual(["idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
     it("PreToolUse does not change status without prior PermissionRequest", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
