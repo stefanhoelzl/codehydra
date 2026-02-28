@@ -53,7 +53,7 @@ export abstract class ServiceError extends Error {
   constructor(message: string, code?: string) {
     super(message);
     this.name = this.constructor.name;
-    this.code = code ?? undefined;
+    this.code = code;
     // Fix prototype chain for instanceof to work
     Object.setPrototypeOf(this, new.target.prototype);
   }

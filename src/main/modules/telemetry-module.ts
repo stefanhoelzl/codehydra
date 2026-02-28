@@ -86,7 +86,7 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
                 platform: deps.platformInfo.platform,
                 arch: deps.platformInfo.arch,
                 isDevelopment: deps.buildInfo.isDevelopment,
-                agent: configuredAgent ?? "unknown",
+                agent: configuredAgent,
               });
             }
             return {};
