@@ -1,0 +1,32 @@
+name: Check Label
+
+on:
+  pull_request:
+    types: [opened, labeled, unlabeled, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check-label:
+    name: Check Label
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require changelog label
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for label in enhancement bug internal; do
+            if echo "$LABELS" | grep -q "\"$label\""; then
+              echo "Found label: $label"
+              exit 0
+            fi
+          done
+          echo "::error::PR must have one of these labels: enhancement, bug, internal"
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "This PR needs a changelog label before it can be merged. Add one of: \`enhancement\`, \`bug\`, or \`internal\`.
+
+          Hint: \`/ship\` adds the label automatically."
+          exit 1

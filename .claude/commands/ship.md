@@ -12,6 +12,8 @@ Ship the current branch by creating a PR with auto-merge and waiting for it to m
 $ARGUMENTS
 
 - Empty: Auto-generate PR title and summary from commits
+- `feature` or `bugfix`: User-facing change. Agent proposes a PR title, user reviews.
+- `feature(<title>)` or `bugfix(<title>)`: User-facing change with explicit PR title.
 - `--keep-workspace`: Keep workspace after successful merge (default: delete)
 - `--resolves <issue>`: Link PR to a GitHub issue
   - `--resolves #123` or `--resolves 123`: Links to issue #123
@@ -134,9 +136,60 @@ Generate title and summary from commits:
 git log origin/main..HEAD --pretty=format:"%s%n%b"
 ```
 
-Analyze commits to determine:
+Also get the diff for changelog analysis:
+
+```bash
+git diff origin/main..HEAD
+```
+
+#### 3a. Determine changelog category
+
+A `changelog_category` variable tracks the result: `"feature"`, `"bugfix"`, or `null` (internal).
+
+**If `feature` or `bugfix` argument was provided:**
+
+Set `changelog_category` to `"feature"` or `"bugfix"` accordingly.
+
+**If no changelog argument was provided:**
+
+Analyze the actual changes (diffs and commit messages) to determine if the changes are user-facing.
+User-facing changes include: new features, bug fixes, UX improvements, new configuration options, API changes visible to users.
+Internal changes include: refactors, test additions/fixes, documentation, CI/CD, dependency bumps, code style, chore tasks.
+
+- If changes appear **user-facing**: Ask the user via AskUserQuestion: "This looks like a user-facing change. Should it appear in the changelog?" with options:
+  - `Feature` — categorize as feature
+  - `Bugfix` — categorize as bugfix
+  - `No` — skip changelog (internal)
+    Set `changelog_category` based on the user's choice (`"feature"`, `"bugfix"`, or `null`).
+- If changes appear **purely internal**: set `changelog_category` to `null` (no prompt).
+
+#### 3b. Determine PR title
+
+**If `changelog_category` is `"feature"` or `"bugfix"`:**
+
+1. Determine the prefix: `feat: ` for feature, `fix: ` for bugfix.
+2. If a title was provided in parentheses (e.g., `feature(Add dark mode)`): PR title = `feat: Add dark mode`
+3. If no title in parentheses: Analyze the changes and propose 3 concise PR title options via AskUserQuestion (the user can also pick "Other" to enter a custom title). Prepend the appropriate prefix (`feat: ` or `fix: `) to the selected title.
+
+**If `changelog_category` is `null`:**
+
+Determine PR title using the standard convention:
 
 - **PR title**: `<type>(<scope>): <description>` (from primary commit or summarized)
+
+**Commit types (for internal PRs):**
+
+| Type    | Description                                     |
+| ------- | ----------------------------------------------- |
+| `feat`  | new feature                                     |
+| `fix`   | bug fix                                         |
+| `docs`  | documentation only or landing page updates      |
+| `chore` | maintenance, deps, config, refactor, formatting |
+| `test`  | adding/fixing tests                             |
+| `infra` | CI/CD, build system                             |
+
+#### 3c. Create the PR
+
 - **PR body**: Bullet-point summary of changes
   - If `--resolves <number>` was provided (directly or via `?` selection), append an empty line followed by `resolves #<number>`
 
@@ -149,17 +202,6 @@ Analyze commits to determine:
 resolves #123
 ```
 
-**Commit types:**
-
-| Type    | Description                                     |
-| ------- | ----------------------------------------------- |
-| `feat`  | new feature                                     |
-| `fix`   | bug fix                                         |
-| `docs`  | documentation only or landing page updates      |
-| `chore` | maintenance, deps, config, refactor, formatting |
-| `test`  | adding/fixing tests                             |
-| `infra` | CI/CD, build system                             |
-
 Create PR:
 
 ```bash
@@ -167,6 +209,14 @@ gh pr create --repo stefanhoelzl/codehydra --title "<title>" --body "<body>"
 ```
 
 Capture the PR URL and number from output.
+
+#### 3d. Label the PR
+
+After PR creation, apply a label based on `changelog_category`:
+
+- `"feature"`: `gh pr edit --repo stefanhoelzl/codehydra <number> --add-label "enhancement"`
+- `"bugfix"`: `gh pr edit --repo stefanhoelzl/codehydra <number> --add-label "bug"`
+- `null` (internal): `gh pr edit --repo stefanhoelzl/codehydra <number> --add-label "internal"`
 
 ### 4. Enable Auto-merge
 
