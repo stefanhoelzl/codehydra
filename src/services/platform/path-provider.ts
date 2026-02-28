@@ -31,9 +31,6 @@ export interface PathProvider {
   /** Directory for VS Code user data: `<dataRoot>/vscode/user-data/` */
   readonly vscodeUserDataDir: Path;
 
-  /** Path to setup marker: `<dataRoot>/.setup-completed` */
-  readonly setupMarkerPath: Path;
-
   /** Directory for Electron data: `<dataRoot>/electron/` */
   readonly electronDataDir: Path;
 
@@ -73,9 +70,6 @@ export interface PathProvider {
    */
   readonly extensionsRuntimeDir: Path;
 
-  /** Directory for Claude Code configs: `<dataRoot>/claude-code/` */
-  readonly claudeCodeConfigDir: Path;
-
   /** Path to Claude Code hook handler script: `<binRuntimeDir>/claude-code-hook-handler.cjs` */
   readonly claudeCodeHookHandlerPath: Path;
 
@@ -107,13 +101,6 @@ export interface PathProvider {
    * @returns `<bundlesRoot>/<type>/<version>/` as Path
    */
   getBinaryDir(type: "code-server" | "opencode" | "claude", version: string): Path;
-
-  /**
-   * Get the bundled Node.js path from a specific code-server version.
-   * @param codeServerVersion - Version of code-server
-   * @returns Path to the bundled node executable
-   */
-  getBundledNodePath(codeServerVersion: string): Path;
 }
 
 /**
@@ -133,7 +120,6 @@ export class DefaultPathProvider implements PathProvider {
   readonly vscodeDir: Path;
   readonly vscodeExtensionsDir: Path;
   readonly vscodeUserDataDir: Path;
-  readonly setupMarkerPath: Path;
   readonly electronDataDir: Path;
   readonly vscodeAssetsDir: Path;
   readonly scriptsDir: Path;
@@ -143,23 +129,17 @@ export class DefaultPathProvider implements PathProvider {
   readonly binRuntimeDir: Path;
   readonly scriptsRuntimeDir: Path;
   readonly extensionsRuntimeDir: Path;
-  readonly claudeCodeConfigDir: Path;
   readonly claudeCodeHookHandlerPath: Path;
   readonly claudeCodeWrapperPath: Path;
   readonly configPath: Path;
 
   /** Bundles root for binary paths */
   private readonly bundlesRoot: Path;
-  /** Platform for bundled node path construction */
-  private readonly platform: "darwin" | "linux" | "win32";
 
   constructor(buildInfo: BuildInfo, platformInfo: PlatformInfo) {
     // Compute different roots for different types of data
     const bundlesRootDirStr = this.computeBundlesRootDir(platformInfo);
     const dataRootDirStr = this.computeDataRootDir(buildInfo, platformInfo);
-
-    // Store platform for dynamic path methods
-    this.platform = platformInfo.platform as "darwin" | "linux" | "win32";
 
     // Bundles root for binary paths (always production paths)
     this.bundlesRoot = new Path(bundlesRootDirStr);
@@ -173,7 +153,6 @@ export class DefaultPathProvider implements PathProvider {
     this.vscodeDir = new Path(this.dataRootDir, "vscode");
     this.vscodeExtensionsDir = new Path(this.vscodeDir, "extensions");
     this.vscodeUserDataDir = new Path(this.vscodeDir, "user-data");
-    this.setupMarkerPath = new Path(this.dataRootDir, ".setup-completed");
     this.electronDataDir = new Path(this.dataRootDir, "electron");
     this.binDir = new Path(this.dataRootDir, "bin");
 
@@ -197,11 +176,10 @@ export class DefaultPathProvider implements PathProvider {
       : this.vscodeAssetsDir;
 
     // Claude Code paths
-    this.claudeCodeConfigDir = new Path(this.dataRootDir, "claude-code");
     this.claudeCodeHookHandlerPath = new Path(this.binRuntimeDir, "claude-code-hook-handler.cjs");
     this.claudeCodeWrapperPath = new Path(
       this.binDir,
-      this.platform === "win32" ? "ch-claude.cmd" : "ch-claude"
+      platformInfo.platform === "win32" ? "ch-claude.cmd" : "ch-claude"
     );
 
     // Application config
@@ -242,11 +220,6 @@ export class DefaultPathProvider implements PathProvider {
 
   getBinaryDir(type: "code-server" | "opencode" | "claude", version: string): Path {
     return new Path(this.bundlesRoot, type, version);
-  }
-
-  getBundledNodePath(codeServerVersion: string): Path {
-    const codeServerDir = this.getBinaryDir("code-server", codeServerVersion);
-    return new Path(codeServerDir, "lib", this.platform === "win32" ? "node.exe" : "node");
   }
 
   /**

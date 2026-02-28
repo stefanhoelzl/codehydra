@@ -23,7 +23,6 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeDir.toString()).toBe("/test/app-data/vscode");
     expect(pathProvider.vscodeExtensionsDir.toString()).toBe("/test/app-data/vscode/extensions");
     expect(pathProvider.vscodeUserDataDir.toString()).toBe("/test/app-data/vscode/user-data");
-    expect(pathProvider.setupMarkerPath.toString()).toBe("/test/app-data/.setup-completed");
     expect(pathProvider.electronDataDir.toString()).toBe("/test/app-data/electron");
     expect(pathProvider.vscodeAssetsDir.toString()).toBe("/mock/assets");
     expect(pathProvider.scriptsDir.toString()).toBe("/mock/assets/scripts");
@@ -47,11 +46,6 @@ describe("createMockPathProvider", () => {
     );
     expect(pathProvider.getBinaryDir("opencode", "1.0.223").toString()).toBe(
       "/test/bundles/opencode/1.0.223"
-    );
-
-    // Test getBundledNodePath
-    expect(pathProvider.getBundledNodePath("4.107.0").toString()).toBe(
-      "/test/bundles/code-server/4.107.0/lib/node"
     );
   });
 
@@ -89,7 +83,6 @@ describe("createMockPathProvider", () => {
       vscodeDir: "/c",
       vscodeExtensionsDir: "/d",
       vscodeUserDataDir: "/e",
-      setupMarkerPath: "/f",
       electronDataDir: "/g",
       vscodeAssetsDir: "/h",
       scriptsDir: "/h/scripts",
@@ -102,7 +95,6 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeDir.toString()).toBe("/c");
     expect(pathProvider.vscodeExtensionsDir.toString()).toBe("/d");
     expect(pathProvider.vscodeUserDataDir.toString()).toBe("/e");
-    expect(pathProvider.setupMarkerPath.toString()).toBe("/f");
     expect(pathProvider.electronDataDir.toString()).toBe("/g");
     expect(pathProvider.vscodeAssetsDir.toString()).toBe("/h");
     expect(pathProvider.scriptsDir.toString()).toBe("/h/scripts");
@@ -156,7 +148,6 @@ describe("createMockPathProvider", () => {
     expect(pathProvider.vscodeDir).toBeInstanceOf(Path);
     expect(pathProvider.vscodeExtensionsDir).toBeInstanceOf(Path);
     expect(pathProvider.vscodeUserDataDir).toBeInstanceOf(Path);
-    expect(pathProvider.setupMarkerPath).toBeInstanceOf(Path);
     expect(pathProvider.electronDataDir).toBeInstanceOf(Path);
     expect(pathProvider.vscodeAssetsDir).toBeInstanceOf(Path);
     expect(pathProvider.scriptsDir).toBeInstanceOf(Path);
@@ -165,7 +156,6 @@ describe("createMockPathProvider", () => {
     expect(typeof pathProvider.getProjectWorkspacesDir).toBe("function");
     expect(typeof pathProvider.getBinaryBaseDir).toBe("function");
     expect(typeof pathProvider.getBinaryDir).toBe("function");
-    expect(typeof pathProvider.getBundledNodePath).toBe("function");
   });
 });
 
@@ -196,7 +186,6 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.vscodeDir.toString()).toMatch(/app-data\/vscode$/);
       expect(pathProvider.vscodeExtensionsDir.toString()).toMatch(/app-data\/vscode\/extensions$/);
       expect(pathProvider.vscodeUserDataDir.toString()).toMatch(/app-data\/vscode\/user-data$/);
-      expect(pathProvider.setupMarkerPath.toString()).toMatch(/app-data\/\.setup-completed$/);
       expect(pathProvider.electronDataDir.toString()).toMatch(/app-data\/electron$/);
       expect(pathProvider.appIconPath.toString()).toMatch(/resources\/icon\.png$/);
       expect(pathProvider.binDir.toString()).toMatch(/app-data\/bin$/);
@@ -214,15 +203,6 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toString()).toMatch(
         new RegExp(`\\.local/share/codehydra/opencode/${OPENCODE_VERSION}$`)
       );
-    });
-
-    it("returns bundled Node path for Unix", () => {
-      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-      expect(pathProvider.getBundledNodePath(CODE_SERVER_VERSION).toString()).toMatch(/lib\/node$/);
-      expect(pathProvider.getBundledNodePath(CODE_SERVER_VERSION).toString()).not.toMatch(/\.exe$/);
     });
 
     it("returns vscodeAssetsDir and scriptsDir based on appPath", () => {
@@ -308,9 +288,6 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.vscodeUserDataDir.toString()).toBe(
         "/home/testuser/.local/share/codehydra/vscode/user-data"
       );
-      expect(pathProvider.setupMarkerPath.toString()).toBe(
-        "/home/testuser/.local/share/codehydra/.setup-completed"
-      );
       expect(pathProvider.electronDataDir.toString()).toBe(
         "/home/testuser/.local/share/codehydra/electron"
       );
@@ -385,9 +362,6 @@ describe("DefaultPathProvider", () => {
       expect(pathProvider.vscodeUserDataDir.toString()).toBe(
         "/Users/testuser/Library/Application Support/Codehydra/vscode/user-data"
       );
-      expect(pathProvider.setupMarkerPath.toString()).toBe(
-        "/Users/testuser/Library/Application Support/Codehydra/.setup-completed"
-      );
       expect(pathProvider.electronDataDir.toString()).toBe(
         "/Users/testuser/Library/Application Support/Codehydra/electron"
       );
@@ -439,23 +413,6 @@ describe("DefaultPathProvider", () => {
       );
       expect(pathProvider.vscodeDir.toString()).toBe(
         "c:/users/testuser/appdata/roaming/codehydra/vscode"
-      );
-    });
-
-    it("returns bundled Node path with .exe extension", () => {
-      const buildInfo = createMockBuildInfo({
-        isDevelopment: false,
-        isPackaged: true,
-        appPath: "C:/Program Files/Codehydra/resources/app.asar",
-      });
-      const platformInfo = createMockPlatformInfo({
-        platform: "win32",
-        homeDir: "C:/Users/TestUser",
-      });
-      const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-
-      expect(pathProvider.getBundledNodePath(CODE_SERVER_VERSION).toString()).toMatch(
-        /lib\/node\.exe$/
       );
     });
   });
