@@ -39,6 +39,20 @@ describe("createMockPathProvider", () => {
     expect(pp.bundlePath("opencode/1.0.223").toString()).toBe("/test/bundles/opencode/1.0.223");
   });
 
+  it("tempPath returns correct paths", () => {
+    const pp = createMockPathProvider();
+
+    expect(pp.tempPath("some-dir")).toBeInstanceOf(Path);
+    expect(pp.tempPath("some-dir").toString()).toBe("/test/temp/some-dir");
+    expect(pp.tempPath("nested/sub/dir").toString()).toBe("/test/temp/nested/sub/dir");
+  });
+
+  it("tempPath accepts override for root dir", () => {
+    const pp = createMockPathProvider({ tempRootDir: "/custom/temp" });
+
+    expect(pp.tempPath("some-dir").toString()).toBe("/custom/temp/some-dir");
+  });
+
   it("runtimePath and assetPath return correct paths", () => {
     const pp = createMockPathProvider();
 
@@ -140,6 +154,14 @@ describe("DefaultPathProvider", () => {
       expect(pp.dataPath("electron").toString()).toMatch(/app-data\/electron$/);
       expect(pp.appIconPath.toString()).toMatch(/resources\/icon\.png$/);
       expect(pp.dataPath("bin").toString()).toMatch(/app-data\/bin$/);
+    });
+
+    it("tempPath returns paths under app-data/temp/", () => {
+      const buildInfo = createMockBuildInfo({ isDevelopment: true, appPath: "/test/app" });
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pp.tempPath("some-dir").toString()).toMatch(/app-data\/temp\/some-dir$/);
     });
 
     it("returns versioned binary directories via bundlePath", () => {
@@ -270,6 +292,23 @@ describe("DefaultPathProvider", () => {
         "/opt/codehydra/resources/app.asar/out/main/assets/manifest.json"
       );
       expect(pp.dataPath("bin").toString()).toBe("/home/testuser/.local/share/codehydra/bin");
+    });
+
+    it("tempPath resolves under data root", () => {
+      const buildInfo = createMockBuildInfo({
+        isDevelopment: false,
+        isPackaged: true,
+        appPath: "/opt/codehydra/resources/app.asar",
+      });
+      const platformInfo = createMockPlatformInfo({
+        platform: "linux",
+        homeDir: "/home/testuser",
+      });
+      const pp = new DefaultPathProvider(buildInfo, platformInfo);
+
+      expect(pp.tempPath("some-dir").toString()).toBe(
+        "/home/testuser/.local/share/codehydra/temp/some-dir"
+      );
     });
 
     it("bin is under data root", () => {
