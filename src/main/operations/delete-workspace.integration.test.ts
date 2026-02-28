@@ -74,6 +74,12 @@ import {
   RESOLVE_WORKSPACE_OPERATION_ID,
   INTENT_RESOLVE_WORKSPACE,
 } from "./resolve-workspace";
+import {
+  GetActiveWorkspaceOperation,
+  GET_ACTIVE_WORKSPACE_OPERATION_ID,
+  INTENT_GET_ACTIVE_WORKSPACE,
+} from "./get-active-workspace";
+import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
 import {
   ResolveProjectOperation,
@@ -372,6 +378,7 @@ function createTestHarness(options?: {
   const deleteOp = new DeleteWorkspaceOperation();
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
   // Add interceptor via module (inline, matching bootstrap pattern)
   const inProgressDeletions = new Set<string>();
@@ -737,6 +744,27 @@ function createTestHarness(options?: {
     },
   };
 
+  const getActiveWorkspaceModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
+        get: {
+          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
+            const path = activeWorkspace.path;
+            if (!path) return { workspaceRef: null };
+            return {
+              workspaceRef: {
+                projectId: PROJECT_ID,
+                workspaceName: extractWorkspaceName(path) as WorkspaceName,
+                path,
+              },
+            };
+          },
+        },
+      },
+    },
+  };
+
   const progressCaptureModule: IntentModule = {
     name: "test",
     events: {
@@ -779,6 +807,7 @@ function createTestHarness(options?: {
     progressCaptureModule,
     resolveWorkspaceModule,
     resolveProjectModule,
+    getActiveWorkspaceModule,
     deleteViewModule,
     deleteAgentModule,
     deleteWindowsLockModule,
@@ -1356,6 +1385,28 @@ describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
     await harness.dispatcher.dispatch(intent);
 
     // Active workspace unchanged (still B)
+    expect(harness.activeWorkspace.path).toBe(WORKSPACE_PATH_B);
+  });
+
+  it("auto-switches when user navigates to workspace being deleted", async () => {
+    // Active workspace is B, deleting A — user is NOT on the deleted workspace initially
+    const harness = createTestHarness({
+      activeWorkspacePath: WORKSPACE_PATH_B,
+    });
+
+    // Simulate user navigating to workspace A during the delete hook
+    // (after the initial shutdown switch-away already ran, finding wasActive=false)
+    harness.globalProviderMock.globalProvider.removeWorkspace = vi
+      .fn()
+      .mockImplementation(async () => {
+        // User navigates to workspace A mid-deletion
+        harness.activeWorkspace.path = WORKSPACE_PATH;
+      });
+
+    const intent = buildDeleteIntent(); // deleting WORKSPACE_PATH (A)
+    await harness.dispatcher.dispatch(intent);
+
+    // autoSwitchIfBecameActive should have detected the change and switched back to B
     expect(harness.activeWorkspace.path).toBe(WORKSPACE_PATH_B);
   });
 

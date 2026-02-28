@@ -36,6 +36,7 @@ import type { WorkspacePath } from "../../shared/ipc";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 
 // =============================================================================
 // Intent Types
@@ -364,6 +365,7 @@ export class DeleteWorkspaceOperation implements Operation<
       }
     }
 
+    await this.autoSwitchIfBecameActive(ctx, payload.workspacePath);
     return { started: true };
   }
 
@@ -564,6 +566,30 @@ export class DeleteWorkspaceOperation implements Operation<
 
       // Still failing — loop back to detect
       currentDel = retryDel;
+    }
+  }
+
+  /**
+   * If the user navigated to the workspace after the initial switch-away,
+   * we must switch again before emitting workspace:deleted.
+   */
+  private async autoSwitchIfBecameActive(
+    ctx: OperationContext<DeleteWorkspaceIntent>,
+    workspacePath: string
+  ): Promise<void> {
+    try {
+      const activeRef = await ctx.dispatch({
+        type: INTENT_GET_ACTIVE_WORKSPACE,
+        payload: {},
+      } as GetActiveWorkspaceIntent);
+      if (activeRef?.path === workspacePath) {
+        await ctx.dispatch({
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: { auto: true, currentPath: workspacePath, focus: true },
+        } as SwitchWorkspaceIntent);
+      }
+    } catch {
+      // Best-effort
     }
   }
 

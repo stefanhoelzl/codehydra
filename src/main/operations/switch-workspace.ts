@@ -176,9 +176,8 @@ export function selectNextWorkspace(
     sorted.push(...list);
   }
 
-  // Find current workspace index
+  // Find current workspace index (-1 when currentPath was already de-registered)
   const currentIndex = sorted.findIndex((w) => w.workspacePath === currentWorkspacePath);
-  if (currentIndex === -1) return null;
 
   const getKey = (ws: WorkspaceCandidate, index: number): number => {
     let statusKey: number;
@@ -187,6 +186,8 @@ export function selectNextWorkspace(
     } else {
       statusKey = 2; // No scorer: treat all as "none"
     }
+    // When currentPath is not in candidates, use score-only (no positional proximity)
+    if (currentIndex === -1) return statusKey;
     const positionKey = (index - currentIndex + sorted.length) % sorted.length;
     return statusKey * sorted.length + positionKey;
   };
