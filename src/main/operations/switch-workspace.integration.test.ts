@@ -655,4 +655,24 @@ describe("SwitchWorkspace Operation", () => {
       expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
     });
   });
+
+  describe("auto-select when currentPath not in candidates", () => {
+    it("selects best candidate even when currentPath is already de-registered", async () => {
+      const setup = createTestSetup({
+        withAutoSelect: true,
+        projects: [createMultiWorkspaceProject()],
+      });
+      const { dispatcher, viewManager } = setup;
+
+      // currentPath doesn't match any candidate (workspace already de-registered)
+      const autoIntent: SwitchWorkspaceIntent = {
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { auto: true, currentPath: "/nonexistent", focus: true },
+      };
+      await dispatcher.dispatch(autoIntent);
+
+      // Should still switch to a valid workspace instead of null
+      expect(viewManager.activeWorkspacePath).not.toBeNull();
+    });
+  });
 });
