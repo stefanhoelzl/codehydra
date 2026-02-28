@@ -58,24 +58,18 @@ import { createAutoPrModule } from "./auto-pr-module";
  */
 class MinimalActivateOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
-  configEnabled: boolean;
-  extraConfigValues: Record<string, unknown>;
+  configValues: Record<string, unknown>;
 
-  constructor(configEnabled: boolean, extraConfigValues?: Record<string, unknown>) {
-    this.configEnabled = configEnabled;
-    this.extraConfigValues = extraConfigValues ?? {};
+  constructor(configValues?: Record<string, unknown>) {
+    this.configValues = configValues ?? {};
   }
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     // Simulate config module emitting config:updated during init phase
-    const values: Record<string, unknown> = { ...this.extraConfigValues };
-    if (this.configEnabled) {
-      values["experimental.auto-pr-workspaces"] = true;
-    }
-    if (Object.keys(values).length > 0) {
+    if (Object.keys(this.configValues).length > 0) {
       const configEvent: ConfigUpdatedEvent = {
         type: EVENT_CONFIG_UPDATED,
-        payload: { values },
+        payload: { values: this.configValues },
       };
       ctx.emit(configEvent);
     }
@@ -225,14 +219,29 @@ interface TestSetup {
   deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
 }
 
+const DEFAULT_TEMPLATE_PATH = "/data/review.liquid";
+const DEFAULT_TEMPLATE_CONTENT = "Review PR #{{ number }}: {{ title }}";
+
 function createTestSetup(options?: {
   ghAuthFails?: boolean;
-  configEnabled?: boolean;
+  disabled?: boolean;
   existingState?: string;
   templatePath?: string | null;
   templateContent?: string;
 }): TestSetup {
-  const configEnabled = options?.configEnabled ?? true;
+  // By default the module is enabled (templatePath set). Use disabled: true to test disabled state.
+  const tplPath = options?.disabled
+    ? null
+    : options?.templatePath !== undefined
+      ? options.templatePath
+      : DEFAULT_TEMPLATE_PATH;
+  // Only use default content when templatePath is not explicitly overridden (or content is provided)
+  const tplContent =
+    options?.templateContent !== undefined
+      ? options.templateContent
+      : options?.templatePath !== undefined
+        ? undefined
+        : DEFAULT_TEMPLATE_CONTENT;
 
   const processRunner = createMockProcessRunner({
     onSpawn: (command, args) => {
@@ -253,8 +262,8 @@ function createTestSetup(options?: {
   if (options?.existingState) {
     fsEntries["/data/auto-pr-workspaces.json"] = file(options.existingState);
   }
-  if (options?.templatePath && options.templateContent !== undefined) {
-    fsEntries[options.templatePath] = file(options.templateContent);
+  if (tplPath && tplContent !== undefined) {
+    fsEntries[tplPath] = file(tplContent);
   }
   const fs = createFileSystemMock({ entries: fsEntries });
 
@@ -265,14 +274,11 @@ function createTestSetup(options?: {
   const openWorkspaceOp = new TrackingOpenWorkspaceOperation();
   const deleteWorkspaceOp = new TrackingDeleteWorkspaceOperation();
 
-  const extraConfig: Record<string, unknown> = {};
-  if (options?.templatePath !== undefined) {
-    extraConfig["experimental.pr-auto-workspace.template-path"] = options.templatePath;
+  const configValues: Record<string, unknown> = {};
+  if (tplPath !== null) {
+    configValues["experimental.auto-pr-template-path"] = tplPath;
   }
-  dispatcher.registerOperation(
-    INTENT_APP_START,
-    new MinimalActivateOperation(configEnabled, extraConfig)
-  );
+  dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation(configValues));
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, openProjectOp);
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
@@ -318,8 +324,8 @@ afterEach(() => {
 
 describe("AutoPrModule Integration", () => {
   describe("activation", () => {
-    it("does nothing when config is disabled", async () => {
-      const { dispatcher, httpClient } = createTestSetup({ configEnabled: false });
+    it("does nothing when no template path configured", async () => {
+      const { dispatcher, httpClient } = createTestSetup({ disabled: true });
 
       await dispatcher.dispatch(startIntent());
 
@@ -374,7 +380,7 @@ describe("AutoPrModule Integration", () => {
       expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("pr-42/feature-login");
       expect(openWorkspaceOp.dispatched[0]!.payload.stealFocus).toBe(false);
       expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
-        prompt: "",
+        prompt: "Review PR #42: Add login feature",
         agent: "plan",
       });
     });
@@ -543,10 +549,10 @@ describe("AutoPrModule Integration", () => {
     });
   });
 
-  describe("initial prompt and plan mode", () => {
+  describe("initial prompt and template behavior", () => {
     const TEMPLATE_PATH = "/data/review.liquid";
 
-    function setupWithPr(options?: { templatePath: string | null; templateContent: string }) {
+    function setupWithPr(options?: { templatePath?: string | null; templateContent?: string }) {
       const setup = createTestSetup(options);
       setup.httpClient.setResponse(SEARCH_URL, {
         body: searchResponse([
@@ -566,17 +572,6 @@ describe("AutoPrModule Integration", () => {
       return setup;
     }
 
-    it("uses plan mode with empty prompt when no template configured", async () => {
-      const { dispatcher, openWorkspaceOp } = setupWithPr();
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
-        prompt: "",
-        agent: "plan",
-      });
-    });
-
     it("renders template file with PR detail data when template-path configured", async () => {
       const { dispatcher, openWorkspaceOp } = setupWithPr({
         templatePath: TEMPLATE_PATH,
@@ -591,9 +586,71 @@ describe("AutoPrModule Integration", () => {
       });
     });
 
-    it("falls back to empty prompt when template file not found", async () => {
-      const setup = createTestSetup({ templatePath: "/data/nonexistent.liquid" });
-      setup.httpClient.setResponse(SEARCH_URL, {
+    it("skips workspace creation when template file not found", async () => {
+      const { dispatcher, openProjectOp, openWorkspaceOp, fs } = setupWithPr({
+        templatePath: "/data/nonexistent.liquid",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      // No workspace created — template read failure means empty prompt → skip
+      expect(openProjectOp.dispatched).toHaveLength(0);
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      // Null entry recorded in state
+      expect(fs).toHaveFileContaining(
+        "/data/auto-pr-workspaces.json",
+        '"https://github.com/org/repo/pull/42": null'
+      );
+    });
+
+    it("skips workspace creation on template render failure", async () => {
+      const { dispatcher, openProjectOp, openWorkspaceOp, fs } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "{% invalid_tag %}",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      // No workspace created — render failure means empty prompt → skip
+      expect(openProjectOp.dispatched).toHaveLength(0);
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      expect(fs).toHaveFileContaining(
+        "/data/auto-pr-workspaces.json",
+        '"https://github.com/org/repo/pull/42": null'
+      );
+    });
+
+    it("skips workspace creation when template renders to whitespace-only", async () => {
+      const { dispatcher, openProjectOp, openWorkspaceOp, fs } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "   \n  ",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openProjectOp.dispatched).toHaveLength(0);
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      expect(fs).toHaveFileContaining(
+        "/data/auto-pr-workspaces.json",
+        '"https://github.com/org/repo/pull/42": null'
+      );
+    });
+
+    it("does not re-evaluate template for previously skipped PR", async () => {
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          "https://github.com/org/repo/pull/42": null,
+        },
+      });
+
+      const { dispatcher, httpClient, openProjectOp } = createTestSetup({
+        existingState,
+        templatePath: TEMPLATE_PATH,
+        templateContent: "Review PR #{{ number }}",
+      });
+
+      httpClient.setResponse(SEARCH_URL, {
         body: searchResponse([
           {
             number: 42,
@@ -602,34 +659,12 @@ describe("AutoPrModule Integration", () => {
           },
         ]),
       });
-      setup.httpClient.setResponse(PR_DETAIL_URL, {
-        body: prDetailResponse("feature-login", "main"),
-      });
-      setup.httpClient.setResponse(REPO_DETAIL_URL, {
-        body: repoDetailResponse("https://github.com/org/repo.git"),
-      });
-      const { dispatcher, openWorkspaceOp } = setup;
 
       await dispatcher.dispatch(startIntent());
 
-      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
-        prompt: "",
-        agent: "plan",
-      });
-    });
-
-    it("falls back to empty prompt on template render failure", async () => {
-      const { dispatcher, openWorkspaceOp } = setupWithPr({
-        templatePath: TEMPLATE_PATH,
-        templateContent: "{% invalid_tag %}",
-      });
-
-      await dispatcher.dispatch(startIntent());
-
-      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
-        prompt: "",
-        agent: "plan",
-      });
+      // Should not fetch PR detail (skipped without re-evaluation)
+      expect(httpClient).not.toHaveRequested(PR_DETAIL_URL);
+      expect(openProjectOp.dispatched).toHaveLength(0);
     });
 
     it("picks up template-path config for workspace creation", async () => {
@@ -644,6 +679,26 @@ describe("AutoPrModule Integration", () => {
         prompt: "Branch: feature-login",
         agent: "plan",
       });
+    });
+  });
+
+  describe("template-skipped PR cleanup", () => {
+    it("cleans up template-skipped null entry when PR disappears", async () => {
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          "https://github.com/org/repo/pull/42": null,
+        },
+      });
+
+      const { dispatcher, httpClient, deleteWorkspaceOp, fs } = createTestSetup({ existingState });
+
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
+      expect(fs).toHaveFileContaining("/data/auto-pr-workspaces.json", '"workspaces": {}');
     });
   });
 

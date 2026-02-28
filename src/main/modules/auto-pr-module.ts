@@ -2,14 +2,16 @@
  * AutoPrModule - Polls GitHub for PRs where the user is a requested reviewer
  * and automatically creates/deletes workspaces to match.
  *
- * Gated behind the `experimental.auto-pr-workspaces` config key.
+ * Enabled when `experimental.auto-pr-template-path` is set to a Liquid template path.
+ * When the template renders to empty/whitespace for a PR, that PR is skipped and
+ * recorded as dismissed (null entry) to avoid re-computing the template every poll cycle.
  *
  * Hooks:
  * - app:start -> "activate": acquire gh token, load state, run initial poll, start timer
  * - app:shutdown -> "stop": clear poll timer
  *
  * Events:
- * - config:updated: react to experimental.auto-pr-workspaces toggle
+ * - config:updated: react to experimental.auto-pr-template-path changes
  * - workspace:deleted: clean up mapping if a PR workspace is manually deleted
  */
 
@@ -35,11 +37,11 @@ import type { ProcessRunner } from "../../services/platform/process";
 import type { HttpClient } from "../../services/platform/network";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Logger } from "../../services/logging/types";
-import type { InitialPrompt } from "../../shared/api/types";
+import type { NormalizedInitialPrompt } from "../../shared/api/types";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../services/template/liquid-renderer";
-import { parseBool, type ConfigKeyDefinition } from "../../services/config/config-definition";
+import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 
 // =============================================================================
 // Persistence Types
@@ -141,7 +143,6 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let enabled = false;
   // Tracked from config:updated events (fires during app:start init phase, before activate)
-  let configEnabled = false;
   let templatePath: string | null = null;
   // Prevents the event handler from triggering activation during initial startup
   let initialActivationDone = false;
@@ -266,12 +267,11 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
   // ------ Workspace Lifecycle ------
 
-  async function buildInitialPrompt(prDetail: Record<string, unknown>): Promise<InitialPrompt> {
-    if (templatePath === null) {
-      return { prompt: "", agent: "plan" };
-    }
+  async function buildInitialPrompt(
+    prDetail: Record<string, unknown>
+  ): Promise<NormalizedInitialPrompt> {
     try {
-      const templateContent = await deps.fs.readFile(templatePath);
+      const templateContent = await deps.fs.readFile(templatePath!);
       const rendered = renderTemplate(templateContent, prDetail);
       return { prompt: rendered, agent: "plan" };
     } catch (error) {
@@ -297,6 +297,17 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     deps.logger.info("Creating PR workspace", { prUrl, workspaceName });
 
     try {
+      // Build prompt first — skip workspace entirely if template resolves to empty
+      const initialPrompt = await buildInitialPrompt(prDetail);
+      if (!initialPrompt.prompt.trim()) {
+        deps.logger.info("Skipping PR workspace (template resolved to empty)", { prUrl });
+        state = {
+          ...state,
+          workspaces: { ...state.workspaces, [prUrl]: null },
+        };
+        return;
+      }
+
       // Open the project (clones if not already open)
       const project = await deps.dispatcher.dispatch({
         type: INTENT_OPEN_PROJECT,
@@ -307,8 +318,6 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         deps.logger.warn("project:open returned null for PR workspace", { cloneUrl });
         return;
       }
-
-      const initialPrompt = await buildInitialPrompt(prDetail);
 
       // Create the workspace
       const wsResult = await deps.dispatcher.dispatch({
@@ -392,6 +401,8 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
     deps.logger.debug("Polling GitHub for review-requested PRs");
 
+    const stateBefore = state;
+
     let items: GitHubSearchItem[];
     try {
       items = await fetchReviewRequestedPrs();
@@ -414,7 +425,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       if (entry) {
         await deletePrWorkspace(prUrl, entry);
       } else {
-        // null entry (dismissed by user) — just remove the key
+        // null entry (dismissed by user or template-skipped) — just remove the key
         const remaining = Object.fromEntries(
           Object.entries(state.workspaces).filter(([key]) => key !== prUrl)
         );
@@ -449,14 +460,8 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       );
     }
 
-    // Persist after all changes
-    if (
-      disappearedUrls.length > 0 ||
-      items.some((i) => {
-        const url = i.pull_request?.html_url ?? i.html_url;
-        return state.workspaces[url]?.createdAt !== undefined;
-      })
-    ) {
+    // Persist if state changed (new workspaces, deletions, or template-skipped null entries)
+    if (state !== stateBefore) {
       await saveState();
     }
   }
@@ -482,11 +487,11 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
   // ------ Activation / Deactivation ------
 
   async function activate(): Promise<void> {
-    if (!configEnabled) {
+    if (templatePath === null) {
       return;
     }
 
-    deps.logger.info("experimental.auto-pr-workspaces is enabled");
+    deps.logger.info("experimental.auto-pr-template-path is set, enabling auto-PR");
 
     token = await acquireToken();
     if (!token) return;
@@ -516,13 +521,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
           handler: async (): Promise<RegisterConfigResult> => ({
             definitions: [
               {
-                name: "experimental.auto-pr-workspaces",
-                default: false,
-                parse: parseBool,
-                validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
-              },
-              {
-                name: "experimental.pr-auto-workspace.template-path",
+                name: "experimental.auto-pr-template-path",
                 default: null,
                 parse: (s: string) => (s === "" ? null : s),
                 validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
@@ -549,19 +548,15 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     events: {
       [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
         const { values } = (event as ConfigUpdatedEvent).payload;
-        if ("experimental.pr-auto-workspace.template-path" in values) {
-          templatePath =
-            (values["experimental.pr-auto-workspace.template-path"] as string | null) ?? null;
-        }
-        if ("experimental.auto-pr-workspaces" in values) {
-          const newValue = values["experimental.auto-pr-workspaces"];
-          configEnabled = newValue === true;
+        if ("experimental.auto-pr-template-path" in values) {
+          const prev = templatePath;
+          templatePath = (values["experimental.auto-pr-template-path"] as string | null) ?? null;
           // Only react to runtime toggles (after initial activate hook has run).
           // During startup, the activate hook handles initial activation.
           if (!initialActivationDone) return;
-          if (newValue === true && !enabled) {
+          if (prev === null && templatePath !== null && !enabled) {
             void activate();
-          } else if (newValue === false && enabled) {
+          } else if (prev !== null && templatePath === null && enabled) {
             deactivate();
           }
         }
