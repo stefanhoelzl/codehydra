@@ -202,21 +202,19 @@ Determine PR title using the standard convention:
 resolves #123
 ```
 
-Create PR:
+Determine the label from `changelog_category`:
+
+- `"feature"`: `enhancement`
+- `"bugfix"`: `bug`
+- `null` (internal): `internal`
+
+Create PR with the label included:
 
 ```bash
-gh pr create --repo stefanhoelzl/codehydra --title "<title>" --body "<body>"
+gh pr create --repo stefanhoelzl/codehydra --title "<title>" --label "<label>" --body "<body>"
 ```
 
 Capture the PR URL and number from output.
-
-#### 3d. Label the PR
-
-After PR creation, apply a label based on `changelog_category`:
-
-- `"feature"`: `gh pr edit --repo stefanhoelzl/codehydra <number> --add-label "enhancement"`
-- `"bugfix"`: `gh pr edit --repo stefanhoelzl/codehydra <number> --add-label "bug"`
-- `null` (internal): `gh pr edit --repo stefanhoelzl/codehydra <number> --add-label "internal"`
 
 ### 4. Enable Auto-merge
 
