@@ -14,6 +14,7 @@ $ARGUMENTS
 - Empty: Auto-generate PR title and summary from commits
 - `feature` or `bugfix`: User-facing change. Agent proposes a PR title, user reviews.
 - `feature(<title>)` or `bugfix(<title>)`: User-facing change with explicit PR title.
+- `internal`: Internal change (no changelog entry). Skips user-facing detection.
 - `--keep-workspace`: Keep workspace after successful merge (default: delete)
 - `--resolves <issue>`: Link PR to a GitHub issue
   - `--resolves #123` or `--resolves 123`: Links to issue #123
@@ -149,6 +150,10 @@ A `changelog_category` variable tracks the result: `"feature"`, `"bugfix"`, or `
 **If `feature` or `bugfix` argument was provided:**
 
 Set `changelog_category` to `"feature"` or `"bugfix"` accordingly.
+
+**If `internal` argument was provided:**
+
+Set `changelog_category` to `null` (skip detection and user prompt).
 
 **If no changelog argument was provided:**
 
