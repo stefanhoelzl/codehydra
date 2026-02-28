@@ -310,6 +310,26 @@ describe("ClaudeCodeProvider integration", () => {
       const env = provider.getEnvironmentVariables();
       expect(env).not.toHaveProperty("_CH_INITIAL_PROMPT_FILE");
     });
+
+    it("includes no-session marker path when marker is set", async () => {
+      const port = await serverManager.startServer(workspacePath);
+
+      await serverManager.setNoSessionMarker(workspacePath);
+
+      await provider.connect(port);
+
+      const env = provider.getEnvironmentVariables();
+      expect(env).toHaveProperty("_CH_CLAUDE_NO_SESSION_MARKER_PATH");
+      expect(env._CH_CLAUDE_NO_SESSION_MARKER_PATH).toContain("no-session");
+    });
+
+    it("omits no-session marker path when no marker is set", async () => {
+      const port = await serverManager.startServer(workspacePath);
+      await provider.connect(port);
+
+      const env = provider.getEnvironmentVariables();
+      expect(env).not.toHaveProperty("_CH_CLAUDE_NO_SESSION_MARKER_PATH");
+    });
   });
 
   describe("markActive", () => {

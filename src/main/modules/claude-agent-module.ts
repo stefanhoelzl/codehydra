@@ -368,17 +368,20 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
               await serverManager.setInitialPrompt(workspacePath, normalizedPrompt);
             }
 
+            // Create no-session marker for new workspaces (skips --continue on first launch)
+            if (
+              intent.payload.existingWorkspace === undefined &&
+              serverManager.setNoSessionMarker
+            ) {
+              await serverManager.setNoSessionMarker(workspacePath);
+            }
+
             const agentProvider = deps.agentStatusManager.getProvider(
               workspacePath as WorkspacePath
             );
             const envVars: Record<string, string> = {
               ...(agentProvider?.getEnvironmentVariables() ?? {}),
             };
-
-            // Signal reopened workspaces to use --continue for session resume
-            if (intent.payload.existingWorkspace !== undefined) {
-              envVars._CH_CLAUDE_CONTINUE = "1";
-            }
 
             return { envVars, agentType: "claude" };
           },

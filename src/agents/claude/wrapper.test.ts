@@ -4,11 +4,14 @@
  * Tests buildInitialPromptArgs function.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   buildInitialPromptArgs,
   buildPermissionArgs,
-  shouldContinue,
+  consumeNoSessionMarker,
   type InitialPromptConfig,
 } from "./wrapper";
 
@@ -92,23 +95,34 @@ describe("buildInitialPromptArgs", () => {
   });
 });
 
-describe("shouldContinue", () => {
+describe("consumeNoSessionMarker", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "ch-wrapper-test-"));
+    delete process.env._CH_CLAUDE_NO_SESSION_MARKER_PATH;
+  });
+
   afterEach(() => {
-    delete process.env._CH_CLAUDE_CONTINUE;
+    delete process.env._CH_CLAUDE_NO_SESSION_MARKER_PATH;
+    rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("returns true when _CH_CLAUDE_CONTINUE is '1'", () => {
-    process.env._CH_CLAUDE_CONTINUE = "1";
-    expect(shouldContinue()).toBe(true);
+  it("returns false when env var is not set", () => {
+    expect(consumeNoSessionMarker()).toBe(false);
   });
 
-  it("returns false when _CH_CLAUDE_CONTINUE is not set", () => {
-    delete process.env._CH_CLAUDE_CONTINUE;
-    expect(shouldContinue()).toBe(false);
+  it("returns true and deletes marker when file exists", () => {
+    const markerPath = join(tempDir, "no-session-marker");
+    writeFileSync(markerPath, "");
+    process.env._CH_CLAUDE_NO_SESSION_MARKER_PATH = markerPath;
+
+    expect(consumeNoSessionMarker()).toBe(true);
+    expect(existsSync(markerPath)).toBe(false);
   });
 
-  it("returns false when _CH_CLAUDE_CONTINUE is '0'", () => {
-    process.env._CH_CLAUDE_CONTINUE = "0";
-    expect(shouldContinue()).toBe(false);
+  it("returns false when env var is set but file does not exist", () => {
+    process.env._CH_CLAUDE_NO_SESSION_MARKER_PATH = join(tempDir, "nonexistent");
+    expect(consumeNoSessionMarker()).toBe(false);
   });
 });
