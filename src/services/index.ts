@@ -17,6 +17,11 @@ export {
 } from "./errors";
 export type { SerializedError } from "./errors";
 
+// Types used by createGitWorktreeProvider
+import type { Path } from "./platform/path";
+import type { FileSystemLayer } from "./platform/filesystem";
+import type { Logger } from "./logging";
+
 // Git types
 export type { Workspace, BaseInfo } from "./git/types";
 
@@ -181,11 +186,11 @@ export type {
  * @throws WorkspaceError if path is invalid or not a git repository
  */
 export async function createGitWorktreeProvider(
-  projectRoot: import("./platform/path").Path,
-  workspacesDir: import("./platform/path").Path,
-  fileSystemLayer: import("./platform/filesystem").FileSystemLayer,
-  gitLogger: import("./logging").Logger,
-  worktreeLogger: import("./logging").Logger
+  projectRoot: Path,
+  workspacesDir: Path,
+  fileSystemLayer: FileSystemLayer,
+  gitLogger: Logger,
+  worktreeLogger: Logger
 ): Promise<GitWorktreeProvider> {
   const gitClient = new SimpleGitClient(gitLogger);
   const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, worktreeLogger);

@@ -25,6 +25,7 @@ import type { Logger } from "../../services/logging/types";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { SupportedPlatform, SupportedArch } from "../../agents/types";
 import type { DownloadRequest } from "../../services/binary-download";
+import type { BinaryType } from "../../services/vscode-setup/types";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type {
   CheckDepsResult,
@@ -139,7 +140,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         // -------------------------------------------------------------------
         "check-deps": {
           handler: async (): Promise<CheckDepsResult> => {
-            const missingBinaries: import("../../services/vscode-setup/types").BinaryType[] = [];
+            const missingBinaries: BinaryType[] = [];
 
             // Check code-server binary
             const codeServerResult = await codeServerManager.preflight();

@@ -47,6 +47,7 @@ import type {
   ResolveHookResult as ResolveProjectHookResult,
 } from "./resolve-project";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
+import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
 import { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
@@ -198,11 +199,10 @@ function createTestSetup(): TestSetup {
     sendToUI: vi.fn(),
     pluginServer: null,
     logger: SILENT_LOGGER,
-    dispatcher:
-      dispatcher as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["dispatcher"],
+    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
     agentStatusManager: {
       getStatus: vi.fn(),
-    } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["agentStatusManager"],
+    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
   });
   dispatcher.registerModule(resolveModule);
   dispatcher.registerModule(resolveProjectModule);

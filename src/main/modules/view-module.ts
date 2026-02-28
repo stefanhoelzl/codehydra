@@ -32,7 +32,7 @@ import type { Logger } from "../../services/logging";
 import type { ViewLayer } from "../../services/shell/view";
 import type { WindowLayerInternal } from "../../services/shell/window";
 import type { SessionLayer } from "../../services/shell/session";
-import type { IpcEventHandler } from "../../services/platform/ipc";
+import type { IpcEventHandler, IpcLayer } from "../../services/platform/ipc";
 import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { WorkspaceRef } from "../../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../../shared/ipc";
@@ -109,10 +109,7 @@ export interface ViewModuleDeps {
   readonly windowLayer: WindowLayerInternal | null;
   readonly sessionLayer: SessionLayer | null;
   readonly dialogLayer?: Pick<DialogLayer, "showOpenDialog"> | null;
-  readonly ipcLayer?: Pick<
-    import("../../services/platform/ipc").IpcLayer,
-    "on" | "removeListener"
-  > | null;
+  readonly ipcLayer?: Pick<IpcLayer, "on" | "removeListener"> | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
   readonly windowManager?: {
     create(): void;

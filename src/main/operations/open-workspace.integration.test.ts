@@ -59,10 +59,10 @@ import type {
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
-import type { ProjectId, Workspace } from "../../shared/api/types";
+import type { ProjectId, Workspace, WorkspaceName } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 
-const PROJECT_ID = "project-ea0135bc" as import("../../shared/api/types").ProjectId;
+const PROJECT_ID = "project-ea0135bc" as ProjectId;
 import { Path } from "../../services/platform/path";
 import {
   SwitchWorkspaceOperation,
@@ -245,7 +245,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             const workspaceName = extractWorkspaceName(wsPath);
             return {
               projectPath: PROJECT_ROOT,
-              workspaceName: workspaceName as import("../../shared/api/types").WorkspaceName,
+              workspaceName: workspaceName as WorkspaceName,
             };
           },
         },
@@ -639,7 +639,7 @@ describe("OpenWorkspace Operation", () => {
       const setup = createTestSetup({
         activeWorkspaceRef: {
           projectId: PROJECT_ID,
-          workspaceName: "other" as import("../../shared/api/types").WorkspaceName,
+          workspaceName: "other" as WorkspaceName,
           path: "/workspaces/other",
         },
       });
@@ -889,7 +889,7 @@ describe("OpenWorkspace Operation", () => {
                 const workspaceName = extractWorkspaceName(wsPath);
                 return {
                   projectPath: PROJECT_ROOT,
-                  workspaceName: workspaceName as import("../../shared/api/types").WorkspaceName,
+                  workspaceName: workspaceName as WorkspaceName,
                 };
               },
             },
@@ -1022,7 +1022,7 @@ describe("OpenWorkspace Operation", () => {
       const setup = createTestSetup({
         activeWorkspaceRef: {
           projectId: PROJECT_ID,
-          workspaceName: "other-ws" as import("../../shared/api/types").WorkspaceName,
+          workspaceName: "other-ws" as WorkspaceName,
           path: "/workspaces/other-ws",
         },
       });

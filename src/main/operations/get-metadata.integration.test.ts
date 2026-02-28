@@ -42,6 +42,8 @@ import type {
   ResolveHookResult as ResolveProjectHookResult,
 } from "./resolve-project";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
+import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
+import type { IApiRegistry } from "../api/registry-types";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
 import { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
@@ -204,18 +206,17 @@ function createTestSetup(): TestSetup {
   // Wire IpcEventBridge
   const mockApiRegistry = createMockApiRegistry();
   const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: mockApiRegistry as unknown as import("../api/registry-types").IApiRegistry,
+    apiRegistry: mockApiRegistry as unknown as IApiRegistry,
     getApi: () => {
       throw new Error("not wired");
     },
     sendToUI: vi.fn(),
     pluginServer: null,
     logger: SILENT_LOGGER,
-    dispatcher:
-      dispatcher as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["dispatcher"],
+    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
     agentStatusManager: {
       getStatus: vi.fn(),
-    } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["agentStatusManager"],
+    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
   });
   dispatcher.registerModule(resolveModule);
   dispatcher.registerModule(resolveProjectModule);

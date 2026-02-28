@@ -32,6 +32,14 @@ export default tseslint.config(
     },
     rules: {
       "@typescript-eslint/ban-ts-comment": "error",
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TSImportType",
+          message:
+            "Use a top-level `import type` declaration instead of inline import() type references.",
+        },
+      ],
     },
   },
   {

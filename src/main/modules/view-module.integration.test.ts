@@ -87,6 +87,7 @@ import { SILENT_LOGGER } from "../../services/logging";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { ApiIpcChannels } from "../../shared/ipc";
+import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import {
   createBehavioralIpcLayer,
   type BehavioralIpcLayer,
@@ -861,10 +862,10 @@ describe("ViewModule Integration", () => {
           const event: AgentStatusUpdatedEvent = {
             type: EVENT_AGENT_STATUS_UPDATED,
             payload: {
-              workspacePath: "/workspaces/ws1" as import("../../shared/ipc").WorkspacePath,
+              workspacePath: "/workspaces/ws1" as WorkspacePath,
               projectId: "test-project" as ProjectId,
               workspaceName: "ws1" as WorkspaceName,
-              status: { status: "idle" } as import("../../shared/ipc").AggregatedAgentStatus,
+              status: { status: "idle" } as AggregatedAgentStatus,
             },
           };
           ctx.emit(event);

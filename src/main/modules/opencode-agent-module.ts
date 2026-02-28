@@ -15,6 +15,7 @@ import type { DomainEvent } from "../intents/infrastructure/types";
 import type { Logger } from "../../services/logging/types";
 import type { AgentBinaryManager } from "../../services/binary-download";
 import type { AgentBinaryType } from "../../services/binary-download";
+import type { BinaryType } from "../../services/vscode-setup/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 
 import type { LoggingService } from "../../services/logging";
@@ -255,7 +256,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
             const { configuredAgent } = ctx as CheckDepsHookContext;
             if (configuredAgent !== "opencode") return {};
 
-            const missingBinaries: import("../../services/vscode-setup/types").BinaryType[] = [];
+            const missingBinaries: BinaryType[] = [];
             const agentResult = await agentBinaryManager.preflight();
             if (agentResult.success && agentResult.needsDownload) {
               const binaryType = agentBinaryManager.getBinaryType() as AgentBinaryType;
