@@ -7,7 +7,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import * as fs from "node:fs";
-import type { RunClaudeDeps } from "./wrapper";
+import type {
+  RunClaudeDeps,
+  getInitialPromptConfig as GetInitialPromptConfigFn,
+  runClaude as RunClaudeFn,
+} from "./wrapper";
 
 // Must mock fs before importing wrapper
 vi.mock("node:fs", () => ({
@@ -18,8 +22,8 @@ vi.mock("node:fs", () => ({
 }));
 
 // Use dynamic import to ensure mock is set up before wrapper is loaded
-let getInitialPromptConfig: typeof import("./wrapper").getInitialPromptConfig;
-let runClaude: typeof import("./wrapper").runClaude;
+let getInitialPromptConfig: typeof GetInitialPromptConfigFn;
+let runClaude: typeof RunClaudeFn;
 
 describe("getInitialPromptConfig integration", () => {
   const mockReadFileSync = vi.mocked(fs.readFileSync);

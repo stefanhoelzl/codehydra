@@ -27,6 +27,7 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
+import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
 import type { UIMode } from "../../shared/ipc";
 import { SILENT_LOGGER } from "../../services/logging";
 
@@ -101,11 +102,10 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
       sendToUI: vi.fn(),
       pluginServer: null,
       logger: SILENT_LOGGER,
-      dispatcher:
-        dispatcher as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["dispatcher"],
+      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
       agentStatusManager: {
         getStatus: vi.fn(),
-      } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["agentStatusManager"],
+      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
     });
     modules.push(ipcEventBridge);
   }

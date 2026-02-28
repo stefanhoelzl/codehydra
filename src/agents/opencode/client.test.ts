@@ -13,6 +13,7 @@ import {
   isValidSessionStatus,
   isSessionStatusResponse,
 } from "./client";
+import type { SdkClientFactory as RealSdkClientFactory } from "./client";
 import type { SessionStatus as OurSessionStatus } from "./types";
 import {
   createSdkClientMock,
@@ -52,7 +53,7 @@ describe("OpenCodeClient", () => {
     return new OpenCodeClient(
       port,
       SILENT_LOGGER,
-      (customFactory ?? mockFactory) as unknown as import("./client").SdkClientFactory
+      (customFactory ?? mockFactory) as unknown as RealSdkClientFactory
     );
   }
 
@@ -1591,11 +1592,7 @@ describe("Permission Event Emission", () => {
   }
 
   function createClient(factory: SdkClientFactory): OpenCodeClient {
-    return new OpenCodeClient(
-      8080,
-      SILENT_LOGGER,
-      factory as unknown as import("./client").SdkClientFactory
-    );
+    return new OpenCodeClient(8080, SILENT_LOGGER, factory as unknown as RealSdkClientFactory);
   }
 
   /**

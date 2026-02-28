@@ -57,7 +57,7 @@ import type {
   WorkspaceCreatedEvent,
 } from "./open-workspace";
 import type { IViewManager } from "../managers/view-manager.interface";
-import type { Project, ProjectId } from "../../shared/api/types";
+import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import { Path } from "../../services/platform/path";
 import { expandGitUrl } from "../../services/project/url-utils";
 import {
@@ -609,7 +609,7 @@ function createTestHarness(options?: {
                 const workspaceName = extractWorkspaceName(wsPath);
                 return {
                   projectPath: project.path,
-                  workspaceName: workspaceName as import("../../shared/api/types").WorkspaceName,
+                  workspaceName: workspaceName as WorkspaceName,
                 };
               }
             }
