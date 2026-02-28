@@ -99,9 +99,8 @@ interface MountSignal {
  * Shell layers are nullable because they may not exist in test environments
  * or when the app quits before full initialization.
  *
- * Lifecycle deps (menuLayer, windowManager, buildInfo, pathProvider, uiHtmlPath,
- * electronApp, devToolsHandler) are nullable so existing call sites that
- * don't need them pass unchanged.
+ * Lifecycle deps (menuLayer, windowManager, buildInfo, uiHtmlPath) are nullable
+ * so existing call sites that don't need them pass unchanged.
  */
 export interface ViewModuleDeps {
   readonly viewManager: IViewManager & { create(): void };
@@ -124,7 +123,6 @@ export interface ViewModuleDeps {
     gitBranch?: string;
   } | null;
   readonly uiHtmlPath?: string | null;
-  readonly devToolsHandler?: (() => void) | null;
 }
 
 /**
@@ -204,11 +202,6 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
 
             // Focus UI
             viewManager.focusUI();
-
-            // Set up devtools handler
-            if (deps.devToolsHandler) {
-              deps.devToolsHandler();
-            }
           },
         },
         "show-ui": {

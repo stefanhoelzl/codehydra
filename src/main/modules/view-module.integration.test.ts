@@ -1115,8 +1115,6 @@ describe("ViewModule Integration", () => {
         create: vi.fn(),
         maximizeAsync: vi.fn().mockResolvedValue(undefined),
       };
-      const devToolsHandler = vi.fn();
-
       const { module } = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
@@ -1126,7 +1124,6 @@ describe("ViewModule Integration", () => {
         menuLayer,
         windowManager,
         uiHtmlPath: "file:///app/ui.html",
-        devToolsHandler,
       });
 
       dispatcher.registerModule(module);
@@ -1146,7 +1143,6 @@ describe("ViewModule Integration", () => {
         "file:///app/ui.html"
       );
       expect(viewManager.focusUI).toHaveBeenCalled();
-      expect(devToolsHandler).toHaveBeenCalled();
     });
 
     it("skips optional deps when not provided", async () => {

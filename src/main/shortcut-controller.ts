@@ -64,6 +64,8 @@ export interface ShortcutControllerDeps {
   getMode: () => UIMode;
   /** Callback when a shortcut key is pressed in shortcut mode */
   onShortcut?: (key: ShortcutKey) => void;
+  /** Intercepts raw key before normalizeKey in shortcut mode. Return true to consume. */
+  onRawShortcutKey?: (key: string) => boolean;
   /** Logger for debugging */
   logger?: Logger;
   /** ViewLayer methods for event subscription */
@@ -203,6 +205,10 @@ export class ShortcutController {
     // Shortcut key detection in shortcut mode
     // NOTE: This runs before Alt+X detection because shortcut mode is already active
     if (currentMode === "shortcut") {
+      // Raw key interception (e.g., dev-only DevTools shortcuts)
+      if (this.deps.onRawShortcutKey?.(input.key)) {
+        return;
+      }
       const normalizedKey = normalizeKey(input.key);
       if (normalizedKey !== null) {
         // NOTE: Do NOT call event.preventDefault() - see Electron bug #37336

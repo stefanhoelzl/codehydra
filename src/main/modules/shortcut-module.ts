@@ -26,13 +26,33 @@ import { ApiIpcChannels } from "../../shared/ipc";
 export interface ShortcutModuleDeps {
   readonly viewManager: Pick<
     IViewManager,
-    "focusUI" | "getUIViewHandle" | "getMode" | "sendToUI" | "getWorkspaceView"
+    | "focusUI"
+    | "getUIViewHandle"
+    | "getMode"
+    | "sendToUI"
+    | "getWorkspaceView"
+    | "getActiveWorkspacePath"
   >;
-  readonly viewLayer: Pick<ViewLayer, "onBeforeInputEvent" | "onDestroyed">;
+  readonly viewLayer: Pick<
+    ViewLayer,
+    "onBeforeInputEvent" | "onDestroyed" | "openDevTools" | "closeDevTools" | "isDevToolsOpened"
+  >;
   readonly windowLayer: Pick<WindowLayer, "onBlur">;
   readonly getWindowHandle: () => WindowHandle;
   readonly dispatch: (intent: { type: string; payload: unknown }) => PromiseLike<unknown>;
   readonly logger: Logger;
+  readonly isDevelopment?: boolean;
+}
+
+function toggleDevTools(
+  viewLayer: Pick<ViewLayer, "openDevTools" | "closeDevTools" | "isDevToolsOpened">,
+  handle: ViewHandle
+): void {
+  if (viewLayer.isDevToolsOpened(handle)) {
+    viewLayer.closeDevTools(handle);
+  } else {
+    viewLayer.openDevTools(handle, { mode: "detach" });
+  }
 }
 
 export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
@@ -68,6 +88,26 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
                 onBlur(handle: WindowHandle, callback: () => void): Unsubscribe;
               },
               windowHandle: deps.getWindowHandle(),
+              ...(deps.isDevelopment && {
+                onRawShortcutKey: (key: string): boolean => {
+                  const lower = key.toLowerCase();
+                  if (lower === "d") {
+                    toggleDevTools(deps.viewLayer, deps.viewManager.getUIViewHandle());
+                    return true;
+                  }
+                  if (lower === "w") {
+                    const activePath = deps.viewManager.getActiveWorkspacePath();
+                    if (activePath) {
+                      const wsHandle = deps.viewManager.getWorkspaceView(activePath);
+                      if (wsHandle) {
+                        toggleDevTools(deps.viewLayer, wsHandle);
+                      }
+                    }
+                    return true;
+                  }
+                  return false;
+                },
+              }),
             });
 
             // Register UI view
