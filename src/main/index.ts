@@ -422,21 +422,6 @@ const { module: viewModule, readyHandler } = createViewModule({
   windowManager,
   buildInfo,
   uiHtmlPath,
-  devToolsHandler: buildInfo.isDevelopment
-    ? () => {
-        const uiHandle = viewManager.getUIViewHandle();
-        viewLayer.onBeforeInputEvent(uiHandle, (input, preventDefault) => {
-          if (input.control && input.shift && input.key === "I") {
-            if (viewLayer.isDevToolsOpened(uiHandle)) {
-              viewLayer.closeDevTools(uiHandle);
-            } else {
-              viewLayer.openDevTools(uiHandle, { mode: "detach" });
-            }
-            preventDefault();
-          }
-        });
-      }
-    : null,
 });
 
 const codeServerModule = createCodeServerModule({
@@ -572,6 +557,7 @@ const shortcutModule = createShortcutModule({
   getWindowHandle: () => windowManager.getWindowHandle(),
   dispatch: (intent) => dispatcher.dispatch(intent),
   logger: loggingService.createLogger("shortcut"),
+  isDevelopment: buildInfo.isDevelopment,
 });
 
 // 9. ApiRegistry + Operation registration
