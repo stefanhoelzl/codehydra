@@ -21,7 +21,6 @@ export interface MockPathProviderOptions {
   vscodeDir?: Path | string;
   vscodeExtensionsDir?: Path | string;
   vscodeUserDataDir?: Path | string;
-  setupMarkerPath?: Path | string;
   electronDataDir?: Path | string;
   binDir?: Path | string;
 
@@ -33,7 +32,6 @@ export interface MockPathProviderOptions {
   binRuntimeDir?: Path | string;
   scriptsRuntimeDir?: Path | string;
   extensionsRuntimeDir?: Path | string;
-  claudeCodeConfigDir?: Path | string;
   claudeCodeHookHandlerPath?: Path | string;
   claudeCodeWrapperPath?: Path | string;
   configPath?: Path | string;
@@ -42,10 +40,6 @@ export interface MockPathProviderOptions {
   getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
   getBinaryBaseDir?: (type: "code-server" | "opencode" | "claude") => Path;
   getBinaryDir?: (type: "code-server" | "opencode" | "claude", version: string) => Path;
-  getBundledNodePath?: (codeServerVersion: string) => Path;
-
-  // Platform for binary path construction (defaults to "linux")
-  platform?: "darwin" | "linux" | "win32";
 }
 
 /**
@@ -68,7 +62,6 @@ function ensurePath(value: Path | string | undefined, defaultValue: string): Pat
 export function createMockPathProvider(overrides?: MockPathProviderOptions): PathProvider {
   // Bundle paths (binaries) - use bundlesRootDir
   const bundlesRootDir = ensurePath(overrides?.bundlesRootDir, "/test/bundles");
-  const platform = overrides?.platform ?? "linux";
 
   // Data paths - use dataRootDir
   const dataRootDir = ensurePath(overrides?.dataRootDir, "/test/app-data");
@@ -92,11 +85,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     return new Path(bundlesRootDir, type, version);
   };
 
-  const defaultGetBundledNodePath = (codeServerVersion: string): Path => {
-    const codeServerDir = defaultGetBinaryDir("code-server", codeServerVersion);
-    return new Path(codeServerDir, "lib", platform === "win32" ? "node.exe" : "node");
-  };
-
   return {
     dataRootDir,
     projectsDir,
@@ -109,10 +97,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     vscodeUserDataDir: ensurePath(
       overrides?.vscodeUserDataDir,
       `${vscodeDir.toString()}/user-data`
-    ),
-    setupMarkerPath: ensurePath(
-      overrides?.setupMarkerPath,
-      `${dataRootDir.toString()}/.setup-completed`
     ),
     electronDataDir: ensurePath(overrides?.electronDataDir, `${dataRootDir.toString()}/electron`),
     binDir: ensurePath(overrides?.binDir, `${dataRootDir.toString()}/bin`),
@@ -128,7 +112,6 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     scriptsRuntimeDir: ensurePath(overrides?.scriptsRuntimeDir, "/mock/assets/scripts"),
     extensionsRuntimeDir: ensurePath(overrides?.extensionsRuntimeDir, "/mock/assets"),
 
-    claudeCodeConfigDir: ensurePath(overrides?.claudeCodeConfigDir, "/test/app-data/claude-code"),
     claudeCodeHookHandlerPath: ensurePath(
       overrides?.claudeCodeHookHandlerPath,
       "/mock/assets/bin/claude-code-hook-handler.cjs"
@@ -143,6 +126,5 @@ export function createMockPathProvider(overrides?: MockPathProviderOptions): Pat
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
     getBinaryBaseDir: overrides?.getBinaryBaseDir ?? defaultGetBinaryBaseDir,
     getBinaryDir: overrides?.getBinaryDir ?? defaultGetBinaryDir,
-    getBundledNodePath: overrides?.getBundledNodePath ?? defaultGetBundledNodePath,
   };
 }

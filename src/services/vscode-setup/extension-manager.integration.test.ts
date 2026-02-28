@@ -40,7 +40,6 @@ function createMockPathProvider(): PathProvider {
     vscodeUserDataDir: new Path("/app/vscode/user-data"),
     binDir: new Path("/app/bin"),
     binAssetsDir: new Path("/app/assets/bin"),
-    setupMarkerPath: new Path("/app/setup.json"),
     electronDataDir: new Path("/app/electron"),
     scriptsRuntimeDir: new Path("/app/scripts"),
     appIconPath: new Path("/app/icon.png"),
