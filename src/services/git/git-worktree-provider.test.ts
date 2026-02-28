@@ -267,7 +267,7 @@ describe("GitWorktreeProvider error injection", () => {
   });
 
   describe("removeWorkspace", () => {
-    it("deletes branch even when worktree removal fails", async () => {
+    it("falls back to rm + prune when git worktree remove fails", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
       const mockClient = createMockGitClient({
         repositories: {
@@ -278,34 +278,33 @@ describe("GitWorktreeProvider error injection", () => {
           },
         },
       });
-      // Override removeWorktree to fail
-      mockClient.removeWorktree = vi
-        .fn()
-        .mockRejectedValue(new Error("Permission denied: files locked"));
-      // Override deleteBranch to remove branch from state (bypasses checkout check for this test)
+      mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("git error"));
       const repo = mockClient.$.repositories.get(PROJECT_ROOT.toString());
+      mockClient.pruneWorktrees = vi.fn().mockImplementation(async () => {
+        repo?.worktrees.delete(worktreePath.toString());
+      });
       mockClient.deleteBranch = vi.fn().mockImplementation(async () => {
         repo?.branches.delete("feature-x");
       });
 
+      const spyFs = createSpyFileSystemLayer();
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        spyFs,
         mockLogger
       );
 
-      // Should throw because worktree removal failed
-      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
-        "Permission denied: files locked"
-      );
+      const result = await provider.removeWorkspace(PROJECT_ROOT, worktreePath, true);
 
-      // But branch should still be deleted before the error is thrown
-      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
+      expect(result.workspaceRemoved).toBe(true);
+      expect(result.baseDeleted).toBe(true);
+      expect(spyFs.rm).toHaveBeenCalledWith(worktreePath, { recursive: true, force: true });
+      expect(mockClient.pruneWorktrees).toHaveBeenCalledWith(PROJECT_ROOT);
     });
 
-    it("throws worktree error even when branch deletion succeeds", async () => {
+    it("throws original error when fallback also fails", async () => {
       const worktreePath = new Path("/data/workspaces/feature-x");
       const mockClient = createMockGitClient({
         repositories: {
@@ -316,28 +315,24 @@ describe("GitWorktreeProvider error injection", () => {
           },
         },
       });
-      // Override removeWorktree to fail
-      mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("Removal failed"));
-      // Override deleteBranch to remove branch from state (bypasses checkout check for this test)
-      const repo = mockClient.$.repositories.get(PROJECT_ROOT.toString());
-      mockClient.deleteBranch = vi.fn().mockImplementation(async () => {
-        repo?.branches.delete("feature-x");
-      });
+      mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("Worktree error"));
+      mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch error"));
+
+      const spyFs = createSpyFileSystemLayer();
+      spyFs.rm = vi.fn().mockRejectedValue(new Error("rm failed"));
 
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
-        mockFs,
+        spyFs,
         mockLogger
       );
 
-      // Should throw worktree error after branch is deleted
+      // Should throw the original worktree error (not the rm error)
       await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
-        "Removal failed"
+        "Worktree error"
       );
-      // Branch should still be deleted
-      expect(mockClient).not.toHaveBranch(PROJECT_ROOT, "feature-x");
     });
 
     it("throws branch error when worktree succeeds but branch deletion fails", async () => {
@@ -365,35 +360,6 @@ describe("GitWorktreeProvider error injection", () => {
       // Should throw branch error since worktree succeeded
       await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
         "Branch deletion failed"
-      );
-    });
-
-    it("throws worktree error when both worktree and branch deletion fail", async () => {
-      const worktreePath = new Path("/data/workspaces/feature-x");
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-x"],
-            currentBranch: "main",
-            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
-          },
-        },
-      });
-      // Override both to fail
-      mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("Worktree error"));
-      mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch error"));
-
-      const provider = await GitWorktreeProvider.create(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        mockLogger
-      );
-
-      // Should throw worktree error (takes precedence)
-      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
-        "Worktree error"
       );
     });
   });
