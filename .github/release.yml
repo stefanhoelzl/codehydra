@@ -1,0 +1,11 @@
+changelog:
+  exclude:
+    labels:
+      - internal
+  categories:
+    - title: Features
+      labels:
+        - enhancement
+    - title: Bug Fixes
+      labels:
+        - bug
