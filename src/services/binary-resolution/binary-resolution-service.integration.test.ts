@@ -30,11 +30,7 @@ describe("BinaryResolutionService", () => {
 
   beforeEach(() => {
     pathProvider = createMockPathProvider();
-    fileSystem = createFileSystemMock({
-      entries: {
-        [pathProvider.dataRootDir.toString()]: directory(),
-      },
-    });
+    fileSystem = createFileSystemMock();
     processRunner = createMockProcessRunner();
     logger = createMockLogger();
   });
@@ -114,8 +110,7 @@ describe("BinaryResolutionService", () => {
 
     it("returns null when no version directories exist", async () => {
       // Create base directory but no versions
-      const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
-      fileSystem.$.setEntry(`${bundlesRoot.toString()}/claude`, directory());
+      fileSystem.$.setEntry(pathProvider.bundlePath("claude").toString(), directory());
 
       const service = createService();
       const result = await service.findLatestDownloaded("claude");
@@ -124,8 +119,7 @@ describe("BinaryResolutionService", () => {
     });
 
     it("returns highest version when multiple exist", async () => {
-      const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
-      const baseDir = `${bundlesRoot.toString()}/claude`;
+      const baseDir = pathProvider.bundlePath("claude").toString();
 
       // Create multiple versions
       fileSystem.$.setEntry(`${baseDir}/1.0.57`, directory());
@@ -143,8 +137,7 @@ describe("BinaryResolutionService", () => {
     });
 
     it("compares versions numerically", async () => {
-      const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
-      const baseDir = `${bundlesRoot.toString()}/opencode`;
+      const baseDir = pathProvider.bundlePath("opencode").toString();
 
       // 1.0.100 should be higher than 1.0.9
       fileSystem.$.setEntry(`${baseDir}/1.0.9`, directory());
@@ -192,8 +185,7 @@ describe("BinaryResolutionService", () => {
       });
 
       // But downloaded version exists
-      const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
-      const baseDir = `${bundlesRoot.toString()}/claude`;
+      const baseDir = pathProvider.bundlePath("claude").toString();
       fileSystem.$.setEntry(`${baseDir}/1.0.58`, directory());
       fileSystem.$.setEntry(`${baseDir}/1.0.58/claude`, file("binary"));
 
@@ -219,8 +211,7 @@ describe("BinaryResolutionService", () => {
       });
 
       // Set up downloaded version
-      const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
-      const baseDir = `${bundlesRoot.toString()}/claude`;
+      const baseDir = pathProvider.bundlePath("claude").toString();
       fileSystem.$.setEntry(`${baseDir}/1.0.58`, directory());
       fileSystem.$.setEntry(`${baseDir}/1.0.58/claude`, file("binary"));
 
@@ -272,8 +263,7 @@ describe("BinaryResolutionService", () => {
 
     it("always checks downloaded for code-server (never system)", async () => {
       // Set up downloaded code-server
-      const bundlesRoot = pathProvider.getBinaryBaseDir("code-server").dirname;
-      const baseDir = `${bundlesRoot.toString()}/code-server`;
+      const baseDir = pathProvider.bundlePath("code-server").toString();
       fileSystem.$.setEntry(`${baseDir}/4.109.2`, directory());
       fileSystem.$.setEntry(`${baseDir}/4.109.2/bin/code-server`, file("binary"));
 

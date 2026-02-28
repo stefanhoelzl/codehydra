@@ -14,6 +14,7 @@ import type { Intent } from "../intents/infrastructure/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent, InitHookContext } from "../operations/app-start";
 import { createScriptModule } from "./script-module";
+import { createMockPathProvider } from "../../services/platform/path-provider.test-utils";
 import { Path } from "../../services/platform/path";
 
 // =============================================================================
@@ -52,10 +53,10 @@ describe("ScriptModule Integration", () => {
       makeExecutable: vi.fn().mockResolvedValue(undefined),
     };
 
-    const pathProvider = {
-      binDir: new Path("/app-data/bin"),
-      binAssetsDir: new Path("/assets/bin"),
-    };
+    const pathProvider = createMockPathProvider({
+      dataRootDir: "/app-data",
+      assetsRootDir: "/assets",
+    });
 
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
@@ -114,10 +115,10 @@ describe("ScriptModule Integration", () => {
       makeExecutable: vi.fn().mockResolvedValue(undefined),
     };
 
-    const pathProvider = {
-      binDir: new Path("/app-data/bin"),
-      binAssetsDir: new Path("/assets/bin"),
-    };
+    const pathProvider = createMockPathProvider({
+      dataRootDir: "/app-data",
+      assetsRootDir: "/assets",
+    });
 
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);

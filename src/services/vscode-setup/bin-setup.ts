@@ -29,8 +29,8 @@ export async function setupBinDirectory(
   pathProvider: PathProvider,
   scripts: readonly string[]
 ): Promise<void> {
-  const binDir = pathProvider.binDir;
-  const binAssetsDir = pathProvider.binAssetsDir;
+  const binDir = pathProvider.dataPath("bin");
+  const binAssetsDir = pathProvider.assetPath("bin");
 
   // Clean bin directory to remove stale scripts before copying new ones
   await fileSystem.rm(binDir, { recursive: true, force: true });

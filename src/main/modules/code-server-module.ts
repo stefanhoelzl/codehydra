@@ -84,7 +84,7 @@ export interface CodeServerModuleDeps {
   > | null;
   readonly fileSystemLayer: Pick<FileSystemLayer, "mkdir">;
   readonly workspaceFileService: IWorkspaceFileService;
-  readonly pathProvider: Pick<PathProvider, "getBinaryDir">;
+  readonly pathProvider: Pick<PathProvider, "bundlePath">;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
   readonly wrapperPath: string;
@@ -396,7 +396,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         const { values } = (event as ConfigUpdatedEvent).payload;
         if (values["version.code-server"] !== undefined) {
           const version = (values["version.code-server"] as string | null) ?? CODE_SERVER_VERSION;
-          const codeServerDir = deps.pathProvider.getBinaryDir("code-server", version);
+          const codeServerDir = deps.pathProvider.bundlePath(`code-server/${version}`);
           const execPath = getCodeServerExecutablePath(deps.platform);
           const binaryPath = new Path(codeServerDir, execPath).toNative();
           const downloadRequest: DownloadRequest = {

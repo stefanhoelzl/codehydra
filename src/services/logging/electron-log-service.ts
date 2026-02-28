@@ -356,7 +356,7 @@ export class ElectronLogService implements LoggingService {
     log.transports.console.level = false;
 
     // Configure file path (known at construction)
-    const logsDir = join(pathProvider.dataRootDir.toNative(), "logs");
+    const logsDir = pathProvider.dataPath("logs").toNative();
     const filename = generateSessionFilename();
     log.transports.file.resolvePathFn = (): string => join(logsDir, filename);
 

@@ -115,7 +115,7 @@ describe("RemoteProjectModule Integration", () => {
 
       const url = "https://github.com/org/repo.git";
       const repoName = extractRepoName(url);
-      const projectDir = new Path(pathProvider.remotesDir.toString(), URL_PROJECT_ID);
+      const projectDir = new Path(pathProvider.dataPath("remotes"), URL_PROJECT_ID);
       const gitPath = new Path(projectDir.toString(), repoName);
 
       // Pre-populate filesystem so readdir succeeds

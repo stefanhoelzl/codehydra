@@ -272,7 +272,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     // Spawn opencode serve
     const platform = process.platform as SupportedPlatform;
     const opencodeCmd = new Path(
-      this.pathProvider.getBinaryDir("opencode", OPENCODE_VERSION),
+      this.pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`),
       getOpencodeExecutablePath(platform)
     ).toNative();
     const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {

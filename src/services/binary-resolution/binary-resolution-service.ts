@@ -195,14 +195,14 @@ export class BinaryResolutionService {
    * Get the base directory for a binary type.
    */
   private getBinaryBaseDir(type: ResolvableBinaryType): Path {
-    return this.pathProvider.getBinaryBaseDir(type);
+    return this.pathProvider.bundlePath(type);
   }
 
   /**
    * Get the binary path for a specific version.
    */
   private getBinaryPath(type: ResolvableBinaryType, version: string): Path {
-    return new Path(this.pathProvider.getBinaryDir(type, version), this.executablePaths[type]);
+    return new Path(this.pathProvider.bundlePath(`${type}/${version}`), this.executablePaths[type]);
   }
 }
 

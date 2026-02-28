@@ -289,7 +289,7 @@ function createTestSetup(options?: {
     httpClient,
     fs,
     logger: SILENT_LOGGER,
-    dataRootDir: "/data",
+    stateFilePath: "/data/auto-pr-workspaces.json",
     dispatcher,
   });
 

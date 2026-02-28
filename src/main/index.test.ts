@@ -20,7 +20,6 @@ import { OPENCODE_VERSION } from "../agents/opencode/setup-info";
 import { Path } from "../services/platform/path";
 import type { PathProvider } from "../services/platform/path-provider";
 import type { SupportedPlatform } from "../agents/types";
-import nodePath from "node:path";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
@@ -62,7 +61,7 @@ describe("Main process wiring", () => {
     /**
      * This tests the same pattern used in main/index.ts createCodeServerConfig()
      * PathProvider now returns Path objects, so we convert to native strings for external use.
-     * Uses dynamic getBinaryDir methods with version constants and setup-info functions.
+     * Uses dynamic bundlePath methods with version constants and setup-info functions.
      */
     interface TestCodeServerConfig {
       readonly binaryPath: string;
@@ -79,18 +78,18 @@ describe("Main process wiring", () => {
       platform: SupportedPlatform
     ): TestCodeServerConfig {
       const codeServerBinaryPath = new Path(
-        pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION),
+        pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`),
         getCodeServerExecutablePath(platform)
       ).toNative();
 
       return {
         binaryPath: codeServerBinaryPath,
-        runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
-        extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
-        userDataDir: pathProvider.vscodeUserDataDir.toNative(),
-        binDir: pathProvider.binDir.toNative(),
-        codeServerDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
-        opencodeDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
+        runtimeDir: pathProvider.dataPath("runtime").toNative(),
+        extensionsDir: pathProvider.dataPath("vscode/extensions").toNative(),
+        userDataDir: pathProvider.dataPath("vscode/user-data").toNative(),
+        binDir: pathProvider.dataPath("bin").toNative(),
+        codeServerDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
+        opencodeDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
       };
     }
 
@@ -156,16 +155,13 @@ describe("Main process wiring", () => {
       });
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pathProvider.dataRootDir.toString()).toBe(
-        "/Users/test/Library/Application Support/Codehydra"
-      );
-      expect(pathProvider.projectsDir.toString()).toBe(
+      expect(pathProvider.dataPath("projects").toString()).toBe(
         "/Users/test/Library/Application Support/Codehydra/projects"
       );
-      expect(pathProvider.vscodeDir.toString()).toBe(
+      expect(pathProvider.dataPath("vscode").toString()).toBe(
         "/Users/test/Library/Application Support/Codehydra/vscode"
       );
-      expect(pathProvider.electronDataDir.toString()).toBe(
+      expect(pathProvider.dataPath("electron").toString()).toBe(
         "/Users/test/Library/Application Support/Codehydra/electron"
       );
     });
@@ -199,14 +195,13 @@ describe("Main process wiring", () => {
       const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 
       // Windows paths are normalized to lowercase by Path class
-      expect(pathProvider.dataRootDir.toString()).toBe("c:/users/test/appdata/roaming/codehydra");
-      expect(pathProvider.projectsDir.toString()).toBe(
+      expect(pathProvider.dataPath("projects").toString()).toBe(
         "c:/users/test/appdata/roaming/codehydra/projects"
       );
-      expect(pathProvider.vscodeDir.toString()).toBe(
+      expect(pathProvider.dataPath("vscode").toString()).toBe(
         "c:/users/test/appdata/roaming/codehydra/vscode"
       );
-      expect(pathProvider.electronDataDir.toString()).toBe(
+      expect(pathProvider.dataPath("electron").toString()).toBe(
         "c:/users/test/appdata/roaming/codehydra/electron"
       );
     });

@@ -35,11 +35,8 @@ extraResources:
   - from: out/main/assets/scripts
     to: scripts
   # VSIX files (installed by code-server)
-  # Note: glob patterns require filter syntax
-  - from: out/main/assets
+  - from: out/main/assets/extensions
     to: extensions
-    filter:
-      - "*.vsix"
 
 # ASAR archive settings
 asar: true
