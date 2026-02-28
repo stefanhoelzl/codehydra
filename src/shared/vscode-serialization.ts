@@ -219,9 +219,10 @@ function reconstructSingleWrapper(
       return reconstructSelection(wrapper, factories);
     case "Location":
       return reconstructLocation(wrapper, factories);
-    default:
-      // This should never happen due to the SUPPORTED_VSCODE_TYPES check above
-      throw new Error(`Unhandled VS Code type: ${typeName}`);
+    default: {
+      const _exhaustive: never = typeName as never;
+      throw new Error(`Unhandled VS Code type: ${_exhaustive}`);
+    }
   }
 }
 

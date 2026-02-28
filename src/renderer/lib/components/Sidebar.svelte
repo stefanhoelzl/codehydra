@@ -133,7 +133,7 @@
       </div>
     {:else if loadingState === "error"}
       <div class="error-state" role="alert">
-        <p>{loadingError ?? "An error occurred"}</p>
+        <p>{loadingError}</p>
       </div>
     {:else if projects.length === 0}
       <EmptyState />
