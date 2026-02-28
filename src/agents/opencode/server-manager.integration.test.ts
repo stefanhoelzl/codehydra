@@ -12,7 +12,8 @@
 import { request as httpRequest } from "http";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
-import { AgentStatusManager, OpenCodeProvider } from "./status-manager";
+import { AgentStatusManager } from "./status-manager";
+import { OpenCodeProvider } from "./provider";
 import {
   createMockProcessRunner,
   type MockProcessRunner,

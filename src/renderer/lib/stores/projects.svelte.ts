@@ -53,7 +53,7 @@ const _projectsWithIds = $derived(_sortedProjects);
 /**
  * Active project with ID.
  */
-const _activeProject = $derived<ProjectWithId | undefined>(
+const _activeProject = $derived<Project | undefined>(
   _projectsWithIds.find((p) => p.workspaces.some((w) => w.path === _activeWorkspacePath))
 );
 
@@ -241,17 +241,11 @@ export function wrapIndex(index: number, length: number): number {
 // =============================================================================
 
 /**
- * Project type alias for compatibility.
- * v2 API projects already include IDs, so this is just an alias.
- */
-export type ProjectWithId = Project;
-
-/**
  * Get a project by its ID.
  * @param id - The project ID to look up (can be undefined)
  * @returns The project if found, undefined otherwise
  */
-export function getProjectById(id: ProjectId | undefined): ProjectWithId | undefined {
+export function getProjectById(id: ProjectId | undefined): Project | undefined {
   if (id === undefined) return undefined;
   return _projectsWithIds.find((p) => p.id === id);
 }

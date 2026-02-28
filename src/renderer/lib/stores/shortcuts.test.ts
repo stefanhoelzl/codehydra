@@ -54,7 +54,6 @@ const mockProjectsStore = vi.hoisted(() => ({
   }),
   wrapIndex: vi.fn((i: number, l: number) => ((i % l) + l) % l),
   activeWorkspacePath: { value: null as string | null },
-  // activeProject now has id (ProjectWithId)
   activeProject: { value: null as { id: string; path: string } | null },
   // activeWorkspace is now used for remove dialog
   activeWorkspace: { value: null as MockWorkspaceRef | null },
@@ -728,7 +727,6 @@ describe("shortcuts store", () => {
       // NOTE: Dialog tests use handleShortcutKey with normalized keys ("enter", "delete")
       // since these come from main process events. Backspace is normalized to "delete" by main process.
       it("should-open-create-dialog-on-enter", () => {
-        // activeProject now has id (ProjectWithId)
         mockProjectsStore.activeProject.value = { id: "project-12345678", path: "/project" };
 
         enableShortcutMode();

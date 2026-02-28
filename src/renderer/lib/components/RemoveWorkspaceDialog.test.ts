@@ -23,7 +23,6 @@ vi.mock("$lib/api", () => ({
   switchWorkspace: vi.fn().mockResolvedValue(undefined),
   listBases: vi.fn().mockResolvedValue([]),
   updateBases: vi.fn().mockResolvedValue(undefined),
-  isWorkspaceDirty: vi.fn().mockResolvedValue(false),
   onProjectOpened: vi.fn(() => vi.fn()),
   onProjectClosed: vi.fn(() => vi.fn()),
   onWorkspaceCreated: vi.fn(() => vi.fn()),

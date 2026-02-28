@@ -1,11 +1,11 @@
-import type { ProjectWithId } from "$lib/stores/projects.svelte.js";
+import type { Project } from "$lib/api";
 
 /**
  * Calculate the global index of a workspace across all projects.
  * Returns the sum of all workspaces in previous projects plus the workspace index.
  */
 export function getWorkspaceGlobalIndex(
-  projects: readonly ProjectWithId[],
+  projects: readonly Project[],
   projectIndex: number,
   workspaceIndex: number
 ): number {

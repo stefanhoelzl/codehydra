@@ -79,7 +79,6 @@ const mockApi = vi.hoisted(() => ({
   }),
   // Legacy APIs (kept for backwards compatibility with some old tests)
   listBases: vi.fn().mockResolvedValue([]),
-  isWorkspaceDirty: vi.fn().mockResolvedValue(false),
 }));
 
 // Mock the API module
@@ -235,7 +234,6 @@ describe("Integration tests", () => {
       { name: "main", isRemote: false },
       { name: "develop", isRemote: false },
     ]);
-    mockApi.isWorkspaceDirty.mockResolvedValue(false);
   });
 
   afterEach(() => {

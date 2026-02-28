@@ -43,8 +43,6 @@ export interface MockWindowManagerOptions {
 /**
  * Create a mock WindowManager for testing.
  *
- * Omits the deprecated getWindow() method from the mock interface.
- *
  * @example
  * ```typescript
  * // Basic usage

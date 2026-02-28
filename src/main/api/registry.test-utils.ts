@@ -15,14 +15,7 @@ import type {
 } from "./registry-types";
 import { ALL_METHOD_PATHS } from "./registry-types";
 
-// Import and re-export shared test fixtures for backward compatibility
-import {
-  createMockProject,
-  createMockWorkspace,
-  DEFAULT_PROJECT_ID,
-} from "../../shared/test-fixtures";
-
-export { createMockProject, createMockWorkspace, DEFAULT_PROJECT_ID };
+import { createMockProject, createMockWorkspace } from "../../shared/test-fixtures";
 
 // =============================================================================
 // Mock Types

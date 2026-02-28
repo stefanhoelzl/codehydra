@@ -12,9 +12,6 @@ import type { Logger } from "../../services/logging";
 import { OpenCodeProvider } from "./provider";
 import type { AgentSessionInfo, AgentStatus, AgentProvider } from "../types";
 
-// Re-export OpenCodeProvider for backward compatibility
-export { OpenCodeProvider } from "./provider";
-
 /**
  * Callback for status changes.
  */

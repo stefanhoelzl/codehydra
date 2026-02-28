@@ -227,16 +227,9 @@ export class ClaudeSetupInfo implements AgentSetupInfo {
   }
 }
 
-// Re-export old names for backward compatibility during transition
-export { ClaudeSetupInfo as ClaudeCodeSetupInfo };
-export type { ClaudeSetupInfoDeps as ClaudeCodeSetupInfoDeps };
-
 /**
  * Creates a ClaudeSetupInfo instance with the given dependencies.
  */
 export function createClaudeSetupInfo(deps: ClaudeSetupInfoDeps): AgentSetupInfo {
   return new ClaudeSetupInfo(deps);
 }
-
-// Re-export old function name for backward compatibility
-export { createClaudeSetupInfo as createClaudeCodeSetupInfo };

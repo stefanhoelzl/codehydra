@@ -2,9 +2,8 @@
  * Shortcut mode state store using Svelte 5 runes.
  * Manages keyboard shortcut overlay visibility and handlers.
  *
- * Note: UI mode state is now centralized in ui-mode.svelte.ts.
- * This module re-exports uiMode and shortcutModeActive for backward compatibility,
- * and provides the handleModeChange function to update the central store.
+ * UI mode state is centralized in ui-mode.svelte.ts.
+ * This module provides the handleModeChange function to update the central store.
  */
 
 import * as api from "$lib/api";

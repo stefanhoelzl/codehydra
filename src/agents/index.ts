@@ -24,7 +24,7 @@ import type { AgentType, AgentSetupInfo, AgentServerManager, AgentProvider } fro
 import { OpenCodeSetupInfo } from "./opencode/setup-info";
 import { OpenCodeServerManager } from "./opencode/server-manager";
 import { OpenCodeProvider } from "./opencode/provider";
-import { ClaudeCodeSetupInfo } from "./claude/setup-info";
+import { ClaudeSetupInfo } from "./claude/setup-info";
 import { ClaudeCodeServerManager } from "./claude/server-manager";
 import { ClaudeCodeProvider } from "./claude/provider";
 
@@ -94,7 +94,7 @@ export function getAgentSetupInfo(type: AgentType, deps: SetupInfoDeps): AgentSe
         arch: deps.arch,
       });
     case "claude":
-      return new ClaudeCodeSetupInfo({
+      return new ClaudeSetupInfo({
         fileSystem: deps.fileSystem,
         httpClient: deps.httpClient,
         platform: deps.platform,

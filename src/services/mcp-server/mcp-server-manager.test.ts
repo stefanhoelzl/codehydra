@@ -5,12 +5,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { McpServerManager } from "./mcp-server-manager";
 import type { MockPortManager } from "../platform/network.test-utils";
-import type { PathProvider } from "../platform/path-provider";
 import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
 import type { McpServerFactory } from "./mcp-server";
 import type { McpServer as McpServerSdk } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMockLogger } from "../logging";
-import { createMockPathProvider } from "../platform/path-provider.test-utils";
 import { createPortManagerMock } from "../platform/network.test-utils";
 
 /**
@@ -48,7 +46,6 @@ function createMockMcpSdk(): McpServerSdk {
 
 describe("McpServerManager", () => {
   let portManager: MockPortManager;
-  let pathProvider: PathProvider;
   let api: ICoreApi;
   let logger: ReturnType<typeof createMockLogger>;
   let mockSdkFactory: McpServerFactory;
@@ -56,7 +53,6 @@ describe("McpServerManager", () => {
 
   beforeEach(() => {
     portManager = createPortManagerMock([12345]);
-    pathProvider = createMockPathProvider({ dataRootDir: "/tmp/test-data" });
     api = createMockCoreApi();
     logger = createMockLogger();
     mockSdkFactory = () => createMockMcpSdk();
@@ -73,13 +69,13 @@ describe("McpServerManager", () => {
 
   describe("constructor", () => {
     it("creates manager with all dependencies", () => {
-      const manager = new McpServerManager(portManager, pathProvider, () => api, logger);
+      const manager = new McpServerManager(portManager, () => api, logger);
 
       expect(manager).toBeInstanceOf(McpServerManager);
     });
 
     it("creates manager without logger", () => {
-      const manager = new McpServerManager(portManager, pathProvider, () => api);
+      const manager = new McpServerManager(portManager, () => api);
 
       expect(manager).toBeInstanceOf(McpServerManager);
     });
@@ -87,7 +83,7 @@ describe("McpServerManager", () => {
 
   describe("start", () => {
     it("allocates port via PortManager", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, () => api, logger, {
+      activeManager = new McpServerManager(portManager, () => api, logger, {
         serverFactory: mockSdkFactory,
       });
 
@@ -99,7 +95,7 @@ describe("McpServerManager", () => {
     });
 
     it("returns allocated port", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, () => api, logger, {
+      activeManager = new McpServerManager(portManager, () => api, logger, {
         serverFactory: mockSdkFactory,
       });
 
@@ -109,7 +105,7 @@ describe("McpServerManager", () => {
     });
 
     it("prevents double-start", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, () => api, logger, {
+      activeManager = new McpServerManager(portManager, () => api, logger, {
         serverFactory: mockSdkFactory,
       });
 
@@ -125,14 +121,14 @@ describe("McpServerManager", () => {
 
   describe("stop", () => {
     it("stops cleanly when not started", async () => {
-      const manager = new McpServerManager(portManager, pathProvider, () => api, logger);
+      const manager = new McpServerManager(portManager, () => api, logger);
 
       // Should not throw
       await expect(manager.stop()).resolves.not.toThrow();
     });
 
     it("clears port after stop", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, () => api, logger, {
+      activeManager = new McpServerManager(portManager, () => api, logger, {
         serverFactory: mockSdkFactory,
       });
 
@@ -146,7 +142,7 @@ describe("McpServerManager", () => {
     it("allows restart after stop", async () => {
       // Provide two ports for start/stop/restart cycle
       const restartPortManager = createPortManagerMock([12345, 54321]);
-      activeManager = new McpServerManager(restartPortManager, pathProvider, () => api, logger, {
+      activeManager = new McpServerManager(restartPortManager, () => api, logger, {
         serverFactory: mockSdkFactory,
       });
 
@@ -161,13 +157,13 @@ describe("McpServerManager", () => {
 
   describe("getPort", () => {
     it("returns null before start", () => {
-      const manager = new McpServerManager(portManager, pathProvider, () => api, logger);
+      const manager = new McpServerManager(portManager, () => api, logger);
 
       expect(manager.getPort()).toBeNull();
     });
 
     it("returns port after start", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, () => api, logger, {
+      activeManager = new McpServerManager(portManager, () => api, logger, {
         serverFactory: mockSdkFactory,
       });
 
@@ -179,7 +175,7 @@ describe("McpServerManager", () => {
 
   describe("isRunning", () => {
     it("returns false before start", () => {
-      const manager = new McpServerManager(portManager, pathProvider, () => api, logger);
+      const manager = new McpServerManager(portManager, () => api, logger);
 
       expect(manager.isRunning()).toBe(false);
     });
@@ -187,7 +183,7 @@ describe("McpServerManager", () => {
 
   describe("dispose", () => {
     it("stops the manager", async () => {
-      activeManager = new McpServerManager(portManager, pathProvider, () => api, logger, {
+      activeManager = new McpServerManager(portManager, () => api, logger, {
         serverFactory: mockSdkFactory,
       });
 
@@ -203,7 +199,7 @@ describe("McpServerManager", () => {
       // Empty port list causes "No ports available" error on first call
       const failingPortManager = createPortManagerMock([]);
 
-      const manager = new McpServerManager(failingPortManager, pathProvider, () => api, logger);
+      const manager = new McpServerManager(failingPortManager, () => api, logger);
 
       await expect(manager.start()).rejects.toThrow("No ports available");
       expect(manager.getPort()).toBeNull();

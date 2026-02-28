@@ -478,11 +478,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 // Helpers
 // =============================================================================
 
-function createIntent(
-  _projectId: ProjectId,
-  overrides?: Partial<OpenWorkspacePayload>
-): OpenWorkspaceIntent {
-  void _projectId; // projectId no longer in payload; kept in signature for test compat
+function createIntent(overrides?: Partial<OpenWorkspacePayload>): OpenWorkspaceIntent {
   return {
     type: INTENT_OPEN_WORKSPACE,
     payload: {
@@ -507,7 +503,7 @@ describe("OpenWorkspace Operation", () => {
     });
 
     it("returns Workspace with correct path, branch, metadata", async () => {
-      const result = await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      const result = await setup.dispatcher.dispatch(createIntent());
 
       expect(result).toBeDefined();
       const workspace = result as Workspace;
@@ -532,7 +528,7 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      await setup.dispatcher.dispatch(createIntent());
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
@@ -557,7 +553,7 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await expect(setup.dispatcher.dispatch(createIntent(setup.projectId))).rejects.toThrow(
+      await expect(setup.dispatcher.dispatch(createIntent())).rejects.toThrow(
         "Worktree creation failed"
       );
 
@@ -577,7 +573,7 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await expect(setup.dispatcher.dispatch(createIntent(setup.projectId))).rejects.toThrow(
+      await expect(setup.dispatcher.dispatch(createIntent())).rejects.toThrow(
         "Agent server failed to start"
       );
 
@@ -594,7 +590,7 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await expect(setup.dispatcher.dispatch(createIntent(setup.projectId))).rejects.toThrow(
+      await expect(setup.dispatcher.dispatch(createIntent())).rejects.toThrow(
         "Setup handler failed"
       );
 
@@ -631,7 +627,7 @@ describe("OpenWorkspace Operation", () => {
       });
 
       await setup.dispatcher.dispatch(
-        createIntent(setup.projectId, {
+        createIntent({
           initialPrompt: { prompt: "Implement login", agent: "build" },
         })
       );
@@ -653,7 +649,7 @@ describe("OpenWorkspace Operation", () => {
       });
 
       await setup.dispatcher.dispatch(
-        createIntent(setup.projectId, {
+        createIntent({
           initialPrompt: "Fix the bug",
         })
       );
@@ -681,7 +677,7 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent(setup.projectId, { stealFocus: false }));
+      await setup.dispatcher.dispatch(createIntent({ stealFocus: false }));
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
@@ -696,7 +692,7 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      await setup.dispatcher.dispatch(createIntent());
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
@@ -721,7 +717,7 @@ describe("OpenWorkspace Operation", () => {
       };
       setup.dispatcher.addInterceptor(cancelInterceptor);
 
-      const result = await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      const result = await setup.dispatcher.dispatch(createIntent());
 
       expect(result).toBeUndefined();
       expect(receivedEvents).toHaveLength(0);
@@ -732,7 +728,7 @@ describe("OpenWorkspace Operation", () => {
     it("copies files with correct project and workspace paths", async () => {
       const setup = createTestSetup();
 
-      await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      await setup.dispatcher.dispatch(createIntent());
 
       expect(setup.keepFilesService.copies).toHaveLength(1);
       expect(setup.keepFilesService.copies[0]!.from.toString()).toBe(PROJECT_ROOT);
@@ -750,7 +746,7 @@ describe("OpenWorkspace Operation", () => {
         receivedEvents.push(event);
       });
 
-      const result = await setup.dispatcher.dispatch(createIntent(setup.projectId));
+      const result = await setup.dispatcher.dispatch(createIntent());
 
       // Operation succeeds despite keepfiles failure
       expect(result).toBeDefined();
@@ -772,7 +768,7 @@ describe("OpenWorkspace Operation", () => {
     it("does not invoke keepfiles when create hook throws", async () => {
       const setup = createTestSetup({ throwOnCreate: true });
 
-      await expect(setup.dispatcher.dispatch(createIntent(setup.projectId))).rejects.toThrow(
+      await expect(setup.dispatcher.dispatch(createIntent())).rejects.toThrow(
         "Worktree creation failed"
       );
 
@@ -949,7 +945,6 @@ describe("OpenWorkspace Operation", () => {
       };
 
       // Re-create setup with the extra module
-      const projectId = PROJECT_ID;
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
@@ -1080,7 +1075,7 @@ describe("OpenWorkspace Operation", () => {
       dispatcher.registerModule(extraEnvModule);
       dispatcher.registerModule(codeServerModule);
 
-      await dispatcher.dispatch(createIntent(projectId));
+      await dispatcher.dispatch(createIntent());
 
       // Both modules' envVars should be merged
       expect(capturedEnvVars).toEqual({
@@ -1099,9 +1094,7 @@ describe("OpenWorkspace Operation", () => {
         switchedIntents.push(event);
       });
 
-      const result = await setup.dispatcher.dispatch(
-        createIntent(setup.projectId, { stealFocus: false })
-      );
+      const result = await setup.dispatcher.dispatch(createIntent({ stealFocus: false }));
 
       // Operation succeeds
       expect(result).toBeDefined();
@@ -1128,9 +1121,7 @@ describe("OpenWorkspace Operation", () => {
         switchedIntents.push(event);
       });
 
-      const result = await setup.dispatcher.dispatch(
-        createIntent(setup.projectId, { stealFocus: false })
-      );
+      const result = await setup.dispatcher.dispatch(createIntent({ stealFocus: false }));
 
       // Operation succeeds
       expect(result).toBeDefined();
