@@ -38,7 +38,6 @@ import type { HttpClient } from "../../services/platform/network";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Logger } from "../../services/logging/types";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
-import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../services/template/liquid-renderer";
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
@@ -96,7 +95,7 @@ export interface AutoPrModuleDeps {
   readonly httpClient: HttpClient;
   readonly fs: Pick<FileSystemLayer, "readFile" | "writeFile" | "mkdir">;
   readonly logger: Logger;
-  readonly dataRootDir: string;
+  readonly stateFilePath: string;
   readonly dispatcher: Dispatcher;
 }
 
@@ -105,7 +104,6 @@ export interface AutoPrModuleDeps {
 // =============================================================================
 
 const POLL_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
-const STATE_FILE_NAME = "auto-pr-workspaces.json";
 const GITHUB_API_BASE = "https://api.github.com";
 
 // =============================================================================
@@ -147,7 +145,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
   // Prevents the event handler from triggering activation during initial startup
   let initialActivationDone = false;
 
-  const stateFilePath = new Path(deps.dataRootDir, STATE_FILE_NAME).toString();
+  const stateFilePath = deps.stateFilePath;
 
   // ------ Token Acquisition ------
 

@@ -171,10 +171,14 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
+      const mockPathProvider = {
+        dataPath: (subpath: string) => new Path(`/data/${subpath}`),
+      };
+
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
-        pathProvider: { electronDataDir: { toNative: () => "/data/electron" } },
+        pathProvider: mockPathProvider,
       });
 
       dispatcher.registerModule(module);
@@ -184,22 +188,21 @@ describe("ElectronLifecycleModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      const electronDir = new Path("/data/electron");
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "userData",
-        new Path(electronDir, "userData").toNative()
+        new Path("/data/electron/userData").toNative()
       );
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "sessionData",
-        new Path(electronDir, "sessionData").toNative()
+        new Path("/data/electron/sessionData").toNative()
       );
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "logs",
-        new Path(electronDir, "logs").toNative()
+        new Path("/data/electron/logs").toNative()
       );
       expect(mockApp.setPath).toHaveBeenCalledWith(
         "crashDumps",
-        new Path(electronDir, "crashDumps").toNative()
+        new Path("/data/electron/crashDumps").toNative()
       );
     });
 

@@ -1,50 +1,31 @@
 /**
  * Test utilities for PathProvider.
  */
-import type { PathProvider } from "./path-provider";
+import type { PathProvider, PathOptions } from "./path-provider";
 import { Path } from "./path";
 import { projectDirName } from "./paths";
 
 /**
  * Options for createMockPathProvider.
- * All path properties can be overridden with Path objects or strings.
- * getProjectWorkspacesDir can be overridden with a custom function.
  */
 export interface MockPathProviderOptions {
-  // Bundle paths (binaries) - use bundlesRootDir
+  /** Root for bundle paths (default: /test/bundles) */
   bundlesRootDir?: Path | string;
-
-  // Data paths - use dataRootDir
+  /** Root for data paths (default: /test/app-data) */
   dataRootDir?: Path | string;
-  projectsDir?: Path | string;
-  remotesDir?: Path | string;
-  vscodeDir?: Path | string;
-  vscodeExtensionsDir?: Path | string;
-  vscodeUserDataDir?: Path | string;
-  electronDataDir?: Path | string;
-  binDir?: Path | string;
-
-  // Shared paths
-  vscodeAssetsDir?: Path | string;
-  scriptsDir?: Path | string;
+  /** Root for runtime paths (default: /mock/runtime) */
+  runtimeRootDir?: Path | string;
+  /** Root for asset paths (default: /mock/assets) */
+  assetsRootDir?: Path | string;
+  /** App icon path (default: /test/resources/icon.png) */
   appIconPath?: Path | string;
-  binAssetsDir?: Path | string;
-  binRuntimeDir?: Path | string;
-  scriptsRuntimeDir?: Path | string;
-  extensionsRuntimeDir?: Path | string;
-  claudeCodeHookHandlerPath?: Path | string;
-  claudeCodeWrapperPath?: Path | string;
-  configPath?: Path | string;
+  /** Platform for cmd option (default: "linux") */
+  platform?: "darwin" | "linux" | "win32";
 
-  // Method overrides
+  /** Override getProjectWorkspacesDir */
   getProjectWorkspacesDir?: (projectPath: string | Path) => Path;
-  getBinaryBaseDir?: (type: "code-server" | "opencode" | "claude") => Path;
-  getBinaryDir?: (type: "code-server" | "opencode" | "claude", version: string) => Path;
 }
 
-/**
- * Helper to ensure a value is a Path object.
- */
 function ensurePath(value: Path | string | undefined, defaultValue: string): Path {
   if (value instanceof Path) {
     return value;
@@ -55,76 +36,34 @@ function ensurePath(value: Path | string | undefined, defaultValue: string): Pat
 /**
  * Create a mock PathProvider with controllable behavior.
  * Defaults to test paths: bundles under `/test/bundles/`, data under `/test/app-data/`.
- *
- * @param overrides - Optional overrides for PathProvider properties
- * @returns Mock PathProvider object
  */
 export function createMockPathProvider(overrides?: MockPathProviderOptions): PathProvider {
-  // Bundle paths (binaries) - use bundlesRootDir
   const bundlesRootDir = ensurePath(overrides?.bundlesRootDir, "/test/bundles");
-
-  // Data paths - use dataRootDir
   const dataRootDir = ensurePath(overrides?.dataRootDir, "/test/app-data");
-  const projectsDir = ensurePath(overrides?.projectsDir, `${dataRootDir.toString()}/projects`);
-  const remotesDir = ensurePath(overrides?.remotesDir, `${dataRootDir.toString()}/remotes`);
-  const vscodeDir = ensurePath(overrides?.vscodeDir, `${dataRootDir.toString()}/vscode`);
+  const runtimeRootDir = ensurePath(overrides?.runtimeRootDir, "/mock/runtime");
+  const assetsRootDir = ensurePath(overrides?.assetsRootDir, "/mock/assets");
+  const platform = overrides?.platform ?? "linux";
 
   const defaultGetProjectWorkspacesDir = (projectPath: string | Path): Path => {
     const pathStr = projectPath instanceof Path ? projectPath.toString() : projectPath;
-    return new Path(projectsDir, projectDirName(pathStr), "workspaces");
-  };
-
-  const defaultGetBinaryBaseDir = (type: "code-server" | "opencode" | "claude"): Path => {
-    return new Path(bundlesRootDir, type);
-  };
-
-  const defaultGetBinaryDir = (
-    type: "code-server" | "opencode" | "claude",
-    version: string
-  ): Path => {
-    return new Path(bundlesRootDir, type, version);
+    return new Path(dataRootDir, "projects", projectDirName(pathStr), "workspaces");
   };
 
   return {
-    dataRootDir,
-    projectsDir,
-    remotesDir,
-    vscodeDir,
-    vscodeExtensionsDir: ensurePath(
-      overrides?.vscodeExtensionsDir,
-      `${vscodeDir.toString()}/extensions`
-    ),
-    vscodeUserDataDir: ensurePath(
-      overrides?.vscodeUserDataDir,
-      `${vscodeDir.toString()}/user-data`
-    ),
-    electronDataDir: ensurePath(overrides?.electronDataDir, `${dataRootDir.toString()}/electron`),
-    binDir: ensurePath(overrides?.binDir, `${dataRootDir.toString()}/bin`),
-
-    // Shared paths
-    vscodeAssetsDir: ensurePath(overrides?.vscodeAssetsDir, "/mock/assets"),
-    scriptsDir: ensurePath(overrides?.scriptsDir, "/mock/assets/scripts"),
+    dataPath(subpath: string, options?: PathOptions): Path {
+      const resolved = options?.cmd && platform === "win32" ? `${subpath}.cmd` : subpath;
+      return new Path(dataRootDir, resolved);
+    },
+    bundlePath(subpath: string): Path {
+      return new Path(bundlesRootDir, subpath);
+    },
+    runtimePath(subpath: string): Path {
+      return new Path(runtimeRootDir, subpath);
+    },
+    assetPath(subpath: string): Path {
+      return new Path(assetsRootDir, subpath);
+    },
     appIconPath: ensurePath(overrides?.appIconPath, "/test/resources/icon.png"),
-    binAssetsDir: ensurePath(overrides?.binAssetsDir, "/mock/assets/bin"),
-
-    // Runtime paths (same as assets in dev mode, resourcesPath in prod)
-    binRuntimeDir: ensurePath(overrides?.binRuntimeDir, "/mock/assets/bin"),
-    scriptsRuntimeDir: ensurePath(overrides?.scriptsRuntimeDir, "/mock/assets/scripts"),
-    extensionsRuntimeDir: ensurePath(overrides?.extensionsRuntimeDir, "/mock/assets"),
-
-    claudeCodeHookHandlerPath: ensurePath(
-      overrides?.claudeCodeHookHandlerPath,
-      "/mock/assets/bin/claude-code-hook-handler.cjs"
-    ),
-    claudeCodeWrapperPath: ensurePath(
-      overrides?.claudeCodeWrapperPath,
-      "/test/app-data/bin/claude"
-    ),
-    configPath: ensurePath(overrides?.configPath, `${dataRootDir.toString()}/config.json`),
-
-    // Methods
     getProjectWorkspacesDir: overrides?.getProjectWorkspacesDir ?? defaultGetProjectWorkspacesDir,
-    getBinaryBaseDir: overrides?.getBinaryBaseDir ?? defaultGetBinaryBaseDir,
-    getBinaryDir: overrides?.getBinaryDir ?? defaultGetBinaryDir,
   };
 }

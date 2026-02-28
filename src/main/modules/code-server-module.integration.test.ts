@@ -256,8 +256,8 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       getWorkspaceFilePath: vi.fn(),
     } as unknown as CodeServerModuleDeps["workspaceFileService"],
     pathProvider: {
-      getBinaryDir: vi.fn().mockImplementation((_type: string, version: string) => {
-        return new Path(`/bundles/code-server/${version}`);
+      bundlePath: vi.fn().mockImplementation((subpath: string) => {
+        return new Path(`/bundles/${subpath}`);
       }),
     },
     platform: "linux",

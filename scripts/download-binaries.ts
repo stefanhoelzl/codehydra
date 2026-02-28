@@ -172,7 +172,6 @@ async function main(): Promise<void> {
   const arch = platformInfo.arch as SupportedArch;
 
   console.log(`Platform: ${platformInfo.platform}-${platformInfo.arch}`);
-  console.log(`Data directory: ${pathProvider.dataRootDir}`);
   console.log(`Binaries will be downloaded to production paths\n`);
 
   // Create service with real implementations
@@ -188,7 +187,7 @@ async function main(): Promise<void> {
   const codeServerRequest: DownloadRequest = {
     name: "code-server",
     url: getCodeServerUrl(platform, arch),
-    destDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
+    destDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
     executablePath: getCodeServerExecutablePath(platform),
   };
   await downloadBinary(service, codeServerRequest, CODE_SERVER_VERSION);
@@ -197,7 +196,7 @@ async function main(): Promise<void> {
   const opencodeRequest: DownloadRequest = {
     name: "opencode",
     url: getOpencodeUrl(platform, arch),
-    destDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
+    destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
     executablePath: getOpencodeExecutablePath(platform),
   };
   await downloadBinary(service, opencodeRequest, OPENCODE_VERSION);
@@ -211,7 +210,7 @@ async function main(): Promise<void> {
     const claudeRequest: DownloadRequest = {
       name: "claude",
       url: getClaudeUrl(platform, arch),
-      destDir: pathProvider.getBinaryDir("claude", CLAUDE_VERSION).toNative(),
+      destDir: pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative(),
       executablePath: getClaudeExecutablePath(platform),
     };
     await downloadBinary(service, claudeRequest, CLAUDE_VERSION);

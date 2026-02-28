@@ -74,7 +74,7 @@ export type {
 } from "./platform/workspace-lock-handler.test-utils";
 
 // Path provider abstraction
-export type { PathProvider } from "./platform/path-provider";
+export type { PathProvider, PathOptions } from "./platform/path-provider";
 export { DefaultPathProvider } from "./platform/path-provider";
 export { createMockPathProvider } from "./platform/path-provider.test-utils";
 

@@ -10,7 +10,7 @@
  * when the config module dispatches env-layer values.
  */
 
-import { Path } from "../../services/platform/path";
+import type { PathProvider } from "../../services/platform/path-provider";
 import type { AsyncWatcher } from "../../services/platform/async-watcher";
 import type { Logger } from "../../services/logging";
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -74,7 +74,7 @@ export interface ElectronLifecycleModuleDeps {
     setPath(name: string, path: string): void;
   };
   readonly buildInfo?: { isPackaged: boolean } | null;
-  readonly pathProvider?: { electronDataDir: { toNative(): string } } | null;
+  readonly pathProvider?: Pick<PathProvider, "dataPath"> | null;
   readonly asyncWatcher?: AsyncWatcher | null;
   readonly logger: Logger;
 }
@@ -108,9 +108,8 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             }
             // Redirect data paths to isolate from system defaults
             if (deps.pathProvider) {
-              const electronDir = new Path(deps.pathProvider.electronDataDir.toNative());
               for (const name of ["userData", "sessionData", "logs", "crashDumps"]) {
-                deps.app.setPath(name, new Path(electronDir, name).toNative());
+                deps.app.setPath(name, deps.pathProvider.dataPath(`electron/${name}`).toNative());
               }
             }
             // Electron flags are applied via config:updated event handler

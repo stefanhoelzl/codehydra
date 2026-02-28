@@ -40,16 +40,16 @@ import type { SupportedPlatform } from "../../agents/types";
 function getCodeServerBinaryPath(): string {
   const pathProvider = getTestPathProvider();
   const platform = process.platform as SupportedPlatform;
-  const binaryDir = pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION);
+  const binaryDir = pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`);
   return new Path(binaryDir, getCodeServerExecutablePath(platform)).toNative();
 }
 
 function getCodeServerDir(): string {
-  return getTestPathProvider().getBinaryDir("code-server", CODE_SERVER_VERSION).toNative();
+  return getTestPathProvider().bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative();
 }
 
 function getOpencodeDir(): string {
-  return getTestPathProvider().getBinaryDir("opencode", OPENCODE_VERSION).toNative();
+  return getTestPathProvider().bundlePath(`opencode/${OPENCODE_VERSION}`).toNative();
 }
 
 // Platform detection for signal tests

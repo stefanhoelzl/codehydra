@@ -52,7 +52,7 @@ function generateProjectIdFromUrl(url: string): ProjectId {
 export function createRemoteProjectModule(deps: {
   readonly fs: Pick<FileSystemLayer, "readdir" | "rm">;
   readonly gitClient: Pick<IGitClient, "clone">;
-  readonly pathProvider: Pick<PathProvider, "remotesDir">;
+  readonly pathProvider: Pick<PathProvider, "dataPath">;
   readonly logger: Logger;
 }): IntentModule {
   const { fs, gitClient, pathProvider, logger } = deps;
@@ -78,7 +78,7 @@ export function createRemoteProjectModule(deps: {
             // Deterministic clone path from URL
             const urlProjectId = generateProjectIdFromUrl(expanded);
             const repoName = extractRepoName(expanded);
-            const projectDir = new Path(pathProvider.remotesDir.toString(), urlProjectId);
+            const projectDir = new Path(pathProvider.dataPath("remotes"), urlProjectId);
             const gitPath = new Path(projectDir.toString(), repoName);
 
             // Check for existing clone via filesystem

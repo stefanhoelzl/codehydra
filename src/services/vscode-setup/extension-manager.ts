@@ -50,17 +50,13 @@ export type ExtensionProgressCallback = (message: string) => void;
  * Manager for extension preflight and installation operations.
  */
 export class ExtensionManager {
-  private readonly assetsDir: Path;
-
   constructor(
     private readonly pathProvider: PathProvider,
     private readonly fileSystem: FileSystemLayer,
     private readonly processRunner: ProcessRunner,
     private codeServerBinaryPath: string,
     private readonly logger?: Logger
-  ) {
-    this.assetsDir = pathProvider.vscodeAssetsDir;
-  }
+  ) {}
 
   /**
    * Override the code-server binary path.
@@ -81,7 +77,7 @@ export class ExtensionManager {
 
     try {
       // Load extensions manifest
-      const configPath = new Path(this.assetsDir, "manifest.json");
+      const configPath = this.pathProvider.runtimePath("extensions/manifest.json");
       const configContent = await this.fileSystem.readFile(configPath);
       const parsed = JSON.parse(configContent) as unknown;
       const validation = validateExtensionsManifest(parsed);
@@ -96,7 +92,7 @@ export class ExtensionManager {
       // List installed extensions
       const installedExtensions = await listInstalledExtensions(
         this.fileSystem,
-        this.pathProvider.vscodeExtensionsDir
+        this.pathProvider.dataPath("vscode/extensions")
       );
 
       // Check all bundled extensions (exact version required)
@@ -155,12 +151,12 @@ export class ExtensionManager {
     // Clean stale entries from extensions.json before installing
     await removeFromExtensionsJson(
       this.fileSystem,
-      this.pathProvider.vscodeExtensionsDir,
+      this.pathProvider.dataPath("vscode/extensions"),
       extensionsToInstall
     );
 
     // Ensure extensions directory exists
-    await this.fileSystem.mkdir(this.pathProvider.vscodeExtensionsDir);
+    await this.fileSystem.mkdir(this.pathProvider.dataPath("vscode/extensions"));
 
     // Install each extension
     for (const extId of extensionsToInstall) {
@@ -172,7 +168,7 @@ export class ExtensionManager {
       onProgress?.(`Installing ${extId}...`);
 
       // Get vsix path from runtime directory (outside ASAR in production)
-      const vsixPath = new Path(this.pathProvider.extensionsRuntimeDir, extConfig.vsix);
+      const vsixPath = new Path(this.pathProvider.runtimePath("extensions"), extConfig.vsix);
 
       // Verify VSIX exists
       try {
@@ -195,7 +191,7 @@ export class ExtensionManager {
    * @param extensionIds Extension IDs to clean
    */
   async cleanOutdated(extensionIds: readonly string[]): Promise<void> {
-    const extensionsDir = this.pathProvider.vscodeExtensionsDir;
+    const extensionsDir = this.pathProvider.dataPath("vscode/extensions");
     const installedExtensions = await listInstalledExtensions(this.fileSystem, extensionsDir);
 
     for (const extId of extensionIds) {
@@ -213,7 +209,7 @@ export class ExtensionManager {
    * Load and validate the extensions manifest.
    */
   private async loadManifest(): Promise<ExtensionsManifest> {
-    const configPath = new Path(this.assetsDir, "manifest.json");
+    const configPath = this.pathProvider.runtimePath("extensions/manifest.json");
     const configContent = await this.fileSystem.readFile(configPath);
     const parsed = JSON.parse(configContent) as unknown;
     const validation = validateExtensionsManifest(parsed);
@@ -231,7 +227,7 @@ export class ExtensionManager {
       "--install-extension",
       vsixPath,
       "--extensions-dir",
-      this.pathProvider.vscodeExtensionsDir.toNative(),
+      this.pathProvider.dataPath("vscode/extensions").toNative(),
     ]);
     const result = await proc.wait();
 

@@ -72,7 +72,7 @@ function buildDownloadRequest(
   const arch = platformInfo.arch as SupportedArch;
 
   if (binary === "code-server") {
-    const destDir = pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative();
+    const destDir = pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative();
     const executablePath = getCodeServerExecutablePath(platform);
     return {
       request: {
@@ -85,7 +85,7 @@ function buildDownloadRequest(
     };
   }
 
-  const destDir = pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative();
+  const destDir = pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative();
   const executablePath = getOpencodeExecutablePath(platform);
   return {
     request: {

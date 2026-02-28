@@ -221,26 +221,26 @@ const arch = platformInfo.arch as SupportedArch;
 
 const codeServerExecutablePath = getCodeServerExecutablePath(platform);
 const codeServerBinaryPath = new Path(
-  pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION),
+  pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`),
   codeServerExecutablePath
 ).toNative();
 
 const codeServerDownloadRequest: DownloadRequest = {
   name: "code-server",
   url: getCodeServerUrl(platform, arch),
-  destDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
+  destDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
   executablePath: codeServerExecutablePath,
 };
 
 const codeServerConfig: CodeServerConfig = {
   port: getCodeServerPort(buildInfo),
   binaryPath: codeServerBinaryPath,
-  runtimeDir: nodePath.join(pathProvider.dataRootDir.toNative(), "runtime"),
-  extensionsDir: pathProvider.vscodeExtensionsDir.toNative(),
-  userDataDir: pathProvider.vscodeUserDataDir.toNative(),
-  binDir: pathProvider.binDir.toNative(),
-  codeServerDir: pathProvider.getBinaryDir("code-server", CODE_SERVER_VERSION).toNative(),
-  opencodeDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
+  runtimeDir: pathProvider.dataPath("runtime").toNative(),
+  extensionsDir: pathProvider.dataPath("vscode/extensions").toNative(),
+  userDataDir: pathProvider.dataPath("vscode/user-data").toNative(),
+  binDir: pathProvider.dataPath("bin").toNative(),
+  codeServerDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
+  opencodeDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
 };
 
 const codeServerManager = new CodeServerManager(
@@ -257,7 +257,7 @@ const claudeBinaryManager = new AgentBinaryManager(
   {
     name: "claude",
     version: CLAUDE_VERSION,
-    destDir: CLAUDE_VERSION ? pathProvider.getBinaryDir("claude", CLAUDE_VERSION).toNative() : "",
+    destDir: CLAUDE_VERSION ? pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative() : "",
     url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
     executablePath: getClaudeExecutablePath(platform),
   },
@@ -268,7 +268,7 @@ const opencodeBinaryManager = new AgentBinaryManager(
   {
     name: "opencode",
     version: OPENCODE_VERSION,
-    destDir: pathProvider.getBinaryDir("opencode", OPENCODE_VERSION).toNative(),
+    destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
     url: getOpencodeUrl(platform, arch),
     executablePath: getOpencodeExecutablePath(platform),
   },
@@ -337,7 +337,7 @@ const workspaceLockHandler = createWorkspaceLockHandler(
   processRunner,
   platformInfo,
   loggingService.createLogger("process"),
-  nodePath.join(pathProvider.scriptsRuntimeDir.toNative(), "blocking-processes.ps1")
+  pathProvider.runtimePath("scripts/blocking-processes.ps1").toNative()
 );
 
 const apiLogger = loggingService.createLogger("api");
@@ -447,7 +447,7 @@ const codeServerModule = createCodeServerModule({
   pathProvider,
   platform,
   arch,
-  wrapperPath: pathProvider.claudeCodeWrapperPath.toString(),
+  wrapperPath: pathProvider.dataPath("bin/ch-claude", { cmd: true }).toString(),
   logger: apiLogger,
 });
 
@@ -495,7 +495,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   dispatcher,
 });
 const localProjectModule = createLocalProjectModule({
-  projectsDir: pathProvider.projectsDir.toString(),
+  projectsDir: pathProvider.dataPath("projects").toString(),
   fs: fileSystemLayer,
   globalProvider: globalWorktreeProvider,
 });
@@ -520,7 +520,7 @@ const autoPrModule = createAutoPrModule({
   httpClient: networkLayer,
   fs: fileSystemLayer,
   logger: loggingService.createLogger("auto-pr"),
-  dataRootDir: pathProvider.dataRootDir.toString(),
+  stateFilePath: pathProvider.dataPath("auto-pr-workspaces.json").toString(),
   dispatcher,
 });
 
@@ -528,7 +528,7 @@ const autoPrModule = createAutoPrModule({
 
 const configModule = createConfigModule({
   fileSystem: fileSystemLayer,
-  configPath: pathProvider.configPath,
+  configPath: pathProvider.dataPath("config.json"),
   dispatcher,
   logger: loggingService.createLogger("config"),
   isDevelopment: buildInfo.isDevelopment,

@@ -11,10 +11,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { ExtensionManager } from "./extension-manager";
 import type { FileSystemLayer, DirEntry } from "../platform/filesystem";
-import type { PathProvider } from "../platform/path-provider";
 import type { ProcessRunner, SpawnedProcess } from "../platform/process";
-import { Path } from "../platform/path";
 import { CODE_SERVER_VERSION } from "../code-server/setup-info";
+import { createMockPathProvider } from "../platform/path-provider.test-utils";
+import type { Path } from "../platform/path";
 
 // =============================================================================
 // Test Setup
@@ -26,29 +26,6 @@ const TEST_MANIFEST = JSON.stringify([
   { id: "codehydra.sidekick", version: "0.0.1", vsix: "codehydra-sidekick-0.0.1.vsix" },
   { id: "publisher.extension", version: "1.2.3", vsix: "publisher-extension-1.2.3.vsix" },
 ]);
-
-function createMockPathProvider(): PathProvider {
-  return {
-    vscodeAssetsDir: new Path("/app/assets"),
-    vscodeExtensionsDir: new Path("/app/vscode/extensions"),
-    extensionsRuntimeDir: new Path("/app/extensions"),
-    // Add other required properties with minimal implementations
-    dataRootDir: new Path("/app"),
-    projectsDir: new Path("/app/projects"),
-    remotesDir: new Path("/app/remotes"),
-    vscodeDir: new Path("/app/vscode"),
-    vscodeUserDataDir: new Path("/app/vscode/user-data"),
-    binDir: new Path("/app/bin"),
-    binAssetsDir: new Path("/app/assets/bin"),
-    electronDataDir: new Path("/app/electron"),
-    scriptsRuntimeDir: new Path("/app/scripts"),
-    appIconPath: new Path("/app/icon.png"),
-    claudeCodeWrapperPath: new Path("/app/claude-wrapper"),
-    getBinaryDir: (binary: string, version: string) =>
-      new Path(`/app/binaries/${binary}-${version}`),
-    getProjectWorkspacesDir: (projectPath: Path) => new Path(`${projectPath}/workspaces`),
-  } as PathProvider;
-}
 
 function createMockFileSystem(
   options: {
@@ -106,7 +83,11 @@ function createMockProcessRunner(exitCode = 0, stderr = ""): ProcessRunner {
 describe("ExtensionManager", () => {
   describe("preflight", () => {
     it("returns needsInstall: true when extensions are missing (#10)", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem({ installedExtensions: new Map() });
       const processRunner = createMockProcessRunner();
 
@@ -128,7 +109,11 @@ describe("ExtensionManager", () => {
     });
 
     it("returns needsInstall: false when all extensions are installed", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const installed = new Map([
         ["codehydra.sidekick", "0.0.1"],
         ["publisher.extension", "1.2.3"],
@@ -153,7 +138,11 @@ describe("ExtensionManager", () => {
     });
 
     it("detects outdated extensions", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const installed = new Map([
         ["codehydra.sidekick", "0.0.0"], // Wrong version
         ["publisher.extension", "1.2.3"], // Correct version
@@ -178,7 +167,11 @@ describe("ExtensionManager", () => {
     });
 
     it("returns error on manifest read failure", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem({ readFileError: new Error("File not found") });
       const processRunner = createMockProcessRunner();
 
@@ -197,7 +190,11 @@ describe("ExtensionManager", () => {
     });
 
     it("returns error on invalid manifest", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem({ manifestContent: "not valid json" });
       const processRunner = createMockProcessRunner();
 
@@ -215,7 +212,11 @@ describe("ExtensionManager", () => {
 
   describe("install", () => {
     it("installs specified extensions via code-server", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem();
       const processRunner = createMockProcessRunner();
 
@@ -237,7 +238,11 @@ describe("ExtensionManager", () => {
     });
 
     it("does nothing when no extensions to install", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem();
       const processRunner = createMockProcessRunner();
 
@@ -253,7 +258,11 @@ describe("ExtensionManager", () => {
     });
 
     it("throws ExtensionError when code-server fails", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem();
       const processRunner = createMockProcessRunner(1, "Installation failed");
 
@@ -270,7 +279,11 @@ describe("ExtensionManager", () => {
     });
 
     it("calls progress callback for each extension", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem();
       const processRunner = createMockProcessRunner();
       const onProgress = vi.fn();
@@ -290,7 +303,11 @@ describe("ExtensionManager", () => {
 
   describe("cleanOutdated", () => {
     it("removes outdated extension directories", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const installed = new Map([["codehydra.sidekick", "0.0.0"]]);
       const fs = createMockFileSystem({ installedExtensions: installed });
       const processRunner = createMockProcessRunner();
@@ -314,7 +331,11 @@ describe("ExtensionManager", () => {
 
   describe("setCodeServerBinaryPath", () => {
     it("uses updated binary path for subsequent installs", async () => {
-      const pathProvider = createMockPathProvider();
+      const pathProvider = createMockPathProvider({
+        dataRootDir: "/app",
+        assetsRootDir: "/app/assets",
+        runtimeRootDir: "/app",
+      });
       const fs = createMockFileSystem({ installedExtensions: new Map() });
       const processRunner = createMockProcessRunner();
 

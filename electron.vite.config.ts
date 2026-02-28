@@ -34,7 +34,7 @@ export default defineConfig({
       codehydraDefaults({ external: ["bufferutil", "utf-8-validate"] }),
       viteStaticCopy({
         targets: [
-          { src: "dist/extensions/*", dest: "assets" },
+          { src: "dist/extensions/*", dest: "assets/extensions" },
           { src: "resources/scripts/*", dest: "assets/scripts" },
           { src: "resources/bin/*", dest: "assets/bin" },
           { src: "dist/bin/*", dest: "assets/bin" },

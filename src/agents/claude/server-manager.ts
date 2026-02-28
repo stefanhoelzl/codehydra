@@ -138,7 +138,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Default hook handler path uses runtime dir (outside ASAR in production)
     // Use toString() for POSIX-style paths - works on all platforms including Windows
     this.hookHandlerPath =
-      deps.config?.hookHandlerPath ?? this.pathProvider.claudeCodeHookHandlerPath.toString();
+      deps.config?.hookHandlerPath ??
+      this.pathProvider.runtimePath("bin/claude-code-hook-handler.cjs").toString();
   }
 
   /**
@@ -708,7 +709,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   private async generateConfigFiles(workspacePath: string): Promise<void> {
     // Config directory is in the app data, not in the workspace
     // Using a hash of workspace path to make it unique
-    const configDir = new Path(this.pathProvider.dataRootDir, "claude", "configs");
+    const configDir = this.pathProvider.dataPath("claude/configs");
 
     // Generate a safe directory name from workspace path
     const safeWorkspaceName = this.getConfigDirName(workspacePath);
@@ -804,9 +805,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     const normalizedPath = new Path(workspacePath).toString();
     const safeWorkspaceName = this.getConfigDirName(normalizedPath);
     return new Path(
-      this.pathProvider.dataRootDir,
-      "claude",
-      "configs",
+      this.pathProvider.dataPath("claude/configs"),
       safeWorkspaceName,
       "codehydra-hooks.json"
     );
@@ -820,9 +819,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     const normalizedPath = new Path(workspacePath).toString();
     const safeWorkspaceName = this.getConfigDirName(normalizedPath);
     return new Path(
-      this.pathProvider.dataRootDir,
-      "claude",
-      "configs",
+      this.pathProvider.dataPath("claude/configs"),
       safeWorkspaceName,
       "codehydra-mcp.json"
     );
