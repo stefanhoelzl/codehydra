@@ -49,6 +49,8 @@ export interface WorkspaceState {
   ignoreNextSessionStart?: boolean;
   /** Path to the initial prompt file (for getInitialPromptPath) */
   initialPromptPath?: Path;
+  /** Path to the no-session marker file (for getNoSessionMarkerPath) */
+  noSessionMarkerPath?: Path;
 }
 
 /**
@@ -468,6 +470,60 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   getInitialPromptPath(workspacePath: string): Path | undefined {
     const normalizedPath = new Path(workspacePath).toString();
     return this.workspaces.get(normalizedPath)?.initialPromptPath;
+  }
+
+  /**
+   * Create a no-session marker file for a new workspace.
+   * The marker tells the wrapper to skip --continue on first launch.
+   * It is deleted by the wrapper on first invocation so subsequent runs
+   * will attempt session resume.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   */
+  async setNoSessionMarker(workspacePath: string): Promise<void> {
+    const normalizedPath = new Path(workspacePath).toString();
+    const state = this.workspaces.get(normalizedPath);
+
+    if (!state) {
+      this.logger.warn("setNoSessionMarker called for unknown workspace", {
+        workspacePath: normalizedPath,
+      });
+      return;
+    }
+
+    try {
+      const markerDir = this.pathProvider.tempPath("claude/no-session");
+      await this.fileSystem.mkdir(markerDir);
+
+      const safeWorkspaceName = this.getConfigDirName(normalizedPath);
+      const markerPath = new Path(markerDir, safeWorkspaceName);
+      await this.fileSystem.writeFile(markerPath, "");
+
+      state.noSessionMarkerPath = markerPath;
+
+      this.logger.debug("No-session marker created", {
+        workspacePath: normalizedPath,
+        path: markerPath.toString(),
+      });
+    } catch (error) {
+      this.logger.error(
+        "Failed to create no-session marker",
+        { workspacePath: normalizedPath },
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+
+  /**
+   * Get the path to the no-session marker file for a workspace.
+   * Returns undefined if no marker was set.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   * @returns Path to the marker file, or undefined
+   */
+  getNoSessionMarkerPath(workspacePath: string): Path | undefined {
+    const normalizedPath = new Path(workspacePath).toString();
+    return this.workspaces.get(normalizedPath)?.noSessionMarkerPath;
   }
 
   /**

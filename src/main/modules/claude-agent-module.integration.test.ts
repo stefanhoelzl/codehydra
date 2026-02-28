@@ -259,6 +259,8 @@ function createMockClaudeServerManager() {
     getHooksConfigPath: vi.fn().mockReturnValue({ toNative: () => "/hooks.json" }),
     getMcpConfigPath: vi.fn().mockReturnValue({ toNative: () => "/mcp.json" }),
     getInitialPromptPath: vi.fn().mockReturnValue(undefined),
+    setNoSessionMarker: vi.fn().mockResolvedValue(undefined),
+    getNoSessionMarkerPath: vi.fn().mockReturnValue(undefined),
   };
 }
 
@@ -798,8 +800,8 @@ describe("ClaudeAgentModule", () => {
       expect(mockSM.setInitialPrompt).toHaveBeenCalled();
     });
 
-    it("includes _CH_CLAUDE_CONTINUE env var for reopened workspaces", async () => {
-      const { dispatcher, module } = createTestSetup();
+    it("calls setNoSessionMarker for new workspaces", async () => {
+      const { dispatcher, module, mockSM } = createTestSetup();
       await activateModule(dispatcher, module);
 
       dispatcher.registerOperation(
@@ -810,7 +812,31 @@ describe("ClaudeAgentModule", () => {
         })
       );
 
-      const result = (await dispatcher.dispatch({
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+        },
+      } as unknown as OpenWorkspaceIntent);
+
+      expect(mockSM.setNoSessionMarker).toHaveBeenCalledWith("/test/workspace");
+    });
+
+    it("does not call setNoSessionMarker for existing workspaces", async () => {
+      const { dispatcher, module, mockSM } = createTestSetup();
+      await activateModule(dispatcher, module);
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+
+      await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
           projectId: "test-12345678",
@@ -823,35 +849,9 @@ describe("ClaudeAgentModule", () => {
             metadata: {},
           },
         },
-      } as unknown as OpenWorkspaceIntent)) as SetupHookResult | undefined;
+      } as unknown as OpenWorkspaceIntent);
 
-      expect(result).toBeDefined();
-      expect(result!.envVars).toHaveProperty("_CH_CLAUDE_CONTINUE", "1");
-    });
-
-    it("does not include _CH_CLAUDE_CONTINUE for new workspaces", async () => {
-      const { dispatcher, module } = createTestSetup();
-      await activateModule(dispatcher, module);
-
-      dispatcher.registerOperation(
-        "workspace:open",
-        new MinimalSetupOperation({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
-        })
-      );
-
-      const result = (await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectId: "test-12345678",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as unknown as OpenWorkspaceIntent)) as SetupHookResult | undefined;
-
-      expect(result).toBeDefined();
-      expect(result!.envVars).not.toHaveProperty("_CH_CLAUDE_CONTINUE");
+      expect(mockSM.setNoSessionMarker).not.toHaveBeenCalled();
     });
 
     it("returns undefined when inactive", async () => {

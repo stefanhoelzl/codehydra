@@ -148,6 +148,15 @@ export interface AgentServerManager {
    */
   setInitialPrompt?(workspacePath: string, config: NormalizedInitialPrompt): Promise<void>;
 
+  /**
+   * Create a no-session marker for a new workspace.
+   * Optional - only Claude Code implements this method.
+   * The marker signals the wrapper to skip --continue on first launch.
+   *
+   * @param workspacePath - Absolute path to the workspace
+   */
+  setNoSessionMarker?(workspacePath: string): Promise<void>;
+
   /** Configure MCP server connection for agent integration */
   setMcpConfig(config: McpConfig): void;
 

@@ -17,10 +17,11 @@
  * - _CH_MCP_PORT: Main MCP server port
  * - _CH_WORKSPACE_PATH: Workspace path for MCP header
  * - _CH_INITIAL_PROMPT_FILE: Path to initial prompt JSON file (optional)
+ * - _CH_CLAUDE_NO_SESSION_MARKER_PATH: Path to no-session marker (optional, new workspaces only)
  */
 
 import { spawnSync, execSync } from "node:child_process";
-import { readFileSync, unlinkSync, rmdirSync } from "node:fs";
+import { readFileSync, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { request } from "node:http";
 
@@ -260,11 +261,21 @@ export function runClaude(
 }
 
 /**
- * Check if the wrapper should attempt --continue for session resume.
- * Returns true when _CH_CLAUDE_CONTINUE=1 (reopened workspace with prior session).
+ * Consume the no-session marker file if present.
+ * Returns true when the marker exists (new workspace, no prior session),
+ * meaning --continue should be skipped. Deletes the marker so subsequent
+ * runs will attempt --continue.
  */
-function shouldContinue(): boolean {
-  return process.env._CH_CLAUDE_CONTINUE === "1";
+function consumeNoSessionMarker(): boolean {
+  const markerPath = process.env._CH_CLAUDE_NO_SESSION_MARKER_PATH;
+  if (!markerPath) return false;
+  if (!existsSync(markerPath)) return false;
+  try {
+    unlinkSync(markerPath);
+  } catch {
+    // Ignore deletion errors
+  }
+  return true;
 }
 
 /**
@@ -407,7 +418,7 @@ async function main(): Promise<never> {
   // Skip --continue attempt for new workspaces (no prior session to resume)
   const result = runClaude(claudeBinary, args, {
     shell: isWindows,
-    skipContinue: !shouldContinue(),
+    skipContinue: consumeNoSessionMarker(),
   });
 
   // 8. Notify wrapper end (Claude has exited)
@@ -438,5 +449,5 @@ export {
   getInitialPromptConfig,
   buildInitialPromptArgs,
   buildPermissionArgs,
-  shouldContinue,
+  consumeNoSessionMarker,
 };

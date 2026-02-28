@@ -908,4 +908,44 @@ describe("ClaudeCodeServerManager integration", () => {
       mockFileSystem.$.mkdtempShouldFail = false;
     });
   });
+
+  describe("no-session marker", () => {
+    it("setNoSessionMarker stores path retrievable via getNoSessionMarkerPath", async () => {
+      await serverManager.startServer("/workspace/feature-a");
+
+      await serverManager.setNoSessionMarker("/workspace/feature-a");
+
+      const path = serverManager.getNoSessionMarkerPath("/workspace/feature-a");
+      expect(path).toBeDefined();
+      expect(path?.toString()).toContain("claude/no-session/");
+    });
+
+    it("getNoSessionMarkerPath returns undefined when no marker set", async () => {
+      await serverManager.startServer("/workspace/feature-a");
+
+      const path = serverManager.getNoSessionMarkerPath("/workspace/feature-a");
+      expect(path).toBeUndefined();
+    });
+
+    it("getNoSessionMarkerPath returns undefined for unknown workspace", () => {
+      const path = serverManager.getNoSessionMarkerPath("/workspace/unknown");
+      expect(path).toBeUndefined();
+    });
+
+    it("setNoSessionMarker logs warning for unknown workspace", async () => {
+      await expect(serverManager.setNoSessionMarker("/workspace/unknown")).resolves.not.toThrow();
+    });
+
+    it("marker file is created as empty file", async () => {
+      await serverManager.startServer("/workspace/feature-a");
+
+      await serverManager.setNoSessionMarker("/workspace/feature-a");
+
+      const path = serverManager.getNoSessionMarkerPath("/workspace/feature-a");
+      expect(path).toBeDefined();
+
+      const content = await mockFileSystem.readFile(path!);
+      expect(content).toBe("");
+    });
+  });
 });

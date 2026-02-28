@@ -14,6 +14,7 @@ vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
   unlinkSync: vi.fn(),
   rmdirSync: vi.fn(),
+  existsSync: vi.fn().mockReturnValue(false),
 }));
 
 // Use dynamic import to ensure mock is set up before wrapper is loaded

@@ -175,6 +175,12 @@ export class ClaudeCodeProvider implements AgentProvider {
       envVars._CH_INITIAL_PROMPT_FILE = initialPromptPath.toNative();
     }
 
+    // Include no-session marker path if set (new workspaces only)
+    const noSessionMarkerPath = this.serverManager.getNoSessionMarkerPath(this.workspacePath);
+    if (noSessionMarkerPath !== undefined) {
+      envVars._CH_CLAUDE_NO_SESSION_MARKER_PATH = noSessionMarkerPath.toNative();
+    }
+
     return envVars;
   }
 
