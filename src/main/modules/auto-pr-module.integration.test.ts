@@ -646,4 +646,111 @@ describe("AutoPrModule Integration", () => {
       });
     });
   });
+
+  describe("manual workspace deletion", () => {
+    it("does not recreate workspace after manual deletion", async () => {
+      const { dispatcher, httpClient, openProjectOp, openWorkspaceOp } = createTestSetup();
+
+      // First poll: workspace gets created
+      httpClient.setResponse(SEARCH_URL, {
+        body: searchResponse([
+          {
+            number: 42,
+            htmlUrl: "https://github.com/org/repo/pull/42",
+            repositoryUrl: "https://api.github.com/repos/org/repo",
+          },
+        ]),
+      });
+      httpClient.setResponse(PR_DETAIL_URL, {
+        body: prDetailResponse("feature-login", "main"),
+      });
+      httpClient.setResponse(REPO_DETAIL_URL, {
+        body: repoDetailResponse("https://github.com/org/repo.git"),
+      });
+
+      await dispatcher.dispatch(startIntent());
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+
+      // User manually deletes the workspace (dispatch triggers workspace:deleted event)
+      await dispatcher.dispatch({
+        type: INTENT_DELETE_WORKSPACE,
+        payload: {
+          workspacePath: "/home/user/projects/repo/pr-42/feature-login",
+          keepBranch: false,
+          force: true,
+          removeWorktree: true,
+        },
+      } as DeleteWorkspaceIntent);
+
+      // Reset tracking and set up second poll with same PR
+      openProjectOp.dispatched.length = 0;
+      openWorkspaceOp.dispatched.length = 0;
+      httpClient.setResponse(SEARCH_URL, {
+        body: searchResponse([
+          {
+            number: 42,
+            htmlUrl: "https://github.com/org/repo/pull/42",
+            repositoryUrl: "https://api.github.com/repos/org/repo",
+          },
+        ]),
+      });
+
+      // Trigger manual poll via shutdown + restart
+      await dispatcher.dispatch(shutdownIntent());
+      await dispatcher.dispatch(startIntent());
+
+      // Workspace should NOT be recreated
+      expect(openProjectOp.dispatched).toHaveLength(0);
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+    });
+
+    it("cleans up null entry when PR disappears from GitHub", async () => {
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          "https://github.com/org/repo/pull/42": null,
+        },
+      });
+
+      const { dispatcher, httpClient, deleteWorkspaceOp, fs } = createTestSetup({ existingState });
+
+      // Poll returns empty — PR no longer requesting review
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      await dispatcher.dispatch(startIntent());
+
+      // Should NOT dispatch a delete (workspace already gone)
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
+
+      // State file should have empty workspaces (entry cleaned up)
+      expect(fs).toHaveFileContaining("/data/auto-pr-workspaces.json", '"workspaces": {}');
+    });
+
+    it("loads null entry from persisted state and skips PR", async () => {
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          "https://github.com/org/repo/pull/42": null,
+        },
+      });
+
+      const { dispatcher, httpClient, openProjectOp } = createTestSetup({ existingState });
+
+      // Poll returns the same PR
+      httpClient.setResponse(SEARCH_URL, {
+        body: searchResponse([
+          {
+            number: 42,
+            htmlUrl: "https://github.com/org/repo/pull/42",
+            repositoryUrl: "https://api.github.com/repos/org/repo",
+          },
+        ]),
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      // Should NOT create a workspace
+      expect(openProjectOp.dispatched).toHaveLength(0);
+    });
+  });
 });

@@ -56,7 +56,7 @@ interface AutoPrWorkspaceEntry {
 
 interface AutoPrState {
   readonly version: 1;
-  readonly workspaces: Record<string, AutoPrWorkspaceEntry>;
+  readonly workspaces: Record<string, AutoPrWorkspaceEntry | null>;
 }
 
 // =============================================================================
@@ -407,19 +407,25 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       openPrUrls.add(prUrl);
     }
 
-    // Detect disappeared PRs → delete workspaces
+    // Detect disappeared PRs → delete workspaces or clean up dismissed entries
     const disappearedUrls = Object.keys(state.workspaces).filter((url) => !openPrUrls.has(url));
     for (const prUrl of disappearedUrls) {
       const entry = state.workspaces[prUrl];
       if (entry) {
         await deletePrWorkspace(prUrl, entry);
+      } else {
+        // null entry (dismissed by user) — just remove the key
+        const remaining = Object.fromEntries(
+          Object.entries(state.workspaces).filter(([key]) => key !== prUrl)
+        );
+        state = { ...state, workspaces: remaining };
       }
     }
 
     // Detect new PRs → create workspaces
     for (const item of items) {
       const prUrl = item.pull_request?.html_url ?? item.html_url;
-      if (state.workspaces[prUrl]) continue; // already tracked
+      if (prUrl in state.workspaces) continue; // tracked (active or dismissed)
 
       const repo = repoFromApiUrl(item.repository_url);
       const prDetail = await fetchPrDetail(repo, item.number);
@@ -477,9 +483,10 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
   async function activate(): Promise<void> {
     if (!configEnabled) {
-      deps.logger.debug("experimental.auto-pr-workspaces is disabled");
       return;
     }
+
+    deps.logger.info("experimental.auto-pr-workspaces is enabled");
 
     token = await acquireToken();
     if (!token) return;
@@ -561,15 +568,15 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       },
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-        // If a tracked PR workspace is manually deleted, remove from mapping
+        // If a tracked PR workspace is deleted, set to null to prevent re-creation
         for (const [prUrl, entry] of Object.entries(state.workspaces)) {
-          if (entry.workspacePath === workspacePath) {
-            const filtered = Object.fromEntries(
-              Object.entries(state.workspaces).filter(([key]) => key !== prUrl)
-            );
-            state = { ...state, workspaces: filtered };
+          if (entry?.workspacePath === workspacePath) {
+            state = {
+              ...state,
+              workspaces: { ...state.workspaces, [prUrl]: null },
+            };
             void saveState();
-            deps.logger.info("Removed manually deleted PR workspace from tracking", {
+            deps.logger.info("Marked PR workspace as dismissed", {
               prUrl,
               workspaceName: entry.workspaceName,
             });
