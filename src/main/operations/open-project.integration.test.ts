@@ -31,6 +31,7 @@ import {
   OPEN_PROJECT_OPERATION_ID,
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
+  EVENT_PROJECT_OPEN_FAILED,
 } from "./open-project";
 import type {
   OpenProjectIntent,
@@ -40,6 +41,7 @@ import type {
   RegisterHookInput,
   RegisterHookResult,
   ProjectOpenedEvent,
+  ProjectOpenFailedEvent,
 } from "./open-project";
 import {
   OpenWorkspaceOperation,
@@ -1046,5 +1048,126 @@ describe("OpenProjectOperation", () => {
     await harness.dispatcher.dispatch(intent);
 
     expect(selectFolderSpy).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // project:open-failed event
+  // ---------------------------------------------------------------------------
+
+  it("emits project:open-failed on error with reason and intent-origin fields", async () => {
+    const harness = createTestHarness({ validateThrows: true });
+
+    const failedEvents: DomainEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_PROJECT_OPEN_FAILED, (event) => {
+      failedEvents.push(event);
+    });
+
+    const intent = buildOpenIntent({ path: new Path("/invalid/path") });
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Not a valid git repository");
+
+    expect(failedEvents).toHaveLength(1);
+    const event = failedEvents[0] as ProjectOpenFailedEvent;
+    expect(event.type).toBe(EVENT_PROJECT_OPEN_FAILED);
+    expect(event.payload.reason).toBe("Not a valid git repository");
+    expect(event.payload.path).toEqual(new Path("/invalid/path"));
+    expect(event.payload.git).toBeUndefined();
+  });
+
+  it("emits project:open-failed on clone error with git field", async () => {
+    const harness = createTestHarness({ cloneThrows: true });
+
+    const failedEvents: DomainEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_PROJECT_OPEN_FAILED, (event) => {
+      failedEvents.push(event);
+    });
+
+    const intent = buildOpenIntent({ git: "https://bad-host.example/bad/repo.git" });
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow("Failed to clone");
+
+    expect(failedEvents).toHaveLength(1);
+    const event = failedEvents[0] as ProjectOpenFailedEvent;
+    expect(event.payload.reason).toContain("Failed to clone");
+    expect(event.payload.git).toBe("https://bad-host.example/bad/repo.git");
+    expect(event.payload.path).toBeUndefined();
+  });
+
+  it("emits project:open-failed with already-open reason when project is already open", async () => {
+    // Create harness where the resolve module signals alreadyOpen
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
+    dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
+    dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+
+    // Resolve module that always returns alreadyOpen: true
+    const alreadyOpenModule: IntentModule = {
+      name: "test",
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          resolve: {
+            handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+              const intent = ctx.intent as OpenProjectIntent;
+              const { path } = intent.payload;
+              if (!path) return {};
+              return { projectPath: path.toString(), alreadyOpen: true };
+            },
+          },
+          register: {
+            handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+              const { projectPath: p } = ctx as RegisterHookInput;
+              return { projectId: testProjectId(p), name: new Path(p).basename };
+            },
+          },
+          discover: {
+            handler: async (): Promise<DiscoverHookResult> => {
+              return { workspaces: [] };
+            },
+          },
+        },
+      },
+    };
+
+    dispatcher.registerModule(alreadyOpenModule);
+
+    const openedEvents: DomainEvent[] = [];
+    const failedEvents: DomainEvent[] = [];
+    dispatcher.subscribe(EVENT_PROJECT_OPENED, (event) => {
+      openedEvents.push(event);
+    });
+    dispatcher.subscribe(EVENT_PROJECT_OPEN_FAILED, (event) => {
+      failedEvents.push(event);
+    });
+
+    const result = await dispatcher.dispatch(buildOpenIntent({ path: new Path(PROJECT_PATH) }));
+
+    // Returns project data (it's not a hard failure)
+    expect(result).toBeDefined();
+
+    // No project:opened event (already open)
+    expect(openedEvents).toHaveLength(0);
+
+    // project:open-failed emitted with already-open reason
+    expect(failedEvents).toHaveLength(1);
+    const event = failedEvents[0] as ProjectOpenFailedEvent;
+    expect(event.payload.reason).toBe("already-open");
+    expect(event.payload.path).toEqual(new Path(PROJECT_PATH));
+  });
+
+  it("project:opened event includes intent-origin fields", async () => {
+    const harness = createTestHarness();
+
+    const receivedEvents: DomainEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_PROJECT_OPENED, (event) => {
+      receivedEvents.push(event);
+    });
+
+    await harness.dispatcher.dispatch(buildOpenIntent({ path: new Path(PROJECT_PATH) }));
+
+    expect(receivedEvents).toHaveLength(1);
+    const event = receivedEvents[0] as ProjectOpenedEvent;
+    expect(event.payload.project.id).toBe(PROJECT_ID);
+    expect(event.payload.path).toEqual(new Path(PROJECT_PATH));
+    expect(event.payload.git).toBeUndefined();
   });
 });
