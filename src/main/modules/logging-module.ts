@@ -18,7 +18,9 @@ import type { BuildInfo } from "../../services/platform/build-info";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { RegisterConfigResult } from "../operations/app-start";
+import type { LogFormat } from "../../services/logging/types";
 import {
+  parseLogFormat,
   parseLogLevelSpec,
   parseLogOutput,
   splitLogLevelSpec,
@@ -69,6 +71,12 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
                 parse: parseLogOutput,
                 validate: (v: unknown) => (typeof v === "string" ? parseLogOutput(v) : undefined),
               },
+              {
+                name: "log.format",
+                default: "text",
+                parse: parseLogFormat,
+                validate: (v: unknown) => (typeof v === "string" ? parseLogFormat(v) : undefined),
+              },
             ],
           }),
         },
@@ -103,15 +111,21 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
         deps.logger.info("Config updated", context);
 
         // Reconfigure logging when any log-related value changes
-        if (values["log.level"] !== undefined || values["log.output"] !== undefined) {
+        if (
+          values["log.level"] !== undefined ||
+          values["log.output"] !== undefined ||
+          values["log.format"] !== undefined
+        ) {
           const levelSpec = (values["log.level"] as string | undefined) ?? "warn";
           const { level, filter } = splitLogLevelSpec(levelSpec);
           const output = (values["log.output"] as string | undefined) ?? "file";
+          const logFormat = ((values["log.format"] as string | undefined) ?? "text") as LogFormat;
           deps.loggingService.configure({
             logLevel: level,
             logFile: output.includes("file"),
             logConsole: output.includes("console"),
             allowedLoggers: filter,
+            logFormat,
           });
         }
       },

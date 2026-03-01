@@ -159,4 +159,53 @@ describe("LoggingModule Integration", () => {
       "telemetry.distinct-id": null,
     });
   });
+
+  it("reconfigures logging when log.format changes", () => {
+    const deps = createDeps();
+    const module = createLoggingModule(deps);
+
+    const handler = module.events![EVENT_CONFIG_UPDATED]!;
+    handler({
+      type: EVENT_CONFIG_UPDATED,
+      payload: { values: { "log.level": "debug", "log.output": "file", "log.format": "json" } },
+    } as ConfigUpdatedEvent);
+
+    expect(deps.loggingService.configure).toHaveBeenCalledWith({
+      logLevel: "debug",
+      logFile: true,
+      logConsole: false,
+      allowedLoggers: undefined,
+      logFormat: "json",
+    });
+  });
+
+  it("reconfigures with logFormat when only log.format changes", () => {
+    const deps = createDeps();
+    const module = createLoggingModule(deps);
+
+    const handler = module.events![EVENT_CONFIG_UPDATED]!;
+    handler({
+      type: EVENT_CONFIG_UPDATED,
+      payload: { values: { "log.format": "json" } },
+    } as ConfigUpdatedEvent);
+
+    expect(deps.loggingService.configure).toHaveBeenCalledWith(
+      expect.objectContaining({ logFormat: "json" })
+    );
+  });
+
+  it("includes logFormat in reconfigure when log.level changes", () => {
+    const deps = createDeps();
+    const module = createLoggingModule(deps);
+
+    const handler = module.events![EVENT_CONFIG_UPDATED]!;
+    handler({
+      type: EVENT_CONFIG_UPDATED,
+      payload: { values: { "log.level": "info" } },
+    } as ConfigUpdatedEvent);
+
+    expect(deps.loggingService.configure).toHaveBeenCalledWith(
+      expect.objectContaining({ logFormat: "text" })
+    );
+  });
 });

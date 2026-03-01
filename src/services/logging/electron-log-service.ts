@@ -16,6 +16,7 @@ import type { PathProvider } from "../platform/path-provider";
 import type {
   Logger,
   LoggerName,
+  LogFormat,
   LoggingConfigureOptions,
   LoggingService,
   LogContext,
@@ -133,6 +134,125 @@ export function parseLogOutput(raw: string | undefined): string | undefined {
   // Deduplicate and sort for canonical form
   const unique = [...new Set(tokens)].sort() as LogOutput[];
   return unique.join(",");
+}
+
+/**
+ * Validate and normalize a log format string.
+ *
+ * @param raw - Raw string value (e.g., "text", "json")
+ * @returns Normalized format string, or undefined if invalid
+ */
+export function parseLogFormat(raw: string | undefined): LogFormat | undefined {
+  if (!raw) return undefined;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "text" || normalized === "json") {
+    return normalized;
+  }
+  return undefined;
+}
+
+/**
+ * Text format template for electron-log transports.
+ */
+const TEXT_FORMAT = "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}";
+
+/**
+ * Create a format function for JSON log output.
+ *
+ * The returned function receives electron-log's FormatParams and produces
+ * a single JSONL line with structured fields:
+ * - timestamp, level, scope, message
+ * - context: first non-Error object in data[1:]
+ * - error: first Error instance in data[1:] (message + stack)
+ *
+ * electron-log Format signature: (params: FormatParams) => any[]
+ * FormatParams: { data, level, logger, message, transport }
+ * message: LogMessage { data, date, level, scope?, ... }
+ */
+function createJsonFormatFn(): (params: {
+  message: { date: Date; level: string; scope?: string; data: unknown[] };
+}) => string[] {
+  return ({ message }) => {
+    const entry: Record<string, unknown> = {
+      timestamp: message.date.toISOString(),
+      level: message.level,
+    };
+
+    if (message.scope) {
+      entry.scope = message.scope;
+    }
+
+    entry.message = typeof message.data[0] === "string" ? message.data[0] : String(message.data[0]);
+
+    // Find context and error in remaining data arguments
+    for (let i = 1; i < message.data.length; i++) {
+      const arg = message.data[i];
+      if (arg instanceof Error) {
+        entry.error = { message: arg.message, stack: arg.stack };
+      } else if (arg !== null && typeof arg === "object" && !Array.isArray(arg)) {
+        entry.context = arg;
+      }
+    }
+
+    return [JSON.stringify(entry)];
+  };
+}
+
+/**
+ * JSON-mode logger that passes message and context as separate arguments
+ * to the electron-log scope, so the format function can include context
+ * as a structured JSON field.
+ */
+class JsonLogLogger implements Logger {
+  private readonly scope: ElectronLogScope;
+
+  constructor(scope: ElectronLogScope) {
+    this.scope = scope;
+  }
+
+  silly(message: string, context?: LogContext): void {
+    if (context) {
+      this.scope.silly(message, context);
+    } else {
+      this.scope.silly(message);
+    }
+  }
+
+  debug(message: string, context?: LogContext): void {
+    if (context) {
+      this.scope.debug(message, context);
+    } else {
+      this.scope.debug(message);
+    }
+  }
+
+  info(message: string, context?: LogContext): void {
+    if (context) {
+      this.scope.info(message, context);
+    } else {
+      this.scope.info(message);
+    }
+  }
+
+  warn(message: string, context?: LogContext): void {
+    if (context) {
+      this.scope.warn(message, context);
+    } else {
+      this.scope.warn(message);
+    }
+  }
+
+  error(message: string, context?: LogContext, error?: Error): void {
+    if (context && error) {
+      this.scope.error(message, context, error);
+    } else if (error) {
+      this.scope.error(message, error);
+    } else if (context) {
+      this.scope.error(message, context);
+    } else {
+      this.scope.error(message);
+    }
+  }
 }
 
 /**
@@ -348,6 +468,7 @@ export class ElectronLogService implements LoggingService {
   private readonly loggers = new Map<LoggerName, QueuedLogger>();
   private configured = false;
   private logLevel: LogLevel = "warn";
+  private logFormat: LogFormat = "text";
   private allowedLoggers: Set<LoggerName> | undefined;
 
   constructor(pathProvider: PathProvider) {
@@ -361,22 +482,29 @@ export class ElectronLogService implements LoggingService {
     log.transports.file.resolvePathFn = (): string => join(logsDir, filename);
 
     // Format: [timestamp] [level] [scope] message
-    log.transports.file.format = "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}";
-    log.transports.console.format = "[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] {scope} {text}";
+    log.transports.file.format = TEXT_FORMAT;
+    log.transports.console.format = TEXT_FORMAT;
   }
 
   configure(options: LoggingConfigureOptions): void {
     this.logLevel = options.logLevel;
+    this.logFormat = options.logFormat;
     this.allowedLoggers = options.allowedLoggers;
 
     // Enable transports with the configured level
     log.transports.file.level = options.logFile ? this.logLevel : false;
     log.transports.console.level = options.logConsole ? this.logLevel : false;
 
+    // Set transport format based on log format
+    const format = this.logFormat === "json" ? createJsonFormatFn() : TEXT_FORMAT;
+    log.transports.file.format = format;
+    log.transports.console.format = format;
+
     // Activate all existing queued loggers
     for (const [name, queued] of this.loggers) {
       const scope = log.scope(name);
-      const inner = new ElectronLogLogger(scope);
+      const inner =
+        this.logFormat === "json" ? new JsonLogLogger(scope) : new ElectronLogLogger(scope);
       const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
       queued.activate(filtered);
     }
@@ -400,7 +528,8 @@ export class ElectronLogService implements LoggingService {
     // If already configured, activate immediately
     if (this.configured) {
       const scope = log.scope(name);
-      const inner = new ElectronLogLogger(scope);
+      const inner =
+        this.logFormat === "json" ? new JsonLogLogger(scope) : new ElectronLogLogger(scope);
       const filtered = new FilteredLogger(inner, this.allowedLoggers, name);
       queued.activate(filtered);
     }

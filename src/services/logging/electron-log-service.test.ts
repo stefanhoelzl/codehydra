@@ -15,11 +15,11 @@ const mockInitialize = vi.fn();
 const mockTransports = {
   file: {
     level: undefined as string | false | undefined,
-    format: undefined as string | undefined,
+    format: undefined as string | ((...args: unknown[]) => string) | undefined,
   },
   console: {
     level: undefined as string | false | undefined,
-    format: undefined as string | undefined,
+    format: undefined as string | ((...args: unknown[]) => string) | undefined,
   },
 };
 
@@ -56,6 +56,7 @@ describe("ElectronLogService", () => {
     logFile: true,
     logConsole: false,
     allowedLoggers: undefined,
+    logFormat: "text",
   };
 
   async function createService(options?: {
@@ -449,6 +450,7 @@ describe("ElectronLogService", () => {
         logFile: true,
         logConsole: false,
         allowedLoggers: undefined,
+        logFormat: "text",
       });
       expect(mockTransports.file.level).toBe("debug");
 
@@ -457,6 +459,7 @@ describe("ElectronLogService", () => {
         logFile: true,
         logConsole: true,
         allowedLoggers: undefined,
+        logFormat: "text",
       });
       expect(mockTransports.file.level).toBe("warn");
       expect(mockTransports.console.level).toBe("warn");
@@ -643,6 +646,117 @@ describe("ElectronLogService", () => {
       const { parseLogOutput } = await import("./electron-log-service");
       expect(parseLogOutput(undefined)).toBeUndefined();
       expect(parseLogOutput("")).toBeUndefined();
+    });
+  });
+
+  describe("parseLogFormat", () => {
+    it("parses valid format values", async () => {
+      const { parseLogFormat } = await import("./electron-log-service");
+      expect(parseLogFormat("text")).toBe("text");
+      expect(parseLogFormat("json")).toBe("json");
+    });
+
+    it("handles case-insensitive input", async () => {
+      const { parseLogFormat } = await import("./electron-log-service");
+      expect(parseLogFormat("TEXT")).toBe("text");
+      expect(parseLogFormat("JSON")).toBe("json");
+      expect(parseLogFormat("Json")).toBe("json");
+    });
+
+    it("returns undefined for invalid input", async () => {
+      const { parseLogFormat } = await import("./electron-log-service");
+      expect(parseLogFormat("xml")).toBeUndefined();
+      expect(parseLogFormat("csv")).toBeUndefined();
+    });
+
+    it("returns undefined for empty or undefined input", async () => {
+      const { parseLogFormat } = await import("./electron-log-service");
+      expect(parseLogFormat(undefined)).toBeUndefined();
+      expect(parseLogFormat("")).toBeUndefined();
+    });
+  });
+
+  describe("JSON format mode", () => {
+    it("sets function format on transports", async () => {
+      await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logFormat: "json" },
+      });
+
+      expect(typeof mockTransports.file.format).toBe("function");
+      expect(typeof mockTransports.console.format).toBe("function");
+    });
+
+    it("sets string format on transports in text mode", async () => {
+      await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logFormat: "text" },
+      });
+
+      expect(typeof mockTransports.file.format).toBe("string");
+      expect(typeof mockTransports.console.format).toBe("string");
+    });
+
+    it("passes message and context separately to scope", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const service = await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logFormat: "json" },
+      });
+      const logger = service.createLogger("git");
+
+      logger.info("Clone complete", { repo: "myrepo", branch: "main" });
+
+      expect(scopeLogger.info).toHaveBeenCalledWith("Clone complete", {
+        repo: "myrepo",
+        branch: "main",
+      });
+    });
+
+    it("passes only message to scope without context", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const service = await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logFormat: "json" },
+      });
+      const logger = service.createLogger("app");
+
+      logger.info("Services started");
+
+      expect(scopeLogger.info).toHaveBeenCalledWith("Services started");
+    });
+
+    it("passes message, context, and error separately for error level", async () => {
+      const scopeLogger = {
+        silly: vi.fn(),
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      };
+      mockScope.mockReturnValue(scopeLogger);
+
+      const service = await createService({
+        configureOptions: { ...DEFAULT_OPTIONS, logFormat: "json" },
+      });
+      const logger = service.createLogger("app");
+
+      const testError = new Error("Test error");
+      logger.error("Failed", { op: "test" }, testError);
+
+      expect(scopeLogger.error).toHaveBeenCalledWith("Failed", { op: "test" }, testError);
     });
   });
 });

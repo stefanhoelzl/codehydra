@@ -21,6 +21,7 @@ const DEFAULT_OPTIONS: LoggingConfigureOptions = {
   logFile: true,
   logConsole: false,
   allowedLoggers: undefined,
+  logFormat: "text",
 };
 
 /**
