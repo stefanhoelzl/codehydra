@@ -31,7 +31,8 @@ import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
 import type { UIMode } from "../../shared/ipc";
 import { SILENT_LOGGER } from "../../services/logging";
 
-import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-utils";
+import { ApiIpcChannels } from "../../shared/ipc";
+import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Behavioral Mocks
@@ -62,7 +63,7 @@ function createMockViewManager(initialMode: UIMode = "workspace"): MockViewManag
 interface TestSetup {
   dispatcher: Dispatcher;
   viewManager: MockViewManager;
-  mockApiRegistry: MockApiRegistry;
+  sendToUI: ReturnType<typeof vi.fn>;
 }
 
 function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boolean }): TestSetup {
@@ -91,18 +92,16 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
   };
 
   // Optionally wire IpcEventBridge
-  const mockApiRegistry = createMockRegistry();
+  const sendToUI = vi.fn();
   const modules: IntentModule[] = [setModeModule];
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry,
-      getApi: () => {
-        throw new Error("not wired");
-      },
-      sendToUI: vi.fn(),
+      ipcLayer: createBehavioralIpcLayer(),
+      sendToUI,
       pluginServer: null,
       logger: SILENT_LOGGER,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      readyHandler: vi.fn(),
       agentStatusManager: {
         getStatus: vi.fn(),
       } as unknown as IpcEventBridgeDeps["agentStatusManager"],
@@ -112,7 +111,7 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
 
   for (const m of modules) dispatcher.registerModule(m);
 
-  return { dispatcher, viewManager, mockApiRegistry };
+  return { dispatcher, viewManager, sendToUI };
 }
 
 // =============================================================================
@@ -245,16 +244,16 @@ describe("SetMode Operation", () => {
   });
 
   describe("IpcEventBridge forwarding (#13)", () => {
-    it("forwards ui:mode-changed to apiRegistry.emit", async () => {
+    it("forwards ui:mode-changed to sendToUI", async () => {
       const setup = createTestSetup({
         initialMode: "workspace",
         withIpcEventBridge: true,
       });
-      const { dispatcher, mockApiRegistry } = setup;
+      const { dispatcher, sendToUI } = setup;
 
       await dispatcher.dispatch(setModeIntent("shortcut"));
 
-      expect(mockApiRegistry.emit).toHaveBeenCalledWith("ui:mode-changed", {
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.UI_MODE_CHANGED, {
         mode: "shortcut",
         previousMode: "workspace",
       });
@@ -265,11 +264,11 @@ describe("SetMode Operation", () => {
         initialMode: "shortcut",
         withIpcEventBridge: true,
       });
-      const { dispatcher, mockApiRegistry } = setup;
+      const { dispatcher, sendToUI } = setup;
 
       await dispatcher.dispatch(setModeIntent("workspace"));
 
-      expect(mockApiRegistry.emit).toHaveBeenCalledWith("ui:mode-changed", {
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.UI_MODE_CHANGED, {
         mode: "workspace",
         previousMode: "shortcut",
       });
@@ -280,7 +279,7 @@ describe("SetMode Operation", () => {
         initialMode: "workspace",
         withIpcEventBridge: true,
       });
-      const { dispatcher, mockApiRegistry } = setup;
+      const { dispatcher, sendToUI } = setup;
 
       const cancelInterceptor: IntentInterceptor = {
         id: "cancel-all",
@@ -292,7 +291,7 @@ describe("SetMode Operation", () => {
 
       await dispatcher.dispatch(setModeIntent("shortcut"));
 
-      expect(mockApiRegistry.emit).not.toHaveBeenCalled();
+      expect(sendToUI).not.toHaveBeenCalled();
     });
   });
 });

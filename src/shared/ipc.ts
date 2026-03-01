@@ -6,6 +6,8 @@
  * Validation schemas are in src/main/ipc/validation.ts.
  */
 
+import type { InitialPrompt } from "./api/types";
+
 // ============ Branded Path Types ============
 
 declare const ProjectPathBrand: unique symbol;
@@ -67,10 +69,93 @@ export interface UIModeChangedEvent {
   readonly previousMode: UIMode;
 }
 
+// ============ IPC Handler Payload Types ============
+// Payload types for IPC handlers registered in the IpcEventBridge module.
+
+/** Methods with no input - use empty object {} */
+export type EmptyPayload = object;
+
+/** projects.open */
+export interface ProjectOpenPayload {
+  readonly path?: string;
+}
+
+/** projects.close */
+export interface ProjectClosePayload {
+  readonly projectPath: string;
+  /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
+  readonly removeLocalRepo?: boolean;
+}
+
+/** projects.clone */
+export interface ProjectClonePayload {
+  readonly url: string;
+}
+
+/** projects.fetchBases */
+export interface ProjectPathPayload {
+  readonly projectPath: string;
+}
+
+/** workspaces.create */
+export interface WorkspaceCreatePayload {
+  readonly projectPath?: string;
+  readonly name: string;
+  readonly base: string;
+  /** Optional initial prompt to send after workspace is created */
+  readonly initialPrompt?: InitialPrompt;
+  /** If true, steal focus from current workspace. If false, don't steal focus but still
+   *  switch when no workspace is active. Default: switch (undefined treated as true). */
+  readonly stealFocus?: boolean;
+  /** Workspace path of the calling workspace (Plugin API / MCP alternative to projectId) */
+  readonly callerWorkspacePath?: string;
+}
+
+/** workspaces.remove */
+export interface WorkspaceRemovePayload {
+  readonly workspacePath: string;
+  readonly keepBranch?: boolean;
+  /** If true, don't switch away from this workspace when it's active. Used for retry. */
+  readonly skipSwitch?: boolean;
+  /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
+  readonly force?: boolean;
+  /** PIDs from a previous failed attempt. Flush hook kills these before re-attempting delete. */
+  readonly blockingPids?: readonly number[];
+}
+
+/** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata, workspaces.restartAgentServer */
+export interface WorkspaceGetPayload {
+  readonly workspacePath: string;
+}
+
+/** workspaces.setMetadata */
+export interface WorkspaceSetMetadataPayload {
+  readonly workspacePath: string;
+  readonly key: string;
+  readonly value: string | null;
+}
+
+/** workspaces.executeCommand */
+export interface WorkspaceExecuteCommandPayload {
+  readonly workspacePath: string;
+  readonly command: string;
+  readonly args?: readonly unknown[];
+}
+
+/** ui.switchWorkspace */
+export interface UiSwitchWorkspacePayload {
+  readonly workspacePath: string;
+  readonly focus?: boolean;
+}
+
+/** ui.setMode */
+export interface UiSetModePayload {
+  readonly mode: UIMode;
+}
+
 // ============ API Layer IPC Channels ============
-// All IPC channels use the api: prefix and work with ICodeHydraApi.
-// Internal events (e.g., "project:opened") are mapped to IPC channels (e.g., "api:project:opened")
-// by the preload script's on() function and wireApiEvents() in api-handlers.ts.
+// All IPC channels use the api: prefix.
+// Domain events are mapped to IPC channels by the IpcEventBridge module.
 
 /**
  * IPC channel names for main↔renderer communication.

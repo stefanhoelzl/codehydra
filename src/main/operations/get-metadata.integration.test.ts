@@ -43,11 +43,11 @@ import type {
 } from "./resolve-project";
 import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
-import type { IApiRegistry } from "../api/registry-types";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
 import { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import { SILENT_LOGGER } from "../../services/logging";
+import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 import { Path } from "../../services/platform/path";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
@@ -61,28 +61,6 @@ import type { HookContext } from "../intents/infrastructure/operation";
 
 const PROJECT_ROOT = new Path("/project");
 const WORKSPACES_DIR = new Path("/workspaces");
-
-// =============================================================================
-// Mock ApiRegistry for IpcEventBridge
-// =============================================================================
-
-interface MockApiRegistry {
-  emit: ReturnType<typeof vi.fn>;
-  register: ReturnType<typeof vi.fn>;
-  on: ReturnType<typeof vi.fn>;
-  getInterface: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-}
-
-function createMockApiRegistry(): MockApiRegistry {
-  return {
-    emit: vi.fn(),
-    register: vi.fn(),
-    on: vi.fn().mockReturnValue(() => {}),
-    getInterface: vi.fn(),
-    dispose: vi.fn(),
-  };
-}
 
 // =============================================================================
 // Test Setup Helper
@@ -204,16 +182,13 @@ function createTestSetup(): TestSetup {
   };
 
   // Wire IpcEventBridge
-  const mockApiRegistry = createMockApiRegistry();
   const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: mockApiRegistry as unknown as IApiRegistry,
-    getApi: () => {
-      throw new Error("not wired");
-    },
+    ipcLayer: createBehavioralIpcLayer(),
     sendToUI: vi.fn(),
     pluginServer: null,
     logger: SILENT_LOGGER,
     dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    readyHandler: vi.fn(),
     agentStatusManager: {
       getStatus: vi.fn(),
     } as unknown as IpcEventBridgeDeps["agentStatusManager"],

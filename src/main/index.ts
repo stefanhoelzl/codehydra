@@ -90,7 +90,6 @@ import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
 import { registerLogHandlers } from "./ipc";
-import { ApiRegistry } from "./api/registry";
 import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
@@ -168,8 +167,6 @@ import {
   INTENT_RESOLVE_WORKSPACE,
 } from "./operations/resolve-workspace";
 import { ResolveProjectOperation, INTENT_RESOLVE_PROJECT } from "./operations/resolve-project";
-import type { ICodeHydraApi } from "../shared/api/interfaces";
-import { ApiIpcChannels } from "../shared/ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
 import { AsyncWatcher } from "../services/platform/async-watcher";
@@ -390,9 +387,6 @@ const badgeManager = new BadgeManager(
   loggingService.createLogger("badge")
 );
 
-// Mutable reference: set after module wiring + registry.getInterface(), read by lazy closures
-let codeHydraApi: ICodeHydraApi | null = null;
-
 // McpServerManager with handlers factory that dispatches intents directly
 const mcpServerManager = new McpServerManager(
   networkLayer,
@@ -590,12 +584,7 @@ const shortcutModule = createShortcutModule({
   isDevelopment: buildInfo.isDevelopment,
 });
 
-// 9. ApiRegistry + Operation registration
-
-const registry = new ApiRegistry({
-  logger: apiLogger,
-  ipcLayer,
-});
+// 9. Operation registration
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
@@ -622,23 +611,18 @@ dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperati
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
 
-// Create IPC event bridge (registers all API bridge handlers on the registry)
+// Create IPC event bridge (registers all IPC handlers directly on ipcLayer)
 const ipcEventBridge = createIpcEventBridge({
-  apiRegistry: registry,
-  getApi: () => {
-    if (!codeHydraApi) {
-      throw new Error("API not initialized");
-    }
-    return codeHydraApi;
-  },
+  ipcLayer,
   sendToUI: (...args) => viewManager.sendToUI(...args),
   pluginServer,
   logger: apiLogger,
   dispatcher,
+  readyHandler,
   agentStatusManager,
 });
 
-// 10. Register all modules + get API interface
+// 10. Register all modules
 
 dispatcher.registerModule(idempotencyModule);
 dispatcher.registerModule(configModule);
@@ -667,14 +651,6 @@ dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(autoPrModule);
 dispatcher.registerModule(ipcEventBridge);
-
-// Register lifecycle.ready handler (bridges mount signal + projects-loaded deferred)
-registry.register("lifecycle.ready", readyHandler, {
-  ipc: ApiIpcChannels.LIFECYCLE_READY,
-});
-
-// Get the typed API interface (all methods are now registered)
-codeHydraApi = registry.getInterface();
 
 // 11. Dispatch app:start
 

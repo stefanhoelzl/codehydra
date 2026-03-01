@@ -9,7 +9,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { simpleGit } from "simple-git";
 import { vi } from "vitest";
-import type { IWorkspaceApi, IProjectApi, ICoreApi } from "../shared/api/interfaces";
+import type { IWorkspaceApi } from "../shared/api/interfaces";
 import { MOCK_WORKSPACE_API_DEFAULTS } from "../shared/test-fixtures";
 
 /**
@@ -317,27 +317,5 @@ export function createMockWorkspaceApi(overrides?: Partial<IWorkspaceApi>): IWor
     getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
     executeCommand: vi.fn().mockResolvedValue(undefined),
     ...overrides,
-  };
-}
-
-/**
- * Creates a mock ICoreApi with sensible defaults.
- * All methods return mock functions that can be configured in tests.
- *
- * @param overrides - Optional overrides for workspaces or projects APIs
- * @returns Mock ICoreApi with all methods mocked
- *
- * @example
- * ```typescript
- * const mockApi = createMockCoreApi();
- * mockApi.workspaces.getStatus.mockResolvedValue({ isDirty: true, agent: { type: "busy" } });
- * ```
- */
-export function createMockCoreApi(overrides?: { workspaces?: Partial<IWorkspaceApi> }): ICoreApi {
-  return {
-    workspaces: createMockWorkspaceApi(overrides?.workspaces),
-    projects: {} as IProjectApi,
-    on: vi.fn().mockReturnValue(() => {}),
-    dispose: vi.fn().mockResolvedValue(undefined),
   };
 }

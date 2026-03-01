@@ -64,7 +64,8 @@ import type { UpdateAvailableIntent } from "./update-available";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 
-import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-utils";
+import { ApiIpcChannels } from "../../shared/ipc";
+import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Behavioral Mocks
@@ -178,7 +179,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
   viewManager: MockViewManager;
   appState: MockAppState;
-  mockApiRegistry: MockApiRegistry;
+  sendToUI: ReturnType<typeof vi.fn>;
   setTitle: ReturnType<typeof vi.fn>;
 }
 
@@ -274,7 +275,7 @@ function createTestSetup(opts?: {
     },
   };
 
-  const mockApiRegistry = createMockRegistry();
+  const sendToUI = vi.fn();
   const modules: IntentModule[] = [resolveModule, resolveProjectModule, switchViewModule];
 
   if (opts?.withAutoSelect) {
@@ -325,14 +326,12 @@ function createTestSetup(opts?: {
 
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry,
-      getApi: () => {
-        throw new Error("not wired");
-      },
-      sendToUI: vi.fn(),
+      ipcLayer: createBehavioralIpcLayer(),
+      sendToUI,
       pluginServer: null,
       logger: SILENT_LOGGER,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      readyHandler: vi.fn(),
       agentStatusManager: {
         getStatus: vi.fn(),
       } as unknown as IpcEventBridgeDeps["agentStatusManager"],
@@ -351,7 +350,7 @@ function createTestSetup(opts?: {
     dispatcher,
     viewManager,
     appState,
-    mockApiRegistry,
+    sendToUI,
     setTitle,
   };
 }
@@ -504,13 +503,13 @@ describe("SwitchWorkspace Operation", () => {
   });
 
   describe("IPC bridge forwards workspace:switched event (#8)", () => {
-    it("forwards to apiRegistry.emit with correct payload", async () => {
+    it("forwards to sendToUI with correct payload", async () => {
       const setup = createTestSetup({ withIpcEventBridge: true });
-      const { dispatcher, mockApiRegistry } = setup;
+      const { dispatcher, sendToUI } = setup;
 
       await dispatcher.dispatch(switchIntent());
 
-      expect(mockApiRegistry.emit).toHaveBeenCalledWith("workspace:switched", {
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_SWITCHED, {
         projectId: generateProjectId(TEST_PROJECT_PATH),
         workspaceName: TEST_WORKSPACE_NAME,
         path: TEST_WORKSPACE_PATH,
