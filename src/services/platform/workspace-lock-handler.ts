@@ -274,7 +274,7 @@ export class WindowsWorkspaceLockHandler implements WorkspaceLockHandler {
         error: error instanceof Error ? error.message : String(error),
       });
       if (result.exitCode !== 0) {
-        throw new Error(`Failed to close handles: exit code ${result.exitCode}`);
+        throw new Error(`Failed to close handles: exit code ${result.exitCode}`, { cause: error });
       }
     }
   }

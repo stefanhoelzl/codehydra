@@ -151,7 +151,6 @@ export class SimpleGitClient implements IGitClient {
           const lines = entry.split("\n");
           let worktreePath: Path | null = null;
           let branch: string | null = null;
-          let isMain = false;
 
           for (const line of lines) {
             if (line.startsWith("worktree ")) {
@@ -173,7 +172,7 @@ export class SimpleGitClient implements IGitClient {
           }
 
           // First worktree is the main one
-          isMain = worktreesResult.length === 0;
+          const isMain = worktreesResult.length === 0;
 
           if (worktreePath) {
             const name = worktreePath.basename;
