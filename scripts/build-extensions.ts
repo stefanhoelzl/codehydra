@@ -13,7 +13,7 @@
  * - Release builds (VERSION env set): 1.47.0
  * - Dev builds: 1.47.0-dev.a1b2c3d4
  *
- * Usage: pnpm build:extensions
+ * Usage: pnpm build:extensions [--force] [--verbose]
  *        npx tsx scripts/build-extensions.ts
  */
 
@@ -30,6 +30,14 @@ const EXTERNAL_JSON = path.join(EXTENSIONS_DIR, "external.json");
 /** Verbose mode: enabled by --verbose flag or CI environment */
 const verbose = process.argv.includes("--verbose") || !!process.env.CI;
 
+/** Force rebuild: enabled by --force flag */
+const forceRebuild = process.argv.includes("--force");
+
+/** Release build: skip cache when VERSION env is set */
+const isReleaseBuild = !!process.env.VERSION;
+
+const BUILD_CACHE_PATH = path.join(DIST_DIR, ".build-cache.json");
+
 interface ExtensionPackageJson {
   publisher: string;
   name: string;
@@ -45,6 +53,26 @@ interface BundledExtension {
 interface ExternalExtension {
   id: string;
   version: string;
+}
+
+interface BuildCacheEntry {
+  hash: string;
+  vsix: string;
+  version: string;
+}
+
+type BuildCache = Record<string, BuildCacheEntry>;
+
+function readBuildCache(): BuildCache {
+  try {
+    return JSON.parse(fs.readFileSync(BUILD_CACHE_PATH, "utf-8")) as BuildCache;
+  } catch {
+    return {};
+  }
+}
+
+function writeBuildCache(cache: BuildCache): void {
+  fs.writeFileSync(BUILD_CACHE_PATH, JSON.stringify(cache, null, 2) + "\n");
 }
 
 /**
@@ -88,16 +116,16 @@ function getCommitCount(extDir: string): string {
  *
  * @param extDir - Full path to the extension directory
  * @param major - Major version from package.json (e.g., "1")
+ * @param hash - Pre-computed folder hash from hashExtensionFolder()
  * @returns SemVer version string (e.g., "1.47.0" or "1.47.0-dev.a1b2c3d4")
  */
-async function getExtensionVersion(extDir: string, major: string): Promise<string> {
+function getExtensionVersion(extDir: string, major: string, hash: string): string {
   const commits = getCommitCount(extDir);
   if (process.env.VERSION) {
     // Release: valid SemVer format required by VS Code
     return `${major}.${commits}.0`;
   }
   // Dev: SemVer with prerelease tag
-  const hash = await hashExtensionFolder(extDir);
   return `${major}.${commits}.0-dev.${hash}`;
 }
 
@@ -238,13 +266,14 @@ function readExtensionPackageJson(extDir: string): ExtensionPackageJson {
 async function buildExtension(
   extDir: string,
   id: string,
-  major: string
+  major: string,
+  hash: string
 ): Promise<{ vsix: string; version: string }> {
   const extPath = path.join(EXTENSIONS_DIR, extDir);
   const packageJsonPath = path.join(extPath, "package.json");
 
   // Compute version from git history and folder hash
-  const version = await getExtensionVersion(extPath, major);
+  const version = getExtensionVersion(extPath, major, hash);
 
   // Use extension id (publisher.name) with dots replaced by hyphens for vsix filename
   const vsixName = `${id.replace(/\./g, "-")}-${version}.vsix`;
@@ -339,6 +368,9 @@ async function main(): Promise<void> {
   }
 
   const manifest: BundledExtension[] = [];
+  const useCache = !forceRebuild && !isReleaseBuild;
+  const cache = useCache ? readBuildCache() : {};
+  const updatedCache: BuildCache = {};
 
   // Build local extensions
   for (const extDir of extDirs) {
@@ -346,13 +378,25 @@ async function main(): Promise<void> {
     const id = `${pkg.publisher}.${pkg.name}`;
     // Extract major version from placeholder (e.g., "1.0.0-placeholder" -> "1")
     const major = pkg.version.split(".")[0] ?? "1";
-    const { vsix, version } = await buildExtension(extDir, id, major);
 
-    manifest.push({
-      id,
-      version,
-      vsix,
-    });
+    const extPath = path.join(EXTENSIONS_DIR, extDir);
+    const hash = await hashExtensionFolder(extPath);
+
+    // Check cache: skip build if hash matches and .vsix exists on disk
+    const cached = cache[id];
+    if (useCache && cached && cached.hash === hash) {
+      const vsixPath = path.join(DIST_DIR, cached.vsix);
+      if (fs.existsSync(vsixPath)) {
+        console.log(`Skipping ${extDir} (unchanged)`);
+        manifest.push({ id, version: cached.version, vsix: cached.vsix });
+        updatedCache[id] = cached;
+        continue;
+      }
+    }
+
+    const { vsix, version } = await buildExtension(extDir, id, major, hash);
+    manifest.push({ id, version, vsix });
+    updatedCache[id] = { hash, vsix, version };
   }
 
   // Download external extensions from marketplace
@@ -375,6 +419,11 @@ async function main(): Promise<void> {
         throw error;
       }
     }
+  }
+
+  // Write build cache for next run
+  if (Object.keys(updatedCache).length > 0) {
+    writeBuildCache(updatedCache);
   }
 
   // Write manifest.json as a flat array (new format)

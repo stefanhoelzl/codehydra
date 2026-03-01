@@ -15,7 +15,7 @@
     "build:wrappers": "vite build --config vite.config.bin.ts",
     "build:extensions": "tsx scripts/build-extensions.ts",
     "build": "pnpm build:wrappers && pnpm build:extensions && electron-vite build",
-    "preview": "pnpm build && electron-vite preview",
+    "preview": "pnpm build && electron-vite preview --skipBuild",
     "test": "vitest run --no-color",
     "test:related": "vitest run --no-color --passWithNoTests",
     "test:legacy": "vitest run --no-color --exclude '**/*.integration.test.ts' --exclude '**/*.boundary.test.ts'",
