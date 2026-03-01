@@ -5,8 +5,6 @@
  * - delete-workspace → release: CWD-only scan + kill blocking processes (best-effort)
  * - delete-workspace → detect: full handle detection
  * - delete-workspace → flush: kill PIDs collected by detect
- *
- * All hooks are no-ops when workspaceLockHandler is undefined (non-Windows).
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -26,7 +24,7 @@ import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../shared/error-utils";
 
 interface WindowsFileLockModuleDeps {
-  readonly workspaceLockHandler: WorkspaceLockHandler | undefined;
+  readonly workspaceLockHandler: WorkspaceLockHandler;
   readonly logger: Logger;
 }
 
@@ -40,7 +38,7 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
-            if (payload.force || !deps.workspaceLockHandler) {
+            if (payload.force) {
               return {};
             }
 
@@ -64,8 +62,6 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
         },
         detect: {
           handler: async (ctx: HookContext): Promise<DetectHookResult> => {
-            if (!deps.workspaceLockHandler) return {};
-
             const { workspacePath } = ctx as DeletePipelineHookInput;
 
             try {
@@ -82,8 +78,6 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
         },
         flush: {
           handler: async (ctx: HookContext): Promise<FlushHookResult> => {
-            if (!deps.workspaceLockHandler) return {};
-
             const { blockingPids } = ctx as FlushHookInput;
             if (blockingPids.length > 0) {
               try {

@@ -2,8 +2,7 @@
 /**
  * Integration tests for WindowsFileLockModule through the Dispatcher.
  *
- * Tests verify: dispatcher -> operation -> release/detect/flush hooks -> lockHandler calls,
- * including no-op behavior when handler is undefined (non-Windows).
+ * Tests verify: dispatcher -> operation -> release/detect/flush hooks -> lockHandler calls.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -113,7 +112,7 @@ class FlushOperation implements Operation<Intent, FlushHookResult> {
 // Test Setup Helpers
 // =============================================================================
 
-function createReleaseSetup(lockHandler: WorkspaceLockHandler | undefined, logger = SILENT_LOGGER) {
+function createReleaseSetup(lockHandler: WorkspaceLockHandler, logger = SILENT_LOGGER) {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", releaseOperation);
@@ -127,7 +126,7 @@ function createReleaseSetup(lockHandler: WorkspaceLockHandler | undefined, logge
   return dispatcher;
 }
 
-function createDetectSetup(lockHandler: WorkspaceLockHandler | undefined, logger = SILENT_LOGGER) {
+function createDetectSetup(lockHandler: WorkspaceLockHandler, logger = SILENT_LOGGER) {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", detectOperation);
@@ -142,7 +141,7 @@ function createDetectSetup(lockHandler: WorkspaceLockHandler | undefined, logger
 }
 
 function createFlushSetup(
-  lockHandler: WorkspaceLockHandler | undefined,
+  lockHandler: WorkspaceLockHandler,
   blockingPids: readonly number[],
   logger = SILENT_LOGGER
 ) {
@@ -270,19 +269,5 @@ describe("WindowsFileLockModule Integration", () => {
 
       expect(handler.killProcesses).not.toHaveBeenCalled();
     });
-  });
-
-  // ---------------------------------------------------------------------------
-  // no-op when handler is undefined (parameterized)
-  // ---------------------------------------------------------------------------
-
-  it.each([
-    { hook: "release", createSetup: () => createReleaseSetup(undefined) },
-    { hook: "detect", createSetup: () => createDetectSetup(undefined) },
-    { hook: "flush", createSetup: () => createFlushSetup(undefined, [1234]) },
-  ])("$hook is a no-op when handler is undefined", async ({ createSetup }) => {
-    const dispatcher = createSetup();
-    const result = await dispatcher.dispatch(makeDeleteIntent());
-    expect(result).toEqual({});
   });
 });
