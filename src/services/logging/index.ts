@@ -7,6 +7,7 @@ export type {
   LoggingService,
   LoggingConfigureOptions,
   LogContext,
+  LogFormat,
   LoggerName,
   LogLevel,
   LogOutput,
@@ -14,6 +15,7 @@ export type {
 export { LogLevel as LogLevelValues, logAtLevel } from "./types";
 export {
   ElectronLogService,
+  parseLogFormat,
   parseLogLevel,
   parseLogLevelSpec,
   splitLogLevelSpec,

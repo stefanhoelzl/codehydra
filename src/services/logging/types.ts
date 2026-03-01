@@ -74,6 +74,13 @@ export type LogContext = Record<string, string | number | boolean | null>;
 export type LogOutput = "file" | "console";
 
 /**
+ * Log output format.
+ * - "text": Human-readable text lines (default)
+ * - "json": JSONL with structured context
+ */
+export type LogFormat = "text" | "json";
+
+/**
  * Configuration options for the logging service.
  * Passed to `configure()` to set transport levels and filters.
  */
@@ -82,6 +89,7 @@ export interface LoggingConfigureOptions {
   readonly logFile: boolean;
   readonly logConsole: boolean;
   readonly allowedLoggers: Set<LoggerName> | undefined;
+  readonly logFormat: LogFormat;
 }
 
 /**
