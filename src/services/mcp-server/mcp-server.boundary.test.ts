@@ -39,6 +39,13 @@ describe("McpServer Boundary Tests", () => {
 
   const testWorkspacePath = "/home/user/projects/my-app/.worktrees/feature-branch";
 
+  /** Standard headers required by MCP SDK for requests. */
+  const mcpHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json, text/event-stream",
+    "X-Workspace-Path": testWorkspacePath,
+  };
+
   beforeEach(async () => {
     port = await findFreePort();
     mockApi = createMockCoreApi();
@@ -62,8 +69,9 @@ describe("McpServer Boundary Tests", () => {
       const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "X-Workspace-Path": testWorkspacePath,
+          ...mcpHeaders,
+          // Initialize requires only text/event-stream
+          Accept: "text/event-stream",
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -131,10 +139,7 @@ describe("McpServer Boundary Tests", () => {
     it("returns 404 for wrong path", async () => {
       const response = await fetch(`http://127.0.0.1:${port}/wrong-path`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Workspace-Path": testWorkspacePath,
-        },
+        headers: mcpHeaders,
         body: "{}",
       });
 
@@ -147,10 +152,7 @@ describe("McpServer Boundary Tests", () => {
       const requests = Array.from({ length: 5 }, (_, i) =>
         fetch(`http://127.0.0.1:${port}/mcp`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Workspace-Path": testWorkspacePath,
-          },
+          headers: mcpHeaders,
           body: JSON.stringify({
             jsonrpc: "2.0",
             method: "tools/list",
@@ -173,10 +175,7 @@ describe("McpServer Boundary Tests", () => {
       // Start a long-running request in the background
       const requestPromise = fetch(`http://127.0.0.1:${port}/mcp`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Workspace-Path": testWorkspacePath,
-        },
+        headers: mcpHeaders,
         body: JSON.stringify({
           jsonrpc: "2.0",
           method: "tools/list",

@@ -94,7 +94,7 @@ export class AssemblyAIProvider implements SpeechToTextProvider {
     } catch (err) {
       this.isConnected = false;
       const error = this.mapError(err);
-      throw new Error(error.message);
+      throw new Error(error.message, { cause: err });
     }
   }
 

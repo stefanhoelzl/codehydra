@@ -15,6 +15,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { randomUUID } from "node:crypto";
 import {
   McpServer as McpServerSdk,
   type RegisteredTool,
@@ -114,9 +115,12 @@ export class McpServer implements IMcpServer {
     // Register tools
     this.registerTools();
 
-    // Create transport (stateless mode for per-request handling)
-    // Empty options = stateless mode (no session ID generation)
-    this.transport = new StreamableHTTPServerTransport({});
+    // Create transport in stateful mode with session IDs.
+    // MCP SDK 1.27+ requires stateful mode for shared transports —
+    // stateless mode throws on the second request.
+    this.transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
 
     // Connect MCP server to transport
     // Cast needed due to exactOptionalPropertyTypes mismatch between SDK types

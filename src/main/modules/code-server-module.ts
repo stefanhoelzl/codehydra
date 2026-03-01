@@ -178,7 +178,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               } catch (error) {
                 const message = error instanceof Error ? error.message : "Unknown error";
                 logger.warn("PluginServer start failed", { error: message });
-                pluginPort = undefined;
               }
             }
 

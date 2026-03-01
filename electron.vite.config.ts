@@ -16,9 +16,19 @@ export default defineConfig({
   main: {
     build: {
       reportCompressedSize: false,
+      // Bundle ESM-only packages that lack CJS exports (require() would fail)
+      externalizeDeps: { exclude: ["@opencode-ai/sdk", "execa"] },
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main/index.ts"),
+        },
+        output: {
+          // Output CJS to avoid ESM/CJS interop issues with externalized deps.
+          // Electron 40's Node.js enforces strict ESM resolution (named imports
+          // from CJS fail, subpath imports need .js). CJS require() works with
+          // both CJS and ESM packages on Node.js 22.x.
+          format: "cjs",
+          entryFileNames: "[name].cjs",
         },
       },
     },
@@ -39,6 +49,9 @@ export default defineConfig({
           { src: "resources/bin/*", dest: "assets/bin" },
           { src: "dist/bin/*", dest: "assets/bin" },
         ],
+        // electron-vite 5 builds the main process as "ssr" environment;
+        // vite-plugin-static-copy defaults to "client" and skips otherwise.
+        environment: "ssr",
       }),
     ],
   },
