@@ -100,6 +100,8 @@ import { createOpenCodeAgentModule } from "./modules/opencode-agent-module";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
+import { createLinuxProcessCleanupModule } from "./modules/linux-process-cleanup-module";
+import { createMacOSProcessCleanupModule } from "./modules/macos-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
 import { createTelemetryModule } from "./modules/telemetry-module";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
@@ -481,10 +483,21 @@ const keepFilesModule = createKeepFilesModule({
   keepFilesService,
   logger: apiLogger,
 });
-const deleteWindowsLockModule = createWindowsFileLockModule({
-  workspaceLockHandler,
-  logger: apiLogger,
-});
+const deleteWindowsLockModule =
+  platformInfo.platform === "win32"
+    ? createWindowsFileLockModule({
+        workspaceLockHandler: workspaceLockHandler!,
+        logger: apiLogger,
+      })
+    : undefined;
+const linuxProcessCleanupModule =
+  platformInfo.platform === "linux"
+    ? createLinuxProcessCleanupModule({ processRunner, logger: apiLogger })
+    : undefined;
+const macosProcessCleanupModule =
+  platformInfo.platform === "darwin"
+    ? createMacOSProcessCleanupModule({ processRunner, logger: apiLogger })
+    : undefined;
 const windowTitleModule = createWindowTitleModule(
   (title: string) => windowManager.setTitle(title),
   buildInfo.gitBranch ?? buildInfo.version
@@ -639,7 +652,9 @@ dispatcher.registerModule(badgeModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(keepFilesModule);
-dispatcher.registerModule(deleteWindowsLockModule);
+if (deleteWindowsLockModule) dispatcher.registerModule(deleteWindowsLockModule);
+if (linuxProcessCleanupModule) dispatcher.registerModule(linuxProcessCleanupModule);
+if (macosProcessCleanupModule) dispatcher.registerModule(macosProcessCleanupModule);
 dispatcher.registerModule(remoteProjectModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
