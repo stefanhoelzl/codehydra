@@ -86,7 +86,6 @@ import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import { Path } from "../../services/platform/path";
-import { expandGitUrl } from "../../services/project/url-utils";
 
 /**
  * Dependencies for the IpcEventBridge module.
@@ -124,9 +123,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
 
   // Closure state for lifecycle management
   let apiEventCleanupFn: Unsubscribe | null = null;
-
-  // Closure state for deduplicating in-progress project opens/clones
-  const inProgressOpens = new Set<string>();
 
   const events: EventDeclarations = {
     [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
@@ -449,27 +445,17 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   apiRegistry.register(
     "projects.open",
     async (payload: ProjectOpenPayload) => {
-      // When path is provided, deduplicate in-progress opens
-      const key = payload.path ? new Path(payload.path).toString() : null;
-      if (key) {
-        if (inProgressOpens.has(key)) {
-          throw new Error("Project open already in progress");
-        }
-        inProgressOpens.add(key);
+      const intent: OpenProjectIntent = {
+        type: INTENT_OPEN_PROJECT,
+        payload: {
+          ...(payload.path !== undefined && { path: new Path(payload.path) }),
+        },
+      };
+      const handle = dispatcher.dispatch(intent);
+      if (!(await handle.accepted)) {
+        throw new Error("Project open already in progress");
       }
-      try {
-        const intent: OpenProjectIntent = {
-          type: INTENT_OPEN_PROJECT,
-          payload: {
-            ...(payload.path !== undefined && { path: new Path(payload.path) }),
-          },
-        };
-        return await dispatcher.dispatch(intent);
-      } finally {
-        if (key) {
-          inProgressOpens.delete(key);
-        }
-      }
+      return await handle;
     },
     { ipc: ApiIpcChannels.PROJECT_OPEN }
   );
@@ -477,24 +463,19 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   apiRegistry.register(
     "projects.clone",
     async (payload: ProjectClonePayload) => {
-      const key = expandGitUrl(payload.url);
-      if (inProgressOpens.has(key)) {
+      const intent: OpenProjectIntent = {
+        type: INTENT_OPEN_PROJECT,
+        payload: { git: payload.url },
+      };
+      const handle = dispatcher.dispatch(intent);
+      if (!(await handle.accepted)) {
         throw new Error("Clone already in progress");
       }
-      inProgressOpens.add(key);
-      try {
-        const intent: OpenProjectIntent = {
-          type: INTENT_OPEN_PROJECT,
-          payload: { git: payload.url },
-        };
-        const result = await dispatcher.dispatch(intent);
-        if (!result) {
-          throw new Error("Clone project dispatch returned no result");
-        }
-        return result;
-      } finally {
-        inProgressOpens.delete(key);
+      const result = await handle;
+      if (!result) {
+        throw new Error("Clone project dispatch returned no result");
       }
+      return result;
     },
     { ipc: ApiIpcChannels.PROJECT_CLONE }
   );

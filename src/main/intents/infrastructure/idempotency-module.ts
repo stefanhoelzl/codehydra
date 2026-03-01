@@ -22,10 +22,10 @@ import type { IntentModule, EventDeclarations } from "./module";
 export interface IdempotencyRule {
   /** Intent type this rule applies to. */
   readonly intentType: string;
-  /** Extract a tracking key from the intent payload. Omit for singleton (boolean flag). */
-  readonly getKey?: (payload: unknown) => string;
-  /** Domain event type that resets tracking state. Uses getKey on event payload for per-key reset. */
-  readonly resetOn?: string;
+  /** Extract a tracking key from the intent payload. Omit for singleton (boolean flag). Return undefined to skip the rule for this payload. */
+  readonly getKey?: (payload: unknown) => string | undefined;
+  /** Domain event type(s) that reset tracking state. Uses getKey on event payload for per-key reset. */
+  readonly resetOn?: string | readonly string[];
   /** Return true to bypass the idempotency block (intent still gets tracked). */
   readonly isForced?: (intent: Intent) => boolean;
 }
@@ -66,11 +66,14 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
   const resetRulesByEvent = new Map<string, IdempotencyRule[]>();
   for (const rule of rules) {
     if (rule.resetOn) {
-      const list = resetRulesByEvent.get(rule.resetOn);
-      if (list) {
-        list.push(rule);
-      } else {
-        resetRulesByEvent.set(rule.resetOn, [rule]);
+      const eventTypes = typeof rule.resetOn === "string" ? [rule.resetOn] : rule.resetOn;
+      for (const eventType of eventTypes) {
+        const list = resetRulesByEvent.get(eventType);
+        if (list) {
+          list.push(rule);
+        } else {
+          resetRulesByEvent.set(eventType, [rule]);
+        }
       }
     }
   }
@@ -81,7 +84,9 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
       for (const rule of resetRules) {
         if (rule.getKey) {
           const key = rule.getKey(event.payload);
-          perKeyFlags.get(rule.intentType)?.delete(key);
+          if (key !== undefined) {
+            perKeyFlags.get(rule.intentType)?.delete(key);
+          }
         } else {
           singletonFlags.set(rule.intentType, false);
         }
@@ -104,6 +109,9 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
           if (rule.getKey) {
             // Per-key mode
             const key = rule.getKey(intent.payload);
+            if (key === undefined) {
+              return intent; // getKey opted out for this payload
+            }
             const keys = perKeyFlags.get(rule.intentType)!;
 
             if (rule.isForced?.(intent)) {

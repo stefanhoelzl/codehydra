@@ -143,7 +143,14 @@ import {
   EVENT_WORKSPACE_DELETED,
 } from "./operations/delete-workspace";
 import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./operations/delete-workspace";
-import { OpenProjectOperation, INTENT_OPEN_PROJECT } from "./operations/open-project";
+import {
+  OpenProjectOperation,
+  INTENT_OPEN_PROJECT,
+  EVENT_PROJECT_OPENED,
+  EVENT_PROJECT_OPEN_FAILED,
+} from "./operations/open-project";
+import type { OpenProjectPayload } from "./operations/open-project";
+import { expandGitUrl } from "../services/project/url-utils";
 import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./operations/close-project";
 import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./operations/switch-workspace";
 import {
@@ -405,6 +412,16 @@ const idempotencyModule = createIdempotencyModule([
     },
     resetOn: EVENT_WORKSPACE_DELETED,
     isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
+  },
+  {
+    intentType: INTENT_OPEN_PROJECT,
+    getKey: (p) => {
+      const payload = p as OpenProjectPayload;
+      if (payload.path) return payload.path.toString();
+      if (payload.git) return expandGitUrl(payload.git);
+      return undefined; // select-folder case: no dedup
+    },
+    resetOn: [EVENT_PROJECT_OPENED, EVENT_PROJECT_OPEN_FAILED],
   },
 ]);
 

@@ -51,6 +51,10 @@ export const INTENT_OPEN_PROJECT = "project:open" as const;
 
 export interface ProjectOpenedPayload {
   readonly project: Project;
+  /** Original intent path, for idempotency reset. */
+  readonly path?: Path;
+  /** Original intent git URL, for idempotency reset. */
+  readonly git?: string;
 }
 
 export interface ProjectOpenedEvent extends DomainEvent {
@@ -59,6 +63,22 @@ export interface ProjectOpenedEvent extends DomainEvent {
 }
 
 export const EVENT_PROJECT_OPENED = "project:opened" as const;
+
+export interface ProjectOpenFailedPayload {
+  /** Original intent path, for idempotency reset. */
+  readonly path?: Path;
+  /** Original intent git URL, for idempotency reset. */
+  readonly git?: string;
+  /** Reason the open failed (error message or "already-open"). */
+  readonly reason: string;
+}
+
+export interface ProjectOpenFailedEvent extends DomainEvent {
+  readonly type: "project:open-failed";
+  readonly payload: ProjectOpenFailedPayload;
+}
+
+export const EVENT_PROJECT_OPEN_FAILED = "project:open-failed" as const;
 
 // =============================================================================
 // Hook Result & Input Types
@@ -116,6 +136,12 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
   async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project | null> {
     const { intent } = ctx;
 
+    // Intent-origin fields for idempotency reset events
+    const origin = {
+      ...(intent.payload.path !== undefined && { path: intent.payload.path }),
+      ...(intent.payload.git !== undefined && { git: intent.payload.git }),
+    };
+
     // 0. Select folder: when no path or git URL provided, run "select-folder" hook
     let effectiveIntent = intent;
     if (!intent.payload.path && !intent.payload.git) {
@@ -142,133 +168,151 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       };
     }
 
-    // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
-    const resolveCtx: HookContext = { intent: effectiveIntent };
-    const { results: resolveResults, errors: resolveErrors } =
-      await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
-    if (resolveErrors.length === 1) {
-      throw resolveErrors[0]!;
-    }
-    if (resolveErrors.length > 1) {
-      throw new AggregateError(resolveErrors, "project:open resolve hooks failed");
-    }
-    let projectPath: string | undefined;
-    let resolvedRemoteUrl: string | undefined;
-    let alreadyOpen = false;
-    for (const r of resolveResults) {
-      if (r.projectPath && !projectPath) projectPath = r.projectPath;
-      if (r.remoteUrl !== undefined) resolvedRemoteUrl = r.remoteUrl;
-      if (r.alreadyOpen) alreadyOpen = true;
-    }
-    if (!projectPath) {
-      throw new Error("Resolve hook did not provide projectPath");
-    }
+    try {
+      // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
+      const resolveCtx: HookContext = { intent: effectiveIntent };
+      const { results: resolveResults, errors: resolveErrors } =
+        await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+      if (resolveErrors.length === 1) {
+        throw resolveErrors[0]!;
+      }
+      if (resolveErrors.length > 1) {
+        throw new AggregateError(resolveErrors, "project:open resolve hooks failed");
+      }
+      let projectPath: string | undefined;
+      let resolvedRemoteUrl: string | undefined;
+      let alreadyOpen = false;
+      for (const r of resolveResults) {
+        if (r.projectPath && !projectPath) projectPath = r.projectPath;
+        if (r.remoteUrl !== undefined) resolvedRemoteUrl = r.remoteUrl;
+        if (r.alreadyOpen) alreadyOpen = true;
+      }
+      if (!projectPath) {
+        throw new Error("Resolve hook did not provide projectPath");
+      }
 
-    // 2. Register: generate ID, store state, persist
-    const registerCtx: RegisterHookInput = {
-      intent: effectiveIntent,
-      projectPath,
-      ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
-    };
-    const { results: registerResults, errors: registerErrors } =
-      await ctx.hooks.collect<RegisterHookResult>("register", registerCtx);
-    if (registerErrors.length === 1) {
-      throw registerErrors[0]!;
-    }
-    if (registerErrors.length > 1) {
-      throw new AggregateError(registerErrors, "project:open register hooks failed");
-    }
-    let projectId: ProjectId | undefined;
-    let name: string | undefined;
-    for (const r of registerResults) {
-      if (r.projectId) projectId = r.projectId;
-      if (r.name !== undefined) name = r.name;
-      if (r.alreadyOpen) alreadyOpen = true;
-    }
-    if (!projectId) {
-      throw new Error("Register hook did not provide projectId");
-    }
+      // 2. Register: generate ID, store state, persist
+      const registerCtx: RegisterHookInput = {
+        intent: effectiveIntent,
+        projectPath,
+        ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
+      };
+      const { results: registerResults, errors: registerErrors } =
+        await ctx.hooks.collect<RegisterHookResult>("register", registerCtx);
+      if (registerErrors.length === 1) {
+        throw registerErrors[0]!;
+      }
+      if (registerErrors.length > 1) {
+        throw new AggregateError(registerErrors, "project:open register hooks failed");
+      }
+      let projectId: ProjectId | undefined;
+      let name: string | undefined;
+      for (const r of registerResults) {
+        if (r.projectId) projectId = r.projectId;
+        if (r.name !== undefined) name = r.name;
+        if (r.alreadyOpen) alreadyOpen = true;
+      }
+      if (!projectId) {
+        throw new Error("Register hook did not provide projectId");
+      }
 
-    // 3. Discover: find existing workspaces
-    const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath };
-    const { results: discoverResults, errors: discoverErrors } =
-      await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
-    if (discoverErrors.length === 1) {
-      throw discoverErrors[0]!;
-    }
-    if (discoverErrors.length > 1) {
-      throw new AggregateError(discoverErrors, "project:open discover hooks failed");
-    }
-    const workspaces: InternalWorkspace[] = [];
-    let defaultBaseBranch: string | undefined;
-    for (const r of discoverResults) {
-      if (r.workspaces) workspaces.push(...r.workspaces);
-      if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
-    }
+      // 3. Discover: find existing workspaces
+      const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath };
+      const { results: discoverResults, errors: discoverErrors } =
+        await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
+      if (discoverErrors.length === 1) {
+        throw discoverErrors[0]!;
+      }
+      if (discoverErrors.length > 1) {
+        throw new AggregateError(discoverErrors, "project:open discover hooks failed");
+      }
+      const workspaces: InternalWorkspace[] = [];
+      let defaultBaseBranch: string | undefined;
+      for (const r of discoverResults) {
+        if (r.workspaces) workspaces.push(...r.workspaces);
+        if (r.defaultBaseBranch !== undefined) defaultBaseBranch = r.defaultBaseBranch;
+      }
 
-    // Build Project return value
-    const project: Project = {
-      id: projectId,
-      path: projectPath,
-      name: name ?? new Path(projectPath).basename,
-      workspaces: toIpcWorkspaces(workspaces, projectId),
-      ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
-      ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
-    };
+      // Build Project return value
+      const project: Project = {
+        id: projectId,
+        path: projectPath,
+        name: name ?? new Path(projectPath).basename,
+        workspaces: toIpcWorkspaces(workspaces, projectId),
+        ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+        ...(resolvedRemoteUrl !== undefined && { remoteUrl: resolvedRemoteUrl }),
+      };
 
-    // When already open, register + discover ran (idempotent) but skip side effects
-    if (!alreadyOpen) {
-      // Dispatch workspace:open per discovered workspace (best-effort)
-      for (const workspace of workspaces) {
-        try {
-          const existingWorkspace: ExistingWorkspaceData = {
-            path: workspace.path.toString(),
-            name: workspace.name,
-            branch: workspace.branch,
-            metadata: workspace.metadata,
-          };
+      // When already open, register + discover ran (idempotent) but skip side effects
+      if (!alreadyOpen) {
+        // Dispatch workspace:open per discovered workspace (best-effort)
+        for (const workspace of workspaces) {
+          try {
+            const existingWorkspace: ExistingWorkspaceData = {
+              path: workspace.path.toString(),
+              name: workspace.name,
+              branch: workspace.branch,
+              metadata: workspace.metadata,
+            };
 
-          const openWsIntent: OpenWorkspaceIntent = {
-            type: INTENT_OPEN_WORKSPACE,
+            const openWsIntent: OpenWorkspaceIntent = {
+              type: INTENT_OPEN_WORKSPACE,
+              payload: {
+                workspaceName: workspace.name,
+                base: workspace.metadata.base ?? "",
+                existingWorkspace,
+                projectPath,
+                stealFocus: false,
+              },
+            };
+
+            await ctx.dispatch(openWsIntent);
+          } catch {
+            // Best-effort: individual workspace:open failures don't fail the project open
+          }
+        }
+
+        // Emit project:opened event
+        const event: ProjectOpenedEvent = {
+          type: EVENT_PROJECT_OPENED,
+          payload: { project, ...origin },
+        };
+        ctx.emit(event);
+
+        // Dispatch workspace:switch for the first workspace
+        if (project.workspaces.length > 0) {
+          const firstWorkspace = project.workspaces[0]!;
+          const switchIntent: SwitchWorkspaceIntent = {
+            type: INTENT_SWITCH_WORKSPACE,
             payload: {
-              workspaceName: workspace.name,
-              base: workspace.metadata.base ?? "",
-              existingWorkspace,
-              projectPath,
-              stealFocus: false,
+              workspacePath: firstWorkspace.path,
             },
           };
-
-          await ctx.dispatch(openWsIntent);
-        } catch {
-          // Best-effort: individual workspace:open failures don't fail the project open
+          try {
+            await ctx.dispatch(switchIntent);
+          } catch {
+            // Best-effort: switch failure doesn't fail the project open
+          }
         }
+      } else {
+        // Project already open — emit failed event so idempotency key is released
+        ctx.emit({
+          type: EVENT_PROJECT_OPEN_FAILED,
+          payload: { ...origin, reason: "already-open" },
+        } as ProjectOpenFailedEvent);
       }
 
-      // Emit project:opened event
-      const event: ProjectOpenedEvent = {
-        type: EVENT_PROJECT_OPENED,
-        payload: { project },
-      };
-      ctx.emit(event);
-
-      // Dispatch workspace:switch for the first workspace
-      if (project.workspaces.length > 0) {
-        const firstWorkspace = project.workspaces[0]!;
-        const switchIntent: SwitchWorkspaceIntent = {
-          type: INTENT_SWITCH_WORKSPACE,
-          payload: {
-            workspacePath: firstWorkspace.path,
-          },
-        };
-        try {
-          await ctx.dispatch(switchIntent);
-        } catch {
-          // Best-effort: switch failure doesn't fail the project open
-        }
-      }
+      return project;
+    } catch (e) {
+      // Emit failed event so idempotency key is released on error
+      ctx.emit({
+        type: EVENT_PROJECT_OPEN_FAILED,
+        payload: {
+          ...origin,
+          reason: e instanceof Error ? e.message : String(e),
+        },
+      } as ProjectOpenFailedEvent);
+      throw e;
     }
-
-    return project;
   }
 }

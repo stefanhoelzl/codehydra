@@ -165,6 +165,100 @@ describe("createIdempotencyModule", () => {
     expect(await h3.accepted).toBe(true);
   });
 
+  it("per-key: getKey returning undefined skips the rule", async () => {
+    const { dispatcher } = setup([
+      {
+        intentType: "test:open",
+        getKey: (p) => (p as { path?: string }).path,
+      },
+    ]);
+    dispatcher.registerOperation("test:open", noopOperation("open-op"));
+
+    // Payload without path → getKey returns undefined → rule skipped
+    const h1 = dispatcher.dispatch({ type: "test:open", payload: {} });
+    expect(await h1.accepted).toBe(true);
+
+    // Second dispatch also passes (no key was tracked)
+    const h2 = dispatcher.dispatch({ type: "test:open", payload: {} });
+    expect(await h2.accepted).toBe(true);
+
+    // Payload with path → key tracked normally
+    const h3 = dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
+    expect(await h3.accepted).toBe(true);
+
+    // Duplicate path blocked
+    const h4 = dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
+    expect(await h4.accepted).toBe(false);
+  });
+
+  it("per-key with resetOn array: resets on any listed event", async () => {
+    const { dispatcher } = setup([
+      {
+        intentType: "test:open",
+        getKey: (p) => (p as { path: string }).path,
+        resetOn: ["test:opened", "test:open-failed"],
+      },
+    ]);
+
+    let emitFn: ((event: DomainEvent) => void) | undefined;
+    dispatcher.registerOperation("test:open", {
+      id: "open-op",
+      execute: async (ctx: OperationContext<Intent>) => {
+        emitFn = ctx.emit;
+      },
+    });
+
+    // Dispatch /a → tracked
+    await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
+    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
+      false
+    );
+
+    // Reset /a via the first event type
+    emitFn!({ type: "test:opened", payload: { path: "/a" } });
+    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
+      true
+    );
+
+    // Block again, then reset via the second event type
+    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
+      false
+    );
+    emitFn!({ type: "test:open-failed", payload: { path: "/a" } });
+    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
+      true
+    );
+  });
+
+  it("per-key reset: event with undefined key is ignored", async () => {
+    const { dispatcher } = setup([
+      {
+        intentType: "test:open",
+        getKey: (p) => (p as { path?: string }).path,
+        resetOn: "test:open-failed",
+      },
+    ]);
+
+    let emitFn: ((event: DomainEvent) => void) | undefined;
+    dispatcher.registerOperation("test:open", {
+      id: "open-op",
+      execute: async (ctx: OperationContext<Intent>) => {
+        emitFn = ctx.emit;
+      },
+    });
+
+    // Track /a
+    await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
+
+    // Reset event with no path → getKey returns undefined → no keys cleared
+    emitFn!({ type: "test:open-failed", payload: {} });
+
+    // /a still blocked
+    expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
+      false
+    );
+  });
+
   it("multiple rules: handles different intent types independently", async () => {
     const { dispatcher } = setup([
       { intentType: "test:shutdown" },
