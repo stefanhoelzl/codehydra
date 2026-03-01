@@ -22,8 +22,7 @@ import {
 } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import type { IMcpServer, McpError } from "./types";
-import type { ICoreApi } from "../../shared/api/interfaces";
+import type { IMcpServer, McpError, McpApiHandlers } from "./types";
 import type { Logger, LogContext } from "../logging";
 import { SILENT_LOGGER, logAtLevel } from "../logging";
 import type { LogLevel } from "../logging/types";
@@ -78,7 +77,7 @@ export function createDefaultMcpServer(): McpServerSdk {
  * Workspace resolution is delegated to the intent system via workspacePath-based API methods.
  */
 export class McpServer implements IMcpServer {
-  private readonly api: ICoreApi;
+  private readonly handlers: McpApiHandlers;
   private readonly serverFactory: McpServerFactory;
   private readonly logger: Logger;
 
@@ -91,11 +90,11 @@ export class McpServer implements IMcpServer {
   private registeredTools: RegisteredTool[] = [];
 
   constructor(
-    api: ICoreApi,
+    handlers: McpApiHandlers,
     serverFactory: McpServerFactory = createDefaultMcpServer,
     logger?: Logger
   ) {
-    this.api = api;
+    this.handlers = handlers;
     this.serverFactory = serverFactory;
     this.logger = logger ?? SILENT_LOGGER;
   }
@@ -283,9 +282,7 @@ export class McpServer implements IMcpServer {
           description: "Get the current workspace status including dirty flag and agent status",
           inputSchema: z.object({}),
         },
-        this.createWorkspaceHandler(async (workspacePath) =>
-          this.api.workspaces.getStatus(workspacePath)
-        )
+        this.createWorkspaceHandler(async (workspacePath) => this.handlers.getStatus(workspacePath))
       )
     );
 
@@ -298,7 +295,7 @@ export class McpServer implements IMcpServer {
           inputSchema: z.object({}),
         },
         this.createWorkspaceHandler(async (workspacePath) =>
-          this.api.workspaces.getMetadata(workspacePath)
+          this.handlers.getMetadata(workspacePath)
         )
       )
     );
@@ -322,7 +319,7 @@ export class McpServer implements IMcpServer {
         },
         this.createWorkspaceHandler(
           async (workspacePath, args: { key: string; value: string | null }) => {
-            await this.api.workspaces.setMetadata(workspacePath, args.key, args.value);
+            await this.handlers.setMetadata(workspacePath, args.key, args.value);
             return null;
           }
         )
@@ -338,7 +335,7 @@ export class McpServer implements IMcpServer {
           inputSchema: z.object({}),
         },
         this.createWorkspaceHandler(async (workspacePath) =>
-          this.api.workspaces.getAgentSession(workspacePath)
+          this.handlers.getAgentSession(workspacePath)
         )
       )
     );
@@ -353,7 +350,7 @@ export class McpServer implements IMcpServer {
           inputSchema: z.object({}),
         },
         this.createWorkspaceHandler(async (workspacePath) =>
-          this.api.workspaces.restartAgentServer(workspacePath)
+          this.handlers.restartAgentServer(workspacePath)
         )
       )
     );
@@ -422,8 +419,10 @@ export class McpServer implements IMcpServer {
             }
 
             // Create workspace with callerWorkspacePath (intent resolves project)
-            const result = await this.api.workspaces.create(undefined, name, base, {
+            const result = await this.handlers.createWorkspace({
               callerWorkspacePath: workspacePath,
+              name,
+              base,
               ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
               stealFocus,
             });
@@ -450,7 +449,7 @@ export class McpServer implements IMcpServer {
           }),
         },
         this.createWorkspaceHandler(async (workspacePath, args: { keepBranch: boolean }) => {
-          return this.api.workspaces.remove(workspacePath, {
+          return this.handlers.deleteWorkspace(workspacePath, {
             keepBranch: args.keepBranch,
           });
         })
@@ -487,7 +486,7 @@ export class McpServer implements IMcpServer {
         },
         this.createWorkspaceHandler(
           async (workspacePath, args: { command: string; args?: unknown[] | undefined }) =>
-            this.api.workspaces.executeCommand(workspacePath, args.command, args.args)
+            this.handlers.executeCommand(workspacePath, args.command, args.args)
         )
       )
     );
@@ -556,7 +555,7 @@ export class McpServer implements IMcpServer {
   private async getCallerModel(workspacePath: string): Promise<PromptModel | undefined> {
     try {
       // Get caller's OpenCode session
-      const session = await this.api.workspaces.getAgentSession(workspacePath);
+      const session = await this.handlers.getAgentSession(workspacePath);
 
       if (!session) {
         this.logger.debug("Cannot determine model: no OpenCode session running", {

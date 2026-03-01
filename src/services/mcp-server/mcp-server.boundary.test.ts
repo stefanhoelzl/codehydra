@@ -5,11 +5,10 @@
  */
 
 import { createServer } from "node:net";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { McpServer, createDefaultMcpServer } from "./mcp-server";
-import type { ICoreApi } from "../../shared/api/interfaces";
+import type { McpApiHandlers } from "./types";
 import { createMockLogger } from "../logging";
-import { createMockCoreApi } from "../test-utils";
 import { delay } from "@shared/test-fixtures";
 
 /**
@@ -31,10 +30,26 @@ async function findFreePort(): Promise<number> {
   });
 }
 
+/**
+ * Create a mock McpApiHandlers for boundary testing.
+ */
+function createMockMcpHandlers(): McpApiHandlers {
+  return {
+    getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+    getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+    setMetadata: vi.fn().mockResolvedValue(undefined),
+    getAgentSession: vi.fn().mockResolvedValue(null),
+    restartAgentServer: vi.fn().mockResolvedValue(14001),
+    createWorkspace: vi.fn().mockResolvedValue({ name: "test", path: "/path" }),
+    deleteWorkspace: vi.fn().mockResolvedValue({ started: true }),
+    executeCommand: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe("McpServer Boundary Tests", () => {
   let server: McpServer;
   let port: number;
-  let mockApi: ICoreApi;
+  let mockHandlers: McpApiHandlers;
   let logger: ReturnType<typeof createMockLogger>;
 
   const testWorkspacePath = "/home/user/projects/my-app/.worktrees/feature-branch";
@@ -48,10 +63,10 @@ describe("McpServer Boundary Tests", () => {
 
   beforeEach(async () => {
     port = await findFreePort();
-    mockApi = createMockCoreApi();
+    mockHandlers = createMockMcpHandlers();
     logger = createMockLogger();
 
-    server = new McpServer(mockApi, createDefaultMcpServer, logger);
+    server = new McpServer(mockHandlers, createDefaultMcpServer, logger);
     await server.start(port);
   });
 

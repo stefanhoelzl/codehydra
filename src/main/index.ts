@@ -85,6 +85,7 @@ import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 import { PluginServer } from "../services/plugin-server";
 import { McpServerManager } from "../services/mcp-server";
+import { createMcpHandlers } from "./modules/mcp-handlers";
 import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
@@ -392,15 +393,10 @@ const badgeManager = new BadgeManager(
 // Mutable reference: set after module wiring + registry.getInterface(), read by lazy closures
 let codeHydraApi: ICodeHydraApi | null = null;
 
-// McpServerManager with lazy API factory (API is not available until after module wiring)
+// McpServerManager with handlers factory that dispatches intents directly
 const mcpServerManager = new McpServerManager(
   networkLayer,
-  () => {
-    if (!codeHydraApi) {
-      throw new Error("API not initialized");
-    }
-    return codeHydraApi;
-  },
+  () => createMcpHandlers(dispatcher, pluginServer),
   loggingService.createLogger("mcp")
 );
 
