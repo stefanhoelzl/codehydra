@@ -141,6 +141,10 @@ describe("MainView close project integration", () => {
       });
       await vi.runAllTimersAsync();
 
+      // Expand sidebar (project header buttons are only in DOM when expanded)
+      const sidebar = document.querySelector(".sidebar")!;
+      await fireEvent.mouseEnter(sidebar);
+
       // Find and click the close button for the project with workspaces
       // Button has id="close-project-${project.id}"
       const closeButton = document.getElementById(`close-project-${projectWithWorkspaces.id}`);
@@ -164,6 +168,10 @@ describe("MainView close project integration", () => {
         expect(projectsStore.loadingState.value).toBe("loaded");
       });
       await vi.runAllTimersAsync();
+
+      // Expand sidebar (project header buttons are only in DOM when expanded)
+      const sidebar = document.querySelector(".sidebar")!;
+      await fireEvent.mouseEnter(sidebar);
 
       // Find and click the close button for the empty project
       const closeButton = document.getElementById(`close-project-${projectWithoutWorkspaces.id}`);
