@@ -92,17 +92,17 @@ function openAgentTerminal(
   if (!show) {
     // Reopened workspace: dispose stale restored terminals (empty creationOptions
     // indicate a terminal restored after pty host reconnection failure)
-    let hadRestoredTerminal = false;
     for (const t of vscode.window.terminals) {
       const opts = t.creationOptions as vscode.TerminalOptions | undefined;
       if (opts?.name === undefined) {
-        hadRestoredTerminal = true;
         t.dispose();
       }
     }
 
-    if (!hadRestoredTerminal) {
-      // User had closed the terminal before restart — don't recreate it
+    // Respect user preference: if they closed the terminal before restart, don't recreate
+    const wasOpen =
+      extensionContext?.workspaceState.get<boolean>("agentTerminalOpen", true) ?? true;
+    if (!wasOpen) {
       return;
     }
   }
@@ -116,6 +116,7 @@ function openAgentTerminal(
 
   agentTerminal.show();
   agentTerminal.sendText(command);
+  void extensionContext?.workspaceState.update("agentTerminalOpen", true);
 
   codehydraApi.log.debug("Agent terminal opened", { agentType, command });
 }
@@ -131,6 +132,7 @@ function setupTerminalCloseListener(): void {
   terminalCloseListener = vscode.window.onDidCloseTerminal((terminal) => {
     if (terminal === agentTerminal) {
       agentTerminal = null;
+      void extensionContext?.workspaceState.update("agentTerminalOpen", false);
       codehydraApi.log.debug("Agent terminal closed");
     }
   });
