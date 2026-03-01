@@ -5,7 +5,8 @@
  * - resolve-workspace: shared workspace resolution (workspacePath → projectPath + workspaceName)
  * - open-project: register project, discover workspaces, fire-and-forget cleanup
  * - close-project: unregister project, clear state
- * - open-workspace: resolve caller, create worktree, fetch bases
+ * - open-workspace: resolve caller, create worktree
+ * - get-project-bases: list bases (local read), refresh bases (git fetch)
  * - delete-workspace: remove worktree
  * - switch-workspace: find candidates
  * - get-workspace-status: check dirty status
@@ -29,6 +30,12 @@ import type {
   ResolveCallerHookResult,
 } from "../operations/open-workspace";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
+import type {
+  ListBasesHookInput,
+  ListBasesHookResult,
+  RefreshBasesHookInput,
+} from "../operations/get-project-bases";
+import { GET_PROJECT_BASES_OPERATION_ID } from "../operations/get-project-bases";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import type { DiscoverHookResult, DiscoverHookInput } from "../operations/open-project";
@@ -53,26 +60,12 @@ import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
 
 // =============================================================================
-// Hook Context Types
-// =============================================================================
-
-interface FetchBasesInput extends HookContext {
-  readonly projectPath: string;
-}
-
-// =============================================================================
 // Hook Result Types
 // =============================================================================
 
 /** Result from the open-project "setup" hook point. */
 export interface WorkspaceSetupHookResult {
   readonly workspaces: readonly Workspace[];
-  readonly defaultBaseBranch?: string;
-}
-
-/** Result from the open-workspace "fetch-bases" hook point. */
-export interface FetchBasesHookResult {
-  readonly bases: readonly { name: string; isRemote: boolean }[];
   readonly defaultBaseBranch?: string;
 }
 
@@ -207,7 +200,7 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // open-workspace -> resolve-caller + create + fetch-bases
+      // open-workspace -> resolve-caller + create
       [OPEN_WORKSPACE_OPERATION_ID]: {
         "resolve-caller": {
           handler: async (ctx: HookContext): Promise<ResolveCallerHookResult> => {
@@ -283,10 +276,13 @@ export function createGitWorktreeWorkspaceModule(
             };
           },
         },
+      },
 
-        "fetch-bases": {
-          handler: async (ctx: HookContext): Promise<FetchBasesHookResult> => {
-            const { projectPath } = ctx as FetchBasesInput;
+      // get-project-bases -> list + refresh
+      [GET_PROJECT_BASES_OPERATION_ID]: {
+        list: {
+          handler: async (ctx: HookContext): Promise<ListBasesHookResult> => {
+            const { projectPath } = ctx as ListBasesHookInput;
             const projectPathObj = new Path(projectPath);
 
             const bases = await globalProvider.listBases(projectPathObj);
@@ -296,6 +292,12 @@ export function createGitWorktreeWorkspaceModule(
               bases,
               ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
             };
+          },
+        },
+        refresh: {
+          handler: async (ctx: HookContext): Promise<void> => {
+            const { projectPath } = ctx as RefreshBasesHookInput;
+            await globalProvider.updateBases(new Path(projectPath));
           },
         },
       },

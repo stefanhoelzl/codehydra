@@ -106,9 +106,6 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
       agentStatusManager: {
         getStatus: vi.fn(),
       } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["agentStatusManager"],
-      globalWorktreeProvider: {
-        listWorktrees: vi.fn(),
-      } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["globalWorktreeProvider"],
     });
     modules.push(ipcEventBridge);
   }

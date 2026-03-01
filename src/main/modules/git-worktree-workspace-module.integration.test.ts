@@ -25,6 +25,8 @@ import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent } from "../operations/open-workspace";
 import type { CreateHookResult } from "../operations/open-workspace";
+import { GET_PROJECT_BASES_OPERATION_ID } from "../operations/get-project-bases";
+import type { ListBasesHookResult } from "../operations/get-project-bases";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
@@ -35,7 +37,6 @@ import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-s
 import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../operations/resolve-workspace";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
-import type { FetchBasesHookResult } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 
@@ -53,6 +54,7 @@ function createMockGitWorktreeProvider() {
     isDirty: vi.fn().mockResolvedValue(false),
     listBases: vi.fn().mockResolvedValue([]),
     defaultBase: vi.fn().mockResolvedValue(undefined),
+    updateBases: vi.fn().mockResolvedValue(undefined),
     cleanupOrphanedWorkspaces: vi.fn().mockResolvedValue({ removedCount: 0, failedPaths: [] }),
     validateRepository: vi.fn().mockResolvedValue(undefined),
     ensureWorkspaceRegistered: vi.fn(),
@@ -178,16 +180,39 @@ class MinimalResolveWorkspaceOperation implements Operation<Intent, ResolveResul
   }
 }
 
-const fetchBasesOperation = createMinimalOperation<Intent, FetchBasesHookResult>(
-  OPEN_WORKSPACE_OPERATION_ID,
-  "fetch-bases",
-  {
-    hookContext: (ctx) => ({
-      intent: ctx.intent,
-      projectPath: (ctx.intent.payload as { projectPath: string }).projectPath,
-    }),
+/** Result from get-project-bases list + refresh dispatch. */
+interface GetProjectBasesTestResult {
+  readonly bases?: readonly { name: string; isRemote: boolean }[];
+  readonly defaultBaseBranch?: string;
+  readonly refreshed?: boolean;
+}
+
+/**
+ * Minimal get-project-bases operation: calls "list" hook, then optionally "refresh".
+ * The intent payload controls which hooks to run via a `hookPoint` field.
+ */
+class MinimalGetProjectBasesOperation implements Operation<Intent, GetProjectBasesTestResult> {
+  readonly id = GET_PROJECT_BASES_OPERATION_ID;
+
+  async execute(ctx: OperationContext<Intent>): Promise<GetProjectBasesTestResult> {
+    const payload = ctx.intent.payload as {
+      projectPath: string;
+      hookPoint?: "list" | "refresh";
+    };
+    const hookCtx = { intent: ctx.intent, projectPath: payload.projectPath };
+
+    if (payload.hookPoint === "refresh") {
+      const { errors } = await ctx.hooks.collect("refresh", hookCtx);
+      if (errors.length > 0) throw errors[0]!;
+      return { refreshed: true };
+    }
+
+    // Default: list
+    const { results, errors } = await ctx.hooks.collect<ListBasesHookResult>("list", hookCtx);
+    if (errors.length > 0) throw errors[0]!;
+    return results[0] ?? {};
   }
-);
+}
 
 /** Result from get-workspace-status: resolve-workspace + get. */
 interface GetStatusResult {
@@ -252,7 +277,7 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation("workspace:open", openWorkspaceOperation);
   dispatcher.registerOperation("workspace:delete", new MinimalDeleteWorkspaceOperation());
   dispatcher.registerOperation("workspace:resolve", new MinimalResolveWorkspaceOperation());
-  dispatcher.registerOperation("open-workspace", fetchBasesOperation);
+  dispatcher.registerOperation("project:get-bases", new MinimalGetProjectBasesOperation());
   dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
 
   // Wire the module under test
@@ -308,14 +333,21 @@ async function dispatchResolveWorkspace(
   } as Intent)) as ResolveResult;
 }
 
-async function dispatchFetchBases(
+async function dispatchListBases(
   dispatcher: Dispatcher,
   projectPath: string
-): Promise<FetchBasesHookResult> {
+): Promise<GetProjectBasesTestResult> {
   return (await dispatcher.dispatch({
-    type: "open-workspace",
+    type: "project:get-bases",
     payload: { projectPath },
-  } as Intent)) as FetchBasesHookResult;
+  } as Intent)) as GetProjectBasesTestResult;
+}
+
+async function dispatchRefreshBases(dispatcher: Dispatcher, projectPath: string): Promise<void> {
+  await dispatcher.dispatch({
+    type: "project:get-bases",
+    payload: { projectPath, hookPoint: "refresh" },
+  } as Intent);
 }
 
 async function dispatchGetStatus(
@@ -637,10 +669,10 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // open-workspace -> fetch-bases
+  // get-project-bases -> list
   // ---------------------------------------------------------------------------
 
-  describe("open-workspace -> fetch-bases", () => {
+  describe("get-project-bases -> list", () => {
     it("returns bases and defaultBaseBranch from provider", async () => {
       const { dispatcher, provider } = setup;
       const projectPath = "/projects/my-app";
@@ -651,12 +683,27 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       ]);
       provider.defaultBase.mockResolvedValue("origin/main");
 
-      const result = await dispatchFetchBases(dispatcher, projectPath);
+      const result = await dispatchListBases(dispatcher, projectPath);
 
       expect(provider.listBases).toHaveBeenCalledWith(new Path(projectPath));
       expect(provider.defaultBase).toHaveBeenCalledWith(new Path(projectPath));
       expect(result.bases).toHaveLength(2);
       expect(result.defaultBaseBranch).toBe("origin/main");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // get-project-bases -> refresh
+  // ---------------------------------------------------------------------------
+
+  describe("get-project-bases -> refresh", () => {
+    it("calls updateBases on provider", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = "/projects/my-app";
+
+      await dispatchRefreshBases(dispatcher, projectPath);
+
+      expect(provider.updateBases).toHaveBeenCalledWith(new Path(projectPath));
     });
   });
 

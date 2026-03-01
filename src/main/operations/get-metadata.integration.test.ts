@@ -216,9 +216,6 @@ function createTestSetup(): TestSetup {
     agentStatusManager: {
       getStatus: vi.fn(),
     } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["agentStatusManager"],
-    globalWorktreeProvider: {
-      listWorktrees: vi.fn(),
-    } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["globalWorktreeProvider"],
   });
   dispatcher.registerModule(resolveModule);
   dispatcher.registerModule(resolveProjectModule);
