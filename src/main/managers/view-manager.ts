@@ -55,6 +55,12 @@ const VIEW_BACKGROUND_COLOR = "#1e1e1e";
 const NAVIGATION_TIMEOUT_MS = 2000;
 
 /**
+ * Z-index for the UI layer when positioned at the bottom of the view stack.
+ * Index 0 is reserved for the background view, so the UI sits at index 1.
+ */
+const Z_UI_BOTTOM = 1;
+
+/**
  * Configuration for creating a ViewManager.
  */
 export interface ViewManagerConfig {
@@ -62,6 +68,8 @@ export interface ViewManagerConfig {
   readonly uiPreloadPath: string;
   /** Code-server port number */
   readonly codeServerPort: number;
+  /** Path to the background HTML page (theme-colored backdrop) */
+  readonly backgroundHtmlPath: string;
 }
 
 /**
@@ -109,6 +117,7 @@ export class ViewManager implements IViewManager {
   private readonly sessionLayer: SessionLayer;
   private readonly config: ViewManagerConfig;
   private uiViewHandle!: ViewHandle;
+  private backgroundViewHandle!: ViewHandle;
   private codeServerPort: number;
   private windowHandle!: WindowHandle;
   /**
@@ -183,10 +192,28 @@ export class ViewManager implements IViewManager {
     // Set transparent background for UI layer
     viewLayer.setBackgroundColor(this.uiViewHandle, "#00000000");
 
+    // Create background view (theme-colored backdrop to prevent white flash)
+    this.backgroundViewHandle = viewLayer.createView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+    });
+
+    // Transparent Electron background — CSS handles the actual color via variables.css
+    viewLayer.setBackgroundColor(this.backgroundViewHandle, "#00000000");
+
     // Get window handle
     this.windowHandle = windowManager.getWindowHandle();
 
-    // Add UI layer to window
+    // Add background view at z-0 (bottom of all views)
+    viewLayer.attachToWindow(this.backgroundViewHandle, this.windowHandle, 0);
+
+    // Load the background HTML page (theme colors via CSS)
+    void viewLayer.loadURL(this.backgroundViewHandle, `file://${config.backgroundHtmlPath}`);
+
+    // Add UI layer to window (on top of background)
     viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
 
     // Subscribe to resize events
@@ -484,6 +511,14 @@ export class ViewManager implements IViewManager {
     const width = Math.max(bounds.width, MIN_WIDTH);
     const height = Math.max(bounds.height, MIN_HEIGHT);
 
+    // Background view: full window (theme-colored backdrop)
+    this.viewLayer.setBounds(this.backgroundViewHandle, {
+      x: 0,
+      y: 0,
+      width,
+      height,
+    });
+
     // UI layer: full window (so dialogs can overlay everything)
     this.viewLayer.setBounds(this.uiViewHandle, {
       x: 0,
@@ -657,7 +692,7 @@ export class ViewManager implements IViewManager {
         // so the transparent sidebar strip is rendered on startup
         try {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
-            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, 0, {
+            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, Z_UI_BOTTOM, {
               force: true,
             });
           }
@@ -769,7 +804,7 @@ export class ViewManager implements IViewManager {
       switch (newMode) {
         case "workspace":
           // Move UI to bottom (index 0) - workspace on top
-          this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, 0);
+          this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, Z_UI_BOTTOM);
           // Focus the active workspace
           this.focusActiveWorkspace();
           break;
@@ -907,7 +942,7 @@ export class ViewManager implements IViewManager {
         // so the transparent sidebar strip is rendered on startup
         try {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
-            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, 0, {
+            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, Z_UI_BOTTOM, {
               force: true,
             });
           }
@@ -1026,6 +1061,13 @@ export class ViewManager implements IViewManager {
     // Destroy all workspace views (fire-and-forget - app is shutting down)
     for (const path of this.workspaceStates.keys()) {
       void this.destroyWorkspaceView(path);
+    }
+
+    // Destroy background view
+    try {
+      this.viewLayer.destroy(this.backgroundViewHandle);
+    } catch {
+      // Ignore errors during cleanup - view may be in an inconsistent state
     }
 
     // Destroy UI view
