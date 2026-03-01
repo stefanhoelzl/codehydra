@@ -339,11 +339,6 @@ function createTestSetup(opts?: {
       globalWorktreeProvider: {
         listWorktrees: vi.fn(),
       } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["globalWorktreeProvider"],
-      deleteOp: {
-        hasPendingRetry: vi.fn().mockReturnValue(false),
-        signalDismiss: vi.fn(),
-        signalRetry: vi.fn(),
-      } as unknown as import("../modules/ipc-event-bridge").IpcEventBridgeDeps["deleteOp"],
     });
     modules.push(ipcEventBridge);
   }

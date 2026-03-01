@@ -257,10 +257,12 @@
     logger.debug("Retrying deletion", {
       workspaceName: activeDeletionState.workspaceName,
     });
-    // Fire-and-forget - signals the waiting pipeline via workspaces.remove handler
+    // Dispatch new intent with blockingPids from previous failure
+    const pids = activeDeletionState.blockingProcesses?.map((p) => p.pid);
     void api.workspaces.remove(activeDeletionState.workspacePath, {
       keepBranch: activeDeletionState.keepBranch,
       skipSwitch: true,
+      ...(pids && { blockingPids: pids }),
     });
   }
 

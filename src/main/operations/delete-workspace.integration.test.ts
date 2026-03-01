@@ -2,9 +2,10 @@
  * Integration tests for DeleteWorkspaceOperation.
  *
  * Tests the full delete-workspace pipeline through dispatcher.dispatch():
- * - Operation orchestrates hooks (shutdown -> release -> delete)
- * - On delete failure: detect -> emit -> wait -> flush -> delete (retry loop)
- * - Interceptor enforces idempotency (per-workspace)
+ * - Operation orchestrates hooks (shutdown -> release -> [flush] -> delete)
+ * - On delete failure: detect -> emit delete-failed -> return
+ * - On retry: blockingPids in payload -> flush -> delete
+ * - Interceptor enforces idempotency (per-workspace), reset by deleted/delete-failed events
  * - Event subscribers update state and emit IPC events
  * - Progress callback captures DeletionProgress objects
  *
@@ -23,9 +24,14 @@ import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETE_FAILED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
 } from "./delete-workspace";
-import type { WorkspaceDeletedEvent, WorkspaceDeletionProgressEvent } from "./delete-workspace";
+import type {
+  WorkspaceDeletedEvent,
+  WorkspaceDeleteFailedEvent,
+  WorkspaceDeletionProgressEvent,
+} from "./delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   ShutdownHookResult,
@@ -318,7 +324,6 @@ function createTestWorkspaceFileService(): IWorkspaceFileService {
 
 interface TestHarness {
   dispatcher: Dispatcher;
-  deleteOp: DeleteWorkspaceOperation;
   progressCaptures: DeletionProgress[];
   appState: MockAppState;
   testState: TestAppState;
@@ -375,8 +380,7 @@ function createTestHarness(options?: {
   // Register operations
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
-  const deleteOp = new DeleteWorkspaceOperation();
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
+  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
   dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
@@ -412,6 +416,10 @@ function createTestHarness(options?: {
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
+        inProgressDeletions.delete(payload.workspacePath);
+      },
+      [EVENT_WORKSPACE_DELETE_FAILED]: (event: DomainEvent) => {
+        const payload = (event as WorkspaceDeleteFailedEvent).payload;
         inProgressDeletions.delete(payload.workspacePath);
       },
     },
@@ -823,7 +831,6 @@ function createTestHarness(options?: {
 
   return {
     dispatcher,
-    deleteOp,
     progressCaptures,
     appState,
     testState,
@@ -1031,7 +1038,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     expect(finalProgress.blockingProcesses).toBeUndefined();
   });
 
-  it("test 22: delete fails → detect finds blockers → progress shows process list → signal retry → flush kills PIDs → delete succeeds", async () => {
+  it("test 22: delete fails → detect finds blockers → progress shows blockers → returns failure → retry with blockingPids → flush → delete succeeds", async () => {
     const blockingProcesses: BlockingProcess[] = [
       { pid: 5678, name: "node.exe", commandLine: "node server.js", files: ["file.txt"], cwd: "." },
     ];
@@ -1055,18 +1062,12 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     };
 
     const harness = createTestHarness({ workspaceLockHandler });
-    // Override the worktree module's provider
     harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
 
+    // First attempt: fails, detects blockers, returns
     const intent = buildDeleteIntent();
-
-    // Start deletion (will block at waitForRetryChoice)
-    const dispatchPromise = harness.dispatcher.dispatch(intent);
-
-    // Wait for the pipeline to reach the retry wait
-    await vi.waitFor(() => {
-      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
-    });
+    const result1 = await harness.dispatcher.dispatch(intent);
+    expect(result1).toEqual({ started: true });
 
     // Verify progress shows blocking processes
     const progressWithBlockers = harness.progressCaptures.find(
@@ -1077,17 +1078,18 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     expect(progressWithBlockers!.completed).toBe(true);
     expect(progressWithBlockers!.hasErrors).toBe(true);
 
-    // Verify detecting-blockers operation in progress
+    // Verify detecting-blockers operation
     const detectOp = progressWithBlockers!.operations.find((op) => op.id === "detecting-blockers");
     expect(detectOp).toBeDefined();
     expect(detectOp!.status).toBe("error");
 
-    // Signal retry
-    harness.deleteOp.signalRetry(WORKSPACE_PATH);
+    // Idempotency reset by workspace:delete-failed event
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
 
-    // Wait for completion
-    const result = await dispatchPromise;
-    expect(result).toEqual({ started: true });
+    // Retry with blockingPids
+    const retryIntent = buildDeleteIntent({ blockingPids: [5678] });
+    const result2 = await harness.dispatcher.dispatch(retryIntent);
+    expect(result2).toEqual({ started: true });
 
     // Flush killed the PIDs
     expect(workspaceLockHandler.killProcesses).toHaveBeenCalledWith([5678]);
@@ -1101,7 +1103,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     expect(finalProgress.hasErrors).toBe(false);
   });
 
-  it("test 23: delete fails → detect → signal dismiss → pipeline exits with hasErrors", async () => {
+  it("test 23: delete fails → detect finds blockers → pipeline exits with hasErrors, no workspace:deleted emitted", async () => {
     const blockingProcesses: BlockingProcess[] = [
       { pid: 9999, name: "code.exe", commandLine: "code .", files: ["file.txt"], cwd: null },
     ];
@@ -1119,18 +1121,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     });
     const intent = buildDeleteIntent();
 
-    // Start deletion
-    const dispatchPromise = harness.dispatcher.dispatch(intent);
-
-    // Wait for retry prompt
-    await vi.waitFor(() => {
-      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
-    });
-
-    // Signal dismiss
-    harness.deleteOp.signalDismiss(WORKSPACE_PATH);
-
-    const result = await dispatchPromise;
+    const result = await harness.dispatcher.dispatch(intent);
     expect(result).toEqual({ started: true });
 
     // Workspace should NOT be removed from state (no workspace:deleted event)
@@ -1139,9 +1130,19 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     // No IPC workspace:removed event
     const ipcEvent = harness.emittedEvents.find((e) => e.event === "workspace:removed");
     expect(ipcEvent).toBeUndefined();
+
+    // Idempotency was reset by delete-failed event (allows retry)
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+
+    // Progress shows blockers
+    const progressWithBlockers = harness.progressCaptures.find(
+      (p) => p.blockingProcesses && p.blockingProcesses.length > 0
+    );
+    expect(progressWithBlockers).toBeDefined();
+    expect(progressWithBlockers!.blockingProcesses![0]!.pid).toBe(9999);
   });
 
-  it("test 24: multiple retry loop: detect → retry → flush → delete(fails) → detect → retry → flush → delete(succeeds)", async () => {
+  it("test 24: multiple retry dispatches: first fails → retry with PIDs fails → retry again → succeeds", async () => {
     const blockingProcesses: BlockingProcess[] = [
       { pid: 1111, name: "node.exe", commandLine: "node", files: ["a.js"], cwd: null },
     ];
@@ -1167,24 +1168,21 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     const harness = createTestHarness({ workspaceLockHandler });
     harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
 
-    const intent = buildDeleteIntent();
-    const dispatchPromise = harness.dispatcher.dispatch(intent);
+    // First attempt: fails
+    const result1 = await harness.dispatcher.dispatch(buildDeleteIntent());
+    expect(result1).toEqual({ started: true });
+    expect(deleteAttempts).toBe(1);
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
 
-    // First retry cycle
-    await vi.waitFor(() => {
-      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
-    });
-    harness.deleteOp.signalRetry(WORKSPACE_PATH);
+    // Second attempt (retry with PIDs): also fails
+    const result2 = await harness.dispatcher.dispatch(buildDeleteIntent({ blockingPids: [1111] }));
+    expect(result2).toEqual({ started: true });
+    expect(deleteAttempts).toBe(2);
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
 
-    // Second retry cycle (second delete also fails)
-    await vi.waitFor(() => {
-      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
-    });
-    harness.deleteOp.signalRetry(WORKSPACE_PATH);
-
-    // Third delete succeeds
-    const result = await dispatchPromise;
-    expect(result).toEqual({ started: true });
+    // Third attempt: succeeds
+    const result3 = await harness.dispatcher.dispatch(buildDeleteIntent({ blockingPids: [1111] }));
+    expect(result3).toEqual({ started: true });
     expect(deleteAttempts).toBe(3);
 
     // Final progress: success
@@ -1304,7 +1302,7 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
     );
   });
 
-  it("test 26: retry loop emits in-progress for detecting-blockers, killing-blockers, and cleanup-workspace", async () => {
+  it("test 26: first attempt emits detecting-blockers in-progress; retry with blockingPids emits killing-blockers in-progress", async () => {
     const blockingProcesses: BlockingProcess[] = [
       { pid: 4444, name: "node.exe", commandLine: "node", files: ["f.js"], cwd: null },
     ];
@@ -1329,35 +1327,26 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
     const harness = createTestHarness({ workspaceLockHandler });
     harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
 
-    const intent = buildDeleteIntent();
-    const dispatchPromise = harness.dispatcher.dispatch(intent);
+    // First attempt: fails, detect runs
+    await harness.dispatcher.dispatch(buildDeleteIntent());
 
-    await vi.waitFor(() => {
-      expect(harness.deleteOp.hasPendingRetry(WORKSPACE_PATH)).toBe(true);
-    });
-
-    // Before user choice: should have emitted detecting-blockers as in-progress
+    // Should have emitted detecting-blockers as in-progress
     const detectInProgress = harness.progressCaptures.find(
       (p) => p.operations.find((op) => op.id === "detecting-blockers")?.status === "in-progress"
     );
     expect(detectInProgress).toBeDefined();
 
-    harness.deleteOp.signalRetry(WORKSPACE_PATH);
-    await dispatchPromise;
+    // Clear captures for retry
+    harness.progressCaptures.length = 0;
 
-    // After retry: should have emitted killing-blockers as in-progress
+    // Retry with blockingPids
+    await harness.dispatcher.dispatch(buildDeleteIntent({ blockingPids: [4444] }));
+
+    // Should have emitted killing-blockers as in-progress
     const flushInProgress = harness.progressCaptures.find(
       (p) => p.operations.find((op) => op.id === "killing-blockers")?.status === "in-progress"
     );
     expect(flushInProgress).toBeDefined();
-
-    // After retry: should have emitted cleanup-workspace as in-progress (retry delete)
-    const retryDeleteInProgress = harness.progressCaptures.find(
-      (p) =>
-        p.operations.some((op) => op.id === "killing-blockers") &&
-        p.operations.find((op) => op.id === "cleanup-workspace")?.status === "in-progress"
-    );
-    expect(retryDeleteInProgress).toBeDefined();
   });
 });
 

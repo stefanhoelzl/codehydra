@@ -103,11 +103,6 @@ export interface IpcEventBridgeDeps {
     getStatus(wp: WorkspacePath): { status: string } | undefined;
   };
   readonly globalWorktreeProvider: GitWorktreeProvider;
-  readonly deleteOp: {
-    hasPendingRetry(wp: string): boolean;
-    signalDismiss(wp: string): void;
-    signalRetry(wp: string): void;
-  };
 }
 
 /**
@@ -278,17 +273,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   apiRegistry.register(
     "workspaces.remove",
     async (payload: WorkspaceRemovePayload) => {
-      // If pipeline is waiting for user choice, signal it instead of dispatching new intent.
-      if (deps.deleteOp.hasPendingRetry(payload.workspacePath)) {
-        if (payload.force) {
-          deps.deleteOp.signalDismiss(payload.workspacePath);
-          // Fall through to dispatch force intent after pipeline exits
-        } else {
-          deps.deleteOp.signalRetry(payload.workspacePath);
-          return { started: true };
-        }
-      }
-
       const intent: DeleteWorkspaceIntent = {
         type: INTENT_DELETE_WORKSPACE,
         payload: {
@@ -297,6 +281,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
           force: payload.force ?? false,
           removeWorktree: true,
           ...(payload.skipSwitch !== undefined && { skipSwitch: payload.skipSwitch }),
+          ...(payload.blockingPids !== undefined && { blockingPids: payload.blockingPids }),
         },
       };
 

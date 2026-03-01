@@ -283,4 +283,38 @@ describe("createIdempotencyModule", () => {
       await dispatcher.dispatch({ type: "test:delete", payload: { path: "/x" } }).accepted
     ).toBe(false);
   });
+
+  it("per-key with resetOn array: any listed event resets the key", async () => {
+    const { dispatcher } = setup([
+      {
+        intentType: "test:delete",
+        getKey: (p) => (p as { path: string }).path,
+        resetOn: ["test:deleted", "test:delete-failed"],
+      },
+    ]);
+
+    let emitFn: ((event: DomainEvent) => void) | undefined;
+    dispatcher.registerOperation("test:delete", {
+      id: "delete-op",
+      execute: async (ctx: OperationContext<Intent>) => {
+        emitFn = ctx.emit;
+      },
+    });
+
+    // Dispatch /a (tracked)
+    await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } });
+
+    // Blocked
+    expect(
+      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } }).accepted
+    ).toBe(false);
+
+    // Reset via second event type (delete-failed)
+    emitFn!({ type: "test:delete-failed", payload: { path: "/a" } });
+
+    // Now unblocked
+    expect(
+      await dispatcher.dispatch({ type: "test:delete", payload: { path: "/a" } }).accepted
+    ).toBe(true);
+  });
 });

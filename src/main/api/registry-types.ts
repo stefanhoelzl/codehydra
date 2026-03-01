@@ -66,6 +66,8 @@ export interface WorkspaceRemovePayload {
   readonly skipSwitch?: boolean;
   /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
   readonly force?: boolean;
+  /** PIDs from a previous failed attempt. Flush hook kills these before re-attempting delete. */
+  readonly blockingPids?: readonly number[];
 }
 
 /** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata, workspaces.restartAgentServer */
