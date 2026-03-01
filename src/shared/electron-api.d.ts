@@ -29,7 +29,7 @@ export type Unsubscribe = () => void;
  */
 export interface Api {
   // ============ API (api: prefixed channels) ============
-  // Primary API using ICodeHydraApi-based backend.
+  // Primary API backed by intent dispatcher.
   // Lifecycle handlers are registered in bootstrap(), others in startServices().
 
   projects: {

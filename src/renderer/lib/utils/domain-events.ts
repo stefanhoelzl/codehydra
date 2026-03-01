@@ -24,7 +24,7 @@ export type ApiEvents = IApiEvents;
 
 /**
  * API interface for event subscriptions.
- * Supports all events from the ICodeHydraApi interface.
+ * Supports all events from the ApiEvents interface.
  */
 export interface DomainEventApi {
   on<E extends keyof ApiEvents>(event: E, handler: ApiEvents[E]): Unsubscribe;

@@ -47,7 +47,6 @@ import type { IViewManager } from "../managers/view-manager.interface";
 
 import type { WorkspaceLockHandler } from "../../services/platform/workspace-lock-handler";
 import type { IWorkspaceFileService } from "../../services";
-import { ApiIpcChannels } from "../../shared/ipc";
 import type { WorkspacePath } from "../../shared/ipc";
 import type {
   BlockingProcess,
@@ -299,15 +298,13 @@ function createTestViewManager(activeWorkspacePath: string | null = WORKSPACE_PA
 }
 
 function createTestSendToUI(): {
-  sendToUI: ReturnType<typeof vi.fn<(channel: string, payload: unknown) => void>>;
-  emittedEvents: Array<{ channel: string; payload: unknown }>;
+  sendToUI: (channel: string, payload: unknown) => void;
+  emittedEvents: Array<{ event: string; payload: unknown }>;
 } {
-  const emittedEvents: Array<{ channel: string; payload: unknown }> = [];
-  const sendToUI = vi
-    .fn<(channel: string, payload: unknown) => void>()
-    .mockImplementation((channel: string, payload: unknown) => {
-      emittedEvents.push({ channel, payload });
-    });
+  const emittedEvents: Array<{ event: string; payload: unknown }> = [];
+  const sendToUI = vi.fn((channel: string, payload: unknown) => {
+    emittedEvents.push({ event: channel, payload });
+  });
   return { sendToUI, emittedEvents };
 }
 
@@ -329,7 +326,7 @@ interface TestHarness {
   viewManager: IViewManager;
   activeWorkspace: { path: string | null };
   destroyedViews: string[];
-  emittedEvents: Array<{ channel: string; payload: unknown }>;
+  emittedEvents: Array<{ event: string; payload: unknown }>;
   inProgressDeletions: Set<string>;
   globalProviderState: { removed: boolean };
   globalProviderMock: {
@@ -683,7 +680,7 @@ function createTestHarness(options?: {
     events: {
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceDeletedEvent).payload;
-        sendToUI(ApiIpcChannels.WORKSPACE_REMOVED, {
+        sendToUI("api:workspace:removed", {
           projectId: payload.projectId,
           workspaceName: payload.workspaceName,
           path: payload.workspacePath,
@@ -874,9 +871,7 @@ describe("DeleteWorkspaceOperation.normalDeletion", () => {
     });
 
     // Event subscriber: IPC event emitted
-    const ipcEvent = harness.emittedEvents.find(
-      (e) => e.channel === ApiIpcChannels.WORKSPACE_REMOVED
-    );
+    const ipcEvent = harness.emittedEvents.find((e) => e.event === "api:workspace:removed");
     expect(ipcEvent).toBeDefined();
     expect(ipcEvent!.payload).toEqual({
       projectId: PROJECT_ID,
@@ -913,9 +908,7 @@ describe("DeleteWorkspaceOperation.forceDeletion", () => {
     });
 
     // IPC event still emitted
-    const ipcEvent = harness.emittedEvents.find(
-      (e) => e.channel === ApiIpcChannels.WORKSPACE_REMOVED
-    );
+    const ipcEvent = harness.emittedEvents.find((e) => e.event === "api:workspace:removed");
     expect(ipcEvent).toBeDefined();
 
     // Final progress should report errors
@@ -1131,9 +1124,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
 
     // No IPC workspace:removed event
-    const ipcEvent = harness.emittedEvents.find(
-      (e) => e.channel === ApiIpcChannels.WORKSPACE_REMOVED
-    );
+    const ipcEvent = harness.emittedEvents.find((e) => e.event === "api:workspace:removed");
     expect(ipcEvent).toBeUndefined();
 
     // Idempotency was reset by delete-failed event (allows retry)
@@ -1467,9 +1458,7 @@ describe("DeleteWorkspaceOperation.ipcEvents", () => {
 
     await harness.dispatcher.dispatch(intent);
 
-    const ipcEvent = harness.emittedEvents.find(
-      (e) => e.channel === ApiIpcChannels.WORKSPACE_REMOVED
-    );
+    const ipcEvent = harness.emittedEvents.find((e) => e.event === "api:workspace:removed");
     expect(ipcEvent).toBeDefined();
     expect(ipcEvent!.payload).toEqual({
       projectId: PROJECT_ID,
@@ -1521,9 +1510,7 @@ describe("DeleteWorkspaceOperation.removeWorktree", () => {
     });
 
     // IPC event emitted
-    const ipcEvent = harness.emittedEvents.find(
-      (e) => e.channel === ApiIpcChannels.WORKSPACE_REMOVED
-    );
+    const ipcEvent = harness.emittedEvents.find((e) => e.event === "api:workspace:removed");
     expect(ipcEvent).toBeDefined();
   });
 
@@ -1558,9 +1545,7 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     expect(result).toEqual({ started: true });
 
     // Workspace deleted event should use the resolved project path
-    const ipcEvent = harness.emittedEvents.find(
-      (e) => e.channel === ApiIpcChannels.WORKSPACE_REMOVED
-    );
+    const ipcEvent = harness.emittedEvents.find((e) => e.event === "api:workspace:removed");
     expect(ipcEvent).toBeDefined();
     expect((ipcEvent!.payload as { projectId: string }).projectId).toBe(PROJECT_ID);
 

@@ -1,8 +1,10 @@
 /**
- * API interface definitions for CodeHydra.
+ * API event type definitions for CodeHydra.
  *
- * These interfaces define the API contract for projects, workspaces, UI, and lifecycle.
- * IPC handlers in IpcEventBridge dispatch intents that implement these contracts.
+ * ApiEvents defines the IPC event contract between the main process and renderer.
+ * These event types are used by:
+ * - The IPC event bridge (domain events → sendToUI)
+ * - The renderer (event type definitions for IPC listeners)
  */
 
 import type {
@@ -13,178 +15,12 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  InitialPrompt,
-  AgentSession,
   SetupScreenProgress,
 } from "./types";
-import type { UIMode, UIModeChangedEvent, SetupErrorPayload } from "../ipc";
+import type { UIModeChangedEvent, SetupErrorPayload } from "../ipc";
 
 // Re-export for consumers that import from this module
 export type { Unsubscribe } from "../types";
-
-// =============================================================================
-// Domain API Interfaces
-// =============================================================================
-
-/**
- * Options for closing a project.
- */
-export interface ProjectCloseOptions {
-  /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
-  readonly removeLocalRepo?: boolean;
-}
-
-export interface IProjectApi {
-  open(path?: string): Promise<Project | null>;
-  close(projectPath: string, options?: ProjectCloseOptions): Promise<void>;
-  /**
-   * Clone a git repository and create a new project.
-   * If the URL has already been cloned, returns the existing project.
-   *
-   * @param url Git remote URL (HTTPS or SSH format)
-   * @returns The created or existing project
-   * @throws Error if clone fails (network, auth, invalid URL)
-   */
-  clone(url: string): Promise<Project>;
-  fetchBases(projectPath: string): Promise<{ readonly bases: readonly BaseInfo[] }>;
-}
-
-/**
- * Options for workspace creation.
- */
-export interface WorkspaceCreateOptions {
-  /** Optional initial prompt to send after workspace is created */
-  readonly initialPrompt?: InitialPrompt;
-  /** If true, steal focus from current workspace. If false, don't steal focus but still
-   *  switch when no workspace is active. Default: switch (undefined treated as true). */
-  readonly stealFocus?: boolean;
-  /**
-   * Workspace path of the calling workspace.
-   * Used by Plugin API / MCP server as an alternative to projectId.
-   * When provided, projectId is resolved from this workspace's project.
-   */
-  readonly callerWorkspacePath?: string;
-}
-
-export interface IWorkspaceApi {
-  /**
-   * Create a new workspace.
-   *
-   * @param projectPath Project path to create the workspace in
-   * @param name Name of the new workspace
-   * @param base Base branch to create the workspace from
-   * @param options Optional creation options (initialPrompt, stealFocus)
-   */
-  create(
-    projectPath: string | undefined,
-    name: string,
-    base: string,
-    options?: WorkspaceCreateOptions
-  ): Promise<Workspace>;
-  /**
-   * Start workspace removal (fire-and-forget).
-   * Progress is emitted via workspace:deletion-progress events.
-   * Returns { started: true } on success, { started: false } if blocked by idempotency.
-   *
-   * @param workspacePath Absolute path to the workspace to remove
-   * @param options Optional removal options (keepBranch, skipSwitch, force)
-   */
-  remove(
-    workspacePath: string,
-    options?: {
-      keepBranch?: boolean;
-      skipSwitch?: boolean;
-      force?: boolean;
-      blockingPids?: readonly number[];
-    }
-  ): Promise<{ started: boolean }>;
-  /**
-   * Get the status of a workspace.
-   * @param workspacePath Absolute path to the workspace
-   * @returns Workspace status including dirty flag and agent status
-   * @throws Error if workspace not found
-   */
-  getStatus(workspacePath: string): Promise<WorkspaceStatus>;
-  /**
-   * Get the agent session info for a workspace.
-   * @param workspacePath Absolute path to the workspace
-   * @returns Session info (port and sessionId) if available, null if not running or not initialized
-   * @throws Error if workspace not found
-   */
-  getAgentSession(workspacePath: string): Promise<AgentSession | null>;
-  /**
-   * Set a metadata value for a workspace.
-   * @param workspacePath Absolute path to the workspace
-   * @param key Metadata key (must match /^[A-Za-z][A-Za-z0-9-]*$/)
-   * @param value Value to set, or null to delete the key
-   * @throws Error if workspace not found, or key format invalid
-   */
-  setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
-  /**
-   * Get all metadata for a workspace.
-   * Always includes `base` key (with fallback if not in config).
-   * @param workspacePath Absolute path to the workspace
-   * @returns Metadata record with at least `base` key
-   * @throws Error if workspace not found
-   */
-  getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
-  /**
-   * Execute a VS Code command in a workspace.
-   *
-   * Note: Most VS Code commands return `undefined`. The return type is `unknown`
-   * because command return types are not statically typed.
-   *
-   * @param workspacePath Absolute path to the workspace
-   * @param command VS Code command identifier (e.g., "workbench.action.files.save")
-   * @param args Optional arguments to pass to the command
-   * @returns The command's return value, or undefined if command returns nothing
-   * @throws Error if workspace not found, workspace not connected, command not found, or execution fails
-   * @throws Error if command times out (10-second limit)
-   */
-  executeCommand(
-    workspacePath: string,
-    command: string,
-    args?: readonly unknown[]
-  ): Promise<unknown>;
-  /**
-   * Restart the agent server for a workspace, preserving the same port.
-   * Useful for reloading configuration changes without affecting other workspaces.
-   *
-   * @param workspacePath Absolute path to the workspace
-   * @returns The port number of the restarted server
-   * @throws Error if workspace not found, or server not running
-   */
-  restartAgentServer(workspacePath: string): Promise<number>;
-}
-
-export interface IUiApi {
-  getActiveWorkspace(): Promise<WorkspaceRef | null>;
-  switchWorkspace(workspacePath: string, focus?: boolean): Promise<void>;
-  /**
-   * Sets the UI mode.
-   * - "workspace": UI at z-index 0, focus active workspace
-   * - "shortcut": UI on top, focus UI layer
-   * - "dialog": UI on top, no focus change
-   *
-   * Mode transitions are idempotent - setting the same mode twice does not emit an event.
-   *
-   * @param mode - The new UI mode
-   */
-  setMode(mode: UIMode): Promise<void>;
-}
-
-export interface ILifecycleApi {
-  /**
-   * Signal that the renderer is ready to receive state.
-   * The main process emits domain events for all current state
-   * (project:opened, workspace:switched) before the promise resolves.
-   */
-  ready(): Promise<void>;
-  /**
-   * Quit the application.
-   */
-  quit(): Promise<void>;
-}
 
 // =============================================================================
 // Domain Event Types (shared with renderer)

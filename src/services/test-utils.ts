@@ -9,8 +9,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { simpleGit } from "simple-git";
 import { vi } from "vitest";
-import type { IWorkspaceApi } from "../shared/api/interfaces";
-import { MOCK_WORKSPACE_API_DEFAULTS } from "../shared/test-fixtures";
 
 /**
  * Create a temporary directory with automatic cleanup.
@@ -286,36 +284,5 @@ export function suppressConsole(
         spy.mockRestore();
       }
     },
-  };
-}
-
-// =============================================================================
-// API Mock Factories
-// =============================================================================
-
-/**
- * Creates a mock IWorkspaceApi with sensible defaults.
- * All methods return mock functions that can be configured in tests.
- *
- * @param overrides - Optional method overrides
- * @returns Mock IWorkspaceApi with all methods mocked
- *
- * @example
- * ```typescript
- * const mockApi = createMockWorkspaceApi();
- * mockApi.getStatus.mockResolvedValue({ isDirty: true, agent: { type: "busy" } });
- * ```
- */
-export function createMockWorkspaceApi(overrides?: Partial<IWorkspaceApi>): IWorkspaceApi {
-  return {
-    create: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
-    remove: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.removeResult),
-    getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
-    getAgentSession: vi.fn().mockResolvedValue(null),
-    restartAgentServer: vi.fn().mockResolvedValue(14001),
-    setMetadata: vi.fn().mockResolvedValue(undefined),
-    getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
-    executeCommand: vi.fn().mockResolvedValue(undefined),
-    ...overrides,
   };
 }
