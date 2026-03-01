@@ -5,6 +5,9 @@
   "type": "module",
   "main": "out/main/index.cjs",
   "packageManager": "pnpm@10.11.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "preinstall": "node scripts/check-path-length.js",
     "bootstrap": "pnpm install && pnpm build",
