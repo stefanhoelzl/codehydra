@@ -233,25 +233,6 @@ describe("ViewManager", () => {
       expect(handle.__brand).toBe("ViewHandle");
     });
 
-    it("registers dom-ready handler that disables EditContext", () => {
-      const deps = createViewManagerDeps();
-      const manager = createViewManager(deps);
-
-      const wsHandle = manager.createWorkspaceView(
-        "/path/to/workspace",
-        "http://127.0.0.1:8080/?folder=/path",
-        "/path/to/project"
-      );
-
-      // Spy on executeJavaScript to verify it's called on dom-ready
-      const executeJsSpy = vi.spyOn(deps.viewLayer, "executeJavaScript");
-
-      // Trigger dom-ready event on the workspace view
-      deps.viewLayer.$.triggerDomReady(wsHandle);
-
-      expect(executeJsSpy).toHaveBeenCalledWith(wsHandle, "delete globalThis.EditContext");
-    });
-
     it("loads URL on first activation", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
@@ -301,9 +282,10 @@ describe("ViewManager", () => {
   });
 
   describe("preloadWorkspaceUrl", () => {
-    it("loads URL without attaching view", () => {
+    it("attaches view at z-index 0 during load", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -313,10 +295,10 @@ describe("ViewManager", () => {
 
       manager.preloadWorkspaceUrl("/path/to/workspace");
 
-      // URL should be loaded but still not attached
+      // URL should be loaded, view attached at z-0 (stays attached until activated)
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
         url: "http://127.0.0.1:8080/?folder=/path",
-        attachedTo: null,
+        attachedTo: windowId,
       });
     });
 
@@ -970,6 +952,7 @@ describe("ViewManager", () => {
     it("attaches view if workspace is active", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -978,16 +961,17 @@ describe("ViewManager", () => {
         true // isNew - starts loading
       );
 
-      // Activate (won't attach because loading)
+      // Activate triggers loadViewUrl (attaches at z-0 for rAF)
       manager.setActiveWorkspace("/path/to/workspace");
 
-      expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: null }); // Not attached during loading
+      // View is attached at z-0 during initialization
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: windowId });
 
-      // Mark as loaded
+      // Mark as loaded → re-attaches on top
       manager.setWorkspaceLoaded("/path/to/workspace");
 
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
-        attachedTo: deps.windowLayer._createdWindowHandle.id,
+        attachedTo: windowId,
       });
     });
 
@@ -1008,6 +992,51 @@ describe("ViewManager", () => {
         manager.setWorkspaceLoaded("/path/to/workspace");
         manager.setWorkspaceLoaded("/path/to/workspace");
       }).not.toThrow();
+    });
+
+    it("attaches view at z-index 0 before URL load", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      // Activate triggers loadViewUrl
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // View should be attached (at z-index 0, behind UI layer)
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      expect(children).toContain(wsHandle.id);
+
+      // Minimal bounds (1x1) to avoid white flash while still enabling rAF
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
+      });
+    });
+
+    it("detaches inactive view when workspace finishes loading", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      // Preload (not activate) — view attached at z-0
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+
+      // Mark as loaded — inactive workspace should be detached
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: null });
     });
   });
 
