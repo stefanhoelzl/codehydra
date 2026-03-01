@@ -354,14 +354,6 @@ export class ViewManager implements IViewManager {
       return true; // Allow navigation within code-server
     });
 
-    // Disable EditContext API before VS Code editor initializes.
-    // EditContext (Chromium 121+) is incompatible with code-server's web context,
-    // causing the editor to ignore all keyboard input. Removing it from the JS
-    // context at dom-ready ensures VS Code falls back to the legacy input method.
-    this.viewLayer.onDomReady(viewHandle, () => {
-      void this.viewLayer.executeJavaScript(viewHandle, "delete globalThis.EditContext");
-    });
-
     // Store workspace state
     this.workspaceStates.set(workspacePath, {
       handle: viewHandle,
@@ -500,8 +492,12 @@ export class ViewManager implements IViewManager {
       height,
     });
 
-    // Only update active workspace bounds (O(1) - inactive views are detached)
-    if (this.activeWorkspacePath !== null) {
+    // Only update active workspace bounds (O(1) - inactive views are detached).
+    // Skip loading workspaces: they're at z-0 with 1x1 bounds.
+    if (
+      this.activeWorkspacePath !== null &&
+      !this.loadingWorkspaces.has(this.activeWorkspacePath)
+    ) {
       const state = this.workspaceStates.get(this.activeWorkspacePath);
       if (state) {
         this.viewLayer.setBounds(state.handle, {
@@ -532,6 +528,20 @@ export class ViewManager implements IViewManager {
 
     const workspaceName = basename(workspacePath);
     this.logger.info("Loading URL", { workspace: workspaceName, url: state.url });
+
+    // Attach at z-index 0 (behind UI layer) so requestAnimationFrame fires
+    // during VS Code initialization (code-server 4.109+ workaround).
+    try {
+      if (!this.windowLayer.isDestroyed(this.windowHandle)) {
+        this.viewLayer.attachToWindow(state.handle, this.windowHandle);
+        // Use minimal bounds so the view is invisible at z-0 (prevents white
+        // flash from code-server's HTML rendering before CSS loads). The 1x1
+        // surface is enough for Chromium's compositor to fire rAF callbacks.
+        this.viewLayer.setBounds(state.handle, { x: 0, y: 0, width: 1, height: 1 });
+      }
+    } catch {
+      // Window may be closing
+    }
 
     // Load the URL (fire-and-forget)
     void this.viewLayer.loadURL(state.handle, state.url);
@@ -877,6 +887,7 @@ export class ViewManager implements IViewManager {
     // If this workspace is active, attach the view and focus it
     if (this.activeWorkspacePath === workspacePath) {
       this.attachView(workspacePath);
+      this.updateBounds();
 
       // Maintain z-order if in dialog, shortcut, or hover mode
       // (UI must stay on top of workspace views)
@@ -912,6 +923,9 @@ export class ViewManager implements IViewManager {
           this.viewLayer.focus(state.handle);
         }
       }
+    } else {
+      // Inactive workspace: detach the z-0 temporary attachment from loadViewUrl()
+      this.detachView(workspacePath);
     }
 
     const workspaceName = basename(workspacePath);
