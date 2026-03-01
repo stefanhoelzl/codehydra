@@ -9,7 +9,7 @@
  * - `WorkspaceRef`: Reference to a workspace (includes path for efficiency)
  *
  * ## Key Interfaces
- * - `IProjectApi`, `IWorkspaceApi`, `IUiApi`, `ILifecycleApi`: Domain API contracts
+ * - `ApiEvents`: All events emitted by the API
  *
  * @module @shared/api
  */
@@ -35,4 +35,4 @@ export type {
 export { isProjectId, isWorkspaceName, validateWorkspaceName } from "./types";
 
 // API interfaces
-export type { IProjectApi, IWorkspaceApi, IUiApi, ILifecycleApi, Unsubscribe } from "./interfaces";
+export type { ApiEvents, Unsubscribe } from "./interfaces";
