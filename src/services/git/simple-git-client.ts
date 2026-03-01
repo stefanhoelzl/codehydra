@@ -515,7 +515,9 @@ export class SimpleGitClient implements IGitClient {
       async () => {
         // Use simple-git's clone with bare option
         // Create git instance at the parent directory to run clone command
-        const git = simpleGit();
+        // allowUnsafePack is required because simple-git 3.32+ false-positives
+        // on Windows paths (drive letter matches its -u regex check)
+        const git = simpleGit({ unsafe: { allowUnsafePack: true } });
         await git.clone(url, targetPath.toNative(), ["--bare"]);
 
         // Set up remote tracking for the bare clone
