@@ -12,8 +12,8 @@ Ship the current branch by creating a PR with auto-merge and waiting for it to m
 $ARGUMENTS
 
 - Empty: Auto-generate PR title and summary from commits
-- `feature` or `bugfix`: User-facing change. Agent proposes a PR title, user reviews.
-- `feature(<title>)` or `bugfix(<title>)`: User-facing change with explicit PR title.
+- `feat` or `fix`: User-facing change. Agent proposes a PR title, user reviews.
+- `feat(<title>)` or `fix(<title>)`: User-facing change with explicit PR title.
 - `internal`: Internal change (no changelog entry). Skips user-facing detection.
 - `--keep-workspace`: Keep workspace after successful merge (default: delete)
 - `--resolves <issue>`: Link PR to a GitHub issue
@@ -147,7 +147,7 @@ git diff origin/main..HEAD
 
 A `changelog_category` variable tracks the result: `"feature"`, `"bugfix"`, or `null` (internal).
 
-**If `feature` or `bugfix` argument was provided:**
+**If `feat` or `fix` argument was provided:**
 
 Set `changelog_category` to `"feature"` or `"bugfix"` accordingly.
 
@@ -173,7 +173,7 @@ Internal changes include: refactors, test additions/fixes, documentation, CI/CD,
 **If `changelog_category` is `"feature"` or `"bugfix"`:**
 
 1. Determine the prefix: `feat: ` for feature, `fix: ` for bugfix.
-2. If a title was provided in parentheses (e.g., `feature(Add dark mode)`): PR title = `feat: Add dark mode`
+2. If a title was provided in parentheses (e.g., `feat(Add dark mode)`): PR title = `feat: Add dark mode`
 3. If no title in parentheses: Analyze the changes and propose 3 concise PR title options via AskUserQuestion (the user can also pick "Other" to enter a custom title). Prepend the appropriate prefix (`feat: ` or `fix: `) to the selected title.
 
 **If `changelog_category` is `null`:**
