@@ -1,6 +1,8 @@
 /**
  * API interface definitions for CodeHydra.
- * Stub file - implementation coming in Step 1.4.
+ *
+ * These interfaces define the API contract for projects, workspaces, UI, and lifecycle.
+ * IPC handlers in IpcEventBridge dispatch intents that implement these contracts.
  */
 
 import type {
@@ -16,13 +18,12 @@ import type {
   SetupScreenProgress,
 } from "./types";
 import type { UIMode, UIModeChangedEvent, SetupErrorPayload } from "../ipc";
-import type { IDisposable, Unsubscribe } from "../types";
 
 // Re-export for consumers that import from this module
-export type { IDisposable, Unsubscribe } from "../types";
+export type { Unsubscribe } from "../types";
 
 // =============================================================================
-// Domain API Interfaces - Stubs
+// Domain API Interfaces
 // =============================================================================
 
 /**
@@ -186,9 +187,13 @@ export interface ILifecycleApi {
 }
 
 // =============================================================================
-// Event Types
+// Domain Event Types (shared with renderer)
 // =============================================================================
 
+/**
+ * Typed event map for domain events sent to the renderer via IPC.
+ * Used by the renderer to type-check event handlers on `api.on()`.
+ */
 export interface ApiEvents {
   "project:opened": (event: { readonly project: Project }) => void;
   "project:closed": (event: { readonly projectId: ProjectId }) => void;
@@ -212,27 +217,9 @@ export interface ApiEvents {
     readonly projectId: ProjectId;
     readonly workspaceName: WorkspaceName;
     readonly key: string;
-    readonly value: string | null; // null means deleted
+    readonly value: string | null;
   }) => void;
   "ui:mode-changed": (event: UIModeChangedEvent) => void;
   "lifecycle:setup-progress": (event: SetupScreenProgress) => void;
   "lifecycle:setup-error": (event: SetupErrorPayload) => void;
 }
-
-// =============================================================================
-// Main API Interface
-// =============================================================================
-
-export interface ICodeHydraApi extends IDisposable {
-  readonly projects: IProjectApi;
-  readonly workspaces: IWorkspaceApi;
-  readonly ui: IUiApi;
-  readonly lifecycle: ILifecycleApi;
-  on<E extends keyof ApiEvents>(event: E, handler: ApiEvents[E]): Unsubscribe;
-}
-
-// =============================================================================
-// Core API (subset for MCP/CLI)
-// =============================================================================
-
-export type ICoreApi = Pick<ICodeHydraApi, "projects" | "workspaces" | "on" | "dispose">;

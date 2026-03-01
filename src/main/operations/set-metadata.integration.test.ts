@@ -66,7 +66,8 @@ import type { HookContext } from "../intents/infrastructure/operation";
 const PROJECT_ROOT = new Path("/project");
 const WORKSPACES_DIR = new Path("/workspaces");
 
-import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-utils";
+import { ApiIpcChannels } from "../../shared/ipc";
+import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Test Setup Helper
@@ -75,7 +76,7 @@ import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-u
 interface TestSetup {
   dispatcher: Dispatcher;
   mockClient: ReturnType<typeof createMockGitClient>;
-  mockApiRegistry: MockApiRegistry;
+  sendToUI: ReturnType<typeof vi.fn>;
   projectId: ProjectId;
   workspaceName: WorkspaceName;
   workspacePath: string;
@@ -190,16 +191,14 @@ function createTestSetup(): TestSetup {
   };
 
   // Wire IpcEventBridge
-  const mockApiRegistry = createMockRegistry();
+  const sendToUI = vi.fn();
   const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: mockApiRegistry,
-    getApi: () => {
-      throw new Error("not wired");
-    },
-    sendToUI: vi.fn(),
+    ipcLayer: createBehavioralIpcLayer(),
+    sendToUI,
     pluginServer: null,
     logger: SILENT_LOGGER,
     dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    readyHandler: vi.fn(),
     agentStatusManager: {
       getStatus: vi.fn(),
     } as unknown as IpcEventBridgeDeps["agentStatusManager"],
@@ -212,7 +211,7 @@ function createTestSetup(): TestSetup {
   return {
     dispatcher,
     mockClient,
-    mockApiRegistry,
+    sendToUI,
     projectId,
     workspaceName,
     workspacePath: workspacePath.toString(),
@@ -260,12 +259,12 @@ describe("SetMetadata Operation", () => {
   });
 
   it("emits workspace:metadata-changed domain event to IpcEventBridge (#10)", async () => {
-    const { dispatcher, mockApiRegistry, projectId, workspaceName, workspacePath } = setup;
+    const { dispatcher, sendToUI, projectId, workspaceName, workspacePath } = setup;
 
     await dispatcher.dispatch(setMetadataIntent(workspacePath, "description", "my workspace"));
 
-    // Verify ApiRegistry.emit was called via IpcEventBridge
-    expect(mockApiRegistry.emit).toHaveBeenCalledWith("workspace:metadata-changed", {
+    // Verify sendToUI was called via IpcEventBridge
+    expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_METADATA_CHANGED, {
       projectId,
       workspaceName,
       key: "description",
@@ -274,11 +273,11 @@ describe("SetMetadata Operation", () => {
   });
 
   it("emits domain event with null value for deletion", async () => {
-    const { dispatcher, mockApiRegistry, projectId, workspaceName, workspacePath } = setup;
+    const { dispatcher, sendToUI, projectId, workspaceName, workspacePath } = setup;
 
     await dispatcher.dispatch(setMetadataIntent(workspacePath, "description", null));
 
-    expect(mockApiRegistry.emit).toHaveBeenCalledWith("workspace:metadata-changed", {
+    expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_METADATA_CHANGED, {
       projectId,
       workspaceName,
       key: "description",
@@ -322,19 +321,19 @@ describe("SetMetadata Operation", () => {
     });
 
     it("no event emitted on error", async () => {
-      const { dispatcher, mockApiRegistry, workspacePath } = setup;
+      const { dispatcher, sendToUI, workspacePath } = setup;
 
       await expect(
         dispatcher.dispatch(setMetadataIntent(workspacePath, "invalid key!", "value"))
       ).rejects.toThrow();
 
-      expect(mockApiRegistry.emit).not.toHaveBeenCalled();
+      expect(sendToUI).not.toHaveBeenCalled();
     });
   });
 
   describe("interceptor", () => {
     it("cancels metadata intent - no state change, no event (#15)", async () => {
-      const { dispatcher, mockClient, mockApiRegistry, workspacePath } = setup;
+      const { dispatcher, mockClient, sendToUI, workspacePath } = setup;
 
       // Add cancel interceptor
       const cancelInterceptor: IntentInterceptor = {
@@ -358,7 +357,7 @@ describe("SetMetadata Operation", () => {
       expect(configs?.get("codehydra.description")).toBeUndefined();
 
       // No event emitted
-      expect(mockApiRegistry.emit).not.toHaveBeenCalled();
+      expect(sendToUI).not.toHaveBeenCalled();
     });
   });
 });

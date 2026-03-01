@@ -1,20 +1,16 @@
 /**
- * IpcEventBridge - Bridges domain events to the ApiRegistry event system,
- * manages IPC lifecycle (API event wiring, plugin API), and registers all
- * API bridge handlers in the registry.
+ * IpcEventBridge - Bridges domain events to the renderer via sendToUI,
+ * and registers all IPC handlers directly on the IpcLayer.
  *
  * This is an IntentModule that:
- * 1. Subscribes to domain events and forwards them to ApiRegistry.emit() for IPC
- * 2. On app:start, wires API events to IPC and sets up the Plugin API
- * 3. On app:shutdown, cleans up event subscriptions
- * 4. Manages plugin workspace registration on workspace created/deleted events
- * 5. Registers all dispatcher bridge handlers in the API registry
+ * 1. Subscribes to domain events and forwards them to sendToUI for IPC
+ * 2. Registers IPC handlers (intent dispatch bridges) directly on ipcLayer
+ * 3. On app:shutdown, removes all registered IPC handlers
  */
 
 import type { IntentModule, EventDeclarations } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type {
-  IApiRegistry,
   ProjectOpenPayload,
   ProjectClosePayload,
   ProjectClonePayload,
@@ -22,19 +18,17 @@ import type {
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
-  WorkspacePathPayload,
-  WorkspaceExecuteCommandPayload,
+  WorkspaceGetPayload,
   UiSwitchWorkspacePayload,
   UiSetModePayload,
-  EmptyPayload,
-} from "../api/registry-types";
-import type { ICodeHydraApi, Unsubscribe } from "../../shared/api/interfaces";
+  SetupErrorPayload,
+  WorkspacePath,
+} from "../../shared/ipc";
+import { ApiIpcChannels } from "../../shared/ipc";
 import type { Logger } from "../../services/logging";
+import type { IpcLayer } from "../../services/platform/ipc";
 import type { PluginServer } from "../../services/plugin-server";
-import type { StartHookResult } from "../operations/app-start";
-import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
-import { wireApiEvents } from "../ipc/api-handlers";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations/set-metadata";
 import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../operations/set-metadata";
 import type { SetMetadataIntent } from "../operations/set-metadata";
@@ -70,8 +64,6 @@ import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../operations/get
 import type { GetProjectBasesIntent } from "../operations/get-project-bases";
 import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../operations/setup";
 import type { SetupErrorEvent, SetupProgressEvent } from "../operations/setup";
-import type { SetupErrorPayload, WorkspacePath } from "../../shared/ipc";
-import { ApiIpcChannels } from "../../shared/ipc";
 import type { WorkspaceStatus, Workspace } from "../../shared/api/types";
 import { INTENT_GET_METADATA } from "../operations/get-metadata";
 import type { GetMetadataIntent } from "../operations/get-metadata";
@@ -92,37 +84,49 @@ import { Path } from "../../services/platform/path";
  * Dependencies for the IpcEventBridge module.
  */
 export interface IpcEventBridgeDeps {
-  readonly apiRegistry: IApiRegistry;
-  readonly getApi: () => ICodeHydraApi;
+  readonly ipcLayer: IpcLayer;
   readonly sendToUI: (channel: string, ...args: unknown[]) => void;
   readonly pluginServer: PluginServer | null;
   readonly logger: Logger;
-
-  // Dependencies for bridge handlers
   readonly dispatcher: Dispatcher;
+  readonly readyHandler: (payload: object) => Promise<void>;
   readonly agentStatusManager: {
     getStatus(wp: WorkspacePath): { status: string } | undefined;
   };
 }
 
 /**
- * Create an IpcEventBridge module that forwards domain events to the API registry,
- * manages IPC lifecycle (API event wiring, plugin API), and registers all
- * API bridge handlers.
+ * Create an IpcEventBridge module that forwards domain events to the renderer
+ * via sendToUI and registers all IPC handlers directly on the ipcLayer.
  *
  * @param deps - Module dependencies
  * @returns IntentModule with event subscriptions and lifecycle hooks
  */
 export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
-  const { apiRegistry, dispatcher, logger } = deps;
+  const { dispatcher, logger } = deps;
 
-  // Closure state for lifecycle management
-  let apiEventCleanupFn: Unsubscribe | null = null;
+  // Track registered IPC channels for cleanup
+  const registeredChannels: string[] = [];
+
+  /**
+   * Register an IPC handler on the ipcLayer.
+   * Converts undefined/null payloads to empty objects for handlers expecting EmptyPayload.
+   */
+  function registerIpc(channel: string, handler: (payload: unknown) => Promise<unknown>): void {
+    deps.ipcLayer.handle(channel, async (_event: unknown, payload: unknown) => {
+      return handler(payload ?? {});
+    });
+    registeredChannels.push(channel);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Domain event → sendToUI subscriptions
+  // ---------------------------------------------------------------------------
 
   const events: EventDeclarations = {
     [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
       const payload = (event as MetadataChangedEvent).payload as MetadataChangedPayload;
-      apiRegistry.emit("workspace:metadata-changed", {
+      deps.sendToUI(ApiIpcChannels.WORKSPACE_METADATA_CHANGED, {
         projectId: payload.projectId,
         workspaceName: payload.workspaceName,
         key: payload.key,
@@ -131,14 +135,14 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     },
     [EVENT_MODE_CHANGED]: (event: DomainEvent) => {
       const payload = (event as ModeChangedEvent).payload as ModeChangedPayload;
-      apiRegistry.emit("ui:mode-changed", {
+      deps.sendToUI(ApiIpcChannels.UI_MODE_CHANGED, {
         mode: payload.mode,
         previousMode: payload.previousMode,
       });
     },
     [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
       const p = (event as WorkspaceCreatedEvent).payload;
-      apiRegistry.emit("workspace:created", {
+      deps.sendToUI(ApiIpcChannels.WORKSPACE_CREATED, {
         projectId: p.projectId,
         workspace: {
           projectId: p.projectId,
@@ -153,7 +157,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     },
     [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
       const payload = (event as WorkspaceDeletedEvent).payload;
-      apiRegistry.emit("workspace:removed", {
+      deps.sendToUI(ApiIpcChannels.WORKSPACE_REMOVED, {
         projectId: payload.projectId,
         workspaceName: payload.workspaceName,
         path: payload.workspacePath,
@@ -165,18 +169,18 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     },
     [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
       const p = (event as ProjectOpenedEvent).payload;
-      apiRegistry.emit("project:opened", { project: p.project });
+      deps.sendToUI(ApiIpcChannels.PROJECT_OPENED, { project: p.project });
     },
     [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
       const p = (event as ProjectClosedEvent).payload;
-      apiRegistry.emit("project:closed", { projectId: p.projectId });
+      deps.sendToUI(ApiIpcChannels.PROJECT_CLOSED, { projectId: p.projectId });
     },
     [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
       const payload = (event as WorkspaceSwitchedEvent).payload;
       if (payload === null) {
-        apiRegistry.emit("workspace:switched", null);
+        deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, null);
       } else {
-        apiRegistry.emit("workspace:switched", {
+        deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, {
           projectId: payload.projectId,
           workspaceName: payload.workspaceName,
           path: payload.path,
@@ -197,7 +201,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     },
     [EVENT_BASES_UPDATED]: (event: DomainEvent) => {
       const p = (event as BasesUpdatedEvent).payload;
-      apiRegistry.emit("project:bases-updated", {
+      deps.sendToUI(ApiIpcChannels.PROJECT_BASES_UPDATED, {
         projectId: p.projectId,
         projectPath: p.projectPath,
         bases: p.bases,
@@ -226,7 +230,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
               },
             };
 
-      apiRegistry.emit("workspace:status-changed", {
+      deps.sendToUI(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
         projectId,
         workspaceName,
         path: workspacePath,
@@ -236,316 +240,226 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   };
 
   // ---------------------------------------------------------------------------
-  // Register dispatcher bridge handlers in the API registry
+  // Register IPC handlers directly on ipcLayer
   // ---------------------------------------------------------------------------
 
-  apiRegistry.register(
-    "lifecycle.quit",
-    async () => {
-      logger.debug("Quit requested");
-      await dispatcher.dispatch({
-        type: INTENT_APP_SHUTDOWN,
-        payload: {},
-      } as AppShutdownIntent);
-    },
-    { ipc: ApiIpcChannels.LIFECYCLE_QUIT }
-  );
+  registerIpc(ApiIpcChannels.LIFECYCLE_READY, async (payload) => {
+    await deps.readyHandler(payload as object);
+  });
 
-  apiRegistry.register(
-    "workspaces.create",
-    async (payload: WorkspaceCreatePayload) => {
-      const intent: OpenWorkspaceIntent = {
-        type: INTENT_OPEN_WORKSPACE,
-        payload: {
-          ...(payload.projectPath !== undefined && { projectPath: payload.projectPath }),
-          workspaceName: payload.name,
-          base: payload.base,
-          ...(payload.initialPrompt !== undefined && { initialPrompt: payload.initialPrompt }),
-          ...(payload.stealFocus !== undefined && {
-            stealFocus: payload.stealFocus,
-          }),
-          ...(payload.callerWorkspacePath !== undefined && {
-            callerWorkspacePath: payload.callerWorkspacePath,
-          }),
-        },
-      };
-      const result = await dispatcher.dispatch(intent);
-      if (!result) {
-        throw new Error("Create workspace dispatch returned no result");
-      }
-      return result as Workspace;
-    },
-    { ipc: ApiIpcChannels.WORKSPACE_CREATE }
-  );
+  registerIpc(ApiIpcChannels.LIFECYCLE_QUIT, async () => {
+    logger.debug("Quit requested");
+    await dispatcher.dispatch({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    } as AppShutdownIntent);
+  });
 
-  apiRegistry.register(
-    "workspaces.remove",
-    async (payload: WorkspaceRemovePayload) => {
-      const intent: DeleteWorkspaceIntent = {
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspacePath: payload.workspacePath,
-          keepBranch: payload.keepBranch ?? true,
-          force: payload.force ?? false,
-          removeWorktree: true,
-          ...(payload.skipSwitch !== undefined && { skipSwitch: payload.skipSwitch }),
-          ...(payload.blockingPids !== undefined && { blockingPids: payload.blockingPids }),
-        },
-      };
-
-      // Dispatch and check interceptor result (idempotency check happens inside pipeline)
-      const handle = dispatcher.dispatch(intent);
-      if (!(await handle.accepted)) {
-        return { started: false };
-      }
-      // Fire-and-forget the operation result (deletion runs asynchronously)
-      void handle;
-      return { started: true };
-    },
-    { ipc: ApiIpcChannels.WORKSPACE_REMOVE }
-  );
-
-  apiRegistry.register(
-    "workspaces.setMetadata",
-    async (payload: WorkspaceSetMetadataPayload) => {
-      const intent: SetMetadataIntent = {
-        type: INTENT_SET_METADATA,
-        payload: {
-          workspacePath: payload.workspacePath,
-          key: payload.key,
-          value: payload.value,
-        },
-      };
-      await dispatcher.dispatch(intent);
-    },
-    { ipc: ApiIpcChannels.WORKSPACE_SET_METADATA }
-  );
-
-  apiRegistry.register(
-    "workspaces.getMetadata",
-    async (payload: WorkspacePathPayload) => {
-      const intent: GetMetadataIntent = {
-        type: INTENT_GET_METADATA,
-        payload: {
-          workspacePath: payload.workspacePath,
-        },
-      };
-      const result = await dispatcher.dispatch(intent);
-      if (!result) {
-        throw new Error("Get metadata dispatch returned no result");
-      }
-      return result;
-    },
-    { ipc: ApiIpcChannels.WORKSPACE_GET_METADATA }
-  );
-
-  apiRegistry.register(
-    "workspaces.getStatus",
-    async (payload: WorkspacePathPayload) => {
-      const intent: GetWorkspaceStatusIntent = {
-        type: INTENT_GET_WORKSPACE_STATUS,
-        payload: {
-          workspacePath: payload.workspacePath,
-        },
-      };
-      const result = await dispatcher.dispatch(intent);
-      if (!result) {
-        throw new Error("Get workspace status dispatch returned no result");
-      }
-      return result;
-    },
-    { ipc: ApiIpcChannels.WORKSPACE_GET_STATUS }
-  );
-
-  apiRegistry.register(
-    "workspaces.getAgentSession",
-    async (payload: WorkspacePathPayload) => {
-      const intent: GetAgentSessionIntent = {
-        type: INTENT_GET_AGENT_SESSION,
-        payload: {
-          workspacePath: payload.workspacePath,
-        },
-      };
-      return dispatcher.dispatch(intent);
-    },
-    { ipc: ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION }
-  );
-
-  apiRegistry.register(
-    "workspaces.restartAgentServer",
-    async (payload: WorkspacePathPayload) => {
-      const intent: RestartAgentIntent = {
-        type: INTENT_RESTART_AGENT,
-        payload: {
-          workspacePath: payload.workspacePath,
-        },
-      };
-      const result = await dispatcher.dispatch(intent);
-      if (result === undefined) {
-        throw new Error("Restart agent dispatch returned no result");
-      }
-      return result;
-    },
-    { ipc: ApiIpcChannels.WORKSPACE_RESTART_AGENT_SERVER }
-  );
-
-  apiRegistry.register(
-    "ui.setMode",
-    async (payload: UiSetModePayload) => {
-      const intent: SetModeIntent = {
-        type: INTENT_SET_MODE,
-        payload: {
-          mode: payload.mode,
-        },
-      };
-      await dispatcher.dispatch(intent);
-    },
-    { ipc: ApiIpcChannels.UI_SET_MODE }
-  );
-
-  apiRegistry.register(
-    "ui.getActiveWorkspace",
-    async (payload: EmptyPayload) => {
-      void payload;
-      const intent: GetActiveWorkspaceIntent = {
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {} as Record<string, never>,
-      };
-      return dispatcher.dispatch(intent);
-    },
-    { ipc: ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE }
-  );
-
-  apiRegistry.register(
-    "ui.switchWorkspace",
-    async (payload: UiSwitchWorkspacePayload) => {
-      const intent: SwitchWorkspaceIntent = {
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: {
-          workspacePath: payload.workspacePath,
-          ...(payload.focus !== undefined && { focus: payload.focus }),
-        },
-      };
-      await dispatcher.dispatch(intent);
-    },
-    { ipc: ApiIpcChannels.UI_SWITCH_WORKSPACE }
-  );
-
-  // ---------------------------------------------------------------------------
-  // Project API bridge handlers
-  // ---------------------------------------------------------------------------
-
-  apiRegistry.register(
-    "projects.open",
-    async (payload: ProjectOpenPayload) => {
-      const intent: OpenProjectIntent = {
-        type: INTENT_OPEN_PROJECT,
-        payload: {
-          ...(payload.path !== undefined && { path: new Path(payload.path) }),
-        },
-      };
-      const handle = dispatcher.dispatch(intent);
-      if (!(await handle.accepted)) {
-        throw new Error("Project open already in progress");
-      }
-      return await handle;
-    },
-    { ipc: ApiIpcChannels.PROJECT_OPEN }
-  );
-
-  apiRegistry.register(
-    "projects.clone",
-    async (payload: ProjectClonePayload) => {
-      const intent: OpenProjectIntent = {
-        type: INTENT_OPEN_PROJECT,
-        payload: { git: payload.url },
-      };
-      const handle = dispatcher.dispatch(intent);
-      if (!(await handle.accepted)) {
-        throw new Error("Clone already in progress");
-      }
-      const result = await handle;
-      if (!result) {
-        throw new Error("Clone project dispatch returned no result");
-      }
-      return result;
-    },
-    { ipc: ApiIpcChannels.PROJECT_CLONE }
-  );
-
-  apiRegistry.register(
-    "projects.close",
-    async (payload: ProjectClosePayload) => {
-      const intent: CloseProjectIntent = {
-        type: INTENT_CLOSE_PROJECT,
-        payload: {
-          projectPath: payload.projectPath,
-          ...(payload.removeLocalRepo !== undefined && {
-            removeLocalRepo: payload.removeLocalRepo,
-          }),
-        },
-      };
-      await dispatcher.dispatch(intent);
-    },
-    { ipc: ApiIpcChannels.PROJECT_CLOSE }
-  );
-
-  apiRegistry.register(
-    "projects.fetchBases",
-    async (payload: ProjectPathPayload) => {
-      const intent: GetProjectBasesIntent = {
-        type: INTENT_GET_PROJECT_BASES,
-        payload: { projectPath: payload.projectPath, refresh: true },
-      };
-      const result = await dispatcher.dispatch(intent);
-      if (!result) {
-        throw new Error("Fetch bases dispatch returned no result");
-      }
-      return { bases: result.bases };
-    },
-    { ipc: ApiIpcChannels.PROJECT_FETCH_BASES }
-  );
-
-  // executeCommand is not exposed via IPC (only used by MCP/Plugin)
-  apiRegistry.register(
-    "workspaces.executeCommand",
-    async (payload: WorkspaceExecuteCommandPayload) => {
-      if (!deps.pluginServer) {
-        throw new Error("Plugin server not available");
-      }
-      const result = await deps.pluginServer.sendCommand(
-        payload.workspacePath,
-        payload.command,
-        payload.args
-      );
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-      return result.data;
+  registerIpc(ApiIpcChannels.WORKSPACE_CREATE, async (payload) => {
+    const p = payload as WorkspaceCreatePayload;
+    const intent: OpenWorkspaceIntent = {
+      type: INTENT_OPEN_WORKSPACE,
+      payload: {
+        ...(p.projectPath !== undefined && { projectPath: p.projectPath }),
+        workspaceName: p.name,
+        base: p.base,
+        ...(p.initialPrompt !== undefined && { initialPrompt: p.initialPrompt }),
+        ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
+        ...(p.callerWorkspacePath !== undefined && {
+          callerWorkspacePath: p.callerWorkspacePath,
+        }),
+      },
+    };
+    const result = await dispatcher.dispatch(intent);
+    if (!result) {
+      throw new Error("Create workspace dispatch returned no result");
     }
-  );
+    return result as Workspace;
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_REMOVE, async (payload) => {
+    const p = payload as WorkspaceRemovePayload;
+    const intent: DeleteWorkspaceIntent = {
+      type: INTENT_DELETE_WORKSPACE,
+      payload: {
+        workspacePath: p.workspacePath,
+        keepBranch: p.keepBranch ?? true,
+        force: p.force ?? false,
+        removeWorktree: true,
+        ...(p.skipSwitch !== undefined && { skipSwitch: p.skipSwitch }),
+        ...(p.blockingPids !== undefined && { blockingPids: p.blockingPids }),
+      },
+    };
+
+    const handle = dispatcher.dispatch(intent);
+    if (!(await handle.accepted)) {
+      return { started: false };
+    }
+    void handle;
+    return { started: true };
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_SET_METADATA, async (payload) => {
+    const p = payload as WorkspaceSetMetadataPayload;
+    const intent: SetMetadataIntent = {
+      type: INTENT_SET_METADATA,
+      payload: {
+        workspacePath: p.workspacePath,
+        key: p.key,
+        value: p.value,
+      },
+    };
+    await dispatcher.dispatch(intent);
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_GET_METADATA, async (payload) => {
+    const p = payload as WorkspaceGetPayload;
+    const intent: GetMetadataIntent = {
+      type: INTENT_GET_METADATA,
+      payload: { workspacePath: p.workspacePath },
+    };
+    const result = await dispatcher.dispatch(intent);
+    if (!result) {
+      throw new Error("Get metadata dispatch returned no result");
+    }
+    return result;
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_GET_STATUS, async (payload) => {
+    const p = payload as WorkspaceGetPayload;
+    const intent: GetWorkspaceStatusIntent = {
+      type: INTENT_GET_WORKSPACE_STATUS,
+      payload: { workspacePath: p.workspacePath },
+    };
+    const result = await dispatcher.dispatch(intent);
+    if (!result) {
+      throw new Error("Get workspace status dispatch returned no result");
+    }
+    return result;
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION, async (payload) => {
+    const p = payload as WorkspaceGetPayload;
+    const intent: GetAgentSessionIntent = {
+      type: INTENT_GET_AGENT_SESSION,
+      payload: { workspacePath: p.workspacePath },
+    };
+    return dispatcher.dispatch(intent);
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_RESTART_AGENT_SERVER, async (payload) => {
+    const p = payload as WorkspaceGetPayload;
+    const intent: RestartAgentIntent = {
+      type: INTENT_RESTART_AGENT,
+      payload: { workspacePath: p.workspacePath },
+    };
+    const result = await dispatcher.dispatch(intent);
+    if (result === undefined) {
+      throw new Error("Restart agent dispatch returned no result");
+    }
+    return result;
+  });
+
+  registerIpc(ApiIpcChannels.UI_SET_MODE, async (payload) => {
+    const p = payload as UiSetModePayload;
+    const intent: SetModeIntent = {
+      type: INTENT_SET_MODE,
+      payload: { mode: p.mode },
+    };
+    await dispatcher.dispatch(intent);
+  });
+
+  registerIpc(ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE, async () => {
+    const intent: GetActiveWorkspaceIntent = {
+      type: INTENT_GET_ACTIVE_WORKSPACE,
+      payload: {} as Record<string, never>,
+    };
+    return dispatcher.dispatch(intent);
+  });
+
+  registerIpc(ApiIpcChannels.UI_SWITCH_WORKSPACE, async (payload) => {
+    const p = payload as UiSwitchWorkspacePayload;
+    const intent: SwitchWorkspaceIntent = {
+      type: INTENT_SWITCH_WORKSPACE,
+      payload: {
+        workspacePath: p.workspacePath,
+        ...(p.focus !== undefined && { focus: p.focus }),
+      },
+    };
+    await dispatcher.dispatch(intent);
+  });
+
+  registerIpc(ApiIpcChannels.PROJECT_OPEN, async (payload) => {
+    const p = payload as ProjectOpenPayload;
+    const intent: OpenProjectIntent = {
+      type: INTENT_OPEN_PROJECT,
+      payload: {
+        ...(p.path !== undefined && { path: new Path(p.path) }),
+      },
+    };
+    const handle = dispatcher.dispatch(intent);
+    if (!(await handle.accepted)) {
+      throw new Error("Project open already in progress");
+    }
+    return await handle;
+  });
+
+  registerIpc(ApiIpcChannels.PROJECT_CLONE, async (payload) => {
+    const p = payload as ProjectClonePayload;
+    const intent: OpenProjectIntent = {
+      type: INTENT_OPEN_PROJECT,
+      payload: { git: p.url },
+    };
+    const handle = dispatcher.dispatch(intent);
+    if (!(await handle.accepted)) {
+      throw new Error("Clone already in progress");
+    }
+    const result = await handle;
+    if (!result) {
+      throw new Error("Clone project dispatch returned no result");
+    }
+    return result;
+  });
+
+  registerIpc(ApiIpcChannels.PROJECT_CLOSE, async (payload) => {
+    const p = payload as ProjectClosePayload;
+    const intent: CloseProjectIntent = {
+      type: INTENT_CLOSE_PROJECT,
+      payload: {
+        projectPath: p.projectPath,
+        ...(p.removeLocalRepo !== undefined && { removeLocalRepo: p.removeLocalRepo }),
+      },
+    };
+    await dispatcher.dispatch(intent);
+  });
+
+  registerIpc(ApiIpcChannels.PROJECT_FETCH_BASES, async (payload) => {
+    const p = payload as ProjectPathPayload;
+    const intent: GetProjectBasesIntent = {
+      type: INTENT_GET_PROJECT_BASES,
+      payload: { projectPath: p.projectPath, refresh: true },
+    };
+    const result = await dispatcher.dispatch(intent);
+    if (!result) {
+      throw new Error("Fetch bases dispatch returned no result");
+    }
+    return { bases: result.bases };
+  });
 
   return {
     name: "ipc-event-bridge",
     events,
     hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            const api = deps.getApi();
-            apiEventCleanupFn = wireApiEvents(api, deps.sendToUI);
-            return {};
-          },
-        },
-      },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            if (apiEventCleanupFn) {
-              apiEventCleanupFn();
-              apiEventCleanupFn = null;
+            for (const channel of registeredChannels) {
+              try {
+                deps.ipcLayer.removeHandler(channel);
+              } catch {
+                // Continue cleanup even if a handler was already removed
+              }
             }
-            await deps.apiRegistry.dispose();
           },
         },
       },

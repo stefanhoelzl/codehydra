@@ -2,19 +2,16 @@
 /**
  * Integration tests for IpcEventBridge.
  *
- * Tests verify the full pipeline: dispatcher -> operation -> domain event -> IpcEventBridge -> registry.emit.
- * Also covers lifecycle hooks (app:start/app:shutdown) and plugin API wiring.
+ * Tests verify the full pipeline: dispatcher -> operation -> domain event -> sendToUI.
+ * Also covers IPC handler registration and shutdown cleanup.
  *
  * Test plan items covered:
  * #2a: Renderer receives workspace status (idle)
  * #2b: Renderer receives workspace status (busy)
  * #2c: Renderer receives workspace status (mixed)
  * #2d: Renderer receives workspace status (none)
- * workspace:deleted emits workspace:removed
- * app:start wires API events
- * app:start with null pluginServer is safe
- * app:shutdown cleans up
- * app:shutdown error is non-fatal
+ * workspace:deleted sends workspace:removed to UI
+ * app:shutdown removes IPC handlers
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -52,8 +49,6 @@ import type {
   WorkspaceDeletedEvent,
   WorkspaceDeletionProgressEvent,
 } from "../operations/delete-workspace";
-import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
-import type { AppStartIntent } from "../operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -61,20 +56,18 @@ import {
 } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
-import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { SetupOperation, INTENT_SETUP } from "../operations/setup";
 import type { SetupIntent } from "../operations/setup";
 import { createIpcEventBridge, type IpcEventBridgeDeps } from "./ipc-event-bridge";
-import { ApiRegistry } from "../api/registry";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import type { ICodeHydraApi } from "../../shared/api/interfaces";
-import { createMockLogger, SILENT_LOGGER } from "../../services/logging";
-import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
-
-import { createMockRegistry, type MockApiRegistry } from "../api/registry.test-utils";
+import { SILENT_LOGGER } from "../../services/logging";
+import {
+  createBehavioralIpcLayer,
+  type BehavioralIpcLayer,
+} from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Minimal operations that emit events for testing
@@ -106,36 +99,8 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
 }
 
 // =============================================================================
-// Mock API and PluginServer
+// Test Setup helpers
 // =============================================================================
-
-function createMockApi(): ICodeHydraApi {
-  return {
-    on: vi.fn().mockReturnValue(() => {}),
-    projects: {} as ICodeHydraApi["projects"],
-    workspaces: {} as ICodeHydraApi["workspaces"],
-    ui: {} as ICodeHydraApi["ui"],
-    lifecycle: {} as ICodeHydraApi["lifecycle"],
-    dispose: vi.fn(),
-  } as unknown as ICodeHydraApi;
-}
-
-interface MockPluginServer {
-  onApiCall: ReturnType<typeof vi.fn>;
-}
-
-function createMockPluginServer(): MockPluginServer {
-  return { onApiCall: vi.fn() };
-}
-
-// =============================================================================
-// Test Setup for agent:status-updated tests (original)
-// =============================================================================
-
-interface StatusTestSetup {
-  dispatcher: Dispatcher;
-  mockApiRegistry: MockApiRegistry;
-}
 
 const TEST_PROJECT_ID = "test-project-12345678" as ProjectId;
 const TEST_PROJECT_PATH = "/projects/test";
@@ -168,6 +133,38 @@ function createMockResolveModule(): IntentModule {
   };
 }
 
+type SendToUIMock = ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
+
+function createBridgeDeps(
+  overrides?: Partial<IpcEventBridgeDeps>
+): IpcEventBridgeDeps & { ipcLayer: BehavioralIpcLayer; sendToUI: SendToUIMock } {
+  const ipcLayer = (overrides?.ipcLayer as BehavioralIpcLayer) ?? createBehavioralIpcLayer();
+  const sendToUI: SendToUIMock =
+    (overrides?.sendToUI as SendToUIMock) ?? vi.fn<(channel: string, ...args: unknown[]) => void>();
+  const base: IpcEventBridgeDeps = {
+    ipcLayer,
+    sendToUI,
+    pluginServer: null,
+    logger: SILENT_LOGGER,
+    dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
+    readyHandler: vi.fn<(payload: object) => Promise<void>>(),
+    agentStatusManager: {
+      getStatus: vi.fn(),
+    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+    ...overrides,
+  };
+  return { ...base, ipcLayer, sendToUI };
+}
+
+// =============================================================================
+// Test Setup for agent:status-updated tests
+// =============================================================================
+
+interface StatusTestSetup {
+  dispatcher: Dispatcher;
+  sendToUI: SendToUIMock;
+}
+
 function createStatusTestSetup(): StatusTestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -176,26 +173,16 @@ function createStatusTestSetup(): StatusTestSetup {
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  const mockApiRegistry = createMockRegistry();
-  const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: mockApiRegistry,
-    getApi: () => {
-      throw new Error("not wired");
-    },
-    sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
-    pluginServer: null,
-    logger: SILENT_LOGGER,
+  const deps = createBridgeDeps({
     dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-    agentStatusManager: {
-      getStatus: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
   });
+  const ipcEventBridge = createIpcEventBridge(deps);
   const resolveModule = createMockResolveModule();
 
   dispatcher.registerModule(ipcEventBridge);
   dispatcher.registerModule(resolveModule);
 
-  return { dispatcher, mockApiRegistry };
+  return { dispatcher, sendToUI: deps.sendToUI };
 }
 
 function updateStatusIntent(
@@ -212,165 +199,83 @@ function updateStatusIntent(
 }
 
 // =============================================================================
-// Lifecycle test setup
-// =============================================================================
-
-interface LifecycleTestSetup {
-  dispatcher: Dispatcher;
-  mockApiRegistry: MockApiRegistry;
-  mockApi: ICodeHydraApi;
-  mockPluginServer: MockPluginServer;
-}
-
-function createLifecycleTestSetup(
-  overrides?: Partial<Pick<IpcEventBridgeDeps, "pluginServer" | "logger">>
-): LifecycleTestSetup {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
-
-  dispatcher.registerOperation(
-    INTENT_DELETE_WORKSPACE,
-    new MinimalDeleteOperation(TEST_PROJECT_ID, TEST_WORKSPACE_NAME, TEST_PROJECT_PATH)
-  );
-  dispatcher.registerOperation(
-    INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
-  );
-  dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-
-  const mockApiRegistry = createMockRegistry();
-  const mockApi = createMockApi();
-  const mockPluginServer = createMockPluginServer();
-
-  const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: mockApiRegistry,
-    getApi: () => mockApi,
-    sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
-    pluginServer:
-      overrides?.pluginServer !== undefined
-        ? overrides.pluginServer
-        : (mockPluginServer as unknown as IpcEventBridgeDeps["pluginServer"]),
-    logger: overrides?.logger ?? SILENT_LOGGER,
-    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-    agentStatusManager: {
-      getStatus: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-  });
-
-  // Wire quit module to prevent app.quit() error on shutdown
-  const quitModule: IntentModule = {
-    name: "test-quit",
-    hooks: {
-      [APP_SHUTDOWN_OPERATION_ID]: {
-        quit: { handler: async () => {} },
-      },
-    },
-  };
-
-  dispatcher.registerModule(ipcEventBridge);
-  dispatcher.registerModule(quitModule);
-
-  return { dispatcher, mockApiRegistry, mockApi, mockPluginServer };
-}
-
-// =============================================================================
-// Tests - agent:status-updated (existing)
+// Tests - agent:status-updated
 // =============================================================================
 
 describe("IpcEventBridge - agent:status-updated", () => {
   describe("renderer receives workspace status (idle) (#2a)", () => {
-    it("emits workspace:status-changed with idle agent status", async () => {
-      const { dispatcher, mockApiRegistry } = createStatusTestSetup();
+    it("sends workspace:status-changed with idle agent status via sendToUI", async () => {
+      const { dispatcher, sendToUI } = createStatusTestSetup();
 
       const status: AggregatedAgentStatus = { status: "idle", counts: { idle: 2, busy: 0 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
 
-      expect(mockApiRegistry.getEmittedEvents()).toEqual([
-        {
-          event: "workspace:status-changed",
-          payload: {
-            projectId: TEST_PROJECT_ID,
-            workspaceName: TEST_WORKSPACE_NAME,
-            path: TEST_WORKSPACE_PATH,
-            status: {
-              isDirty: false,
-              agent: { type: "idle", counts: { idle: 2, busy: 0, total: 2 } },
-            },
-          },
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        path: TEST_WORKSPACE_PATH,
+        status: {
+          isDirty: false,
+          agent: { type: "idle", counts: { idle: 2, busy: 0, total: 2 } },
         },
-      ]);
+      });
     });
   });
 
   describe("renderer receives workspace status (busy) (#2b)", () => {
-    it("emits workspace:status-changed with busy agent status", async () => {
-      const { dispatcher, mockApiRegistry } = createStatusTestSetup();
+    it("sends workspace:status-changed with busy agent status via sendToUI", async () => {
+      const { dispatcher, sendToUI } = createStatusTestSetup();
 
       const status: AggregatedAgentStatus = { status: "busy", counts: { idle: 0, busy: 3 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
 
-      expect(mockApiRegistry.getEmittedEvents()).toEqual([
-        {
-          event: "workspace:status-changed",
-          payload: {
-            projectId: TEST_PROJECT_ID,
-            workspaceName: TEST_WORKSPACE_NAME,
-            path: TEST_WORKSPACE_PATH,
-            status: {
-              isDirty: false,
-              agent: { type: "busy", counts: { idle: 0, busy: 3, total: 3 } },
-            },
-          },
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        path: TEST_WORKSPACE_PATH,
+        status: {
+          isDirty: false,
+          agent: { type: "busy", counts: { idle: 0, busy: 3, total: 3 } },
         },
-      ]);
+      });
     });
   });
 
   describe("renderer receives workspace status (mixed) (#2c)", () => {
-    it("emits workspace:status-changed with mixed agent status", async () => {
-      const { dispatcher, mockApiRegistry } = createStatusTestSetup();
+    it("sends workspace:status-changed with mixed agent status via sendToUI", async () => {
+      const { dispatcher, sendToUI } = createStatusTestSetup();
 
       const status: AggregatedAgentStatus = { status: "mixed", counts: { idle: 1, busy: 2 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
 
-      expect(mockApiRegistry.getEmittedEvents()).toEqual([
-        {
-          event: "workspace:status-changed",
-          payload: {
-            projectId: TEST_PROJECT_ID,
-            workspaceName: TEST_WORKSPACE_NAME,
-            path: TEST_WORKSPACE_PATH,
-            status: {
-              isDirty: false,
-              agent: { type: "mixed", counts: { idle: 1, busy: 2, total: 3 } },
-            },
-          },
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        path: TEST_WORKSPACE_PATH,
+        status: {
+          isDirty: false,
+          agent: { type: "mixed", counts: { idle: 1, busy: 2, total: 3 } },
         },
-      ]);
+      });
     });
   });
 
   describe("renderer receives workspace status (none) (#2d)", () => {
-    it("emits workspace:status-changed with none agent status (no counts field)", async () => {
-      const { dispatcher, mockApiRegistry } = createStatusTestSetup();
+    it("sends workspace:status-changed with none agent status via sendToUI", async () => {
+      const { dispatcher, sendToUI } = createStatusTestSetup();
 
       const status: AggregatedAgentStatus = { status: "none", counts: { idle: 0, busy: 0 } };
       await dispatcher.dispatch(updateStatusIntent(TEST_WORKSPACE_PATH, status));
 
-      expect(mockApiRegistry.getEmittedEvents()).toEqual([
-        {
-          event: "workspace:status-changed",
-          payload: {
-            projectId: TEST_PROJECT_ID,
-            workspaceName: TEST_WORKSPACE_NAME,
-            path: TEST_WORKSPACE_PATH,
-            status: {
-              isDirty: false,
-              agent: { type: "none" },
-            },
-          },
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        path: TEST_WORKSPACE_PATH,
+        status: {
+          isDirty: false,
+          agent: { type: "none" },
         },
-      ]);
+      });
     });
   });
 });
@@ -380,8 +285,32 @@ describe("IpcEventBridge - agent:status-updated", () => {
 // =============================================================================
 
 describe("IpcEventBridge - workspace:deleted", () => {
-  it("emits workspace:removed on workspace:deleted event", async () => {
-    const { dispatcher, mockApiRegistry } = createLifecycleTestSetup();
+  it("sends workspace:removed to UI on workspace:deleted event", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+
+    dispatcher.registerOperation(
+      INTENT_DELETE_WORKSPACE,
+      new MinimalDeleteOperation(TEST_PROJECT_ID, TEST_WORKSPACE_NAME, TEST_PROJECT_PATH)
+    );
+    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+    const deps = createBridgeDeps({
+      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    });
+    const ipcEventBridge = createIpcEventBridge(deps);
+
+    const quitModule: IntentModule = {
+      name: "test-quit",
+      hooks: {
+        [APP_SHUTDOWN_OPERATION_ID]: {
+          quit: { handler: async () => {} },
+        },
+      },
+    };
+
+    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(quitModule);
 
     await dispatcher.dispatch({
       type: INTENT_DELETE_WORKSPACE,
@@ -393,19 +322,11 @@ describe("IpcEventBridge - workspace:deleted", () => {
       },
     } as DeleteWorkspaceIntent);
 
-    const removedEvents = mockApiRegistry
-      .getEmittedEvents()
-      .filter((e) => e.event === "workspace:removed");
-    expect(removedEvents).toEqual([
-      {
-        event: "workspace:removed",
-        payload: {
-          projectId: TEST_PROJECT_ID,
-          workspaceName: TEST_WORKSPACE_NAME,
-          path: TEST_WORKSPACE_PATH,
-        },
-      },
-    ]);
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_REMOVED, {
+      projectId: TEST_PROJECT_ID,
+      workspaceName: TEST_WORKSPACE_NAME,
+      path: TEST_WORKSPACE_PATH,
+    });
   });
 });
 
@@ -414,21 +335,9 @@ describe("IpcEventBridge - workspace:deleted", () => {
 // =============================================================================
 
 describe("IpcEventBridge - bases:updated", () => {
-  it("emits project:bases-updated on bases:updated domain event", () => {
-    const mockApiRegistry = createMockRegistry();
-    const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry,
-      getApi: () => {
-        throw new Error("not wired");
-      },
-      sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
-      pluginServer: null,
-      logger: SILENT_LOGGER,
-      dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
-      agentStatusManager: {
-        getStatus: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-    });
+  it("sends project:bases-updated to UI on bases:updated domain event", () => {
+    const deps = createBridgeDeps();
+    const ipcEventBridge = createIpcEventBridge(deps);
 
     const bases = [
       { name: "main", isRemote: false },
@@ -445,19 +354,11 @@ describe("IpcEventBridge - bases:updated", () => {
       },
     });
 
-    const basesEvents = mockApiRegistry
-      .getEmittedEvents()
-      .filter((e) => e.event === "project:bases-updated");
-    expect(basesEvents).toEqual([
-      {
-        event: "project:bases-updated",
-        payload: {
-          projectId: TEST_PROJECT_ID,
-          projectPath: TEST_PROJECT_PATH,
-          bases,
-        },
-      },
-    ]);
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.PROJECT_BASES_UPDATED, {
+      projectId: TEST_PROJECT_ID,
+      projectPath: TEST_PROJECT_PATH,
+      bases,
+    });
   });
 });
 
@@ -466,28 +367,9 @@ describe("IpcEventBridge - bases:updated", () => {
 // =============================================================================
 
 describe("IpcEventBridge - workspace:deletion-progress", () => {
-  function createMockWebContents(): {
-    send: ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
-  } {
-    return { send: vi.fn<(channel: string, ...args: unknown[]) => void>() };
-  }
-
-  it("sends deletion progress to webContents via IPC", () => {
-    const mockWebContents = createMockWebContents();
-    const mockApiRegistry = createMockRegistry();
-    const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry,
-      getApi: () => {
-        throw new Error("not wired");
-      },
-      sendToUI: mockWebContents.send,
-      pluginServer: null,
-      logger: SILENT_LOGGER,
-      dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
-      agentStatusManager: {
-        getStatus: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-    });
+  it("sends deletion progress to UI via sendToUI", () => {
+    const deps = createBridgeDeps();
+    const ipcEventBridge = createIpcEventBridge(deps);
 
     const progressPayload = {
       workspacePath: TEST_WORKSPACE_PATH as WorkspacePath,
@@ -509,32 +391,18 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       payload: progressPayload,
     };
 
-    // Call the event handler directly from the module's events declaration
     ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!(event);
 
-    expect(mockWebContents.send).toHaveBeenCalledWith(
+    expect(deps.sendToUI).toHaveBeenCalledWith(
       ApiIpcChannels.WORKSPACE_DELETION_PROGRESS,
       progressPayload
     );
   });
 
   it("ignores when sendToUI is a no-op", () => {
-    const mockApiRegistry = createMockRegistry();
-    const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry,
-      getApi: () => {
-        throw new Error("not wired");
-      },
-      sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
-      pluginServer: null,
-      logger: SILENT_LOGGER,
-      dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
-      agentStatusManager: {
-        getStatus: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-    });
+    const deps = createBridgeDeps();
+    const ipcEventBridge = createIpcEventBridge(deps);
 
-    // Should not throw when sendToUI is a no-op
     const event: WorkspaceDeletionProgressEvent = {
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
       payload: {
@@ -552,189 +420,147 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
 });
 
 // =============================================================================
-// Tests - lifecycle hooks
+// Tests - IPC handler registration
 // =============================================================================
 
-describe("IpcEventBridge - lifecycle", () => {
-  describe("app:start / start hook", () => {
-    it("wires API events via wireApiEvents", async () => {
-      const { dispatcher, mockApi } = createLifecycleTestSetup();
+describe("IpcEventBridge - IPC handlers", () => {
+  it("registers IPC handlers on ipcLayer", () => {
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps = createBridgeDeps({ ipcLayer });
+    createIpcEventBridge(deps);
 
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      // wireApiEvents calls api.on() for each event channel
-      expect(mockApi.on).toHaveBeenCalled();
-    });
+    const state = ipcLayer._getState();
+    expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_READY)).toBe(true);
+    expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_QUIT)).toBe(true);
+    expect(state.handlers.has(ApiIpcChannels.WORKSPACE_CREATE)).toBe(true);
+    expect(state.handlers.has(ApiIpcChannels.WORKSPACE_REMOVE)).toBe(true);
+    expect(state.handlers.has(ApiIpcChannels.PROJECT_OPEN)).toBe(true);
+    expect(state.handlers.has(ApiIpcChannels.UI_SET_MODE)).toBe(true);
   });
 
-  describe("app:shutdown / stop hook", () => {
-    it("cleans up API event wiring and disposes apiRegistry on shutdown", async () => {
-      const unsubscribeFn = vi.fn();
-      const mockApi = {
-        on: vi.fn().mockReturnValue(unsubscribeFn),
-        projects: {},
-        workspaces: {},
-        ui: {},
-        lifecycle: {},
-        dispose: vi.fn(),
-      } as unknown as ICodeHydraApi;
+  it("lifecycle.ready IPC handler delegates to readyHandler", async () => {
+    const ipcLayer = createBehavioralIpcLayer();
+    const readyHandler = vi.fn<(payload: object) => Promise<void>>();
+    const deps = createBridgeDeps({ ipcLayer, readyHandler });
+    createIpcEventBridge(deps);
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
-      );
-      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+    await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, undefined);
 
-      const mockApiRegistry = createMockRegistry();
-      const ipcEventBridge = createIpcEventBridge({
-        apiRegistry: mockApiRegistry,
-        getApi: () => mockApi,
-        sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
-        pluginServer: null,
-        logger: SILENT_LOGGER,
-        dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-        agentStatusManager: {
-          getStatus: vi.fn(),
-        } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-      });
+    expect(readyHandler).toHaveBeenCalledWith({});
+  });
 
-      const quitModule: IntentModule = {
-        name: "test-quit",
-        hooks: {
-          [APP_SHUTDOWN_OPERATION_ID]: {
-            quit: { handler: async () => {} },
-          },
-        },
-      };
+  it("IPC handler converts null payload to empty object", async () => {
+    const ipcLayer = createBehavioralIpcLayer();
+    const readyHandler = vi.fn<(payload: object) => Promise<void>>();
+    const deps = createBridgeDeps({ ipcLayer, readyHandler });
+    createIpcEventBridge(deps);
 
-      dispatcher.registerModule(ipcEventBridge);
-      dispatcher.registerModule(quitModule);
+    await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, null);
 
-      // Start (wires API events, each api.on() returns unsubscribeFn)
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(mockApi.on).toHaveBeenCalled();
-
-      // Shutdown (should call the cleanup function returned by wireApiEvents)
-      await dispatcher.dispatch({
-        type: INTENT_APP_SHUTDOWN,
-        payload: {},
-      } as AppShutdownIntent);
-
-      // apiRegistry.dispose() is called during shutdown
-      expect(mockApiRegistry.dispose).toHaveBeenCalled();
-    });
-
-    it("collect catches error, dispatch still resolves", async () => {
-      // Create an API where on() returns a cleanup function that throws
-      const throwingCleanup = () => {
-        throw new Error("cleanup boom");
-      };
-      const mockApi = {
-        on: vi.fn().mockReturnValue(throwingCleanup),
-        projects: {},
-        workspaces: {},
-        ui: {},
-        lifecycle: {},
-        dispose: vi.fn(),
-      } as unknown as ICodeHydraApi;
-
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "start", { throwOnError: false })
-      );
-      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-
-      const mockApiRegistry = createMockRegistry();
-      const ipcEventBridge = createIpcEventBridge({
-        apiRegistry: mockApiRegistry,
-        getApi: () => mockApi,
-        sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
-        pluginServer: null,
-        logger: SILENT_LOGGER,
-        dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-        agentStatusManager: {
-          getStatus: vi.fn(),
-        } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-      });
-
-      const quitModule: IntentModule = {
-        name: "test-quit",
-        hooks: {
-          [APP_SHUTDOWN_OPERATION_ID]: {
-            quit: { handler: async () => {} },
-          },
-        },
-      };
-
-      dispatcher.registerModule(ipcEventBridge);
-      dispatcher.registerModule(quitModule);
-
-      // Start (wires with throwing cleanup)
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      // Handler throws directly, but AppShutdownOperation uses collect()
-      // which catches errors -- dispatch still resolves
-      await expect(
-        dispatcher.dispatch({
-          type: INTENT_APP_SHUTDOWN,
-          payload: {},
-        } as AppShutdownIntent)
-      ).resolves.not.toThrow();
-    });
+    expect(readyHandler).toHaveBeenCalledWith({});
   });
 });
 
 // =============================================================================
-// setup:error → lifecycle:setup-error bridge tests
+// Tests - shutdown cleanup
+// =============================================================================
+
+describe("IpcEventBridge - shutdown", () => {
+  it("removes all IPC handlers on app:shutdown", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps = createBridgeDeps({
+      ipcLayer,
+      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    });
+    const ipcEventBridge = createIpcEventBridge(deps);
+
+    const quitModule: IntentModule = {
+      name: "test-quit",
+      hooks: {
+        [APP_SHUTDOWN_OPERATION_ID]: {
+          quit: { handler: async () => {} },
+        },
+      },
+    };
+
+    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(quitModule);
+
+    // Verify handlers are registered
+    const stateBefore = ipcLayer._getState();
+    expect(stateBefore.handlers.size).toBeGreaterThan(0);
+
+    // Shutdown
+    await dispatcher.dispatch({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    } as AppShutdownIntent);
+
+    // All handlers should be removed
+    const stateAfter = ipcLayer._getState();
+    expect(stateAfter.handlers.size).toBe(0);
+  });
+
+  it("shutdown with already-removed handler does not throw", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps = createBridgeDeps({
+      ipcLayer,
+      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    });
+    const ipcEventBridge = createIpcEventBridge(deps);
+
+    const quitModule: IntentModule = {
+      name: "test-quit",
+      hooks: {
+        [APP_SHUTDOWN_OPERATION_ID]: {
+          quit: { handler: async () => {} },
+        },
+      },
+    };
+
+    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(quitModule);
+
+    // Remove a handler manually before shutdown
+    ipcLayer.removeHandler(ApiIpcChannels.LIFECYCLE_READY);
+
+    // Shutdown should still succeed (catches the error for the already-removed handler)
+    await expect(
+      dispatcher.dispatch({
+        type: INTENT_APP_SHUTDOWN,
+        payload: {},
+      } as AppShutdownIntent)
+    ).resolves.not.toThrow();
+  });
+});
+
+// =============================================================================
+// setup:error -> lifecycle:setup-error bridge tests
 // =============================================================================
 
 describe("IpcEventBridge - setup:error", () => {
-  function createMockWebContents(): {
-    send: ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
-  } {
-    return { send: vi.fn<(channel: string, ...args: unknown[]) => void>() };
-  }
-
   function createSetupErrorTestSetup(): {
     dispatcher: Dispatcher;
-    mockWebContents: ReturnType<typeof createMockWebContents>;
+    sendToUI: SendToUIMock;
   } {
     const hookRegistry = new HookRegistry();
     const dispatcher = new Dispatcher(hookRegistry);
 
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 
-    const mockApiRegistry = createMockRegistry();
-    const mockWebContents = createMockWebContents();
-    const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry,
-      getApi: () => {
-        throw new Error("getApi not available in setup-error test");
-      },
-      sendToUI: mockWebContents.send,
-      pluginServer: null,
-      logger: SILENT_LOGGER,
+    const deps = createBridgeDeps({
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-      agentStatusManager: {
-        getStatus: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
     });
+    const ipcEventBridge = createIpcEventBridge(deps);
 
-    // Hook module that throws to trigger the setup:error domain event
     const failingSetupHook: IntentModule = {
       name: "test-failing-setup",
       hooks: {
@@ -751,21 +577,20 @@ describe("IpcEventBridge - setup:error", () => {
     dispatcher.registerModule(ipcEventBridge);
     dispatcher.registerModule(failingSetupHook);
 
-    return { dispatcher, mockWebContents };
+    return { dispatcher, sendToUI: deps.sendToUI };
   }
 
-  it("sends lifecycle:setup-error to webContents when setup operation fails", async () => {
-    const { dispatcher, mockWebContents } = createSetupErrorTestSetup();
+  it("sends lifecycle:setup-error to UI when setup operation fails", async () => {
+    const { dispatcher, sendToUI } = createSetupErrorTestSetup();
 
     const intent: SetupIntent = {
       type: INTENT_SETUP,
       payload: {},
     };
 
-    // SetupOperation throws after emitting the error event
     await expect(dispatcher.dispatch(intent)).rejects.toThrow("Download failed");
 
-    expect(mockWebContents.send).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
+    expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
       message: "Download failed",
     });
   });
@@ -776,21 +601,10 @@ describe("IpcEventBridge - setup:error", () => {
 
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 
-    const mockApiRegistry = createMockRegistry();
-    const mockWebContents = createMockWebContents();
-    const ipcEventBridge = createIpcEventBridge({
-      apiRegistry: mockApiRegistry,
-      getApi: () => {
-        throw new Error("getApi not available in setup-error test");
-      },
-      sendToUI: mockWebContents.send,
-      pluginServer: null,
-      logger: SILENT_LOGGER,
+    const deps = createBridgeDeps({
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-      agentStatusManager: {
-        getStatus: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
     });
+    const ipcEventBridge = createIpcEventBridge(deps);
 
     const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
     const failingHook: IntentModule = {
@@ -812,7 +626,7 @@ describe("IpcEventBridge - setup:error", () => {
     const intent: SetupIntent = { type: INTENT_SETUP, payload: {} };
     await expect(dispatcher.dispatch(intent)).rejects.toThrow("Network timeout");
 
-    expect(mockWebContents.send).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
       message: "Network timeout",
       code: "ETIMEDOUT",
     });
@@ -820,85 +634,21 @@ describe("IpcEventBridge - setup:error", () => {
 });
 
 // =============================================================================
-// API handler tests (executeCommand + selectFolder)
-//
-// These use a real ApiRegistry + createBehavioralIpcLayer so we can invoke
-// the handlers registered by createIpcEventBridge via getInterface().
+// executeCommand tests (via IPC handler)
 // =============================================================================
 
-function createApiTestSetup(overrides?: { pluginServer?: IpcEventBridgeDeps["pluginServer"] }) {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
-
-  const ipcLayer = createBehavioralIpcLayer();
-  const registry = new ApiRegistry({ logger: createMockLogger(), ipcLayer });
-
-  const ipcEventBridge = createIpcEventBridge({
-    apiRegistry: registry,
-    getApi: () => registry.getInterface(),
-    sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
-    pluginServer: overrides?.pluginServer ?? null,
-    logger: SILENT_LOGGER,
-    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-    agentStatusManager: {
-      getStatus: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-  });
-
-  dispatcher.registerModule(ipcEventBridge);
-
-  // lifecycle.ready is registered outside the bridge in the composition root
-  registry.register("lifecycle.ready", async () => {}, {
-    ipc: ApiIpcChannels.LIFECYCLE_READY,
-  });
-
-  return {
-    api: registry.getInterface(),
-    dispose: () => registry.dispose(),
-  };
-}
-
 describe("IpcEventBridge - executeCommand", () => {
-  it("delegates to pluginServer.sendCommand and returns data", async () => {
-    const mockPluginServer = {
-      sendCommand: vi.fn().mockResolvedValue({ success: true, data: { result: 42 } }),
-    };
-    const { api, dispose } = createApiTestSetup({
-      pluginServer: mockPluginServer as unknown as IpcEventBridgeDeps["pluginServer"],
-    });
+  it("is not exposed via IPC (only used by MCP/Plugin)", () => {
+    // executeCommand is registered as an apiRegistry method in the old code
+    // but was not exposed via IPC. Now it's gone entirely from the bridge.
+    // MCP/Plugin handlers dispatch intents directly.
+    const ipcLayer = createBehavioralIpcLayer();
+    const deps = createBridgeDeps({ ipcLayer });
+    createIpcEventBridge(deps);
 
-    const data = await api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "test.command", ["arg1"]);
-
-    expect(data).toEqual({ result: 42 });
-    expect(mockPluginServer.sendCommand).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, "test.command", [
-      "arg1",
-    ]);
-
-    await dispose();
-  });
-
-  it("throws when pluginServer is not available", async () => {
-    const { api, dispose } = createApiTestSetup({ pluginServer: null });
-
-    await expect(
-      api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "test.command")
-    ).rejects.toThrow("Plugin server not available");
-
-    await dispose();
-  });
-
-  it("throws when sendCommand returns failure", async () => {
-    const mockPluginServer = {
-      sendCommand: vi.fn().mockResolvedValue({ success: false, error: "Command failed" }),
-    };
-    const { api, dispose } = createApiTestSetup({
-      pluginServer: mockPluginServer as unknown as IpcEventBridgeDeps["pluginServer"],
-    });
-
-    await expect(api.workspaces.executeCommand(TEST_WORKSPACE_PATH, "bad.command")).rejects.toThrow(
-      "Command failed"
-    );
-
-    await dispose();
+    // No IPC channel for executeCommand
+    const state = ipcLayer._getState();
+    const channels = [...state.handlers.keys()];
+    expect(channels.every((ch) => !ch.includes("execute-command"))).toBe(true);
   });
 });

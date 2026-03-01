@@ -17,7 +17,34 @@ import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_UPDATE_AVAILABLE } from "../operations/update-available";
 import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
-import { formatWindowTitle } from "../ipc/api-handlers";
+/**
+ * Formats the window title based on current workspace.
+ *
+ * Format: "CodeHydra - <project> / <workspace> - (<version>) - (update available)"
+ * No workspace: "CodeHydra - (<version>)" or "CodeHydra"
+ *
+ * @param projectName - Name of the active project, or undefined
+ * @param workspaceName - Name of the active workspace, or undefined
+ * @param version - Version suffix (branch in dev mode, version in packaged mode), or undefined
+ * @param hasUpdate - Whether an update is available
+ * @returns Formatted window title
+ */
+export function formatWindowTitle(
+  projectName: string | undefined,
+  workspaceName: string | undefined,
+  version?: string,
+  hasUpdate?: boolean
+): string {
+  const base = "CodeHydra";
+  const versionSuffix = version ? ` - (${version})` : "";
+  const updateSuffix = hasUpdate ? ` - (update available)` : "";
+
+  if (projectName && workspaceName) {
+    return `${base} - ${projectName} / ${workspaceName}${versionSuffix}${updateSuffix}`;
+  }
+
+  return `${base}${versionSuffix}${updateSuffix}`;
+}
 
 /**
  * Create a window title module that sets the initial title on startup and
