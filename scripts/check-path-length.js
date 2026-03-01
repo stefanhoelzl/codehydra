@@ -2,7 +2,6 @@
  * Windows MAX_PATH Check
  *
  * Runs before pnpm install to warn users about potential path length issues.
- * Uses CommonJS (.cjs) to work regardless of package.json "type" setting.
  *
  * This script:
  * 1. Exits silently on non-Windows platforms
@@ -15,7 +14,7 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const { execSync } = require("child_process");
+import { execSync } from "node:child_process";
 
 // Threshold based on real failure: install failed at 91 character base path
 const PATH_LENGTH_THRESHOLD = 90;
