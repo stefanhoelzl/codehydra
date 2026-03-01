@@ -122,7 +122,9 @@
         <Icon name="chevron-right" size={12} />
       </span>
     {/if}
-    <h2>PROJECTS</h2>
+    {#if isExpanded}
+      <h2>PROJECTS</h2>
+    {/if}
   </header>
 
   <div class="sidebar-content">
@@ -140,37 +142,39 @@
     {:else}
       <ul class="project-list">
         {#each projects as project, projectIndex (project.path)}
-          {#if projectIndex > 0}
+          {#if isExpanded && projectIndex > 0}
             <vscode-divider></vscode-divider>
           {/if}
           {@const projectTitle = project.remoteUrl ?? project.path}
           <li class="project-item">
-            <div class="project-header">
-              <span class="project-icon" title={projectTitle}>
-                <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
-              </span>
-              <span class="project-name" title={projectTitle}>{project.name}</span>
-              <div class="project-actions">
-                <button
-                  type="button"
-                  class="action-btn"
-                  id={`add-ws-${project.id}`}
-                  aria-label="Add workspace"
-                  onclick={() => handleAddWorkspace(project.id)}
-                >
-                  <Icon name="add" size={14} />
-                </button>
-                <button
-                  type="button"
-                  class="action-btn"
-                  id={`close-project-${project.id}`}
-                  aria-label="Close project"
-                  onclick={() => onCloseProject(project.id)}
-                >
-                  <Icon name="trash" size={14} />
-                </button>
+            {#if isExpanded}
+              <div class="project-header">
+                <span class="project-icon" title={projectTitle}>
+                  <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
+                </span>
+                <span class="project-name" title={projectTitle}>{project.name}</span>
+                <div class="project-actions">
+                  <button
+                    type="button"
+                    class="action-btn"
+                    id={`add-ws-${project.id}`}
+                    aria-label="Add workspace"
+                    onclick={() => handleAddWorkspace(project.id)}
+                  >
+                    <Icon name="add" size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    class="action-btn"
+                    id={`close-project-${project.id}`}
+                    aria-label="Close project"
+                    onclick={() => onCloseProject(project.id)}
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
+            {/if}
             <ul class="workspace-list">
               {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
                 {@const globalIndex = getWorkspaceGlobalIndex(

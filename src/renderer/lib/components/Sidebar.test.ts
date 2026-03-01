@@ -1042,6 +1042,61 @@ describe("Sidebar component", () => {
       const indicators = container.querySelectorAll('[role="status"]');
       expect(indicators.length).toBeGreaterThan(0);
     });
+
+    it("project header buttons not in DOM when minimized", () => {
+      render(Sidebar, { props: propsWithWorkspaces() });
+
+      // Sidebar is minimized (totalWorkspaces > 0, uiMode is workspace, no hover)
+      expect(screen.queryByLabelText("Add workspace")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Close project")).not.toBeInTheDocument();
+    });
+
+    it("project header buttons appear in DOM when expanded via hover", async () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+      const sidebar = container.querySelector(".sidebar");
+
+      await fireEvent.mouseEnter(sidebar!);
+      expect(sidebar).toHaveClass("expanded");
+
+      expect(screen.getByLabelText("Add workspace")).toBeInTheDocument();
+      expect(screen.getByLabelText("Close project")).toBeInTheDocument();
+    });
+
+    it("h2 heading not in DOM when minimized", () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
+      expect(screen.queryByRole("heading", { name: /projects/i })).not.toBeInTheDocument();
+    });
+
+    it("h2 heading in DOM when expanded", async () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+      const sidebar = container.querySelector(".sidebar");
+
+      await fireEvent.mouseEnter(sidebar!);
+
+      expect(screen.getByRole("heading", { name: /projects/i })).toBeInTheDocument();
+    });
+
+    it("vscode-divider not in DOM when minimized", () => {
+      const ws1 = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const ws2 = createMockWorkspace({ path: "/test2/.worktrees/ws2", name: "ws2" });
+      const project1 = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws1],
+      });
+      const project2 = createMockProject({
+        path: "/test2" as ProjectPath,
+        workspaces: [ws2],
+      });
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project1, project2], totalWorkspaces: 2 },
+      });
+
+      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
+      expect(container.querySelector("vscode-divider")).not.toBeInTheDocument();
+    });
   });
 
   describe("deletion indicator", () => {
