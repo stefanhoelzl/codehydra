@@ -3,7 +3,7 @@
  */
 
 // Types
-export type { McpErrorCode, McpError, IMcpServer } from "./types";
+export type { McpErrorCode, McpError, IMcpServer, McpApiHandlers } from "./types";
 export type { IDisposable } from "../../shared/types";
 
 // MCP Server

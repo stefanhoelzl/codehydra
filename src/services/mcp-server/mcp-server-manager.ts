@@ -5,7 +5,7 @@
  */
 
 import type { PortManager } from "../platform/network";
-import type { ICoreApi } from "../../shared/api/interfaces";
+import type { McpApiHandlers } from "./types";
 import type { Logger } from "../logging";
 import { SILENT_LOGGER } from "../logging";
 import type { IDisposable } from "../../shared/types";
@@ -29,7 +29,7 @@ export interface McpServerManagerConfig {
  */
 export class McpServerManager implements IDisposable {
   private readonly portManager: PortManager;
-  private readonly apiFactory: () => ICoreApi;
+  private readonly handlersFactory: () => McpApiHandlers;
   private readonly logger: Logger;
   private readonly serverFactory: McpServerFactory;
 
@@ -38,12 +38,12 @@ export class McpServerManager implements IDisposable {
 
   constructor(
     portManager: PortManager,
-    apiFactory: () => ICoreApi,
+    handlersFactory: () => McpApiHandlers,
     logger?: Logger,
     config?: McpServerManagerConfig
   ) {
     this.portManager = portManager;
-    this.apiFactory = apiFactory;
+    this.handlersFactory = handlersFactory;
     this.logger = logger ?? SILENT_LOGGER;
     this.serverFactory = config?.serverFactory ?? createDefaultMcpServer;
   }
@@ -68,7 +68,7 @@ export class McpServerManager implements IDisposable {
       this.logger.info("Allocated port", { port: this.port });
 
       // Create and start the MCP server
-      this.mcpServer = new McpServer(this.apiFactory(), this.serverFactory, this.logger);
+      this.mcpServer = new McpServer(this.handlersFactory(), this.serverFactory, this.logger);
       await this.mcpServer.start(this.port);
 
       this.logger.info("Manager started", {

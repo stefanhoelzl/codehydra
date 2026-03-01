@@ -6,13 +6,11 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import type { ICoreApi, IProjectApi } from "../../shared/api/interfaces";
 import type { WorkspaceStatus } from "../../shared/api/types";
-import type { McpError } from "./types";
+import type { McpApiHandlers, McpError } from "./types";
 import type { Logger, LogContext } from "../logging";
 import type { LogLevel } from "../logging/types";
 import { createBehavioralLogger } from "../logging/logging.test-utils";
-import { createMockWorkspaceApi } from "../test-utils";
 
 /**
  * Tool result type from MCP SDK.
@@ -58,11 +56,28 @@ interface SimulatedToolContext {
 }
 
 /**
+ * Create mock McpApiHandlers with sensible defaults.
+ */
+function createMockHandlers(overrides?: Partial<McpApiHandlers>): McpApiHandlers {
+  return {
+    getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+    getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+    setMetadata: vi.fn().mockResolvedValue(undefined),
+    getAgentSession: vi.fn().mockResolvedValue(null),
+    restartAgentServer: vi.fn().mockResolvedValue(14001),
+    createWorkspace: vi.fn().mockResolvedValue({ name: "test", path: "/path" }),
+    deleteWorkspace: vi.fn().mockResolvedValue({ started: true }),
+    executeCommand: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+}
+
+/**
  * Simulate tool handlers for testing.
  * This mimics the tool registration logic from McpServer.
- * Tools now pass workspacePath directly to API methods.
+ * Tools now call flat McpApiHandlers methods.
  */
-function createToolHandlers(api: ICoreApi) {
+function createToolHandlers(handlers: McpApiHandlers) {
   // Handle undefined specially since JSON.stringify(undefined) returns undefined (not a string)
   const successResult = <T>(data: T): ToolResult => ({
     content: [{ type: "text", text: data === undefined ? "null" : JSON.stringify(data) }],
@@ -84,7 +99,7 @@ function createToolHandlers(api: ICoreApi) {
         return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const status = await api.workspaces.getStatus(context.workspacePath);
+        const status = await handlers.getStatus(context.workspacePath);
         return successResult(status);
       } catch (error) {
         return handleError(error);
@@ -96,7 +111,7 @@ function createToolHandlers(api: ICoreApi) {
         return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const metadata = await api.workspaces.getMetadata(context.workspacePath);
+        const metadata = await handlers.getMetadata(context.workspacePath);
         return successResult(metadata);
       } catch (error) {
         return handleError(error);
@@ -111,20 +126,20 @@ function createToolHandlers(api: ICoreApi) {
         return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        await api.workspaces.setMetadata(context.workspacePath, args.key, args.value);
+        await handlers.setMetadata(context.workspacePath, args.key, args.value);
         return successResult(null);
       } catch (error) {
         return handleError(error);
       }
     },
 
-    workspace_get_opencode_port: async (context: SimulatedToolContext): Promise<ToolResult> => {
+    workspace_get_agent_session: async (context: SimulatedToolContext): Promise<ToolResult> => {
       if (!context.workspacePath) {
         return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const port = await api.workspaces.getAgentSession(context.workspacePath);
-        return successResult(port);
+        const session = await handlers.getAgentSession(context.workspacePath);
+        return successResult(session);
       } catch (error) {
         return handleError(error);
       }
@@ -138,7 +153,7 @@ function createToolHandlers(api: ICoreApi) {
         return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const result = await api.workspaces.remove(context.workspacePath, {
+        const result = await handlers.deleteWorkspace(context.workspacePath, {
           keepBranch: args.keepBranch ?? false,
         });
         return successResult(result);
@@ -155,7 +170,7 @@ function createToolHandlers(api: ICoreApi) {
         return errorResult("workspace-not-found", "Missing workspace path");
       }
       try {
-        const result = await api.workspaces.executeCommand(
+        const result = await handlers.executeCommand(
           context.workspacePath,
           args.command,
           args.args
@@ -239,21 +254,14 @@ describe("MCP Tools", () => {
         agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
       };
 
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         getStatus: vi.fn().mockResolvedValue(expectedStatus),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_get_status(context);
+      const result = await toolHandlers.workspace_get_status(context);
       const parsed = parseToolResult<WorkspaceStatus>(result);
 
       expect(parsed.success).toBe(true);
@@ -264,17 +272,11 @@ describe("MCP Tools", () => {
     });
 
     it("returns error when workspace not found", async () => {
-      const api: ICoreApi = {
-        workspaces: createMockWorkspaceApi(),
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const mockHandlers = createMockHandlers();
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createEmptyContext();
 
-      const result = await handlers.workspace_get_status(context);
+      const result = await toolHandlers.workspace_get_status(context);
       const parsed = parseToolResult<WorkspaceStatus>(result);
 
       expect(parsed.success).toBe(false);
@@ -284,21 +286,14 @@ describe("MCP Tools", () => {
     });
 
     it("propagates API errors correctly", async () => {
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         getStatus: vi.fn().mockRejectedValue(new Error("API error")),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_get_status(context);
+      const result = await toolHandlers.workspace_get_status(context);
       const parsed = parseToolResult<WorkspaceStatus>(result);
 
       expect(parsed.success).toBe(false);
@@ -313,21 +308,14 @@ describe("MCP Tools", () => {
     it("returns metadata object on success", async () => {
       const expectedMetadata = { base: "main", note: "test workspace" };
 
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         getMetadata: vi.fn().mockResolvedValue(expectedMetadata),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_get_metadata(context);
+      const result = await toolHandlers.workspace_get_metadata(context);
       const parsed = parseToolResult<Record<string, string>>(result);
 
       expect(parsed.success).toBe(true);
@@ -341,21 +329,14 @@ describe("MCP Tools", () => {
   describe("workspace_set_metadata", () => {
     it("sets metadata successfully", async () => {
       const setMetadataMock = vi.fn().mockResolvedValue(undefined);
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         setMetadata: setMetadataMock,
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_set_metadata(context, {
+      const result = await toolHandlers.workspace_set_metadata(context, {
         key: "note",
         value: "test value",
       });
@@ -367,21 +348,14 @@ describe("MCP Tools", () => {
 
     it("deletes metadata when value is null", async () => {
       const setMetadataMock = vi.fn().mockResolvedValue(undefined);
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         setMetadata: setMetadataMock,
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      await handlers.workspace_set_metadata(context, {
+      await toolHandlers.workspace_set_metadata(context, {
         key: "note",
         value: null,
       });
@@ -390,21 +364,14 @@ describe("MCP Tools", () => {
     });
 
     it("propagates validation errors from API", async () => {
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         setMetadata: vi.fn().mockRejectedValue(new Error("Invalid key format")),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_set_metadata(context, {
+      const result = await toolHandlers.workspace_set_metadata(context, {
         key: "123invalid",
         value: "test",
       });
@@ -417,23 +384,16 @@ describe("MCP Tools", () => {
     });
   });
 
-  describe("workspace_get_opencode_session", () => {
+  describe("workspace_get_agent_session", () => {
     it("returns session info on success", async () => {
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         getAgentSession: vi.fn().mockResolvedValue({ port: 14001, sessionId: "test-session-id" }),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_get_opencode_port(context);
+      const result = await toolHandlers.workspace_get_agent_session(context);
       const parsed = parseToolResult<{ port: number; sessionId: string }>(result);
 
       expect(parsed.success).toBe(true);
@@ -443,21 +403,14 @@ describe("MCP Tools", () => {
     });
 
     it("returns null when server not running", async () => {
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         getAgentSession: vi.fn().mockResolvedValue(null),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_get_opencode_port(context);
+      const result = await toolHandlers.workspace_get_agent_session(context);
       const parsed = parseToolResult<{ port: number; sessionId: string } | null>(result);
 
       expect(parsed.success).toBe(true);
@@ -468,23 +421,16 @@ describe("MCP Tools", () => {
   });
 
   describe("workspace_delete", () => {
-    it("calls API with correct params", async () => {
-      const removeMock = vi.fn().mockResolvedValue({ started: true });
-      const workspaceApi = createMockWorkspaceApi({
-        remove: removeMock,
+    it("calls handler with correct params", async () => {
+      const deleteWorkspaceMock = vi.fn().mockResolvedValue({ started: true });
+      const mockHandlers = createMockHandlers({
+        deleteWorkspace: deleteWorkspaceMock,
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_delete(context, { keepBranch: false });
+      const result = await toolHandlers.workspace_delete(context, { keepBranch: false });
       const parsed = parseToolResult<{ started: boolean }>(result);
 
       expect(parsed.success).toBe(true);
@@ -492,70 +438,54 @@ describe("MCP Tools", () => {
         expect(parsed.data.started).toBe(true);
       }
 
-      expect(removeMock).toHaveBeenCalledWith(context.workspacePath, { keepBranch: false });
+      expect(deleteWorkspaceMock).toHaveBeenCalledWith(context.workspacePath, {
+        keepBranch: false,
+      });
     });
 
     it("respects keepBranch option", async () => {
-      const removeMock = vi.fn().mockResolvedValue({ started: true });
-      const workspaceApi = createMockWorkspaceApi({
-        remove: removeMock,
+      const deleteWorkspaceMock = vi.fn().mockResolvedValue({ started: true });
+      const mockHandlers = createMockHandlers({
+        deleteWorkspace: deleteWorkspaceMock,
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      await handlers.workspace_delete(context, { keepBranch: true });
+      await toolHandlers.workspace_delete(context, { keepBranch: true });
 
-      expect(removeMock).toHaveBeenCalledWith(context.workspacePath, { keepBranch: true });
+      expect(deleteWorkspaceMock).toHaveBeenCalledWith(context.workspacePath, {
+        keepBranch: true,
+      });
     });
 
     it("defaults keepBranch to false", async () => {
-      const removeMock = vi.fn().mockResolvedValue({ started: true });
-      const workspaceApi = createMockWorkspaceApi({
-        remove: removeMock,
+      const deleteWorkspaceMock = vi.fn().mockResolvedValue({ started: true });
+      const mockHandlers = createMockHandlers({
+        deleteWorkspace: deleteWorkspaceMock,
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      await handlers.workspace_delete(context, {});
+      await toolHandlers.workspace_delete(context, {});
 
-      expect(removeMock).toHaveBeenCalledWith(context.workspacePath, { keepBranch: false });
+      expect(deleteWorkspaceMock).toHaveBeenCalledWith(context.workspacePath, {
+        keepBranch: false,
+      });
     });
   });
 
   describe("workspace_execute_command", () => {
     it("returns command result on success", async () => {
-      const executeCommandMock = vi.fn().mockResolvedValue("command result");
-      const workspaceApi = createMockWorkspaceApi({
-        executeCommand: executeCommandMock,
+      const mockHandlers = createMockHandlers({
+        executeCommand: vi.fn().mockResolvedValue("command result"),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_execute_command(context, {
+      const result = await toolHandlers.workspace_execute_command(context, {
         command: "test.command",
       });
       const parsed = parseToolResult<unknown>(result);
@@ -567,22 +497,14 @@ describe("MCP Tools", () => {
     });
 
     it("returns null for commands that return null", async () => {
-      const executeCommandMock = vi.fn().mockResolvedValue(null);
-      const workspaceApi = createMockWorkspaceApi({
-        executeCommand: executeCommandMock,
+      const mockHandlers = createMockHandlers({
+        executeCommand: vi.fn().mockResolvedValue(null),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_execute_command(context, {
+      const result = await toolHandlers.workspace_execute_command(context, {
         command: "workbench.action.files.saveAll",
       });
       const parsed = parseToolResult<unknown>(result);
@@ -595,22 +517,14 @@ describe("MCP Tools", () => {
 
     it("handles undefined result correctly (converts to null string)", async () => {
       // Most VS Code commands return undefined - verify the result has a valid string text field
-      const executeCommandMock = vi.fn().mockResolvedValue(undefined);
-      const workspaceApi = createMockWorkspaceApi({
-        executeCommand: executeCommandMock,
+      const mockHandlers = createMockHandlers({
+        executeCommand: vi.fn().mockResolvedValue(undefined),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_execute_command(context, {
+      const result = await toolHandlers.workspace_execute_command(context, {
         command: "workbench.action.files.saveAll",
       });
 
@@ -632,23 +546,16 @@ describe("MCP Tools", () => {
       }
     });
 
-    it("passes command and args to API", async () => {
+    it("passes command and args to handler", async () => {
       const executeCommandMock = vi.fn().mockResolvedValue(undefined);
-      const workspaceApi = createMockWorkspaceApi({
+      const mockHandlers = createMockHandlers({
         executeCommand: executeCommandMock,
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      await handlers.workspace_execute_command(context, {
+      await toolHandlers.workspace_execute_command(context, {
         command: "vscode.open",
         args: ["/path/to/file", { preview: true }],
       });
@@ -660,17 +567,11 @@ describe("MCP Tools", () => {
     });
 
     it("returns error when workspace not found", async () => {
-      const api: ICoreApi = {
-        workspaces: createMockWorkspaceApi(),
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const mockHandlers = createMockHandlers();
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createEmptyContext();
 
-      const result = await handlers.workspace_execute_command(context, {
+      const result = await toolHandlers.workspace_execute_command(context, {
         command: "test.command",
       });
       const parsed = parseToolResult<unknown>(result);
@@ -682,24 +583,14 @@ describe("MCP Tools", () => {
     });
 
     it("propagates API errors correctly", async () => {
-      const executeCommandMock = vi
-        .fn()
-        .mockRejectedValue(new Error("Command not found: invalid.command"));
-      const workspaceApi = createMockWorkspaceApi({
-        executeCommand: executeCommandMock,
+      const mockHandlers = createMockHandlers({
+        executeCommand: vi.fn().mockRejectedValue(new Error("Command not found: invalid.command")),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_execute_command(context, {
+      const result = await toolHandlers.workspace_execute_command(context, {
         command: "invalid.command",
       });
       const parsed = parseToolResult<unknown>(result);
@@ -712,22 +603,14 @@ describe("MCP Tools", () => {
     });
 
     it("propagates timeout errors correctly", async () => {
-      const executeCommandMock = vi.fn().mockRejectedValue(new Error("Command timed out"));
-      const workspaceApi = createMockWorkspaceApi({
-        executeCommand: executeCommandMock,
+      const mockHandlers = createMockHandlers({
+        executeCommand: vi.fn().mockRejectedValue(new Error("Command timed out")),
       });
 
-      const api: ICoreApi = {
-        workspaces: workspaceApi,
-        projects: {} as IProjectApi,
-        on: vi.fn().mockReturnValue(() => {}),
-        dispose: vi.fn(),
-      };
-
-      const handlers = createToolHandlers(api);
+      const toolHandlers = createToolHandlers(mockHandlers);
       const context = createContext();
 
-      const result = await handlers.workspace_execute_command(context, {
+      const result = await toolHandlers.workspace_execute_command(context, {
         command: "slow.command",
       });
       const parsed = parseToolResult<unknown>(result);

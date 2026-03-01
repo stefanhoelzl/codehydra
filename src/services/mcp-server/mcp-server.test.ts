@@ -9,56 +9,30 @@ import {
   SERVER_INSTRUCTIONS,
   type McpServerFactory,
 } from "./mcp-server";
-import type { ICoreApi, IWorkspaceApi, IProjectApi } from "../../shared/api/interfaces";
+import type { McpApiHandlers } from "./types";
 import { type ProjectId, initialPromptSchema } from "../../shared/api/types";
 import { createMockLogger } from "../logging";
 
 /**
- * Create a mock ICoreApi for testing.
+ * Create a mock McpApiHandlers for testing.
  */
-function createMockCoreApi(overrides?: {
-  workspaces?: Partial<IWorkspaceApi>;
-  projects?: Partial<IProjectApi>;
-}): ICoreApi {
-  const defaultWorkspaces: IWorkspaceApi = {
-    create: vi.fn().mockResolvedValue({
+function createMockMcpHandlers(overrides?: Partial<McpApiHandlers>): McpApiHandlers {
+  return {
+    getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+    getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+    setMetadata: vi.fn().mockResolvedValue(undefined),
+    getAgentSession: vi.fn().mockResolvedValue(14001),
+    restartAgentServer: vi.fn().mockResolvedValue(14001),
+    createWorkspace: vi.fn().mockResolvedValue({
       name: "test",
       path: "/path",
       branch: "main",
       metadata: { base: "main" },
       projectId: "test-12345678" as ProjectId,
     }),
-    remove: vi.fn().mockResolvedValue({ started: true }),
-    getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
-    getAgentSession: vi.fn().mockResolvedValue(14001),
-    restartAgentServer: vi.fn().mockResolvedValue(14001),
-    setMetadata: vi.fn().mockResolvedValue(undefined),
-    getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
+    deleteWorkspace: vi.fn().mockResolvedValue({ started: true }),
     executeCommand: vi.fn().mockResolvedValue(undefined),
-  };
-
-  const defaultProjects: IProjectApi = {
-    open: vi.fn().mockResolvedValue({
-      id: "test-12345678" as ProjectId,
-      name: "test",
-      path: "/path",
-      workspaces: [],
-    }),
-    close: vi.fn().mockResolvedValue(undefined),
-    clone: vi.fn().mockResolvedValue({
-      id: "test-12345678" as ProjectId,
-      name: "test",
-      path: "/path",
-      workspaces: [],
-    }),
-    fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
-  };
-
-  return {
-    workspaces: { ...defaultWorkspaces, ...overrides?.workspaces },
-    projects: { ...defaultProjects, ...overrides?.projects },
-    on: vi.fn().mockReturnValue(() => {}),
-    dispose: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
   };
 }
 
@@ -86,13 +60,13 @@ function createMockMcpSdk() {
 }
 
 describe("McpServer", () => {
-  let mockApi: ICoreApi;
+  let mockHandlers: McpApiHandlers;
   let mockLogger: ReturnType<typeof createMockLogger>;
   let mockMcpSdk: ReturnType<typeof createMockMcpSdk>;
   let mockFactory: McpServerFactory;
 
   beforeEach(() => {
-    mockApi = createMockCoreApi();
+    mockHandlers = createMockMcpHandlers();
     mockLogger = createMockLogger();
     mockMcpSdk = createMockMcpSdk();
     mockFactory = () => mockMcpSdk as unknown as ReturnType<typeof createDefaultMcpServer>;
@@ -100,31 +74,31 @@ describe("McpServer", () => {
 
   describe("constructor", () => {
     it("creates server with injected dependencies", () => {
-      const server = new McpServer(mockApi, mockFactory, mockLogger);
+      const server = new McpServer(mockHandlers, mockFactory, mockLogger);
       expect(server).toBeInstanceOf(McpServer);
     });
 
     it("creates server without logger", () => {
-      const server = new McpServer(mockApi, mockFactory);
+      const server = new McpServer(mockHandlers, mockFactory);
       expect(server).toBeInstanceOf(McpServer);
     });
 
     it("creates server with default factory", () => {
-      const server = new McpServer(mockApi);
+      const server = new McpServer(mockHandlers);
       expect(server).toBeInstanceOf(McpServer);
     });
   });
 
   describe("isRunning", () => {
     it("returns false before start", () => {
-      const server = new McpServer(mockApi, mockFactory, mockLogger);
+      const server = new McpServer(mockHandlers, mockFactory, mockLogger);
       expect(server.isRunning()).toBe(false);
     });
   });
 
   describe("tool registration", () => {
     it("registers all required tools when started", async () => {
-      const server = new McpServer(mockApi, mockFactory, mockLogger);
+      const server = new McpServer(mockHandlers, mockFactory, mockLogger);
 
       // Start and immediately stop to trigger registration
       await server.start(0); // Port 0 = let OS assign
@@ -146,11 +120,11 @@ describe("McpServer", () => {
       expect(tools.length).toBe(9);
     });
 
-    it("workspace_restart_agent_server tool calls API and returns port", async () => {
+    it("workspace_restart_agent_server tool calls handler and returns port", async () => {
       const workspacePath = "/project/workspaces/test-workspace";
 
       // Create server
-      const server = new McpServer(mockApi, mockFactory, mockLogger);
+      const server = new McpServer(mockHandlers, mockFactory, mockLogger);
 
       await server.start(0);
       await server.stop();
@@ -166,8 +140,8 @@ describe("McpServer", () => {
         { authInfo: { extra: { workspacePath } } }
       );
 
-      // Verify API was called
-      expect(mockApi.workspaces.restartAgentServer).toHaveBeenCalled();
+      // Verify handler was called
+      expect(mockHandlers.restartAgentServer).toHaveBeenCalled();
 
       // Verify result contains the port number
       expect(result).toEqual({
@@ -178,7 +152,7 @@ describe("McpServer", () => {
 
   describe("dispose", () => {
     it("stops the server", async () => {
-      const server = new McpServer(mockApi, mockFactory, mockLogger);
+      const server = new McpServer(mockHandlers, mockFactory, mockLogger);
 
       await server.start(0);
       expect(server.isRunning()).toBe(true);

@@ -3,6 +3,12 @@
  */
 
 import type { IDisposable } from "../../shared/types";
+import type {
+  WorkspaceStatus,
+  AgentSession,
+  Workspace,
+  InitialPrompt,
+} from "../../shared/api/types";
 
 // =============================================================================
 // MCP Error Types
@@ -23,6 +29,39 @@ export type McpErrorCode =
 export interface McpError {
   readonly code: McpErrorCode;
   readonly message: string;
+}
+
+// =============================================================================
+// MCP API Handlers
+// =============================================================================
+
+/**
+ * Flat handler interface for MCP server operations.
+ * Each method maps to an MCP tool. The MCP server calls these handlers
+ * instead of going through the centralized API facade.
+ */
+export interface McpApiHandlers {
+  getStatus(workspacePath: string): Promise<WorkspaceStatus>;
+  getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
+  setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
+  getAgentSession(workspacePath: string): Promise<AgentSession | null>;
+  restartAgentServer(workspacePath: string): Promise<number>;
+  createWorkspace(options: {
+    callerWorkspacePath: string;
+    name: string;
+    base: string;
+    initialPrompt?: InitialPrompt;
+    stealFocus?: boolean;
+  }): Promise<Workspace>;
+  deleteWorkspace(
+    workspacePath: string,
+    options: { keepBranch: boolean }
+  ): Promise<{ started: boolean }>;
+  executeCommand(
+    workspacePath: string,
+    command: string,
+    args?: readonly unknown[]
+  ): Promise<unknown>;
 }
 
 // =============================================================================
