@@ -94,6 +94,7 @@ export interface IWorkspaceApi {
       keepBranch?: boolean;
       skipSwitch?: boolean;
       force?: boolean;
+      blockingPids?: readonly number[];
     }
   ): Promise<{ started: boolean }>;
   /**

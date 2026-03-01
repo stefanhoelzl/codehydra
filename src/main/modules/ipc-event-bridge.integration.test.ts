@@ -192,11 +192,6 @@ function createStatusTestSetup(): StatusTestSetup {
     globalWorktreeProvider: {
       listWorktrees: vi.fn(),
     } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-    deleteOp: {
-      hasPendingRetry: vi.fn().mockReturnValue(false),
-      signalDismiss: vi.fn(),
-      signalRetry: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["deleteOp"],
   });
   const resolveModule = createMockResolveModule();
 
@@ -266,11 +261,6 @@ function createLifecycleTestSetup(
     globalWorktreeProvider: {
       listWorktrees: vi.fn(),
     } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-    deleteOp: {
-      hasPendingRetry: vi.fn().mockReturnValue(false),
-      signalDismiss: vi.fn(),
-      signalRetry: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["deleteOp"],
   });
 
   // Wire quit module to prevent app.quit() error on shutdown
@@ -454,11 +444,6 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       globalWorktreeProvider: {
         listWorktrees: vi.fn(),
       } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-      deleteOp: {
-        hasPendingRetry: vi.fn().mockReturnValue(false),
-        signalDismiss: vi.fn(),
-        signalRetry: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["deleteOp"],
     });
 
     const progressPayload = {
@@ -507,11 +492,6 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       globalWorktreeProvider: {
         listWorktrees: vi.fn(),
       } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-      deleteOp: {
-        hasPendingRetry: vi.fn().mockReturnValue(false),
-        signalDismiss: vi.fn(),
-        signalRetry: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["deleteOp"],
     });
 
     // Should not throw when sendToUI is a no-op
@@ -605,11 +585,6 @@ describe("IpcEventBridge - lifecycle", () => {
         globalWorktreeProvider: {
           listWorktrees: vi.fn(),
         } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-        deleteOp: {
-          hasPendingRetry: vi.fn().mockReturnValue(false),
-          signalDismiss: vi.fn(),
-          signalRetry: vi.fn(),
-        } as unknown as IpcEventBridgeDeps["deleteOp"],
       });
 
       const quitModule: IntentModule = {
@@ -678,11 +653,6 @@ describe("IpcEventBridge - lifecycle", () => {
         globalWorktreeProvider: {
           listWorktrees: vi.fn(),
         } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-        deleteOp: {
-          hasPendingRetry: vi.fn().mockReturnValue(false),
-          signalDismiss: vi.fn(),
-          signalRetry: vi.fn(),
-        } as unknown as IpcEventBridgeDeps["deleteOp"],
       });
 
       const quitModule: IntentModule = {
@@ -752,11 +722,6 @@ describe("IpcEventBridge - setup:error", () => {
       globalWorktreeProvider: {
         listWorktrees: vi.fn(),
       } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-      deleteOp: {
-        hasPendingRetry: vi.fn().mockReturnValue(false),
-        signalDismiss: vi.fn(),
-        signalRetry: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["deleteOp"],
     });
 
     // Hook module that throws to trigger the setup:error domain event
@@ -818,11 +783,6 @@ describe("IpcEventBridge - setup:error", () => {
       globalWorktreeProvider: {
         listWorktrees: vi.fn(),
       } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-      deleteOp: {
-        hasPendingRetry: vi.fn().mockReturnValue(false),
-        signalDismiss: vi.fn(),
-        signalRetry: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["deleteOp"],
     });
 
     const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
@@ -879,11 +839,6 @@ function createApiTestSetup(overrides?: { pluginServer?: IpcEventBridgeDeps["plu
     globalWorktreeProvider: {
       listWorktrees: vi.fn(),
     } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
-    deleteOp: {
-      hasPendingRetry: vi.fn().mockReturnValue(false),
-      signalDismiss: vi.fn(),
-      signalRetry: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["deleteOp"],
   });
 
   dispatcher.registerModule(ipcEventBridge);

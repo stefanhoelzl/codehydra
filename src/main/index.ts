@@ -141,6 +141,7 @@ import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETE_FAILED,
 } from "./operations/delete-workspace";
 import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./operations/delete-workspace";
 import {
@@ -410,7 +411,7 @@ const idempotencyModule = createIdempotencyModule([
       const { workspacePath } = p as DeleteWorkspacePayload;
       return workspacePath;
     },
-    resetOn: EVENT_WORKSPACE_DELETED,
+    resetOn: [EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_DELETE_FAILED],
     isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
   },
   {
@@ -599,8 +600,7 @@ dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
 dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
 
-const deleteOp = new DeleteWorkspaceOperation();
-dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteOp);
+dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
 
 dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
 dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
@@ -624,7 +624,6 @@ const ipcEventBridge = createIpcEventBridge({
   dispatcher,
   agentStatusManager,
   globalWorktreeProvider,
-  deleteOp,
 });
 
 // 10. Register all modules + get API interface

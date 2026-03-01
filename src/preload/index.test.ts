@@ -191,7 +191,10 @@ describe("preload API", () => {
       mockIpcRenderer.invoke.mockResolvedValue(mockResult);
 
       const workspaces = exposedApi.workspaces as {
-        remove: (workspacePath: string, options?: { keepBranch?: boolean }) => Promise<unknown>;
+        remove: (
+          workspacePath: string,
+          options?: { keepBranch?: boolean; blockingPids?: readonly number[] }
+        ) => Promise<unknown>;
       };
       const result = await workspaces.remove("/test/.worktrees/feature", { keepBranch: true });
 

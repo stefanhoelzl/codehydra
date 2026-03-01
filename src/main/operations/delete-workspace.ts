@@ -6,17 +6,19 @@
  * 2. Dispatch project:resolve — resolves projectPath to projectId
  * 3. "shutdown" hook — ViewModule (switch + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI)
  * 4. "release" hook — WindowsLockModule (detect CWD + kill) [Windows-only]
- * 5. "delete" hook — WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
+ * 5. If blockingPids provided (retry): "flush" hook — kill provided PIDs
+ * 6. "delete" hook — WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file)
  *
- * If delete fails (and not force), enters a retry loop:
- * 6. "detect" — Full blocking process detection (RM + CWD + handles)
- * 7. Emit progress with blockers, wait for user choice (Kill & Retry or Dismiss)
- * 8. "flush" — Kill collected PIDs
- * 9. "delete" — Re-attempt
- * Loop back to 6 if delete fails again.
+ * If delete fails (and not force):
+ * 7. "detect" — Full blocking process detection (RM + CWD + handles)
+ * 8. Emit progress with blockers, emit workspace:delete-failed, return
+ *
+ * On retry, the UI dispatches a new intent with blockingPids from the previous failure.
+ * The flush hook kills those PIDs before re-attempting delete.
  *
  * Each handler returns a typed result; the operation merges results and tracks errors.
  * On success (or force=true), emits a workspace:deleted domain event for state cleanup.
+ * On failure, emits workspace:delete-failed to reset idempotency for retry.
  *
  * No provider dependencies - hook handlers do the actual work.
  */
@@ -49,6 +51,8 @@ export interface DeleteWorkspacePayload {
   /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
   readonly removeWorktree: boolean;
   readonly skipSwitch?: boolean;
+  /** PIDs from a previous failed attempt. When present, flush hook kills these before delete. */
+  readonly blockingPids?: readonly number[];
 }
 
 export interface DeleteWorkspaceIntent extends Intent<{ started: true }> {
@@ -75,6 +79,17 @@ export interface WorkspaceDeletedEvent extends DomainEvent {
 }
 
 export const EVENT_WORKSPACE_DELETED = "workspace:deleted" as const;
+
+export const EVENT_WORKSPACE_DELETE_FAILED = "workspace:delete-failed" as const;
+
+export interface WorkspaceDeleteFailedPayload {
+  readonly workspacePath: string;
+}
+
+export interface WorkspaceDeleteFailedEvent extends DomainEvent {
+  readonly type: typeof EVENT_WORKSPACE_DELETE_FAILED;
+  readonly payload: WorkspaceDeleteFailedPayload;
+}
 
 export const EVENT_WORKSPACE_DELETION_PROGRESS = "workspace:deletion-progress" as const;
 
@@ -293,42 +308,6 @@ export class DeleteWorkspaceOperation implements Operation<
 > {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
 
-  /** Pending retry resolvers keyed by workspace path. */
-  private readonly retryResolvers = new Map<string, (choice: "retry" | "dismiss") => void>();
-
-  /**
-   * Wait for user choice (Kill & Retry or Dismiss) for a workspace.
-   * Resolves when signalRetry or signalDismiss is called.
-   */
-  waitForRetryChoice(wsPath: string): Promise<"retry" | "dismiss"> {
-    return new Promise<"retry" | "dismiss">((resolve) => {
-      this.retryResolvers.set(wsPath, resolve);
-    });
-  }
-
-  /** Signal that the user chose Kill & Retry. */
-  signalRetry(wsPath: string): void {
-    const resolver = this.retryResolvers.get(wsPath);
-    if (resolver) {
-      this.retryResolvers.delete(wsPath);
-      resolver("retry");
-    }
-  }
-
-  /** Signal that the user chose Dismiss. */
-  signalDismiss(wsPath: string): void {
-    const resolver = this.retryResolvers.get(wsPath);
-    if (resolver) {
-      this.retryResolvers.delete(wsPath);
-      resolver("dismiss");
-    }
-  }
-
-  /** Check if a workspace has a pending retry choice. */
-  hasPendingRetry(wsPath: string): boolean {
-    return this.retryResolvers.has(wsPath);
-  }
-
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
     const { payload } = ctx.intent;
 
@@ -359,8 +338,14 @@ export class DeleteWorkspaceOperation implements Operation<
     } else {
       const result = await this.runPipeline(ctx, ctx.emit);
 
-      // Normal mode: only emit if no errors
-      if (!result.hasErrors) {
+      if (result.hasErrors) {
+        // Emit delete-failed to reset idempotency, allowing retry dispatch
+        const failedEvent: WorkspaceDeleteFailedEvent = {
+          type: EVENT_WORKSPACE_DELETE_FAILED,
+          payload: { workspacePath: payload.workspacePath },
+        };
+        ctx.emit(failedEvent);
+      } else {
         emitEvent(result.identity);
       }
     }
@@ -451,6 +436,27 @@ export class DeleteWorkspaceOperation implements Operation<
       "cleanup-workspace"
     );
 
+    // --- Flush (kill provided PIDs from previous attempt) ---
+    let flush: MergedFlush | undefined;
+    if (payload.blockingPids && payload.blockingPids.length > 0) {
+      this.emitPipelineProgress(
+        emit,
+        identity,
+        payload,
+        { shutdown, release },
+        false,
+        false,
+        "killing-blockers"
+      );
+      const flushCtx: FlushHookInput = {
+        ...pipelineCtx,
+        blockingPids: payload.blockingPids,
+      };
+      const { results: flushResults, errors: flushCollectErrors } =
+        await ctx.hooks.collect<FlushHookResult>("flush", flushCtx);
+      flush = mergeFlush(flushResults, flushCollectErrors);
+    }
+
     // --- Delete ---
     const { results: deleteResults, errors: deleteCollectErrors } =
       await ctx.hooks.collect<DeleteHookResult>("delete", pipelineCtx);
@@ -459,7 +465,14 @@ export class DeleteWorkspaceOperation implements Operation<
     const deleteFailed = del.errors.length > 0;
     if (!deleteFailed) {
       // Success
-      this.emitPipelineProgress(emit, identity, payload, { shutdown, release, del }, true, false);
+      this.emitPipelineProgress(
+        emit,
+        identity,
+        payload,
+        { shutdown, release, del, ...(flush && { flush }) },
+        true,
+        false
+      );
       return { hasErrors: false, identity };
     }
 
@@ -477,96 +490,30 @@ export class DeleteWorkspaceOperation implements Operation<
       return { hasErrors, identity };
     }
 
-    // --- Retry loop: detect → emit → wait → flush → delete ---
-    let currentDel = del;
-    for (;;) {
-      // Detect
-      this.emitPipelineProgress(
-        emit,
-        identity,
-        payload,
-        { shutdown, release, del: currentDel },
-        false,
-        false,
-        "detecting-blockers"
-      );
-      const { results: detectResults, errors: detectCollectErrors } =
-        await ctx.hooks.collect<DetectHookResult>("detect", pipelineCtx);
-      const detect = mergeDetect(detectResults, detectCollectErrors);
+    // --- Detect blockers (full scan after failure) ---
+    this.emitPipelineProgress(
+      emit,
+      identity,
+      payload,
+      { shutdown, release, del },
+      false,
+      false,
+      "detecting-blockers"
+    );
+    const { results: detectResults, errors: detectCollectErrors } =
+      await ctx.hooks.collect<DetectHookResult>("detect", pipelineCtx);
+    const detect = mergeDetect(detectResults, detectCollectErrors);
 
-      // Emit progress with blockers and wait for user choice
-      this.emitPipelineProgress(
-        emit,
-        identity,
-        payload,
-        { shutdown, release, del: currentDel, detect },
-        true,
-        true
-      );
-
-      const choice = await this.waitForRetryChoice(payload.workspacePath);
-      if (choice === "dismiss") {
-        return { hasErrors: true, identity };
-      }
-
-      // Flush (kill collected PIDs)
-      this.emitPipelineProgress(
-        emit,
-        identity,
-        payload,
-        { shutdown, release, del: currentDel, detect },
-        false,
-        false,
-        "killing-blockers"
-      );
-      const blockingPids = detect.blockingProcesses?.map((p) => p.pid) ?? [];
-      const flushCtx: FlushHookInput = {
-        ...pipelineCtx,
-        blockingPids,
-      };
-      const { results: flushResults, errors: flushCollectErrors } =
-        await ctx.hooks.collect<FlushHookResult>("flush", flushCtx);
-      const flush = mergeFlush(flushResults, flushCollectErrors);
-
-      // Emit progress showing kill completed
-      this.emitPipelineProgress(emit, identity, payload, {
-        shutdown,
-        release,
-        del: currentDel,
-        detect,
-        flush,
-      });
-
-      // Re-attempt delete
-      this.emitPipelineProgress(
-        emit,
-        identity,
-        payload,
-        { shutdown, release, del: currentDel, detect, flush },
-        false,
-        false,
-        "cleanup-workspace"
-      );
-      const { results: retryDeleteResults, errors: retryDeleteCollectErrors } =
-        await ctx.hooks.collect<DeleteHookResult>("delete", pipelineCtx);
-      const retryDel = mergeDelete(retryDeleteResults, retryDeleteCollectErrors);
-
-      if (retryDel.errors.length === 0) {
-        // Success
-        this.emitPipelineProgress(
-          emit,
-          identity,
-          payload,
-          { shutdown, release, del: retryDel },
-          true,
-          false
-        );
-        return { hasErrors: false, identity };
-      }
-
-      // Still failing — loop back to detect
-      currentDel = retryDel;
-    }
+    // Emit progress with blockers and return failure
+    this.emitPipelineProgress(
+      emit,
+      identity,
+      payload,
+      { shutdown, release, del, detect },
+      true,
+      true
+    );
+    return { hasErrors: true, identity };
   }
 
   /**
