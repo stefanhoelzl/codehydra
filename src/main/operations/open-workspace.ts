@@ -1,9 +1,6 @@
 /**
  * OpenWorkspaceOperation - Orchestrates workspace opening.
  *
- * Replaces CreateWorkspaceOperation with an expanded pipeline that includes
- * project resolution and a fetch-bases path for incomplete payloads.
- *
  * Uses isolated hook contexts with collect() — each hook point returns typed
  * results that are merged field-by-field with conflict detection.
  *
@@ -11,10 +8,7 @@
  * 0. If callerWorkspacePath:
  *    Dispatch workspace:resolve to get projectPath
  * 1. Dispatch project:resolve to get projectId from projectPath
- * 2. If incomplete (missing workspaceName or base):
- *    "fetch-bases" → FetchBasesHookResult — returns bases for dialog (fatal, early return)
- * 3. If complete:
- *    "create" → CreateHookResult — worktree creation (fatal)
+ * 2. "create" → CreateHookResult — worktree creation (fatal)
  *    "setup" → SetupHookResult — keepfiles (best-effort, internal try/catch),
  *     agent server (fatal)
  *    "finalize" → FinalizeHookResult — workspace URL (fatal)
@@ -61,8 +55,8 @@ export interface OpenWorkspacePayload {
    * When present, resolved via dispatch to determine projectPath.
    */
   readonly callerWorkspacePath?: string;
-  readonly workspaceName?: string;
-  readonly base?: string;
+  readonly workspaceName: string;
+  readonly base: string;
   readonly initialPrompt?: InitialPrompt;
   /** If true, switch to the new workspace. If false, don't steal focus but still switch when
    *  no workspace is active. Default behavior (undefined): switch. */
@@ -73,14 +67,7 @@ export interface OpenWorkspacePayload {
   readonly projectPath?: string;
 }
 
-export type OpenWorkspaceResult =
-  | Workspace
-  | {
-      bases: readonly { name: string; isRemote: boolean }[];
-      defaultBaseBranch?: string;
-      projectPath: string;
-      projectId: ProjectId;
-    };
+export type OpenWorkspaceResult = Workspace;
 
 export interface OpenWorkspaceIntent extends Intent<OpenWorkspaceResult> {
   readonly type: "workspace:open";
@@ -132,11 +119,6 @@ export interface ResolveCallerHookInput extends HookContext {
 export interface ResolveCallerHookResult {
   readonly projectPath?: string;
   readonly workspaceName?: WorkspaceName;
-}
-
-/** Input context for the "fetch-bases" hook point (enriched with resolved project path). */
-export interface FetchBasesHookInput extends HookContext {
-  readonly projectPath: string;
 }
 
 /** Input context for the "create" hook point (enriched with resolved project path). */
@@ -217,33 +199,9 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     } as ResolveProjectIntent);
     const resolvedProjectId = projResolved.projectId;
 
-    // Check if payload is incomplete (missing workspaceName or base)
-    const { workspaceName, base } = ctx.intent.payload;
-    if (workspaceName === undefined || base === undefined) {
-      // Hook: "fetch-bases" — return bases for dialog (fatal, early return)
-      const fetchBasesCtx: FetchBasesHookInput = {
-        intent: ctx.intent,
-        projectPath,
-      };
-      const { results: fetchBasesResults, errors: fetchBasesErrors } = await ctx.hooks.collect<{
-        bases?: readonly { name: string; isRemote: boolean }[];
-        defaultBaseBranch?: string;
-      }>("fetch-bases", fetchBasesCtx);
+    const { base } = ctx.intent.payload;
 
-      if (fetchBasesErrors.length > 0) throw fetchBasesErrors[0]!;
-
-      const fetchBases = mergeHookResults(fetchBasesResults, "fetch-bases");
-      return {
-        bases: fetchBases.bases ?? [],
-        ...(fetchBases.defaultBaseBranch !== undefined && {
-          defaultBaseBranch: fetchBases.defaultBaseBranch,
-        }),
-        projectPath,
-        projectId: resolvedProjectId,
-      };
-    }
-
-    // Hook 3a: "create" — worktree creation (fatal on error)
+    // Hook: "create" — worktree creation (fatal on error)
     const createCtx: CreateHookInput = { intent: ctx.intent, projectPath };
     const { results: createResults, errors: createErrors } =
       await ctx.hooks.collect<CreateHookResult>("create", createCtx);

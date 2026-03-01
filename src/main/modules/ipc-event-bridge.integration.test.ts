@@ -189,9 +189,6 @@ function createStatusTestSetup(): StatusTestSetup {
     agentStatusManager: {
       getStatus: vi.fn(),
     } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-    globalWorktreeProvider: {
-      listWorktrees: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
   });
   const resolveModule = createMockResolveModule();
 
@@ -258,9 +255,6 @@ function createLifecycleTestSetup(
     agentStatusManager: {
       getStatus: vi.fn(),
     } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-    globalWorktreeProvider: {
-      listWorktrees: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
   });
 
   // Wire quit module to prevent app.quit() error on shutdown
@@ -416,6 +410,58 @@ describe("IpcEventBridge - workspace:deleted", () => {
 });
 
 // =============================================================================
+// Tests - bases:updated event
+// =============================================================================
+
+describe("IpcEventBridge - bases:updated", () => {
+  it("emits project:bases-updated on bases:updated domain event", () => {
+    const mockApiRegistry = createMockRegistry();
+    const ipcEventBridge = createIpcEventBridge({
+      apiRegistry: mockApiRegistry,
+      getApi: () => {
+        throw new Error("not wired");
+      },
+      sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>(),
+      pluginServer: null,
+      logger: SILENT_LOGGER,
+      dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
+      agentStatusManager: {
+        getStatus: vi.fn(),
+      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
+    });
+
+    const bases = [
+      { name: "main", isRemote: false },
+      { name: "origin/main", isRemote: true },
+    ];
+
+    // Call the event handler directly
+    ipcEventBridge.events!["bases:updated"]!({
+      type: "bases:updated",
+      payload: {
+        projectId: TEST_PROJECT_ID,
+        projectPath: TEST_PROJECT_PATH,
+        bases,
+      },
+    });
+
+    const basesEvents = mockApiRegistry
+      .getEmittedEvents()
+      .filter((e) => e.event === "project:bases-updated");
+    expect(basesEvents).toEqual([
+      {
+        event: "project:bases-updated",
+        payload: {
+          projectId: TEST_PROJECT_ID,
+          projectPath: TEST_PROJECT_PATH,
+          bases,
+        },
+      },
+    ]);
+  });
+});
+
+// =============================================================================
 // Tests - workspace:deletion-progress event
 // =============================================================================
 
@@ -441,9 +487,6 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       agentStatusManager: {
         getStatus: vi.fn(),
       } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-      globalWorktreeProvider: {
-        listWorktrees: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
     });
 
     const progressPayload = {
@@ -489,9 +532,6 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       agentStatusManager: {
         getStatus: vi.fn(),
       } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-      globalWorktreeProvider: {
-        listWorktrees: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
     });
 
     // Should not throw when sendToUI is a no-op
@@ -582,9 +622,6 @@ describe("IpcEventBridge - lifecycle", () => {
         agentStatusManager: {
           getStatus: vi.fn(),
         } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-        globalWorktreeProvider: {
-          listWorktrees: vi.fn(),
-        } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
       });
 
       const quitModule: IntentModule = {
@@ -650,9 +687,6 @@ describe("IpcEventBridge - lifecycle", () => {
         agentStatusManager: {
           getStatus: vi.fn(),
         } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-        globalWorktreeProvider: {
-          listWorktrees: vi.fn(),
-        } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
       });
 
       const quitModule: IntentModule = {
@@ -719,9 +753,6 @@ describe("IpcEventBridge - setup:error", () => {
       agentStatusManager: {
         getStatus: vi.fn(),
       } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-      globalWorktreeProvider: {
-        listWorktrees: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
     });
 
     // Hook module that throws to trigger the setup:error domain event
@@ -780,9 +811,6 @@ describe("IpcEventBridge - setup:error", () => {
       agentStatusManager: {
         getStatus: vi.fn(),
       } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-      globalWorktreeProvider: {
-        listWorktrees: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
     });
 
     const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
@@ -836,9 +864,6 @@ function createApiTestSetup(overrides?: { pluginServer?: IpcEventBridgeDeps["plu
     agentStatusManager: {
       getStatus: vi.fn(),
     } as unknown as IpcEventBridgeDeps["agentStatusManager"],
-    globalWorktreeProvider: {
-      listWorktrees: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["globalWorktreeProvider"],
   });
 
   dispatcher.registerModule(ipcEventBridge);

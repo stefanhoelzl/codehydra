@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { projects, type BaseInfo } from "$lib/api";
+  import { projects, on, type BaseInfo } from "$lib/api";
   import FilterableDropdown, { type DropdownOption } from "./FilterableDropdown.svelte";
 
   /**
@@ -47,18 +47,32 @@
   let branches = $state<readonly BaseInfo[]>([]);
   let error = $state<string | null>(null);
 
-  // Load branches on mount or when projectId changes
+  // Load branches on mount or when projectPath changes
   $effect(() => {
+    const currentProjectPath = projectPath;
     error = null;
 
     projects
-      .fetchBases(projectPath)
+      .fetchBases(currentProjectPath)
       .then((result: { bases: readonly BaseInfo[] }) => {
         branches = result.bases;
       })
       .catch((err: unknown) => {
         error = err instanceof Error ? err.message : "Failed to load branches";
       });
+
+    const unsubscribe = on<{ projectPath: string; bases: readonly BaseInfo[] }>(
+      "project:bases-updated",
+      (event) => {
+        if (event.projectPath === currentProjectPath) {
+          branches = event.bases;
+        }
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
   });
 
   /**

@@ -21,7 +21,6 @@
  * #12: No keepfiles side effects when worktree creation fails
  * #15: existingWorkspace skips worktree creation
  * #16: existingWorkspace uses projectPath directly
- * #17: Incomplete payload returns bases
  * #18: project:resolve failure propagates error
  * #20: stealFocus=false with no active workspace dispatches switch
  * #21: stealFocus=false with active workspace skips switch
@@ -202,7 +201,6 @@ interface TestSetupOptions {
   serverManager?: MockServerManager;
   agentStatusManager?: MockAgentStatusManager;
   keepFilesService?: MockKeepFilesService;
-  fetchBasesModule?: IntentModule;
   throwOnCreate?: boolean;
   setupThrows?: boolean;
   workspaceUrl?: string;
@@ -286,31 +284,6 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       },
     },
   };
-
-  // Default FetchBasesModule: "fetch-bases" hook — returns bases for dialog
-  const defaultFetchBasesModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [OPEN_WORKSPACE_OPERATION_ID]: {
-        "fetch-bases": {
-          handler: async (): Promise<{
-            bases: readonly { name: string; isRemote: boolean }[];
-            defaultBaseBranch?: string;
-          }> => {
-            return {
-              bases: [
-                { name: "main", isRemote: false },
-                { name: "origin/main", isRemote: true },
-              ],
-              defaultBaseBranch: "main",
-            };
-          },
-        },
-      },
-    },
-  };
-
-  const fetchBasesModule = opts?.fetchBasesModule ?? defaultFetchBasesModule;
 
   // GetActiveWorkspace module: returns configurable active workspace ref
   const activeWorkspaceRef = opts?.activeWorkspaceRef ?? null;
@@ -459,7 +432,6 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     resolveProjectResolveModule,
     switchViewModule,
     getActiveWorkspaceModule,
-    fetchBasesModule,
     worktreeModule,
     keepFilesModule,
     agentModule,
@@ -861,54 +833,6 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
-  describe("incomplete payload returns bases (#17)", () => {
-    it("returns bases when workspaceName is missing", async () => {
-      const setup = createTestSetup();
-
-      const intent: OpenWorkspaceIntent = {
-        type: INTENT_OPEN_WORKSPACE,
-        payload: {
-          projectPath: PROJECT_ROOT,
-          // No workspaceName or base
-        },
-      };
-
-      const result = await setup.dispatcher.dispatch(intent);
-
-      expect(result).toBeDefined();
-      // Result should be the bases object, not a Workspace
-      expect(result).toHaveProperty("bases");
-      const basesResult = result as {
-        bases: readonly { name: string; isRemote: boolean }[];
-        defaultBaseBranch?: string;
-      };
-      expect(basesResult.bases).toHaveLength(2);
-      expect(basesResult.bases[0]).toEqual({ name: "main", isRemote: false });
-      expect(basesResult.bases[1]).toEqual({ name: "origin/main", isRemote: true });
-      expect(basesResult.defaultBaseBranch).toBe("main");
-    });
-
-    it("returns bases when base is missing", async () => {
-      const setup = createTestSetup();
-
-      const intent: OpenWorkspaceIntent = {
-        type: INTENT_OPEN_WORKSPACE,
-        payload: {
-          projectPath: PROJECT_ROOT,
-          workspaceName: "feature-x",
-          // No base
-        },
-      };
-
-      const result = await setup.dispatcher.dispatch(intent);
-
-      expect(result).toBeDefined();
-      expect(result).toHaveProperty("bases");
-      const basesResult = result as { bases: readonly { name: string; isRemote: boolean }[] };
-      expect(basesResult.bases).toHaveLength(2);
-    });
-  });
-
   describe("project:resolve failure propagates error (#18)", () => {
     it("throws when project:resolve finds no project for path", async () => {
       const setup = createTestSetup();
@@ -997,18 +921,6 @@ describe("OpenWorkspace Operation", () => {
           },
         },
       };
-      const fetchBasesModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [OPEN_WORKSPACE_OPERATION_ID]: {
-            "fetch-bases": {
-              handler: async () => ({
-                bases: [{ name: "main", isRemote: false }],
-              }),
-            },
-          },
-        },
-      };
       const worktreeModule: IntentModule = {
         name: "test",
         hooks: {
@@ -1069,7 +981,6 @@ describe("OpenWorkspace Operation", () => {
       dispatcher.registerModule(resolveProjectResolveModule);
       dispatcher.registerModule(switchViewModule);
       dispatcher.registerModule(getActiveWorkspaceModule);
-      dispatcher.registerModule(fetchBasesModule);
       dispatcher.registerModule(worktreeModule);
       dispatcher.registerModule(agentModule);
       dispatcher.registerModule(extraEnvModule);

@@ -139,6 +139,7 @@ import {
   INTENT_GET_ACTIVE_WORKSPACE,
 } from "./operations/get-active-workspace";
 import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./operations/open-workspace";
+import { GetProjectBasesOperation, INTENT_GET_PROJECT_BASES } from "./operations/get-project-bases";
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
@@ -613,6 +614,7 @@ dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperat
 dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
 dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
+dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, new GetProjectBasesOperation());
 
 dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
 
@@ -637,7 +639,6 @@ const ipcEventBridge = createIpcEventBridge({
   logger: apiLogger,
   dispatcher,
   agentStatusManager,
-  globalWorktreeProvider,
 });
 
 // 10. Register all modules + get API interface

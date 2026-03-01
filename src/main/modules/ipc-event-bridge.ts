@@ -66,6 +66,9 @@ import { EVENT_WORKSPACE_SWITCHED, INTENT_SWITCH_WORKSPACE } from "../operations
 import type { SwitchWorkspaceIntent } from "../operations/switch-workspace";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
+import type { BasesUpdatedEvent } from "../operations/get-project-bases";
+import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../operations/get-project-bases";
+import type { GetProjectBasesIntent } from "../operations/get-project-bases";
 import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../operations/setup";
 import type { SetupErrorEvent, SetupProgressEvent } from "../operations/setup";
 import type { SetupErrorPayload, WorkspacePath } from "../../shared/ipc";
@@ -84,7 +87,6 @@ import type { GetActiveWorkspaceIntent } from "../operations/get-active-workspac
 import { INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
-import type { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import { Path } from "../../services/platform/path";
 
 /**
@@ -102,7 +104,6 @@ export interface IpcEventBridgeDeps {
   readonly agentStatusManager: {
     getStatus(wp: WorkspacePath): { status: string } | undefined;
   };
-  readonly globalWorktreeProvider: GitWorktreeProvider;
 }
 
 /**
@@ -194,6 +195,14 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         ...(code !== undefined && { code }),
       };
       deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
+    },
+    [EVENT_BASES_UPDATED]: (event: DomainEvent) => {
+      const p = (event as BasesUpdatedEvent).payload;
+      apiRegistry.emit("project:bases-updated", {
+        projectId: p.projectId,
+        projectPath: p.projectPath,
+        bases: p.bases,
+      });
     },
     [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
       const {
@@ -485,46 +494,15 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   apiRegistry.register(
     "projects.fetchBases",
     async (payload: ProjectPathPayload) => {
-      // Dispatch workspace:open with incomplete payload (missing workspaceName/base)
-      // This triggers the project:resolve + fetch-bases path
-      const intent: OpenWorkspaceIntent = {
-        type: INTENT_OPEN_WORKSPACE,
-        payload: {
-          projectPath: payload.projectPath,
-        },
+      const intent: GetProjectBasesIntent = {
+        type: INTENT_GET_PROJECT_BASES,
+        payload: { projectPath: payload.projectPath, refresh: true },
       };
       const result = await dispatcher.dispatch(intent);
       if (!result) {
         throw new Error("Fetch bases dispatch returned no result");
       }
-      const basesResult = result as {
-        bases: readonly { name: string; isRemote: boolean }[];
-        defaultBaseBranch?: string;
-        projectPath: string;
-        projectId: import("../../shared/api/types").ProjectId;
-      };
-
-      // Fire-and-forget background update
-      void (async () => {
-        try {
-          const projectRoot = new Path(basesResult.projectPath);
-          await deps.globalWorktreeProvider.updateBases(projectRoot);
-          const updatedBases = await deps.globalWorktreeProvider.listBases(projectRoot);
-          apiRegistry.emit("project:bases-updated", {
-            projectId: basesResult.projectId,
-            projectPath: basesResult.projectPath,
-            bases: updatedBases,
-          });
-        } catch (error) {
-          logger.error(
-            "Failed to fetch bases for project",
-            { projectPath: payload.projectPath },
-            error instanceof Error ? error : undefined
-          );
-        }
-      })();
-
-      return { bases: basesResult.bases };
+      return { bases: result.bases };
     },
     { ipc: ApiIpcChannels.PROJECT_FETCH_BASES }
   );

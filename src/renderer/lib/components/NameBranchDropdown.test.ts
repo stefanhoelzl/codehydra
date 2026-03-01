@@ -8,8 +8,9 @@ import { tick } from "svelte";
 import type { BaseInfo } from "@shared/api/types";
 
 // Create mock functions with vi.hoisted - required for vitest mocking pattern
-const { mockFetchBases } = vi.hoisted(() => ({
+const { mockFetchBases, mockOn } = vi.hoisted(() => ({
   mockFetchBases: vi.fn(),
+  mockOn: vi.fn().mockReturnValue(() => {}),
 }));
 
 // Mock $lib/api - must be a static mock, not dynamic (no importOriginal)
@@ -17,6 +18,7 @@ vi.mock("$lib/api", () => ({
   projects: {
     fetchBases: mockFetchBases,
   },
+  on: mockOn,
 }));
 
 // Import component after mocks
@@ -416,6 +418,87 @@ describe("NameBranchDropdown component", () => {
 
       const input = screen.getByRole("combobox");
       expect(input).toHaveAttribute("data-autofocus");
+    });
+  });
+
+  describe("project:bases-updated event updates branches", () => {
+    it("subscribes to project:bases-updated and updates branch list", async () => {
+      const initialBranches: BaseInfo[] = [
+        { name: "feature-auth", isRemote: false, derives: "feature-auth" },
+      ];
+
+      const updatedBranches: BaseInfo[] = [
+        { name: "feature-auth", isRemote: false, derives: "feature-auth" },
+        { name: "origin/feature-new", isRemote: true, derives: "feature-new" },
+      ];
+
+      // Capture the on() callback so we can invoke it
+      let basesUpdatedHandler:
+        | ((event: { projectPath: string; bases: readonly BaseInfo[] }) => void)
+        | undefined;
+      mockOn.mockImplementation(
+        (
+          _event: string,
+          handler: (event: { projectPath: string; bases: readonly BaseInfo[] }) => void
+        ) => {
+          basesUpdatedHandler = handler;
+          return () => {};
+        }
+      );
+
+      await renderWithBranches(initialBranches);
+
+      // Verify subscription was made
+      expect(mockOn).toHaveBeenCalledWith("project:bases-updated", expect.any(Function));
+
+      // Simulate bases-updated event
+      basesUpdatedHandler!({
+        projectPath: testProjectPath,
+        bases: updatedBranches,
+      });
+      await tick();
+
+      // Open dropdown and verify updated branches
+      const input = screen.getByRole("combobox");
+      await focusAndOpenDropdown(input);
+
+      expect(screen.getByText("feature-auth")).toBeInTheDocument();
+      expect(screen.getByText("feature-new")).toBeInTheDocument();
+    });
+
+    it("ignores events for different project paths", async () => {
+      const initialBranches: BaseInfo[] = [
+        { name: "feature-auth", isRemote: false, derives: "feature-auth" },
+      ];
+
+      let basesUpdatedHandler:
+        | ((event: { projectPath: string; bases: readonly BaseInfo[] }) => void)
+        | undefined;
+      mockOn.mockImplementation(
+        (
+          _event: string,
+          handler: (event: { projectPath: string; bases: readonly BaseInfo[] }) => void
+        ) => {
+          basesUpdatedHandler = handler;
+          return () => {};
+        }
+      );
+
+      await renderWithBranches(initialBranches);
+
+      // Simulate event for a different project
+      basesUpdatedHandler!({
+        projectPath: "/other/project",
+        bases: [{ name: "other-branch", isRemote: false, derives: "other-branch" }],
+      });
+      await tick();
+
+      // Open dropdown - should still show original branches only
+      const input = screen.getByRole("combobox");
+      await focusAndOpenDropdown(input);
+
+      expect(screen.getByText("feature-auth")).toBeInTheDocument();
+      expect(screen.queryByText("other-branch")).not.toBeInTheDocument();
     });
   });
 
