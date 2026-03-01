@@ -35,7 +35,6 @@ import type { StartHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { wireApiEvents } from "../ipc/api-handlers";
-import { wirePluginApi } from "../api/wire-plugin-api";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations/set-metadata";
 import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../operations/set-metadata";
 import type { SetMetadataIntent } from "../operations/set-metadata";
@@ -535,9 +534,6 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
           handler: async (): Promise<StartHookResult> => {
             const api = deps.getApi();
             apiEventCleanupFn = wireApiEvents(api, deps.sendToUI);
-            if (deps.pluginServer) {
-              wirePluginApi(deps.pluginServer, api, deps.logger);
-            }
             return {};
           },
         },

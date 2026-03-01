@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
-import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { Dispatcher, IntentHandle } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -19,13 +19,16 @@ import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../opera
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../operations/open-workspace";
 import type {
   FinalizeHookInput,
   FinalizeHookResult,
   OpenWorkspaceIntent,
 } from "../operations/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
+import {
+  DELETE_WORKSPACE_OPERATION_ID,
+  INTENT_DELETE_WORKSPACE,
+} from "../operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
@@ -47,6 +50,12 @@ import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import { SetupError } from "../../services/errors";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { ApiCallHandlers } from "../../services/plugin-server/plugin-server";
+import { INTENT_GET_WORKSPACE_STATUS } from "../operations/get-workspace-status";
+import { INTENT_GET_AGENT_SESSION } from "../operations/get-agent-session";
+import { INTENT_RESTART_AGENT } from "../operations/restart-agent";
+import { INTENT_GET_METADATA } from "../operations/get-metadata";
+import { INTENT_SET_METADATA } from "../operations/set-metadata";
 
 // =============================================================================
 // Minimal Test Operations
@@ -243,6 +252,8 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       close: vi.fn().mockResolvedValue(undefined),
       setWorkspaceConfig: vi.fn(),
       removeWorkspaceConfig: vi.fn(),
+      onApiCall: vi.fn(),
+      sendCommand: vi.fn(),
     },
     fileSystemLayer: {
       mkdir: vi.fn().mockResolvedValue(undefined),
@@ -262,6 +273,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
     },
     platform: "linux",
     arch: "x64",
+    dispatcher: { dispatch: vi.fn() } as unknown as CodeServerModuleDeps["dispatcher"],
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     ...overrides,
@@ -439,6 +451,8 @@ describe("CodeServerModule", () => {
           close: vi.fn().mockResolvedValue(undefined),
           setWorkspaceConfig: vi.fn(),
           removeWorkspaceConfig: vi.fn(),
+          onApiCall: vi.fn(),
+          sendCommand: vi.fn(),
         },
       });
       const { dispatcher } = createTestSetup(deps);
@@ -489,6 +503,8 @@ describe("CodeServerModule", () => {
           }),
           setWorkspaceConfig: vi.fn(),
           removeWorkspaceConfig: vi.fn(),
+          onApiCall: vi.fn(),
+          sendCommand: vi.fn(),
         },
       });
       const { dispatcher } = createTestSetup(deps);
@@ -1002,6 +1018,274 @@ describe("CodeServerModule", () => {
 
       expect(deps.codeServerManager.setCodeServerVersion).not.toHaveBeenCalled();
       expect(deps.extensionManager.setCodeServerBinaryPath).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Plugin API handlers
+  // ---------------------------------------------------------------------------
+
+  describe("plugin API handlers", () => {
+    const testWorkspacePath = "/home/user/.codehydra/workspaces/my-feature";
+
+    /**
+     * Helper: run the start hook to register handlers, then extract them from
+     * the onApiCall mock. Returns the captured handlers and mock dispatcher.
+     */
+    async function setupPluginHandlers(
+      resolveWith?: unknown,
+      options?: { accepted?: boolean }
+    ): Promise<{
+      handlers: ApiCallHandlers;
+      mockDispatch: ReturnType<typeof vi.fn>;
+      deps: CodeServerModuleDeps;
+    }> {
+      const mockDispatch = vi.fn().mockImplementation(() => {
+        const handle = new IntentHandle();
+        handle.signalAccepted(options?.accepted ?? true);
+        if (resolveWith instanceof Error) {
+          handle.reject(resolveWith);
+        } else {
+          handle.resolve(resolveWith);
+        }
+        return handle;
+      });
+
+      const deps = createMockDeps({
+        dispatcher: { dispatch: mockDispatch } as unknown as CodeServerModuleDeps["dispatcher"],
+      });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      // Dispatch app:start to trigger handler registration
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Extract registered handlers
+      const onApiCallMock = deps.pluginServer!.onApiCall as ReturnType<typeof vi.fn>;
+      expect(onApiCallMock).toHaveBeenCalledTimes(1);
+      const handlers = onApiCallMock.mock.calls[0]![0] as ApiCallHandlers;
+
+      return { handlers, mockDispatch, deps };
+    }
+
+    it("registers handlers on app:start when pluginServer is available", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(deps.pluginServer!.onApiCall).toHaveBeenCalled();
+    });
+
+    it("getStatus dispatches correct intent", async () => {
+      const status = { isDirty: false, agent: { type: "none" as const } };
+      const { handlers, mockDispatch } = await setupPluginHandlers(status);
+
+      const result = await handlers.getStatus(testWorkspacePath);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual(status);
+      }
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_GET_WORKSPACE_STATUS,
+          payload: { workspacePath: testWorkspacePath },
+        })
+      );
+    });
+
+    it("getAgentSession dispatches correct intent", async () => {
+      const session = { port: 12345, sessionId: "ses-123" };
+      const { handlers, mockDispatch } = await setupPluginHandlers(session);
+
+      const result = await handlers.getAgentSession(testWorkspacePath);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual(session);
+      }
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_GET_AGENT_SESSION,
+          payload: { workspacePath: testWorkspacePath },
+        })
+      );
+    });
+
+    it("restartAgentServer dispatches correct intent", async () => {
+      const { handlers, mockDispatch } = await setupPluginHandlers(14001);
+
+      const result = await handlers.restartAgentServer(testWorkspacePath);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe(14001);
+      }
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_RESTART_AGENT,
+          payload: { workspacePath: testWorkspacePath },
+        })
+      );
+    });
+
+    it("getMetadata dispatches correct intent", async () => {
+      const { handlers, mockDispatch } = await setupPluginHandlers({ base: "main" });
+
+      const result = await handlers.getMetadata(testWorkspacePath);
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ base: "main" });
+      }
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_GET_METADATA,
+          payload: { workspacePath: testWorkspacePath },
+        })
+      );
+    });
+
+    it("setMetadata dispatches correct intent", async () => {
+      const { handlers, mockDispatch } = await setupPluginHandlers(undefined);
+
+      const result = await handlers.setMetadata(testWorkspacePath, {
+        key: "my-key",
+        value: "my-value",
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_SET_METADATA,
+          payload: { workspacePath: testWorkspacePath, key: "my-key", value: "my-value" },
+        })
+      );
+    });
+
+    it("delete returns started:true when accepted", async () => {
+      const { handlers, mockDispatch } = await setupPluginHandlers(undefined, { accepted: true });
+
+      const result = await handlers.delete(testWorkspacePath, {});
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ started: true });
+      }
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_DELETE_WORKSPACE,
+          payload: expect.objectContaining({
+            workspacePath: testWorkspacePath,
+            keepBranch: true,
+            force: false,
+            removeWorktree: true,
+          }),
+        })
+      );
+    });
+
+    it("delete returns started:false when rejected by interceptor", async () => {
+      const { handlers } = await setupPluginHandlers(undefined, { accepted: false });
+
+      const result = await handlers.delete(testWorkspacePath, {});
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({ started: false });
+      }
+    });
+
+    it("executeCommand calls pluginServer.sendCommand directly", async () => {
+      const { handlers, deps } = await setupPluginHandlers();
+      vi.mocked(deps.pluginServer!.sendCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
+        success: true,
+        data: "command result",
+      });
+
+      const result = await handlers.executeCommand(testWorkspacePath, {
+        command: "test.command",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toBe("command result");
+      }
+      expect(deps.pluginServer!.sendCommand).toHaveBeenCalledWith(
+        testWorkspacePath,
+        "test.command",
+        undefined
+      );
+    });
+
+    it("create dispatches correct intent with optional fields", async () => {
+      const workspace = {
+        projectId: "proj-1",
+        name: "my-ws",
+        branch: "my-ws",
+        metadata: {},
+        path: "/workspaces/my-ws",
+      };
+      const { handlers, mockDispatch } = await setupPluginHandlers(workspace);
+
+      const result = await handlers.create(testWorkspacePath, {
+        name: "my-ws",
+        base: "main",
+        initialPrompt: "Do something",
+        stealFocus: false,
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual(workspace);
+      }
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_OPEN_WORKSPACE,
+          payload: expect.objectContaining({
+            callerWorkspacePath: testWorkspacePath,
+            workspaceName: "my-ws",
+            base: "main",
+            initialPrompt: "Do something",
+            stealFocus: false,
+          }),
+        })
+      );
+    });
+
+    it("create does not include optional fields when undefined", async () => {
+      const { handlers, mockDispatch } = await setupPluginHandlers({
+        projectId: "p",
+        name: "ws",
+        branch: "ws",
+        metadata: {},
+        path: "/ws",
+      });
+
+      await handlers.create(testWorkspacePath, { name: "my-ws", base: "main" });
+
+      const dispatchedIntent = mockDispatch.mock.calls[0]![0];
+      expect(dispatchedIntent.payload).not.toHaveProperty("initialPrompt");
+      expect(dispatchedIntent.payload).not.toHaveProperty("stealFocus");
+    });
+
+    it("returns error result when dispatch throws", async () => {
+      const { handlers, mockDispatch } = await setupPluginHandlers();
+      mockDispatch.mockImplementation(() => {
+        const handle = new IntentHandle();
+        handle.signalAccepted(true);
+        handle.reject(new Error("Workspace not found"));
+        return handle;
+      });
+
+      const result = await handlers.getStatus(testWorkspacePath);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Workspace not found");
+      }
     });
   });
 });

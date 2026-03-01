@@ -446,6 +446,7 @@ const codeServerModule = createCodeServerModule({
   codeServerManager,
   extensionManager: setupExtensionManager,
   pluginServer,
+  dispatcher,
   fileSystemLayer,
   workspaceFileService,
   pathProvider,

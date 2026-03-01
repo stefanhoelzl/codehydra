@@ -568,27 +568,6 @@ describe("IpcEventBridge - lifecycle", () => {
       // wireApiEvents calls api.on() for each event channel
       expect(mockApi.on).toHaveBeenCalled();
     });
-
-    it("wires plugin API when pluginServer is provided", async () => {
-      const { dispatcher, mockPluginServer } = createLifecycleTestSetup();
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(mockPluginServer.onApiCall).toHaveBeenCalled();
-    });
-
-    it("does not error when pluginServer is null", async () => {
-      const { dispatcher } = createLifecycleTestSetup({ pluginServer: null });
-
-      // Should not throw
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-    });
   });
 
   describe("app:shutdown / stop hook", () => {
