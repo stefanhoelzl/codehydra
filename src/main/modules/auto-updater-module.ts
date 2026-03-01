@@ -23,6 +23,7 @@ import {
   type UpdateAvailableIntent,
 } from "../operations/update-available";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedPayload } from "../operations/config-set-values";
+import { configEnum } from "../../services/config/config-definition";
 import type { AutoUpdatePreference } from "../../services/config/config-values";
 import type { AutoUpdater } from "../../services/auto-updater";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
@@ -45,10 +46,8 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               {
                 name: "auto-update",
                 default: "always" as AutoUpdatePreference,
-                parse: (s: string) =>
-                  s === "always" || s === "never" ? (s as AutoUpdatePreference) : undefined,
-                validate: (v: unknown) =>
-                  v === "always" || v === "never" ? (v as AutoUpdatePreference) : undefined,
+                description: "Auto-update preference",
+                ...configEnum(["always", "never"]),
               },
             ],
           }),

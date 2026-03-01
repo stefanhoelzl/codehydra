@@ -76,6 +76,7 @@ import {
   getCodeServerExecutablePath,
 } from "../../services/code-server/setup-info";
 import { Path } from "../../services/platform/path";
+import { configString } from "../../services/config/config-definition";
 import { SetupError, getErrorMessage } from "../../services/errors";
 
 // =============================================================================
@@ -143,8 +144,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               {
                 name: "version.code-server",
                 default: null,
-                parse: (s: string) => (s === "" ? null : s),
-                validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+                description: "Code-server version override (null = built-in)",
+                ...configString({ nullable: true }),
               },
             ],
           }),

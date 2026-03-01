@@ -62,6 +62,7 @@ import { INTENT_UPDATE_AGENT_STATUS } from "../operations/update-agent-status";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { ConfigSetValuesIntent } from "../operations/config-set-values";
 import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import { configString } from "../../services/config/config-definition";
 import { SetupError, getErrorMessage } from "../../services/errors";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import { ClaudeCodeProvider } from "../../agents/claude/provider";
@@ -198,8 +199,8 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
               {
                 name: "version.claude",
                 default: null,
-                parse: (s: string) => (s === "" ? null : s),
-                validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+                description: "Claude agent version override",
+                ...configString({ nullable: true }),
               },
             ],
           }),
