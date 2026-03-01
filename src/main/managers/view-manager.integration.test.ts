@@ -20,7 +20,7 @@ import {
   createWindowLayerInternalMock,
   type MockWindowLayerInternal,
 } from "../../services/shell/window.state-mock";
-import type { WindowHandle } from "../../services/shell/types";
+import { createViewHandle, type WindowHandle } from "../../services/shell/types";
 import { createMockWindowManager } from "./window-manager.test-utils";
 
 // Mock external-url
@@ -74,6 +74,7 @@ function createViewManagerDeps(): ViewManagerDeps & {
     config: {
       uiPreloadPath: "/path/to/preload.js",
       codeServerPort: 8080,
+      backgroundHtmlPath: "/path/to/background.html",
     },
     logger: SILENT_LOGGER,
   };
@@ -117,7 +118,7 @@ describe("ViewManager", () => {
 
       const uiHandle = manager.getUIViewHandle();
       expect(uiHandle.id).toMatch(/^view-\d+$/);
-      expect(deps.viewLayer).toHaveViews([uiHandle.id]);
+      expect(deps.viewLayer.isAvailable(uiHandle)).toBe(true);
     });
 
     it("sets transparent background on UI layer", () => {
@@ -146,6 +147,62 @@ describe("ViewManager", () => {
     });
   });
 
+  describe("background view", () => {
+    /**
+     * Helper to get the background view ID (always at index 0 in window children).
+     */
+    function getBackgroundViewId(deps: ReturnType<typeof createViewManagerDeps>): string {
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+      const children = deps.viewLayer.$.windowChildren.get(windowId) ?? [];
+      expect(children.length).toBeGreaterThanOrEqual(2);
+      // Background view is always at index 0 (bottom of z-stack)
+      const id = children[0] as string;
+      return id;
+    }
+
+    it("is created and attached at z-0 during create()", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const uiHandle = manager.getUIViewHandle();
+      const backgroundViewId = getBackgroundViewId(deps);
+
+      // Background view should be at index 0 (bottom), not the UI view
+      expect(backgroundViewId).not.toBe(uiHandle.id);
+
+      // Background view should have transparent Electron bg (CSS handles color)
+      expect(deps.viewLayer).toHaveView(backgroundViewId, {
+        backgroundColor: "#00000000",
+      });
+    });
+
+    it("has its bounds updated on resize", () => {
+      const deps = createViewManagerDeps();
+      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
+      const manager = createViewManager(deps);
+
+      manager.updateBounds();
+
+      const backgroundViewId = getBackgroundViewId(deps);
+
+      expect(deps.viewLayer).toHaveView(backgroundViewId, {
+        bounds: { x: 0, y: 0, width: 1400, height: 900 },
+      });
+    });
+
+    it("is destroyed on destroy()", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const backgroundViewId = getBackgroundViewId(deps);
+
+      manager.destroy();
+
+      // Background view should no longer be available
+      expect(deps.viewLayer.isAvailable(createViewHandle(backgroundViewId))).toBe(false);
+    });
+  });
+
   describe("getUIViewHandle", () => {
     it("returns the UI layer ViewHandle", () => {
       const deps = createViewManagerDeps();
@@ -169,9 +226,8 @@ describe("ViewManager", () => {
         "/path/to/project"
       );
 
-      const uiHandle = manager.getUIViewHandle();
-      // Should have 2 views: UI + workspace
-      expect(deps.viewLayer).toHaveViews([uiHandle.id, wsHandle.id]);
+      // Workspace view should exist
+      expect(deps.viewLayer.isAvailable(wsHandle)).toBe(true);
 
       // Workspace view should NOT be attached
       expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: null });
@@ -701,7 +757,7 @@ describe("ViewManager", () => {
       });
     });
 
-    it("keeps UI view at index 0 in workspace mode (DirectComposition workaround)", () => {
+    it("keeps UI view at index 1 in workspace mode (above background view)", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -714,10 +770,10 @@ describe("ViewManager", () => {
       manager.setWorkspaceLoaded("/path/to/workspace");
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // UI view should be at index 0 (bottom)
+      // UI view should be at index 1 (above background view at 0)
       const uiHandle = manager.getUIViewHandle();
       const children = deps.viewLayer.$.windowChildren.get(windowId);
-      expect(children?.[0]).toBe(uiHandle.id);
+      expect(children?.[1]).toBe(uiHandle.id);
     });
 
     it("null workspace detaches current", () => {

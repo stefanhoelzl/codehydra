@@ -373,6 +373,7 @@ const viewManager = new ViewManager({
   config: {
     uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
     codeServerPort: 0,
+    backgroundHtmlPath: nodePath.join(__dirname, "../renderer/background.html"),
   },
   logger: loggingService.createLogger("view"),
 });
