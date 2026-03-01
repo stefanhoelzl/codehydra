@@ -51,7 +51,7 @@ import {
 } from "../../services/platform/filesystem.state-mock";
 import { createConfigModule, parseEnvVars, parseCliArgs } from "./config-module";
 import { generateHelpText } from "../../services/config/config-values";
-import { parseBool } from "../../services/config/config-definition";
+import { parseBool, ConfigValidationError } from "../../services/config/config-definition";
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 
 // =============================================================================
@@ -113,9 +113,9 @@ function testDefinitions(): ConfigKeyDefinition<unknown>[] {
     },
     {
       name: "test.optional",
-      default: undefined,
-      parse: (s: string) => (s === "" ? undefined : s),
-      validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+      default: null,
+      parse: (s: string) => (s === "" ? null : s),
+      validate: (v: unknown) => (v === null ? null : typeof v === "string" ? v : undefined),
     },
   ];
 }
@@ -399,13 +399,14 @@ describe("ConfigModule Integration", () => {
 
     it("throws on unknown CH_ env var", () => {
       expect(() => parseEnvVars({ CH_UNKNOWN_VAR: "value" }, definitions)).toThrow(
-        /Unknown config env var/
+        ConfigValidationError
       );
     });
 
-    it("skips invalid values without throwing", () => {
-      const result = parseEnvVars({ CH_TEST__LEVEL: "not-a-level" }, definitions);
-      expect(result["test.level"]).toBeUndefined();
+    it("throws on invalid env var value", () => {
+      expect(() => parseEnvVars({ CH_TEST__LEVEL: "not-a-level" }, definitions)).toThrow(
+        ConfigValidationError
+      );
     });
   });
 
@@ -430,9 +431,10 @@ describe("ConfigModule Integration", () => {
       expect(result["test.enum"]).toBe("never");
     });
 
-    it("ignores unknown flags silently", () => {
-      const result = parseCliArgs(["--unknown-flag=value"], definitions);
-      expect(Object.keys(result)).toHaveLength(0);
+    it("throws on unknown CLI flag", () => {
+      expect(() => parseCliArgs(["--unknown-flag=value"], definitions)).toThrow(
+        ConfigValidationError
+      );
     });
 
     it("parses multiple flags", () => {
@@ -1096,7 +1098,7 @@ describe("ConfigModule Integration", () => {
       const output = stdout.write.mock.calls[0]![0] as string;
       // isDevelopment=true computes test.level=debug (not static default "warn")
       expect(output).toContain("test.level");
-      expect(output).toMatch(/test\.level\s+default: debug/);
+      expect(output).toMatch(/test\.level\s+default:\s+debug/);
     });
 
     it("CH_HELP=1 env var prints help and dispatches shutdown", async () => {
@@ -1156,6 +1158,7 @@ describe("ConfigModule Integration", () => {
       const text = generateHelpText("/some/config.json", definitions, defaultValues);
       expect(text).toContain("default: warn");
       expect(text).toContain("default: false");
+      // test.dev-flag has default true (static)
       expect(text).toContain("default: true");
     });
 
@@ -1166,8 +1169,8 @@ describe("ConfigModule Integration", () => {
         "test.dev-flag": false,
       };
       const text = generateHelpText("/some/config.json", definitions, computedDefaults);
-      expect(text).toMatch(/test\.level\s+default: debug/);
-      expect(text).toMatch(/test\.dev-flag\s+default: false/);
+      expect(text).toMatch(/test\.level\s+default:\s+debug/);
+      expect(text).toMatch(/test\.dev-flag\s+default:\s+false/);
     });
   });
 });

@@ -40,6 +40,7 @@ import type { Logger } from "../../services/logging/types";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../services/template/liquid-renderer";
+import { configPath } from "../../services/config/config-definition";
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 
 // =============================================================================
@@ -521,8 +522,8 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
               {
                 name: "experimental.auto-pr-template-path",
                 default: null,
-                parse: (s: string) => (s === "" ? null : s),
-                validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+                description: "Path to Liquid template for auto-PR workspaces",
+                ...configPath({ nullable: true }),
               },
             ] satisfies ConfigKeyDefinition<unknown>[],
           }),

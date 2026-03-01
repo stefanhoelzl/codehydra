@@ -62,6 +62,7 @@ import { INTENT_UPDATE_AGENT_STATUS } from "../operations/update-agent-status";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { ConfigSetValuesIntent } from "../operations/config-set-values";
 import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import { configString } from "../../services/config/config-definition";
 import { SetupError, getErrorMessage } from "../../services/errors";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import { OpenCodeProvider } from "../../agents/opencode/provider";
@@ -236,8 +237,8 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
               {
                 name: "version.opencode",
                 default: null,
-                parse: (s: string) => (s === "" ? null : s),
-                validate: (v: unknown) => (v === null || typeof v === "string" ? v : undefined),
+                description: "OpenCode agent version override",
+                ...configString({ nullable: true }),
               },
             ],
           }),

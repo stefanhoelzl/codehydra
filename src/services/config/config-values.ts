@@ -72,10 +72,18 @@ export function generateHelpText(
     "",
   ];
 
-  for (const key of definitions.keys()) {
+  for (const [key, def] of definitions) {
     const value = defaults[key];
-    const valueStr = value === undefined ? "—" : String(value);
-    lines.push(`  ${key.padEnd(24)} default: ${valueStr}`);
+    const valueStr = value === null || value === undefined ? "—" : String(value);
+
+    let line = `  ${key.padEnd(38)} default: ${valueStr}`;
+    if (def.validValues) {
+      line += `  [${def.validValues}]`;
+    }
+    if (def.description) {
+      line += `  — ${def.description}`;
+    }
+    lines.push(line);
   }
 
   lines.push("");

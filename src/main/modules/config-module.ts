@@ -25,7 +25,11 @@ import type {
   ConfigKeyDefinition,
   ComputedDefaultContext,
 } from "../../services/config/config-definition";
-import { parseBool } from "../../services/config/config-definition";
+import {
+  configBoolean,
+  configEnum,
+  ConfigValidationError,
+} from "../../services/config/config-definition";
 import type { ConfigAgentType } from "../../services/config/config-values";
 import { envVarToConfigKey, generateHelpText } from "../../services/config/config-values";
 import type {
@@ -64,18 +68,96 @@ export interface ConfigModuleDeps {
 }
 
 // =============================================================================
+// Centralized Validation
+// =============================================================================
+
+/**
+ * Validate and parse raw string values (from env vars or CLI flags).
+ * Throws ConfigValidationError on unknown keys or invalid values.
+ */
+export function validateAndParse(
+  rawValues: Record<string, string>,
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
+  source: string
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, rawValue] of Object.entries(rawValues)) {
+    const def = definitions.get(key);
+    if (!def) {
+      throw new ConfigValidationError({
+        key,
+        value: rawValue,
+        reason: "unknown",
+        source,
+      });
+    }
+
+    const parsed = def.parse(rawValue);
+    if (parsed === undefined) {
+      throw new ConfigValidationError({
+        key,
+        value: rawValue,
+        reason: "invalid",
+        source,
+      });
+    }
+    result[key] = parsed;
+  }
+
+  return result;
+}
+
+/**
+ * Validate already-typed values (from config.json or config:set-values).
+ * Throws ConfigValidationError on unknown keys or invalid values.
+ */
+export function validateTyped(
+  values: Record<string, unknown>,
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
+  source: string
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(values)) {
+    const def = definitions.get(key);
+    if (!def) {
+      throw new ConfigValidationError({
+        key,
+        value,
+        reason: "unknown",
+        source,
+      });
+    }
+
+    const validated = def.validate(value);
+    if (validated === undefined) {
+      throw new ConfigValidationError({
+        key,
+        value,
+        reason: "invalid",
+        source,
+      });
+    }
+    result[key] = validated;
+  }
+
+  return result;
+}
+
+// =============================================================================
 // Env Var + CLI Parsing
 // =============================================================================
 
 /**
  * Scan an env object for CH_* keys (not _CH_*), convert to config keys,
- * validate against definition map, parse values.
+ * collect as raw string values for validation.
  */
 export function parseEnvVars(
   env: Record<string, string | undefined>,
   definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
 ): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+  const rawValues: Record<string, string> = {};
 
   for (const [envKey, rawValue] of Object.entries(env)) {
     if (!envKey.startsWith("CH_") || envKey.startsWith("_CH_")) continue;
@@ -84,22 +166,10 @@ export function parseEnvVars(
     const configKey = envVarToConfigKey(envKey);
     if (configKey === undefined) continue;
 
-    const def = definitions.get(configKey);
-    if (!def) {
-      throw new Error(`Unknown config env var: ${envKey} (maps to "${configKey}")`);
-    }
-
-    const parsed = def.parse(rawValue);
-    if (parsed === undefined && rawValue !== "") {
-      // Invalid value — skip (don't throw, env vars may come from external sources)
-      continue;
-    }
-    if (parsed !== undefined) {
-      result[configKey] = parsed;
-    }
+    rawValues[configKey] = rawValue;
   }
 
-  return result;
+  return validateAndParse(rawValues, definitions, "env var");
 }
 
 /**
@@ -110,14 +180,14 @@ export function parseCliArgs(
   argv: readonly string[],
   definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
 ): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+  const rawValues: Record<string, string> = {};
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (!arg.startsWith("--")) continue;
 
     let key: string;
-    let value: string | undefined;
+    let value: string;
 
     const eqIndex = arg.indexOf("=");
     if (eqIndex !== -1) {
@@ -136,19 +206,10 @@ export function parseCliArgs(
       }
     }
 
-    const def = definitions.get(key);
-    if (!def) {
-      // Unknown flag — skip silently (may be an Electron/Node flag)
-      continue;
-    }
-
-    const parsed = def.parse(value);
-    if (parsed !== undefined) {
-      result[key] = parsed;
-    }
+    rawValues[key] = value;
   }
 
-  return result;
+  return validateAndParse(rawValues, definitions, "CLI flag");
 }
 
 // =============================================================================
@@ -157,7 +218,7 @@ export function parseCliArgs(
 
 /**
  * Parse a config.json object (flat kebab-case format) into file-layer config values.
- * Unknown keys are ignored.
+ * Throws on unknown keys or invalid values.
  */
 function parseConfigFile(
   data: unknown,
@@ -166,34 +227,13 @@ function parseConfigFile(
   if (typeof data !== "object" || data === null) return {};
 
   const obj = data as Record<string, unknown>;
-  const result: Record<string, unknown> = {};
+  const values: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(obj)) {
-    if (definitions.has(key)) {
-      result[key] = value;
-    }
+    values[key] = value;
   }
 
-  return validateFileValues(result, definitions);
-}
-
-/**
- * Validate file-layer values using the definition map's validators. Returns only valid entries.
- */
-function validateFileValues(
-  values: Record<string, unknown>,
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(values)) {
-    const def = definitions.get(key);
-    if (!def || value === undefined) continue;
-    const validated = def.validate(value);
-    if (validated !== undefined) {
-      result[key] = validated;
-    }
-  }
-  return result;
+  return validateTyped(values, definitions, "config.json");
 }
 
 // =============================================================================
@@ -249,6 +289,9 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
     return defaults;
   }
 
+  const agentBuilder = configEnum(["claude", "opencode"], { nullable: true });
+  const helpBuilder = configBoolean();
+
   return {
     name: "config",
     hooks: {
@@ -259,18 +302,14 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
               {
                 name: "agent",
                 default: null,
-                parse: (s: string) =>
-                  s === "claude" || s === "opencode" ? s : s === "" ? null : undefined,
-                validate: (v: unknown) =>
-                  v === null || v === "claude" || v === "opencode"
-                    ? (v as ConfigAgentType)
-                    : undefined,
+                description: "Agent selection",
+                ...agentBuilder,
               },
               {
                 name: "help",
                 default: false,
-                parse: parseBool,
-                validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+                description: "Print config help and exit",
+                ...helpBuilder,
               },
             ],
           }),
@@ -351,6 +390,9 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
               fileValues = parseConfigFile(parsed, definitionMap);
               logger.debug("Config loaded from disk", { path: configPath.toString() });
             } catch (error) {
+              if (error instanceof ConfigValidationError) {
+                throw error;
+              }
               if (error instanceof Error && "fsCode" in error && error.fsCode === "ENOENT") {
                 logger.debug("Config not found, using defaults", {
                   path: configPath.toString(),
@@ -396,6 +438,11 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
           handler: async (ctx: HookContext): Promise<ConfigSetHookResult> => {
             const { values, persist } = ctx as ConfigSetHookInput;
 
+            // Validate incoming values if definition map is populated
+            if (definitionMap.size > 0) {
+              validateTyped(values, definitionMap, "config:set-values");
+            }
+
             // Snapshot before merge
             const oldEffective = { ...effective };
 
@@ -417,7 +464,11 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
               }
 
               for (const [key, value] of Object.entries(values)) {
-                fileContent[key] = value;
+                if (value === null) {
+                  delete fileContent[key];
+                } else {
+                  fileContent[key] = value;
+                }
               }
               await fileSystem.mkdir(configPath.dirname);
               await fileSystem.writeFile(configPath, JSON.stringify(fileContent, null, 2));

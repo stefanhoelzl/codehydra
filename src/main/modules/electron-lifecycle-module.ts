@@ -17,6 +17,7 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { ConfigureResult, RegisterConfigResult } from "../operations/app-start";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import { configString } from "../../services/config/config-definition";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
@@ -93,9 +94,9 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             definitions: [
               {
                 name: "electron.flags",
-                default: undefined,
-                parse: (s: string) => (s === "" ? undefined : s),
-                validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+                default: null,
+                description: "Electron switches (e.g., --disable-gpu)",
+                ...configString({ nullable: true }),
               },
             ],
           }),

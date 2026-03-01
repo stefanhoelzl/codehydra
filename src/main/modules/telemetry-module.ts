@@ -19,7 +19,7 @@ import type { ConfigSetValuesIntent } from "../operations/config-set-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
-import { parseBool } from "../../services/config/config-definition";
+import { configBoolean, configString } from "../../services/config/config-definition";
 import type { TelemetryService } from "../../services/telemetry/types";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { BuildInfo } from "../../services/platform/build-info";
@@ -65,16 +65,16 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
               {
                 name: "telemetry.enabled",
                 default: true,
-                parse: parseBool,
-                validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
+                description: "Enable telemetry (false in dev/unpackaged)",
+                ...configBoolean(),
                 computedDefault: (ctx) =>
                   ctx.isDevelopment || !ctx.isPackaged ? false : undefined,
               },
               {
                 name: "telemetry.distinct-id",
-                default: undefined,
-                parse: (s: string) => (s === "" ? undefined : s),
-                validate: (v: unknown) => (typeof v === "string" ? v : undefined),
+                default: null,
+                description: "Telemetry user ID (auto-generated)",
+                ...configString({ nullable: true }),
               },
             ],
           }),

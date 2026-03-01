@@ -19,12 +19,8 @@ import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { RegisterConfigResult } from "../operations/app-start";
 import type { LogFormat } from "../../services/logging/types";
-import {
-  parseLogFormat,
-  parseLogLevelSpec,
-  parseLogOutput,
-  splitLogLevelSpec,
-} from "../../services/logging/electron-log-service";
+import { parseLogLevelSpec, splitLogLevelSpec } from "../../services/logging/electron-log-service";
+import { configCustom, configEnum, configEnumList } from "../../services/config/config-definition";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 
@@ -60,22 +56,26 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
               {
                 name: "log.level",
                 default: "warn",
-                parse: parseLogLevelSpec,
-                validate: (v: unknown) =>
-                  typeof v === "string" ? parseLogLevelSpec(v) : undefined,
+                description: "Level spec: <level> or <level>:<filter>",
+                ...configCustom({
+                  parse: parseLogLevelSpec,
+                  validate: (v: unknown) =>
+                    typeof v === "string" ? parseLogLevelSpec(v) : undefined,
+                  validValues: "silly|debug|info|warn|error[:filter]",
+                }),
                 computedDefault: (ctx) => (ctx.isDevelopment ? "debug" : undefined),
               },
               {
                 name: "log.output",
                 default: "file",
-                parse: parseLogOutput,
-                validate: (v: unknown) => (typeof v === "string" ? parseLogOutput(v) : undefined),
+                description: "Output destinations (comma-separated)",
+                ...configEnumList(["file", "console"]),
               },
               {
                 name: "log.format",
                 default: "text",
-                parse: parseLogFormat,
-                validate: (v: unknown) => (typeof v === "string" ? parseLogFormat(v) : undefined),
+                description: "Log output format",
+                ...configEnum(["text", "json"]),
               },
             ],
           }),
