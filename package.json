@@ -6,7 +6,7 @@
   "main": "out/main/index.cjs",
   "packageManager": "pnpm@10.11.0",
   "scripts": {
-    "preinstall": "node scripts/check-path-length.cjs",
+    "preinstall": "node scripts/check-path-length.js",
     "bootstrap": "pnpm install && pnpm build",
     "dev": "pnpm build && electron-vite dev",
     "build:wrappers": "vite build --config vite.config.bin.ts",
