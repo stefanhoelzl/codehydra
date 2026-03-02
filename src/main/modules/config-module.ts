@@ -175,10 +175,15 @@ export function parseEnvVars(
 /**
  * Parse CLI args in the form --key=value or --key value.
  * Key is the config key directly (e.g. --log.level=debug).
+ *
+ * Unknown flags (e.g. Electron's --inspect, --remote-debugging-port) are
+ * skipped with a warning — process.argv may contain flags injected by the
+ * runtime that are not app config keys.
  */
 export function parseCliArgs(
   argv: readonly string[],
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
+  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
+  logger: Logger
 ): Record<string, unknown> {
   const rawValues: Record<string, string> = {};
 
@@ -204,6 +209,11 @@ export function parseCliArgs(
         // Boolean flag with no value — treat as "true"
         value = "true";
       }
+    }
+
+    if (!definitions.has(key)) {
+      logger.warn("Unknown CLI flag (ignored)", { flag: key });
+      continue;
     }
 
     rawValues[key] = value;
@@ -342,7 +352,7 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
 
             // Parse env vars and CLI args (no I/O — pure computation)
             envValues = parseEnvVars(deps.env, definitionMap);
-            cliValues = parseCliArgs(deps.argv, definitionMap);
+            cliValues = parseCliArgs(deps.argv, definitionMap, deps.logger);
 
             // Full merged config: defaults + env + CLI
             const merged = {
