@@ -2,7 +2,8 @@
  * Unit tests for MCP Server.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createServer } from "node:net";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   McpServer,
   createDefaultMcpServer,
@@ -12,6 +13,25 @@ import {
 import type { McpApiHandlers } from "./types";
 import { type ProjectId, initialPromptSchema } from "../../shared/api/types";
 import { createMockLogger } from "../logging";
+
+/**
+ * Find a free port for testing.
+ */
+async function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (addr && typeof addr === "object") {
+        const port = addr.port;
+        server.close(() => resolve(port));
+      } else {
+        reject(new Error("Could not get port"));
+      }
+    });
+    server.on("error", reject);
+  });
+}
 
 /**
  * Create a mock McpApiHandlers for testing.
@@ -59,6 +79,34 @@ function createMockMcpSdk() {
   };
 }
 
+const testWorkspacePath = "/home/user/projects/my-app/.worktrees/feature-branch";
+
+/**
+ * Send an initialize request to trigger session creation.
+ * The mock SDK won't produce a response, but tools will be registered.
+ * Returns the fetch response (an open SSE stream).
+ */
+async function sendInitialize(port: number, workspacePath = testWorkspacePath): Promise<Response> {
+  return fetch(`http://127.0.0.1:${port}/mcp`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "X-Workspace-Path": workspacePath,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0" },
+      },
+      id: 1,
+    }),
+  });
+}
+
 describe("McpServer", () => {
   let mockHandlers: McpApiHandlers;
   let mockLogger: ReturnType<typeof createMockLogger>;
@@ -97,14 +145,23 @@ describe("McpServer", () => {
   });
 
   describe("tool registration", () => {
-    it("registers all required tools when started", async () => {
-      const server = new McpServer(mockHandlers, mockFactory, mockLogger);
+    let server: McpServer;
+    let port: number;
 
-      // Start and immediately stop to trigger registration
-      await server.start(0); // Port 0 = let OS assign
+    beforeEach(async () => {
+      port = await findFreePort();
+      server = new McpServer(mockHandlers, mockFactory, mockLogger);
+      await server.start(port);
+    });
+
+    afterEach(async () => {
       await server.stop();
+    });
 
-      // Check that all tools were registered
+    it("registers all required tools when a client initializes", async () => {
+      // Send initialize to trigger session creation and tool registration
+      await sendInitialize(port);
+
       const tools = mockMcpSdk.getRegisteredTools();
       const toolNames = tools.map((t) => t.name);
 
@@ -121,13 +178,8 @@ describe("McpServer", () => {
     });
 
     it("workspace_restart_agent_server tool calls handler and returns port", async () => {
-      const workspacePath = "/project/workspaces/test-workspace";
-
-      // Create server
-      const server = new McpServer(mockHandlers, mockFactory, mockLogger);
-
-      await server.start(0);
-      await server.stop();
+      // Trigger tool registration via initialize
+      await sendInitialize(port);
 
       // Find the registered tool handler
       const tools = mockMcpSdk.getRegisteredTools();
@@ -137,7 +189,7 @@ describe("McpServer", () => {
       // Invoke the handler with workspace path in extra.authInfo.extra (matches real MCP flow)
       const result = await restartTool!.handler(
         {}, // empty input schema
-        { authInfo: { extra: { workspacePath } } }
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
       );
 
       // Verify handler was called
@@ -152,9 +204,10 @@ describe("McpServer", () => {
 
   describe("dispose", () => {
     it("stops the server", async () => {
+      const port = await findFreePort();
       const server = new McpServer(mockHandlers, mockFactory, mockLogger);
 
-      await server.start(0);
+      await server.start(port);
       expect(server.isRunning()).toBe(true);
 
       await server.dispose();
