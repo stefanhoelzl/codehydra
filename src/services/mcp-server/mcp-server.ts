@@ -4,6 +4,10 @@
  * Provides MCP (Model Context Protocol) server functionality for AI agent integration.
  * Uses the @modelcontextprotocol/sdk for protocol handling.
  *
+ * Each connecting client (one per workspace) gets its own MCP session with a dedicated
+ * transport + McpServerSdk pair. Sessions are created on-demand when a client sends an
+ * initialize request, and cleaned up when the client disconnects or the server stops.
+ *
  * Workspace resolution is handled by the intent system — the MCP server passes
  * workspacePath directly to API methods. For `create`, it uses `callerWorkspacePath`
  * so the intent hooks resolve the project from the calling workspace.
@@ -16,10 +20,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import { randomUUID } from "node:crypto";
-import {
-  McpServer as McpServerSdk,
-  type RegisteredTool,
-} from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer as McpServerSdk } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import type { IMcpServer, McpError, McpApiHandlers } from "./types";
@@ -40,14 +41,16 @@ import { createOpencodeClient } from "@opencode-ai/sdk";
 const WORKSPACE_PATH_HEADER = "x-workspace-path";
 
 /**
+ * MCP session ID header name.
+ */
+const MCP_SESSION_HEADER = "mcp-session-id";
+
+/**
  * Factory function type for creating MCP SDK instances.
  * Used for dependency injection and testability.
  */
 export type McpServerFactory = () => McpServerSdk;
 
-/**
- * Default factory that creates an MCP SDK server instance.
- */
 /**
  * Server-level instructions surfaced to AI agents via MCP initialize response.
  * Guides agents on how to use CodeHydra tools effectively.
@@ -71,9 +74,20 @@ export function createDefaultMcpServer(): McpServerSdk {
 }
 
 /**
+ * Per-client MCP session.
+ * Each workspace's Claude Code gets its own session with a dedicated transport + server pair.
+ */
+interface McpSession {
+  mcpServer: McpServerSdk;
+  transport: StreamableHTTPServerTransport;
+  workspacePath: string;
+}
+
+/**
  * MCP Server implementation.
  *
  * Provides HTTP-based MCP server that exposes workspace tools to AI agents.
+ * Each connecting client gets a dedicated MCP session with its own transport and server.
  * Workspace resolution is delegated to the intent system via workspacePath-based API methods.
  */
 export class McpServer implements IMcpServer {
@@ -81,13 +95,11 @@ export class McpServer implements IMcpServer {
   private readonly serverFactory: McpServerFactory;
   private readonly logger: Logger;
 
-  private mcpServer: McpServerSdk | null = null;
   private httpServer: HttpServer | null = null;
-  private transport: StreamableHTTPServerTransport | null = null;
   private running = false;
 
-  // Store registered tools for cleanup
-  private registeredTools: RegisteredTool[] = [];
+  /** Per-client MCP sessions, keyed by MCP session ID. */
+  private sessions = new Map<string, McpSession>();
 
   constructor(
     handlers: McpApiHandlers,
@@ -101,6 +113,7 @@ export class McpServer implements IMcpServer {
 
   /**
    * Start the MCP server on the specified port.
+   * Only creates the HTTP server — MCP sessions are created on-demand per client.
    */
   async start(port: number): Promise<void> {
     if (this.running) {
@@ -108,26 +121,21 @@ export class McpServer implements IMcpServer {
       return;
     }
 
-    // Create MCP server instance
-    this.mcpServer = this.serverFactory();
-
-    // Register tools
-    this.registerTools();
-
-    // Create transport in stateful mode with session IDs.
-    // MCP SDK 1.27+ requires stateful mode for shared transports —
-    // stateless mode throws on the second request.
-    this.transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-    });
-
-    // Connect MCP server to transport
-    // Cast needed due to exactOptionalPropertyTypes mismatch between SDK types
-    await this.mcpServer.connect(this.transport as Parameters<typeof this.mcpServer.connect>[0]);
-
     // Create HTTP server to handle incoming requests
     this.httpServer = createServer((req, res) => {
-      this.handleRequest(req, res);
+      this.handleRequest(req, res).catch((err) => {
+        this.logger.error("Request handling failed", { error: getErrorMessage(err) });
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              error: { code: -32603, message: "Internal error" },
+              id: null,
+            })
+          );
+        }
+      });
     });
 
     // Start listening
@@ -142,7 +150,7 @@ export class McpServer implements IMcpServer {
   }
 
   /**
-   * Stop the MCP server.
+   * Stop the MCP server and close all sessions.
    */
   async stop(): Promise<void> {
     if (!this.running) {
@@ -151,17 +159,20 @@ export class McpServer implements IMcpServer {
 
     this.logger.info("Stopping");
 
-    // Close MCP server
-    if (this.mcpServer) {
-      await this.mcpServer.close();
-      this.mcpServer = null;
+    // Close all MCP sessions
+    for (const [sessionId, session] of this.sessions) {
+      try {
+        await session.mcpServer.close();
+      } catch {
+        this.logger.warn("Failed to close MCP server for session", { sessionId });
+      }
+      try {
+        await session.transport.close();
+      } catch {
+        this.logger.warn("Failed to close transport for session", { sessionId });
+      }
     }
-
-    // Close transport
-    if (this.transport) {
-      await this.transport.close();
-      this.transport = null;
-    }
+    this.sessions.clear();
 
     // Close HTTP server
     if (this.httpServer) {
@@ -173,7 +184,6 @@ export class McpServer implements IMcpServer {
       this.httpServer = null;
     }
 
-    this.registeredTools = [];
     this.running = false;
     this.logger.info("Stopped");
   }
@@ -193,42 +203,111 @@ export class McpServer implements IMcpServer {
   }
 
   /**
-   * Handle incoming HTTP requests.
+   * Handle incoming HTTP requests with per-session routing.
+   *
+   * - POST without mcp-session-id: create a new session (initialize)
+   * - POST/GET/DELETE with mcp-session-id: route to existing session
    */
-  private handleRequest(req: IncomingMessage, res: ServerResponse): void {
-    // Only handle POST requests to /mcp
-    if (req.method !== "POST" || req.url !== "/mcp") {
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.url !== "/mcp") {
       res.writeHead(404);
       res.end("Not Found");
       return;
     }
 
-    // Extract workspace path from header for context
+    const sessionId = this.getSessionId(req);
+
+    if (sessionId) {
+      // Route to existing session
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32001, message: "Session not found" },
+            id: null,
+          })
+        );
+        return;
+      }
+
+      this.logger.debug("Routing to session", {
+        sessionId,
+        workspacePath: session.workspacePath,
+        method: req.method ?? "unknown",
+      });
+
+      // Inject stored workspace path into auth info and delegate
+      this.attachAuth(req, session.workspacePath);
+      await session.transport.handleRequest(this.asAuthRequest(req), res);
+    } else if (req.method === "POST") {
+      // New session — initialize
+      await this.handleNewSession(req, res);
+    } else {
+      // Non-POST without session ID
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Bad Request: Mcp-Session-Id header is required" },
+          id: null,
+        })
+      );
+    }
+  }
+
+  /**
+   * Create a new MCP session for a connecting client.
+   * Creates a dedicated transport + McpServerSdk pair and registers all tools.
+   */
+  private async handleNewSession(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Workspace path is required to bind the session to a workspace
     const workspacePath = this.getWorkspacePath(req);
     if (!workspacePath) {
-      this.logger.warn("Request missing X-Workspace-Path header");
+      this.logger.warn("Initialize request missing X-Workspace-Path header");
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Missing X-Workspace-Path header" }));
       return;
     }
 
-    this.logger.debug("Handling request", { workspacePath });
+    // Create per-session MCP server and register tools
+    const mcpServer = this.serverFactory();
+    this.registerTools(mcpServer);
 
-    // Attach auth info with workspace path to the request
-    // The MCP SDK's StreamableHTTPServerTransport.handleRequest() accepts req.auth of type AuthInfo
-    // which has an extra field for custom data that gets passed to tool handlers
-    const reqWithAuth = req as IncomingMessage & {
-      auth?: { token: string; clientId: string; scopes: string[]; extra?: Record<string, unknown> };
-    };
-    reqWithAuth.auth = {
-      token: "codehydra",
-      clientId: "codehydra",
-      scopes: [],
-      extra: { workspacePath },
-    };
+    // Create per-session transport with session management callbacks
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (newSessionId: string) => {
+        this.sessions.set(newSessionId, { mcpServer, transport, workspacePath });
+        this.logger.info("Session created", { sessionId: newSessionId, workspacePath });
+      },
+      onsessionclosed: (closedSessionId) => {
+        if (closedSessionId) {
+          this.sessions.delete(closedSessionId);
+          this.logger.info("Session closed", { sessionId: closedSessionId });
+        }
+      },
+    });
 
-    // Delegate to transport
-    this.transport!.handleRequest(reqWithAuth, res);
+    // Connect MCP server to transport
+    // Cast needed due to exactOptionalPropertyTypes mismatch between SDK types
+    await mcpServer.connect(transport as Parameters<typeof mcpServer.connect>[0]);
+
+    // Attach workspace path and delegate the initialize request
+    this.attachAuth(req, workspacePath);
+    await transport.handleRequest(this.asAuthRequest(req), res);
+  }
+
+  /**
+   * Get MCP session ID from request header.
+   */
+  private getSessionId(req: IncomingMessage): string | null {
+    const header = req.headers[MCP_SESSION_HEADER];
+    if (typeof header === "string" && header.length > 0) {
+      return header;
+    }
+    return null;
   }
 
   /**
@@ -240,6 +319,33 @@ export class McpServer implements IMcpServer {
       return header;
     }
     return null;
+  }
+
+  /**
+   * Attach auth info with workspace path to the request.
+   * The MCP SDK's StreamableHTTPServerTransport.handleRequest() accepts req.auth of type AuthInfo
+   * which has an extra field for custom data that gets passed to tool handlers.
+   */
+  private attachAuth(req: IncomingMessage, workspacePath: string): void {
+    const reqWithAuth = req as IncomingMessage & {
+      auth?: { token: string; clientId: string; scopes: string[]; extra?: Record<string, unknown> };
+    };
+    reqWithAuth.auth = {
+      token: "codehydra",
+      clientId: "codehydra",
+      scopes: [],
+      extra: { workspacePath },
+    };
+  }
+
+  /**
+   * Cast request to the type expected by StreamableHTTPServerTransport.handleRequest().
+   * Must be called after attachAuth() which sets the auth property.
+   */
+  private asAuthRequest(
+    req: IncomingMessage
+  ): Parameters<StreamableHTTPServerTransport["handleRequest"]>[0] {
+    return req as Parameters<StreamableHTTPServerTransport["handleRequest"]>[0];
   }
 
   /**
@@ -267,264 +373,237 @@ export class McpServer implements IMcpServer {
   }
 
   /**
-   * Register all MCP tools.
+   * Register all MCP tools on the given server instance.
    */
-  private registerTools(): void {
-    if (!this.mcpServer) {
-      return;
-    }
-
+  private registerTools(mcpServer: McpServerSdk): void {
     // workspace_get_status
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_get_status",
-        {
-          description: "Get the current workspace status including dirty flag and agent status",
-          inputSchema: z.object({}),
-        },
-        this.createWorkspaceHandler(async (workspacePath) => this.handlers.getStatus(workspacePath))
-      )
+    mcpServer.registerTool(
+      "workspace_get_status",
+      {
+        description: "Get the current workspace status including dirty flag and agent status",
+        inputSchema: z.object({}),
+      },
+      this.createWorkspaceHandler(async (workspacePath) => this.handlers.getStatus(workspacePath))
     );
 
     // workspace_get_metadata
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_get_metadata",
-        {
-          description: "Get all metadata for the current workspace",
-          inputSchema: z.object({}),
-        },
-        this.createWorkspaceHandler(async (workspacePath) =>
-          this.handlers.getMetadata(workspacePath)
-        )
-      )
+    mcpServer.registerTool(
+      "workspace_get_metadata",
+      {
+        description: "Get all metadata for the current workspace",
+        inputSchema: z.object({}),
+      },
+      this.createWorkspaceHandler(async (workspacePath) => this.handlers.getMetadata(workspacePath))
     );
 
     // workspace_set_metadata
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_set_metadata",
-        {
-          description: "Set or delete a metadata key for the current workspace",
-          inputSchema: z.object({
-            key: z
-              .string()
-              .describe(
-                "Metadata key (must start with letter, contain only letters/digits/hyphens)"
-              ),
-            value: z
-              .union([z.string(), z.null()])
-              .describe("Value to set, or null to delete the key"),
-          }),
-        },
-        this.createWorkspaceHandler(
-          async (workspacePath, args: { key: string; value: string | null }) => {
-            await this.handlers.setMetadata(workspacePath, args.key, args.value);
-            return null;
-          }
-        )
+    mcpServer.registerTool(
+      "workspace_set_metadata",
+      {
+        description: "Set or delete a metadata key for the current workspace",
+        inputSchema: z.object({
+          key: z
+            .string()
+            .describe("Metadata key (must start with letter, contain only letters/digits/hyphens)"),
+          value: z
+            .union([z.string(), z.null()])
+            .describe("Value to set, or null to delete the key"),
+        }),
+      },
+      this.createWorkspaceHandler(
+        async (workspacePath, args: { key: string; value: string | null }) => {
+          await this.handlers.setMetadata(workspacePath, args.key, args.value);
+          return null;
+        }
       )
     );
 
     // workspace_get_agent_session
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_get_agent_session",
-        {
-          description: "Get the agent session info (port and session ID) for the current workspace",
-          inputSchema: z.object({}),
-        },
-        this.createWorkspaceHandler(async (workspacePath) =>
-          this.handlers.getAgentSession(workspacePath)
-        )
+    mcpServer.registerTool(
+      "workspace_get_agent_session",
+      {
+        description: "Get the agent session info (port and session ID) for the current workspace",
+        inputSchema: z.object({}),
+      },
+      this.createWorkspaceHandler(async (workspacePath) =>
+        this.handlers.getAgentSession(workspacePath)
       )
     );
 
     // workspace_restart_agent_server
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_restart_agent_server",
-        {
-          description:
-            "Restart the agent server for the current workspace, preserving the same port",
-          inputSchema: z.object({}),
-        },
-        this.createWorkspaceHandler(async (workspacePath) =>
-          this.handlers.restartAgentServer(workspacePath)
-        )
+    mcpServer.registerTool(
+      "workspace_restart_agent_server",
+      {
+        description: "Restart the agent server for the current workspace, preserving the same port",
+        inputSchema: z.object({}),
+      },
+      this.createWorkspaceHandler(async (workspacePath) =>
+        this.handlers.restartAgentServer(workspacePath)
       )
     );
 
     // workspace_create
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_create",
-        {
-          description:
-            "Create a new workspace in the same project as the caller. Returns the created workspace.",
-          inputSchema: z.object({
-            name: z.string().min(1).describe("Name for the new workspace (becomes branch name)"),
-            base: z.string().min(1).describe("Base branch to create the workspace from"),
-            initialPrompt: initialPromptSchema
-              .optional()
-              .describe(
-                "Optional initial prompt to send after workspace is created. " +
-                  "Can be a string or { prompt, agent? }. " +
-                  'Set agent to "plan" for read-only/planning mode, ' +
-                  "or omit agent for full-permission implementation mode."
-              ),
-            stealFocus: z
-              .boolean()
-              .optional()
-              .describe(
-                "If true, switch to the new workspace (default: false = stay in background for API calls)"
-              ),
-          }),
-        },
-        async (args, extra) => {
-          const workspacePath = this.getWorkspacePathFromExtra(extra);
-          if (!workspacePath) {
-            return this.errorResult("workspace-not-found", "Missing workspace path");
-          }
+    mcpServer.registerTool(
+      "workspace_create",
+      {
+        description:
+          "Create a new workspace in the same project as the caller. Returns the created workspace.",
+        inputSchema: z.object({
+          name: z.string().min(1).describe("Name for the new workspace (becomes branch name)"),
+          base: z.string().min(1).describe("Base branch to create the workspace from"),
+          initialPrompt: initialPromptSchema
+            .optional()
+            .describe(
+              "Optional initial prompt to send after workspace is created. " +
+                "Can be a string or { prompt, agent? }. " +
+                'Set agent to "plan" for read-only/planning mode, ' +
+                "or omit agent for full-permission implementation mode."
+            ),
+          stealFocus: z
+            .boolean()
+            .optional()
+            .describe(
+              "If true, switch to the new workspace (default: false = stay in background for API calls)"
+            ),
+        }),
+      },
+      async (args, extra) => {
+        const workspacePath = this.getWorkspacePathFromExtra(extra);
+        if (!workspacePath) {
+          return this.errorResult("workspace-not-found", "Missing workspace path");
+        }
 
-          try {
-            const name = args.name as string;
-            const base = args.base as string;
-            const rawInitialPrompt = args.initialPrompt as
-              | string
-              | { prompt: string; agent?: string; model?: PromptModel }
-              | undefined;
-            // Default to false for API calls (stay in background)
-            const stealFocus = (args.stealFocus as boolean | undefined) ?? false;
+        try {
+          const name = args.name as string;
+          const base = args.base as string;
+          const rawInitialPrompt = args.initialPrompt as
+            | string
+            | { prompt: string; agent?: string; model?: PromptModel }
+            | undefined;
+          // Default to false for API calls (stay in background)
+          const stealFocus = (args.stealFocus as boolean | undefined) ?? false;
 
-            // If initialPrompt provided, resolve model from caller's session if not specified
-            let finalPrompt: { prompt: string; agent?: string; model?: PromptModel } | undefined;
-            if (rawInitialPrompt !== undefined) {
-              const normalized = normalizeInitialPrompt(rawInitialPrompt);
+          // If initialPrompt provided, resolve model from caller's session if not specified
+          let finalPrompt: { prompt: string; agent?: string; model?: PromptModel } | undefined;
+          if (rawInitialPrompt !== undefined) {
+            const normalized = normalizeInitialPrompt(rawInitialPrompt);
 
-              // If no model specified, try to get caller's current model
-              let model = normalized.model;
-              if (!model) {
-                model = await this.getCallerModel(workspacePath);
-              }
-
-              // Build final prompt with model if available
-              finalPrompt = { prompt: normalized.prompt };
-              if (normalized.agent !== undefined) {
-                finalPrompt = { ...finalPrompt, agent: normalized.agent };
-              }
-              if (model !== undefined) {
-                finalPrompt = { ...finalPrompt, model };
-              }
+            // If no model specified, try to get caller's current model
+            let model = normalized.model;
+            if (!model) {
+              model = await this.getCallerModel(workspacePath);
             }
 
-            // Create workspace with callerWorkspacePath (intent resolves project)
-            const result = await this.handlers.createWorkspace({
-              callerWorkspacePath: workspacePath,
-              name,
-              base,
-              ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
-              stealFocus,
-            });
-            return this.successResult(result);
-          } catch (error) {
-            return this.handleError(error);
+            // Build final prompt with model if available
+            finalPrompt = { prompt: normalized.prompt };
+            if (normalized.agent !== undefined) {
+              finalPrompt = { ...finalPrompt, agent: normalized.agent };
+            }
+            if (model !== undefined) {
+              finalPrompt = { ...finalPrompt, model };
+            }
           }
+
+          // Create workspace with callerWorkspacePath (intent resolves project)
+          const result = await this.handlers.createWorkspace({
+            callerWorkspacePath: workspacePath,
+            name,
+            base,
+            ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
+            stealFocus,
+          });
+          return this.successResult(result);
+        } catch (error) {
+          return this.handleError(error);
         }
-      )
+      }
     );
 
     // workspace_delete
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_delete",
-        {
-          description: "Delete the current workspace. This will terminate the OpenCode session.",
-          inputSchema: z.object({
-            keepBranch: z
-              .boolean()
-              .optional()
-              .default(false)
-              .describe("If true, keep the git branch after deleting the worktree"),
-          }),
-        },
-        this.createWorkspaceHandler(async (workspacePath, args: { keepBranch: boolean }) => {
-          return this.handlers.deleteWorkspace(workspacePath, {
-            keepBranch: args.keepBranch,
-          });
-        })
-      )
+    mcpServer.registerTool(
+      "workspace_delete",
+      {
+        description: "Delete the current workspace. This will terminate the OpenCode session.",
+        inputSchema: z.object({
+          keepBranch: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe("If true, keep the git branch after deleting the worktree"),
+        }),
+      },
+      this.createWorkspaceHandler(async (workspacePath, args: { keepBranch: boolean }) => {
+        return this.handlers.deleteWorkspace(workspacePath, {
+          keepBranch: args.keepBranch,
+        });
+      })
     );
 
     // workspace_execute_command
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "workspace_execute_command",
-        {
-          description:
-            "Execute a VS Code command in the current workspace. Most commands return undefined. " +
-            "Commands requiring VS Code objects (Uri, Position, Range, Selection, Location) can use " +
-            'the $vscode wrapper format. Example: { "$vscode": "Uri", "value": "file:///path/to/file.ts" }',
-          inputSchema: z.object({
-            command: z
-              .string()
-              .min(1)
-              .max(256)
-              .describe("VS Code command identifier (e.g., 'workbench.action.files.save')"),
-            args: z
-              .array(z.unknown())
-              .optional()
-              .describe(
-                "Optional command arguments. Supports $vscode wrapper format for VS Code objects:\n" +
-                  '- Uri: { "$vscode": "Uri", "value": "file:///path/to/file.ts" }\n' +
-                  '- Position: { "$vscode": "Position", "line": 10, "character": 5 }\n' +
-                  '- Range: { "$vscode": "Range", "start": <Position>, "end": <Position> }\n' +
-                  '- Selection: { "$vscode": "Selection", "anchor": <Position>, "active": <Position> }\n' +
-                  '- Location: { "$vscode": "Location", "uri": <Uri>, "range": <Range> }'
-              ),
-          }),
-        },
-        this.createWorkspaceHandler(
-          async (workspacePath, args: { command: string; args?: unknown[] | undefined }) =>
-            this.handlers.executeCommand(workspacePath, args.command, args.args)
-        )
+    mcpServer.registerTool(
+      "workspace_execute_command",
+      {
+        description:
+          "Execute a VS Code command in the current workspace. Most commands return undefined. " +
+          "Commands requiring VS Code objects (Uri, Position, Range, Selection, Location) can use " +
+          'the $vscode wrapper format. Example: { "$vscode": "Uri", "value": "file:///path/to/file.ts" }',
+        inputSchema: z.object({
+          command: z
+            .string()
+            .min(1)
+            .max(256)
+            .describe("VS Code command identifier (e.g., 'workbench.action.files.save')"),
+          args: z
+            .array(z.unknown())
+            .optional()
+            .describe(
+              "Optional command arguments. Supports $vscode wrapper format for VS Code objects:\n" +
+                '- Uri: { "$vscode": "Uri", "value": "file:///path/to/file.ts" }\n' +
+                '- Position: { "$vscode": "Position", "line": 10, "character": 5 }\n' +
+                '- Range: { "$vscode": "Range", "start": <Position>, "end": <Position> }\n' +
+                '- Selection: { "$vscode": "Selection", "anchor": <Position>, "active": <Position> }\n' +
+                '- Location: { "$vscode": "Location", "uri": <Uri>, "range": <Range> }'
+            ),
+        }),
+      },
+      this.createWorkspaceHandler(
+        async (workspacePath, args: { command: string; args?: unknown[] | undefined }) =>
+          this.handlers.executeCommand(workspacePath, args.command, args.args)
       )
     );
 
     // log - different pattern, doesn't require workspace resolution
-    this.registeredTools.push(
-      this.mcpServer.registerTool(
-        "log",
-        {
-          description:
-            "Send a structured log message to CodeHydra's logging system. Logs appear with [mcp] scope.",
-          inputSchema: z.object({
-            level: z
-              .enum(["silly", "debug", "info", "warn", "error"])
-              .describe("Log level (silly=most verbose, error=least verbose)"),
-            message: z.string().min(1).describe("Log message"),
-            context: z
-              .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
-              .optional()
-              .describe("Optional structured context data (primitives only)"),
-          }),
-        },
-        async (args, extra) => {
-          const workspacePath = this.getWorkspacePathFromExtra(extra);
-          const level = args.level as LogLevel;
-          const logContext: LogContext = {
-            ...(args.context ?? {}),
-            workspace: workspacePath,
-          };
+    mcpServer.registerTool(
+      "log",
+      {
+        description:
+          "Send a structured log message to CodeHydra's logging system. Logs appear with [mcp] scope.",
+        inputSchema: z.object({
+          level: z
+            .enum(["silly", "debug", "info", "warn", "error"])
+            .describe("Log level (silly=most verbose, error=least verbose)"),
+          message: z.string().min(1).describe("Log message"),
+          context: z
+            .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+            .optional()
+            .describe("Optional structured context data (primitives only)"),
+        }),
+      },
+      async (args, extra) => {
+        const workspacePath = this.getWorkspacePathFromExtra(extra);
+        const level = args.level as LogLevel;
+        const logContext: LogContext = {
+          ...(args.context ?? {}),
+          workspace: workspacePath,
+        };
 
-          logAtLevel(this.logger, level, args.message, logContext);
+        logAtLevel(this.logger, level, args.message, logContext);
 
-          return this.successResult(null);
-        }
-      )
+        return this.successResult(null);
+      }
     );
 
-    this.logger.debug("Registered tools", { count: this.registeredTools.length });
+    this.logger.debug("Registered tools", { count: 9 });
   }
 
   /**
