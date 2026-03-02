@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "mcp__codehydra__*",
+      "mcp__appctrl__*",
       "Bash(pnpm test:*)",
       "Bash(pnpm validate:*)",
       "Bash(pnpm build:*)",
