@@ -519,7 +519,12 @@ export class GitWorktreeProvider {
         // git worktree remove can fail for various reasons (stale .git,
         // Windows long paths, locked files, etc.) — fall back to rm + prune
         try {
-          await this.fileSystemLayer.rm(workspacePath, { recursive: true, force: true });
+          await this.fileSystemLayer.rm(workspacePath, {
+            recursive: true,
+            force: true,
+            maxRetries: 3,
+            retryDelay: 200,
+          });
           await this.gitClient.pruneWorktrees(projectRoot);
           this.logger.info("Removed workspace via fallback", { path: workspacePath.toString() });
         } catch {

@@ -59,6 +59,10 @@ export interface RmOptions {
   readonly recursive?: boolean;
   /** Ignore errors if path doesn't exist (default: false) */
   readonly force?: boolean;
+  /** Max retry count for EBUSY/ENOTEMPTY on Windows (default: 0). Only applies when recursive is true. */
+  readonly maxRetries?: number;
+  /** Delay in ms between retries (default: 100). Only applies when maxRetries > 0. */
+  readonly retryDelay?: number;
 }
 
 /**
@@ -447,7 +451,13 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     try {
       if (recursive) {
         // Use fs.rm for recursive deletion
-        await fs.rm(nativePath, { recursive, force });
+        // maxRetries/retryDelay handle EBUSY/ENOTEMPTY on Windows (lingering file handles)
+        await fs.rm(nativePath, {
+          recursive,
+          force,
+          ...(options?.maxRetries !== undefined && { maxRetries: options.maxRetries }),
+          ...(options?.retryDelay !== undefined && { retryDelay: options.retryDelay }),
+        });
       } else {
         // For non-recursive: check if directory or file
         const stat = await fs.stat(nativePath);
