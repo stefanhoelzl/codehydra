@@ -361,6 +361,35 @@ async function notifyHook(hookName: "WrapperStart" | "WrapperEnd"): Promise<void
 }
 
 /**
+ * Signals to catch so the wrapper survives long enough to send WrapperEnd.
+ *
+ * - SIGHUP: PTY hangup when the terminal tab is closed.
+ * - SIGTERM: Graceful termination from process managers (code-server may
+ *   send this after SIGHUP if the process hasn't exited yet).
+ *
+ * Without these handlers Node.js terminates immediately on these signals,
+ * preventing the async notifyHook("WrapperEnd") call from executing after
+ * spawnSync returns.
+ */
+const WRAPPER_SIGNALS: NodeJS.Signals[] = ["SIGHUP", "SIGTERM"];
+
+/**
+ * Install no-op signal handlers to prevent default process termination.
+ *
+ * Must be called before spawnSync so the wrapper survives terminal-close
+ * signals and can still send the WrapperEnd hook notification.
+ * The process exits via the explicit process.exit() in main().
+ *
+ * @param proc - Process-like object for testability (defaults to global process)
+ */
+function installSignalHandlers(proc: Pick<NodeJS.Process, "on"> = process): void {
+  const noop = (): void => {};
+  for (const signal of WRAPPER_SIGNALS) {
+    proc.on(signal, noop);
+  }
+}
+
+/**
  * Main entry point for the wrapper script.
  */
 async function main(): Promise<never> {
@@ -410,10 +439,14 @@ async function main(): Promise<never> {
   // 5. Clear CLAUDECODE to allow nested Claude Code sessions inside CodeHydra
   delete process.env.CLAUDECODE;
 
-  // 6. Notify wrapper start (clears loading screen before Claude shows dialogs)
+  // 6. Catch SIGHUP/SIGTERM so the wrapper survives terminal-close signals
+  //    and can still send WrapperEnd after Claude exits.
+  installSignalHandlers();
+
+  // 7. Notify wrapper start (clears loading screen before Claude shows dialogs)
   await notifyHook("WrapperStart");
 
-  // 7. Spawn Claude with automatic session resume
+  // 8. Spawn Claude with automatic session resume
   // Use shell on Windows to resolve binary name via PATH (handles .cmd shims)
   // Skip --continue attempt for new workspaces (no prior session to resume)
   const result = runClaude(claudeBinary, args, {
@@ -421,10 +454,10 @@ async function main(): Promise<never> {
     skipContinue: consumeNoSessionMarker(),
   });
 
-  // 8. Notify wrapper end (Claude has exited)
+  // 9. Notify wrapper end (Claude has exited)
   await notifyHook("WrapperEnd");
 
-  // 9. Handle result
+  // 10. Handle result
   if (result.error) {
     console.error(`Error: Failed to start Claude: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
@@ -450,4 +483,5 @@ export {
   buildInitialPromptArgs,
   buildPermissionArgs,
   consumeNoSessionMarker,
+  installSignalHandlers,
 };

@@ -12,6 +12,7 @@ import {
   buildInitialPromptArgs,
   buildPermissionArgs,
   consumeNoSessionMarker,
+  installSignalHandlers,
   type InitialPromptConfig,
 } from "./wrapper";
 
@@ -124,5 +125,25 @@ describe("consumeNoSessionMarker", () => {
   it("returns false when env var is set but file does not exist", () => {
     process.env._CH_CLAUDE_NO_SESSION_MARKER_PATH = join(tempDir, "nonexistent");
     expect(consumeNoSessionMarker()).toBe(false);
+  });
+});
+
+describe("installSignalHandlers", () => {
+  it("registers handlers for SIGHUP and SIGTERM", () => {
+    const handlers: Array<{ signal: string; handler: () => void }> = [];
+    const fakeProcess = {
+      on(signal: string, handler: () => void) {
+        handlers.push({ signal, handler });
+        return fakeProcess as unknown as NodeJS.Process;
+      },
+    };
+
+    installSignalHandlers(fakeProcess);
+
+    expect(handlers).toHaveLength(2);
+    expect(handlers.map((h) => h.signal)).toEqual(["SIGHUP", "SIGTERM"]);
+    for (const h of handlers) {
+      expect(() => h.handler()).not.toThrow();
+    }
   });
 });
