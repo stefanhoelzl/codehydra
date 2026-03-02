@@ -300,7 +300,12 @@ describe("GitWorktreeProvider error injection", () => {
 
       expect(result.workspaceRemoved).toBe(true);
       expect(result.baseDeleted).toBe(true);
-      expect(spyFs.rm).toHaveBeenCalledWith(worktreePath, { recursive: true, force: true });
+      expect(spyFs.rm).toHaveBeenCalledWith(worktreePath, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 200,
+      });
       expect(mockClient.pruneWorktrees).toHaveBeenCalledWith(PROJECT_ROOT);
     });
 
