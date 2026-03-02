@@ -107,12 +107,13 @@ Some components use external libraries directly without abstraction layers. Thes
 
 ### Essential Commands
 
-| Command             | Purpose                           |
-| ------------------- | --------------------------------- |
-| `pnpm dev`          | Start development mode            |
-| `pnpm validate:fix` | Fix lint/format issues, run tests |
-| `pnpm test`         | Run all tests                     |
-| `pnpm build`        | Build for production              |
+| Command             | Purpose                                                                    |
+| ------------------- | -------------------------------------------------------------------------- |
+| `pnpm dev`          | Start development mode                                                     |
+| `pnpm validate:fix` | Fix lint/format issues, run tests                                          |
+| `pnpm test`         | Run all tests                                                              |
+| `pnpm build`        | Build for production                                                       |
+| `appctrl_*` MCP     | Control running app for UI debugging (via `scripts/appctrl.ts` MCP server) |
 
 ### Key Documents
 
