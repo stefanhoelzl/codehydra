@@ -22,7 +22,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { Path } from "../../services/platform/path";
-import { SILENT_LOGGER } from "../../services/logging";
+import { createMockLogger, SILENT_LOGGER } from "../../services/logging";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
@@ -417,30 +417,39 @@ describe("ConfigModule Integration", () => {
     const definitions = buildTestDefinitionsMap();
 
     it("parses --key=value format", () => {
-      const result = parseCliArgs(["--test.level=debug"], definitions);
+      const result = parseCliArgs(["--test.level=debug"], definitions, SILENT_LOGGER);
       expect(result["test.level"]).toBe("debug");
     });
 
     it("parses --key value format", () => {
-      const result = parseCliArgs(["--test.level", "debug"], definitions);
+      const result = parseCliArgs(["--test.level", "debug"], definitions, SILENT_LOGGER);
       expect(result["test.level"]).toBe("debug");
     });
 
     it("parses --test.enum flag", () => {
-      const result = parseCliArgs(["--test.enum=never"], definitions);
+      const result = parseCliArgs(["--test.enum=never"], definitions, SILENT_LOGGER);
       expect(result["test.enum"]).toBe("never");
     });
 
-    it("throws on unknown CLI flag", () => {
-      expect(() => parseCliArgs(["--unknown-flag=value"], definitions)).toThrow(
-        ConfigValidationError
+    it("warns and skips unknown CLI flags", () => {
+      const logger = createMockLogger();
+      const result = parseCliArgs(
+        ["--unknown-flag=value", "--test.level=debug"],
+        definitions,
+        logger
       );
+      expect(result["test.level"]).toBe("debug");
+      expect(result).not.toHaveProperty("unknown-flag");
+      expect(logger.warn).toHaveBeenCalledWith("Unknown CLI flag (ignored)", {
+        flag: "unknown-flag",
+      });
     });
 
     it("parses multiple flags", () => {
       const result = parseCliArgs(
         ["--test.level=debug", "--test.enum=never", "--agent=claude"],
-        definitions
+        definitions,
+        SILENT_LOGGER
       );
       expect(result["test.level"]).toBe("debug");
       expect(result["test.enum"]).toBe("never");
@@ -448,7 +457,7 @@ describe("ConfigModule Integration", () => {
     });
 
     it("parses boolean flag without value as true", () => {
-      const result = parseCliArgs(["--help"], definitions);
+      const result = parseCliArgs(["--help"], definitions, SILENT_LOGGER);
       expect(result.help).toBe(true);
     });
   });
