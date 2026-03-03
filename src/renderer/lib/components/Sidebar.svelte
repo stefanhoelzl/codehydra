@@ -3,7 +3,9 @@
   import type { ProjectId, WorkspaceRef, WorkspaceName } from "$lib/api";
   import EmptyState from "./EmptyState.svelte";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
+  import WorkspaceTags from "./WorkspaceTags.svelte";
   import Icon from "./Icon.svelte";
+  import { extractTags } from "@shared/api/types";
   import { getCounts } from "$lib/stores/agent-status.svelte.js";
   import { getDeletionStatus } from "$lib/stores/deletion.svelte.js";
   import { uiMode, setSidebarExpanded } from "$lib/stores/ui-mode.svelte.js";
@@ -193,52 +195,61 @@
                   workspaceName: workspace.name as WorkspaceName,
                   path: workspace.path,
                 }}
+                {@const hasTags = workspace.metadata
+                  ? extractTags(workspace.metadata).length > 0
+                  : false}
                 {#if isExpanded}
-                  <!-- Expanded layout: original sidebar layout -->
+                  <!-- Expanded layout: two-row when tags exist -->
                   <li
                     class="workspace-item"
                     class:active={isActive}
+                    class:has-tags={hasTags}
                     aria-current={isActive ? "true" : undefined}
                   >
-                    <button
-                      type="button"
-                      class="workspace-btn"
-                      aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
-                      onclick={() => onSwitchWorkspace(workspaceRef)}
-                    >
-                      {#if shortcutModeActive}
-                        <vscode-badge
-                          class="shortcut-badge"
-                          class:badge-dimmed={displayIndex === null}
-                          aria-hidden="true"
-                        >
-                          {displayIndex ?? "·"}
-                        </vscode-badge>
-                      {/if}
-                      {workspace.name}
-                    </button>
-                    {#if deletionStatus === "none"}
+                    <div class="workspace-row">
                       <button
                         type="button"
-                        class="action-btn remove-btn"
-                        id={`remove-ws-${workspace.path}`}
-                        aria-label="Remove workspace"
-                        onclick={() => handleRemoveWorkspace(workspaceRef)}
+                        class="workspace-btn"
+                        aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
+                        onclick={() => onSwitchWorkspace(workspaceRef)}
                       >
-                        <Icon name="trash" size={14} />
+                        {#if shortcutModeActive}
+                          <vscode-badge
+                            class="shortcut-badge"
+                            class:badge-dimmed={displayIndex === null}
+                            aria-hidden="true"
+                          >
+                            {displayIndex ?? "·"}
+                          </vscode-badge>
+                        {/if}
+                        {workspace.name}
                       </button>
-                    {/if}
-                    {#if deletionStatus === "in-progress"}
-                      <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
-                    {:else if deletionStatus === "error"}
-                      <span class="deletion-error" role="img" aria-label="Deletion failed">
-                        <Icon name="warning" size={14} />
-                      </span>
-                    {:else}
-                      <AgentStatusIndicator
-                        idleCount={agentCounts.idle}
-                        busyCount={agentCounts.busy}
-                      />
+                      {#if deletionStatus === "none"}
+                        <button
+                          type="button"
+                          class="action-btn remove-btn"
+                          id={`remove-ws-${workspace.path}`}
+                          aria-label="Remove workspace"
+                          onclick={() => handleRemoveWorkspace(workspaceRef)}
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      {/if}
+                      {#if deletionStatus === "in-progress"}
+                        <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                      {:else if deletionStatus === "error"}
+                        <span class="deletion-error" role="img" aria-label="Deletion failed">
+                          <Icon name="warning" size={14} />
+                        </span>
+                      {:else}
+                        <AgentStatusIndicator
+                          idleCount={agentCounts.idle}
+                          busyCount={agentCounts.busy}
+                        />
+                      {/if}
+                    </div>
+                    {#if hasTags}
+                      <WorkspaceTags metadata={workspace.metadata} />
                     {/if}
                   </li>
                 {:else}
@@ -503,11 +514,20 @@
 
   .workspace-item {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     padding: 4px 12px 4px 12px;
-    gap: 4px;
     min-height: 44px; /* Accessible click target */
     min-width: var(--ch-sidebar-width, 250px);
+  }
+
+  .workspace-item.has-tags {
+    padding-bottom: 6px;
+  }
+
+  .workspace-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .status-indicator-btn {

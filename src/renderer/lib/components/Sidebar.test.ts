@@ -1105,6 +1105,59 @@ describe("Sidebar component", () => {
     });
   });
 
+  describe("workspace tags", () => {
+    it("renders tag badges when workspace has tags in metadata", async () => {
+      const ws = createMockWorkspace({
+        path: "/test/.worktrees/ws1",
+        name: "ws1",
+        metadata: { base: "main", "tags.bugfix": "{}", "tags.wip": '{"color":"#ff0"}' },
+      });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      // Expand sidebar to see tags
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      const tagsContainer = container.querySelector(".workspace-tags");
+      expect(tagsContainer).toBeInTheDocument();
+
+      const pills = container.querySelectorAll(".tag-pill");
+      expect(pills).toHaveLength(2);
+
+      const pillTexts = Array.from(pills).map((p) => p.textContent?.trim());
+      expect(pillTexts).toContain("bugfix");
+      expect(pillTexts).toContain("wip");
+    });
+
+    it("does not render tags container when workspace has no tags", async () => {
+      const ws = createMockWorkspace({
+        path: "/test/.worktrees/ws1",
+        name: "ws1",
+        metadata: { base: "main" },
+      });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        workspaces: [ws],
+      });
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+
+      expect(container.querySelector(".workspace-tags")).not.toBeInTheDocument();
+    });
+  });
+
   describe("deletion indicator", () => {
     const createDeletionProgress = (workspacePath: string) => ({
       workspacePath: workspacePath as WorkspacePath,

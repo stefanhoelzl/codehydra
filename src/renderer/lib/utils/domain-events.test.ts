@@ -94,6 +94,7 @@ describe("setupDomainEvents", () => {
       removeWorkspace: vi.fn(),
       setActiveWorkspace: vi.fn(),
       updateAgentStatus: vi.fn(),
+      updateWorkspaceMetadata: vi.fn(),
     };
   });
 
@@ -171,6 +172,44 @@ describe("setupDomainEvents", () => {
       mockApi.emit("workspace:status-changed", event);
 
       expect(mockStores.updateAgentStatus).toHaveBeenCalledWith(event, status);
+    });
+  });
+
+  describe("metadata events", () => {
+    it("calls updateWorkspaceMetadata when workspace:metadata-changed sets a key", () => {
+      setupDomainEvents(mockApi.api, mockStores);
+
+      mockApi.emit("workspace:metadata-changed", {
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        key: "tags.bugfix",
+        value: "{}",
+      });
+
+      expect(mockStores.updateWorkspaceMetadata).toHaveBeenCalledWith(
+        TEST_PROJECT_ID,
+        TEST_WORKSPACE_NAME,
+        "tags.bugfix",
+        "{}"
+      );
+    });
+
+    it("calls updateWorkspaceMetadata when workspace:metadata-changed deletes a key", () => {
+      setupDomainEvents(mockApi.api, mockStores);
+
+      mockApi.emit("workspace:metadata-changed", {
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        key: "tags.bugfix",
+        value: null,
+      });
+
+      expect(mockStores.updateWorkspaceMetadata).toHaveBeenCalledWith(
+        TEST_PROJECT_ID,
+        TEST_WORKSPACE_NAME,
+        "tags.bugfix",
+        null
+      );
     });
   });
 

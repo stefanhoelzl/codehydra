@@ -8,7 +8,7 @@
  */
 
 import type { Unsubscribe } from "@shared/electron-api";
-import type { WorkspaceRef, WorkspaceStatus } from "@shared/api/types";
+import type { ProjectId, WorkspaceName, WorkspaceRef, WorkspaceStatus } from "@shared/api/types";
 import type { ApiEvents as IApiEvents } from "@shared/api/interfaces";
 import { AgentNotificationService } from "$lib/services/agent-notifications";
 
@@ -50,6 +50,13 @@ export interface DomainStores {
   setActiveWorkspace: (ref: WorkspaceRef | null) => void;
   /** Update agent status by WorkspaceRef */
   updateAgentStatus: (ref: WorkspaceRef, status: WorkspaceStatus) => void;
+  /** Update a single metadata key on a workspace */
+  updateWorkspaceMetadata: (
+    projectId: ProjectId,
+    workspaceName: WorkspaceName,
+    key: string,
+    value: string | null
+  ) => void;
 }
 
 /**
@@ -147,6 +154,13 @@ export function setupDomainEvents(
       if (event.status.agent.type !== "none" && "counts" in event.status.agent) {
         notificationService.handleStatusChange(event.path, event.status.agent.counts);
       }
+    })
+  );
+
+  // Workspace metadata changed event
+  unsubscribes.push(
+    api.on("workspace:metadata-changed", (event) => {
+      stores.updateWorkspaceMetadata(event.projectId, event.workspaceName, event.key, event.value);
     })
   );
 
