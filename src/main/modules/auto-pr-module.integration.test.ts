@@ -46,7 +46,7 @@ import {
   file,
   directory,
 } from "../../services/platform/filesystem.state-mock";
-import { createAutoPrModule } from "./auto-pr-module";
+import { createAutoPrModule, parseTemplateOutput } from "./auto-pr-module";
 
 // =============================================================================
 // Minimal Test Operations
@@ -680,6 +680,130 @@ describe("AutoPrModule Integration", () => {
         agent: "plan",
       });
     });
+
+    it("uses front-matter name to override workspace name", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nname: review/{{ number }}\n---\nReview PR #{{ number }}",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("review/42");
+    });
+
+    it("uses front-matter agent to override agent mode", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nagent: build\n---\nDo the thing",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "Do the thing",
+        agent: "build",
+      });
+    });
+
+    it("uses front-matter base to override base branch", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nbase: origin/develop\n---\nReview",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.base).toBe("origin/develop");
+    });
+
+    it("uses front-matter focus to override stealFocus", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nfocus: true\n---\nReview",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.stealFocus).toBe(true);
+    });
+
+    it("uses front-matter model to set model in initial prompt", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nmodel.provider: anthropic\nmodel.id: claude-sonnet-4-6\n---\nReview",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "Review",
+        agent: "plan",
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+      });
+    });
+
+    it("skips workspace when front-matter prompt body is empty", async () => {
+      const { dispatcher, openProjectOp, openWorkspaceOp, fs } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nname: review/{{ number }}\n---\n   ",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openProjectOp.dispatched).toHaveLength(0);
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      expect(fs).toHaveFileContaining(
+        "/data/auto-pr-workspaces.json",
+        '"https://github.com/org/repo/pull/42": null'
+      );
+    });
+
+    it("creates workspace despite unknown front-matter keys (non-fatal warning)", async () => {
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nunknown: value\n---\nReview",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+        prompt: "Review",
+        agent: "plan",
+      });
+    });
+
+    it("applies all front-matter overrides together", async () => {
+      const template = [
+        "---",
+        "name: review/{{ number }}",
+        "agent: build",
+        "base: origin/{{ base.ref }}",
+        "focus: true",
+        "model.provider: anthropic",
+        "model.id: claude-sonnet-4-6",
+        "---",
+        "Review PR #{{ number }}: {{ title }}",
+      ].join("\n");
+
+      const { dispatcher, openWorkspaceOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: template,
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      const payload = openWorkspaceOp.dispatched[0]!.payload;
+      expect(payload.workspaceName).toBe("review/42");
+      expect(payload.base).toBe("origin/main");
+      expect(payload.stealFocus).toBe(true);
+      expect(payload.initialPrompt).toEqual({
+        prompt: "Review PR #42: Add login feature",
+        agent: "build",
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+      });
+    });
   });
 
   describe("template-skipped PR cleanup", () => {
@@ -807,5 +931,124 @@ describe("AutoPrModule Integration", () => {
       // Should NOT create a workspace
       expect(openProjectOp.dispatched).toHaveLength(0);
     });
+  });
+});
+
+// =============================================================================
+// parseTemplateOutput
+// =============================================================================
+
+describe("parseTemplateOutput", () => {
+  it("treats entire string as prompt when no front matter", () => {
+    const result = parseTemplateOutput("Review PR #42");
+    expect(result.config).toEqual({ prompt: "Review PR #42" });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("parses all supported front-matter fields", () => {
+    const input = [
+      "---",
+      "name: review/42",
+      "agent: plan",
+      "base: origin/main",
+      "focus: true",
+      "model.provider: anthropic",
+      "model.id: claude-sonnet-4-6",
+      "---",
+      "Review this PR",
+    ].join("\n");
+
+    const result = parseTemplateOutput(input);
+    expect(result.config).toEqual({
+      prompt: "Review this PR",
+      name: "review/42",
+      agent: "plan",
+      base: "origin/main",
+      focus: true,
+      model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("returns only specified fields (rest remain undefined)", () => {
+    const input = "---\nagent: build\n---\nDo the thing";
+    const result = parseTemplateOutput(input);
+    expect(result.config.agent).toBe("build");
+    expect(result.config.name).toBeUndefined();
+    expect(result.config.base).toBeUndefined();
+    expect(result.config.focus).toBeUndefined();
+    expect(result.config.model).toBeUndefined();
+    expect(result.config.prompt).toBe("Do the thing");
+  });
+
+  it("handles empty front matter (prompt only)", () => {
+    const input = "---\n---\nJust the prompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config).toEqual({ prompt: "Just the prompt" });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("warns on unknown front-matter keys", () => {
+    const input = "---\nunknown: value\nname: ws\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.name).toBe("ws");
+    expect(result.warnings).toEqual(['Unknown front-matter key: "unknown"']);
+  });
+
+  it("warns on invalid boolean value for focus", () => {
+    const input = "---\nfocus: banana\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.focus).toBeUndefined();
+    expect(result.warnings).toEqual(['Invalid focus value "banana", expected "true" or "false"']);
+  });
+
+  it("treats opening --- without closing as no front matter", () => {
+    const input = "---\nname: ws\nno closing delimiter";
+    const result = parseTemplateOutput(input);
+    expect(result.config).toEqual({ prompt: input });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("warns when only model.provider is specified", () => {
+    const input = "---\nmodel.provider: anthropic\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.model).toBeUndefined();
+    expect(result.warnings).toEqual([
+      "Both model.provider and model.id must be specified together",
+    ]);
+  });
+
+  it("warns when only model.id is specified", () => {
+    const input = "---\nmodel.id: claude-sonnet-4-6\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.model).toBeUndefined();
+    expect(result.warnings).toEqual([
+      "Both model.provider and model.id must be specified together",
+    ]);
+  });
+
+  it("ignores comments and blank lines in front matter", () => {
+    const input = "---\n# this is a comment\n\nname: ws\n\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.name).toBe("ws");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("splits on first colon only (values can contain colons)", () => {
+    const input = "---\nbase: origin/main:feature\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.base).toBe("origin/main:feature");
+  });
+
+  it("parses focus: false correctly", () => {
+    const input = "---\nfocus: false\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.focus).toBe(false);
+  });
+
+  it("strips single leading newline after closing delimiter", () => {
+    const input = "---\nname: ws\n---\n\nTwo newlines before this";
+    const result = parseTemplateOutput(input);
+    expect(result.config.prompt).toBe("\nTwo newlines before this");
   });
 });

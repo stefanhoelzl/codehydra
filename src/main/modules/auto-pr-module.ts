@@ -133,6 +133,101 @@ function buildWorkspaceName(prNumber: number, headRef: string): string {
 }
 
 // =============================================================================
+// Front-matter parser
+// =============================================================================
+
+export interface TemplateConfig {
+  readonly name?: string;
+  readonly agent?: string;
+  readonly base?: string;
+  readonly focus?: boolean;
+  readonly model?: { readonly providerID: string; readonly modelID: string };
+  readonly prompt: string;
+}
+
+export interface ParseResult {
+  readonly config: TemplateConfig;
+  readonly warnings: readonly string[];
+}
+
+const FRONT_MATTER_OPEN = "---\n";
+const KNOWN_KEYS = new Set(["name", "agent", "base", "focus", "model.provider", "model.id"]);
+
+export function parseTemplateOutput(rendered: string): ParseResult {
+  const warnings: string[] = [];
+
+  if (!rendered.startsWith(FRONT_MATTER_OPEN)) {
+    return { config: { prompt: rendered }, warnings };
+  }
+
+  // Find closing delimiter after the opening "---\n"
+  const rest = rendered.slice(FRONT_MATTER_OPEN.length);
+  const closeMatch = /^---[ \t]*$/m.exec(rest);
+  if (!closeMatch || closeMatch.index === undefined) {
+    // No closing delimiter → treat entire string as prompt
+    return { config: { prompt: rendered }, warnings };
+  }
+
+  const frontMatterBlock = rest.slice(0, closeMatch.index);
+  const prompt = rest.slice(closeMatch.index + closeMatch[0].length).replace(/^\n/, "");
+
+  // Parse key-value lines
+  const fields: Record<string, string> = {};
+  for (const line of frontMatterBlock.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const colonIndex = trimmed.indexOf(":");
+    if (colonIndex === -1) {
+      warnings.push(`Ignoring front-matter line (no colon): "${trimmed}"`);
+      continue;
+    }
+
+    const key = trimmed.slice(0, colonIndex).trim();
+    const value = trimmed.slice(colonIndex + 1).trim();
+
+    if (!KNOWN_KEYS.has(key)) {
+      warnings.push(`Unknown front-matter key: "${key}"`);
+      continue;
+    }
+
+    fields[key] = value;
+  }
+
+  // Build config
+  let focus: boolean | undefined;
+  if (fields["focus"] !== undefined) {
+    if (fields["focus"] === "true") {
+      focus = true;
+    } else if (fields["focus"] === "false") {
+      focus = false;
+    } else {
+      warnings.push(`Invalid focus value "${fields["focus"]}", expected "true" or "false"`);
+    }
+  }
+
+  let model: { readonly providerID: string; readonly modelID: string } | undefined;
+  if (fields["model.provider"] !== undefined || fields["model.id"] !== undefined) {
+    if (fields["model.provider"] && fields["model.id"]) {
+      model = { providerID: fields["model.provider"], modelID: fields["model.id"] };
+    } else {
+      warnings.push("Both model.provider and model.id must be specified together");
+    }
+  }
+
+  const config: TemplateConfig = {
+    prompt,
+    ...(fields["name"] !== undefined && { name: fields["name"] }),
+    ...(fields["agent"] !== undefined && { agent: fields["agent"] }),
+    ...(fields["base"] !== undefined && { base: fields["base"] }),
+    ...(focus !== undefined && { focus }),
+    ...(model !== undefined && { model }),
+  };
+
+  return { config, warnings };
+}
+
+// =============================================================================
 // Module Factory
 // =============================================================================
 
@@ -266,19 +361,48 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
   // ------ Workspace Lifecycle ------
 
-  async function buildInitialPrompt(
+  interface WorkspaceConfig {
+    readonly workspaceName: string;
+    readonly base: string;
+    readonly stealFocus: boolean;
+    readonly initialPrompt: NormalizedInitialPrompt;
+  }
+
+  async function buildWorkspaceConfig(
+    prNumber: number,
+    headRef: string,
+    baseRef: string,
     prDetail: Record<string, unknown>
-  ): Promise<NormalizedInitialPrompt> {
+  ): Promise<WorkspaceConfig | null> {
     try {
       const templateContent = await deps.fs.readFile(templatePath!);
       const rendered = renderTemplate(templateContent, prDetail);
-      return { prompt: rendered, agent: "plan" };
+      const { config, warnings } = parseTemplateOutput(rendered);
+
+      for (const warning of warnings) {
+        deps.logger.warn("Template front-matter warning", { warning, templatePath });
+      }
+
+      if (!config.prompt.trim()) return null;
+
+      const initialPrompt: NormalizedInitialPrompt = {
+        prompt: config.prompt,
+        agent: config.agent ?? "plan",
+        ...(config.model !== undefined && { model: config.model }),
+      };
+
+      return {
+        workspaceName: config.name ?? buildWorkspaceName(prNumber, headRef),
+        base: config.base ?? `origin/${baseRef}`,
+        stealFocus: config.focus ?? false,
+        initialPrompt,
+      };
     } catch (error) {
-      deps.logger.warn("Failed to read/render PR template, falling back to empty prompt", {
+      deps.logger.warn("Failed to read/render PR template", {
         templatePath,
         error: getErrorMessage(error),
       });
-      return { prompt: "", agent: "plan" };
+      return null;
     }
   }
 
@@ -291,14 +415,12 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     baseRef: string,
     prDetail: Record<string, unknown>
   ): Promise<void> {
-    const workspaceName = buildWorkspaceName(prNumber, headRef);
-
-    deps.logger.info("Creating PR workspace", { prUrl, workspaceName });
+    deps.logger.info("Creating PR workspace", { prUrl });
 
     try {
-      // Build prompt first — skip workspace entirely if template resolves to empty
-      const initialPrompt = await buildInitialPrompt(prDetail);
-      if (!initialPrompt.prompt.trim()) {
+      // Build config first — skip workspace entirely if template resolves to empty
+      const config = await buildWorkspaceConfig(prNumber, headRef, baseRef, prDetail);
+      if (!config) {
         deps.logger.info("Skipping PR workspace (template resolved to empty)", { prUrl });
         state = {
           ...state,
@@ -322,11 +444,11 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       const wsResult = await deps.dispatcher.dispatch({
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          workspaceName,
-          base: `origin/${baseRef}`,
-          stealFocus: false,
+          workspaceName: config.workspaceName,
+          base: config.base,
+          stealFocus: config.stealFocus,
           projectPath: project.path,
-          initialPrompt,
+          initialPrompt: config.initialPrompt,
         },
       } as OpenWorkspaceIntent);
 
@@ -342,7 +464,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         workspaces: {
           ...state.workspaces,
           [prUrl]: {
-            workspaceName,
+            workspaceName: config.workspaceName,
             workspacePath,
             prNumber,
             repo,
@@ -352,7 +474,10 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         },
       };
 
-      deps.logger.info("PR workspace created", { prUrl, workspaceName });
+      deps.logger.info("PR workspace created", {
+        prUrl,
+        workspaceName: config.workspaceName,
+      });
     } catch (error) {
       deps.logger.warn("Failed to create PR workspace", {
         prUrl,
