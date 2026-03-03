@@ -97,22 +97,21 @@ describe("Dialog component", () => {
       expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    it("click on overlay calls onClose", async () => {
+    it("click on overlay does not call onClose", async () => {
       const onClose = vi.fn();
       render(Dialog, { props: { ...defaultProps, onClose } });
 
       const overlay = screen.getByTestId("dialog-overlay");
       await fireEvent.click(overlay);
 
-      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(onClose).not.toHaveBeenCalled();
     });
 
-    it("click inside dialog does not call onClose", async () => {
+    it("Escape key does not call onClose when busy", async () => {
       const onClose = vi.fn();
-      render(Dialog, { props: { ...defaultProps, onClose } });
+      render(Dialog, { props: { ...defaultProps, onClose, busy: true } });
 
-      const dialog = screen.getByRole("dialog");
-      await fireEvent.click(dialog);
+      await fireEvent.keyDown(document, { key: "Escape" });
 
       expect(onClose).not.toHaveBeenCalled();
     });

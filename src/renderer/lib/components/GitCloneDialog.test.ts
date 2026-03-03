@@ -329,6 +329,29 @@ describe("GitCloneDialog component", () => {
       expect(mockOpenCreateDialog).toHaveBeenCalledWith();
     });
 
+    it("Escape key does not close during clone", async () => {
+      mockCloneProject.mockImplementation(
+        () =>
+          new Promise((resolve) => setTimeout(() => resolve(createProject(testProjectId)), 1000))
+      );
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: testUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      // Clone is in progress — Escape should not close
+      await fireEvent.keyDown(document.body, { key: "Escape" });
+
+      expect(mockOpenCreateDialog).not.toHaveBeenCalled();
+
+      await vi.runAllTimersAsync();
+    });
+
     it("cancel button disabled during clone", async () => {
       mockCloneProject.mockImplementation(
         () =>
