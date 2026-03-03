@@ -1115,6 +1115,7 @@ describe("ViewModule Integration", () => {
       const windowManager = {
         create: vi.fn(),
         maximizeAsync: vi.fn().mockResolvedValue(undefined),
+        focus: vi.fn(),
       };
       const { module } = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
@@ -1139,6 +1140,7 @@ describe("ViewModule Integration", () => {
       expect(windowManager.create).toHaveBeenCalled();
       expect(viewManager.create).toHaveBeenCalled();
       expect(windowManager.maximizeAsync).toHaveBeenCalled();
+      expect(windowManager.focus).toHaveBeenCalled();
       expect(layers.viewLayer.loadURL).toHaveBeenCalledWith(
         viewManager.getUIViewHandle(),
         "file:///app/ui.html"

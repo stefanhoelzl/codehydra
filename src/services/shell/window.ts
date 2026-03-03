@@ -164,6 +164,14 @@ export interface WindowLayer {
   setTitle(handle: WindowHandle, title: string): void;
 
   /**
+   * Focus a window (request OS-level focus).
+   *
+   * @param handle - Handle to the window
+   * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
+   */
+  focus(handle: WindowHandle): void;
+
+  /**
    * Close a window.
    *
    * @param handle - Handle to the window
@@ -433,6 +441,11 @@ export class DefaultWindowLayer implements WindowLayerInternal {
   setTitle(handle: WindowHandle, title: string): void {
     const state = this.getWindowState(handle);
     state.window.setTitle(title);
+  }
+
+  focus(handle: WindowHandle): void {
+    const state = this.getWindowState(handle);
+    state.window.focus();
   }
 
   close(handle: WindowHandle): void {

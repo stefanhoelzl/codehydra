@@ -453,6 +453,11 @@ export function createWindowLayerMock(): MockWindowLayer {
       window.title = title;
     },
 
+    focus(handle: WindowHandle): void {
+      getWindow(handle); // Validate handle exists
+      // No-op in mock - focus is an OS-level operation
+    },
+
     close(handle: WindowHandle): void {
       const window = getWindow(handle);
       // Trigger close callbacks before marking destroyed

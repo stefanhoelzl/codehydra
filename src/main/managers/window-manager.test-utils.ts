@@ -19,6 +19,7 @@ export interface MockWindowManager {
   getBounds: Mock<WindowManager["getBounds"]>;
   onResize: Mock<WindowManager["onResize"]>;
   maximizeAsync: Mock<WindowManager["maximizeAsync"]>;
+  focus: Mock<WindowManager["focus"]>;
   setTitle: Mock<WindowManager["setTitle"]>;
   setOverlayIcon: Mock<WindowManager["setOverlayIcon"]>;
   close: Mock<WindowManager["close"]>;
@@ -68,6 +69,7 @@ export function createMockWindowManager(options?: MockWindowManagerOptions): Moc
     getBounds: vi.fn(() => bounds),
     onResize: vi.fn((): Unsubscribe => vi.fn()),
     maximizeAsync: vi.fn(async () => {}),
+    focus: vi.fn(),
     setTitle: vi.fn(),
     setOverlayIcon: vi.fn((image: ImageHandle | null, description: string) => {
       overlayIconCalls.push({ image, description });

@@ -204,6 +204,13 @@ export class WindowManager {
   }
 
   /**
+   * Focuses the window (requests OS-level focus).
+   */
+  focus(): void {
+    this.windowLayer.focus(this.windowHandle);
+  }
+
+  /**
    * Closes the window.
    */
   close(): void {
