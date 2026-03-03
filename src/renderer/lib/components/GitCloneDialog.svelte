@@ -1,11 +1,18 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { on, projects } from "$lib/api";
-  import { openCreateDialog } from "$lib/stores/dialogs.svelte.js";
+  import { projects } from "$lib/api";
+  import { openCreateDialog, closeDialog } from "$lib/stores/dialogs.svelte.js";
+  import {
+    cloneState,
+    startClone,
+    completeClone,
+    failClone,
+    clearClone,
+    stageLabel,
+  } from "$lib/stores/clone-progress.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
-  import type { CloneProgress } from "@shared/api/types";
 
   const logger = createLogger("ui");
 
@@ -18,36 +25,40 @@
   // Form state
   let url = $state("");
   let submitError = $state<string | null>(null);
-  let isCloning = $state(false);
 
-  // Clone progress state
-  let cloneStage = $state<string | null>(null);
-  let cloneProgress = $state(0);
+  // Whether this dialog instance started the clone (vs opening while one is in progress)
+  let dialogOwnsClone = $state(false);
 
-  function stageLabel(stage: string): string {
-    switch (stage) {
-      case "receiving":
-        return "Receiving objects...";
-      case "resolving":
-        return "Resolving deltas...";
-      case "counting":
-        return "Counting objects...";
-      case "compressing":
-        return "Compressing objects...";
-      default:
-        return stage.charAt(0).toUpperCase() + stage.slice(1) + "...";
-    }
-  }
+  // Clone is in progress (either started by this dialog or already running)
+  const isCloning = $derived(cloneState.value !== null && cloneState.value.error === null);
 
-  // Subscribe to clone progress events
+  // Read progress from store
+  const currentStage = $derived(cloneState.value?.stage ?? null);
+  const currentProgress = $derived(cloneState.value?.progress ?? 0);
+  const progressPercent = $derived(Math.round(currentProgress * 100));
+
+  // On open, pre-fill from existing clone state if applicable.
+  // Uses a flag to run only once per dialog open (avoids re-running when
+  // startClone() changes cloneState.value, which would reset dialogOwnsClone).
+  let initialized = false;
   $effect(() => {
-    const unsub = on<CloneProgress>("project:clone-progress", (payload: CloneProgress) => {
-      cloneStage = payload.stage;
-      cloneProgress = payload.progress;
-    });
-    return () => {
-      unsub();
-    };
+    if (!open) {
+      initialized = false;
+      return;
+    }
+    if (initialized) return;
+    initialized = true;
+    const state = cloneState.value;
+    if (state?.error) {
+      // Previous clone failed — pre-fill URL and show error
+      url = state.url;
+      submitError = state.error;
+      clearClone();
+    } else if (state) {
+      // Clone already in progress — show progress
+      url = state.url;
+      dialogOwnsClone = false;
+    }
   });
 
   // URL validation state
@@ -75,30 +86,47 @@
   const isCloneDisabled = $derived(!url.trim() || urlValidationError() !== null || isCloning);
 
   // Handle form submission
-  async function handleSubmit(): Promise<void> {
+  function handleSubmit(): void {
     if (isCloning || isCloneDisabled) return;
 
     submitError = null;
-    isCloning = true;
-    cloneStage = null;
-    cloneProgress = 0;
+    dialogOwnsClone = true;
 
-    logger.debug("Cloning repository", { url });
+    const trimmedUrl = url.trim();
+    logger.debug("Cloning repository", { url: trimmedUrl });
 
-    try {
-      const project = await projects.clone(url.trim());
-      logger.info("Repository cloned successfully", { projectId: project.id });
-      // Return to CreateWorkspaceDialog with the new project selected
-      openCreateDialog(project.id);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("Clone failed", { url, error: message });
-      submitError = message;
-      isCloning = false;
-    }
+    startClone(trimmedUrl);
+
+    // Fire clone as detached promise — dialog may close before it resolves
+    void projects.clone(trimmedUrl).then(
+      (project) => {
+        logger.info("Repository cloned successfully", { projectId: project.id });
+        completeClone();
+        // Only navigate if this dialog instance owns the clone and is still open
+        if (dialogOwnsClone) {
+          openCreateDialog(project.id);
+        }
+      },
+      (error: unknown) => {
+        const message = getErrorMessage(error);
+        logger.warn("Clone failed", { url: trimmedUrl, error: message });
+        failClone(message);
+        // If dialog is still open, show error inline
+        if (dialogOwnsClone) {
+          submitError = message;
+        }
+      }
+    );
   }
 
-  // Handle cancel
+  // Handle "Continue in background" — close dialog, clone keeps running
+  function handleContinueInBackground(): void {
+    logger.debug("Clone continuing in background", { url });
+    dialogOwnsClone = false;
+    closeDialog();
+  }
+
+  // Handle cancel (only available when not cloning)
   function handleCancel(): void {
     logger.debug("Dialog closed", { type: "git-clone" });
     // Return to CreateWorkspaceDialog without selecting a project
@@ -118,7 +146,7 @@
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && !isCloneDisabled) {
       event.preventDefault();
-      void handleSubmit();
+      handleSubmit();
     }
   }
 
@@ -158,16 +186,16 @@
       {/if}
     </div>
 
-    {#if isCloning && cloneStage !== null}
+    {#if isCloning && currentStage !== null}
       <div class="clone-progress" aria-live="polite">
         <div class="clone-progress-header">
-          <span class="clone-progress-stage">{stageLabel(cloneStage)}</span>
-          <span class="clone-progress-pct">{cloneProgress}%</span>
+          <span class="clone-progress-stage">{stageLabel(currentStage)}</span>
+          <span class="clone-progress-pct">{progressPercent}%</span>
         </div>
         <vscode-progress-bar
-          value={cloneProgress}
+          value={progressPercent}
           aria-label="Clone progress"
-          aria-valuenow={cloneProgress}
+          aria-valuenow={progressPercent}
           aria-valuemin="0"
           aria-valuemax="100"
         ></vscode-progress-bar>
@@ -185,15 +213,17 @@
   {/snippet}
 
   {#snippet actions()}
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <vscode-button onclick={handleSubmit} disabled={isCloneDisabled} class="clone-button">
-      {#if isCloning}
-        <vscode-progress-ring class="button-spinner"></vscode-progress-ring>
-        <span id={descriptionId}>Cloning...</span>
-      {:else}
+    {#if isCloning}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <vscode-button onclick={handleContinueInBackground} class="clone-button">
+        <span id={descriptionId}>Continue in background</span>
+      </vscode-button>
+    {:else}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <vscode-button onclick={handleSubmit} disabled={isCloneDisabled} class="clone-button">
         Clone
-      {/if}
-    </vscode-button>
+      </vscode-button>
+    {/if}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <vscode-button secondary={true} onclick={handleCancel} disabled={isCloning}>
       Cancel
@@ -231,11 +261,5 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-  }
-
-  /* Make the spinner smaller to fit in the button */
-  :global(.button-spinner) {
-    width: 14px;
-    height: 14px;
   }
 </style>

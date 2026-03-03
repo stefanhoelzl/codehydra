@@ -29,6 +29,7 @@ vi.mock("$lib/stores/dialogs.svelte.js", () => ({
 
 // Import component after mocks
 import GitCloneDialog from "./GitCloneDialog.svelte";
+import * as cloneProgressStore from "$lib/stores/clone-progress.svelte.js";
 
 // Test data
 const testProjectId = "test-repo-12345678" as ProjectId;
@@ -61,10 +62,12 @@ describe("GitCloneDialog component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    cloneProgressStore.reset();
     mockCloneProject.mockResolvedValue(createProject(testProjectId));
   });
 
   afterEach(() => {
+    cloneProgressStore.reset();
     vi.useRealTimers();
     document.body.innerHTML = "";
   });
@@ -187,7 +190,7 @@ describe("GitCloneDialog component", () => {
       expect(mockCloneProject).toHaveBeenCalledWith(testUrl);
     });
 
-    it("shows loading state during clone", async () => {
+    it('shows "Continue in background" button during clone', async () => {
       mockCloneProject.mockImplementation(
         () =>
           new Promise((resolve) => setTimeout(() => resolve(createProject(testProjectId)), 1000))
@@ -202,13 +205,15 @@ describe("GitCloneDialog component", () => {
       const cloneButton = screen.getByRole("button", { name: /clone/i });
       await fireEvent.click(cloneButton);
 
-      // Should show loading state in the button
-      expect(screen.getByText(/cloning\.\.\./i)).toBeInTheDocument();
+      // Should show "Continue in background" button
+      expect(screen.getByRole("button", { name: /continue in background/i })).toBeInTheDocument();
+      // Clone button should be gone
+      expect(screen.queryByRole("button", { name: /^clone$/i })).not.toBeInTheDocument();
 
       await vi.runAllTimersAsync();
     });
 
-    it("disables inputs during clone", async () => {
+    it("disables input and cancel during clone", async () => {
       mockCloneProject.mockImplementation(
         () =>
           new Promise((resolve) => setTimeout(() => resolve(createProject(testProjectId)), 1000))
@@ -223,9 +228,12 @@ describe("GitCloneDialog component", () => {
       const cloneButton = screen.getByRole("button", { name: /clone/i });
       await fireEvent.click(cloneButton);
 
-      // Input and buttons should be disabled
+      // Input should be disabled
       expect(input).toBeDisabled();
-      expect(cloneButton).toBeDisabled();
+      // Cancel should be disabled
+      expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
+      // "Continue in background" should be enabled
+      expect(screen.getByRole("button", { name: /continue in background/i })).not.toBeDisabled();
 
       await vi.runAllTimersAsync();
     });
@@ -240,9 +248,64 @@ describe("GitCloneDialog component", () => {
       const cloneButton = screen.getByRole("button", { name: /clone/i });
       await fireEvent.click(cloneButton);
 
+      // Flush microtasks from the detached promise's .then() handler
       await vi.runAllTimersAsync();
+      await Promise.resolve();
 
       expect(mockOpenCreateDialog).toHaveBeenCalledWith(testProjectId);
+    });
+
+    it('closes dialog when "Continue in background" is clicked', async () => {
+      mockCloneProject.mockImplementation(
+        () =>
+          new Promise((resolve) => setTimeout(() => resolve(createProject(testProjectId)), 1000))
+      );
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: testUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      const bgButton = screen.getByRole("button", { name: /continue in background/i });
+      await fireEvent.click(bgButton);
+
+      expect(mockCloseDialog).toHaveBeenCalled();
+
+      await vi.runAllTimersAsync();
+    });
+
+    it("does not navigate after background clone completes", async () => {
+      let resolveClone: (project: Project) => void;
+      mockCloneProject.mockImplementation(
+        () =>
+          new Promise<Project>((resolve) => {
+            resolveClone = resolve;
+          })
+      );
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: testUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      // Click "Continue in background"
+      const bgButton = screen.getByRole("button", { name: /continue in background/i });
+      await fireEvent.click(bgButton);
+
+      // Now resolve the clone
+      resolveClone!(createProject(testProjectId));
+      await vi.runAllTimersAsync();
+
+      // openCreateDialog should NOT have been called (dialog was backgrounded)
+      expect(mockOpenCreateDialog).not.toHaveBeenCalled();
     });
   });
 

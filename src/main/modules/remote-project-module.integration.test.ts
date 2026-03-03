@@ -198,9 +198,9 @@ describe("RemoteProjectModule Integration", () => {
     it("reports clone progress via report callback", async () => {
       const { hookRegistry, gitClient } = createTestSetup();
 
-      const progressEvents: Array<{ stage: string; progress: number }> = [];
-      const report: CloneProgressReporter = (stage, progress) => {
-        progressEvents.push({ stage, progress });
+      const progressEvents: Array<{ stage: string; progress: number; name: string }> = [];
+      const report: CloneProgressReporter = (stage, progress, name) => {
+        progressEvents.push({ stage, progress, name });
       };
 
       // Override mock clone to invoke onProgress
@@ -221,8 +221,8 @@ describe("RemoteProjectModule Integration", () => {
       await hooks.collect<ResolveHookResult | undefined>("resolve", resolveContext(intent, report));
 
       expect(progressEvents).toEqual([
-        { stage: "receiving", progress: 50 },
-        { stage: "resolving", progress: 100 },
+        { stage: "receiving", progress: 0.5, name: "repo" },
+        { stage: "resolving", progress: 1, name: "repo" },
       ]);
 
       // Restore

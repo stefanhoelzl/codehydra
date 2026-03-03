@@ -108,7 +108,7 @@ export function createRemoteProjectModule(deps: {
             });
 
             await gitClient.clone(expanded, gitPath, (event) => {
-              report(event.stage, event.progress);
+              report(event.stage, event.progress / 100, repoName);
             });
 
             // No saveProject call — LocalProjectModule.register handles persistence

@@ -121,7 +121,7 @@ export interface DiscoverHookInput extends HookContext {
 }
 
 /** Callback for reporting clone progress from a resolve hook. */
-export type CloneProgressReporter = (stage: string, progress: number) => void;
+export type CloneProgressReporter = (stage: string, progress: number, name: string) => void;
 
 /** Input context for the "resolve" hook point. */
 export interface ResolveHookInput extends HookContext {
@@ -137,6 +137,7 @@ export const EVENT_CLONE_PROGRESS = "clone:progress" as const;
 export interface CloneProgressPayload {
   readonly stage: string;
   readonly progress: number;
+  readonly name: string;
 }
 
 export interface CloneProgressEvent extends DomainEvent {
@@ -194,10 +195,10 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
 
     try {
       // Create clone progress reporter that emits domain events
-      const report: CloneProgressReporter = (stage, progress) => {
+      const report: CloneProgressReporter = (stage, progress, name) => {
         ctx.emit({
           type: EVENT_CLONE_PROGRESS,
-          payload: { stage, progress },
+          payload: { stage, progress, name },
         } as CloneProgressEvent);
       };
 

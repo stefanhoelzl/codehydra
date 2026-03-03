@@ -317,8 +317,10 @@ export interface SetupScreenProgress {
 export interface CloneProgress {
   /** Git operation stage (e.g., "receiving", "resolving", "counting", "compressing") */
   readonly stage: string;
-  /** Progress percentage (0-100) */
+  /** Progress as a 0-1 float (e.g., 0.75 = 75%) */
   readonly progress: number;
+  /** Repository name (e.g., "my-project") */
+  readonly name: string;
 }
 
 // =============================================================================
