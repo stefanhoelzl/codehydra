@@ -1,10 +1,11 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { projects } from "$lib/api";
+  import { on, projects } from "$lib/api";
   import { openCreateDialog } from "$lib/stores/dialogs.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
+  import type { CloneProgress } from "@shared/api/types";
 
   const logger = createLogger("ui");
 
@@ -18,6 +19,36 @@
   let url = $state("");
   let submitError = $state<string | null>(null);
   let isCloning = $state(false);
+
+  // Clone progress state
+  let cloneStage = $state<string | null>(null);
+  let cloneProgress = $state(0);
+
+  function stageLabel(stage: string): string {
+    switch (stage) {
+      case "receiving":
+        return "Receiving objects...";
+      case "resolving":
+        return "Resolving deltas...";
+      case "counting":
+        return "Counting objects...";
+      case "compressing":
+        return "Compressing objects...";
+      default:
+        return stage.charAt(0).toUpperCase() + stage.slice(1) + "...";
+    }
+  }
+
+  // Subscribe to clone progress events
+  $effect(() => {
+    const unsub = on<CloneProgress>("project:clone-progress", (payload: CloneProgress) => {
+      cloneStage = payload.stage;
+      cloneProgress = payload.progress;
+    });
+    return () => {
+      unsub();
+    };
+  });
 
   // URL validation state
   // Validates full URLs and shorthand formats (org/repo, github.com/org/repo)
@@ -49,6 +80,8 @@
 
     submitError = null;
     isCloning = true;
+    cloneStage = null;
+    cloneProgress = 0;
 
     logger.debug("Cloning repository", { url });
 
@@ -125,6 +158,22 @@
       {/if}
     </div>
 
+    {#if isCloning && cloneStage !== null}
+      <div class="clone-progress" aria-live="polite">
+        <div class="clone-progress-header">
+          <span class="clone-progress-stage">{stageLabel(cloneStage)}</span>
+          <span class="clone-progress-pct">{cloneProgress}%</span>
+        </div>
+        <vscode-progress-bar
+          value={cloneProgress}
+          aria-label="Clone progress"
+          aria-valuenow={cloneProgress}
+          aria-valuemin="0"
+          aria-valuemax="100"
+        ></vscode-progress-bar>
+      </div>
+    {/if}
+
     {#if submitError}
       <div class="ch-alert-box" role="alert">
         <span class="ch-alert-box-icon" aria-hidden="true">
@@ -153,6 +202,26 @@
 </Dialog>
 
 <style>
+  .clone-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .clone-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .clone-progress-stage,
+  .clone-progress-pct {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground, #888888);
+    margin: 0;
+  }
+
   .error-text {
     white-space: pre-line;
   }

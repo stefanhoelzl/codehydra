@@ -18,6 +18,7 @@ vi.mock("$lib/api", () => ({
   projects: {
     clone: mockCloneProject,
   },
+  on: vi.fn(() => () => {}),
 }));
 
 // Mock $lib/stores/dialogs.svelte.js

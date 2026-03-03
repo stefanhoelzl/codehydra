@@ -120,6 +120,30 @@ export interface DiscoverHookInput extends HookContext {
   readonly projectPath: string;
 }
 
+/** Callback for reporting clone progress from a resolve hook. */
+export type CloneProgressReporter = (stage: string, progress: number) => void;
+
+/** Input context for the "resolve" hook point. */
+export interface ResolveHookInput extends HookContext {
+  readonly report: CloneProgressReporter;
+}
+
+// =============================================================================
+// Clone Progress Event Types
+// =============================================================================
+
+export const EVENT_CLONE_PROGRESS = "clone:progress" as const;
+
+export interface CloneProgressPayload {
+  readonly stage: string;
+  readonly progress: number;
+}
+
+export interface CloneProgressEvent extends DomainEvent {
+  readonly type: typeof EVENT_CLONE_PROGRESS;
+  readonly payload: CloneProgressPayload;
+}
+
 /** Input context for the "register" hook point. */
 export interface RegisterHookInput extends HookContext {
   readonly projectPath: string;
@@ -169,8 +193,16 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
     }
 
     try {
+      // Create clone progress reporter that emits domain events
+      const report: CloneProgressReporter = (stage, progress) => {
+        ctx.emit({
+          type: EVENT_CLONE_PROGRESS,
+          payload: { stage, progress },
+        } as CloneProgressEvent);
+      };
+
       // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
-      const resolveCtx: HookContext = { intent: effectiveIntent };
+      const resolveCtx: ResolveHookInput = { intent: effectiveIntent, report };
       const { results: resolveResults, errors: resolveErrors } =
         await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
       if (resolveErrors.length === 1) {

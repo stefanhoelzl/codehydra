@@ -16,7 +16,12 @@ import { createMockPathProvider } from "../../services/platform/path-provider.te
 import { createFileSystemMock } from "../../services/platform/filesystem.state-mock";
 import { createRemoteProjectModule } from "./remote-project-module";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
-import type { ResolveHookResult, OpenProjectIntent } from "../operations/open-project";
+import type {
+  ResolveHookResult,
+  ResolveHookInput,
+  OpenProjectIntent,
+  CloneProgressReporter,
+} from "../operations/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
 import type {
   CloseHookInput,
@@ -31,6 +36,8 @@ import type { ProjectId } from "../../shared/api/types";
 const URL_PROJECT_ID = "repo-4c06e3f1" as ProjectId;
 
 expect.extend(gitClientMatchers);
+
+const noopReport: CloneProgressReporter = () => {};
 
 // =============================================================================
 // Test Setup
@@ -67,6 +74,13 @@ function openProjectIntent(payload: { git?: string; path?: Path }): OpenProjectI
   };
 }
 
+function resolveContext(
+  intent: OpenProjectIntent,
+  report: CloneProgressReporter = noopReport
+): ResolveHookInput {
+  return { intent, report };
+}
+
 function closeProjectIntent(payload: {
   projectPath: string;
   removeLocalRepo?: boolean;
@@ -93,9 +107,10 @@ describe("RemoteProjectModule Integration", () => {
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>("resolve", {
-        intent,
-      });
+      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+        "resolve",
+        resolveContext(intent)
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -124,9 +139,10 @@ describe("RemoteProjectModule Integration", () => {
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: url });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>("resolve", {
-        intent,
-      });
+      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+        "resolve",
+        resolveContext(intent)
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -146,9 +162,10 @@ describe("RemoteProjectModule Integration", () => {
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ path: new Path("/local/project") });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>("resolve", {
-        intent,
-      });
+      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+        "resolve",
+        resolveContext(intent)
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(0);
@@ -165,13 +182,48 @@ describe("RemoteProjectModule Integration", () => {
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>("resolve", {
-        intent,
-      });
+      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+        "resolve",
+        resolveContext(intent)
+      );
 
       expect(errors).toHaveLength(1);
       expect(errors[0]!.message).toBe("Network error: connection refused");
       expect(results).toHaveLength(0);
+
+      // Restore
+      (gitClient as { clone: typeof gitClient.clone }).clone = originalClone;
+    });
+
+    it("reports clone progress via report callback", async () => {
+      const { hookRegistry, gitClient } = createTestSetup();
+
+      const progressEvents: Array<{ stage: string; progress: number }> = [];
+      const report: CloneProgressReporter = (stage, progress) => {
+        progressEvents.push({ stage, progress });
+      };
+
+      // Override mock clone to invoke onProgress
+      const originalClone = gitClient.clone.bind(gitClient);
+      (gitClient as { clone: typeof gitClient.clone }).clone = async (
+        url,
+        targetPath,
+        onProgress
+      ) => {
+        onProgress?.({ stage: "receiving", progress: 50 });
+        onProgress?.({ stage: "resolving", progress: 100 });
+        return originalClone(url, targetPath);
+      };
+
+      const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
+      const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
+
+      await hooks.collect<ResolveHookResult | undefined>("resolve", resolveContext(intent, report));
+
+      expect(progressEvents).toEqual([
+        { stage: "receiving", progress: 50 },
+        { stage: "resolving", progress: 100 },
+      ]);
 
       // Restore
       (gitClient as { clone: typeof gitClient.clone }).clone = originalClone;

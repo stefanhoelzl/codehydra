@@ -21,7 +21,11 @@ import type { Logger } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import type { ProjectId } from "../../shared/api/types";
 import { expandGitUrl, normalizeGitUrl, extractRepoName } from "../../services/project/url-utils";
-import type { OpenProjectIntent, ResolveHookResult } from "../operations/open-project";
+import type {
+  OpenProjectIntent,
+  ResolveHookResult,
+  ResolveHookInput,
+} from "../operations/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import type { CloseHookInput, CloseHookResult } from "../operations/close-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
@@ -68,6 +72,7 @@ export function createRemoteProjectModule(deps: {
           handler: async (ctx: HookContext): Promise<ResolveHookResult | undefined> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { git } = intent.payload;
+            const { report } = ctx as ResolveHookInput;
 
             if (!git) {
               return undefined;
@@ -102,7 +107,9 @@ export function createRemoteProjectModule(deps: {
               gitPath: gitPath.toString(),
             });
 
-            await gitClient.clone(expanded, gitPath);
+            await gitClient.clone(expanded, gitPath, (event) => {
+              report(event.stage, event.progress);
+            });
 
             // No saveProject call — LocalProjectModule.register handles persistence
             // with remoteUrl from context

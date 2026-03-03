@@ -4,7 +4,7 @@
 
 import simpleGit, { type SimpleGit, type SimpleGitOptions } from "simple-git";
 import { GitError, getErrorMessage } from "../errors";
-import type { IGitClient } from "./git-client";
+import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./types";
 import type { Logger } from "../logging";
 import { Path } from "../platform/path";
@@ -510,14 +510,20 @@ export class SimpleGitClient implements IGitClient {
     }
   }
 
-  async clone(url: string, targetPath: Path): Promise<void> {
+  async clone(url: string, targetPath: Path, onProgress?: CloneProgressCallback): Promise<void> {
     return this.wrapGitOperation(
       async () => {
         // Use simple-git's clone with bare option
         // Create git instance at the parent directory to run clone command
         // allowUnsafePack is required because simple-git 3.32+ false-positives
         // on Windows paths (drive letter matches its -u regex check)
-        const git = simpleGit({ unsafe: { allowUnsafePack: true } });
+        const options: Partial<SimpleGitOptions> = { unsafe: { allowUnsafePack: true } };
+        if (onProgress) {
+          options.progress = (data) => {
+            onProgress({ stage: data.stage, progress: data.progress });
+          };
+        }
+        const git = simpleGit(options);
         await git.clone(url, targetPath.toNative(), ["--bare"]);
 
         // Set up remote tracking for the bare clone
