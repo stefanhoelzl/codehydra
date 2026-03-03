@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import { io } from "socket.io-client";
+import cssColorNames from "color-name";
 import type { CodehydraApi } from "../api";
 import type {
   TypedSocket,
@@ -17,6 +18,42 @@ import {
   reconstructVscodeObjects,
   type VscodeFactories,
 } from "../../../src/shared/vscode-serialization";
+
+const TAGS_PREFIX = "tags.";
+
+interface WorkspaceTag {
+  readonly name: string;
+  readonly color?: string;
+}
+
+function extractTagsFromMetadata(metadata: Record<string, string>): WorkspaceTag[] {
+  const tags: WorkspaceTag[] = [];
+  for (const [key, value] of Object.entries(metadata)) {
+    if (!key.startsWith(TAGS_PREFIX)) continue;
+    const name = key.slice(TAGS_PREFIX.length);
+    if (name.length === 0) continue;
+
+    let color: string | undefined;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (typeof parsed === "object" && parsed !== null && "color" in parsed) {
+        const candidate = (parsed as { color: unknown }).color;
+        if (typeof candidate === "string") {
+          color = candidate;
+        }
+      }
+    } catch {
+      // Invalid JSON — tag with just name
+    }
+
+    if (color !== undefined) {
+      tags.push({ name, color });
+    } else {
+      tags.push({ name });
+    }
+  }
+  return tags;
+}
 
 let socket: TypedSocket | null = null;
 let isConnected = false;
@@ -257,6 +294,20 @@ const codehydraApi = {
 
     setMetadata(key: string, value: string | null) {
       return emitApiCall<void>("api:workspace:setMetadata", { key, value });
+    },
+
+    async getTags(): Promise<readonly WorkspaceTag[]> {
+      const metadata = await emitApiCall<Record<string, string>>("api:workspace:getMetadata");
+      return extractTagsFromMetadata(metadata);
+    },
+
+    async setTag(name: string, options?: { color?: string }): Promise<void> {
+      const value = options?.color !== undefined ? JSON.stringify({ color: options.color }) : "{}";
+      await emitApiCall<void>("api:workspace:setMetadata", { key: `tags.${name}`, value });
+    },
+
+    async deleteTag(name: string): Promise<void> {
+      await emitApiCall<void>("api:workspace:setMetadata", { key: `tags.${name}`, value: null });
     },
 
     executeCommand(command: string, args?: readonly unknown[]) {
@@ -590,6 +641,19 @@ function connectToPluginServer(port: number, workspacePath: string): void {
 }
 
 // ============================================================================
+// Color Picker Items
+// ============================================================================
+
+const COLOR_ITEMS: vscode.QuickPickItem[] = [
+  { label: "No color", description: "Tag without color" },
+  ...Object.entries(cssColorNames).map(([name, [r, g, b]]) => ({
+    label: name,
+    description: `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`,
+  })),
+  { label: "Custom hex...", description: "Enter a hex color manually" },
+];
+
+// ============================================================================
 // Extension Lifecycle
 // ============================================================================
 
@@ -618,6 +682,111 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
         return;
       }
       openAgentTerminal(currentAgentType, currentAgentEnv);
+    })
+  );
+
+  // Tag commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codehydra.getTags",
+      async (): Promise<readonly { name: string; color?: string }[]> => {
+        const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
+        const tags = extractTagsFromMetadata(metadata);
+        if (tags.length === 0) {
+          await vscode.window.showInformationMessage("No tags on this workspace");
+        } else {
+          const items = tags.map((t) => ({
+            label: t.name,
+            description: t.color ?? "",
+          }));
+          await vscode.window.showQuickPick(items, {
+            title: "Workspace Tags",
+            placeHolder: "Tags (read-only)",
+          });
+        }
+        return tags;
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codehydra.setTag",
+      async (arg?: { name: string; color?: string }): Promise<void> => {
+        let name: string;
+        let color: string | undefined;
+
+        if (arg && typeof arg.name === "string") {
+          name = arg.name;
+          color = typeof arg.color === "string" ? arg.color : undefined;
+        } else {
+          const nameInput = await vscode.window.showInputBox({
+            title: "Tag Name",
+            prompt: "Enter tag name (letters, digits, hyphens, dots)",
+            validateInput: (v) => {
+              if (!v) return "Tag name is required";
+              if (!/^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)*$/.test(v)) {
+                return "Must start with a letter, use only letters/digits/hyphens/dots";
+              }
+              if (v.split(".").some((s) => s.endsWith("-"))) {
+                return "Segments cannot end with a hyphen";
+              }
+              return null;
+            },
+          });
+          if (!nameInput) return;
+          name = nameInput;
+
+          const colorPick = await vscode.window.showQuickPick(COLOR_ITEMS, {
+            title: "Tag Color",
+            placeHolder: "Select a color or search by name",
+          });
+          if (!colorPick) return;
+
+          if (colorPick.label === "Custom hex...") {
+            const hex = await vscode.window.showInputBox({
+              title: "Tag Color",
+              prompt: "Enter hex color (e.g. #ff0000)",
+            });
+            color = hex || undefined;
+          } else if (colorPick.label === "No color") {
+            color = undefined;
+          } else {
+            color = colorPick.description;
+          }
+        }
+
+        const value = color !== undefined ? JSON.stringify({ color }) : "{}";
+        await codehydraApi.workspace.setMetadata(`tags.${name}`, value);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.deleteTag", async (arg?: string): Promise<void> => {
+      let name: string;
+
+      if (typeof arg === "string") {
+        name = arg;
+      } else {
+        const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
+        const tags = extractTagsFromMetadata(metadata);
+        if (tags.length === 0) {
+          await vscode.window.showInformationMessage("No tags to delete");
+          return;
+        }
+        const picked = await vscode.window.showQuickPick(
+          tags.map((t) => ({
+            label: t.name,
+            description: t.color ?? "",
+          })),
+          { title: "Delete Tag", placeHolder: "Select a tag to delete" }
+        );
+        if (!picked) return;
+        name = picked.label;
+      }
+
+      await codehydraApi.workspace.setMetadata(`tags.${name}`, null);
     })
   );
 

@@ -173,6 +173,14 @@ export interface WorkspaceStatus {
 }
 
 /**
+ * A tag attached to a workspace.
+ */
+export interface WorkspaceTag {
+  readonly name: string;
+  readonly color?: string;
+}
+
+/**
  * Workspace API namespace.
  */
 export interface WorkspaceApi {
@@ -268,6 +276,55 @@ export interface WorkspaceApi {
    * ```
    */
   setMetadata(key: string, value: string | null): Promise<void>;
+
+  /**
+   * Get all tags for this workspace.
+   * Tags are extracted from metadata entries with the "tags." prefix.
+   *
+   * @returns Array of workspace tags
+   * @throws Error if not connected or request fails
+   *
+   * @example
+   * ```typescript
+   * const tags = await api.workspace.getTags();
+   * for (const tag of tags) {
+   *   console.log(`Tag: ${tag.name}`, tag.color ?? 'no color');
+   * }
+   * ```
+   */
+  getTags(): Promise<readonly WorkspaceTag[]>;
+
+  /**
+   * Set or update a tag on this workspace.
+   * Tags are stored as metadata entries with the "tags." prefix.
+   *
+   * @param name - Tag name (letters, digits, hyphens, dots)
+   * @param options - Optional tag properties (e.g., color)
+   * @throws Error if not connected or request fails
+   *
+   * @example
+   * ```typescript
+   * // Tag with color
+   * await api.workspace.setTag('bugfix', { color: '#ff0000' });
+   *
+   * // Tag without color
+   * await api.workspace.setTag('wip');
+   * ```
+   */
+  setTag(name: string, options?: { color?: string }): Promise<void>;
+
+  /**
+   * Delete a tag from this workspace.
+   *
+   * @param name - Tag name to delete
+   * @throws Error if not connected or request fails
+   *
+   * @example
+   * ```typescript
+   * await api.workspace.deleteTag('wip');
+   * ```
+   */
+  deleteTag(name: string): Promise<void>;
 
   /**
    * Execute a VS Code command in this workspace.
