@@ -104,14 +104,14 @@ describe("OpenProjectErrorDialog component", () => {
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
 
-    it("calls onClose when clicking overlay", async () => {
+    it("does not call onClose when clicking overlay", async () => {
       render(OpenProjectErrorDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
       const overlay = screen.getByTestId("dialog-overlay");
       await fireEvent.click(overlay);
 
-      expect(defaultProps.onClose).toHaveBeenCalled();
+      expect(defaultProps.onClose).not.toHaveBeenCalled();
     });
   });
 

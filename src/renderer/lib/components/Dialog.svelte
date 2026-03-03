@@ -63,6 +63,7 @@
 
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.key === "Escape") {
+        if (busy) return;
         onClose();
       }
     }
@@ -73,24 +74,10 @@
       document.removeEventListener("keydown", handleKeyDown);
     };
   });
-
-  function handleOverlayClick(): void {
-    onClose();
-  }
-
-  function handleDialogClick(event: MouseEvent): void {
-    event.stopPropagation();
-  }
 </script>
 
 {#if open}
-  <div
-    class="dialog-overlay"
-    data-testid="dialog-overlay"
-    role="presentation"
-    onclick={handleOverlayClick}
-    onkeydown={() => {}}
-  >
+  <div class="dialog-overlay" data-testid="dialog-overlay" role="presentation">
     <div
       bind:this={dialogElement}
       class="dialog"
@@ -100,8 +87,6 @@
       aria-describedby={descriptionId}
       aria-busy={busy || undefined}
       tabindex="-1"
-      onclick={handleDialogClick}
-      onkeydown={() => {}}
     >
       {#if title}
         <div class="dialog-title">
