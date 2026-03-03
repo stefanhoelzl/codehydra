@@ -20,6 +20,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "color-name": "^2.1.0",
     "socket.io-client": "^4.7.0"
   },
   "contributes": {
@@ -32,6 +33,21 @@
       {
         "command": "codehydra.openAgent",
         "title": "Open Agent",
+        "category": "CodeHydra"
+      },
+      {
+        "command": "codehydra.getTags",
+        "title": "Get Tags",
+        "category": "CodeHydra"
+      },
+      {
+        "command": "codehydra.setTag",
+        "title": "Set Tag",
+        "category": "CodeHydra"
+      },
+      {
+        "command": "codehydra.deleteTag",
+        "title": "Delete Tag",
         "category": "CodeHydra"
       },
       {

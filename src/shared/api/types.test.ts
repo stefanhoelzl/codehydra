@@ -11,6 +11,9 @@ import {
   validateWorkspaceName,
   isValidMetadataKey,
   METADATA_KEY_REGEX,
+  extractTags,
+  TAGS_METADATA_KEY_PREFIX,
+  type WorkspaceTag,
 } from "./types";
 
 describe("Branded Types - Compile-time Safety", () => {
@@ -291,6 +294,13 @@ describe("isValidMetadataKey - Metadata Key Validation", () => {
       expect(isValidMetadataKey("a")).toBe(true);
       expect(isValidMetadataKey("Z")).toBe(true);
     });
+
+    it("should accept dot-separated keys", () => {
+      expect(isValidMetadataKey("tags.bugfix")).toBe(true);
+      expect(isValidMetadataKey("tags.my-tag")).toBe(true);
+      expect(isValidMetadataKey("a.b.c")).toBe(true);
+      expect(isValidMetadataKey("tags.v2.release")).toBe(true);
+    });
   });
 
   describe("invalid keys", () => {
@@ -314,6 +324,11 @@ describe("isValidMetadataKey - Metadata Key Validation", () => {
       expect(isValidMetadataKey("model-name-")).toBe(false);
     });
 
+    it("should reject trailing hyphen in any segment", () => {
+      expect(isValidMetadataKey("tags.note-")).toBe(false);
+      expect(isValidMetadataKey("note-.tags")).toBe(false);
+    });
+
     it("should reject keys over 64 characters", () => {
       const longKey = "a".repeat(65);
       expect(isValidMetadataKey(longKey)).toBe(false);
@@ -324,8 +339,7 @@ describe("isValidMetadataKey - Metadata Key Validation", () => {
       expect(isValidMetadataKey(maxKey)).toBe(true);
     });
 
-    it("should reject keys with special characters", () => {
-      expect(isValidMetadataKey("key.name")).toBe(false);
+    it("should reject keys with special characters (except dots)", () => {
       expect(isValidMetadataKey("key/name")).toBe(false);
       expect(isValidMetadataKey("key@name")).toBe(false);
       expect(isValidMetadataKey("key name")).toBe(false);
@@ -334,5 +348,73 @@ describe("isValidMetadataKey - Metadata Key Validation", () => {
     it("should reject keys starting with hyphen", () => {
       expect(isValidMetadataKey("-key")).toBe(false);
     });
+
+    it("should reject leading, trailing, and consecutive dots", () => {
+      expect(isValidMetadataKey(".foo")).toBe(false);
+      expect(isValidMetadataKey("foo.")).toBe(false);
+      expect(isValidMetadataKey("foo..bar")).toBe(false);
+    });
+
+    it("should reject segments starting with digits", () => {
+      expect(isValidMetadataKey("tags.1fix")).toBe(false);
+    });
+  });
+});
+
+describe("TAGS_METADATA_KEY_PREFIX", () => {
+  it("should be 'tags.'", () => {
+    expect(TAGS_METADATA_KEY_PREFIX).toBe("tags.");
+  });
+});
+
+describe("extractTags", () => {
+  it("should return empty array for empty metadata", () => {
+    expect(extractTags({})).toEqual([]);
+  });
+
+  it("should return empty array for metadata without tag entries", () => {
+    expect(extractTags({ base: "main", note: "hello" })).toEqual([]);
+  });
+
+  it("should extract tag with color", () => {
+    const metadata = { "tags.bugfix": '{"color":"#ff0000"}' };
+    const tags = extractTags(metadata);
+    expect(tags).toEqual([{ name: "bugfix", color: "#ff0000" }]);
+  });
+
+  it("should extract tag without color (empty object)", () => {
+    const metadata = { "tags.wip": "{}" };
+    const tags = extractTags(metadata);
+    expect(tags).toEqual([{ name: "wip" }]);
+  });
+
+  it("should handle invalid JSON gracefully", () => {
+    const metadata = { "tags.broken": "not-json" };
+    const tags = extractTags(metadata);
+    expect(tags).toEqual([{ name: "broken" }]);
+  });
+
+  it("should ignore non-string color values", () => {
+    const metadata = { "tags.bad-color": '{"color":123}' };
+    const tags = extractTags(metadata);
+    expect(tags).toEqual([{ name: "bad-color" }]);
+  });
+
+  it("should extract multiple tags", () => {
+    const metadata = {
+      base: "main",
+      "tags.bugfix": '{"color":"#ff0000"}',
+      "tags.wip": "{}",
+      note: "some note",
+    };
+    const tags = extractTags(metadata);
+    expect(tags).toHaveLength(2);
+    const names = tags.map((t: WorkspaceTag) => t.name).sort();
+    expect(names).toEqual(["bugfix", "wip"]);
+  });
+
+  it("should skip 'tags.' key with empty name after prefix", () => {
+    const metadata = { "tags.": "{}" };
+    expect(extractTags(metadata)).toEqual([]);
   });
 });

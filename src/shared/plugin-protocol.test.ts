@@ -157,7 +157,7 @@ describe("validateSetMetadataRequest", () => {
     });
 
     it("rejects key with special characters", () => {
-      const result = validateSetMetadataRequest({ key: "my.key", value: "test" });
+      const result = validateSetMetadataRequest({ key: "my@key", value: "test" });
       expect(result.valid).toBe(false);
       expect((result as { error: string }).error).toContain("Invalid key format");
     });
