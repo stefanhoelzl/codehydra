@@ -178,6 +178,30 @@ export function removeWorkspace(projectPath: string, workspacePath: string): voi
   );
 }
 
+export function updateWorkspaceMetadata(
+  projectId: ProjectId,
+  workspaceName: WorkspaceName,
+  key: string,
+  value: string | null
+): void {
+  _projects = _projects.map((p) => {
+    if (p.id !== projectId) return p;
+    return {
+      ...p,
+      workspaces: p.workspaces.map((w) => {
+        if (w.name !== workspaceName) return w;
+        const metadata = { ...w.metadata };
+        if (value === null) {
+          delete metadata[key];
+        } else {
+          metadata[key] = value;
+        }
+        return { ...w, metadata };
+      }),
+    };
+  });
+}
+
 /**
  * Reset store to initial state. Used for testing.
  */

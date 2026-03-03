@@ -14,6 +14,7 @@ import {
   setActiveWorkspace,
   addWorkspace,
   removeWorkspace,
+  updateWorkspaceMetadata,
 } from "$lib/stores/projects.svelte.js";
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
 import { setWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
@@ -108,6 +109,10 @@ export function setupDomainEventBindings(
       updateAgentStatus: (ref, status) => {
         updateStatus(ref.path, status.agent);
         logger.debug("Store updated", { store: "agent-status" });
+      },
+      updateWorkspaceMetadata: (projectId, workspaceName, key, value) => {
+        updateWorkspaceMetadata(projectId, workspaceName, key, value);
+        logger.debug("Store updated", { store: "projects", key });
       },
     },
     {
