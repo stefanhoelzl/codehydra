@@ -42,6 +42,7 @@
 
   // Setup functions
   import { setupDeletionProgress } from "$lib/utils/setup-deletion-progress";
+  import { setupCloneProgress } from "$lib/utils/setup-clone-progress";
   import { setupDomainEventBindings } from "$lib/utils/setup-domain-event-bindings";
   import { initializeApp } from "$lib/utils/initialize-app";
 
@@ -58,6 +59,7 @@
   import Logo from "./Logo.svelte";
 
   import { clearDeletion, getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
+  import { cloneState } from "$lib/stores/clone-progress.svelte.js";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
   import { isWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
@@ -122,13 +124,16 @@
 
     // Check all conditions
     // Show Create Workspace dialog when no workspaces exist (even if no projects)
+    // Suppress when a background clone is running — don't interrupt with the dialog
+    const cloneRunning = cloneState.value !== null;
     const firstProject = projectList[0];
     if (
       workspaceCount === 0 &&
       loading === "loaded" &&
       dialog.type === "closed" &&
       !deletionInProgress &&
-      !autoShowDismissed
+      !autoShowDismissed &&
+      !cloneRunning
     ) {
       // Debounce to avoid showing during rapid state changes
       autoShowTimeout = setTimeout(() => {
@@ -176,6 +181,7 @@
 
     // Compose setup functions - each returns cleanup callback
     const cleanupDeletion = setupDeletionProgress();
+    const cleanupClone = setupCloneProgress();
     const cleanupDomainEvents = setupDomainEventBindings(notificationService);
 
     // Initialize app (async with no-op cleanup for consistent composition)
@@ -190,6 +196,7 @@
     // Combined cleanup
     return () => {
       cleanupDeletion();
+      cleanupClone();
       cleanupDomainEvents();
       cleanupInit();
     };
@@ -285,6 +292,7 @@
     loadingError={loadingError.value}
     shortcutModeActive={shortcutModeActive.value}
     totalWorkspaces={getAllWorkspaces().length}
+    cloneInProgress={cloneState.value}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
     onOpenCreateDialog={handleOpenCreateDialog}

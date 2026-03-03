@@ -14,6 +14,8 @@
     getStatusText,
   } from "$lib/utils/sidebar-utils.js";
   import type { Project } from "$lib/api";
+  import type { CloneState } from "$lib/stores/clone-progress.svelte.js";
+  import { stageLabel } from "$lib/stores/clone-progress.svelte.js";
 
   interface SidebarProps {
     projects: readonly Project[];
@@ -22,6 +24,7 @@
     loadingError: string | null;
     shortcutModeActive?: boolean;
     totalWorkspaces: number;
+    cloneInProgress: CloneState | null;
     onCloseProject: (projectId: ProjectId) => void;
     onSwitchWorkspace: (workspaceRef: WorkspaceRef) => void;
     onOpenCreateDialog: (projectId: ProjectId) => void;
@@ -35,6 +38,7 @@
     loadingError,
     shortcutModeActive = false,
     totalWorkspaces,
+    cloneInProgress,
     onCloseProject,
     onSwitchWorkspace,
     onOpenCreateDialog,
@@ -275,6 +279,59 @@
       </ul>
     {/if}
   </div>
+
+  {#if cloneInProgress}
+    {@const cloneHasError = cloneInProgress.error !== null}
+    {@const cloneName = cloneInProgress.name || cloneInProgress.url}
+    {@const clonePercent = Math.round(cloneInProgress.progress * 100)}
+    {#if isExpanded}
+      <div
+        class="clone-entry"
+        role="status"
+        aria-label={cloneHasError ? "Clone failed" : `Cloning ${cloneName}`}
+      >
+        <vscode-divider></vscode-divider>
+        <div class="clone-entry-row">
+          <span class="project-icon" aria-hidden="true">
+            {#if cloneHasError}
+              <Icon name="warning" size={14} />
+            {:else}
+              <Icon name="source-control" size={14} />
+            {/if}
+          </span>
+          <span class="clone-entry-name" title={cloneInProgress.url}>{cloneName}</span>
+          {#if cloneHasError}
+            <span class="clone-entry-error">
+              <Icon name="warning" size={14} />
+            </span>
+          {:else if cloneInProgress.stage}
+            <span class="clone-entry-pct">{clonePercent}%</span>
+          {:else}
+            <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
+          {/if}
+        </div>
+        {#if !cloneHasError && cloneInProgress.stage}
+          <div class="clone-entry-progress">
+            <span class="clone-entry-stage">{stageLabel(cloneInProgress.stage)}</span>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <div
+        class="clone-entry-minimized"
+        role="status"
+        aria-label={cloneHasError ? "Clone failed" : `Cloning ${cloneName}`}
+      >
+        {#if cloneHasError}
+          <span class="clone-entry-error-min">
+            <Icon name="warning" size={14} />
+          </span>
+        {:else}
+          <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
+        {/if}
+      </div>
+    {/if}
+  {/if}
 </nav>
 
 <style>
@@ -552,5 +609,72 @@
     --vscode-icon-foreground: var(--ch-danger);
     font-size: 14px;
     flex-shrink: 0;
+  }
+
+  /* Clone-in-progress entry — pinned to bottom of sidebar */
+  .clone-entry {
+    padding: 0 0 8px 0;
+    min-width: var(--ch-sidebar-width, 250px);
+    flex-shrink: 0;
+  }
+
+  .clone-entry-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px 0 calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
+    gap: 8px;
+  }
+
+  .clone-entry-name {
+    flex: 1;
+    font-size: 13px;
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .clone-entry-pct {
+    font-size: 12px;
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+
+  .clone-entry-progress {
+    padding: 2px 12px 0 calc(var(--ch-sidebar-minimized-width, 20px) + 8px + 14px + 8px);
+  }
+
+  .clone-entry-stage {
+    font-size: 11px;
+    opacity: 0.5;
+  }
+
+  .clone-entry-error {
+    --vscode-icon-foreground: var(--ch-danger);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .clone-spinner {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  .clone-entry-minimized {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--ch-sidebar-minimized-width, 20px);
+    min-height: 36px;
+    padding: 4px;
+    flex-shrink: 0;
+  }
+
+  .clone-entry-error-min {
+    --vscode-icon-foreground: var(--ch-danger);
+    display: flex;
+    align-items: center;
   }
 </style>

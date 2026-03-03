@@ -18,6 +18,7 @@ import {
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
 import { setWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
 import { dialogState, openCreateDialog } from "$lib/stores/dialogs.svelte.js";
+import { cloneState } from "$lib/stores/clone-progress.svelte.js";
 import { setupDomainEvents, type DomainEventApi } from "$lib/utils/domain-events";
 import { createLogger } from "$lib/logging";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
@@ -113,10 +114,12 @@ export function setupDomainEventBindings(
       onProjectOpenedHook: (project) => {
         // Only auto-open during normal operation, not during initial startup loading.
         // The auto-show $effect in MainView.svelte handles the post-load case.
+        // Skip when a background clone just completed — the project appears silently.
         if (
           loadingState.value === "loaded" &&
           project.workspaces.length === 0 &&
-          dialogState.value.type === "closed"
+          dialogState.value.type === "closed" &&
+          cloneState.value === null
         ) {
           openCreateDialog(project.id);
         }
