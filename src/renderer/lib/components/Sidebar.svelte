@@ -145,32 +145,32 @@
           {/if}
           {@const projectTitle = project.remoteUrl ?? project.path}
           <li class="project-item">
-              <div class="project-header" inert={!isExpanded}>
-                <span class="project-icon" title={projectTitle}>
-                  <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
-                </span>
-                <span class="project-name" title={projectTitle}>{project.name}</span>
-                <div class="project-actions">
-                  <button
-                    type="button"
-                    class="action-btn"
-                    id={`add-ws-${project.id}`}
-                    aria-label="Add workspace"
-                    onclick={() => handleAddWorkspace(project.id)}
-                  >
-                    <Icon name="add" size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    class="action-btn"
-                    id={`close-project-${project.id}`}
-                    aria-label="Close project"
-                    onclick={() => onCloseProject(project.id)}
-                  >
-                    <Icon name="trash" size={14} />
-                  </button>
-                </div>
+            <div class="project-header" inert={!isExpanded}>
+              <span class="project-icon" title={projectTitle}>
+                <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
+              </span>
+              <span class="project-name" title={projectTitle}>{project.name}</span>
+              <div class="project-actions">
+                <button
+                  type="button"
+                  class="action-btn"
+                  id={`add-ws-${project.id}`}
+                  aria-label="Add workspace"
+                  onclick={() => handleAddWorkspace(project.id)}
+                >
+                  <Icon name="add" size={14} />
+                </button>
+                <button
+                  type="button"
+                  class="action-btn"
+                  id={`close-project-${project.id}`}
+                  aria-label="Close project"
+                  onclick={() => onCloseProject(project.id)}
+                >
+                  <Icon name="trash" size={14} />
+                </button>
               </div>
+            </div>
             <ul class="workspace-list">
               {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
                 {@const globalIndex = getWorkspaceGlobalIndex(
