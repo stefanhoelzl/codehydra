@@ -26,7 +26,7 @@
  */
 
 import { expect } from "vitest";
-import type { IGitClient } from "./git-client";
+import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./types";
 import { GitError } from "../errors";
 import { Path } from "../platform/path";
@@ -610,7 +610,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       // No-op if key doesn't exist (per interface contract)
     },
 
-    async clone(url: string, targetPath: Path): Promise<void> {
+    async clone(url: string, targetPath: Path, _onProgress?: CloneProgressCallback): Promise<void> {
       const normalizedTarget = normalizePath(targetPath);
 
       // Check if target already exists

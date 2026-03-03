@@ -7,6 +7,9 @@
 import type { Path } from "../platform/path";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./types";
 
+/** Callback for reporting clone progress from the git library. */
+export type CloneProgressCallback = (event: { stage: string; progress: number }) => void;
+
 /**
  * Interface for git operations.
  * All methods use git terminology (worktree, branch, etc.).
@@ -179,9 +182,10 @@ export interface IGitClient {
    * Clone a repository in bare mode.
    * @param url Git remote URL (HTTPS or SSH format)
    * @param targetPath Destination path for the bare clone
+   * @param onProgress Optional callback for clone progress events
    * @throws GitError on network failure, auth failure, invalid URL, or target exists
    */
-  clone(url: string, targetPath: Path): Promise<void>;
+  clone(url: string, targetPath: Path, onProgress?: CloneProgressCallback): Promise<void>;
 
   /**
    * Check if a repository is a bare repository.

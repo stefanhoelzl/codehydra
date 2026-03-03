@@ -307,6 +307,21 @@ export interface SetupScreenProgress {
 }
 
 // =============================================================================
+// Clone Progress Types
+// =============================================================================
+
+/**
+ * Progress update during git clone.
+ * Sent as events from main → renderer during repository cloning.
+ */
+export interface CloneProgress {
+  /** Git operation stage (e.g., "receiving", "resolving", "counting", "compressing") */
+  readonly stage: string;
+  /** Progress percentage (0-100) */
+  readonly progress: number;
+}
+
+// =============================================================================
 // Blocking Process Types
 // =============================================================================
 
