@@ -1435,6 +1435,44 @@ describe("GitWorktreeProvider", () => {
       expect(result2.workspaceRemoved).toBe(true);
       expect(result2.baseDeleted).toBe(true); // Branch already deleted, treat as success
     });
+
+    it("clears codehydra metadata from branch config on deletion", async () => {
+      const worktreePath = new Path("/data/workspaces/feature-x");
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+            branchConfigs: {
+              "feature-x": {
+                "codehydra.base": "main",
+                "codehydra.note": "WIP feature",
+                "codehydra.model": "claude-4",
+              },
+            },
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await provider.removeWorkspace(PROJECT_ROOT, worktreePath, false);
+
+      // Branch still exists but metadata should be cleared
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
+      const metadata = await mockClient.getBranchConfigsByPrefix(
+        PROJECT_ROOT,
+        "feature-x",
+        "codehydra"
+      );
+      expect(metadata).toEqual({});
+    });
   });
 
   describe("isDirty", () => {
