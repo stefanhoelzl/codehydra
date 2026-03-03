@@ -114,6 +114,7 @@ export interface ViewModuleDeps {
   readonly windowManager?: {
     create(): void;
     maximizeAsync(): Promise<void>;
+    focus(): void;
   } | null;
   readonly buildInfo?: {
     isDevelopment: boolean;
@@ -187,9 +188,10 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
             }
             viewManager.create();
 
-            // Maximize window
+            // Maximize and focus window
             if (deps.windowManager) {
               await deps.windowManager.maximizeAsync();
+              deps.windowManager.focus();
             }
 
             // Load UI HTML
