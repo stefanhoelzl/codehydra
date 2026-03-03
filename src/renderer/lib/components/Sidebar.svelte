@@ -122,9 +122,7 @@
         <Icon name="chevron-right" size={12} />
       </span>
     {/if}
-    {#if isExpanded}
-      <h2>PROJECTS</h2>
-    {/if}
+    <h2 class:visually-collapsed={!isExpanded}>PROJECTS</h2>
   </header>
 
   <div class="sidebar-content">
@@ -142,13 +140,12 @@
     {:else}
       <ul class="project-list">
         {#each projects as project, projectIndex (project.path)}
-          {#if isExpanded && projectIndex > 0}
-            <vscode-divider></vscode-divider>
+          {#if projectIndex > 0}
+            <vscode-divider inert={!isExpanded}></vscode-divider>
           {/if}
           {@const projectTitle = project.remoteUrl ?? project.path}
           <li class="project-item">
-            {#if isExpanded}
-              <div class="project-header">
+              <div class="project-header" inert={!isExpanded}>
                 <span class="project-icon" title={projectTitle}>
                   <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
                 </span>
@@ -174,7 +171,6 @@
                   </button>
                 </div>
               </div>
-            {/if}
             <ul class="workspace-list">
               {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
                 {@const globalIndex = getWorkspaceGlobalIndex(
@@ -332,7 +328,7 @@
   .expand-hint {
     width: var(--ch-sidebar-minimized-width, 20px);
     min-width: var(--ch-sidebar-minimized-width, 20px);
-    height: 32px;
+    align-self: stretch;
     opacity: 0.5;
     flex-shrink: 0;
     display: flex;
@@ -354,6 +350,10 @@
     opacity: 0.7;
     flex: 1;
     white-space: nowrap;
+  }
+
+  .sidebar-header h2.visually-collapsed {
+    visibility: hidden;
   }
 
   .loading-state,

@@ -1043,42 +1043,45 @@ describe("Sidebar component", () => {
       expect(indicators.length).toBeGreaterThan(0);
     });
 
-    it("project header buttons not in DOM when minimized", () => {
-      render(Sidebar, { props: propsWithWorkspaces() });
+    it("project header is inert when minimized", () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       // Sidebar is minimized (totalWorkspaces > 0, uiMode is workspace, no hover)
-      expect(screen.queryByLabelText("Add workspace")).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("Close project")).not.toBeInTheDocument();
+      const header = container.querySelector(".project-header");
+      expect(header).toHaveAttribute("inert");
     });
 
-    it("project header buttons appear in DOM when expanded via hover", async () => {
+    it("project header is interactive when expanded via hover", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
       const sidebar = container.querySelector(".sidebar");
 
       await fireEvent.mouseEnter(sidebar!);
       expect(sidebar).toHaveClass("expanded");
 
-      expect(screen.getByLabelText("Add workspace")).toBeInTheDocument();
-      expect(screen.getByLabelText("Close project")).toBeInTheDocument();
+      expect(container.querySelector(".project-header")).not.toHaveAttribute("inert");
     });
 
-    it("h2 heading not in DOM when minimized", () => {
+    it("h2 heading is visually hidden when minimized", () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
-      expect(screen.queryByRole("heading", { name: /projects/i })).not.toBeInTheDocument();
+      const heading = container.querySelector(".sidebar-header h2");
+      expect(heading).toBeInTheDocument();
+      expect(heading).toHaveClass("visually-collapsed");
     });
 
-    it("h2 heading in DOM when expanded", async () => {
+    it("h2 heading is visible when expanded", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
       const sidebar = container.querySelector(".sidebar");
 
       await fireEvent.mouseEnter(sidebar!);
 
-      expect(screen.getByRole("heading", { name: /projects/i })).toBeInTheDocument();
+      const heading = container.querySelector(".sidebar-header h2");
+      expect(heading).toBeInTheDocument();
+      expect(heading).not.toHaveClass("visually-collapsed");
     });
 
-    it("vscode-divider not in DOM when minimized", () => {
+    it("vscode-divider is inert when minimized", () => {
       const ws1 = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const ws2 = createMockWorkspace({ path: "/test2/.worktrees/ws2", name: "ws2" });
       const project1 = createMockProject({
@@ -1095,7 +1098,9 @@ describe("Sidebar component", () => {
       });
 
       expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
-      expect(container.querySelector("vscode-divider")).not.toBeInTheDocument();
+      const divider = container.querySelector("vscode-divider");
+      expect(divider).toBeInTheDocument();
+      expect(divider).toHaveAttribute("inert");
     });
   });
 
