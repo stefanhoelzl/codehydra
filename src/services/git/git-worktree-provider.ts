@@ -533,6 +533,26 @@ export class GitWorktreeProvider {
       }
     }
 
+    // Step 1.5: Clear codehydra metadata from branch config
+    if (branchName) {
+      try {
+        const metadata = await this.gitClient.getBranchConfigsByPrefix(
+          projectRoot,
+          branchName,
+          GitWorktreeProvider.METADATA_CONFIG_PREFIX
+        );
+        for (const key of Object.keys(metadata)) {
+          await this.gitClient.unsetBranchConfig(
+            projectRoot,
+            branchName,
+            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`
+          );
+        }
+      } catch {
+        this.logger.warn("Failed to clear branch metadata", { branch: branchName });
+      }
+    }
+
     // Step 2: Delete the branch (always attempt if requested)
     // This ensures branch is deleted even if worktree removal failed
     // (e.g., due to Windows file locks - directory cleanup happens at startup)
