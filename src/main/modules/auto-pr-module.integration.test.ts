@@ -38,6 +38,7 @@ import {
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
 } from "../operations/delete-workspace";
+import { INTENT_SET_METADATA, type SetMetadataIntent } from "../operations/set-metadata";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
 import { createMockProcessRunner } from "../../services/platform/process.state-mock";
 import { createMockHttpClient } from "../../services/platform/http-client.state-mock";
@@ -160,6 +161,18 @@ class TrackingDeleteWorkspaceOperation implements Operation<
   }
 }
 
+/**
+ * Tracking operation for workspace:set-metadata — records dispatches.
+ */
+class TrackingSetMetadataOperation implements Operation<SetMetadataIntent, void> {
+  readonly id = "set-metadata";
+  readonly dispatched: SetMetadataIntent[] = [];
+
+  async execute(ctx: OperationContext<SetMetadataIntent>): Promise<void> {
+    this.dispatched.push(ctx.intent);
+  }
+}
+
 // =============================================================================
 // GitHub API Response Helpers
 // =============================================================================
@@ -217,6 +230,7 @@ interface TestSetup {
   openProjectOp: TrackingOpenProjectOperation;
   openWorkspaceOp: TrackingOpenWorkspaceOperation;
   deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
+  setMetadataOp: TrackingSetMetadataOperation;
 }
 
 const DEFAULT_TEMPLATE_PATH = "/data/review.liquid";
@@ -273,6 +287,7 @@ function createTestSetup(options?: {
   const openProjectOp = new TrackingOpenProjectOperation();
   const openWorkspaceOp = new TrackingOpenWorkspaceOperation();
   const deleteWorkspaceOp = new TrackingDeleteWorkspaceOperation();
+  const setMetadataOp = new TrackingSetMetadataOperation();
 
   const configValues: Record<string, unknown> = {};
   if (tplPath !== null) {
@@ -283,6 +298,7 @@ function createTestSetup(options?: {
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, openProjectOp);
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
+  dispatcher.registerOperation(INTENT_SET_METADATA, setMetadataOp);
 
   const autoPrModule = createAutoPrModule({
     processRunner,
@@ -303,6 +319,7 @@ function createTestSetup(options?: {
     openProjectOp,
     openWorkspaceOp,
     deleteWorkspaceOp,
+    setMetadataOp,
   };
 }
 
@@ -759,6 +776,57 @@ describe("AutoPrModule Integration", () => {
       );
     });
 
+    it("dispatches set-metadata intents after workspace creation", async () => {
+      const template = [
+        "---",
+        "name: review/{{ number }}",
+        "metadata.pr-url: {{ html_url }}",
+        "metadata.pr-number: {{ number }}",
+        "---",
+        "Review PR #{{ number }}",
+      ].join("\n");
+
+      const { dispatcher, openWorkspaceOp, setMetadataOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: template,
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+      expect(setMetadataOp.dispatched).toHaveLength(2);
+
+      const metaPayloads = setMetadataOp.dispatched.map((i) => ({
+        key: i.payload.key,
+        value: i.payload.value,
+      }));
+      expect(metaPayloads).toContainEqual({
+        key: "pr-url",
+        value: "https://github.com/org/repo/pull/42",
+      });
+      expect(metaPayloads).toContainEqual({
+        key: "pr-number",
+        value: "42",
+      });
+
+      // workspacePath should be passed through
+      for (const intent of setMetadataOp.dispatched) {
+        expect(intent.payload.workspacePath).toBe("/home/user/projects/repo/review/42");
+      }
+    });
+
+    it("does not dispatch set-metadata when no metadata keys in template", async () => {
+      const { dispatcher, openWorkspaceOp, setMetadataOp } = setupWithPr({
+        templatePath: TEMPLATE_PATH,
+        templateContent: "---\nname: review/{{ number }}\n---\nReview PR #{{ number }}",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+      expect(setMetadataOp.dispatched).toHaveLength(0);
+    });
+
     it("creates workspace despite unknown front-matter keys (non-fatal warning)", async () => {
       const { dispatcher, openWorkspaceOp } = setupWithPr({
         templatePath: TEMPLATE_PATH,
@@ -1050,5 +1118,52 @@ describe("parseTemplateOutput", () => {
     const input = "---\nname: ws\n---\n\nTwo newlines before this";
     const result = parseTemplateOutput(input);
     expect(result.config.prompt).toBe("\nTwo newlines before this");
+  });
+
+  it("parses metadata.* keys into metadata record", () => {
+    const input =
+      "---\nmetadata.pr-url: https://github.com/org/repo/pull/42\nmetadata.pr-number: 42\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.metadata).toEqual({
+      "pr-url": "https://github.com/org/repo/pull/42",
+      "pr-number": "42",
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("warns on invalid metadata key", () => {
+    const input =
+      "---\nmetadata.note-: trailing hyphen\nmetadata.123: leading digit\nmetadata.: empty\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.metadata).toBeUndefined();
+    expect(result.warnings).toEqual([
+      'Invalid metadata key: "note-"',
+      'Invalid metadata key: "123"',
+      'Invalid metadata key: ""',
+    ]);
+  });
+
+  it("includes valid keys and warns on invalid ones in same template", () => {
+    const input = "---\nmetadata.good-key: value\nmetadata.bad-: invalid\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.metadata).toEqual({ "good-key": "value" });
+    expect(result.warnings).toEqual(['Invalid metadata key: "bad-"']);
+  });
+
+  it("metadata works alongside other front-matter fields", () => {
+    const input =
+      "---\nname: review/42\nmetadata.pr-url: https://example.com\nagent: plan\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.name).toBe("review/42");
+    expect(result.config.agent).toBe("plan");
+    expect(result.config.metadata).toEqual({ "pr-url": "https://example.com" });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("empty metadata values are valid", () => {
+    const input = "---\nmetadata.note:\n---\nprompt";
+    const result = parseTemplateOutput(input);
+    expect(result.config.metadata).toEqual({ note: "" });
+    expect(result.warnings).toEqual([]);
   });
 });

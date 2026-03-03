@@ -37,9 +37,10 @@ import type { ProcessRunner } from "../../services/platform/process";
 import type { HttpClient } from "../../services/platform/network";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { Logger } from "../../services/logging/types";
-import type { NormalizedInitialPrompt } from "../../shared/api/types";
+import { isValidMetadataKey, type NormalizedInitialPrompt } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../services/template/liquid-renderer";
+import { INTENT_SET_METADATA, type SetMetadataIntent } from "../operations/set-metadata";
 import { configPath } from "../../services/config/config-definition";
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 
@@ -142,6 +143,7 @@ export interface TemplateConfig {
   readonly base?: string;
   readonly focus?: boolean;
   readonly model?: { readonly providerID: string; readonly modelID: string };
+  readonly metadata?: Readonly<Record<string, string>>;
   readonly prompt: string;
 }
 
@@ -173,6 +175,7 @@ export function parseTemplateOutput(rendered: string): ParseResult {
 
   // Parse key-value lines
   const fields: Record<string, string> = {};
+  const metadataFields: Record<string, string> = {};
   for (const line of frontMatterBlock.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -185,6 +188,16 @@ export function parseTemplateOutput(rendered: string): ParseResult {
 
     const key = trimmed.slice(0, colonIndex).trim();
     const value = trimmed.slice(colonIndex + 1).trim();
+
+    if (key.startsWith("metadata.")) {
+      const metaKey = key.slice("metadata.".length);
+      if (isValidMetadataKey(metaKey)) {
+        metadataFields[metaKey] = value;
+      } else {
+        warnings.push(`Invalid metadata key: "${metaKey}"`);
+      }
+      continue;
+    }
 
     if (!KNOWN_KEYS.has(key)) {
       warnings.push(`Unknown front-matter key: "${key}"`);
@@ -222,6 +235,7 @@ export function parseTemplateOutput(rendered: string): ParseResult {
     ...(fields["base"] !== undefined && { base: fields["base"] }),
     ...(focus !== undefined && { focus }),
     ...(model !== undefined && { model }),
+    ...(Object.keys(metadataFields).length > 0 && { metadata: metadataFields }),
   };
 
   return { config, warnings };
@@ -366,6 +380,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     readonly base: string;
     readonly stealFocus: boolean;
     readonly initialPrompt: NormalizedInitialPrompt;
+    readonly metadata?: Readonly<Record<string, string>>;
   }
 
   async function buildWorkspaceConfig(
@@ -396,6 +411,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         base: config.base ?? `origin/${baseRef}`,
         stealFocus: config.focus ?? false,
         initialPrompt,
+        ...(config.metadata !== undefined && { metadata: config.metadata }),
       };
     } catch (error) {
       deps.logger.warn("Failed to read/render PR template", {
@@ -457,6 +473,24 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         wsResult && typeof wsResult === "object" && "path" in wsResult
           ? (wsResult as { path: string }).path
           : "";
+
+      // Set metadata keys if any
+      if (config.metadata && workspacePath) {
+        for (const [key, value] of Object.entries(config.metadata)) {
+          try {
+            await deps.dispatcher.dispatch({
+              type: INTENT_SET_METADATA,
+              payload: { workspacePath, key, value },
+            } as SetMetadataIntent);
+          } catch (error) {
+            deps.logger.warn("Failed to set workspace metadata", {
+              key,
+              prUrl,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+      }
 
       // Record in state
       state = {
