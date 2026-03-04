@@ -42,7 +42,7 @@ import type {
   FlushHookInput,
   DeletePipelineHookInput,
 } from "./delete-workspace";
-import type { HookContext } from "../intents/infrastructure/operation";
+import type { HookContext, OperationContext } from "../intents/infrastructure/operation";
 import type { IViewManager } from "../managers/view-manager.interface";
 
 import type { WorkspaceLockHandler } from "../../services/platform/workspace-lock-handler";
@@ -1634,5 +1634,112 @@ describe("DeleteWorkspaceOperation.resolveHooks", () => {
     await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
       "Workspace not found: /unknown/workspace"
     );
+  });
+});
+
+describe("DeleteWorkspaceOperation.safetyNet", () => {
+  it("emits completed error progress when pipeline encounters unexpected error after identity resolution", async () => {
+    // Directly test the safety net by constructing the operation with a mock context
+    // where hooks.collect throws on "release" (simulating an infrastructure-level failure).
+    const operation = new DeleteWorkspaceOperation();
+    const intent = buildDeleteIntent();
+
+    const emittedEvents: DomainEvent[] = [];
+
+    const ctx = {
+      intent,
+      causation: [],
+      emit: (event: DomainEvent) => {
+        emittedEvents.push(event);
+      },
+      dispatch: async (dispatchedIntent: Intent) => {
+        if (dispatchedIntent.type === INTENT_RESOLVE_WORKSPACE) {
+          return { projectPath: PROJECT_PATH, workspaceName: WORKSPACE_NAME };
+        }
+        if (dispatchedIntent.type === INTENT_RESOLVE_PROJECT) {
+          return { projectId: PROJECT_ID, projectName: "test-project" };
+        }
+        if (dispatchedIntent.type === INTENT_GET_ACTIVE_WORKSPACE) {
+          return { workspaceRef: null };
+        }
+        return undefined;
+      },
+      hooks: {
+        async collect(hookPointId: string) {
+          if (hookPointId === "shutdown") {
+            return { results: [{ wasActive: false }], errors: [] };
+          }
+          if (hookPointId === "release") {
+            // Simulate unexpected infrastructure-level failure
+            throw new Error("Unexpected collect failure");
+          }
+          return { results: [], errors: [] };
+        },
+      },
+    } as unknown as OperationContext<DeleteWorkspaceIntent>;
+
+    const result = await operation.execute(ctx);
+    expect(result).toEqual({ started: true });
+
+    // Safety net should have emitted a terminal progress event
+    const progressEvents = emittedEvents.filter(
+      (e) => e.type === EVENT_WORKSPACE_DELETION_PROGRESS
+    ) as WorkspaceDeletionProgressEvent[];
+    expect(progressEvents.length).toBeGreaterThanOrEqual(1);
+
+    const finalProgress = progressEvents[progressEvents.length - 1]!;
+    expect(finalProgress.payload.completed).toBe(true);
+    expect(finalProgress.payload.hasErrors).toBe(true);
+
+    // workspace:delete-failed should have been emitted (resets idempotency)
+    const failedEvents = emittedEvents.filter((e) => e.type === EVENT_WORKSPACE_DELETE_FAILED);
+    expect(failedEvents).toHaveLength(1);
+
+    // workspace:deleted should NOT have been emitted
+    const deletedEvents = emittedEvents.filter((e) => e.type === EVENT_WORKSPACE_DELETED);
+    expect(deletedEvents).toHaveLength(0);
+  });
+
+  it("delete handler returns error in non-force mode instead of throwing", async () => {
+    // With the fix, removeWorkspace failure returns { error } instead of throwing.
+    // The pipeline should reach the detect phase (proving collect() got a structured
+    // error result, not a thrown exception that escaped).
+    const blockingProcesses: BlockingProcess[] = [
+      { pid: 7777, name: "node.exe", commandLine: "node", files: ["x.js"], cwd: null },
+    ];
+
+    const workspaceLockHandler: WorkspaceLockHandler = {
+      detect: vi.fn().mockResolvedValue(blockingProcesses),
+      detectCwd: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn().mockResolvedValue(undefined),
+      closeHandles: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const harness = createTestHarness({
+      workspaceLockHandler,
+      worktreeRemoveError: "EBUSY: resource busy",
+    });
+
+    const intent = buildDeleteIntent();
+    const result = await harness.dispatcher.dispatch(intent);
+    expect(result).toEqual({ started: true });
+
+    // Pipeline reached the detect phase (detect hook was called)
+    expect(workspaceLockHandler.detect).toHaveBeenCalled();
+
+    // Progress shows blockers from detect phase
+    const progressWithBlockers = harness.progressCaptures.find(
+      (p) => p.blockingProcesses && p.blockingProcesses.length > 0
+    );
+    expect(progressWithBlockers).toBeDefined();
+    expect(progressWithBlockers!.blockingProcesses![0]!.pid).toBe(7777);
+    expect(progressWithBlockers!.completed).toBe(true);
+    expect(progressWithBlockers!.hasErrors).toBe(true);
+
+    // delete-failed emitted (resets idempotency for retry)
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+
+    // workspace:deleted NOT emitted (workspace still exists)
+    expect(harness.testState.removedWorkspaces).toHaveLength(0);
   });
 });
