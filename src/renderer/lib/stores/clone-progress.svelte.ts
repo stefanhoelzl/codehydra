@@ -1,8 +1,10 @@
 /**
  * Clone progress state store using Svelte 5 runes.
- * Manages the active background clone state (only one clone at a time).
+ * Manages multiple concurrent background clone operations keyed by URL.
  * This is a pure state container - IPC subscriptions are handled externally.
  */
+
+import { SvelteMap } from "svelte/reactivity";
 
 // ============ Types ============
 
@@ -15,7 +17,7 @@ export interface CloneState {
 
 // ============ State ============
 
-let _cloneState = $state<CloneState | null>(null);
+const _clones = new SvelteMap<string, CloneState>();
 
 // ============ Actions ============
 
@@ -24,25 +26,33 @@ let _cloneState = $state<CloneState | null>(null);
  * @param url - The git URL being cloned
  */
 export function startClone(url: string): void {
-  _cloneState = { url, name: "", stage: null, progress: 0 };
+  _clones.set(url, { url, name: "", stage: null, progress: 0 });
 }
 
 /**
  * Update clone progress from an IPC event.
+ * No-op if the URL is not tracked.
+ * @param url - The git URL being cloned
  * @param stage - Git operation stage
  * @param progress - Progress as 0-1 float
  * @param name - Repository name
  */
-export function updateCloneProgress(stage: string, progress: number, name: string): void {
-  if (!_cloneState) return;
-  _cloneState = { ..._cloneState, stage, progress, name };
+export function updateCloneProgress(
+  url: string,
+  stage: string,
+  progress: number,
+  name: string
+): void {
+  if (!_clones.has(url)) return;
+  _clones.set(url, { url, stage, progress, name });
 }
 
 /**
- * Clear the clone state (success or failure).
+ * Remove a clone entry (success or failure).
+ * @param url - The git URL to remove
  */
-export function completeClone(): void {
-  _cloneState = null;
+export function completeClone(url: string): void {
+  _clones.delete(url);
 }
 
 /**
@@ -63,14 +73,30 @@ export function stageLabel(stage: string): string {
   }
 }
 
-// ============ Reactive Getter ============
+// ============ Reactive Getters ============
 
 /**
- * Reactive getter for clone state.
+ * Get clone state for a specific URL.
  */
-export const cloneState = {
-  get value(): CloneState | null {
-    return _cloneState;
+export function getClone(url: string): CloneState | undefined {
+  return _clones.get(url);
+}
+
+/**
+ * Reactive getter for all active clones as an array.
+ */
+export const activeClones = {
+  get value(): readonly CloneState[] {
+    return Array.from(_clones.values());
+  },
+};
+
+/**
+ * Reactive getter for whether any clones are active.
+ */
+export const hasActiveClones = {
+  get value(): boolean {
+    return _clones.size > 0;
   },
 };
 
@@ -78,5 +104,5 @@ export const cloneState = {
  * Reset store to initial state. Used for testing.
  */
 export function reset(): void {
-  _cloneState = null;
+  _clones.clear();
 }

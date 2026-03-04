@@ -72,7 +72,7 @@ describe("Sidebar component", () => {
     loadingError: null,
     shortcutModeActive: false,
     totalWorkspaces: 0,
-    cloneInProgress: null,
+    activeClones: [],
     onCloseProject: vi.fn(),
     onSwitchWorkspace: vi.fn(),
     onOpenCreateDialog: vi.fn(),

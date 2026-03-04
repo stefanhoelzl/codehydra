@@ -8,7 +8,9 @@ import {
   updateCloneProgress,
   completeClone,
   stageLabel,
-  cloneState,
+  getClone,
+  activeClones,
+  hasActiveClones,
   reset,
 } from "./clone-progress.svelte";
 
@@ -21,7 +23,7 @@ describe("clone-progress store", () => {
     it("initializes clone state with url and defaults", () => {
       startClone("https://github.com/org/repo.git");
 
-      const state = cloneState.value;
+      const state = getClone("https://github.com/org/repo.git");
       expect(state).toEqual({
         url: "https://github.com/org/repo.git",
         name: "",
@@ -30,53 +32,130 @@ describe("clone-progress store", () => {
       });
     });
 
-    it("replaces existing clone state", () => {
+    it("allows multiple concurrent clones", () => {
       startClone("https://github.com/org/repo1.git");
       startClone("https://github.com/org/repo2.git");
 
-      expect(cloneState.value?.url).toBe("https://github.com/org/repo2.git");
+      expect(getClone("https://github.com/org/repo1.git")).toBeDefined();
+      expect(getClone("https://github.com/org/repo2.git")).toBeDefined();
+      expect(activeClones.value).toHaveLength(2);
+    });
+
+    it("replaces existing clone with same URL", () => {
+      startClone("https://github.com/org/repo.git");
+      updateCloneProgress("https://github.com/org/repo.git", "receiving", 0.5, "repo");
+
+      startClone("https://github.com/org/repo.git");
+
+      const state = getClone("https://github.com/org/repo.git");
+      expect(state?.progress).toBe(0);
+      expect(state?.stage).toBeNull();
     });
   });
 
   describe("updateCloneProgress", () => {
-    it("updates stage, progress, and name", () => {
+    it("updates stage, progress, and name for matching URL", () => {
       startClone("https://github.com/org/repo.git");
 
-      updateCloneProgress("receiving", 0.5, "repo");
+      updateCloneProgress("https://github.com/org/repo.git", "receiving", 0.5, "repo");
 
-      const state = cloneState.value;
+      const state = getClone("https://github.com/org/repo.git");
       expect(state?.stage).toBe("receiving");
       expect(state?.progress).toBe(0.5);
       expect(state?.name).toBe("repo");
     });
 
-    it("is a no-op when no clone is active", () => {
-      updateCloneProgress("receiving", 0.5, "repo");
+    it("is a no-op when URL is not tracked", () => {
+      updateCloneProgress("https://github.com/org/repo.git", "receiving", 0.5, "repo");
 
-      expect(cloneState.value).toBeNull();
+      expect(getClone("https://github.com/org/repo.git")).toBeUndefined();
+      expect(hasActiveClones.value).toBe(false);
     });
 
-    it("preserves url field", () => {
-      startClone("https://github.com/org/repo.git");
-      updateCloneProgress("receiving", 0.5, "repo");
+    it("only updates the matching clone", () => {
+      startClone("https://github.com/org/repo1.git");
+      startClone("https://github.com/org/repo2.git");
 
-      expect(cloneState.value?.url).toBe("https://github.com/org/repo.git");
+      updateCloneProgress("https://github.com/org/repo1.git", "receiving", 0.5, "repo1");
+
+      expect(getClone("https://github.com/org/repo1.git")?.progress).toBe(0.5);
+      expect(getClone("https://github.com/org/repo2.git")?.progress).toBe(0);
     });
   });
 
   describe("completeClone", () => {
-    it("clears clone state", () => {
+    it("removes the clone entry for the given URL", () => {
       startClone("https://github.com/org/repo.git");
-      updateCloneProgress("receiving", 1, "repo");
 
-      completeClone();
+      completeClone("https://github.com/org/repo.git");
 
-      expect(cloneState.value).toBeNull();
+      expect(getClone("https://github.com/org/repo.git")).toBeUndefined();
+      expect(hasActiveClones.value).toBe(false);
     });
 
-    it("is a no-op when no clone is active", () => {
-      completeClone();
-      expect(cloneState.value).toBeNull();
+    it("only removes the matching clone", () => {
+      startClone("https://github.com/org/repo1.git");
+      startClone("https://github.com/org/repo2.git");
+
+      completeClone("https://github.com/org/repo1.git");
+
+      expect(getClone("https://github.com/org/repo1.git")).toBeUndefined();
+      expect(getClone("https://github.com/org/repo2.git")).toBeDefined();
+      expect(activeClones.value).toHaveLength(1);
+    });
+
+    it("is a no-op when URL is not tracked", () => {
+      completeClone("https://github.com/org/repo.git");
+      expect(hasActiveClones.value).toBe(false);
+    });
+  });
+
+  describe("getClone", () => {
+    it("returns undefined for unknown URL", () => {
+      expect(getClone("https://github.com/org/repo.git")).toBeUndefined();
+    });
+
+    it("returns clone state for tracked URL", () => {
+      startClone("https://github.com/org/repo.git");
+      updateCloneProgress("https://github.com/org/repo.git", "receiving", 0.75, "repo");
+
+      const state = getClone("https://github.com/org/repo.git");
+      expect(state?.url).toBe("https://github.com/org/repo.git");
+      expect(state?.progress).toBe(0.75);
+    });
+  });
+
+  describe("activeClones", () => {
+    it("returns empty array when no clones", () => {
+      expect(activeClones.value).toEqual([]);
+    });
+
+    it("returns all active clones", () => {
+      startClone("https://github.com/org/repo1.git");
+      startClone("https://github.com/org/repo2.git");
+
+      const clones = activeClones.value;
+      expect(clones).toHaveLength(2);
+      const urls = clones.map((c) => c.url);
+      expect(urls).toContain("https://github.com/org/repo1.git");
+      expect(urls).toContain("https://github.com/org/repo2.git");
+    });
+  });
+
+  describe("hasActiveClones", () => {
+    it("returns false when no clones", () => {
+      expect(hasActiveClones.value).toBe(false);
+    });
+
+    it("returns true when clones are active", () => {
+      startClone("https://github.com/org/repo.git");
+      expect(hasActiveClones.value).toBe(true);
+    });
+
+    it("returns false after all clones complete", () => {
+      startClone("https://github.com/org/repo.git");
+      completeClone("https://github.com/org/repo.git");
+      expect(hasActiveClones.value).toBe(false);
     });
   });
 
@@ -95,12 +174,13 @@ describe("clone-progress store", () => {
 
   describe("reset", () => {
     it("clears all state", () => {
-      startClone("https://github.com/org/repo.git");
-      updateCloneProgress("receiving", 0.5, "repo");
+      startClone("https://github.com/org/repo1.git");
+      startClone("https://github.com/org/repo2.git");
 
       reset();
 
-      expect(cloneState.value).toBeNull();
+      expect(hasActiveClones.value).toBe(false);
+      expect(activeClones.value).toEqual([]);
     });
   });
 });

@@ -26,7 +26,7 @@
     loadingError: string | null;
     shortcutModeActive?: boolean;
     totalWorkspaces: number;
-    cloneInProgress: CloneState | null;
+    activeClones: readonly CloneState[];
     onCloseProject: (projectId: ProjectId) => void;
     onSwitchWorkspace: (workspaceRef: WorkspaceRef) => void;
     onOpenCreateDialog: (projectId: ProjectId) => void;
@@ -40,7 +40,7 @@
     loadingError,
     shortcutModeActive = false,
     totalWorkspaces,
-    cloneInProgress,
+    activeClones,
     onCloseProject,
     onSwitchWorkspace,
     onOpenCreateDialog,
@@ -291,9 +291,9 @@
     {/if}
   </div>
 
-  {#if cloneInProgress}
-    {@const cloneName = cloneInProgress.name || cloneInProgress.url}
-    {@const clonePercent = Math.round(cloneInProgress.progress * 100)}
+  {#each activeClones as clone (clone.url)}
+    {@const cloneName = clone.name || clone.url}
+    {@const clonePercent = Math.round(clone.progress * 100)}
     {#if isExpanded}
       <div class="clone-entry" role="status" aria-label={`Cloning ${cloneName}`}>
         <vscode-divider></vscode-divider>
@@ -301,16 +301,16 @@
           <span class="project-icon" aria-hidden="true">
             <Icon name="source-control" size={14} />
           </span>
-          <span class="clone-entry-name" title={cloneInProgress.url}>{cloneName}</span>
-          {#if cloneInProgress.stage}
+          <span class="clone-entry-name" title={clone.url}>{cloneName}</span>
+          {#if clone.stage}
             <span class="clone-entry-pct">{clonePercent}%</span>
           {:else}
             <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
           {/if}
         </div>
-        {#if cloneInProgress.stage}
+        {#if clone.stage}
           <div class="clone-entry-progress">
-            <span class="clone-entry-stage">{stageLabel(cloneInProgress.stage)}</span>
+            <span class="clone-entry-stage">{stageLabel(clone.stage)}</span>
           </div>
         {/if}
       </div>
@@ -319,7 +319,7 @@
         <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
       </div>
     {/if}
-  {/if}
+  {/each}
 </nav>
 
 <style>
