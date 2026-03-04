@@ -3,7 +3,7 @@
  *
  * Hooks:
  * - app:start → "before-ready": registers global error handlers (only if telemetry.enabled)
- * - app:start → "start": captures "app_launched" event with platform/agent info
+ * - app:start → "start": generates distinct ID if needed, captures "app_launched" event
  * - app:shutdown → "stop": flushes and shuts down telemetry service (best-effort)
  *
  * Events:
@@ -81,6 +81,23 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
         },
         start: {
           handler: async (): Promise<StartHookResult> => {
+            // Generate distinctId if needed (after init has loaded stored config)
+            if (telemetryEnabled && !distinctId && deps.telemetryService) {
+              const newId = deps.telemetryService.generateDistinctId();
+              if (newId) {
+                distinctId = newId;
+                deps.telemetryService.configure({
+                  enabled: telemetryEnabled,
+                  distinctId: newId,
+                  agent: configuredAgent ?? undefined,
+                });
+                await deps.dispatcher.dispatch({
+                  type: INTENT_CONFIG_SET_VALUES,
+                  payload: { values: { "telemetry.distinct-id": newId } },
+                } as ConfigSetValuesIntent);
+              }
+            }
+
             if (configuredAgent !== undefined) {
               deps.telemetryService?.capture("app_launched", {
                 platform: deps.platformInfo.platform,
@@ -115,8 +132,9 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
           telemetryEnabled = values["telemetry.enabled"] as boolean;
         }
 
-        if (values["telemetry.distinct-id"] !== undefined) {
-          distinctId = values["telemetry.distinct-id"] as string;
+        const rawDistinctId = values["telemetry.distinct-id"];
+        if (typeof rawDistinctId === "string") {
+          distinctId = rawDistinctId;
         }
 
         // Configure telemetry service when relevant values arrive
@@ -130,18 +148,6 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
           // Register error handlers when telemetry is enabled
           if (telemetryEnabled) {
             registerErrorHandlers();
-          }
-
-          // Generate distinctId if telemetry is enabled but no id yet
-          if (telemetryEnabled && !distinctId) {
-            const newId = deps.telemetryService.generateDistinctId();
-            if (newId) {
-              distinctId = newId;
-              void deps.dispatcher.dispatch({
-                type: INTENT_CONFIG_SET_VALUES,
-                payload: { values: { "telemetry.distinct-id": newId } },
-              } as ConfigSetValuesIntent);
-            }
           }
         }
       },

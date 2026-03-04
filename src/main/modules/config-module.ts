@@ -338,11 +338,6 @@ export function createConfigModule(deps: ConfigModuleDeps): IntentModule {
               definitionMap.set(def.name, def);
             }
 
-            // Seed effective with static defaults so first dispatch only reports actual changes
-            for (const [key, def] of definitionMap) {
-              effective[key] = def.default;
-            }
-
             // Build defaults (static + computed)
             const computedDefaultCtx: ComputedDefaultContext = {
               isDevelopment: deps.isDevelopment,

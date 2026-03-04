@@ -328,24 +328,17 @@ describe("TelemetryModule Integration", () => {
       }
     });
 
-    it("generates distinctId and dispatches config:set-values when no id yet", async () => {
-      const { dispatcher, tracking, configureCalls } = createTestSetup();
+    it("does not generate distinctId during config:updated (deferred to start hook)", async () => {
+      const { dispatcher, configureCalls } = createTestSetup();
 
-      // Telemetry enabled but no distinctId
+      // Telemetry enabled but no distinctId — ID generation is deferred to start hook
       await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
 
-      // First configure call from the initial event
-      expect(configureCalls).toHaveLength(2);
-      // First: from the initial config:updated
+      // Only one configure call from config:updated (no nested dispatch for ID generation)
+      expect(configureCalls).toHaveLength(1);
       expect(configureCalls[0]).toEqual({
         enabled: true,
         distinctId: undefined,
-        agent: undefined,
-      });
-      // Second: from the nested config:set-values dispatch that set the generated id
-      expect(configureCalls[1]).toEqual({
-        enabled: true,
-        distinctId: tracking.generateDistinctIdResult,
         agent: undefined,
       });
     });
@@ -420,6 +413,50 @@ describe("TelemetryModule Integration", () => {
 
       await dispatcher.dispatch(configSetValuesIntent({ agent: "opencode" }));
       await dispatcher.dispatch(startIntent());
+    });
+
+    it("generates distinctId during start hook when telemetry enabled and no id", async () => {
+      const { dispatcher, tracking, configureCalls } = createTestSetup();
+
+      // Simulate config:updated with telemetry enabled but no distinctId
+      await dispatcher.dispatch(
+        configSetValuesIntent({ "telemetry.enabled": true, agent: "claude" })
+      );
+
+      // Only the initial configure call — no ID generation yet
+      expect(configureCalls).toHaveLength(1);
+      expect(configureCalls[0]!.distinctId).toBeUndefined();
+
+      // Start hook triggers ID generation
+      await dispatcher.dispatch(startIntent());
+
+      // Start hook calls configure directly (2nd), then dispatches config:set-values
+      // which triggers config:updated → configure again (3rd)
+      expect(configureCalls).toHaveLength(3);
+      expect(configureCalls[1]).toEqual({
+        enabled: true,
+        distinctId: tracking.generateDistinctIdResult,
+        agent: "claude",
+      });
+    });
+
+    it("stored distinct-id from init takes precedence over generation", async () => {
+      const { dispatcher, configureCalls } = createTestSetup();
+
+      // Simulate init loading stored ID via config:updated
+      await dispatcher.dispatch(
+        configSetValuesIntent({
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "stored-id-from-config",
+          agent: "opencode",
+        })
+      );
+
+      await dispatcher.dispatch(startIntent());
+
+      // No additional configure call from start hook — ID already exists
+      expect(configureCalls).toHaveLength(1);
+      expect(configureCalls[0]!.distinctId).toBe("stored-id-from-config");
     });
   });
 
