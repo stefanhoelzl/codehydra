@@ -453,9 +453,20 @@ export class CodeServerManager {
       this.logger.info("Started", { port, pid: this.currentPid ?? 0 });
       return port;
     } catch (error: unknown) {
+      const proc = this.process;
       this.currentPort = null;
       this.currentPid = null;
       this.process = null;
+
+      // Kill the orphaned process to release the port
+      if (proc) {
+        try {
+          await proc.kill(PROCESS_KILL_GRACEFUL_TIMEOUT_MS, PROCESS_KILL_FORCE_TIMEOUT_MS);
+        } catch {
+          // Best-effort cleanup — log but don't mask the original error
+          this.logger.warn("Failed to kill code-server after start failure");
+        }
+      }
 
       const errorMsg = getErrorMessage(error);
       this.logger.error("Start failed", { error: errorMsg });

@@ -530,6 +530,63 @@ describe("CodeServerManager Integration", () => {
     });
   });
 
+  describe("start failure cleanup", () => {
+    it("kills the spawned process when health check times out", async () => {
+      vi.useFakeTimers();
+
+      try {
+        const processRunner = createMockProcessRunner({
+          onSpawn: () => ({ pid: 99999, running: true }),
+        });
+
+        // Health check always returns non-200, so it never becomes healthy
+        const httpClient = createMockHttpClient({ defaultResponse: { status: 503 } });
+        const portManager = createPortManagerMock([8080]);
+        const config = {
+          port: CODE_SERVER_PORT,
+          binaryPath: "/app/code-server",
+          runtimeDir: "/tmp/runtime",
+          extensionsDir: "/tmp/extensions",
+          userDataDir: "/tmp/user-data",
+          binDir: "/app/bin",
+          codeServerDir: "/app/code-server-dir",
+          opencodeDir: "/app/opencode-dir",
+        };
+
+        const manager = new CodeServerManager(
+          config,
+          processRunner,
+          httpClient,
+          portManager,
+          testLogger
+        );
+
+        // Start ensureRunning (will block on health check).
+        // Attach a catch handler immediately to prevent unhandled rejection warnings,
+        // since the rejection fires before the await in ensureRunning handles it.
+        let caughtError: unknown;
+        const startPromise = manager.ensureRunning().catch((err: unknown) => {
+          caughtError = err;
+        });
+
+        // Advance past the 10s health check timeout
+        await vi.advanceTimersByTimeAsync(11_000);
+
+        await startPromise;
+
+        // Verify the start failed with a timeout error
+        expect(caughtError).toBeDefined();
+        expect(String(caughtError)).toContain("Failed to start code-server");
+
+        // Verify the spawned process was killed to avoid orphaning
+        const spawned = processRunner.$.spawned(0);
+        expect(spawned).toHaveBeenKilled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe("setCodeServerVersion", () => {
     it("updates binaryPath, codeServerDir, and download request", async () => {
       const processRunner = createMockProcessRunner({
