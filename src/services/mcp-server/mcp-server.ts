@@ -9,8 +9,8 @@
  * initialize request, and cleaned up when the client disconnects or the server stops.
  *
  * Workspace resolution is handled by the intent system — the MCP server passes
- * workspacePath directly to API methods. For `create`, it uses `callerWorkspacePath`
- * so the intent hooks resolve the project from the calling workspace.
+ * workspacePath directly to API methods. For `create`, the agent provides
+ * projectPath directly (discovered via `project_list` tool).
  */
 
 import {
@@ -64,6 +64,9 @@ export const SERVER_INSTRUCTIONS = [
   "- No agent field — the agent starts with full permissions. Use this when the task should proceed directly to implementation.",
   "",
   "The model is automatically propagated from your current session — you do not need to specify it.",
+  "",
+  "When working with tool results, write down any important information you might need later in your response,",
+  "as the original tool result may be cleared later.",
 ].join("\n");
 
 export function createDefaultMcpServer(): McpServerSdk {
@@ -442,13 +445,40 @@ export class McpServer implements IMcpServer {
       )
     );
 
+    // project_list
+    mcpServer.registerTool(
+      "project_list",
+      {
+        description:
+          "List all open projects with their workspaces. " +
+          "Call this before workspace_create to discover available projects and their projectPath values.",
+        inputSchema: z.object({}),
+      },
+      async () => {
+        try {
+          const projects = await this.handlers.listProjects();
+          return this.successResult(projects);
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
     // workspace_create
     mcpServer.registerTool(
       "workspace_create",
       {
         description:
-          "Create a new workspace in the same project as the caller. Returns the created workspace.",
+          "Create a new workspace in the specified project. " +
+          "Requires projectPath — use project_list to discover available projects. " +
+          "Returns the created workspace.",
         inputSchema: z.object({
+          projectPath: z
+            .string()
+            .min(1)
+            .describe(
+              "Project path to create the workspace in. Use project_list to discover available projects."
+            ),
           name: z.string().min(1).describe("Name for the new workspace (becomes branch name)"),
           base: z.string().min(1).describe("Base branch to create the workspace from"),
           initialPrompt: initialPromptSchema
@@ -469,11 +499,9 @@ export class McpServer implements IMcpServer {
       },
       async (args, extra) => {
         const workspacePath = this.getWorkspacePathFromExtra(extra);
-        if (!workspacePath) {
-          return this.errorResult("workspace-not-found", "Missing workspace path");
-        }
 
         try {
+          const projectPath = args.projectPath as string;
           const name = args.name as string;
           const base = args.base as string;
           const rawInitialPrompt = args.initialPrompt as
@@ -490,7 +518,7 @@ export class McpServer implements IMcpServer {
 
             // If no model specified, try to get caller's current model
             let model = normalized.model;
-            if (!model) {
+            if (!model && workspacePath) {
               model = await this.getCallerModel(workspacePath);
             }
 
@@ -504,9 +532,8 @@ export class McpServer implements IMcpServer {
             }
           }
 
-          // Create workspace with callerWorkspacePath (intent resolves project)
           const result = await this.handlers.createWorkspace({
-            callerWorkspacePath: workspacePath,
+            projectPath,
             name,
             base,
             ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
@@ -603,7 +630,7 @@ export class McpServer implements IMcpServer {
       }
     );
 
-    this.logger.debug("Registered tools", { count: 9 });
+    this.logger.debug("Registered tools", { count: 10 });
   }
 
   /**

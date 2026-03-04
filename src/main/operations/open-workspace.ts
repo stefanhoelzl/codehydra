@@ -5,8 +5,6 @@
  * results that are merged field-by-field with conflict detection.
  *
  * Steps:
- * 0. If callerWorkspacePath:
- *    Dispatch workspace:resolve to get projectPath
  * 1. Dispatch project:resolve to get projectId from projectPath
  * 2. "create" → CreateHookResult — worktree creation (fatal)
  *    "setup" → SetupHookResult — keepfiles (best-effort, internal try/catch),
@@ -32,7 +30,6 @@ import type { AgentType } from "../../shared/plugin-protocol";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 
@@ -49,12 +46,6 @@ export interface ExistingWorkspaceData {
 }
 
 export interface OpenWorkspacePayload {
-  /**
-   * Workspace path of the calling workspace.
-   * Used by Plugin API / MCP server as an alternative to projectPath.
-   * When present, resolved via dispatch to determine projectPath.
-   */
-  readonly callerWorkspacePath?: string;
   readonly workspaceName: string;
   readonly base: string;
   readonly initialPrompt?: InitialPrompt;
@@ -64,7 +55,7 @@ export interface OpenWorkspacePayload {
   /** When set, skip worktree creation and populate context from existing workspace data. */
   readonly existingWorkspace?: ExistingWorkspaceData;
   /** Authoritative project path. */
-  readonly projectPath?: string;
+  readonly projectPath: string;
 }
 
 export type OpenWorkspaceResult = Workspace;
@@ -109,17 +100,6 @@ export const OPEN_WORKSPACE_OPERATION_ID = "open-workspace";
 // =============================================================================
 // Per-hook-point types
 // =============================================================================
-
-/** Input context for the "resolve-caller" hook point (callerWorkspacePath resolution). */
-export interface ResolveCallerHookInput extends HookContext {
-  readonly callerWorkspacePath: string;
-}
-
-/** Result from the "resolve-caller" hook point. */
-export interface ResolveCallerHookResult {
-  readonly projectPath?: string;
-  readonly workspaceName?: WorkspaceName;
-}
 
 /** Input context for the "create" hook point (enriched with resolved project path). */
 export interface CreateHookInput extends HookContext {
@@ -177,20 +157,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
 
   async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
-    let projectPath: string | undefined = ctx.intent.payload.projectPath;
-
-    // If callerWorkspacePath provided (Plugin API / MCP), resolve via dispatch
-    if (ctx.intent.payload.callerWorkspacePath && !projectPath) {
-      const wsResolved = await ctx.dispatch({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath: ctx.intent.payload.callerWorkspacePath },
-      } as ResolveWorkspaceIntent);
-      projectPath = wsResolved.projectPath;
-    }
-
-    if (!projectPath) {
-      throw new Error("projectPath is required");
-    }
+    const { projectPath } = ctx.intent.payload;
 
     // Dispatch project:resolve to get projectId from projectPath
     const projResolved = await ctx.dispatch({

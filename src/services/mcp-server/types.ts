@@ -7,6 +7,7 @@ import type {
   WorkspaceStatus,
   AgentSession,
   Workspace,
+  Project,
   InitialPrompt,
 } from "../../shared/api/types";
 
@@ -46,8 +47,9 @@ export interface McpApiHandlers {
   setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
   getAgentSession(workspacePath: string): Promise<AgentSession | null>;
   restartAgentServer(workspacePath: string): Promise<number>;
+  listProjects(): Promise<readonly Project[]>;
   createWorkspace(options: {
-    callerWorkspacePath: string;
+    projectPath: string;
     name: string;
     base: string;
     initialPrompt?: InitialPrompt;

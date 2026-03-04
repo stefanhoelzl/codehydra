@@ -65,6 +65,7 @@ function createMockHandlers(overrides?: Partial<McpApiHandlers>): McpApiHandlers
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getAgentSession: vi.fn().mockResolvedValue(null),
     restartAgentServer: vi.fn().mockResolvedValue(14001),
+    listProjects: vi.fn().mockResolvedValue([]),
     createWorkspace: vi.fn().mockResolvedValue({ name: "test", path: "/path" }),
     deleteWorkspace: vi.fn().mockResolvedValue({ started: true }),
     executeCommand: vi.fn().mockResolvedValue(undefined),
@@ -175,6 +176,32 @@ function createToolHandlers(handlers: McpApiHandlers) {
           args.command,
           args.args
         );
+        return successResult(result);
+      } catch (error) {
+        return handleError(error);
+      }
+    },
+
+    project_list: async (): Promise<ToolResult> => {
+      try {
+        const projects = await handlers.listProjects();
+        return successResult(projects);
+      } catch (error) {
+        return handleError(error);
+      }
+    },
+
+    workspace_create: async (
+      _context: SimulatedToolContext,
+      args: { projectPath: string; name: string; base: string; stealFocus?: boolean }
+    ): Promise<ToolResult> => {
+      try {
+        const result = await handlers.createWorkspace({
+          projectPath: args.projectPath,
+          name: args.name,
+          base: args.base,
+          stealFocus: args.stealFocus ?? false,
+        });
         return successResult(result);
       } catch (error) {
         return handleError(error);
@@ -619,6 +646,119 @@ describe("MCP Tools", () => {
       if (!parsed.success) {
         expect(parsed.error.code).toBe("internal-error");
         expect(parsed.error.message).toBe("Command timed out");
+      }
+    });
+  });
+
+  describe("project_list", () => {
+    it("returns projects from handler", async () => {
+      const mockProjects = [
+        { id: "proj-1", name: "my-project", path: "/projects/my-project", workspaces: [] },
+      ];
+      const mockHandlers = createMockHandlers({
+        listProjects: vi.fn().mockResolvedValue(mockProjects),
+      });
+
+      const toolHandlers = createToolHandlers(mockHandlers);
+
+      const result = await toolHandlers.project_list();
+      const parsed = parseToolResult<typeof mockProjects>(result);
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data).toEqual(mockProjects);
+      }
+    });
+
+    it("returns empty array when no projects open", async () => {
+      const mockHandlers = createMockHandlers();
+      const toolHandlers = createToolHandlers(mockHandlers);
+
+      const result = await toolHandlers.project_list();
+      const parsed = parseToolResult<unknown[]>(result);
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data).toEqual([]);
+      }
+    });
+
+    it("propagates errors", async () => {
+      const mockHandlers = createMockHandlers({
+        listProjects: vi.fn().mockRejectedValue(new Error("List failed")),
+      });
+      const toolHandlers = createToolHandlers(mockHandlers);
+
+      const result = await toolHandlers.project_list();
+      const parsed = parseToolResult<unknown>(result);
+
+      expect(parsed.success).toBe(false);
+      if (!parsed.success) {
+        expect(parsed.error.code).toBe("internal-error");
+      }
+    });
+  });
+
+  describe("workspace_create", () => {
+    it("calls handler with projectPath", async () => {
+      const mockWorkspace = { name: "feature", path: "/workspaces/feature" };
+      const createMock = vi.fn().mockResolvedValue(mockWorkspace);
+      const mockHandlers = createMockHandlers({ createWorkspace: createMock });
+      const toolHandlers = createToolHandlers(mockHandlers);
+      const context = createContext();
+
+      const result = await toolHandlers.workspace_create(context, {
+        projectPath: "/projects/my-project",
+        name: "feature",
+        base: "main",
+      });
+      const parsed = parseToolResult<typeof mockWorkspace>(result);
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data).toEqual(mockWorkspace);
+      }
+      expect(createMock).toHaveBeenCalledWith({
+        projectPath: "/projects/my-project",
+        name: "feature",
+        base: "main",
+        stealFocus: false,
+      });
+    });
+
+    it("passes stealFocus when provided", async () => {
+      const createMock = vi.fn().mockResolvedValue({ name: "ws", path: "/ws" });
+      const mockHandlers = createMockHandlers({ createWorkspace: createMock });
+      const toolHandlers = createToolHandlers(mockHandlers);
+      const context = createContext();
+
+      await toolHandlers.workspace_create(context, {
+        projectPath: "/projects/my-project",
+        name: "ws",
+        base: "main",
+        stealFocus: true,
+      });
+
+      expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ stealFocus: true }));
+    });
+
+    it("propagates errors", async () => {
+      const mockHandlers = createMockHandlers({
+        createWorkspace: vi.fn().mockRejectedValue(new Error("Create failed")),
+      });
+      const toolHandlers = createToolHandlers(mockHandlers);
+      const context = createContext();
+
+      const result = await toolHandlers.workspace_create(context, {
+        projectPath: "/projects/my-project",
+        name: "ws",
+        base: "main",
+      });
+      const parsed = parseToolResult<unknown>(result);
+
+      expect(parsed.success).toBe(false);
+      if (!parsed.success) {
+        expect(parsed.error.code).toBe("internal-error");
       }
     });
   });

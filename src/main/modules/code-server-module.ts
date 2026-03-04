@@ -69,6 +69,8 @@ import { INTENT_GET_METADATA } from "../operations/get-metadata";
 import type { GetMetadataIntent } from "../operations/get-metadata";
 import { INTENT_SET_METADATA } from "../operations/set-metadata";
 import type { SetMetadataIntent } from "../operations/set-metadata";
+import { INTENT_RESOLVE_WORKSPACE } from "../operations/resolve-workspace";
+import type { ResolveWorkspaceIntent } from "../operations/resolve-workspace";
 import { urlForWorkspace, urlForFolder } from "../../services/code-server/code-server-manager";
 import {
   CODE_SERVER_VERSION,
@@ -628,10 +630,16 @@ function createPluginApiHandlers(
         workspacePath,
         "create",
         async () => {
+          // Resolve workspacePath → projectPath before dispatching workspace:open
+          const resolved = await dispatcher.dispatch({
+            type: INTENT_RESOLVE_WORKSPACE,
+            payload: { workspacePath },
+          } as ResolveWorkspaceIntent);
+
           const intent: OpenWorkspaceIntent = {
             type: INTENT_OPEN_WORKSPACE,
             payload: {
-              callerWorkspacePath: workspacePath,
+              projectPath: resolved.projectPath,
               workspaceName: request.name,
               base: request.base,
               ...(request.initialPrompt !== undefined && {

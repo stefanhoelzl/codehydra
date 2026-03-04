@@ -23,6 +23,8 @@ import { INTENT_OPEN_WORKSPACE } from "../operations/open-workspace";
 import type { OpenWorkspaceIntent } from "../operations/open-workspace";
 import { INTENT_DELETE_WORKSPACE } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
+import { INTENT_LIST_PROJECTS } from "../operations/list-projects";
+import type { ListProjectsIntent } from "../operations/list-projects";
 
 /**
  * Create McpApiHandlers that dispatch intents via the Dispatcher.
@@ -87,11 +89,23 @@ export function createMcpHandlers(
       return result;
     },
 
+    async listProjects() {
+      const intent: ListProjectsIntent = {
+        type: INTENT_LIST_PROJECTS,
+        payload: {} as Record<string, never>,
+      };
+      const result = await dispatcher.dispatch(intent);
+      if (!result) {
+        throw new Error("List projects dispatch returned no result");
+      }
+      return result;
+    },
+
     async createWorkspace(options) {
       const intent: OpenWorkspaceIntent = {
         type: INTENT_OPEN_WORKSPACE,
         payload: {
-          callerWorkspacePath: options.callerWorkspacePath,
+          projectPath: options.projectPath,
           workspaceName: options.name,
           base: options.base,
           ...(options.initialPrompt !== undefined && { initialPrompt: options.initialPrompt }),

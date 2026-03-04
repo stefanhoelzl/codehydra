@@ -21,6 +21,7 @@ function createMockMcpHandlers(): McpApiHandlers {
     setMetadata: vi.fn(),
     getAgentSession: vi.fn(),
     restartAgentServer: vi.fn(),
+    listProjects: vi.fn(),
     createWorkspace: vi.fn(),
     deleteWorkspace: vi.fn(),
     executeCommand: vi.fn(),

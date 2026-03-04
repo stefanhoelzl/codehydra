@@ -43,6 +43,7 @@ function createMockMcpHandlers(overrides?: Partial<McpApiHandlers>): McpApiHandl
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getAgentSession: vi.fn().mockResolvedValue(14001),
     restartAgentServer: vi.fn().mockResolvedValue(14001),
+    listProjects: vi.fn().mockResolvedValue([]),
     createWorkspace: vi.fn().mockResolvedValue({
       name: "test",
       path: "/path",
@@ -172,9 +173,10 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_restart_agent_server");
       expect(toolNames).toContain("workspace_delete");
       expect(toolNames).toContain("workspace_execute_command");
+      expect(toolNames).toContain("project_list");
       expect(toolNames).toContain("workspace_create");
       expect(toolNames).toContain("log");
-      expect(tools.length).toBe(9);
+      expect(tools.length).toBe(10);
     });
 
     it("workspace_restart_agent_server tool calls handler and returns port", async () => {

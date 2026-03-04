@@ -99,7 +99,7 @@ export interface ProjectPathPayload {
 
 /** workspaces.create */
 export interface WorkspaceCreatePayload {
-  readonly projectPath?: string;
+  readonly projectPath: string;
   readonly name: string;
   readonly base: string;
   /** Optional initial prompt to send after workspace is created */
@@ -107,8 +107,6 @@ export interface WorkspaceCreatePayload {
   /** If true, steal focus from current workspace. If false, don't steal focus but still
    *  switch when no workspace is active. Default: switch (undefined treated as true). */
   readonly stealFocus?: boolean;
-  /** Workspace path of the calling workspace (Plugin API / MCP alternative to projectId) */
-  readonly callerWorkspacePath?: string;
 }
 
 /** workspaces.remove */
