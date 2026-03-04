@@ -600,8 +600,8 @@ describe("ConfigModule Integration", () => {
       expect(result).not.toHaveProperty("scripts");
     });
 
-    it("no config:updated when merged config matches defaults (production)", async () => {
-      // isPackaged=true + isDevelopment=false → no computed defaults differ from static defaults
+    it("emits all keys including static defaults on first dispatch (production)", async () => {
+      // isPackaged=true + isDevelopment=false → all values emitted (no seed to suppress them)
       const { dispatcher } = createTestSetup({ isDevelopment: false, isPackaged: true });
 
       const events: ConfigUpdatedEvent[] = [];
@@ -614,8 +614,11 @@ describe("ConfigModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      // Dispatch happens but no values changed → no config:updated event
-      expect(events).toHaveLength(0);
+      // All keys are emitted on first dispatch — subscribers need full initial config
+      expect(events).toHaveLength(1);
+      const values = events[0]!.payload.values;
+      expect(values).toHaveProperty("test.string");
+      expect(values).toHaveProperty("test.level");
     });
   });
 
@@ -648,12 +651,13 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent)) as unknown as { configuredAgent?: string | null };
 
       expect(result.configuredAgent).toBe("claude");
-      // Only init should produce changes (agent, test.nullable, test.enum from file)
-      const initEvents = events.filter((e) => e.payload.values.agent !== undefined);
-      expect(initEvents).toHaveLength(1);
-      expect(initEvents[0]!.payload.values.agent).toBe("claude");
-      expect(initEvents[0]!.payload.values["test.nullable"]).toBe("custom-val");
-      expect(initEvents[0]!.payload.values["test.enum"]).toBe("never");
+      // First event: before-ready emits all defaults; second: init emits file delta
+      expect(events).toHaveLength(2);
+      // Init delta contains file values that differ from defaults
+      const initEvent = events[1]!;
+      expect(initEvent.payload.values.agent).toBe("claude");
+      expect(initEvent.payload.values["test.nullable"]).toBe("custom-val");
+      expect(initEvent.payload.values["test.enum"]).toBe("never");
     });
 
     it("enum value from config.json round-trips through init", async () => {
@@ -674,9 +678,10 @@ describe("ConfigModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      const enumEvents = events.filter((e) => e.payload.values["test.enum"] !== undefined);
-      expect(enumEvents).toHaveLength(1);
-      expect(enumEvents[0]!.payload.values["test.enum"]).toBe("never");
+      // before-ready emits default "always", init emits file override "never"
+      expect(events).toHaveLength(2);
+      expect(events[0]!.payload.values["test.enum"]).toBe("always");
+      expect(events[1]!.payload.values["test.enum"]).toBe("never");
     });
 
     it("returns configuredAgent from effective config", async () => {
@@ -709,7 +714,8 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent)) as unknown as { configuredAgent?: string | null };
 
       expect(result.configuredAgent).toBeNull();
-      expect(events).toHaveLength(0);
+      // before-ready emits all defaults; init has no delta (no file)
+      expect(events).toHaveLength(1);
     });
 
     it("uses defaults when config.json is corrupt JSON", async () => {
@@ -730,7 +736,8 @@ describe("ConfigModule Integration", () => {
       } as AppStartIntent)) as unknown as { configuredAgent?: string | null };
 
       expect(result.configuredAgent).toBeNull();
-      expect(events).toHaveLength(0);
+      // before-ready emits all defaults; init has no delta (corrupt file ignored)
+      expect(events).toHaveLength(1);
     });
   });
 
@@ -998,7 +1005,7 @@ describe("ConfigModule Integration", () => {
       expect(devFlagEvent!.payload.values["test.dev-flag"]).toBe(false);
     });
 
-    it("isPackaged=true and isDevelopment=false leaves static defaults unchanged", async () => {
+    it("isPackaged=true and isDevelopment=false emits all defaults then no init delta", async () => {
       const { dispatcher } = createTestSetup({ isDevelopment: false, isPackaged: true });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation());
@@ -1011,9 +1018,9 @@ describe("ConfigModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      // No computed defaults override static defaults, and file defaults match static defaults.
-      // No changes should be emitted.
-      expect(events).toHaveLength(0);
+      // before-ready emits all keys (including static defaults); init has no delta
+      expect(events).toHaveLength(1);
+      expect(events[0]!.payload.values).toHaveProperty("test.string");
     });
 
     it("config file overrides computed defaults", async () => {
