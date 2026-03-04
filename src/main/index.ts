@@ -138,6 +138,7 @@ import {
   GetActiveWorkspaceOperation,
   INTENT_GET_ACTIVE_WORKSPACE,
 } from "./operations/get-active-workspace";
+import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "./operations/list-projects";
 import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./operations/open-workspace";
 import { GetProjectBasesOperation, INTENT_GET_PROJECT_BASES } from "./operations/get-project-bases";
 import {
@@ -599,6 +600,7 @@ dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatus
 dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
 dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
 dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
+dispatcher.registerOperation(INTENT_LIST_PROJECTS, new ListProjectsOperation());
 dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
 dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, new GetProjectBasesOperation());
 

@@ -45,6 +45,11 @@ import {
   type ResolveHookInput as ResolveProjectHookInput,
   type ResolveHookResult as ResolveProjectHookResult,
 } from "../operations/resolve-project";
+import {
+  LIST_PROJECTS_OPERATION_ID,
+  type ListProjectsHookResult,
+  type ListProjectsHookEntry,
+} from "../operations/list-projects";
 
 // =============================================================================
 // Types
@@ -425,6 +430,23 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
           handler: async (): Promise<ActivateHookResult> => {
             const configs = await loadAllProjectConfigs(fs, projectsDir);
             return { projectPaths: configs.map((c) => c.path) };
+          },
+        },
+      },
+
+      // list-projects -> list-projects
+      [LIST_PROJECTS_OPERATION_ID]: {
+        "list-projects": {
+          handler: async (): Promise<ListProjectsHookResult> => {
+            const entries: ListProjectsHookEntry[] = [];
+            for (const [key, project] of projects) {
+              entries.push({
+                projectId: project.id,
+                name: project.name,
+                path: key,
+              });
+            }
+            return { projects: entries };
           },
         },
       },
