@@ -381,6 +381,26 @@ export class DeleteWorkspaceOperation implements Operation<
       workspacePath: payload.workspacePath,
     };
 
+    // Safety net: catch unexpected errors after identity resolution to ensure
+    // the UI always receives a terminal progress event (completed: true).
+    // Without this, an unexpected throw after the first progress emission
+    // leaves the UI permanently stuck on "Removing workspace".
+    try {
+      return await this.runPipelineBody(ctx, emit, identity, pipelineCtx);
+    } catch {
+      this.emitPipelineProgress(emit, identity, payload, {}, true, true);
+      return { hasErrors: true, identity };
+    }
+  }
+
+  private async runPipelineBody(
+    ctx: OperationContext<DeleteWorkspaceIntent>,
+    emit: EmitFn,
+    identity: ResolvedIdentity,
+    pipelineCtx: DeletePipelineHookInput
+  ): Promise<PipelineResult> {
+    const { payload } = ctx.intent;
+
     // --- Shutdown ---
     this.emitPipelineProgress(emit, identity, payload, {}, false, false, "kill-terminals");
     const { results: shutdownResults, errors: shutdownCollectErrors } =

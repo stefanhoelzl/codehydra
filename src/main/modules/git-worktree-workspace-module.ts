@@ -322,9 +322,8 @@ export function createGitWorktreeWorkspaceModule(
                     error: getErrorMessage(error),
                   });
                   unregisterWorkspaceFromState(projectPath, wsPath);
-                  return { error: getErrorMessage(error) };
                 }
-                throw error;
+                return { error: getErrorMessage(error) };
               }
             }
 
