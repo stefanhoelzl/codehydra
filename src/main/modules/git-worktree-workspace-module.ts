@@ -10,6 +10,7 @@
  * - delete-workspace: remove worktree
  * - switch-workspace: find candidates
  * - get-workspace-status: check dirty status
+ * - list-projects: list workspaces per project
  *
  * Uses GitWorktreeProvider directly (no ProjectScopedWorkspaceProvider adapter).
  * Maintains its own workspace state in closure-scoped maps.
@@ -55,6 +56,11 @@ import {
   type GetStatusHookInput,
   type GetStatusHookResult,
 } from "../operations/get-workspace-status";
+import {
+  LIST_PROJECTS_OPERATION_ID,
+  type ListWorkspacesHookResult,
+  type ListWorkspacesHookEntry,
+} from "../operations/list-projects";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 import { getErrorMessage } from "../../services/errors";
@@ -364,6 +370,22 @@ export function createGitWorktreeWorkspaceModule(
             const { workspacePath: wsPath } = ctx as GetStatusHookInput;
             const isDirty = await globalProvider.isDirty(new Path(wsPath));
             return { isDirty };
+          },
+        },
+      },
+
+      // list-projects -> list-workspaces
+      [LIST_PROJECTS_OPERATION_ID]: {
+        "list-workspaces": {
+          handler: async (): Promise<ListWorkspacesHookResult> => {
+            const entries: ListWorkspacesHookEntry[] = [];
+            for (const [key, wsList] of workspaces) {
+              entries.push({
+                projectPath: key,
+                workspaces: wsList,
+              });
+            }
+            return { entries };
           },
         },
       },
