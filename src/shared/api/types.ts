@@ -380,6 +380,8 @@ export interface CloneProgress {
   readonly progress: number;
   /** Repository name (e.g., "my-project") */
   readonly name: string;
+  /** Git URL being cloned (for routing progress to the correct clone) */
+  readonly url: string;
 }
 
 // =============================================================================

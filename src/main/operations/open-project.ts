@@ -138,6 +138,7 @@ export interface CloneProgressPayload {
   readonly stage: string;
   readonly progress: number;
   readonly name: string;
+  readonly url: string;
 }
 
 export interface CloneProgressEvent extends DomainEvent {
@@ -195,10 +196,11 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
 
     try {
       // Create clone progress reporter that emits domain events
+      const gitUrl = effectiveIntent.payload.git ?? "";
       const report: CloneProgressReporter = (stage, progress, name) => {
         ctx.emit({
           type: EVENT_CLONE_PROGRESS,
-          payload: { stage, progress, name },
+          payload: { stage, progress, name, url: gitUrl },
         } as CloneProgressEvent);
       };
 

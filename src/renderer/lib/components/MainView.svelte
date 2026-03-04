@@ -59,7 +59,7 @@
   import Logo from "./Logo.svelte";
 
   import { clearDeletion, getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
-  import { cloneState } from "$lib/stores/clone-progress.svelte.js";
+  import { activeClones, hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
   import { isWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
@@ -125,7 +125,7 @@
     // Check all conditions
     // Show Create Workspace dialog when no workspaces exist (even if no projects)
     // Suppress when a background clone is running — don't interrupt with the dialog
-    const cloneRunning = cloneState.value !== null;
+    const cloneRunning = hasActiveClones.value;
     const firstProject = projectList[0];
     if (
       workspaceCount === 0 &&
@@ -292,7 +292,7 @@
     loadingError={loadingError.value}
     shortcutModeActive={shortcutModeActive.value}
     totalWorkspaces={getAllWorkspaces().length}
-    cloneInProgress={cloneState.value}
+    activeClones={activeClones.value}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
     onOpenCreateDialog={handleOpenCreateDialog}

@@ -19,7 +19,7 @@ import {
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
 import { setWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
 import { dialogState, openCreateDialog } from "$lib/stores/dialogs.svelte.js";
-import { cloneState } from "$lib/stores/clone-progress.svelte.js";
+import { hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
 import { setupDomainEvents, type DomainEventApi } from "$lib/utils/domain-events";
 import { createLogger } from "$lib/logging";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
@@ -124,7 +124,7 @@ export function setupDomainEventBindings(
           loadingState.value === "loaded" &&
           project.workspaces.length === 0 &&
           dialogState.value.type === "closed" &&
-          cloneState.value === null
+          !hasActiveClones.value
         ) {
           openCreateDialog(project.id);
         }

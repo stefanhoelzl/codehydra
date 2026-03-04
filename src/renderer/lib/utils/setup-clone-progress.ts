@@ -15,7 +15,10 @@ import { on as apiOn } from "$lib/api";
  */
 export interface CloneProgressApi {
   on(event: "project:clone-progress", handler: (payload: CloneProgress) => void): () => void;
-  on(event: "project:clone-failed", handler: (payload: { reason: string }) => void): () => void;
+  on(
+    event: "project:clone-failed",
+    handler: (payload: { reason: string; url?: string }) => void
+  ): () => void;
 }
 
 // Default API implementation
@@ -31,11 +34,13 @@ const defaultApi: CloneProgressApi = { on: apiOn };
  */
 export function setupCloneProgress(apiImpl: CloneProgressApi = defaultApi): () => void {
   const cleanupProgress = apiImpl.on("project:clone-progress", (payload) => {
-    updateCloneProgress(payload.stage, payload.progress, payload.name);
+    updateCloneProgress(payload.url, payload.stage, payload.progress, payload.name);
   });
 
-  const cleanupFailed = apiImpl.on("project:clone-failed", () => {
-    completeClone();
+  const cleanupFailed = apiImpl.on("project:clone-failed", (payload) => {
+    if (payload.url) {
+      completeClone(payload.url);
+    }
   });
 
   return () => {

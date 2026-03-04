@@ -4,7 +4,7 @@
   import { projects } from "$lib/api";
   import { openCreateDialog, closeDialog } from "$lib/stores/dialogs.svelte.js";
   import {
-    cloneState,
+    getClone,
     startClone,
     completeClone,
     stageLabel,
@@ -24,35 +24,17 @@
   let url = $state("");
   let submitError = $state<string | null>(null);
 
-  // Whether this dialog instance started the clone (vs opening while one is in progress)
-  let dialogOwnsClone = $state(false);
+  // The URL this dialog instance submitted (null if not yet submitted)
+  let cloneUrl = $state<string | null>(null);
 
-  // Clone is in progress (either started by this dialog or already running)
-  const isCloning = $derived(cloneState.value !== null);
+  // Clone is in progress for this dialog's URL
+  const cloneEntry = $derived(cloneUrl !== null ? getClone(cloneUrl) : undefined);
+  const isCloning = $derived(cloneEntry !== undefined);
 
-  // Read progress from store
-  const currentStage = $derived(cloneState.value?.stage ?? null);
-  const currentProgress = $derived(cloneState.value?.progress ?? 0);
+  // Read progress from store for this dialog's clone
+  const currentStage = $derived(cloneEntry?.stage ?? null);
+  const currentProgress = $derived(cloneEntry?.progress ?? 0);
   const progressPercent = $derived(Math.round(currentProgress * 100));
-
-  // On open, pre-fill from existing clone state if applicable.
-  // Uses a flag to run only once per dialog open (avoids re-running when
-  // startClone() changes cloneState.value, which would reset dialogOwnsClone).
-  let initialized = false;
-  $effect(() => {
-    if (!open) {
-      initialized = false;
-      return;
-    }
-    if (initialized) return;
-    initialized = true;
-    const state = cloneState.value;
-    if (state) {
-      // Clone already in progress — show progress
-      url = state.url;
-      dialogOwnsClone = false;
-    }
-  });
 
   // URL validation state
   // Validates full URLs and shorthand formats (org/repo, github.com/org/repo)
@@ -83,30 +65,38 @@
     if (isCloning || isCloneDisabled) return;
 
     submitError = null;
-    dialogOwnsClone = true;
 
     const trimmedUrl = url.trim();
+
+    // Reject if this URL is already being cloned in the background
+    if (getClone(trimmedUrl) !== undefined) {
+      submitError = "Clone already in progress for this URL";
+      return;
+    }
+
     logger.debug("Cloning repository", { url: trimmedUrl });
 
+    cloneUrl = trimmedUrl;
     startClone(trimmedUrl);
 
     // Fire clone as detached promise — dialog may close before it resolves
     void projects.clone(trimmedUrl).then(
       (project) => {
         logger.info("Repository cloned successfully", { projectId: project.id });
-        completeClone();
+        completeClone(trimmedUrl);
         // Only navigate if this dialog instance owns the clone and is still open
-        if (dialogOwnsClone) {
+        if (cloneUrl === trimmedUrl) {
           openCreateDialog(project.id);
         }
       },
       (error: unknown) => {
         const message = getErrorMessage(error);
         logger.warn("Clone failed", { url: trimmedUrl, error: message });
-        completeClone();
-        // If dialog is still open, show error inline
-        if (dialogOwnsClone) {
+        completeClone(trimmedUrl);
+        // If dialog is still open and tracking this URL, show error inline
+        if (cloneUrl === trimmedUrl) {
           submitError = message;
+          cloneUrl = null;
         }
       }
     );
@@ -114,8 +104,8 @@
 
   // Handle "Continue in background" — close dialog, clone keeps running
   function handleContinueInBackground(): void {
-    logger.debug("Clone continuing in background", { url });
-    dialogOwnsClone = false;
+    logger.debug("Clone continuing in background", { url: cloneUrl });
+    cloneUrl = null;
     closeDialog();
   }
 

@@ -206,7 +206,10 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     },
     [EVENT_PROJECT_OPEN_FAILED]: (event: DomainEvent) => {
       const payload = (event as ProjectOpenFailedEvent).payload;
-      deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, { reason: payload.reason });
+      deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, {
+        reason: payload.reason,
+        url: payload.git,
+      });
     },
     [EVENT_SETUP_ERROR]: (event: DomainEvent) => {
       const { message, code } = (event as SetupErrorEvent).payload;
