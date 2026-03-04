@@ -19,30 +19,47 @@ import * as cloneStore from "$lib/stores/clone-progress.svelte.js";
 // =============================================================================
 
 type CloneProgressHandler = (payload: CloneProgress) => void;
+type CloneFailedHandler = (payload: { reason: string }) => void;
 
 function createMockApi(): {
   api: CloneProgressApi;
-  emit: (progress: CloneProgress) => void;
-  unsubscribeCalled: () => boolean;
+  emitProgress: (progress: CloneProgress) => void;
+  emitFailed: (reason: string) => void;
+  unsubscribeProgressCalled: () => boolean;
+  unsubscribeFailedCalled: () => boolean;
 } {
-  let handler: CloneProgressHandler | undefined;
-  let unsubscribed = false;
+  let progressHandler: CloneProgressHandler | undefined;
+  let failedHandler: CloneFailedHandler | undefined;
+  let progressUnsubscribed = false;
+  let failedUnsubscribed = false;
 
   const api: CloneProgressApi = {
-    on: (_event: "project:clone-progress", h: CloneProgressHandler) => {
-      handler = h;
-      return () => {
-        handler = undefined;
-        unsubscribed = true;
-      };
-    },
+    on: ((event: string, h: (...args: never[]) => void) => {
+      if (event === "project:clone-progress") {
+        progressHandler = h as CloneProgressHandler;
+        return () => {
+          progressHandler = undefined;
+          progressUnsubscribed = true;
+        };
+      }
+      if (event === "project:clone-failed") {
+        failedHandler = h as CloneFailedHandler;
+        return () => {
+          failedHandler = undefined;
+          failedUnsubscribed = true;
+        };
+      }
+      return () => {};
+    }) as CloneProgressApi["on"],
   };
 
-  const emit = (progress: CloneProgress): void => {
-    handler?.(progress);
+  return {
+    api,
+    emitProgress: (progress) => progressHandler?.(progress),
+    emitFailed: (reason) => failedHandler?.({ reason }),
+    unsubscribeProgressCalled: () => progressUnsubscribed,
+    unsubscribeFailedCalled: () => failedUnsubscribed,
   };
-
-  return { api, emit, unsubscribeCalled: () => unsubscribed };
 }
 
 // =============================================================================
@@ -59,14 +76,14 @@ describe("setupCloneProgress", () => {
   });
 
   it("updates store when clone progress event is emitted", () => {
-    const { api, emit } = createMockApi();
+    const { api, emitProgress } = createMockApi();
 
     // Start a clone first so the store accepts updates
     cloneStore.startClone("https://github.com/org/repo.git");
 
     setupCloneProgress(api);
 
-    emit({ stage: "receiving", progress: 0.5, name: "repo" });
+    emitProgress({ stage: "receiving", progress: 0.5, name: "repo" });
 
     const state = cloneStore.cloneState.value;
     expect(state?.stage).toBe("receiving");
@@ -75,44 +92,72 @@ describe("setupCloneProgress", () => {
   });
 
   it("updates store with successive progress events", () => {
-    const { api, emit } = createMockApi();
+    const { api, emitProgress } = createMockApi();
 
     cloneStore.startClone("https://github.com/org/repo.git");
     setupCloneProgress(api);
 
-    emit({ stage: "counting", progress: 0.1, name: "repo" });
-    emit({ stage: "receiving", progress: 0.75, name: "repo" });
+    emitProgress({ stage: "counting", progress: 0.1, name: "repo" });
+    emitProgress({ stage: "receiving", progress: 0.75, name: "repo" });
 
     const state = cloneStore.cloneState.value;
     expect(state?.stage).toBe("receiving");
     expect(state?.progress).toBe(0.75);
   });
 
-  it("cleanup stops updates", () => {
-    const { api, emit, unsubscribeCalled } = createMockApi();
+  it("clears clone state when clone-failed event is emitted", () => {
+    const { api, emitFailed } = createMockApi();
+
+    cloneStore.startClone("https://github.com/org/repo.git");
+    setupCloneProgress(api);
+
+    expect(cloneStore.cloneState.value).not.toBeNull();
+
+    emitFailed("Connection refused");
+
+    expect(cloneStore.cloneState.value).toBeNull();
+  });
+
+  it("cleanup stops progress updates", () => {
+    const { api, emitProgress, unsubscribeProgressCalled } = createMockApi();
 
     cloneStore.startClone("https://github.com/org/repo.git");
     const cleanup = setupCloneProgress(api);
 
-    emit({ stage: "receiving", progress: 0.5, name: "repo" });
+    emitProgress({ stage: "receiving", progress: 0.5, name: "repo" });
     expect(cloneStore.cloneState.value?.stage).toBe("receiving");
 
     cleanup();
 
-    expect(unsubscribeCalled()).toBe(true);
+    expect(unsubscribeProgressCalled()).toBe(true);
 
     // Emit after cleanup - should not update store
-    emit({ stage: "resolving", progress: 0.8, name: "repo" });
+    emitProgress({ stage: "resolving", progress: 0.8, name: "repo" });
     expect(cloneStore.cloneState.value?.stage).toBe("receiving");
   });
 
+  it("cleanup stops failed updates", () => {
+    const { api, emitFailed, unsubscribeFailedCalled } = createMockApi();
+
+    cloneStore.startClone("https://github.com/org/repo.git");
+    const cleanup = setupCloneProgress(api);
+
+    cleanup();
+
+    expect(unsubscribeFailedCalled()).toBe(true);
+
+    // Emit after cleanup - should not clear store
+    emitFailed("Connection refused");
+    expect(cloneStore.cloneState.value).not.toBeNull();
+  });
+
   it("does not update store when no clone is active", () => {
-    const { api, emit } = createMockApi();
+    const { api, emitProgress } = createMockApi();
 
     // Don't call startClone
     setupCloneProgress(api);
 
-    emit({ stage: "receiving", progress: 0.5, name: "repo" });
+    emitProgress({ stage: "receiving", progress: 0.5, name: "repo" });
 
     expect(cloneStore.cloneState.value).toBeNull();
   });

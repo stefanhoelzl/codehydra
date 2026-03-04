@@ -292,54 +292,31 @@
   </div>
 
   {#if cloneInProgress}
-    {@const cloneHasError = cloneInProgress.error !== null}
     {@const cloneName = cloneInProgress.name || cloneInProgress.url}
     {@const clonePercent = Math.round(cloneInProgress.progress * 100)}
     {#if isExpanded}
-      <div
-        class="clone-entry"
-        role="status"
-        aria-label={cloneHasError ? "Clone failed" : `Cloning ${cloneName}`}
-      >
+      <div class="clone-entry" role="status" aria-label={`Cloning ${cloneName}`}>
         <vscode-divider></vscode-divider>
         <div class="clone-entry-row">
           <span class="project-icon" aria-hidden="true">
-            {#if cloneHasError}
-              <Icon name="warning" size={14} />
-            {:else}
-              <Icon name="source-control" size={14} />
-            {/if}
+            <Icon name="source-control" size={14} />
           </span>
           <span class="clone-entry-name" title={cloneInProgress.url}>{cloneName}</span>
-          {#if cloneHasError}
-            <span class="clone-entry-error">
-              <Icon name="warning" size={14} />
-            </span>
-          {:else if cloneInProgress.stage}
+          {#if cloneInProgress.stage}
             <span class="clone-entry-pct">{clonePercent}%</span>
           {:else}
             <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
           {/if}
         </div>
-        {#if !cloneHasError && cloneInProgress.stage}
+        {#if cloneInProgress.stage}
           <div class="clone-entry-progress">
             <span class="clone-entry-stage">{stageLabel(cloneInProgress.stage)}</span>
           </div>
         {/if}
       </div>
     {:else}
-      <div
-        class="clone-entry-minimized"
-        role="status"
-        aria-label={cloneHasError ? "Clone failed" : `Cloning ${cloneName}`}
-      >
-        {#if cloneHasError}
-          <span class="clone-entry-error-min">
-            <Icon name="warning" size={14} />
-          </span>
-        {:else}
-          <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
-        {/if}
+      <div class="clone-entry-minimized" role="status" aria-label={`Cloning ${cloneName}`}>
+        <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
       </div>
     {/if}
   {/if}
@@ -669,13 +646,6 @@
     opacity: 0.5;
   }
 
-  .clone-entry-error {
-    --vscode-icon-foreground: var(--ch-danger);
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-  }
-
   .clone-spinner {
     width: 14px;
     height: 14px;
@@ -690,11 +660,5 @@
     min-height: 36px;
     padding: 4px;
     flex-shrink: 0;
-  }
-
-  .clone-entry-error-min {
-    --vscode-icon-foreground: var(--ch-danger);
-    display: flex;
-    align-items: center;
   }
 </style>
