@@ -28,7 +28,8 @@ import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../operations/delete-workspace";
-import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import { INTENT_LIST_PROJECTS, LIST_PROJECTS_OPERATION_ID } from "../operations/list-projects";
+import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 
 import { createMcpHandlers } from "./mcp-handlers";
 
@@ -118,7 +119,21 @@ function createTestSetup() {
     createCapturingOperation(DELETE_WORKSPACE_OPERATION_ID, capturedIntents, { started: true })
   );
 
-  return { dispatcher, hookRegistry, pluginServer, capturedIntents };
+  const mockProjects: Project[] = [
+    {
+      id: "proj-12345678" as ProjectId,
+      name: "my-project",
+      path: "/projects/my-project",
+      workspaces: [],
+    },
+  ];
+
+  dispatcher.registerOperation(
+    INTENT_LIST_PROJECTS,
+    createCapturingOperation(LIST_PROJECTS_OPERATION_ID, capturedIntents, mockProjects)
+  );
+
+  return { dispatcher, hookRegistry, pluginServer, capturedIntents, mockProjects };
 }
 
 // =============================================================================
@@ -199,13 +214,26 @@ describe("createMcpHandlers", () => {
     });
   });
 
+  describe("listProjects", () => {
+    it("dispatches ListProjectsIntent and returns projects", async () => {
+      const { dispatcher, pluginServer, capturedIntents, mockProjects } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const result = await handlers.listProjects();
+
+      expect(capturedIntents).toHaveLength(1);
+      expect(capturedIntents[0]!.type).toBe(INTENT_LIST_PROJECTS);
+      expect(result).toEqual(mockProjects);
+    });
+  });
+
   describe("createWorkspace", () => {
     it("dispatches OpenWorkspaceIntent with mapped payload", async () => {
       const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
       const handlers = createMcpHandlers(dispatcher, pluginServer as never);
 
       const result = await handlers.createWorkspace({
-        callerWorkspacePath: "/caller/workspace",
+        projectPath: "/projects/my-project",
         name: "feature",
         base: "main",
         stealFocus: false,
@@ -214,7 +242,7 @@ describe("createMcpHandlers", () => {
       expect(capturedIntents).toHaveLength(1);
       expect(capturedIntents[0]!.type).toBe(INTENT_OPEN_WORKSPACE);
       expect(capturedIntents[0]!.payload).toEqual({
-        callerWorkspacePath: "/caller/workspace",
+        projectPath: "/projects/my-project",
         workspaceName: "feature",
         base: "main",
         stealFocus: false,
@@ -227,7 +255,7 @@ describe("createMcpHandlers", () => {
       const handlers = createMcpHandlers(dispatcher, pluginServer as never);
 
       await handlers.createWorkspace({
-        callerWorkspacePath: "/caller/workspace",
+        projectPath: "/projects/my-project",
         name: "feature",
         base: "main",
         initialPrompt: "Implement the feature",

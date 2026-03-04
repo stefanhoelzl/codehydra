@@ -56,6 +56,7 @@ import { INTENT_GET_AGENT_SESSION } from "../operations/get-agent-session";
 import { INTENT_RESTART_AGENT } from "../operations/restart-agent";
 import { INTENT_GET_METADATA } from "../operations/get-metadata";
 import { INTENT_SET_METADATA } from "../operations/set-metadata";
+import { INTENT_RESOLVE_WORKSPACE } from "../operations/resolve-workspace";
 
 // =============================================================================
 // Minimal Test Operations
@@ -696,7 +697,7 @@ describe("CodeServerModule", () => {
       const result = (await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectId: "test-12345678" as ProjectId,
+          projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
         },
@@ -745,7 +746,7 @@ describe("CodeServerModule", () => {
       const result = (await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectId: "test-12345678" as ProjectId,
+          projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
         },
@@ -780,7 +781,7 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectId: "test-12345678" as ProjectId,
+          projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
         },
@@ -819,7 +820,7 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectId: "test-12345678" as ProjectId,
+          projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
           existingWorkspace: {
@@ -1228,7 +1229,20 @@ describe("CodeServerModule", () => {
         metadata: {},
         path: "/workspaces/my-ws",
       };
+      const resolvedProject = { projectPath: "/project/path", workspaceName: "caller-ws" };
       const { handlers, mockDispatch } = await setupPluginHandlers(workspace);
+      // Mock: first dispatch (workspace:resolve) returns resolvedProject,
+      // second dispatch (workspace:open) returns workspace
+      mockDispatch.mockImplementation((intent: Intent) => {
+        const handle = new IntentHandle();
+        handle.signalAccepted(true);
+        if (intent.type === INTENT_RESOLVE_WORKSPACE) {
+          handle.resolve(resolvedProject);
+        } else {
+          handle.resolve(workspace);
+        }
+        return handle;
+      });
 
       const result = await handlers.create(testWorkspacePath, {
         name: "my-ws",
@@ -1245,7 +1259,7 @@ describe("CodeServerModule", () => {
         expect.objectContaining({
           type: INTENT_OPEN_WORKSPACE,
           payload: expect.objectContaining({
-            callerWorkspacePath: testWorkspacePath,
+            projectPath: "/project/path",
             workspaceName: "my-ws",
             base: "main",
             initialPrompt: "Do something",
@@ -1256,17 +1270,30 @@ describe("CodeServerModule", () => {
     });
 
     it("create does not include optional fields when undefined", async () => {
-      const { handlers, mockDispatch } = await setupPluginHandlers({
+      const workspace = {
         projectId: "p",
         name: "ws",
         branch: "ws",
         metadata: {},
         path: "/ws",
+      };
+      const resolvedProject = { projectPath: "/project/path", workspaceName: "caller-ws" };
+      const { handlers, mockDispatch } = await setupPluginHandlers(workspace);
+      mockDispatch.mockImplementation((intent: Intent) => {
+        const handle = new IntentHandle();
+        handle.signalAccepted(true);
+        if (intent.type === INTENT_RESOLVE_WORKSPACE) {
+          handle.resolve(resolvedProject);
+        } else {
+          handle.resolve(workspace);
+        }
+        return handle;
       });
 
       await handlers.create(testWorkspacePath, { name: "my-ws", base: "main" });
 
-      const dispatchedIntent = mockDispatch.mock.calls[0]![0];
+      // Second call is workspace:open (first is workspace:resolve)
+      const dispatchedIntent = mockDispatch.mock.calls[1]![0];
       expect(dispatchedIntent.payload).not.toHaveProperty("initialPrompt");
       expect(dispatchedIntent.payload).not.toHaveProperty("stealFocus");
     });

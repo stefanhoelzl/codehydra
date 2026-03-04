@@ -265,17 +265,17 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
 
   registerIpc(ApiIpcChannels.WORKSPACE_CREATE, async (payload) => {
     const p = payload as WorkspaceCreatePayload;
+    if (!p.projectPath) {
+      throw new Error("projectPath is required");
+    }
     const intent: OpenWorkspaceIntent = {
       type: INTENT_OPEN_WORKSPACE,
       payload: {
-        ...(p.projectPath !== undefined && { projectPath: p.projectPath }),
+        projectPath: p.projectPath,
         workspaceName: p.name,
         base: p.base,
         ...(p.initialPrompt !== undefined && { initialPrompt: p.initialPrompt }),
         ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
-        ...(p.callerWorkspacePath !== undefined && {
-          callerWorkspacePath: p.callerWorkspacePath,
-        }),
       },
     };
     const result = await dispatcher.dispatch(intent);

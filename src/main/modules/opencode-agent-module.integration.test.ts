@@ -689,7 +689,7 @@ describe("OpenCodeAgentModule Integration", () => {
       const result = (await setup.dispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectId: "test-12345678",
+          projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
         },
@@ -711,7 +711,7 @@ describe("OpenCodeAgentModule Integration", () => {
       await setup.dispatcher.dispatch({
         type: "workspace:open",
         payload: {
-          projectId: "test-12345678",
+          projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
           initialPrompt: "Fix the bug",

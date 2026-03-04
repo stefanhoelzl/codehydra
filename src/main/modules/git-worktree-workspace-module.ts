@@ -27,8 +27,6 @@ import type {
   OpenWorkspaceIntent,
   CreateHookInput,
   CreateHookResult,
-  ResolveCallerHookInput,
-  ResolveCallerHookResult,
 } from "../operations/open-workspace";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import type {
@@ -206,16 +204,8 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // open-workspace -> resolve-caller + create
+      // open-workspace -> create
       [OPEN_WORKSPACE_OPERATION_ID]: {
-        "resolve-caller": {
-          handler: async (ctx: HookContext): Promise<ResolveCallerHookResult> => {
-            const { callerWorkspacePath } = ctx as ResolveCallerHookInput;
-            const result = resolveFromWorkspacePath(callerWorkspacePath);
-            if (!result) return {};
-            return { projectPath: result.projectPath, workspaceName: result.workspaceName };
-          },
-        },
         create: {
           handler: async (ctx: HookContext): Promise<CreateHookResult> => {
             const intent = ctx.intent as OpenWorkspaceIntent;

@@ -40,6 +40,7 @@ function createMockMcpHandlers(): McpApiHandlers {
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getAgentSession: vi.fn().mockResolvedValue(null),
     restartAgentServer: vi.fn().mockResolvedValue(14001),
+    listProjects: vi.fn().mockResolvedValue([]),
     createWorkspace: vi.fn().mockResolvedValue({ name: "test", path: "/path" }),
     deleteWorkspace: vi.fn().mockResolvedValue({ started: true }),
     executeCommand: vi.fn().mockResolvedValue(undefined),
