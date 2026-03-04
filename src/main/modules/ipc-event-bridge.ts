@@ -48,10 +48,15 @@ import {
   INTENT_DELETE_WORKSPACE,
 } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
-import type { ProjectOpenedEvent, CloneProgressEvent } from "../operations/open-project";
+import type {
+  ProjectOpenedEvent,
+  CloneProgressEvent,
+  ProjectOpenFailedEvent,
+} from "../operations/open-project";
 import {
   EVENT_PROJECT_OPENED,
   EVENT_CLONE_PROGRESS,
+  EVENT_PROJECT_OPEN_FAILED,
   INTENT_OPEN_PROJECT,
 } from "../operations/open-project";
 import type { OpenProjectIntent } from "../operations/open-project";
@@ -198,6 +203,10 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     [EVENT_CLONE_PROGRESS]: (event: DomainEvent) => {
       const payload = (event as CloneProgressEvent).payload;
       deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_PROGRESS, payload);
+    },
+    [EVENT_PROJECT_OPEN_FAILED]: (event: DomainEvent) => {
+      const payload = (event as ProjectOpenFailedEvent).payload;
+      deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, { reason: payload.reason });
     },
     [EVENT_SETUP_ERROR]: (event: DomainEvent) => {
       const { message, code } = (event as SetupErrorEvent).payload;

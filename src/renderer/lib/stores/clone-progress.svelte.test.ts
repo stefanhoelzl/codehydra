@@ -7,8 +7,6 @@ import {
   startClone,
   updateCloneProgress,
   completeClone,
-  failClone,
-  clearClone,
   stageLabel,
   cloneState,
   reset,
@@ -29,7 +27,6 @@ describe("clone-progress store", () => {
         name: "",
         stage: null,
         progress: 0,
-        error: null,
       });
     });
 
@@ -59,12 +56,11 @@ describe("clone-progress store", () => {
       expect(cloneState.value).toBeNull();
     });
 
-    it("preserves url and error fields", () => {
+    it("preserves url field", () => {
       startClone("https://github.com/org/repo.git");
       updateCloneProgress("receiving", 0.5, "repo");
 
       expect(cloneState.value?.url).toBe("https://github.com/org/repo.git");
-      expect(cloneState.value?.error).toBeNull();
     });
   });
 
@@ -80,38 +76,6 @@ describe("clone-progress store", () => {
 
     it("is a no-op when no clone is active", () => {
       completeClone();
-      expect(cloneState.value).toBeNull();
-    });
-  });
-
-  describe("failClone", () => {
-    it("sets error on clone state", () => {
-      startClone("https://github.com/org/repo.git");
-
-      failClone("Connection refused");
-
-      expect(cloneState.value?.error).toBe("Connection refused");
-      expect(cloneState.value?.url).toBe("https://github.com/org/repo.git");
-    });
-
-    it("is a no-op when no clone is active", () => {
-      failClone("Connection refused");
-      expect(cloneState.value).toBeNull();
-    });
-  });
-
-  describe("clearClone", () => {
-    it("removes clone state entirely", () => {
-      startClone("https://github.com/org/repo.git");
-      failClone("Connection refused");
-
-      clearClone();
-
-      expect(cloneState.value).toBeNull();
-    });
-
-    it("is a no-op when no clone is active", () => {
-      clearClone();
       expect(cloneState.value).toBeNull();
     });
   });

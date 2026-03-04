@@ -7,8 +7,6 @@
     cloneState,
     startClone,
     completeClone,
-    failClone,
-    clearClone,
     stageLabel,
   } from "$lib/stores/clone-progress.svelte.js";
   import { createLogger } from "$lib/logging";
@@ -30,7 +28,7 @@
   let dialogOwnsClone = $state(false);
 
   // Clone is in progress (either started by this dialog or already running)
-  const isCloning = $derived(cloneState.value !== null && cloneState.value.error === null);
+  const isCloning = $derived(cloneState.value !== null);
 
   // Read progress from store
   const currentStage = $derived(cloneState.value?.stage ?? null);
@@ -49,12 +47,7 @@
     if (initialized) return;
     initialized = true;
     const state = cloneState.value;
-    if (state?.error) {
-      // Previous clone failed — pre-fill URL and show error
-      url = state.url;
-      submitError = state.error;
-      clearClone();
-    } else if (state) {
+    if (state) {
       // Clone already in progress — show progress
       url = state.url;
       dialogOwnsClone = false;
@@ -110,7 +103,7 @@
       (error: unknown) => {
         const message = getErrorMessage(error);
         logger.warn("Clone failed", { url: trimmedUrl, error: message });
-        failClone(message);
+        completeClone();
         // If dialog is still open, show error inline
         if (dialogOwnsClone) {
           submitError = message;

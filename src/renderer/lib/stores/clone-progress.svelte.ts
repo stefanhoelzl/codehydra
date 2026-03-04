@@ -11,7 +11,6 @@ export interface CloneState {
   readonly name: string;
   readonly stage: string | null;
   readonly progress: number; // 0-1 float
-  readonly error: string | null;
 }
 
 // ============ State ============
@@ -25,7 +24,7 @@ let _cloneState = $state<CloneState | null>(null);
  * @param url - The git URL being cloned
  */
 export function startClone(url: string): void {
-  _cloneState = { url, name: "", stage: null, progress: 0, error: null };
+  _cloneState = { url, name: "", stage: null, progress: 0 };
 }
 
 /**
@@ -40,25 +39,9 @@ export function updateCloneProgress(stage: string, progress: number, name: strin
 }
 
 /**
- * Mark the clone as successfully completed.
+ * Clear the clone state (success or failure).
  */
 export function completeClone(): void {
-  _cloneState = null;
-}
-
-/**
- * Mark the clone as failed with an error message.
- * @param error - Error message
- */
-export function failClone(error: string): void {
-  if (!_cloneState) return;
-  _cloneState = { ..._cloneState, error };
-}
-
-/**
- * Clear the clone state (e.g., after user acknowledges an error).
- */
-export function clearClone(): void {
   _cloneState = null;
 }
 
