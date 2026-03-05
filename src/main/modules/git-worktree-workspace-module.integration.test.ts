@@ -52,6 +52,7 @@ function createMockGitWorktreeProvider() {
     createWorkspace: vi.fn(),
     removeWorkspace: vi.fn().mockResolvedValue({ workspaceRemoved: true, baseDeleted: false }),
     isDirty: vi.fn().mockResolvedValue(false),
+    countUnmergedCommits: vi.fn().mockResolvedValue(0),
     listBases: vi.fn().mockResolvedValue([]),
     defaultBase: vi.fn().mockResolvedValue(undefined),
     updateBases: vi.fn().mockResolvedValue(undefined),
@@ -217,6 +218,7 @@ class MinimalGetProjectBasesOperation implements Operation<Intent, GetProjectBas
 /** Result from get-workspace-status: resolve-workspace + get. */
 interface GetStatusResult {
   readonly isDirty?: boolean;
+  readonly unmergedCommits?: number;
 }
 
 /**
@@ -247,10 +249,14 @@ class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
     if (errors.length > 0) throw errors[0]!;
 
     let isDirty = false;
+    let unmergedCommits = 0;
     for (const result of results) {
       if (result.isDirty) isDirty = true;
+      if (result.unmergedCommits !== undefined && result.unmergedCommits > unmergedCommits) {
+        unmergedCommits = result.unmergedCommits;
+      }
     }
-    return { isDirty };
+    return { isDirty, unmergedCommits };
   }
 }
 

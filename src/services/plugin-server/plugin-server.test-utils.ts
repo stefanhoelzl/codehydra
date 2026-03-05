@@ -286,7 +286,11 @@ export interface MockApiHandlersOptions {
  * ```
  */
 export function createMockApiHandlers(options?: MockApiHandlersOptions): ApiCallHandlers {
-  const defaultStatus: WorkspaceStatus = { isDirty: false, agent: { type: "none" } };
+  const defaultStatus: WorkspaceStatus = {
+    isDirty: false,
+    unmergedCommits: 0,
+    agent: { type: "none" },
+  };
   const defaultMetadata: Record<string, string> = { base: "main" };
 
   // Helper to check if value is already a PluginResult

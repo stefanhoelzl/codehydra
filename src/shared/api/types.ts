@@ -233,6 +233,7 @@ export interface WorkspaceRef {
  */
 export interface WorkspaceStatus {
   readonly isDirty: boolean;
+  readonly unmergedCommits: number;
   readonly agent: AgentStatus;
 }
 

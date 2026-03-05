@@ -359,7 +359,8 @@ export function createGitWorktreeWorkspaceModule(
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const { workspacePath: wsPath } = ctx as GetStatusHookInput;
             const isDirty = await globalProvider.isDirty(new Path(wsPath));
-            return { isDirty };
+            const unmergedCommits = await globalProvider.countUnmergedCommits(new Path(wsPath));
+            return { isDirty, unmergedCommits };
           },
         },
       },

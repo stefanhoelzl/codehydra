@@ -40,6 +40,19 @@ vi.mock("$lib/stores/dialogs.svelte.js", () => ({
   closeDialog: mockCloseDialog,
 }));
 
+// Mock $lib/stores/projects.svelte.js
+vi.mock("$lib/stores/projects.svelte.js", () => ({
+  getAllWorkspaces: () => [
+    {
+      name: "feature-branch",
+      path: "/test/project/.worktrees/feature-branch",
+      branch: "feature-branch",
+      metadata: { base: "main" },
+      projectId: "test-project-12345678",
+    },
+  ],
+}));
+
 // Import component after mocks
 import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
 import { workspaces } from "$lib/api";
@@ -76,7 +89,11 @@ describe("RemoveWorkspaceDialog component", () => {
     // Fire-and-forget API returns { started: true }
     mockRemoveWorkspace.mockResolvedValue({ started: true });
     // v2 API returns WorkspaceStatus
-    mockGetStatus.mockResolvedValue({ isDirty: false, agent: { type: "none" } });
+    mockGetStatus.mockResolvedValue({
+      isDirty: false,
+      unmergedCommits: 0,
+      agent: { type: "none" },
+    });
   });
 
   afterEach(() => {
@@ -114,19 +131,22 @@ describe("RemoveWorkspaceDialog component", () => {
   });
 
   describe("dirty status", () => {
-    it("loads dirty status using workspaces.getStatus on mount", async () => {
+    it("loads status using workspaces.getStatus on mount", async () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
       expect(workspaces.getStatus).toHaveBeenCalledWith(testWorkspaceRef.path);
     });
 
-    it("shows spinner while checking dirty status", async () => {
+    it("shows spinner while checking status", async () => {
       // Delay the API response - v2 returns WorkspaceStatus object
       mockGetStatus.mockImplementation(
         () =>
           new Promise((resolve) =>
-            setTimeout(() => resolve({ isDirty: false, agent: { type: "none" } }), 1000)
+            setTimeout(
+              () => resolve({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
+              1000
+            )
           )
       );
 
@@ -138,7 +158,11 @@ describe("RemoveWorkspaceDialog component", () => {
     });
 
     it("shows warning box when workspace is dirty", async () => {
-      mockGetStatus.mockResolvedValue({ isDirty: true, agent: { type: "none" } });
+      mockGetStatus.mockResolvedValue({
+        isDirty: true,
+        unmergedCommits: 0,
+        agent: { type: "none" },
+      });
 
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
@@ -147,7 +171,11 @@ describe("RemoveWorkspaceDialog component", () => {
     });
 
     it("hides warning box when workspace is clean", async () => {
-      mockGetStatus.mockResolvedValue({ isDirty: false, agent: { type: "none" } });
+      mockGetStatus.mockResolvedValue({
+        isDirty: false,
+        unmergedCommits: 0,
+        agent: { type: "none" },
+      });
 
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();

@@ -60,7 +60,9 @@ interface SimulatedToolContext {
  */
 function createMockHandlers(overrides?: Partial<McpApiHandlers>): McpApiHandlers {
   return {
-    getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+    getStatus: vi
+      .fn()
+      .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
     getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getAgentSession: vi.fn().mockResolvedValue(null),
@@ -278,6 +280,7 @@ describe("MCP Tools", () => {
     it("returns correct status format on success", async () => {
       const expectedStatus: WorkspaceStatus = {
         isDirty: true,
+        unmergedCommits: 0,
         agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
       };
 

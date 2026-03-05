@@ -237,9 +237,10 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
 
       const status: WorkspaceStatus =
         aggregatedStatus.status === "none"
-          ? { isDirty: false, agent: { type: "none" } }
+          ? { isDirty: false, unmergedCommits: 0, agent: { type: "none" } }
           : {
               isDirty: false,
+              unmergedCommits: 0,
               agent: {
                 type: aggregatedStatus.status,
                 counts: {

@@ -187,9 +187,10 @@ describe("PluginServer", () => {
 
     it("accepts handler registration without throwing", () => {
       const handlers: ApiCallHandlers = {
-        getStatus: vi
-          .fn()
-          .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
+        getStatus: vi.fn().mockResolvedValue({
+          success: true,
+          data: { isDirty: false, unmergedCommits: 0, agent: { type: "none" } },
+        }),
         getAgentSession: vi.fn().mockResolvedValue({ success: true, data: null }),
         restartAgentServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
@@ -205,9 +206,10 @@ describe("PluginServer", () => {
 
     it("allows handlers to be replaced", () => {
       const handlers1: ApiCallHandlers = {
-        getStatus: vi
-          .fn()
-          .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
+        getStatus: vi.fn().mockResolvedValue({
+          success: true,
+          data: { isDirty: false, unmergedCommits: 0, agent: { type: "none" } },
+        }),
         getAgentSession: vi.fn().mockResolvedValue({ success: true, data: null }),
         restartAgentServer: vi.fn().mockResolvedValue({ success: true, data: 14001 }),
         getMetadata: vi.fn().mockResolvedValue({ success: true, data: {} }),
@@ -244,9 +246,10 @@ describe("PluginServer", () => {
 
     it("should register getAgentSession handler on socket connection", () => {
       const handlers: ApiCallHandlers = {
-        getStatus: vi
-          .fn()
-          .mockResolvedValue({ success: true, data: { isDirty: false, agent: { type: "none" } } }),
+        getStatus: vi.fn().mockResolvedValue({
+          success: true,
+          data: { isDirty: false, unmergedCommits: 0, agent: { type: "none" } },
+        }),
         getAgentSession: vi
           .fn()
           .mockResolvedValue({ success: true, data: { port: 12345, sessionId: "session-abc" } }),

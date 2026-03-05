@@ -1560,6 +1560,127 @@ describe("GitWorktreeProvider", () => {
     });
   });
 
+  describe("countUnmergedCommits", () => {
+    it("returns count when base is in metadata", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: "/data/workspaces/feature-x",
+                branch: "feature-x",
+                unmergedCommits: 5,
+              },
+            ],
+            branchConfigs: { "feature-x": { "codehydra.base": "main" } },
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+      const wsPath = new Path("/data/workspaces/feature-x");
+      provider.ensureWorkspaceRegistered(wsPath, PROJECT_ROOT);
+
+      const count = await provider.countUnmergedCommits(wsPath);
+
+      expect(count).toBe(5);
+    });
+
+    it("returns 0 for detached HEAD", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "detached",
+                path: "/data/workspaces/detached",
+                branch: null,
+              },
+            ],
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+      const wsPath = new Path("/data/workspaces/detached");
+      provider.ensureWorkspaceRegistered(wsPath, PROJECT_ROOT);
+
+      const count = await provider.countUnmergedCommits(wsPath);
+
+      expect(count).toBe(0);
+    });
+
+    it("returns 0 when workspace is not registered", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const count = await provider.countUnmergedCommits(new Path("/nonexistent"));
+
+      expect(count).toBe(0);
+    });
+
+    it("falls back to defaultBase when no base in metadata", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            remoteBranches: ["origin/main"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "feature-x",
+                path: "/data/workspaces/feature-x",
+                branch: "feature-x",
+                unmergedCommits: 2,
+              },
+            ],
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+      const wsPath = new Path("/data/workspaces/feature-x");
+      provider.ensureWorkspaceRegistered(wsPath, PROJECT_ROOT);
+
+      const count = await provider.countUnmergedCommits(wsPath);
+
+      expect(count).toBe(2);
+    });
+  });
+
   describe("isMainWorkspace", () => {
     it("returns true for project root path", async () => {
       const mockClient = createMockGitClient({

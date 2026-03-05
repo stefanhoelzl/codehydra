@@ -49,6 +49,7 @@ interface WorktreeState {
   readonly path: string;
   readonly branch: string | null;
   readonly isDirty: boolean;
+  readonly unmergedCommits: number;
 }
 
 /**
@@ -91,6 +92,8 @@ export interface WorktreeInit {
   readonly branch: string | null;
   /** Whether the worktree has uncommitted changes. Defaults to `false`. */
   readonly isDirty?: boolean;
+  /** Number of commits not merged into base. Defaults to `0`. */
+  readonly unmergedCommits?: number;
 }
 
 /**
@@ -283,6 +286,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
             path: wtPath,
             branch: wt.branch,
             isDirty: wt.isDirty ?? false,
+            unmergedCommits: wt.unmergedCommits ?? 0,
           });
         }
       }
@@ -393,6 +397,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         path: normalizedWorktreePath,
         branch,
         isDirty: false,
+        unmergedCommits: 0,
       });
     },
 
@@ -632,6 +637,16 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         isBare: true,
         remoteUrl: url,
       });
+    },
+
+    async countUnmergedCommits(repoPath: Path, branch: string, _base: string): Promise<number> {
+      const repo = getRepoOrThrow(repoPath);
+      for (const wt of repo.worktrees.values()) {
+        if (wt.branch === branch) {
+          return wt.unmergedCommits;
+        }
+      }
+      return 0;
     },
 
     async isBare(repoPath: Path): Promise<boolean> {

@@ -3,6 +3,7 @@
   import Icon from "./Icon.svelte";
   import { workspaces, type WorkspaceRef } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
+  import { getAllWorkspaces } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
 
   const logger = createLogger("ui");
@@ -17,29 +18,38 @@
   // Form state
   let keepBranch = $state(false);
   let isDirty = $state(false);
-  let isCheckingDirty = $state(true);
+  let unmergedCommits = $state(0);
+  let isCheckingStatus = $state(true);
 
   // Extract workspace name from ref
   const workspaceName = $derived(workspaceRef.workspaceName);
 
-  // Check dirty status on mount
+  // Get the base branch name from workspace metadata
+  const baseBranch = $derived(() => {
+    const ws = getAllWorkspaces().find((w) => w.path === workspaceRef.path);
+    return ws?.metadata?.base;
+  });
+
+  // Check workspace status on mount
   $effect(() => {
     if (!open) return;
 
-    isCheckingDirty = true;
+    isCheckingStatus = true;
     isDirty = false;
+    unmergedCommits = 0;
 
     workspaces
       .getStatus(workspaceRef.path)
       .then((status) => {
         isDirty = status.isDirty;
+        unmergedCommits = status.unmergedCommits;
       })
       .catch(() => {
-        // Assume clean on error
         isDirty = false;
+        unmergedCommits = 0;
       })
       .finally(() => {
-        isCheckingDirty = false;
+        isCheckingStatus = false;
       });
   });
 
@@ -86,15 +96,26 @@
       Remove workspace "{workspaceName}"?
     </p>
 
-    {#if isCheckingDirty}
-      <div class="ch-status-message" role="status">Checking for uncommitted changes...</div>
-    {:else if isDirty}
-      <div class="ch-alert-box" role="alert">
-        <span class="ch-alert-box-icon">
-          <Icon name="warning" />
-        </span>
-        This workspace has uncommitted changes that will be lost.
-      </div>
+    {#if isCheckingStatus}
+      <div class="ch-status-message" role="status">Checking workspace status...</div>
+    {:else}
+      {#if isDirty}
+        <div class="ch-alert-box" role="alert">
+          <span class="ch-alert-box-icon">
+            <Icon name="warning" />
+          </span>
+          This workspace has uncommitted changes that will be lost.
+        </div>
+      {/if}
+      {#if unmergedCommits > 0}
+        <div class="ch-alert-box" role="alert">
+          <span class="ch-alert-box-icon">
+            <Icon name="warning" />
+          </span>
+          This branch has {unmergedCommits} commit{unmergedCommits === 1 ? "" : "s"} not merged into {baseBranch() ??
+            "base"}.
+        </div>
+      {/if}
     {/if}
 
     <div class="ch-checkbox-row">

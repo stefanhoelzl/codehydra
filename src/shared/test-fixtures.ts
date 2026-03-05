@@ -225,6 +225,7 @@ export const MOCK_WORKSPACE_API_DEFAULTS = {
 
   status: {
     isDirty: false,
+    unmergedCommits: 0,
     agent: { type: "none" },
   } as WorkspaceStatus,
 
