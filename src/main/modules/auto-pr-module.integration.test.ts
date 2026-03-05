@@ -18,7 +18,7 @@ import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { Project, WorkspaceName } from "../../shared/api/types";
+import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -38,6 +38,7 @@ import {
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
 } from "../operations/delete-workspace";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../operations/list-projects";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../operations/set-metadata";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
 import { createMockProcessRunner } from "../../services/platform/process.state-mock";
@@ -173,6 +174,44 @@ class TrackingSetMetadataOperation implements Operation<SetMetadataIntent, void>
   }
 }
 
+/**
+ * Tracking operation for project:list — returns configurable projects with workspace metadata.
+ */
+class TrackingListProjectsOperation implements Operation<ListProjectsIntent, Project[]> {
+  readonly id = "list-projects";
+  projects: Project[] = [];
+
+  async execute(): Promise<Project[]> {
+    return this.projects;
+  }
+}
+
+function autoPrWorkspace(
+  prUrl: string,
+  workspacePath: string,
+  extra?: Record<string, string>
+): Project {
+  return {
+    id: "project-1" as ProjectId,
+    name: "repo",
+    path: "/home/user/projects/repo",
+    workspaces: [
+      {
+        projectId: "project-1" as ProjectId,
+        name: "pr-workspace" as WorkspaceName,
+        branch: "feature",
+        path: workspacePath,
+        metadata: {
+          base: "origin/main",
+          source: "auto-pr",
+          "auto-pr.url": prUrl,
+          ...extra,
+        },
+      },
+    ],
+  };
+}
+
 // =============================================================================
 // GitHub API Response Helpers
 // =============================================================================
@@ -231,6 +270,7 @@ interface TestSetup {
   openWorkspaceOp: TrackingOpenWorkspaceOperation;
   deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
   setMetadataOp: TrackingSetMetadataOperation;
+  listProjectsOp: TrackingListProjectsOperation;
 }
 
 const DEFAULT_TEMPLATE_PATH = "/data/review.liquid";
@@ -239,7 +279,7 @@ const DEFAULT_TEMPLATE_CONTENT = "Review PR #{{ number }}: {{ title }}";
 function createTestSetup(options?: {
   ghAuthFails?: boolean;
   disabled?: boolean;
-  existingState?: string;
+  dismissedUrls?: string[];
   templatePath?: string | null;
   templateContent?: string;
 }): TestSetup {
@@ -273,8 +313,9 @@ function createTestSetup(options?: {
   const fsEntries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>> = {
     "/data": directory(),
   };
-  if (options?.existingState) {
-    fsEntries["/data/auto-pr-workspaces.json"] = file(options.existingState);
+  if (options?.dismissedUrls) {
+    const dismissedState = JSON.stringify({ dismissed: options.dismissedUrls });
+    fsEntries["/data/auto-pr-workspaces.json"] = file(dismissedState);
   }
   if (tplPath && tplContent !== undefined) {
     fsEntries[tplPath] = file(tplContent);
@@ -288,6 +329,7 @@ function createTestSetup(options?: {
   const openWorkspaceOp = new TrackingOpenWorkspaceOperation();
   const deleteWorkspaceOp = new TrackingDeleteWorkspaceOperation();
   const setMetadataOp = new TrackingSetMetadataOperation();
+  const listProjectsOp = new TrackingListProjectsOperation();
 
   const configValues: Record<string, unknown> = {};
   if (tplPath !== null) {
@@ -299,6 +341,7 @@ function createTestSetup(options?: {
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
   dispatcher.registerOperation(INTENT_SET_METADATA, setMetadataOp);
+  dispatcher.registerOperation(INTENT_LIST_PROJECTS, listProjectsOp);
 
   const autoPrModule = createAutoPrModule({
     processRunner,
@@ -320,6 +363,7 @@ function createTestSetup(options?: {
     openWorkspaceOp,
     deleteWorkspaceOp,
     setMetadataOp,
+    listProjectsOp,
   };
 }
 
@@ -403,21 +447,14 @@ describe("AutoPrModule Integration", () => {
     });
 
     it("does not recreate workspace for already-tracked PR", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        workspaces: {
-          "https://github.com/org/repo/pull/42": {
-            workspaceName: "pr-42/feature-login",
-            workspacePath: "/data/workspaces/repo-abc/workspaces/pr-42/feature-login",
-            prNumber: 42,
-            repo: "org/repo",
-            projectPath: "/home/user/projects/repo",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
+      const { dispatcher, httpClient, openProjectOp, listProjectsOp } = createTestSetup();
 
-      const { dispatcher, httpClient, openProjectOp } = createTestSetup({ existingState });
+      listProjectsOp.projects = [
+        autoPrWorkspace(
+          "https://github.com/org/repo/pull/42",
+          "/data/workspaces/repo-abc/workspaces/pr-42/feature-login"
+        ),
+      ];
 
       httpClient.setResponse(SEARCH_URL, {
         body: searchResponse([
@@ -439,29 +476,44 @@ describe("AutoPrModule Integration", () => {
 
   describe("PR disappearance", () => {
     it("deletes workspace when tracked PR disappears from search results", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        workspaces: {
-          "https://github.com/org/repo/pull/42": {
-            workspaceName: "pr-42/feature-login",
-            workspacePath: "/data/workspaces/repo-abc/workspaces/pr-42/feature-login",
-            prNumber: 42,
-            repo: "org/repo",
-            projectPath: "/home/user/projects/repo",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
-      });
+      const { dispatcher, httpClient, deleteWorkspaceOp, listProjectsOp } = createTestSetup();
 
-      const { dispatcher, httpClient, deleteWorkspaceOp } = createTestSetup({ existingState });
+      listProjectsOp.projects = [
+        autoPrWorkspace(
+          "https://github.com/org/repo/pull/42",
+          "/data/workspaces/repo-abc/workspaces/pr-42/feature-login"
+        ),
+      ];
 
       httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
 
       await dispatcher.dispatch(startIntent());
 
       expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+      expect(deleteWorkspaceOp.dispatched[0]!.payload.workspacePath).toBe(
+        "/data/workspaces/repo-abc/workspaces/pr-42/feature-login"
+      );
       expect(deleteWorkspaceOp.dispatched[0]!.payload.removeWorktree).toBe(true);
       expect(deleteWorkspaceOp.dispatched[0]!.payload.force).toBe(true);
+    });
+
+    it("does not add auto-deleted workspace to dismissed set", async () => {
+      const { dispatcher, httpClient, deleteWorkspaceOp, listProjectsOp, fs } = createTestSetup();
+
+      listProjectsOp.projects = [
+        autoPrWorkspace(
+          "https://github.com/org/repo/pull/42",
+          "/data/workspaces/repo-abc/workspaces/pr-42/feature-login"
+        ),
+      ];
+
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+      // No dismissed URLs → file should not be written
+      expect(fs).not.toHaveFile("/data/auto-pr-workspaces.json");
     });
   });
 
@@ -478,7 +530,7 @@ describe("AutoPrModule Integration", () => {
   });
 
   describe("state persistence", () => {
-    it("persists state after creating a PR workspace", async () => {
+    it("does not persist dismissed set when workspace is successfully created", async () => {
       const { dispatcher, httpClient, fs } = createTestSetup();
 
       httpClient.setResponse(SEARCH_URL, {
@@ -499,25 +551,16 @@ describe("AutoPrModule Integration", () => {
 
       await dispatcher.dispatch(startIntent());
 
-      expect(fs).toHaveFile("/data/auto-pr-workspaces.json");
+      // No dismissed URLs → file should not be written
+      expect(fs).not.toHaveFile("/data/auto-pr-workspaces.json");
     });
 
-    it("loads existing state on startup", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        workspaces: {
-          "https://github.com/org/repo/pull/42": {
-            workspaceName: "pr-42/feature-login",
-            workspacePath: "/data/workspaces/repo-abc/workspaces/pr-42/feature-login",
-            prNumber: 42,
-            repo: "org/repo",
-            projectPath: "/home/user/projects/repo",
-            createdAt: "2026-02-27T10:00:00Z",
-          },
-        },
+    it("loads dismissed URLs from persisted state and skips PR", async () => {
+      const { dispatcher, httpClient, openProjectOp, listProjectsOp } = createTestSetup({
+        dismissedUrls: ["https://github.com/org/repo/pull/42"],
       });
 
-      const { dispatcher, httpClient, openProjectOp } = createTestSetup({ existingState });
+      listProjectsOp.projects = [];
 
       httpClient.setResponse(SEARCH_URL, {
         body: searchResponse([
@@ -613,10 +656,10 @@ describe("AutoPrModule Integration", () => {
       // No workspace created — template read failure means empty prompt → skip
       expect(openProjectOp.dispatched).toHaveLength(0);
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
-      // Null entry recorded in state
+      // PR URL recorded in dismissed set
       expect(fs).toHaveFileContaining(
         "/data/auto-pr-workspaces.json",
-        '"https://github.com/org/repo/pull/42": null'
+        "https://github.com/org/repo/pull/42"
       );
     });
 
@@ -633,7 +676,7 @@ describe("AutoPrModule Integration", () => {
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
       expect(fs).toHaveFileContaining(
         "/data/auto-pr-workspaces.json",
-        '"https://github.com/org/repo/pull/42": null'
+        "https://github.com/org/repo/pull/42"
       );
     });
 
@@ -649,20 +692,13 @@ describe("AutoPrModule Integration", () => {
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
       expect(fs).toHaveFileContaining(
         "/data/auto-pr-workspaces.json",
-        '"https://github.com/org/repo/pull/42": null'
+        "https://github.com/org/repo/pull/42"
       );
     });
 
     it("does not re-evaluate template for previously skipped PR", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        workspaces: {
-          "https://github.com/org/repo/pull/42": null,
-        },
-      });
-
       const { dispatcher, httpClient, openProjectOp } = createTestSetup({
-        existingState,
+        dismissedUrls: ["https://github.com/org/repo/pull/42"],
         templatePath: TEMPLATE_PATH,
         templateContent: "Review PR #{{ number }}",
       });
@@ -772,7 +808,7 @@ describe("AutoPrModule Integration", () => {
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
       expect(fs).toHaveFileContaining(
         "/data/auto-pr-workspaces.json",
-        '"https://github.com/org/repo/pull/42": null'
+        "https://github.com/org/repo/pull/42"
       );
     });
 
@@ -794,12 +830,18 @@ describe("AutoPrModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
-      expect(setMetadataOp.dispatched).toHaveLength(2);
+      // 2 marker keys (source, auto-pr.url) + 2 template metadata keys
+      expect(setMetadataOp.dispatched).toHaveLength(4);
 
       const metaPayloads = setMetadataOp.dispatched.map((i) => ({
         key: i.payload.key,
         value: i.payload.value,
       }));
+      expect(metaPayloads).toContainEqual({ key: "source", value: "auto-pr" });
+      expect(metaPayloads).toContainEqual({
+        key: "auto-pr.url",
+        value: "https://github.com/org/repo/pull/42",
+      });
       expect(metaPayloads).toContainEqual({
         key: "pr-url",
         value: "https://github.com/org/repo/pull/42",
@@ -815,7 +857,7 @@ describe("AutoPrModule Integration", () => {
       }
     });
 
-    it("does not dispatch set-metadata when no metadata keys in template", async () => {
+    it("always sets marker metadata even without template metadata keys", async () => {
       const { dispatcher, openWorkspaceOp, setMetadataOp } = setupWithPr({
         templatePath: TEMPLATE_PATH,
         templateContent: "---\nname: review/{{ number }}\n---\nReview PR #{{ number }}",
@@ -824,7 +866,18 @@ describe("AutoPrModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
-      expect(setMetadataOp.dispatched).toHaveLength(0);
+      // 2 marker keys (source, auto-pr.url) only
+      expect(setMetadataOp.dispatched).toHaveLength(2);
+
+      const metaPayloads = setMetadataOp.dispatched.map((i) => ({
+        key: i.payload.key,
+        value: i.payload.value,
+      }));
+      expect(metaPayloads).toContainEqual({ key: "source", value: "auto-pr" });
+      expect(metaPayloads).toContainEqual({
+        key: "auto-pr.url",
+        value: "https://github.com/org/repo/pull/42",
+      });
     });
 
     it("creates workspace despite unknown front-matter keys (non-fatal warning)", async () => {
@@ -875,28 +928,24 @@ describe("AutoPrModule Integration", () => {
   });
 
   describe("template-skipped PR cleanup", () => {
-    it("cleans up template-skipped null entry when PR disappears", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        workspaces: {
-          "https://github.com/org/repo/pull/42": null,
-        },
+    it("cleans up dismissed entry when PR disappears", async () => {
+      const { dispatcher, httpClient, deleteWorkspaceOp, fs } = createTestSetup({
+        dismissedUrls: ["https://github.com/org/repo/pull/42"],
       });
-
-      const { dispatcher, httpClient, deleteWorkspaceOp, fs } = createTestSetup({ existingState });
 
       httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
 
       await dispatcher.dispatch(startIntent());
 
       expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
-      expect(fs).toHaveFileContaining("/data/auto-pr-workspaces.json", '"workspaces": {}');
+      expect(fs).toHaveFileContaining("/data/auto-pr-workspaces.json", '"dismissed": []');
     });
   });
 
   describe("manual workspace deletion", () => {
     it("does not recreate workspace after manual deletion", async () => {
-      const { dispatcher, httpClient, openProjectOp, openWorkspaceOp } = createTestSetup();
+      const { dispatcher, httpClient, openProjectOp, openWorkspaceOp, listProjectsOp } =
+        createTestSetup();
 
       // First poll: workspace gets created
       httpClient.setResponse(SEARCH_URL, {
@@ -932,6 +981,8 @@ describe("AutoPrModule Integration", () => {
       // Reset tracking and set up second poll with same PR
       openProjectOp.dispatched.length = 0;
       openWorkspaceOp.dispatched.length = 0;
+      // Workspace no longer appears in listing (it was deleted)
+      listProjectsOp.projects = [];
       httpClient.setResponse(SEARCH_URL, {
         body: searchResponse([
           {
@@ -951,15 +1002,10 @@ describe("AutoPrModule Integration", () => {
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
     });
 
-    it("cleans up null entry when PR disappears from GitHub", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        workspaces: {
-          "https://github.com/org/repo/pull/42": null,
-        },
+    it("cleans up dismissed entry when PR disappears from GitHub", async () => {
+      const { dispatcher, httpClient, deleteWorkspaceOp, fs } = createTestSetup({
+        dismissedUrls: ["https://github.com/org/repo/pull/42"],
       });
-
-      const { dispatcher, httpClient, deleteWorkspaceOp, fs } = createTestSetup({ existingState });
 
       // Poll returns empty — PR no longer requesting review
       httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
@@ -969,19 +1015,14 @@ describe("AutoPrModule Integration", () => {
       // Should NOT dispatch a delete (workspace already gone)
       expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
 
-      // State file should have empty workspaces (entry cleaned up)
-      expect(fs).toHaveFileContaining("/data/auto-pr-workspaces.json", '"workspaces": {}');
+      // Dismissed set should be empty (entry cleaned up)
+      expect(fs).toHaveFileContaining("/data/auto-pr-workspaces.json", '"dismissed": []');
     });
 
-    it("loads null entry from persisted state and skips PR", async () => {
-      const existingState = JSON.stringify({
-        version: 1,
-        workspaces: {
-          "https://github.com/org/repo/pull/42": null,
-        },
+    it("loads dismissed URL from persisted state and skips PR", async () => {
+      const { dispatcher, httpClient, openProjectOp } = createTestSetup({
+        dismissedUrls: ["https://github.com/org/repo/pull/42"],
       });
-
-      const { dispatcher, httpClient, openProjectOp } = createTestSetup({ existingState });
 
       // Poll returns the same PR
       httpClient.setResponse(SEARCH_URL, {

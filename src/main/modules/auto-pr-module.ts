@@ -32,6 +32,7 @@ import {
   type WorkspaceDeletedEvent,
 } from "../operations/delete-workspace";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../operations/open-project";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../operations/list-projects";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { ProcessRunner } from "../../services/platform/process";
 import type { HttpClient } from "../../services/platform/network";
@@ -48,19 +49,17 @@ import type { ConfigKeyDefinition } from "../../services/config/config-definitio
 // Persistence Types
 // =============================================================================
 
-interface AutoPrWorkspaceEntry {
-  readonly workspaceName: string;
-  readonly workspacePath: string;
-  readonly prNumber: number;
-  readonly repo: string;
-  readonly projectPath: string;
-  readonly createdAt: string;
+interface AutoPrDismissedState {
+  readonly dismissed: readonly string[]; // PR URLs
 }
 
-interface AutoPrState {
-  readonly version: 1;
-  readonly workspaces: Record<string, AutoPrWorkspaceEntry | null>;
-}
+// =============================================================================
+// Metadata Constants
+// =============================================================================
+
+const METADATA_SOURCE_KEY = "source";
+const METADATA_SOURCE_VALUE = "auto-pr";
+const METADATA_PR_URL_KEY = "auto-pr.url";
 
 // =============================================================================
 // GitHub API Types (minimal)
@@ -95,7 +94,7 @@ interface GitHubRepoDetail {
 export interface AutoPrModuleDeps {
   readonly processRunner: ProcessRunner;
   readonly httpClient: HttpClient;
-  readonly fs: Pick<FileSystemLayer, "readFile" | "writeFile" | "mkdir">;
+  readonly fs: Pick<FileSystemLayer, "readFile" | "writeFile">;
   readonly logger: Logger;
   readonly stateFilePath: string;
   readonly dispatcher: Dispatcher;
@@ -111,10 +110,6 @@ const GITHUB_API_BASE = "https://api.github.com";
 // =============================================================================
 // Helpers
 // =============================================================================
-
-function emptyState(): AutoPrState {
-  return { version: 1, workspaces: {} };
-}
 
 /**
  * Extract "owner/repo" from a GitHub repository API URL.
@@ -247,7 +242,9 @@ export function parseTemplateOutput(rendered: string): ParseResult {
 
 export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
   let token: string | null = null;
-  let state: AutoPrState = emptyState();
+  let dismissedSet = new Set<string>(); // PR URLs to never recreate
+  const deletingPrUrls = new Set<string>(); // sentinel for auto-deletions (in-memory only)
+  let workspaceMap = new Map<string, string>(); // prUrl → workspacePath (refreshed each poll)
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let enabled = false;
   // Tracked from config:updated events (fires during app:start init phase, before activate)
@@ -281,26 +278,48 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
   // ------ State Persistence ------
 
-  async function loadState(): Promise<AutoPrState> {
+  async function loadDismissedSet(): Promise<Set<string>> {
     try {
       const raw = await deps.fs.readFile(stateFilePath);
-      const parsed = JSON.parse(raw) as AutoPrState;
-      if (parsed.version === 1 && typeof parsed.workspaces === "object") {
-        return parsed;
+      const parsed = JSON.parse(raw) as AutoPrDismissedState;
+      if (Array.isArray(parsed.dismissed)) {
+        return new Set(parsed.dismissed);
       }
-      deps.logger.warn("Invalid auto-pr state file, starting fresh");
-      return emptyState();
+      return new Set();
     } catch {
-      return emptyState();
+      return new Set();
     }
   }
 
-  async function saveState(): Promise<void> {
+  async function saveDismissedSet(): Promise<void> {
     try {
-      await deps.fs.writeFile(stateFilePath, JSON.stringify(state, null, 2));
+      const data: AutoPrDismissedState = { dismissed: [...dismissedSet] };
+      await deps.fs.writeFile(stateFilePath, JSON.stringify(data, null, 2));
     } catch (error) {
-      deps.logger.warn("Failed to save auto-pr state", { error: getErrorMessage(error) });
+      deps.logger.warn("Failed to save auto-pr dismissed set", { error: getErrorMessage(error) });
     }
+  }
+
+  // ------ Workspace Listing ------
+
+  async function buildWorkspaceMap(): Promise<Map<string, string>> {
+    const projects = await deps.dispatcher.dispatch({
+      type: INTENT_LIST_PROJECTS,
+      payload: {},
+    } as ListProjectsIntent);
+
+    const map = new Map<string, string>();
+    for (const project of projects) {
+      for (const workspace of project.workspaces) {
+        if (
+          workspace.metadata[METADATA_SOURCE_KEY] === METADATA_SOURCE_VALUE &&
+          workspace.metadata[METADATA_PR_URL_KEY]
+        ) {
+          map.set(workspace.metadata[METADATA_PR_URL_KEY], workspace.path);
+        }
+      }
+    }
+    return map;
   }
 
   // ------ GitHub API ------
@@ -424,7 +443,6 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
   async function createPrWorkspace(
     prUrl: string,
-    repo: string,
     prNumber: number,
     headRef: string,
     cloneUrl: string,
@@ -438,10 +456,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       const config = await buildWorkspaceConfig(prNumber, headRef, baseRef, prDetail);
       if (!config) {
         deps.logger.info("Skipping PR workspace (template resolved to empty)", { prUrl });
-        state = {
-          ...state,
-          workspaces: { ...state.workspaces, [prUrl]: null },
-        };
+        dismissedSet.add(prUrl);
         return;
       }
 
@@ -474,39 +489,32 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
           ? (wsResult as { path: string }).path
           : "";
 
-      // Set metadata keys if any
-      if (config.metadata && workspacePath) {
-        for (const [key, value] of Object.entries(config.metadata)) {
-          try {
-            await deps.dispatcher.dispatch({
-              type: INTENT_SET_METADATA,
-              payload: { workspacePath, key, value },
-            } as SetMetadataIntent);
-          } catch (error) {
-            deps.logger.warn("Failed to set workspace metadata", {
-              key,
-              prUrl,
-              error: getErrorMessage(error),
-            });
-          }
+      if (!workspacePath) return;
+
+      // Always set marker metadata for discovery
+      const metadataEntries: Array<[string, string]> = [
+        [METADATA_SOURCE_KEY, METADATA_SOURCE_VALUE],
+        [METADATA_PR_URL_KEY, prUrl],
+        ...(config.metadata ? Object.entries(config.metadata) : []),
+      ];
+
+      for (const [key, value] of metadataEntries) {
+        try {
+          await deps.dispatcher.dispatch({
+            type: INTENT_SET_METADATA,
+            payload: { workspacePath, key, value },
+          } as SetMetadataIntent);
+        } catch (error) {
+          deps.logger.warn("Failed to set workspace metadata", {
+            key,
+            prUrl,
+            error: getErrorMessage(error),
+          });
         }
       }
 
-      // Record in state
-      state = {
-        ...state,
-        workspaces: {
-          ...state.workspaces,
-          [prUrl]: {
-            workspaceName: config.workspaceName,
-            workspacePath,
-            prNumber,
-            repo,
-            projectPath: project.path,
-            createdAt: new Date().toISOString(),
-          },
-        },
-      };
+      // Update in-memory workspace map
+      workspaceMap.set(prUrl, workspacePath);
 
       deps.logger.info("PR workspace created", {
         prUrl,
@@ -520,36 +528,29 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     }
   }
 
-  async function deletePrWorkspace(prUrl: string, entry: AutoPrWorkspaceEntry): Promise<void> {
-    deps.logger.info("Deleting PR workspace (PR disappeared)", {
-      prUrl,
-      workspaceName: entry.workspaceName,
-    });
+  async function deletePrWorkspace(prUrl: string, wsPath: string): Promise<void> {
+    deps.logger.info("Deleting PR workspace (PR disappeared)", { prUrl });
 
+    deletingPrUrls.add(prUrl);
     try {
       await deps.dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
         payload: {
-          workspacePath: entry.workspacePath,
+          workspacePath: wsPath,
           keepBranch: false,
           force: true,
           removeWorktree: true,
         },
       } as DeleteWorkspaceIntent);
 
-      deps.logger.info("PR workspace deleted", { prUrl, workspaceName: entry.workspaceName });
+      deps.logger.info("PR workspace deleted", { prUrl });
     } catch (error) {
       deps.logger.warn("Failed to delete PR workspace", {
         prUrl,
         error: getErrorMessage(error),
       });
     }
-
-    // Remove from state regardless of success (don't retry forever)
-    const remaining = Object.fromEntries(
-      Object.entries(state.workspaces).filter(([key]) => key !== prUrl)
-    );
-    state = { ...state, workspaces: remaining };
+    deletingPrUrls.delete(prUrl);
   }
 
   // ------ Poll Cycle ------
@@ -559,8 +560,12 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
     deps.logger.debug("Polling GitHub for review-requested PRs");
 
-    const stateBefore = state;
+    let dismissedChanged = false;
 
+    // 1. Discover existing auto-PR workspaces via project:list
+    workspaceMap = await buildWorkspaceMap();
+
+    // 2. Fetch GitHub search results
     let items: GitHubSearchItem[];
     try {
       items = await fetchReviewRequestedPrs();
@@ -576,25 +581,27 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       openPrUrls.add(prUrl);
     }
 
-    // Detect disappeared PRs → delete workspaces or clean up dismissed entries
-    const disappearedUrls = Object.keys(state.workspaces).filter((url) => !openPrUrls.has(url));
-    for (const prUrl of disappearedUrls) {
-      const entry = state.workspaces[prUrl];
-      if (entry) {
-        await deletePrWorkspace(prUrl, entry);
-      } else {
-        // null entry (dismissed by user or template-skipped) — just remove the key
-        const remaining = Object.fromEntries(
-          Object.entries(state.workspaces).filter(([key]) => key !== prUrl)
-        );
-        state = { ...state, workspaces: remaining };
+    // 3. Delete workspaces for PRs that disappeared
+    for (const [prUrl, wsPath] of workspaceMap) {
+      if (!openPrUrls.has(prUrl)) {
+        await deletePrWorkspace(prUrl, wsPath);
       }
     }
 
-    // Detect new PRs → create workspaces
+    // 4. Clean up dismissed entries for PRs that disappeared
+    for (const prUrl of dismissedSet) {
+      if (!openPrUrls.has(prUrl)) {
+        dismissedSet.delete(prUrl);
+        dismissedChanged = true;
+      }
+    }
+
+    // 5. Create workspaces for new PRs
+    const allTracked = new Set([...workspaceMap.keys(), ...dismissedSet]);
+    const dismissedBeforeCreation = dismissedSet.size;
     for (const item of items) {
       const prUrl = item.pull_request?.html_url ?? item.html_url;
-      if (prUrl in state.workspaces) continue; // tracked (active or dismissed)
+      if (allTracked.has(prUrl)) continue;
 
       const repo = repoFromApiUrl(item.repository_url);
       const prDetail = await fetchPrDetail(repo, item.number);
@@ -609,7 +616,6 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
 
       await createPrWorkspace(
         prUrl,
-        repo,
         item.number,
         head.ref,
         repoDetail.clone_url,
@@ -618,9 +624,9 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       );
     }
 
-    // Persist if state changed (new workspaces, deletions, or template-skipped null entries)
-    if (state !== stateBefore) {
-      await saveState();
+    // 6. Persist dismissed set if changed
+    if (dismissedChanged || dismissedSet.size !== dismissedBeforeCreation) {
+      await saveDismissedSet();
     }
   }
 
@@ -654,7 +660,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     token = await acquireToken();
     if (!token) return;
 
-    state = await loadState();
+    dismissedSet = await loadDismissedSet();
     enabled = true;
 
     // Run initial poll (reconcile stale state)
@@ -721,18 +727,19 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       },
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-        // If a tracked PR workspace is deleted, set to null to prevent re-creation
-        for (const [prUrl, entry] of Object.entries(state.workspaces)) {
-          if (entry?.workspacePath === workspacePath) {
-            state = {
-              ...state,
-              workspaces: { ...state.workspaces, [prUrl]: null },
-            };
-            void saveState();
-            deps.logger.info("Marked PR workspace as dismissed", {
-              prUrl,
-              workspaceName: entry.workspaceName,
-            });
+        // Find the PR URL for this workspace path
+        for (const [prUrl, wsPath] of workspaceMap) {
+          if (wsPath === workspacePath) {
+            // Auto-deletion (PR disappeared) — do NOT dismiss, just clean up the map
+            if (deletingPrUrls.has(prUrl)) {
+              workspaceMap.delete(prUrl);
+              break;
+            }
+            // Manual deletion — add to dismissed set to prevent re-creation
+            workspaceMap.delete(prUrl);
+            dismissedSet.add(prUrl);
+            void saveDismissedSet();
+            deps.logger.info("Marked PR workspace as dismissed", { prUrl });
             break;
           }
         }
