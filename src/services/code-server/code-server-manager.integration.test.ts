@@ -569,8 +569,8 @@ describe("CodeServerManager Integration", () => {
           caughtError = err;
         });
 
-        // Advance past the 10s health check timeout
-        await vi.advanceTimersByTimeAsync(11_000);
+        // Advance past the 30s health check timeout
+        await vi.advanceTimersByTimeAsync(31_000);
 
         await startPromise;
 
