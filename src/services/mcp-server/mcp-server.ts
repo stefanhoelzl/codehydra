@@ -403,7 +403,11 @@ export class McpServer implements IMcpServer {
     mcpServer.registerTool(
       "workspace_set_metadata",
       {
-        description: "Set or delete a metadata key for the current workspace",
+        description:
+          "Set or delete a metadata key for the current workspace. " +
+          "To set tags, use the 'tags.' prefix for the key (e.g., key: 'tags.bugfix'). " +
+          "The value is a JSON object with an optional color field: '{\"color\":\"#ff0000\"}' or '{}' for no color. " +
+          "To remove a tag, set value to null.",
         inputSchema: z.object({
           key: z
             .string()
