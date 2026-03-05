@@ -96,6 +96,46 @@ export interface ServerToClientEvents {
    * @param ack - Acknowledgment callback to confirm shutdown received
    */
   shutdown: (ack: (result: PluginResult<void>) => void) => void;
+
+  /**
+   * Show a notification in VS Code.
+   */
+  "ui:showNotification": (
+    request: ShowNotificationRequest,
+    ack: (result: PluginResult<ShowNotificationResponse>) => void
+  ) => void;
+
+  /**
+   * Create or update a status bar item.
+   */
+  "ui:statusBarUpdate": (
+    request: StatusBarUpdateRequest,
+    ack: (result: PluginResult<void>) => void
+  ) => void;
+
+  /**
+   * Dispose a status bar item.
+   */
+  "ui:statusBarDispose": (
+    request: StatusBarDisposeRequest,
+    ack: (result: PluginResult<void>) => void
+  ) => void;
+
+  /**
+   * Show a quick pick list.
+   */
+  "ui:showQuickPick": (
+    request: ShowQuickPickRequest,
+    ack: (result: PluginResult<ShowQuickPickResponse>) => void
+  ) => void;
+
+  /**
+   * Show an input box.
+   */
+  "ui:showInputBox": (
+    request: ShowInputBoxRequest,
+    ack: (result: PluginResult<ShowInputBoxResponse>) => void
+  ) => void;
 }
 
 // ============================================================================
@@ -335,6 +375,327 @@ export function validateDeleteWorkspaceRequest(
       keepBranch: request.keepBranch as boolean | undefined,
     },
   };
+}
+
+// ============================================================================
+// UI Request/Response Types
+// ============================================================================
+
+/**
+ * Notification severity level.
+ */
+export type NotificationSeverity = "info" | "warning" | "error";
+
+/**
+ * Request to show a notification in VS Code.
+ */
+export interface ShowNotificationRequest {
+  readonly severity: NotificationSeverity;
+  readonly message: string;
+  readonly actions?: readonly string[] | undefined;
+}
+
+/**
+ * Response from a notification interaction.
+ */
+export interface ShowNotificationResponse {
+  readonly action: string | null;
+}
+
+/**
+ * Request to create or update a status bar item.
+ */
+export interface StatusBarUpdateRequest {
+  readonly id: string;
+  readonly text: string;
+  readonly tooltip?: string | undefined;
+  readonly command?: string | undefined;
+  readonly color?: string | undefined;
+}
+
+/**
+ * Request to dispose a status bar item.
+ */
+export interface StatusBarDisposeRequest {
+  readonly id: string;
+}
+
+/**
+ * A single item in a quick pick list.
+ */
+export interface QuickPickItem {
+  readonly label: string;
+  readonly description?: string | undefined;
+  readonly detail?: string | undefined;
+}
+
+/**
+ * Request to show a quick pick list.
+ */
+export interface ShowQuickPickRequest {
+  readonly items: readonly QuickPickItem[];
+  readonly title?: string | undefined;
+  readonly placeholder?: string | undefined;
+}
+
+/**
+ * Response from a quick pick selection.
+ */
+export interface ShowQuickPickResponse {
+  readonly selected: string | null;
+}
+
+/**
+ * Request to show an input box.
+ */
+export interface ShowInputBoxRequest {
+  readonly title?: string | undefined;
+  readonly prompt?: string | undefined;
+  readonly placeholder?: string | undefined;
+  readonly value?: string | undefined;
+  readonly password?: boolean | undefined;
+}
+
+/**
+ * Response from an input box.
+ */
+export interface ShowInputBoxResponse {
+  readonly value: string | null;
+}
+
+// ============================================================================
+// UI Validation Functions
+// ============================================================================
+
+const VALID_SEVERITIES = ["info", "warning", "error"];
+
+/**
+ * Runtime validation for ShowNotificationRequest.
+ */
+export function validateShowNotificationRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if (!("severity" in request)) {
+    return { valid: false, error: "Missing required field: severity" };
+  }
+
+  if (typeof request.severity !== "string") {
+    return { valid: false, error: "Field 'severity' must be a string" };
+  }
+
+  if (!VALID_SEVERITIES.includes(request.severity)) {
+    return { valid: false, error: `Invalid severity: ${request.severity}` };
+  }
+
+  if (!("message" in request)) {
+    return { valid: false, error: "Missing required field: message" };
+  }
+
+  if (typeof request.message !== "string") {
+    return { valid: false, error: "Field 'message' must be a string" };
+  }
+
+  if (request.message.length === 0) {
+    return { valid: false, error: "Field 'message' cannot be empty" };
+  }
+
+  if ("actions" in request && request.actions !== undefined) {
+    if (!Array.isArray(request.actions)) {
+      return { valid: false, error: "Field 'actions' must be an array" };
+    }
+    for (const action of request.actions) {
+      if (typeof action !== "string") {
+        return { valid: false, error: "Each action must be a string" };
+      }
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Runtime validation for StatusBarUpdateRequest.
+ */
+export function validateStatusBarUpdateRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if (!("id" in request)) {
+    return { valid: false, error: "Missing required field: id" };
+  }
+
+  if (typeof request.id !== "string") {
+    return { valid: false, error: "Field 'id' must be a string" };
+  }
+
+  if (request.id.length === 0) {
+    return { valid: false, error: "Field 'id' cannot be empty" };
+  }
+
+  if (!("text" in request)) {
+    return { valid: false, error: "Missing required field: text" };
+  }
+
+  if (typeof request.text !== "string") {
+    return { valid: false, error: "Field 'text' must be a string" };
+  }
+
+  if (request.text.length === 0) {
+    return { valid: false, error: "Field 'text' cannot be empty" };
+  }
+
+  if (
+    "tooltip" in request &&
+    request.tooltip !== undefined &&
+    typeof request.tooltip !== "string"
+  ) {
+    return { valid: false, error: "Field 'tooltip' must be a string" };
+  }
+
+  if (
+    "command" in request &&
+    request.command !== undefined &&
+    typeof request.command !== "string"
+  ) {
+    return { valid: false, error: "Field 'command' must be a string" };
+  }
+
+  if ("color" in request && request.color !== undefined && typeof request.color !== "string") {
+    return { valid: false, error: "Field 'color' must be a string" };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Runtime validation for StatusBarDisposeRequest.
+ */
+export function validateStatusBarDisposeRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if (!("id" in request)) {
+    return { valid: false, error: "Missing required field: id" };
+  }
+
+  if (typeof request.id !== "string") {
+    return { valid: false, error: "Field 'id' must be a string" };
+  }
+
+  if (request.id.length === 0) {
+    return { valid: false, error: "Field 'id' cannot be empty" };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Runtime validation for ShowQuickPickRequest.
+ */
+export function validateShowQuickPickRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if (!("items" in request)) {
+    return { valid: false, error: "Missing required field: items" };
+  }
+
+  if (!Array.isArray(request.items)) {
+    return { valid: false, error: "Field 'items' must be an array" };
+  }
+
+  if (request.items.length === 0) {
+    return { valid: false, error: "Field 'items' cannot be empty" };
+  }
+
+  for (let i = 0; i < request.items.length; i++) {
+    const item = request.items[i] as unknown;
+    if (typeof item !== "object" || item === null) {
+      return { valid: false, error: `Item at index ${i} must be an object` };
+    }
+    const itemObj = item as Record<string, unknown>;
+    if (typeof itemObj.label !== "string") {
+      return { valid: false, error: `Item at index ${i} must have a string 'label'` };
+    }
+  }
+
+  if ("title" in request && request.title !== undefined && typeof request.title !== "string") {
+    return { valid: false, error: "Field 'title' must be a string" };
+  }
+
+  if (
+    "placeholder" in request &&
+    request.placeholder !== undefined &&
+    typeof request.placeholder !== "string"
+  ) {
+    return { valid: false, error: "Field 'placeholder' must be a string" };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Runtime validation for ShowInputBoxRequest.
+ */
+export function validateShowInputBoxRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if ("title" in request && request.title !== undefined && typeof request.title !== "string") {
+    return { valid: false, error: "Field 'title' must be a string" };
+  }
+
+  if ("prompt" in request && request.prompt !== undefined && typeof request.prompt !== "string") {
+    return { valid: false, error: "Field 'prompt' must be a string" };
+  }
+
+  if (
+    "placeholder" in request &&
+    request.placeholder !== undefined &&
+    typeof request.placeholder !== "string"
+  ) {
+    return { valid: false, error: "Field 'placeholder' must be a string" };
+  }
+
+  if ("value" in request && request.value !== undefined && typeof request.value !== "string") {
+    return { valid: false, error: "Field 'value' must be a string" };
+  }
+
+  if (
+    "password" in request &&
+    request.password !== undefined &&
+    typeof request.password !== "boolean"
+  ) {
+    return { valid: false, error: "Field 'password' must be a boolean" };
+  }
+
+  return { valid: true };
 }
 
 // ============================================================================

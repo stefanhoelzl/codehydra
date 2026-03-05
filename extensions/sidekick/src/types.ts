@@ -57,11 +57,84 @@ export interface WorkspaceCreateRequest {
   readonly stealFocus?: boolean;
 }
 
+// UI request/response types
+export type NotificationSeverity = "info" | "warning" | "error";
+
+export interface ShowNotificationRequest {
+  readonly severity: NotificationSeverity;
+  readonly message: string;
+  readonly actions?: readonly string[];
+}
+
+export interface ShowNotificationResponse {
+  readonly action: string | null;
+}
+
+export interface StatusBarUpdateRequest {
+  readonly id: string;
+  readonly text: string;
+  readonly tooltip?: string;
+  readonly command?: string;
+  readonly color?: string;
+}
+
+export interface StatusBarDisposeRequest {
+  readonly id: string;
+}
+
+export interface QuickPickItem {
+  readonly label: string;
+  readonly description?: string;
+  readonly detail?: string;
+}
+
+export interface ShowQuickPickRequest {
+  readonly items: readonly QuickPickItem[];
+  readonly title?: string;
+  readonly placeholder?: string;
+}
+
+export interface ShowQuickPickResponse {
+  readonly selected: string | null;
+}
+
+export interface ShowInputBoxRequest {
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly placeholder?: string;
+  readonly value?: string;
+  readonly password?: boolean;
+}
+
+export interface ShowInputBoxResponse {
+  readonly value: string | null;
+}
+
 // Socket.IO typed events
 export interface ServerToClientEvents {
   config: (config: PluginConfig) => void;
   command: (request: CommandRequest, ack: (result: PluginResult) => void) => void;
   shutdown: (ack: (result: PluginResult<undefined>) => void) => void;
+  "ui:showNotification": (
+    request: ShowNotificationRequest,
+    ack: (result: PluginResult<ShowNotificationResponse>) => void
+  ) => void;
+  "ui:statusBarUpdate": (
+    request: StatusBarUpdateRequest,
+    ack: (result: PluginResult<void>) => void
+  ) => void;
+  "ui:statusBarDispose": (
+    request: StatusBarDisposeRequest,
+    ack: (result: PluginResult<void>) => void
+  ) => void;
+  "ui:showQuickPick": (
+    request: ShowQuickPickRequest,
+    ack: (result: PluginResult<ShowQuickPickResponse>) => void
+  ) => void;
+  "ui:showInputBox": (
+    request: ShowInputBoxRequest,
+    ack: (result: PluginResult<ShowInputBoxResponse>) => void
+  ) => void;
 }
 
 export interface ClientToServerEvents {

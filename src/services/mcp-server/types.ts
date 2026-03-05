@@ -10,6 +10,16 @@ import type {
   Project,
   InitialPrompt,
 } from "../../shared/api/types";
+import type {
+  ShowNotificationRequest,
+  ShowNotificationResponse,
+  StatusBarUpdateRequest,
+  StatusBarDisposeRequest,
+  ShowQuickPickRequest,
+  ShowQuickPickResponse,
+  ShowInputBoxRequest,
+  ShowInputBoxResponse,
+} from "../../shared/plugin-protocol";
 
 // =============================================================================
 // MCP Error Types
@@ -64,6 +74,23 @@ export interface McpApiHandlers {
     command: string,
     args?: readonly unknown[]
   ): Promise<unknown>;
+  showNotification(
+    workspacePath: string,
+    request: ShowNotificationRequest,
+    timeoutMs?: number
+  ): Promise<ShowNotificationResponse>;
+  updateStatusBar(workspacePath: string, request: StatusBarUpdateRequest): Promise<void>;
+  disposeStatusBar(workspacePath: string, request: StatusBarDisposeRequest): Promise<void>;
+  showQuickPick(
+    workspacePath: string,
+    request: ShowQuickPickRequest,
+    timeoutMs?: number
+  ): Promise<ShowQuickPickResponse>;
+  showInputBox(
+    workspacePath: string,
+    request: ShowInputBoxRequest,
+    timeoutMs?: number
+  ): Promise<ShowInputBoxResponse>;
 }
 
 // =============================================================================

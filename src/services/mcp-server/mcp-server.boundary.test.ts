@@ -46,6 +46,11 @@ function createMockMcpHandlers(): McpApiHandlers {
     createWorkspace: vi.fn().mockResolvedValue({ name: "test", path: "/path" }),
     deleteWorkspace: vi.fn().mockResolvedValue({ started: true }),
     executeCommand: vi.fn().mockResolvedValue(undefined),
+    showNotification: vi.fn().mockResolvedValue({ action: null }),
+    updateStatusBar: vi.fn().mockResolvedValue(undefined),
+    disposeStatusBar: vi.fn().mockResolvedValue(undefined),
+    showQuickPick: vi.fn().mockResolvedValue({ selected: null }),
+    showInputBox: vi.fn().mockResolvedValue({ value: null }),
   };
 }
 

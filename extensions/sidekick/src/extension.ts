@@ -13,6 +13,14 @@ import type {
   InitialPrompt,
   AgentSession,
   AgentType,
+  ShowNotificationRequest,
+  ShowNotificationResponse,
+  StatusBarUpdateRequest,
+  StatusBarDisposeRequest,
+  ShowQuickPickRequest,
+  ShowQuickPickResponse,
+  ShowInputBoxRequest,
+  ShowInputBoxResponse,
 } from "./types";
 import {
   reconstructVscodeObjects,
@@ -173,6 +181,23 @@ function setupTerminalCloseListener(): void {
       codehydraApi.log.debug("Agent terminal closed");
     }
   });
+}
+
+// ============================================================================
+// MCP Status Bar Management
+// ============================================================================
+
+/** Status bar items created via MCP ui:statusBarUpdate, keyed by id */
+const mcpStatusBarItems = new Map<string, vscode.StatusBarItem>();
+
+/**
+ * Dispose all MCP-created status bar items.
+ */
+function disposeAllMcpStatusBarItems(): void {
+  for (const item of mcpStatusBarItems.values()) {
+    item.dispose();
+  }
+  mcpStatusBarItems.clear();
 }
 
 // ============================================================================
@@ -592,6 +617,7 @@ function connectToPluginServer(port: number, workspacePath: string): void {
   socket.on("disconnect", (reason) => {
     codehydraApi.log.info("Disconnected from PluginServer", { reason });
     isConnected = false;
+    disposeAllMcpStatusBarItems();
   });
 
   socket.on("connect_error", (err) => {
@@ -636,6 +662,108 @@ function connectToPluginServer(port: number, workspacePath: string): void {
     codehydraApi.log.info("Exiting extension host");
     setImmediate(() => process.exit(0));
   });
+
+  // ---- UI event handlers ----
+
+  socket.on(
+    "ui:showNotification",
+    (
+      request: ShowNotificationRequest,
+      ack: (result: PluginResult<ShowNotificationResponse>) => void
+    ) => {
+      const showFn =
+        request.severity === "error"
+          ? vscode.window.showErrorMessage
+          : request.severity === "warning"
+            ? vscode.window.showWarningMessage
+            : vscode.window.showInformationMessage;
+
+      if (!request.actions || request.actions.length === 0) {
+        // Fire-and-forget: ack immediately, then show modal notification
+        ack({ success: true, data: { action: null } });
+        void showFn(request.message, { modal: true });
+      } else {
+        // Interactive: show modal with actions, await user response, then ack
+        const actions = [...request.actions];
+        void showFn(request.message, { modal: true }, ...actions).then((selected) => {
+          ack({ success: true, data: { action: selected ?? null } });
+        });
+      }
+    }
+  );
+
+  socket.on(
+    "ui:statusBarUpdate",
+    (request: StatusBarUpdateRequest, ack: (result: PluginResult<void>) => void) => {
+      try {
+        let item = mcpStatusBarItems.get(request.id);
+        if (!item) {
+          item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+          mcpStatusBarItems.set(request.id, item);
+        }
+        item.text = request.text;
+        if (request.tooltip !== undefined) item.tooltip = request.tooltip;
+        if (request.command !== undefined) item.command = request.command;
+        if (request.color !== undefined) {
+          item.color = request.color;
+        }
+        item.show();
+        ack({ success: true, data: undefined });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        ack({ success: false, error });
+      }
+    }
+  );
+
+  socket.on(
+    "ui:statusBarDispose",
+    (request: StatusBarDisposeRequest, ack: (result: PluginResult<void>) => void) => {
+      const item = mcpStatusBarItems.get(request.id);
+      if (item) {
+        item.dispose();
+        mcpStatusBarItems.delete(request.id);
+      }
+      ack({ success: true, data: undefined });
+    }
+  );
+
+  socket.on(
+    "ui:showQuickPick",
+    (request: ShowQuickPickRequest, ack: (result: PluginResult<ShowQuickPickResponse>) => void) => {
+      const items: vscode.QuickPickItem[] = request.items.map((i) => ({
+        label: i.label,
+        ...(i.description !== undefined && { description: i.description }),
+        ...(i.detail !== undefined && { detail: i.detail }),
+      }));
+
+      void vscode.window
+        .showQuickPick(items, {
+          ...(request.title !== undefined && { title: request.title }),
+          ...(request.placeholder !== undefined && { placeHolder: request.placeholder }),
+        })
+        .then((selected) => {
+          ack({ success: true, data: { selected: selected?.label ?? null } });
+        });
+    }
+  );
+
+  socket.on(
+    "ui:showInputBox",
+    (request: ShowInputBoxRequest, ack: (result: PluginResult<ShowInputBoxResponse>) => void) => {
+      void vscode.window
+        .showInputBox({
+          ...(request.title !== undefined && { title: request.title }),
+          ...(request.prompt !== undefined && { prompt: request.prompt }),
+          ...(request.placeholder !== undefined && { placeHolder: request.placeholder }),
+          ...(request.value !== undefined && { value: request.value }),
+          ...(request.password !== undefined && { password: request.password }),
+        })
+        .then((value) => {
+          ack({ success: true, data: { value: value ?? null } });
+        });
+    }
+  );
 
   socket.connect();
 }
@@ -822,6 +950,8 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
 }
 
 export function deactivate(): void {
+  disposeAllMcpStatusBarItems();
+
   if (socket) {
     codehydraApi.log.info("Deactivating");
     socket.disconnect();
