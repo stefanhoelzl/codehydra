@@ -147,5 +147,58 @@ export function createMcpHandlers(
       }
       return result.data;
     },
+
+    async showNotification(workspacePath, request, timeoutMs) {
+      if (!pluginServer) {
+        throw new Error("Plugin server not available");
+      }
+      const result = await pluginServer.showNotification(workspacePath, request, timeoutMs);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      return result.data;
+    },
+
+    async updateStatusBar(workspacePath, request) {
+      if (!pluginServer) {
+        throw new Error("Plugin server not available");
+      }
+      const result = await pluginServer.updateStatusBar(workspacePath, request);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+    },
+
+    async disposeStatusBar(workspacePath, request) {
+      if (!pluginServer) {
+        throw new Error("Plugin server not available");
+      }
+      const result = await pluginServer.disposeStatusBar(workspacePath, request);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+    },
+
+    async showQuickPick(workspacePath, request, timeoutMs) {
+      if (!pluginServer) {
+        throw new Error("Plugin server not available");
+      }
+      const result = await pluginServer.showQuickPick(workspacePath, request, timeoutMs);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      return result.data;
+    },
+
+    async showInputBox(workspacePath, request, timeoutMs) {
+      if (!pluginServer) {
+        throw new Error("Plugin server not available");
+      }
+      const result = await pluginServer.showInputBox(workspacePath, request, timeoutMs);
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      return result.data;
+    },
   };
 }

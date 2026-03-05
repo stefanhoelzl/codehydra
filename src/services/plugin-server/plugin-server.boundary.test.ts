@@ -1033,4 +1033,214 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(shutdownCount).toBe(2);
     });
   });
+
+  describe("UI events", () => {
+    it("showNotification round-trip with action", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:showNotification", (request, ack) => {
+        expect(request.severity).toBe("info");
+        expect(request.message).toBe("Continue?");
+        expect(request.actions).toEqual(["Yes", "No"]);
+        ack({ success: true, data: { action: "Yes" } });
+      });
+
+      const result = await env.server.showNotification("/test/workspace", {
+        severity: "info",
+        message: "Continue?",
+        actions: ["Yes", "No"],
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.action).toBe("Yes");
+      }
+    });
+
+    it("showNotification fire-and-forget without actions", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:showNotification", (request, ack) => {
+        expect(request.severity).toBe("warning");
+        expect(request.message).toBe("Something happened");
+        expect(request.actions).toBeUndefined();
+        ack({ success: true, data: { action: null } });
+      });
+
+      const result = await env.server.showNotification("/test/workspace", {
+        severity: "warning",
+        message: "Something happened",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.action).toBeNull();
+      }
+    });
+
+    it("showNotification returns error when workspace not connected", async () => {
+      const result = await env.server.showNotification("/nonexistent", {
+        severity: "info",
+        message: "test",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("Workspace not connected");
+      }
+    });
+
+    it("updateStatusBar round-trip", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:statusBarUpdate", (request, ack) => {
+        expect(request.id).toBe("myStatusBar");
+        expect(request.text).toBe("$(sync~spin) Building...");
+        expect(request.tooltip).toBe("Build in progress");
+        ack({ success: true, data: undefined });
+      });
+
+      const result = await env.server.updateStatusBar("/test/workspace", {
+        id: "myStatusBar",
+        text: "$(sync~spin) Building...",
+        tooltip: "Build in progress",
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it("disposeStatusBar round-trip", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:statusBarDispose", (request, ack) => {
+        expect(request.id).toBe("myStatusBar");
+        ack({ success: true, data: undefined });
+      });
+
+      const result = await env.server.disposeStatusBar("/test/workspace", {
+        id: "myStatusBar",
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it("showQuickPick round-trip with selection", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:showQuickPick", (request, ack) => {
+        expect(request.items).toEqual([
+          { label: "Option A", description: "First option" },
+          { label: "Option B", description: "Second option" },
+        ]);
+        expect(request.title).toBe("Pick one");
+        expect(request.placeholder).toBe("Select an option...");
+        ack({ success: true, data: { selected: "Option A" } });
+      });
+
+      const result = await env.server.showQuickPick("/test/workspace", {
+        items: [
+          { label: "Option A", description: "First option" },
+          { label: "Option B", description: "Second option" },
+        ],
+        title: "Pick one",
+        placeholder: "Select an option...",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.selected).toBe("Option A");
+      }
+    });
+
+    it("showQuickPick returns null on cancel", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:showQuickPick", (_request, ack) => {
+        ack({ success: true, data: { selected: null } });
+      });
+
+      const result = await env.server.showQuickPick("/test/workspace", {
+        items: [{ label: "Option A" }],
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.selected).toBeNull();
+      }
+    });
+
+    it("showInputBox round-trip with value", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:showInputBox", (request, ack) => {
+        expect(request.title).toBe("Enter name");
+        expect(request.prompt).toBe("Workspace name");
+        expect(request.placeholder).toBe("my-workspace");
+        expect(request.value).toBe("default-name");
+        ack({ success: true, data: { value: "user-input" } });
+      });
+
+      const result = await env.server.showInputBox("/test/workspace", {
+        title: "Enter name",
+        prompt: "Workspace name",
+        placeholder: "my-workspace",
+        value: "default-name",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.value).toBe("user-input");
+      }
+    });
+
+    it("showInputBox returns null on cancel", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.on("ui:showInputBox", (_request, ack) => {
+        ack({ success: true, data: { value: null } });
+      });
+
+      const result = await env.server.showInputBox("/test/workspace", {
+        prompt: "Enter something",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.value).toBeNull();
+      }
+    });
+
+    it("showNotification times out when client does not ack", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      // Handler that never acks
+      client.on("ui:showNotification", () => {
+        // Intentionally do not call ack
+      });
+
+      const start = Date.now();
+      const result = await env.server.showNotification(
+        "/test/workspace",
+        { severity: "info", message: "test", actions: ["OK"] },
+        500
+      );
+      const elapsed = Date.now() - start;
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toBe("UI event timed out");
+      }
+      expect(elapsed).toBeGreaterThanOrEqual(500 - TIMING_TOLERANCE_MS);
+      expect(elapsed).toBeLessThan(2000);
+    });
+  });
 });

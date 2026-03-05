@@ -29,6 +29,14 @@ import {
   type PluginConfig,
   type LogContext,
   type AgentType,
+  type ShowNotificationRequest,
+  type ShowNotificationResponse,
+  type StatusBarUpdateRequest,
+  type StatusBarDisposeRequest,
+  type ShowQuickPickRequest,
+  type ShowQuickPickResponse,
+  type ShowInputBoxRequest,
+  type ShowInputBoxResponse,
   COMMAND_TIMEOUT_MS,
   SHUTDOWN_DISCONNECT_TIMEOUT_MS,
   validateSetMetadataRequest,
@@ -323,6 +331,127 @@ export class PluginServer {
         resolve(result);
       });
     });
+  }
+
+  /**
+   * Send a UI event to a connected workspace and wait for acknowledgment.
+   *
+   * @param workspacePath - Path to the workspace
+   * @param event - The UI event name
+   * @param request - The request payload
+   * @param timeoutMs - Timeout for acknowledgment (0 = no timeout)
+   * @returns Result from the extension
+   */
+  private async sendUiEvent<TReq, TRes>(
+    workspacePath: string,
+    event: keyof ServerToClientEvents,
+    request: TReq,
+    timeoutMs: number = COMMAND_TIMEOUT_MS
+  ): Promise<PluginResult<TRes>> {
+    const normalized = new Path(workspacePath).toString();
+    const socket = this.connections.get(normalized);
+
+    if (!socket) {
+      return { success: false, error: "Workspace not connected" };
+    }
+
+    if (!socket.connected) {
+      this.connections.delete(normalized);
+      return { success: false, error: "Workspace disconnected" };
+    }
+
+    return new Promise((resolve) => {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      if (timeoutMs > 0) {
+        timeoutId = setTimeout(() => {
+          this.logger.warn("UI event timeout", { workspace: normalized, event, timeoutMs });
+          resolve({ success: false, error: "UI event timed out" });
+        }, timeoutMs);
+      }
+
+      // @ts-expect-error Dynamic event name - TypedSocket strict typing cannot accommodate generic event dispatch
+      socket.emit(event, request, (result: PluginResult<TRes>) => {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        this.logger.debug("UI event result", {
+          workspace: normalized,
+          event,
+          success: result.success,
+        });
+        resolve(result);
+      });
+    });
+  }
+
+  /**
+   * Show a notification in the workspace's VS Code instance.
+   *
+   * @param workspacePath - Path to the workspace
+   * @param request - Notification request
+   * @param timeoutMs - Timeout (default: COMMAND_TIMEOUT_MS; 0 = no timeout)
+   */
+  async showNotification(
+    workspacePath: string,
+    request: ShowNotificationRequest,
+    timeoutMs: number = COMMAND_TIMEOUT_MS
+  ): Promise<PluginResult<ShowNotificationResponse>> {
+    return this.sendUiEvent(workspacePath, "ui:showNotification", request, timeoutMs);
+  }
+
+  /**
+   * Create or update a status bar item in the workspace's VS Code instance.
+   *
+   * @param workspacePath - Path to the workspace
+   * @param request - Status bar update request
+   */
+  async updateStatusBar(
+    workspacePath: string,
+    request: StatusBarUpdateRequest
+  ): Promise<PluginResult<void>> {
+    return this.sendUiEvent(workspacePath, "ui:statusBarUpdate", request);
+  }
+
+  /**
+   * Dispose a status bar item in the workspace's VS Code instance.
+   *
+   * @param workspacePath - Path to the workspace
+   * @param request - Status bar dispose request
+   */
+  async disposeStatusBar(
+    workspacePath: string,
+    request: StatusBarDisposeRequest
+  ): Promise<PluginResult<void>> {
+    return this.sendUiEvent(workspacePath, "ui:statusBarDispose", request);
+  }
+
+  /**
+   * Show a quick pick in the workspace's VS Code instance.
+   *
+   * @param workspacePath - Path to the workspace
+   * @param request - Quick pick request
+   * @param timeoutMs - Timeout (default: 0 = no timeout, waits for user)
+   */
+  async showQuickPick(
+    workspacePath: string,
+    request: ShowQuickPickRequest,
+    timeoutMs: number = 0
+  ): Promise<PluginResult<ShowQuickPickResponse>> {
+    return this.sendUiEvent(workspacePath, "ui:showQuickPick", request, timeoutMs);
+  }
+
+  /**
+   * Show an input box in the workspace's VS Code instance.
+   *
+   * @param workspacePath - Path to the workspace
+   * @param request - Input box request
+   * @param timeoutMs - Timeout (default: 0 = no timeout, waits for user)
+   */
+  async showInputBox(
+    workspacePath: string,
+    request: ShowInputBoxRequest,
+    timeoutMs: number = 0
+  ): Promise<PluginResult<ShowInputBoxResponse>> {
+    return this.sendUiEvent(workspacePath, "ui:showInputBox", request, timeoutMs);
   }
 
   /**

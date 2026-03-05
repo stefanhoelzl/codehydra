@@ -57,6 +57,11 @@ function createCapturingOperation<TIntent extends Intent = Intent, TResult = voi
 function createMockPluginServer() {
   return {
     sendCommand: vi.fn().mockResolvedValue({ success: true, data: "result" }),
+    showNotification: vi.fn().mockResolvedValue({ success: true, data: { action: null } }),
+    updateStatusBar: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+    disposeStatusBar: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+    showQuickPick: vi.fn().mockResolvedValue({ success: true, data: { selected: "Option A" } }),
+    showInputBox: vi.fn().mockResolvedValue({ success: true, data: { value: "hello" } }),
   };
 }
 
@@ -345,6 +350,217 @@ describe("createMcpHandlers", () => {
       await expect(handlers.executeCommand("/workspace/path", "test.command")).rejects.toThrow(
         "Plugin server not available"
       );
+    });
+  });
+
+  describe("showNotification", () => {
+    it("delegates to pluginServer.showNotification", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { severity: "info" as const, message: "Hello" };
+      const result = await handlers.showNotification("/workspace/path", request);
+
+      expect(pluginServer.showNotification).toHaveBeenCalledWith(
+        "/workspace/path",
+        request,
+        undefined
+      );
+      expect(result).toEqual({ action: null });
+    });
+
+    it("passes timeout to pluginServer", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { severity: "info" as const, message: "Hello", actions: ["OK"] };
+      await handlers.showNotification("/workspace/path", request, 5000);
+
+      expect(pluginServer.showNotification).toHaveBeenCalledWith("/workspace/path", request, 5000);
+    });
+
+    it("throws when pluginServer returns error", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      pluginServer.showNotification.mockResolvedValue({
+        success: false,
+        error: "Not connected",
+      });
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await expect(
+        handlers.showNotification("/workspace/path", { severity: "info", message: "Hi" })
+      ).rejects.toThrow("Not connected");
+    });
+
+    it("throws when pluginServer is null", async () => {
+      const { dispatcher } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, null);
+
+      await expect(
+        handlers.showNotification("/workspace/path", { severity: "info", message: "Hi" })
+      ).rejects.toThrow("Plugin server not available");
+    });
+  });
+
+  describe("updateStatusBar", () => {
+    it("delegates to pluginServer.updateStatusBar", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { id: "my-status", text: "Building..." };
+      await handlers.updateStatusBar("/workspace/path", request);
+
+      expect(pluginServer.updateStatusBar).toHaveBeenCalledWith("/workspace/path", request);
+    });
+
+    it("throws when pluginServer returns error", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      pluginServer.updateStatusBar.mockResolvedValue({
+        success: false,
+        error: "Socket disconnected",
+      });
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await expect(
+        handlers.updateStatusBar("/workspace/path", { id: "my-status", text: "Building..." })
+      ).rejects.toThrow("Socket disconnected");
+    });
+
+    it("throws when pluginServer is null", async () => {
+      const { dispatcher } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, null);
+
+      await expect(
+        handlers.updateStatusBar("/workspace/path", { id: "my-status", text: "Building..." })
+      ).rejects.toThrow("Plugin server not available");
+    });
+  });
+
+  describe("disposeStatusBar", () => {
+    it("delegates to pluginServer.disposeStatusBar", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { id: "my-status" };
+      await handlers.disposeStatusBar("/workspace/path", request);
+
+      expect(pluginServer.disposeStatusBar).toHaveBeenCalledWith("/workspace/path", request);
+    });
+
+    it("throws when pluginServer returns error", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      pluginServer.disposeStatusBar.mockResolvedValue({
+        success: false,
+        error: "Item not found",
+      });
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await expect(
+        handlers.disposeStatusBar("/workspace/path", { id: "my-status" })
+      ).rejects.toThrow("Item not found");
+    });
+
+    it("throws when pluginServer is null", async () => {
+      const { dispatcher } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, null);
+
+      await expect(
+        handlers.disposeStatusBar("/workspace/path", { id: "my-status" })
+      ).rejects.toThrow("Plugin server not available");
+    });
+  });
+
+  describe("showQuickPick", () => {
+    it("delegates to pluginServer.showQuickPick", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { items: [{ label: "Option A" }, { label: "Option B" }] };
+      const result = await handlers.showQuickPick("/workspace/path", request);
+
+      expect(pluginServer.showQuickPick).toHaveBeenCalledWith(
+        "/workspace/path",
+        request,
+        undefined
+      );
+      expect(result).toEqual({ selected: "Option A" });
+    });
+
+    it("passes timeout to pluginServer", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { items: [{ label: "Option A" }], title: "Pick one" };
+      await handlers.showQuickPick("/workspace/path", request, 10000);
+
+      expect(pluginServer.showQuickPick).toHaveBeenCalledWith("/workspace/path", request, 10000);
+    });
+
+    it("throws when pluginServer returns error", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      pluginServer.showQuickPick.mockResolvedValue({
+        success: false,
+        error: "Timed out",
+      });
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await expect(
+        handlers.showQuickPick("/workspace/path", { items: [{ label: "A" }] })
+      ).rejects.toThrow("Timed out");
+    });
+
+    it("throws when pluginServer is null", async () => {
+      const { dispatcher } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, null);
+
+      await expect(
+        handlers.showQuickPick("/workspace/path", { items: [{ label: "A" }] })
+      ).rejects.toThrow("Plugin server not available");
+    });
+  });
+
+  describe("showInputBox", () => {
+    it("delegates to pluginServer.showInputBox", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { prompt: "Enter your name", placeholder: "Name" };
+      const result = await handlers.showInputBox("/workspace/path", request);
+
+      expect(pluginServer.showInputBox).toHaveBeenCalledWith("/workspace/path", request, undefined);
+      expect(result).toEqual({ value: "hello" });
+    });
+
+    it("passes timeout to pluginServer", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      const request = { prompt: "Enter value", password: true };
+      await handlers.showInputBox("/workspace/path", request, 15000);
+
+      expect(pluginServer.showInputBox).toHaveBeenCalledWith("/workspace/path", request, 15000);
+    });
+
+    it("throws when pluginServer returns error", async () => {
+      const { dispatcher, pluginServer } = createTestSetup();
+      pluginServer.showInputBox.mockResolvedValue({
+        success: false,
+        error: "User cancelled",
+      });
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await expect(
+        handlers.showInputBox("/workspace/path", { prompt: "Enter value" })
+      ).rejects.toThrow("User cancelled");
+    });
+
+    it("throws when pluginServer is null", async () => {
+      const { dispatcher } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, null);
+
+      await expect(
+        handlers.showInputBox("/workspace/path", { prompt: "Enter value" })
+      ).rejects.toThrow("Plugin server not available");
     });
   });
 });
