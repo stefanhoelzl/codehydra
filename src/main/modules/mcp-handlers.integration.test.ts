@@ -291,6 +291,51 @@ describe("createMcpHandlers", () => {
       expect(result).toEqual({ started: true });
     });
 
+    it("passes ignoreWarnings through to intent payload", async () => {
+      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await handlers.deleteWorkspace("/workspace/path", {
+        keepBranch: false,
+        ignoreWarnings: true,
+      });
+
+      expect(capturedIntents[0]!.payload).toMatchObject({
+        ignoreWarnings: true,
+      });
+    });
+
+    it("defaults ignoreWarnings to false", async () => {
+      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await handlers.deleteWorkspace("/workspace/path", { keepBranch: false });
+
+      expect(capturedIntents[0]!.payload).toMatchObject({
+        ignoreWarnings: false,
+      });
+    });
+
+    it("awaits full result and propagates thrown errors", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const pluginServer = createMockPluginServer();
+
+      // Register an operation that throws (simulates preflight failure)
+      dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, {
+        id: DELETE_WORKSPACE_OPERATION_ID,
+        async execute(): Promise<{ started: true }> {
+          throw new Error("Preflight check failed: Workspace has uncommitted changes");
+        },
+      });
+
+      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+
+      await expect(
+        handlers.deleteWorkspace("/workspace/path", { keepBranch: false })
+      ).rejects.toThrow("Preflight check failed: Workspace has uncommitted changes");
+    });
+
     it("returns started: false when interceptor rejects", async () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);

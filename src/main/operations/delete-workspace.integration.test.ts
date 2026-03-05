@@ -34,6 +34,7 @@ import type {
 } from "./delete-workspace";
 import type {
   DeleteWorkspaceIntent,
+  PreflightHookResult,
   ShutdownHookResult,
   ReleaseHookResult,
   DeleteHookResult,
@@ -341,6 +342,8 @@ function createTestHarness(options?: {
   serverStopError?: string;
   worktreeRemoveError?: string;
   initialProjects?: TestAppState["projects"];
+  isDirty?: boolean;
+  unmergedCommits?: number;
 }): TestHarness {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -806,12 +809,29 @@ function createTestHarness(options?: {
     },
   };
 
+  const deletePreflightModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        preflight: {
+          handler: async (): Promise<PreflightHookResult> => {
+            return {
+              isDirty: options?.isDirty ?? false,
+              unmergedCommits: options?.unmergedCommits ?? 0,
+            };
+          },
+        },
+      },
+    },
+  };
+
   for (const m of [
     idempotencyModule,
     progressCaptureModule,
     resolveWorkspaceModule,
     resolveProjectModule,
     getActiveWorkspaceModule,
+    deletePreflightModule,
     deleteViewModule,
     deleteAgentModule,
     deleteWindowsLockModule,
@@ -1741,5 +1761,119 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
 
     // workspace:deleted NOT emitted (workspace still exists)
     expect(harness.testState.removedWorkspaces).toHaveLength(0);
+  });
+});
+
+describe("DeleteWorkspaceOperation.preflight", () => {
+  it("throws when workspace is dirty", async () => {
+    const harness = createTestHarness({ isDirty: true });
+    const intent = buildDeleteIntent();
+
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
+      "Preflight check failed: Workspace has uncommitted changes"
+    );
+
+    // Shutdown hook should NOT have been called (server not stopped)
+    expect(harness.testState.serverStopped).toBe(false);
+
+    // Worktree should NOT be removed
+    expect(harness.testState.worktreeRemoved).toBe(false);
+
+    // workspace:deleted NOT emitted
+    expect(harness.testState.removedWorkspaces).toHaveLength(0);
+
+    // delete-failed emitted (resets idempotency)
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+
+    // No progress events emitted (preflight throws before any progress)
+    expect(harness.progressCaptures).toHaveLength(0);
+  });
+
+  it("throws when workspace has unmerged commits", async () => {
+    const harness = createTestHarness({ unmergedCommits: 3 });
+    const intent = buildDeleteIntent();
+
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
+      "Preflight check failed: Workspace has 3 unmerged commits"
+    );
+
+    expect(harness.testState.serverStopped).toBe(false);
+    expect(harness.testState.worktreeRemoved).toBe(false);
+    expect(harness.testState.removedWorkspaces).toHaveLength(0);
+    expect(harness.progressCaptures).toHaveLength(0);
+  });
+
+  it("proceeds when workspace is clean", async () => {
+    const harness = createTestHarness({ isDirty: false, unmergedCommits: 0 });
+    const intent = buildDeleteIntent();
+
+    await harness.dispatcher.dispatch(intent);
+
+    // Deletion should have completed normally
+    expect(harness.testState.worktreeRemoved).toBe(true);
+    expect(harness.testState.removedWorkspaces).toContainEqual({
+      projectPath: PROJECT_PATH,
+      workspacePath: WORKSPACE_PATH,
+    });
+
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.completed).toBe(true);
+    expect(finalProgress.hasErrors).toBe(false);
+  });
+
+  it("skips preflight when ignoreWarnings is true", async () => {
+    const harness = createTestHarness({ isDirty: true, unmergedCommits: 5 });
+    const intent = buildDeleteIntent({ ignoreWarnings: true });
+
+    await harness.dispatcher.dispatch(intent);
+
+    // Deletion should proceed despite dirty state
+    expect(harness.testState.worktreeRemoved).toBe(true);
+    expect(harness.testState.removedWorkspaces).toContainEqual({
+      projectPath: PROJECT_PATH,
+      workspacePath: WORKSPACE_PATH,
+    });
+
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.completed).toBe(true);
+    expect(finalProgress.hasErrors).toBe(false);
+  });
+
+  it("skips preflight when force is true", async () => {
+    const harness = createTestHarness({ isDirty: true });
+    const intent = buildDeleteIntent({ force: true });
+
+    await harness.dispatcher.dispatch(intent);
+
+    // Force deletion proceeds
+    expect(harness.testState.removedWorkspaces).toContainEqual({
+      projectPath: PROJECT_PATH,
+      workspacePath: WORKSPACE_PATH,
+    });
+  });
+
+  it("skips preflight when removeWorktree is false", async () => {
+    const harness = createTestHarness({ isDirty: true });
+    const intent = buildDeleteIntent({ removeWorktree: false });
+
+    await harness.dispatcher.dispatch(intent);
+
+    // Runtime teardown only — no preflight, no worktree removal
+    expect(harness.testState.serverStopped).toBe(true);
+
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.completed).toBe(true);
+    expect(finalProgress.hasErrors).toBe(false);
+  });
+
+  it("throws with both dirty and unmerged messages when both are true", async () => {
+    const harness = createTestHarness({ isDirty: true, unmergedCommits: 2 });
+    const intent = buildDeleteIntent();
+
+    await expect(harness.dispatcher.dispatch(intent)).rejects.toThrow(
+      "Preflight check failed: Workspace has uncommitted changes; Workspace has 2 unmerged commits"
+    );
+
+    expect(harness.progressCaptures).toHaveLength(0);
   });
 });

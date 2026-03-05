@@ -307,6 +307,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         keepBranch: p.keepBranch ?? true,
         force: p.force ?? false,
         removeWorktree: true,
+        ignoreWarnings: p.ignoreWarnings ?? false,
         ...(p.skipSwitch !== undefined && { skipSwitch: p.skipSwitch }),
         ...(p.blockingPids !== undefined && { blockingPids: p.blockingPids }),
       },
@@ -316,7 +317,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     if (!(await handle.accepted)) {
       return { started: false };
     }
-    void handle;
+    void handle.catch(() => {}); // Errors communicated via domain events
     return { started: true };
   });
 

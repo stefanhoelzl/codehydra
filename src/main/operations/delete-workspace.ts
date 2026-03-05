@@ -51,6 +51,8 @@ export interface DeleteWorkspacePayload {
   /** Whether to remove the git worktree. true = full pipeline, false = shutdown only (runtime teardown). */
   readonly removeWorktree: boolean;
   readonly skipSwitch?: boolean;
+  /** If true, skip preflight checks for uncommitted changes and unmerged commits. */
+  readonly ignoreWarnings?: boolean;
   /** PIDs from a previous failed attempt. When present, flush hook kills these before delete. */
   readonly blockingPids?: readonly number[];
 }
@@ -103,6 +105,16 @@ export interface WorkspaceDeletionProgressEvent extends DomainEvent {
 // =============================================================================
 
 export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
+
+/**
+ * Per-handler result for the "preflight" hook point.
+ * Checks workspace for uncommitted changes and unmerged commits before deletion.
+ */
+export interface PreflightHookResult {
+  readonly isDirty?: boolean;
+  readonly unmergedCommits?: number;
+  readonly error?: string;
+}
 
 /**
  * Per-handler result for the "shutdown" hook point.
@@ -336,17 +348,27 @@ export class DeleteWorkspaceOperation implements Operation<
         }
       }
     } else {
-      const result = await this.runPipeline(ctx, ctx.emit);
+      try {
+        const result = await this.runPipeline(ctx, ctx.emit);
 
-      if (result.hasErrors) {
-        // Emit delete-failed to reset idempotency, allowing retry dispatch
+        if (result.hasErrors) {
+          // Emit delete-failed to reset idempotency, allowing retry dispatch
+          const failedEvent: WorkspaceDeleteFailedEvent = {
+            type: EVENT_WORKSPACE_DELETE_FAILED,
+            payload: { workspacePath: payload.workspacePath },
+          };
+          ctx.emit(failedEvent);
+        } else {
+          emitEvent(result.identity);
+        }
+      } catch (error) {
+        // Preflight or unexpected error — emit delete-failed for idempotency reset, then propagate
         const failedEvent: WorkspaceDeleteFailedEvent = {
           type: EVENT_WORKSPACE_DELETE_FAILED,
           payload: { workspacePath: payload.workspacePath },
         };
         ctx.emit(failedEvent);
-      } else {
-        emitEvent(result.identity);
+        throw error;
       }
     }
 
@@ -387,7 +409,10 @@ export class DeleteWorkspaceOperation implements Operation<
     // leaves the UI permanently stuck on "Removing workspace".
     try {
       return await this.runPipelineBody(ctx, emit, identity, pipelineCtx);
-    } catch {
+    } catch (error) {
+      // Preflight errors must propagate (no progress events emitted yet)
+      if (error instanceof Error && error.message.startsWith("Preflight check failed:"))
+        throw error;
       this.emitPipelineProgress(emit, identity, payload, {}, true, true);
       return { hasErrors: true, identity };
     }
@@ -400,6 +425,32 @@ export class DeleteWorkspaceOperation implements Operation<
     pipelineCtx: DeletePipelineHookInput
   ): Promise<PipelineResult> {
     const { payload } = ctx.intent;
+
+    // --- Preflight (dirty/unmerged check) ---
+    if (payload.removeWorktree && !payload.force && !payload.ignoreWarnings) {
+      const { results: preflightResults, errors: preflightCollectErrors } =
+        await ctx.hooks.collect<PreflightHookResult>("preflight", pipelineCtx);
+
+      let isDirty = false;
+      let unmergedCommits = 0;
+      for (const e of preflightCollectErrors) throw e;
+      for (const r of preflightResults) {
+        if (r.isDirty) isDirty = true;
+        if (r.unmergedCommits !== undefined && r.unmergedCommits > unmergedCommits)
+          unmergedCommits = r.unmergedCommits;
+        if (r.error) throw new Error(r.error);
+      }
+
+      if (isDirty || unmergedCommits > 0) {
+        const messages: string[] = [];
+        if (isDirty) messages.push("Workspace has uncommitted changes");
+        if (unmergedCommits > 0)
+          messages.push(
+            `Workspace has ${unmergedCommits} unmerged commit${unmergedCommits === 1 ? "" : "s"}`
+          );
+        throw new Error(`Preflight check failed: ${messages.join("; ")}`);
+      }
+    }
 
     // --- Shutdown ---
     this.emitPipelineProgress(emit, identity, payload, {}, false, false, "kill-terminals");
