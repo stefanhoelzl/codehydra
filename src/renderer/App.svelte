@@ -27,6 +27,8 @@
     ShowAgentSelectionPayload,
     SetupErrorPayload,
     LifecycleAgentType,
+    UpdateProgressPayload,
+    UpdateChoice,
   } from "@shared/ipc";
   import {
     handleModeChange,
@@ -41,6 +43,7 @@
   import SetupScreen from "$lib/components/SetupScreen.svelte";
   import SetupError from "$lib/components/SetupError.svelte";
   import AgentSelectionDialog from "$lib/components/AgentSelectionDialog.svelte";
+  import UpdateOverlay from "$lib/components/UpdateOverlay.svelte";
 
   const logger = createLogger("ui");
 
@@ -78,6 +81,14 @@
 
   // Announcement message for screen readers (cleared after announcement)
   let announceMessage = $state<string>("");
+
+  // Update overlay state
+  type UpdateState =
+    | { type: "none" }
+    | { type: "choice"; version: string }
+    | { type: "downloading"; version: string; percent: number };
+
+  let updateState = $state<UpdateState>({ type: "none" });
 
   // Subscribe to ui:mode-changed events from main process (unified mode system)
   $effect(() => {
@@ -204,6 +215,45 @@
     };
   });
 
+  // Subscribe to update:progress events from main process
+  $effect(() => {
+    const unsub = api.on<UpdateProgressPayload>("update:progress", (payload) => {
+      if (payload.finished) {
+        updateState = { type: "none" };
+        return;
+      }
+
+      switch (payload.action) {
+        case "show-choice":
+          updateState = { type: "choice", version: payload.version };
+          break;
+        case "downloading":
+        case "progress":
+          updateState = {
+            type: "downloading",
+            version: payload.version,
+            percent: payload.percent,
+          };
+          break;
+      }
+    });
+    return () => {
+      unsub();
+    };
+  });
+
+  // Handle update choice
+  function handleUpdateChoice(choice: UpdateChoice): void {
+    logger.info("Update choice", { choice });
+    api.sendUpdateChoice(choice);
+  }
+
+  // Handle update cancel
+  function handleUpdateCancel(): void {
+    logger.info("Update cancelled");
+    api.sendCancelUpdate();
+  }
+
   // No onMount needed - main process drives the flow via IPC events
   // The renderer starts in "initializing" mode and waits for IPC instructions
 
@@ -312,6 +362,18 @@
       </div>
     {/if}
   {/if}
+
+  {#if updateState.type !== "none"}
+    <div class="update-overlay-container">
+      <UpdateOverlay
+        mode={updateState.type === "choice" ? "choice" : "downloading"}
+        version={updateState.version}
+        percent={updateState.type === "downloading" ? updateState.percent : 0}
+        onchoice={handleUpdateChoice}
+        oncancel={handleUpdateCancel}
+      />
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -356,6 +418,22 @@
     color: var(--ch-foreground);
     background-color: var(--ch-background);
     z-index: 1000;
+  }
+
+  .update-overlay-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    color: var(--ch-foreground);
+    background-color: var(--ch-background);
+    z-index: 1100;
   }
 
   @keyframes fadeIn {

@@ -73,6 +73,8 @@ import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../operations/get
 import type { GetProjectBasesIntent } from "../operations/get-project-bases";
 import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../operations/setup";
 import type { SetupErrorEvent, SetupProgressEvent } from "../operations/setup";
+import { EVENT_UPDATE_PROGRESS } from "../operations/update-apply";
+import type { UpdateProgressEvent } from "../operations/update-apply";
 import type { WorkspaceStatus, Workspace } from "../../shared/api/types";
 import { INTENT_GET_METADATA } from "../operations/get-metadata";
 import type { GetMetadataIntent } from "../operations/get-metadata";
@@ -218,6 +220,10 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         ...(code !== undefined && { code }),
       };
       deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
+    },
+    [EVENT_UPDATE_PROGRESS]: (event: DomainEvent) => {
+      const payload = (event as UpdateProgressEvent).payload;
+      deps.sendToUI(ApiIpcChannels.UPDATE_PROGRESS, payload);
     },
     [EVENT_BASES_UPDATED]: (event: DomainEvent) => {
       const p = (event as BasesUpdatedEvent).payload;

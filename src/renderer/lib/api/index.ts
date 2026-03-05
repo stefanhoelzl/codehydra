@@ -29,6 +29,9 @@ export const {
   sendAgentSelected,
   // Retry event (renderer → main process)
   sendRetry,
+  // Update events (renderer → main process)
+  sendUpdateChoice,
+  sendCancelUpdate,
 } = window.api;
 
 // Re-export branded path types from IPC (still used for type safety)

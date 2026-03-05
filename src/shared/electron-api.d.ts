@@ -3,7 +3,7 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { UIModeChangedEvent, LogContext, LifecycleAgentType } from "./ipc";
+import type { UIModeChangedEvent, LogContext, LifecycleAgentType, UpdateChoice } from "./ipc";
 import type { UIMode } from "./ipc";
 import type { ShortcutKey } from "./shortcuts";
 
@@ -130,6 +130,20 @@ export interface Api {
    * Fire-and-forget - does not return a promise.
    */
   sendRetry(): void;
+
+  /**
+   * Send update choice event to main process.
+   * Used when user responds to the update choice dialog.
+   * Fire-and-forget - does not return a promise.
+   */
+  sendUpdateChoice(choice: UpdateChoice): void;
+
+  /**
+   * Send cancel update event to main process.
+   * Used when user clicks Cancel during update download.
+   * Fire-and-forget - does not return a promise.
+   */
+  sendCancelUpdate(): void;
 }
 
 declare global {

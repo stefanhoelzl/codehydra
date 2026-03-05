@@ -64,6 +64,7 @@ import { SET_MODE_OPERATION_ID } from "../operations/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
+import { UPDATE_APPLY_OPERATION_ID, type UpdateChoiceResult } from "../operations/update-apply";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../operations/get-active-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../operations/switch-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
@@ -76,6 +77,8 @@ import {
   type LifecycleAgentType,
   type ShowAgentSelectionPayload,
   type AgentSelectedPayload,
+  type UpdateChoice,
+  type UpdateChoicePayload,
 } from "../../shared/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../../shared/ipc";
 import { SetupError } from "../../services/errors";
@@ -310,6 +313,30 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         "hide-ui": {
           handler: async () => {
             viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
+          },
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // update-apply → await-choice: listen for user's update choice via IPC
+      // -------------------------------------------------------------------
+      [UPDATE_APPLY_OPERATION_ID]: {
+        "await-choice": {
+          handler: async (): Promise<UpdateChoiceResult> => {
+            if (!deps.ipcLayer) {
+              return {};
+            }
+
+            const ipcLayer = deps.ipcLayer;
+            const choice = await new Promise<UpdateChoice>((resolve) => {
+              const handler: IpcEventHandler = (_event, ...args) => {
+                ipcLayer.removeListener(ApiIpcChannels.UPDATE_CHOICE, handler);
+                resolve((args[0] as UpdateChoicePayload).choice);
+              };
+              ipcLayer.on(ApiIpcChannels.UPDATE_CHOICE, handler);
+            });
+
+            return { choice };
           },
         },
       },

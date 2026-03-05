@@ -42,6 +42,7 @@ import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 import { INTENT_SETUP } from "./setup";
+import { INTENT_UPDATE_APPLY } from "./update-apply";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
 import { Path } from "../../services/platform/path";
 
@@ -89,6 +90,8 @@ export interface CheckDepsResult {
   readonly missingBinaries?: readonly BinaryType[];
   readonly missingExtensions?: readonly string[];
   readonly outdatedExtensions?: readonly string[];
+  /** True when auto-update config is "ask" and an update was detected. */
+  readonly updateNeedsChoice?: boolean;
 }
 
 /**
@@ -169,6 +172,7 @@ interface CheckResult {
   readonly needsExtensions: boolean;
   readonly missingExtensions: readonly string[];
   readonly outdatedExtensions: readonly string[];
+  readonly updateNeedsChoice: boolean;
 }
 
 // =============================================================================
@@ -231,6 +235,16 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
 
     // Hook 5: "check-deps" (collect, isolated contexts)
     let checkResult = await this.runChecks(ctx, configuredAgent);
+
+    // Dispatch app:update before setup (interceptor rejects if config="never" or no update)
+    try {
+      await ctx.dispatch({
+        type: INTENT_UPDATE_APPLY,
+        payload: { needsChoice: checkResult.updateNeedsChoice ?? false },
+      });
+    } catch {
+      // Update rejected by interceptor or failed — non-fatal, continue startup
+    }
 
     // Dispatch app:setup if needed (blocking sub-operation)
     // Setup manages its own UI (shows/hides setup screen)
@@ -339,11 +353,13 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     const missingBinaries: BinaryType[] = [];
     const missingExtensions: string[] = [];
     const outdatedExtensions: string[] = [];
+    let updateNeedsChoice = false;
 
     for (const result of depsResults) {
       if (result.missingBinaries) missingBinaries.push(...result.missingBinaries);
       if (result.missingExtensions) missingExtensions.push(...result.missingExtensions);
       if (result.outdatedExtensions) outdatedExtensions.push(...result.outdatedExtensions);
+      if (result.updateNeedsChoice) updateNeedsChoice = true;
     }
 
     // Derive booleans (dissolved from needsSetupModule)
@@ -361,6 +377,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       needsExtensions,
       missingExtensions,
       outdatedExtensions,
+      updateNeedsChoice,
     };
   }
 }

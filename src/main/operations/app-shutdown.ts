@@ -23,8 +23,8 @@ import type { Operation, OperationContext, HookContext } from "../intents/infras
 // =============================================================================
 
 export interface AppShutdownPayload {
-  /** No payload needed - shutdown has no parameters. */
-  readonly [key: string]: never;
+  /** If true, install a downloaded update after shutdown cleanup. */
+  readonly installUpdate?: boolean;
 }
 
 export interface AppShutdownIntent extends Intent<void> {
