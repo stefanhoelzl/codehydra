@@ -10,6 +10,8 @@ import type {
   LogContext,
   LifecycleAgentType,
   AgentSelectedPayload,
+  UpdateChoice,
+  UpdateChoicePayload,
 } from "../shared/ipc";
 import type { ShortcutKey } from "../shared/shortcuts";
 import type { InitialPrompt } from "../shared/api/types";
@@ -111,6 +113,21 @@ contextBridge.exposeInMainWorld("api", {
    */
   sendRetry: () => {
     ipcRenderer.send(ApiIpcChannels.LIFECYCLE_RETRY);
+  },
+  /**
+   * Send update choice event to main process.
+   * Used when user responds to the update choice dialog.
+   */
+  sendUpdateChoice: (choice: UpdateChoice) => {
+    const payload: UpdateChoicePayload = { choice };
+    ipcRenderer.send(ApiIpcChannels.UPDATE_CHOICE, payload);
+  },
+  /**
+   * Send cancel update event to main process.
+   * Used when user clicks Cancel during update download.
+   */
+  sendCancelUpdate: () => {
+    ipcRenderer.send(ApiIpcChannels.UPDATE_CANCEL);
   },
   // Log API (renderer → main, fire-and-forget)
   log: {

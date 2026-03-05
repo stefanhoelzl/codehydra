@@ -164,6 +164,7 @@ import {
   INTENT_UPDATE_AGENT_STATUS,
 } from "./operations/update-agent-status";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
+import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./operations/update-apply";
 import {
   ResolveWorkspaceOperation,
   INTENT_RESOLVE_WORKSPACE,
@@ -505,6 +506,7 @@ const telemetryLifecycleModule = createTelemetryModule({
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
   dispatcher,
+  ipcLayer,
 });
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
@@ -620,6 +622,7 @@ dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
 dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
+dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation());
 
 // Create IPC event bridge (registers all IPC handlers directly on ipcLayer)
 const ipcEventBridge = createIpcEventBridge({

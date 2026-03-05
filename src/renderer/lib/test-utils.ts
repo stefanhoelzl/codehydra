@@ -65,5 +65,7 @@ export function createMockApi(): Api {
     onShortcut: vi.fn(() => vi.fn()),
     sendAgentSelected: vi.fn(),
     sendRetry: vi.fn(),
+    sendUpdateChoice: vi.fn(),
+    sendCancelUpdate: vi.fn(),
   };
 }

@@ -212,6 +212,10 @@ export const ApiIpcChannels = {
   WORKSPACE_LOADING_CHANGED: "api:workspace:loading-changed",
   UI_MODE_CHANGED: "api:ui:mode-changed",
   SHORTCUT_KEY: "api:shortcut:key",
+  // Update events
+  UPDATE_PROGRESS: "api:update:progress",
+  UPDATE_CHOICE: "api:update:choice",
+  UPDATE_CANCEL: "api:update:cancel",
 } as const satisfies Record<string, string>;
 
 // ============ Workspace Loading Types ============
@@ -292,4 +296,37 @@ export interface ApiLogPayload {
   readonly message: string;
   /** Optional context data */
   readonly context?: LogContext;
+}
+
+// ============ Update Progress Types ============
+
+/**
+ * Actions for the update progress overlay.
+ * - "show-choice": Show update choice dialog
+ * - "downloading": Show downloading state (initial)
+ * - "progress": Update download progress
+ */
+export type UpdateProgressAction = "show-choice" | "downloading" | "progress";
+
+/**
+ * Payload for api:update:progress events (main → renderer).
+ * Single event type for all update overlay state transitions.
+ */
+export interface UpdateProgressPayload {
+  readonly action: UpdateProgressAction;
+  readonly version: string;
+  readonly percent: number;
+  readonly finished?: boolean;
+}
+
+/**
+ * User's choice from the update dialog.
+ */
+export type UpdateChoice = "always" | "yes" | "skip" | "never";
+
+/**
+ * Payload for api:update:choice events (renderer → main).
+ */
+export interface UpdateChoicePayload {
+  readonly choice: UpdateChoice;
 }
