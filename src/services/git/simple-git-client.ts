@@ -559,4 +559,17 @@ export class SimpleGitClient implements IGitClient {
       "Failed to check if repository is bare"
     );
   }
+
+  async countUnmergedCommits(repoPath: Path, branch: string, base: string): Promise<number> {
+    return this.wrapGitOperation(
+      async () => {
+        const git = this.getGit(repoPath);
+        const result = await git.raw(["rev-list", "--count", `${base}..${branch}`]);
+        return parseInt(result.trim(), 10);
+      },
+      "countUnmergedCommits",
+      repoPath,
+      `Failed to count unmerged commits for ${branch} against ${base}`
+    );
+  }
 }

@@ -49,6 +49,7 @@ export interface GetStatusHookInput extends HookContext {
  */
 export interface GetStatusHookResult {
   readonly isDirty?: boolean;
+  readonly unmergedCommits?: number;
   readonly agentStatus?: AggregatedAgentStatus;
 }
 
@@ -81,12 +82,16 @@ export class GetWorkspaceStatusOperation implements Operation<
       throw new AggregateError(errors, "get-workspace-status get hooks failed");
     }
 
-    // Merge results — isDirty uses OR (any hook says dirty = dirty)
+    // Merge results — isDirty uses OR, unmergedCommits uses max
     let isDirty = false;
+    let unmergedCommits = 0;
     let agentStatus: AggregatedAgentStatus | undefined;
 
     for (const result of results) {
       if (result.isDirty) isDirty = true;
+      if (result.unmergedCommits !== undefined && result.unmergedCommits > unmergedCommits) {
+        unmergedCommits = result.unmergedCommits;
+      }
       if (result.agentStatus !== undefined) agentStatus = result.agentStatus;
     }
 
@@ -97,6 +102,7 @@ export class GetWorkspaceStatusOperation implements Operation<
 
     return {
       isDirty,
+      unmergedCommits,
       agent:
         finalAgentStatus.status === "none"
           ? { type: "none" }

@@ -603,6 +603,31 @@ export class GitWorktreeProvider {
     return status.isDirty;
   }
 
+  async countUnmergedCommits(workspacePath: Path): Promise<number> {
+    try {
+      const branch = await this.gitClient.getCurrentBranch(workspacePath);
+      if (!branch) return 0;
+
+      const projectRoot = this.workspaceRegistry.get(workspacePath.toString());
+      if (!projectRoot) return 0;
+
+      const metadata = await this.gitClient.getBranchConfigsByPrefix(
+        projectRoot,
+        branch,
+        GitWorktreeProvider.METADATA_CONFIG_PREFIX
+      );
+      let base = metadata.base;
+      if (!base) {
+        base = await this.defaultBase(projectRoot);
+      }
+      if (!base) return 0;
+
+      return await this.gitClient.countUnmergedCommits(projectRoot, branch, base);
+    } catch {
+      return 0;
+    }
+  }
+
   isMainWorkspace(projectRoot: Path, workspacePath: Path): boolean {
     // Use Path.equals() for proper normalized comparison
     return workspacePath.equals(projectRoot);

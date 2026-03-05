@@ -266,6 +266,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const handlers = createMockApiHandlers({
         getStatus: {
           isDirty: true,
+          unmergedCommits: 0,
           agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
         },
       });
@@ -286,6 +287,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       expect(result.success).toBe(true);
       expect(result.data).toEqual({
         isDirty: true,
+        unmergedCommits: 0,
         agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
       });
       expect(handlers.getStatus).toHaveBeenCalledWith("/test/workspace");
@@ -478,7 +480,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           callCount++;
           return Promise.resolve({
             success: true,
-            data: { isDirty: false, agent: { type: "none" } },
+            data: { isDirty: false, unmergedCommits: 0, agent: { type: "none" } },
           });
         }),
       };
@@ -531,7 +533,10 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
             new Promise((resolve) => {
               // This will never resolve before disconnect
               setTimeout(() => {
-                resolve({ success: true, data: { isDirty: false, agent: { type: "none" } } });
+                resolve({
+                  success: true,
+                  data: { isDirty: false, unmergedCommits: 0, agent: { type: "none" } },
+                });
               }, 5000);
             })
         ),

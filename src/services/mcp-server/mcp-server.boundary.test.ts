@@ -35,7 +35,9 @@ async function findFreePort(): Promise<number> {
  */
 function createMockMcpHandlers(): McpApiHandlers {
   return {
-    getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+    getStatus: vi
+      .fn()
+      .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
     getMetadata: vi.fn().mockResolvedValue({ base: "main" }),
     setMetadata: vi.fn().mockResolvedValue(undefined),
     getAgentSession: vi.fn().mockResolvedValue(null),

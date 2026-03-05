@@ -74,6 +74,7 @@ function createTestSetup() {
     INTENT_GET_WORKSPACE_STATUS,
     createCapturingOperation(GET_WORKSPACE_STATUS_OPERATION_ID, capturedIntents, {
       isDirty: false,
+      unmergedCommits: 0,
       agent: { type: "none" as const },
     })
   );
@@ -151,7 +152,7 @@ describe("createMcpHandlers", () => {
       expect(capturedIntents).toHaveLength(1);
       expect(capturedIntents[0]!.type).toBe(INTENT_GET_WORKSPACE_STATUS);
       expect(capturedIntents[0]!.payload).toEqual({ workspacePath: "/workspace/path" });
-      expect(result).toEqual({ isDirty: false, agent: { type: "none" } });
+      expect(result).toEqual({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } });
     });
   });
 

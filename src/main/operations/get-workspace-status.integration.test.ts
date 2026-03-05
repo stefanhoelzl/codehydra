@@ -261,6 +261,67 @@ describe("GetWorkspaceStatus Operation", () => {
     });
   });
 
+  describe("unmerged commits (#3)", () => {
+    it("returns unmergedCommits from hook result", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+
+      dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+      dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+
+      const resolveModule: IntentModule = {
+        name: "test",
+        hooks: {
+          [RESOLVE_WORKSPACE_OPERATION_ID]: {
+            resolve: {
+              handler: async (): Promise<ResolveHookResult> => ({
+                projectPath: PROJECT_ROOT,
+                workspaceName,
+              }),
+            },
+          },
+        },
+      };
+
+      const unmergedModule: IntentModule = {
+        name: "test",
+        hooks: {
+          [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+            get: {
+              handler: async (): Promise<GetStatusHookResult> => ({
+                isDirty: false,
+                unmergedCommits: 3,
+              }),
+            },
+          },
+        },
+      };
+
+      dispatcher.registerModule(resolveModule);
+      dispatcher.registerModule(unmergedModule);
+
+      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_PATH))) as WorkspaceStatus;
+
+      expect(result.unmergedCommits).toBe(3);
+    });
+
+    it("defaults unmergedCommits to 0 when not provided", async () => {
+      const setup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({
+          [WORKSPACE_PATH]: false,
+        }),
+        agentStatusManager: null,
+      });
+
+      const result = (await setup.dispatcher.dispatch(
+        statusIntent(WORKSPACE_PATH)
+      )) as WorkspaceStatus;
+
+      expect(result.unmergedCommits).toBe(0);
+    });
+  });
+
   describe("no workspace provider", () => {
     it("returns isDirty false when no provider", async () => {
       const setup = createTestSetup({

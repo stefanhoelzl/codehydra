@@ -165,6 +165,7 @@ describe("setupDomainEvents", () => {
 
       const status = {
         isDirty: false,
+        unmergedCommits: 0,
         agent: { type: "idle" as const, counts: { idle: 1, busy: 0, total: 1 } },
       };
       const event = { ...TEST_WORKSPACE_REF, status };
@@ -286,6 +287,7 @@ describe("setupDomainEvents", () => {
 
       const status = {
         isDirty: false,
+        unmergedCommits: 0,
         agent: { type: "idle" as const, counts: { idle: 1, busy: 0, total: 1 } },
       };
       mockApi.emit("workspace:status-changed", { ...TEST_WORKSPACE_REF, status });
@@ -306,6 +308,7 @@ describe("setupDomainEvents", () => {
 
       const status = {
         isDirty: false,
+        unmergedCommits: 0,
         agent: { type: "none" as const },
       };
       mockApi.emit("workspace:status-changed", { ...TEST_WORKSPACE_REF, status });
@@ -342,6 +345,7 @@ describe("setupDomainEvents", () => {
 
       const status = {
         isDirty: false,
+        unmergedCommits: 0,
         agent: { type: "busy" as const, counts: { idle: 0, busy: 2, total: 2 } },
       };
       mockApi.emit("workspace:status-changed", { ...TEST_WORKSPACE_REF, status });

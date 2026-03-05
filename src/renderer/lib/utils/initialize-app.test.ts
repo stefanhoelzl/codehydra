@@ -49,6 +49,7 @@ const TEST_PROJECT: Project = {
 
 const TEST_STATUS: WorkspaceStatus = {
   isDirty: false,
+  unmergedCommits: 0,
   agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
 };
 

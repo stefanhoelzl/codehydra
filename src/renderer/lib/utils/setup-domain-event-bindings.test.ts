@@ -275,6 +275,7 @@ describe("setupDomainEventBindings", () => {
 
       const status: WorkspaceStatus = {
         isDirty: false,
+        unmergedCommits: 0,
         agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
       };
       mockApi.emit("workspace:status-changed", { ...TEST_WORKSPACE_REF, status });
@@ -288,6 +289,7 @@ describe("setupDomainEventBindings", () => {
 
       const status: WorkspaceStatus = {
         isDirty: false,
+        unmergedCommits: 0,
         agent: { type: "none" },
       };
       mockApi.emit("workspace:status-changed", { ...TEST_WORKSPACE_REF, status });

@@ -1080,7 +1080,7 @@ describe("CodeServerModule", () => {
     });
 
     it("getStatus dispatches correct intent", async () => {
-      const status = { isDirty: false, agent: { type: "none" as const } };
+      const status = { isDirty: false, unmergedCommits: 0, agent: { type: "none" as const } };
       const { handlers, mockDispatch } = await setupPluginHandlers(status);
 
       const result = await handlers.getStatus(testWorkspacePath);

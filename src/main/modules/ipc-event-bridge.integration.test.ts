@@ -216,6 +216,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
         path: TEST_WORKSPACE_PATH,
         status: {
           isDirty: false,
+          unmergedCommits: 0,
           agent: { type: "idle", counts: { idle: 2, busy: 0, total: 2 } },
         },
       });
@@ -235,6 +236,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
         path: TEST_WORKSPACE_PATH,
         status: {
           isDirty: false,
+          unmergedCommits: 0,
           agent: { type: "busy", counts: { idle: 0, busy: 3, total: 3 } },
         },
       });
@@ -254,6 +256,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
         path: TEST_WORKSPACE_PATH,
         status: {
           isDirty: false,
+          unmergedCommits: 0,
           agent: { type: "mixed", counts: { idle: 1, busy: 2, total: 3 } },
         },
       });
@@ -273,6 +276,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
         path: TEST_WORKSPACE_PATH,
         status: {
           isDirty: false,
+          unmergedCommits: 0,
           agent: { type: "none" },
         },
       });

@@ -194,4 +194,15 @@ export interface IGitClient {
    * @throws GitError if not a git repository
    */
   isBare(repoPath: Path): Promise<boolean>;
+
+  /**
+   * Count commits on a branch that are not reachable from a base ref.
+   * Equivalent to `git rev-list --count <base>..<branch>`.
+   * @param repoPath Absolute path to the git repository
+   * @param branch Branch to count commits on
+   * @param base Base ref to compare against
+   * @returns Promise resolving to the number of unmerged commits
+   * @throws GitError if refs don't exist or not a git repository
+   */
+  countUnmergedCommits(repoPath: Path, branch: string, base: string): Promise<number>;
 }

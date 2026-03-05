@@ -35,7 +35,9 @@ const mockApi = vi.hoisted(() => ({
   workspaces: {
     create: vi.fn().mockResolvedValue({}),
     remove: vi.fn().mockResolvedValue({ started: true }),
-    getStatus: vi.fn().mockResolvedValue({ isDirty: false, agent: { type: "none" } }),
+    getStatus: vi
+      .fn()
+      .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
     get: vi.fn().mockResolvedValue(undefined),
   },
   // Flat API structure - ui namespace
