@@ -476,7 +476,7 @@ export class CodeServerManager {
 
   /**
    * Wait for the server to become healthy.
-   * Uses shared health check utility with 10s timeout.
+   * Uses shared health check utility with 30s timeout.
    *
    * Port availability is checked BEFORE spawning code-server (in doStart),
    * so we don't need a delay here. The health check verifies both that
@@ -485,9 +485,9 @@ export class CodeServerManager {
   private async waitForServerHealthy(port: number): Promise<void> {
     await waitForHealthy({
       checkFn: () => this.checkHealth(port),
-      timeoutMs: 10000,
+      timeoutMs: 30000,
       intervalMs: 100,
-      errorMessage: "Health check timed out after 10 seconds",
+      errorMessage: "Health check timed out after 30 seconds",
     });
   }
 
