@@ -562,13 +562,21 @@ export class McpServer implements IMcpServer {
             .optional()
             .default(false)
             .describe("If true, keep the git branch after deleting the worktree"),
+          ignoreWarnings: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe("If true, skip checks for uncommitted changes and unmerged commits"),
         }),
       },
-      this.createWorkspaceHandler(async (workspacePath, args: { keepBranch: boolean }) => {
-        return this.handlers.deleteWorkspace(workspacePath, {
-          keepBranch: args.keepBranch,
-        });
-      })
+      this.createWorkspaceHandler(
+        async (workspacePath, args: { keepBranch: boolean; ignoreWarnings: boolean }) => {
+          return this.handlers.deleteWorkspace(workspacePath, {
+            keepBranch: args.keepBranch,
+            ignoreWarnings: args.ignoreWarnings,
+          });
+        }
+      )
     );
 
     // workspace_execute_command

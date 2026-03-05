@@ -58,7 +58,10 @@
     logger.debug("Dialog submitted", { type: "remove-workspace" });
     // Fire-and-forget: start deletion and close dialog immediately
     // Progress is shown via DeletionProgressView in MainView
-    void workspaces.remove(workspaceRef.path, { keepBranch });
+    void workspaces.remove(workspaceRef.path, {
+      keepBranch,
+      ignoreWarnings: isDirty || unmergedCommits > 0,
+    });
     closeDialog();
   }
 

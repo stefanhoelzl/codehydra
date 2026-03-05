@@ -423,7 +423,7 @@ describe("Integration tests", () => {
       await waitFor(() => {
         expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
           workspace.path, // workspacePath
-          { keepBranch: false } // keepBranch (default is unchecked, so keepBranch=false)
+          { keepBranch: false, ignoreWarnings: false } // keepBranch (default is unchecked, so keepBranch=false)
         );
       });
 
@@ -601,7 +601,7 @@ describe("Integration tests", () => {
       // API was called
       expect(mockApi.workspaces.remove).toHaveBeenCalledWith(
         workspace.path, // workspacePath
-        { keepBranch: false } // keepBranch default
+        { keepBranch: false, ignoreWarnings: false } // keepBranch default, ignoreWarnings default
       );
     });
   });
