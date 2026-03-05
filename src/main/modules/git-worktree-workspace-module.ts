@@ -36,7 +36,11 @@ import type {
 } from "../operations/get-project-bases";
 import { GET_PROJECT_BASES_OPERATION_ID } from "../operations/get-project-bases";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
-import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
+import type {
+  DeleteHookResult,
+  DeletePipelineHookInput,
+  PreflightHookResult,
+} from "../operations/delete-workspace";
 import type { DiscoverHookResult, DiscoverHookInput } from "../operations/open-project";
 import type { CloseHookInput } from "../operations/close-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
@@ -298,8 +302,20 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // delete-workspace -> delete (resolve hook removed, now uses resolve-workspace dispatch)
+      // delete-workspace -> preflight + delete (resolve hook removed, now uses resolve-workspace dispatch)
       [DELETE_WORKSPACE_OPERATION_ID]: {
+        preflight: {
+          handler: async (ctx: HookContext): Promise<PreflightHookResult> => {
+            const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
+            try {
+              const isDirty = await globalProvider.isDirty(new Path(wsPath));
+              const unmergedCommits = await globalProvider.countUnmergedCommits(new Path(wsPath));
+              return { isDirty, unmergedCommits };
+            } catch (error) {
+              return { error: getErrorMessage(error) };
+            }
+          },
+        },
         delete: {
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
             const { projectPath, workspacePath: wsPath } = ctx as DeletePipelineHookInput;

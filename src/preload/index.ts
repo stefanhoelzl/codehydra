@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("api", {
         keepBranch?: boolean;
         skipSwitch?: boolean;
         force?: boolean;
+        ignoreWarnings?: boolean;
         blockingPids?: readonly number[];
       }
     ): Promise<{ started: boolean }> =>

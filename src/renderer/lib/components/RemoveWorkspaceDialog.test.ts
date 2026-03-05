@@ -241,6 +241,7 @@ describe("RemoveWorkspaceDialog component", () => {
       // API uses keepBranch (inverted from old deleteBranch)
       expect(workspaces.remove).toHaveBeenCalledWith(testWorkspaceRef.path, {
         keepBranch: false,
+        ignoreWarnings: false,
       });
     });
 
@@ -262,6 +263,7 @@ describe("RemoveWorkspaceDialog component", () => {
 
       expect(workspaces.remove).toHaveBeenCalledWith(testWorkspaceRef.path, {
         keepBranch: true,
+        ignoreWarnings: false,
       });
     });
 

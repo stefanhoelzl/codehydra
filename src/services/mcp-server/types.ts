@@ -67,7 +67,7 @@ export interface McpApiHandlers {
   }): Promise<Workspace>;
   deleteWorkspace(
     workspacePath: string,
-    options: { keepBranch: boolean }
+    options: { keepBranch: boolean; ignoreWarnings?: boolean }
   ): Promise<{ started: boolean }>;
   executeCommand(
     workspacePath: string,

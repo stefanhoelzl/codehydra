@@ -117,6 +117,8 @@ export interface WorkspaceRemovePayload {
   readonly skipSwitch?: boolean;
   /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
   readonly force?: boolean;
+  /** If true, skip preflight checks for uncommitted changes and unmerged commits. */
+  readonly ignoreWarnings?: boolean;
   /** PIDs from a previous failed attempt. Flush hook kills these before re-attempting delete. */
   readonly blockingPids?: readonly number[];
 }

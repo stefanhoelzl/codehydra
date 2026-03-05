@@ -32,7 +32,7 @@ import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
 } from "../operations/delete-workspace";
-import type { DeleteHookResult } from "../operations/delete-workspace";
+import type { DeleteHookResult, PreflightHookResult } from "../operations/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
 import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../operations/resolve-workspace";
@@ -105,6 +105,47 @@ const openWorkspaceOperation = createMinimalOperation<OpenWorkspaceIntent, Creat
     }),
   }
 );
+
+/** Preflight result from the delete-workspace preflight hook. */
+interface PreflightResult {
+  readonly isDirty?: boolean;
+  readonly unmergedCommits?: number;
+  readonly error?: string;
+}
+
+/**
+ * Preflight-only operation: dispatches workspace:resolve then runs "preflight" hook point.
+ */
+class MinimalPreflightOperation implements Operation<DeleteWorkspaceIntent, PreflightResult> {
+  readonly id = DELETE_WORKSPACE_OPERATION_ID;
+
+  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<PreflightResult> {
+    const { payload } = ctx.intent;
+
+    let resolvedProjectPath = "";
+    try {
+      const resolved = (await ctx.dispatch({
+        type: "workspace:resolve",
+        payload: { workspacePath: payload.workspacePath },
+      } as Intent)) as ResolveResult;
+      resolvedProjectPath = resolved.projectPath ?? "";
+    } catch {
+      // Workspace not found
+    }
+
+    const preflightInput: DeletePipelineHookInput = {
+      intent: ctx.intent,
+      projectPath: resolvedProjectPath,
+      workspacePath: payload.workspacePath,
+    };
+    const { results, errors } = await ctx.hooks.collect<PreflightHookResult>(
+      "preflight",
+      preflightInput
+    );
+    if (errors.length > 0) return { error: errors[0]!.message };
+    return results[0] ?? {};
+  }
+}
 
 /** Extended delete result that includes the resolved path and possible error. */
 interface DeleteResult extends DeleteHookResult {
@@ -297,6 +338,27 @@ function createTestSetup(): TestSetup {
   return { dispatcher, provider, pathProvider };
 }
 
+function createPreflightTestSetup(): TestSetup {
+  const provider = createMockGitWorktreeProvider();
+  const pathProvider = createMockPathProvider();
+
+  const hookRegistry = new HookRegistry();
+  const dispatcher = new Dispatcher(hookRegistry);
+
+  dispatcher.registerOperation("project:open", openProjectOperation);
+  dispatcher.registerOperation("workspace:delete", new MinimalPreflightOperation());
+  dispatcher.registerOperation("workspace:resolve", new MinimalResolveWorkspaceOperation());
+
+  const module = createGitWorktreeWorkspaceModule(
+    provider as unknown as GitWorktreeProvider,
+    pathProvider,
+    SILENT_LOGGER
+  );
+  dispatcher.registerModule(module);
+
+  return { dispatcher, provider, pathProvider };
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -380,6 +442,17 @@ async function dispatchDeleteWorkspace(
 ): Promise<DeleteResult> {
   // Cast through Intent to bypass phantom type inference (test operation returns DeleteResult)
   return (await dispatcher.dispatch(intent as unknown as Intent)) as DeleteResult;
+}
+
+async function dispatchPreflight(
+  dispatcher: Dispatcher,
+  workspacePath: string
+): Promise<PreflightResult> {
+  const intent: DeleteWorkspaceIntent = {
+    type: "workspace:delete",
+    payload: { workspacePath, keepBranch: false, force: false, removeWorktree: true },
+  };
+  return (await dispatcher.dispatch(intent as unknown as Intent)) as PreflightResult;
 }
 
 // =============================================================================
@@ -747,6 +820,44 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const result = await dispatchGetStatus(dispatcher, ws.path.toString());
 
       expect(result.isDirty).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // delete-workspace -> preflight
+  // ---------------------------------------------------------------------------
+
+  describe("delete-workspace -> preflight", () => {
+    it("returns isDirty and unmergedCommits from provider", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const projectPath = "/projects/my-app";
+
+      const ws = makeWorkspace("feature-1", projectPath);
+      preflightSetup.provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(preflightSetup.dispatcher, projectPath);
+
+      preflightSetup.provider.isDirty.mockResolvedValue(true);
+      preflightSetup.provider.countUnmergedCommits.mockResolvedValue(3);
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, ws.path.toString());
+
+      expect(result.isDirty).toBe(true);
+      expect(result.unmergedCommits).toBe(3);
+    });
+
+    it("returns error when provider throws", async () => {
+      const preflightSetup = createPreflightTestSetup();
+      const projectPath = "/projects/my-app";
+
+      const ws = makeWorkspace("feature-1", projectPath);
+      preflightSetup.provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(preflightSetup.dispatcher, projectPath);
+
+      preflightSetup.provider.isDirty.mockRejectedValue(new Error("git failed"));
+
+      const result = await dispatchPreflight(preflightSetup.dispatcher, ws.path.toString());
+
+      expect(result.error).toBe("git failed");
     });
   });
 });
