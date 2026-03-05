@@ -57,7 +57,8 @@ export type LoggerName =
   | "agent" // AgentServerManager / AgentStatusManager - agent lifecycle
   | "shortcut" // ShortcutController - keyboard shortcut detection
   | "dispatcher" // Dispatcher - intent dispatch pipeline
-  | "auto-pr"; // AutoPrModule - GitHub PR workspace automation
+  | "auto-pr" // AutoPrModule - GitHub PR workspace automation
+  | "youtrack"; // YouTrackModule - YouTrack issue workspace automation
 
 /**
  * Context data for log entries.
