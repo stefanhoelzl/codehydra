@@ -127,13 +127,14 @@ export function createMcpHandlers(
           keepBranch: options.keepBranch,
           force: false,
           removeWorktree: true,
+          ignoreWarnings: options.ignoreWarnings ?? false,
         },
       };
       const handle = dispatcher.dispatch(intent);
       if (!(await handle.accepted)) {
         return { started: false };
       }
-      void handle;
+      await handle;
       return { started: true };
     },
 
