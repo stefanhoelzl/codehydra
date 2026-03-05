@@ -119,6 +119,7 @@ import { createShortcutModule } from "./modules/shortcut-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoPrModule } from "./modules/auto-pr-module";
+import { createYouTrackModule } from "./modules/youtrack-module";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import { ConfigSetValuesOperation, INTENT_CONFIG_SET_VALUES } from "./operations/config-set-values";
@@ -534,6 +535,13 @@ const autoPrModule = createAutoPrModule({
   stateFilePath: pathProvider.dataPath("auto-pr-workspaces.json").toString(),
   dispatcher,
 });
+const youtrackModule = createYouTrackModule({
+  httpClient: networkLayer,
+  fs: fileSystemLayer,
+  logger: loggingService.createLogger("youtrack"),
+  stateFilePath: pathProvider.dataPath("youtrack-workspaces.json").toString(),
+  dispatcher,
+});
 
 // 8. New modules
 
@@ -652,6 +660,7 @@ dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(autoPrModule);
+dispatcher.registerModule(youtrackModule);
 dispatcher.registerModule(ipcEventBridge);
 
 // 11. Dispatch app:start
