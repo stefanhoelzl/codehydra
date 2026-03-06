@@ -1133,6 +1133,7 @@ describe("MainView component", () => {
         expect(mockApi.workspaces.remove).toHaveBeenCalledWith("/test/.worktrees/feature", {
           keepBranch: false, // from the stored progress
           skipSwitch: true, // retry keeps user on this workspace
+          ignoreWarnings: true, // skip preflight on retry
         });
       });
     });
