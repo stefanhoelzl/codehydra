@@ -227,6 +227,10 @@ Extensions in `extensions/` are packaged at build time. See `extensions/external
 - **Bug fixes**: Fix issue, ensure test coverage exists, validate
 - Use `pnpm add <package>` for dependencies (never edit package.json manually)
 
+### Showing Commands to the User
+
+When the user needs to run a command (for verification, testing, or any other reason), **show it in the VS Code status bar** using the `mcp__codehydra__ui_status_bar_update` MCP tool. Put the full command in the `tooltip` and a short summary in `text`. Use the `mcp__codehydra__ui_status_bar_dispose` tool to clean it up afterward when appropriate.
+
 ### Git Worktree Merge
 
 ```bash
