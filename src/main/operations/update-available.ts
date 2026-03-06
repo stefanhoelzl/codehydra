@@ -43,7 +43,7 @@ export const EVENT_UPDATE_AVAILABLE = "update:available" as const;
 // Operation
 // =============================================================================
 
-export const UPDATE_AVAILABLE_OPERATION_ID = "update-available";
+const UPDATE_AVAILABLE_OPERATION_ID = "update-available";
 
 export class UpdateAvailableOperation implements Operation<UpdateAvailableIntent, void> {
   readonly id = UPDATE_AVAILABLE_OPERATION_ID;

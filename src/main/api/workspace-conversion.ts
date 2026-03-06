@@ -19,7 +19,7 @@ import type { Workspace as IpcWorkspace, ProjectId, WorkspaceName } from "../../
  * @param projectId - Project ID to include in IPC workspace
  * @returns IPC workspace with string-based path
  */
-export function toIpcWorkspace(internal: InternalWorkspace, projectId: ProjectId): IpcWorkspace {
+function toIpcWorkspace(internal: InternalWorkspace, projectId: ProjectId): IpcWorkspace {
   return {
     projectId,
     name: internal.name as WorkspaceName,

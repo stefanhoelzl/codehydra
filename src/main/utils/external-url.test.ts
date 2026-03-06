@@ -17,7 +17,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 // Import after mocking
-import { openExternal, ALLOWED_SCHEMES, ExternalUrlError } from "./external-url";
+import { openExternal } from "./external-url";
 
 describe("external-url", () => {
   beforeEach(() => {
@@ -26,20 +26,6 @@ describe("external-url", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  describe("ALLOWED_SCHEMES", () => {
-    it("includes http:", () => {
-      expect(ALLOWED_SCHEMES).toContain("http:");
-    });
-
-    it("includes https:", () => {
-      expect(ALLOWED_SCHEMES).toContain("https:");
-    });
-
-    it("includes mailto:", () => {
-      expect(ALLOWED_SCHEMES).toContain("mailto:");
-    });
   });
 
   describe("openExternal", () => {
@@ -140,7 +126,6 @@ describe("external-url", () => {
           if (callback) callback(new Error("failed") as ExecException, "", "");
         });
 
-        await expect(openExternal("https://example.com")).rejects.toThrow(ExternalUrlError);
         await expect(openExternal("https://example.com")).rejects.toThrow(
           "Failed to open external URL"
         );
@@ -174,7 +159,9 @@ describe("external-url", () => {
           if (callback) callback(new Error("failed") as ExecException, "", "");
         });
 
-        await expect(openExternal("https://example.com")).rejects.toThrow(ExternalUrlError);
+        await expect(openExternal("https://example.com")).rejects.toThrow(
+          "Failed to open external URL"
+        );
       });
     });
 
@@ -205,7 +192,9 @@ describe("external-url", () => {
           if (callback) callback(new Error("failed") as ExecException, "", "");
         });
 
-        await expect(openExternal("https://example.com")).rejects.toThrow(ExternalUrlError);
+        await expect(openExternal("https://example.com")).rejects.toThrow(
+          "Failed to open external URL"
+        );
       });
     });
 
@@ -234,7 +223,6 @@ describe("external-url", () => {
       it("rejects with ExternalUrlError for unsupported platform", async () => {
         Object.defineProperty(process, "platform", { value: "freebsd" });
 
-        await expect(openExternal("https://example.com")).rejects.toThrow(ExternalUrlError);
         await expect(openExternal("https://example.com")).rejects.toThrow(
           "Unsupported platform 'freebsd'"
         );
@@ -250,8 +238,8 @@ describe("external-url", () => {
           await openExternal("https://example.com");
           expect.fail("should have thrown");
         } catch (error) {
-          expect(error).toBeInstanceOf(ExternalUrlError);
-          expect((error as ExternalUrlError).url).toBe("https://example.com");
+          expect((error as Error).name).toBe("ExternalUrlError");
+          expect((error as Error & { url: string }).url).toBe("https://example.com");
         }
       });
 
@@ -266,8 +254,8 @@ describe("external-url", () => {
           await openExternal("https://example.com");
           expect.fail("should have thrown");
         } catch (error) {
-          expect(error).toBeInstanceOf(ExternalUrlError);
-          expect((error as ExternalUrlError).cause).toBe(causeError);
+          expect((error as Error).name).toBe("ExternalUrlError");
+          expect((error as Error & { cause: Error }).cause).toBe(causeError);
         }
       });
     });

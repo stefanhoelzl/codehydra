@@ -48,7 +48,7 @@ export interface AgentRestartedEvent extends DomainEvent {
   readonly payload: AgentRestartedPayload;
 }
 
-export const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
+const EVENT_AGENT_RESTARTED = "agent:restarted" as const;
 
 // =============================================================================
 // Hook Result & Input Types

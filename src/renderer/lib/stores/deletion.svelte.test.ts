@@ -6,7 +6,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   setDeletionState,
   clearDeletion,
-  getDeletionState,
   getDeletionStatus,
   deletionStates,
   reset,
@@ -43,7 +42,7 @@ describe("deletion store", () => {
 
       setDeletionState(progress);
 
-      expect(getDeletionState("/path/to/workspace")).toEqual(progress);
+      expect(deletionStates.value.get("/path/to/workspace")).toEqual(progress);
     });
 
     it("should update existing state for same workspace", () => {
@@ -58,7 +57,7 @@ describe("deletion store", () => {
       setDeletionState(initial);
       setDeletionState(updated);
 
-      expect(getDeletionState("/path/to/workspace")).toEqual(updated);
+      expect(deletionStates.value.get("/path/to/workspace")).toEqual(updated);
     });
 
     it("should store multiple workspaces independently", () => {
@@ -70,8 +69,8 @@ describe("deletion store", () => {
       setDeletionState(progress1);
       setDeletionState(progress2);
 
-      expect(getDeletionState("/path/to/workspace1")).toEqual(progress1);
-      expect(getDeletionState("/path/to/workspace2")).toEqual(progress2);
+      expect(deletionStates.value.get("/path/to/workspace1")).toEqual(progress1);
+      expect(deletionStates.value.get("/path/to/workspace2")).toEqual(progress2);
     });
   });
 
@@ -82,7 +81,7 @@ describe("deletion store", () => {
 
       clearDeletion("/path/to/workspace");
 
-      expect(getDeletionState("/path/to/workspace")).toBeUndefined();
+      expect(deletionStates.value.get("/path/to/workspace")).toBeUndefined();
     });
 
     it("should not affect other workspaces", () => {
@@ -93,8 +92,8 @@ describe("deletion store", () => {
 
       clearDeletion("/path/to/workspace1");
 
-      expect(getDeletionState("/path/to/workspace1")).toBeUndefined();
-      expect(getDeletionState("/path/to/workspace2")).toEqual(progress2);
+      expect(deletionStates.value.get("/path/to/workspace1")).toBeUndefined();
+      expect(deletionStates.value.get("/path/to/workspace2")).toEqual(progress2);
     });
 
     it("should be a no-op for non-existent workspace", () => {
@@ -117,18 +116,6 @@ describe("deletion store", () => {
       clearDeletion("/path/to/workspace");
 
       expect(getDeletionStatus("/path/to/workspace")).toBe("none");
-    });
-  });
-
-  describe("getDeletionState", () => {
-    it("should return stored state or undefined", () => {
-      const progress = createProgress("/path/to/workspace");
-
-      expect(getDeletionState("/path/to/workspace")).toBeUndefined();
-
-      setDeletionState(progress);
-
-      expect(getDeletionState("/path/to/workspace")).toEqual(progress);
     });
   });
 

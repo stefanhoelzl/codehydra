@@ -5,7 +5,7 @@
  */
 
 export { WorkspaceFileService } from "./workspace-file-service";
-export { createWorkspaceFileConfig, DEFAULT_WORKSPACE_SETTINGS } from "./default-settings";
+export { createWorkspaceFileConfig } from "./default-settings";
 export type {
   IWorkspaceFileService,
   WorkspaceFileConfig,

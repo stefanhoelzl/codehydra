@@ -155,7 +155,6 @@ export {
   parseLogLevel,
   parseLogLevelSpec,
   splitLogLevelSpec,
-  parseLogOutput,
   createMockLogger,
   createMockLoggingService,
   SILENT_LOGGER,

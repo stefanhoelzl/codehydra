@@ -3,12 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  ViewManager,
-  SIDEBAR_MINIMIZED_WIDTH,
-  GLOBAL_SESSION_PARTITION,
-  type ViewManagerDeps,
-} from "./view-manager";
+import { ViewManager, SIDEBAR_MINIMIZED_WIDTH, type ViewManagerDeps } from "./view-manager";
 import type { WindowManager } from "./window-manager";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createViewLayerMock, type MockViewLayer } from "../../services/shell/view.state-mock";
@@ -412,7 +407,7 @@ describe("ViewManager", () => {
       // All workspaces should share the same session (only one session created)
       expect(deps.sessionLayer).toHaveSessionCount(1);
       expect(deps.sessionLayer).toHaveSession("session-1", {
-        partition: GLOBAL_SESSION_PARTITION,
+        partition: "persist:codehydra-global",
       });
     });
 
@@ -438,7 +433,7 @@ describe("ViewManager", () => {
       // Session should still exist (workspace2 still needs the shared session)
       expect(deps.sessionLayer).toHaveSessionCount(1);
       expect(deps.sessionLayer).toHaveSession("session-1", {
-        partition: GLOBAL_SESSION_PARTITION,
+        partition: "persist:codehydra-global",
       });
     });
 
@@ -460,7 +455,6 @@ describe("ViewManager", () => {
 
       // Verify the partition name is the global constant
       const session = deps.sessionLayer.$.sessions.get("session-1");
-      expect(session?.partition).toBe(GLOBAL_SESSION_PARTITION);
       expect(session?.partition).toBe("persist:codehydra-global");
     });
   });
@@ -549,7 +543,7 @@ describe("ViewManager", () => {
       // Get the session handle id before destroying
       const sessions = [...deps.sessionLayer.$.sessions.entries()];
       const globalSessionId = sessions.find(
-        ([, s]) => s.partition === GLOBAL_SESSION_PARTITION
+        ([, s]) => s.partition === "persist:codehydra-global"
       )?.[0];
       expect(globalSessionId).toBeDefined();
 
