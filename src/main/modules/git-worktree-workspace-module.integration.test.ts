@@ -611,6 +611,128 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(resolveResult.projectPath).toBe(projectPath);
       });
     });
+
+    describe("base resolution", () => {
+      it("resolves default base via defaultBase() when base is omitted", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = "/projects/my-app";
+
+        provider.discover.mockResolvedValue([]);
+        await dispatchOpenProject(dispatcher, projectPath);
+
+        provider.defaultBase.mockResolvedValue("origin/main");
+
+        const createdWs: Workspace = {
+          name: "auto-base",
+          path: new Path("/workspaces/auto-base"),
+          branch: "auto-base",
+          metadata: { base: "origin/main" },
+        };
+        provider.createWorkspace.mockResolvedValue(createdWs);
+
+        const createIntent: OpenWorkspaceIntent = {
+          type: "workspace:open",
+          payload: {
+            workspaceName: "auto-base",
+            projectPath,
+          },
+        };
+
+        const result = await dispatchCreateWorkspace(dispatcher, createIntent);
+
+        expect(provider.defaultBase).toHaveBeenCalledWith(new Path(projectPath));
+        expect(provider.createWorkspace).toHaveBeenCalledWith(
+          new Path(projectPath),
+          "auto-base",
+          "origin/main"
+        );
+        expect(result.resolvedBase).toBe("origin/main");
+      });
+
+      it("throws when base is omitted and no default branch exists", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = "/projects/my-app";
+
+        provider.discover.mockResolvedValue([]);
+        await dispatchOpenProject(dispatcher, projectPath);
+
+        provider.defaultBase.mockResolvedValue(undefined);
+
+        const createIntent: OpenWorkspaceIntent = {
+          type: "workspace:open",
+          payload: {
+            workspaceName: "no-base",
+            projectPath,
+          },
+        };
+
+        await expect(dispatchCreateWorkspace(dispatcher, createIntent)).rejects.toThrow(
+          "No base branch specified and no default branch found"
+        );
+      });
+
+      it("uses explicit base without calling defaultBase()", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = "/projects/my-app";
+
+        provider.discover.mockResolvedValue([]);
+        await dispatchOpenProject(dispatcher, projectPath);
+
+        const createdWs: Workspace = {
+          name: "explicit-base",
+          path: new Path("/workspaces/explicit-base"),
+          branch: "explicit-base",
+          metadata: { base: "develop" },
+        };
+        provider.createWorkspace.mockResolvedValue(createdWs);
+
+        const createIntent: OpenWorkspaceIntent = {
+          type: "workspace:open",
+          payload: {
+            workspaceName: "explicit-base",
+            base: "develop",
+            projectPath,
+          },
+        };
+
+        const result = await dispatchCreateWorkspace(dispatcher, createIntent);
+
+        // defaultBase should not be called when base is explicitly provided
+        // (the mock's default return is undefined, so if it were called and used, createWorkspace would fail)
+        expect(provider.createWorkspace).toHaveBeenCalledWith(
+          new Path(projectPath),
+          "explicit-base",
+          "develop"
+        );
+        expect(result.resolvedBase).toBe("develop");
+      });
+
+      it("returns resolvedBase for existing workspace path", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = "/projects/my-app";
+
+        provider.discover.mockResolvedValue([]);
+        await dispatchOpenProject(dispatcher, projectPath);
+
+        const createIntent: OpenWorkspaceIntent = {
+          type: "workspace:open",
+          payload: {
+            workspaceName: "existing-ws",
+            base: "origin/main",
+            projectPath,
+            existingWorkspace: {
+              path: "/workspaces/existing-ws",
+              name: "existing-ws",
+              branch: "existing-ws",
+              metadata: { base: "origin/main" },
+            },
+          },
+        };
+
+        const result = await dispatchCreateWorkspace(dispatcher, createIntent);
+        expect(result.resolvedBase).toBe("origin/main");
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------

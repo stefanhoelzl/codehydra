@@ -47,7 +47,7 @@ export interface ExistingWorkspaceData {
 
 export interface OpenWorkspacePayload {
   readonly workspaceName: string;
-  readonly base: string;
+  readonly base?: string;
   readonly initialPrompt?: InitialPrompt;
   /** If true, switch to the new workspace. If false, don't steal focus but still switch when
    *  no workspace is active. Default behavior (undefined): switch. */
@@ -77,7 +77,7 @@ export interface WorkspaceCreatedPayload {
   readonly workspacePath: string;
   readonly projectPath: string;
   readonly branch: string;
-  readonly base: string;
+  readonly base?: string;
   readonly metadata: Readonly<Record<string, string>>;
   readonly workspaceUrl: string;
   readonly initialPrompt?: NormalizedInitialPrompt;
@@ -111,6 +111,8 @@ export interface CreateHookResult {
   readonly workspacePath?: string;
   readonly branch?: string;
   readonly metadata?: Readonly<Record<string, string>>;
+  /** The resolved base branch (explicit or auto-detected). Used in the event payload. */
+  readonly resolvedBase?: string;
 }
 
 /** Input context for the "setup" hook point (enriched with merged create results). */
@@ -166,8 +168,6 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     } as ResolveProjectIntent);
     const resolvedProjectId = projResolved.projectId;
 
-    const { base } = ctx.intent.payload;
-
     // Hook: "create" — worktree creation (fatal on error)
     const createCtx: CreateHookInput = { intent: ctx.intent, projectPath };
     const { results: createResults, errors: createErrors } =
@@ -176,7 +176,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     if (createErrors.length > 0) throw createErrors[0]!;
 
     const create = mergeHookResults(createResults, "create");
-    const { workspacePath, branch, metadata } = create;
+    const { workspacePath, branch, metadata, resolvedBase } = create;
     if (workspacePath === undefined || branch === undefined || metadata === undefined) {
       throw new Error("Create hook did not provide all required fields");
     }
@@ -240,13 +240,14 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     };
 
     // Build and emit domain event
+    const eventBase = resolvedBase ?? ctx.intent.payload.base;
     const eventPayload: WorkspaceCreatedPayload = {
       projectId,
       workspaceName: resolvedWorkspaceName,
       workspacePath,
       projectPath,
       branch,
-      base,
+      ...(eventBase !== undefined && { base: eventBase }),
       metadata,
       workspaceUrl: finalize.workspaceUrl,
       ...(ctx.intent.payload.initialPrompt !== undefined && {

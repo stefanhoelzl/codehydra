@@ -65,7 +65,7 @@ import {
 } from "../operations/list-projects";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
-import { getErrorMessage } from "../../services/errors";
+import { getErrorMessage, WorkspaceError } from "../../services/errors";
 
 // =============================================================================
 // Hook Result Types
@@ -243,16 +243,29 @@ export function createGitWorktreeWorkspaceModule(
                 workspaces.set(key, projectWorkspaces);
               }
 
-              return { workspacePath, branch, metadata };
+              return {
+                workspacePath,
+                branch,
+                metadata,
+                ...(payload.base !== undefined && { resolvedBase: payload.base }),
+              };
             }
 
             // New workspace: create via provider
             const projectPathObj = new Path(projectPath);
 
+            // Resolve base: explicit or default
+            const base = payload.base ?? (await globalProvider.defaultBase(projectPathObj));
+            if (!base) {
+              throw new WorkspaceError(
+                "No base branch specified and no default branch found (looked for origin/main, main, origin/master, master)"
+              );
+            }
+
             const internalWorkspace = await globalProvider.createWorkspace(
               projectPathObj,
               payload.workspaceName!,
-              payload.base!
+              base
             );
 
             // Update state
@@ -273,6 +286,7 @@ export function createGitWorktreeWorkspaceModule(
               workspacePath: internalWorkspace.path.toString(),
               branch: internalWorkspace.branch ?? internalWorkspace.name,
               metadata: internalWorkspace.metadata,
+              resolvedBase: base,
             };
           },
         },
