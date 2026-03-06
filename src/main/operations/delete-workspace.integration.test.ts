@@ -1866,6 +1866,42 @@ describe("DeleteWorkspaceOperation.preflight", () => {
     expect(finalProgress.hasErrors).toBe(false);
   });
 
+  it("retry with ignoreWarnings and blockingPids skips preflight and proceeds to flush → delete", async () => {
+    const blockingProcesses: BlockingProcess[] = [
+      { pid: 7777, name: "node.exe", commandLine: "node server.js", files: ["file.txt"], cwd: "." },
+    ];
+
+    const workspaceLockHandler: WorkspaceLockHandler = {
+      detect: vi.fn().mockResolvedValue(blockingProcesses),
+      detectCwd: vi.fn().mockResolvedValue([]),
+      killProcesses: vi.fn().mockResolvedValue(undefined),
+      closeHandles: vi.fn().mockResolvedValue(undefined),
+    };
+
+    // Dirty workspace — preflight would throw without ignoreWarnings
+    const harness = createTestHarness({ isDirty: true, workspaceLockHandler });
+
+    // First attempt (without ignoreWarnings): fails at preflight
+    const intent1 = buildDeleteIntent();
+    await expect(harness.dispatcher.dispatch(intent1)).rejects.toThrow("Preflight check failed");
+    expect(harness.progressCaptures).toHaveLength(0);
+
+    // Retry with ignoreWarnings + blockingPids (simulates Kill & Retry)
+    const retryIntent = buildDeleteIntent({ ignoreWarnings: true, blockingPids: [7777] });
+    const result = await harness.dispatcher.dispatch(retryIntent);
+    expect(result).toEqual({ started: true });
+
+    // Flush killed the PIDs
+    expect(workspaceLockHandler.killProcesses).toHaveBeenCalledWith([7777]);
+
+    // Delete succeeded
+    expect(harness.testState.worktreeRemoved).toBe(true);
+
+    const finalProgress = harness.progressCaptures[harness.progressCaptures.length - 1]!;
+    expect(finalProgress.completed).toBe(true);
+    expect(finalProgress.hasErrors).toBe(false);
+  });
+
   it("throws with both dirty and unmerged messages when both are true", async () => {
     const harness = createTestHarness({ isDirty: true, unmergedCommits: 2 });
     const intent = buildDeleteIntent();

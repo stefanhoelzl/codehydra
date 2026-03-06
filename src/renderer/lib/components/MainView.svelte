@@ -269,6 +269,7 @@
     void api.workspaces.remove(activeDeletionState.workspacePath, {
       keepBranch: activeDeletionState.keepBranch,
       skipSwitch: true,
+      ignoreWarnings: true,
       ...(pids && { blockingPids: pids }),
     });
   }
