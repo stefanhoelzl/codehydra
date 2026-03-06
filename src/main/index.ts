@@ -118,8 +118,9 @@ import { createTempDirModule } from "./modules/temp-dir-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
-import { createAutoPrModule } from "./modules/auto-pr-module";
-import { createYouTrackModule } from "./modules/youtrack-module";
+import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
+import { createGitHubSource } from "./modules/auto-workspace/github-source";
+import { createYouTrackSource } from "./modules/auto-workspace/youtrack-source";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import { ConfigSetValuesOperation, INTENT_CONFIG_SET_VALUES } from "./operations/config-set-values";
@@ -529,20 +530,21 @@ const workspaceSelectionModule = createWorkspaceSelectionModule(agentStatusManag
 const mcpModule = createMcpModule({
   mcpServerManager,
 });
-const autoPrModule = createAutoPrModule({
+const githubSource = createGitHubSource({
   processRunner,
   httpClient: networkLayer,
-  fs: fileSystemLayer,
-  logger: loggingService.createLogger("auto-pr"),
-  stateFilePath: pathProvider.dataPath("auto-pr-workspaces.json").toString(),
-  dispatcher,
+  logger: loggingService.createLogger("auto-workspace:github"),
 });
-const youtrackModule = createYouTrackModule({
+const youtrackSource = createYouTrackSource({
   httpClient: networkLayer,
+  logger: loggingService.createLogger("auto-workspace:youtrack"),
+});
+const autoWorkspaceModule = createAutoWorkspaceModule({
   fs: fileSystemLayer,
-  logger: loggingService.createLogger("youtrack"),
-  stateFilePath: pathProvider.dataPath("youtrack-workspaces.json").toString(),
+  logger: loggingService.createLogger("auto-workspace"),
+  stateFilePath: pathProvider.dataPath("auto-workspaces.json").toString(),
   dispatcher,
+  sources: [githubSource, youtrackSource],
 });
 
 // 8. New modules
@@ -661,8 +663,7 @@ dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(shortcutModule);
-dispatcher.registerModule(autoPrModule);
-dispatcher.registerModule(youtrackModule);
+dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(ipcEventBridge);
 
 // 11. Dispatch app:start
