@@ -91,30 +91,38 @@
     syncMode();
   });
 
+  // Effective workspace count excludes workspaces with active (non-failed) deletions.
+  // This lets us show the Create Workspace dialog as soon as the last workspace's
+  // deletion begins, rather than waiting for the full deletion pipeline to complete.
+  const effectiveWorkspaceCount = $derived.by(() => {
+    const allWorkspaces = getAllWorkspaces();
+    const deletions = deletionStates.value;
+    return allWorkspaces.filter((ws) => {
+      const deletion = deletions.get(ws.path);
+      if (!deletion) return true;
+      if (deletion.completed && deletion.hasErrors) return true;
+      return false;
+    }).length;
+  });
+
   // Auto-show Create Workspace dialog when all conditions are met:
-  // - No workspaces exist
-  // - At least one project exists
+  // - No effective workspaces (real count minus active deletions)
   // - Loading is complete
   // - No dialog is currently open
-  // - No deletion in progress
   // - User hasn't dismissed the auto-shown dialog
   // Uses a debounce to avoid showing during rapid state changes (e.g., after deletion)
   let autoShowTimeout: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     // Read all reactive dependencies
-    const workspaceCount = getAllWorkspaces().length;
+    const effectiveCount = effectiveWorkspaceCount;
     const projectList = projects.value;
     const loading = loadingState.value;
     const dialog = dialogState.value;
-    const deletions = deletionStates.value;
 
-    // Reset dismissed state when workspaces exist (allows auto-show in future)
-    if (workspaceCount > 0) {
+    // Reset dismissed state when effective workspaces exist (allows auto-show in future)
+    if (effectiveCount > 0) {
       autoShowDismissed = false;
     }
-
-    // Check if any deletion is in progress (not completed)
-    const deletionInProgress = Array.from(deletions.values()).some((s) => !s.completed);
 
     // Clear any pending timeout
     if (autoShowTimeout !== null) {
@@ -123,15 +131,14 @@
     }
 
     // Check all conditions
-    // Show Create Workspace dialog when no workspaces exist (even if no projects)
+    // Show Create Workspace dialog when no effective workspaces exist (even if no projects)
     // Suppress when a background clone is running — don't interrupt with the dialog
     const cloneRunning = hasActiveClones.value;
     const firstProject = projectList[0];
     if (
-      workspaceCount === 0 &&
+      effectiveCount === 0 &&
       loading === "loaded" &&
       dialog.type === "closed" &&
-      !deletionInProgress &&
       !autoShowDismissed &&
       !cloneRunning
     ) {
@@ -149,6 +156,7 @@
   });
 
   // Auto-close create dialog when first workspace appears (e.g., created via MCP or auto-PR)
+  // Uses raw workspace count (not effective) so deletion failures don't close the dialog
   let prevWorkspaceCount = 0;
   $effect(() => {
     const count = getAllWorkspaces().length;

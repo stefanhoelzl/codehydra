@@ -1204,6 +1204,156 @@ describe("MainView component", () => {
     });
   });
 
+  describe("auto-open create dialog during last workspace deletion", () => {
+    // Helper to create deletion progress payload
+    function createDeletionProgress(
+      workspacePath: string,
+      overrides: Partial<DeletionProgress> = {}
+    ): DeletionProgress {
+      return {
+        workspacePath: workspacePath as WorkspacePath,
+        workspaceName: "feature" as WorkspaceName,
+        projectId: asProjectId("test-project-12345678"),
+        keepBranch: false,
+        operations: [
+          { id: "kill-terminals", label: "Terminating processes", status: "pending" },
+          { id: "cleanup-vscode", label: "Closing VS Code view", status: "pending" },
+          { id: "cleanup-workspace", label: "Removing workspace", status: "pending" },
+        ],
+        completed: false,
+        hasErrors: false,
+        ...overrides,
+      };
+    }
+
+    it("auto-opens create dialog when last workspace deletion is in progress", async () => {
+      // Start with one workspace
+      const project = createMockProject({
+        id: asProjectId("test-project-12345678"),
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/feature",
+            name: "feature" as WorkspaceName,
+            branch: "feature",
+          },
+        ],
+      });
+      mockApi.projects.list.mockResolvedValue([project]);
+      mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Dialog should NOT be open yet (workspace exists)
+      expect(dialogsStore.dialogState.value.type).not.toBe("create");
+
+      // Simulate deletion-progress event (not completed — deletion just started)
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(createDeletionProgress("/test/.worktrees/feature"));
+
+      // Create dialog should auto-open (effective count drops to 0)
+      await waitFor(() => {
+        expect(dialogsStore.dialogState.value.type).toBe("create");
+      });
+    });
+
+    it("does NOT auto-open when non-last workspace is being deleted", async () => {
+      // Start with two workspaces
+      const project = createMockProject({
+        id: asProjectId("test-project-12345678"),
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/feature",
+            name: "feature" as WorkspaceName,
+            branch: "feature",
+          },
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/bugfix",
+            name: "bugfix" as WorkspaceName,
+            branch: "bugfix",
+          },
+        ],
+      });
+      mockApi.projects.list.mockResolvedValue([project]);
+      mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Simulate deletion of one workspace (effective count goes to 1, not 0)
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(createDeletionProgress("/test/.worktrees/feature"));
+
+      // Give time for any auto-open to trigger
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Dialog should NOT open (one effective workspace remains)
+      expect(dialogsStore.dialogState.value.type).toBe("closed");
+    });
+
+    it("does NOT auto-close create dialog when deletion fails", async () => {
+      // Start with one workspace
+      const project = createMockProject({
+        id: asProjectId("test-project-12345678"),
+        workspaces: [
+          {
+            projectId: asProjectId("test-project-12345678"),
+            path: "/test/.worktrees/feature",
+            name: "feature" as WorkspaceName,
+            branch: "feature",
+          },
+        ],
+      });
+      mockApi.projects.list.mockResolvedValue([project]);
+      mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
+
+      render(MainView);
+
+      await waitFor(() => {
+        expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
+      });
+
+      // Simulate deletion starting (effective count drops to 0 → dialog opens)
+      const callback = getEventCallback("workspace:deletion-progress");
+      callback!(createDeletionProgress("/test/.worktrees/feature"));
+
+      await waitFor(() => {
+        expect(dialogsStore.dialogState.value.type).toBe("create");
+      });
+
+      // Simulate deletion failure (completed with errors)
+      callback!(
+        createDeletionProgress("/test/.worktrees/feature", {
+          completed: true,
+          hasErrors: true,
+          operations: [
+            {
+              id: "cleanup-workspace",
+              label: "Removing workspace",
+              status: "error",
+              error: "Failed",
+            },
+          ],
+        })
+      );
+
+      // Give time for any close to trigger
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Dialog should remain open — deletion failure should not close it
+      expect(dialogsStore.dialogState.value.type).toBe("create");
+    });
+  });
+
   describe("auto-close create dialog when first workspace appears", () => {
     it("closes create dialog when workspace count transitions from 0 to >0", async () => {
       // Start with no workspaces — auto-show opens the create dialog
