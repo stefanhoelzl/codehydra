@@ -31,10 +31,13 @@ import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../operations/o
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETE_FAILED,
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
+  type WorkspaceDeleteFailedEvent,
 } from "../operations/delete-workspace";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../operations/open-project";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../operations/list-projects";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { HttpClient } from "../../services/platform/network";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
@@ -92,6 +95,10 @@ const CONFIG_KEYS = {
 
 const YOUTRACK_FIELDS =
   "id,idReadable,summary,description,reporter(login,fullName),created,updated,resolved,project(id,name,shortName),customFields(name,value(name))";
+
+const METADATA_TRACKED_KEY = "youtrack.tracked";
+const TAG_DELETION_FAILED_KEY = "tags.deletion-failed";
+const TAG_DELETION_FAILED_VALUE = JSON.stringify({ color: "#e74c3c" });
 
 // =============================================================================
 // Helpers
@@ -247,6 +254,7 @@ export function createYouTrackModule(deps: YouTrackModuleDeps): IntentModule {
   let initialActivationDone = false;
 
   const stateFilePath = deps.stateFilePath;
+  const deletingStateKeys = new Set<string>();
 
   function isFullyConfigured(): boolean {
     return (
@@ -432,6 +440,7 @@ export function createYouTrackModule(deps: YouTrackModuleDeps): IntentModule {
         const autoMetadata: Record<string, string> = {
           source: "youtrack",
           url: issueUrl,
+          [METADATA_TRACKED_KEY]: "true",
         };
 
         // Merge auto metadata with template metadata (template wins on conflict)
@@ -490,13 +499,14 @@ export function createYouTrackModule(deps: YouTrackModuleDeps): IntentModule {
       workspaceName: entry.workspaceName,
     });
 
+    deletingStateKeys.add(stateKey);
     try {
       await deps.dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
         payload: {
           workspacePath: entry.workspacePath,
           keepBranch: false,
-          force: true,
+          force: false,
           removeWorktree: true,
         },
       } as DeleteWorkspaceIntent);
@@ -511,12 +521,25 @@ export function createYouTrackModule(deps: YouTrackModuleDeps): IntentModule {
         error: getErrorMessage(error),
       });
     }
+    deletingStateKeys.delete(stateKey);
+  }
 
-    // Remove from state regardless of success (don't retry forever)
-    const remaining = Object.fromEntries(
-      Object.entries(state.workspaces).filter(([key]) => key !== stateKey)
-    );
-    state = { ...state, workspaces: remaining };
+  // ------ Metadata Tracking ------
+
+  async function buildTrackedPaths(): Promise<Set<string>> {
+    const projects = await deps.dispatcher.dispatch({
+      type: INTENT_LIST_PROJECTS,
+      payload: {},
+    } as ListProjectsIntent);
+    const tracked = new Set<string>();
+    for (const project of projects) {
+      for (const workspace of project.workspaces) {
+        if (workspace.metadata[METADATA_TRACKED_KEY]) {
+          tracked.add(workspace.path);
+        }
+      }
+    }
+    return tracked;
   }
 
   // ------ Poll Cycle ------
@@ -543,12 +566,13 @@ export function createYouTrackModule(deps: YouTrackModuleDeps): IntentModule {
     }
 
     // Detect disappeared issues -> delete workspaces or clean up null entries
+    const trackedPaths = await buildTrackedPaths();
     const disappearedKeys = Object.keys(state.workspaces).filter((key) => !openIssueKeys.has(key));
     for (const stateKey of disappearedKeys) {
       const entry = state.workspaces[stateKey];
-      if (entry) {
+      if (entry && trackedPaths.has(entry.workspacePath)) {
         await deleteIssueWorkspace(stateKey, entry);
-      } else {
+      } else if (!entry) {
         // null entry (dismissed) — just remove the key
         const remaining = Object.fromEntries(
           Object.entries(state.workspaces).filter(([key]) => key !== stateKey)
@@ -695,18 +719,46 @@ export function createYouTrackModule(deps: YouTrackModuleDeps): IntentModule {
       },
       [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
         const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-        // If a tracked YouTrack workspace is deleted, set to null to prevent re-creation
         for (const [stateKey, entry] of Object.entries(state.workspaces)) {
           if (entry?.workspacePath === workspacePath) {
-            state = {
-              ...state,
-              workspaces: { ...state.workspaces, [stateKey]: null },
-            };
+            if (deletingStateKeys.has(stateKey)) {
+              // Auto-deletion (issue disappeared) — remove entry entirely
+              const remaining = Object.fromEntries(
+                Object.entries(state.workspaces).filter(([key]) => key !== stateKey)
+              );
+              state = { ...state, workspaces: remaining };
+            } else {
+              // Manual deletion — set to null to prevent re-creation
+              state = {
+                ...state,
+                workspaces: { ...state.workspaces, [stateKey]: null },
+              };
+            }
             void saveState();
             deps.logger.info("Marked YouTrack workspace as dismissed", {
               stateKey,
               workspaceName: entry.workspaceName,
             });
+            break;
+          }
+        }
+      },
+      [EVENT_WORKSPACE_DELETE_FAILED]: (event: DomainEvent) => {
+        const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
+        for (const [stateKey, entry] of Object.entries(state.workspaces)) {
+          if (entry?.workspacePath === workspacePath && deletingStateKeys.has(stateKey)) {
+            void deps.dispatcher.dispatch({
+              type: INTENT_SET_METADATA,
+              payload: { workspacePath, key: METADATA_TRACKED_KEY, value: null },
+            } as SetMetadataIntent);
+            void deps.dispatcher.dispatch({
+              type: INTENT_SET_METADATA,
+              payload: {
+                workspacePath,
+                key: TAG_DELETION_FAILED_KEY,
+                value: TAG_DELETION_FAILED_VALUE,
+              },
+            } as SetMetadataIntent);
             break;
           }
         }

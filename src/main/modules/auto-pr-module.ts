@@ -28,8 +28,10 @@ import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../operations/o
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETE_FAILED,
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
+  type WorkspaceDeleteFailedEvent,
 } from "../operations/delete-workspace";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../operations/open-project";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../operations/list-projects";
@@ -60,6 +62,9 @@ interface AutoPrDismissedState {
 const METADATA_SOURCE_KEY = "source";
 const METADATA_SOURCE_VALUE = "auto-pr";
 const METADATA_PR_URL_KEY = "auto-pr.url";
+const METADATA_TRACKED_KEY = "auto-pr.tracked";
+const TAG_DELETION_FAILED_KEY = "tags.deletion-failed";
+const TAG_DELETION_FAILED_VALUE = JSON.stringify({ color: "#e74c3c" });
 
 // =============================================================================
 // GitHub API Types (minimal)
@@ -282,10 +287,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
     try {
       const raw = await deps.fs.readFile(stateFilePath);
       const parsed = JSON.parse(raw) as AutoPrDismissedState;
-      if (Array.isArray(parsed.dismissed)) {
-        return new Set(parsed.dismissed);
-      }
-      return new Set();
+      return Array.isArray(parsed.dismissed) ? new Set(parsed.dismissed) : new Set();
     } catch {
       return new Set();
     }
@@ -313,7 +315,8 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       for (const workspace of project.workspaces) {
         if (
           workspace.metadata[METADATA_SOURCE_KEY] === METADATA_SOURCE_VALUE &&
-          workspace.metadata[METADATA_PR_URL_KEY]
+          workspace.metadata[METADATA_PR_URL_KEY] &&
+          workspace.metadata[METADATA_TRACKED_KEY]
         ) {
           map.set(workspace.metadata[METADATA_PR_URL_KEY], workspace.path);
         }
@@ -495,6 +498,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
       const metadataEntries: Array<[string, string]> = [
         [METADATA_SOURCE_KEY, METADATA_SOURCE_VALUE],
         [METADATA_PR_URL_KEY, prUrl],
+        [METADATA_TRACKED_KEY, "true"],
         ...(config.metadata ? Object.entries(config.metadata) : []),
       ];
 
@@ -538,7 +542,7 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
         payload: {
           workspacePath: wsPath,
           keepBranch: false,
-          force: true,
+          force: false,
           removeWorktree: true,
         },
       } as DeleteWorkspaceIntent);
@@ -740,6 +744,26 @@ export function createAutoPrModule(deps: AutoPrModuleDeps): IntentModule {
             dismissedSet.add(prUrl);
             void saveDismissedSet();
             deps.logger.info("Marked PR workspace as dismissed", { prUrl });
+            break;
+          }
+        }
+      },
+      [EVENT_WORKSPACE_DELETE_FAILED]: (event: DomainEvent) => {
+        const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
+        for (const [prUrl, wsPath] of workspaceMap) {
+          if (wsPath === workspacePath && deletingPrUrls.has(prUrl)) {
+            void deps.dispatcher.dispatch({
+              type: INTENT_SET_METADATA,
+              payload: { workspacePath, key: METADATA_TRACKED_KEY, value: null },
+            } as SetMetadataIntent);
+            void deps.dispatcher.dispatch({
+              type: INTENT_SET_METADATA,
+              payload: {
+                workspacePath,
+                key: TAG_DELETION_FAILED_KEY,
+                value: TAG_DELETION_FAILED_VALUE,
+              },
+            } as SetMetadataIntent);
             break;
           }
         }
