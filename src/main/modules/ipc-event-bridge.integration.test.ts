@@ -144,7 +144,6 @@ function createBridgeDeps(
   const base: IpcEventBridgeDeps = {
     ipcLayer,
     sendToUI,
-    pluginServer: null,
     logger: SILENT_LOGGER,
     dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
     readyHandler: vi.fn<(payload: object) => Promise<void>>(),

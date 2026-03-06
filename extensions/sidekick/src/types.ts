@@ -6,17 +6,10 @@
  * version (which uses native WebSocket unavailable in VS Code extension host).
  */
 import type { Socket } from "socket.io-client";
-import type {
-  WorkspaceStatus,
-  AgentStatus,
-  Workspace,
-  LogContext,
-  InitialPrompt,
-  AgentSession,
-} from "../api";
+import type { WorkspaceStatus, Workspace, LogContext, InitialPrompt, AgentSession } from "../api";
 
 // Re-export types from api.d.ts that are used internally
-export type { WorkspaceStatus, AgentStatus, Workspace, LogContext, InitialPrompt, AgentSession };
+export type { LogContext, InitialPrompt, AgentSession };
 
 // API response types
 export type PluginResult<T = unknown> =

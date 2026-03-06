@@ -264,26 +264,6 @@ export class PluginServer {
   }
 
   /**
-   * Get the port the server is listening on.
-   *
-   * @returns Port number or null if not started
-   */
-  getPort(): number | null {
-    return this.port;
-  }
-
-  /**
-   * Check if a workspace is connected.
-   *
-   * @param workspacePath - Path to the workspace
-   * @returns True if connected
-   */
-  isConnected(workspacePath: string): boolean {
-    const normalized = new Path(workspacePath).toString();
-    return this.connections.has(normalized);
-  }
-
-  /**
    * Send a command to a connected workspace.
    *
    * @param workspacePath - Path to the workspace

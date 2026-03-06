@@ -195,7 +195,6 @@ function createTestSetup(): TestSetup {
   const ipcEventBridge = createIpcEventBridge({
     ipcLayer: createBehavioralIpcLayer(),
     sendToUI,
-    pluginServer: null,
     logger: SILENT_LOGGER,
     dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
     readyHandler: vi.fn(),
