@@ -628,7 +628,6 @@ dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation());
 const ipcEventBridge = createIpcEventBridge({
   ipcLayer,
   sendToUI: (...args) => viewManager.sendToUI(...args),
-  pluginServer,
   logger: apiLogger,
   dispatcher,
   readyHandler,

@@ -27,7 +27,6 @@ import type {
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { Logger } from "../../services/logging";
 import type { IpcLayer } from "../../services/platform/ipc";
-import type { PluginServer } from "../../services/plugin-server";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations/set-metadata";
 import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../operations/set-metadata";
@@ -97,7 +96,6 @@ import { Path } from "../../services/platform/path";
 export interface IpcEventBridgeDeps {
   readonly ipcLayer: IpcLayer;
   readonly sendToUI: (channel: string, ...args: unknown[]) => void;
-  readonly pluginServer: PluginServer | null;
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
   readonly readyHandler: (payload: object) => Promise<void>;

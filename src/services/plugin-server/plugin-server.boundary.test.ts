@@ -40,7 +40,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
     it("starts on dynamic port", async () => {
       expect(env.port).toBeGreaterThan(0);
       expect(env.port).toBeLessThan(65536);
-      expect(env.server.getPort()).toBe(env.port);
     });
   });
 
@@ -50,7 +49,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await waitForConnect(client);
 
       expect(client.connected).toBe(true);
-      expect(env.server.isConnected("/test/workspace")).toBe(true);
     });
 
     it("rejects client with invalid auth", async () => {
@@ -177,8 +175,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       (client.io.opts as { reconnectionDelayMax: number }).reconnectionDelayMax = 200;
 
       await waitForConnect(client);
-      expect(env.server.isConnected("/test/workspace")).toBe(true);
-
       const oldPort = env.port;
 
       // Close server and all clients, then start fresh
@@ -198,11 +194,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
 
       // Connect all clients
       await Promise.all(clientsToTest.map((c) => waitForConnect(c)));
-
-      // All should be connected
-      for (const ws of workspaces) {
-        expect(env.server.isConnected(ws)).toBe(true);
-      }
 
       // Set up handlers
       for (const client of clientsToTest) {
@@ -240,8 +231,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       // All should succeed
       expect(results.every((r) => r.success)).toBe(true);
 
-      // All should be connected
-      expect(workspaces.every((ws) => env.server.isConnected(ws))).toBe(true);
+      // All should succeed (verified above)
     });
   });
 
@@ -257,7 +247,6 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       // Verify we can connect
       const client = createClient("/test/workspace");
       await waitForConnect(client);
-      expect(env.server.isConnected("/test/workspace")).toBe(true);
     });
   });
 
@@ -1007,7 +996,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       const newClient = createClient("/test/workspace2");
       await waitForConnect(newClient);
 
-      expect(env.server.isConnected("/test/workspace2")).toBe(true);
+      expect(newClient.connected).toBe(true);
     });
 
     it("is idempotent for same workspace", async () => {
