@@ -518,31 +518,6 @@ describe("ElectronLogService", () => {
     });
   });
 
-  describe("parseLoggerFilter", () => {
-    it("parses comma-separated logger names", async () => {
-      const { parseLoggerFilter } = await import("./electron-log-service");
-      const result = parseLoggerFilter("git,process,fs");
-      expect(result).toEqual(new Set(["git", "process", "fs"]));
-    });
-
-    it("handles whitespace in names", async () => {
-      const { parseLoggerFilter } = await import("./electron-log-service");
-      const result = parseLoggerFilter("  git , process  ");
-      expect(result).toEqual(new Set(["git", "process"]));
-    });
-
-    it("returns undefined for empty or undefined input", async () => {
-      const { parseLoggerFilter } = await import("./electron-log-service");
-      expect(parseLoggerFilter(undefined)).toBeUndefined();
-      expect(parseLoggerFilter("")).toBeUndefined();
-    });
-
-    it("returns undefined for whitespace-only input", async () => {
-      const { parseLoggerFilter } = await import("./electron-log-service");
-      expect(parseLoggerFilter("  ,  ,  ")).toBeUndefined();
-    });
-  });
-
   describe("parseLogLevelSpec", () => {
     it("validates plain log levels", async () => {
       const { parseLogLevelSpec } = await import("./electron-log-service");

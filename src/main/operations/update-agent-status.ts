@@ -53,7 +53,7 @@ export const EVENT_AGENT_STATUS_UPDATED = "agent:status-updated" as const;
 // Operation
 // =============================================================================
 
-export const UPDATE_AGENT_STATUS_OPERATION_ID = "update-agent-status";
+const UPDATE_AGENT_STATUS_OPERATION_ID = "update-agent-status";
 
 export class UpdateAgentStatusOperation implements Operation<UpdateAgentStatusIntent, void> {
   readonly id = UPDATE_AGENT_STATUS_OPERATION_ID;

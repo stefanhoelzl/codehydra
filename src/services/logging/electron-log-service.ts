@@ -323,7 +323,7 @@ class ElectronLogLogger implements Logger {
  * @param envValue - Raw string value (e.g., from an environment variable)
  * @returns Set of allowed logger names, or undefined if not set (allow all)
  */
-export function parseLoggerFilter(envValue: string | undefined): Set<LoggerName> | undefined {
+function parseLoggerFilter(envValue: string | undefined): Set<LoggerName> | undefined {
   if (!envValue) return undefined;
   const names = envValue
     .split(",")

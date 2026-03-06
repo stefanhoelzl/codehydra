@@ -87,7 +87,7 @@ describe("setupDeletionProgress", () => {
 
     emit(TEST_PROGRESS);
 
-    expect(deletionStore.getDeletionState(TEST_WORKSPACE_PATH)).toEqual(TEST_PROGRESS);
+    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toEqual(TEST_PROGRESS);
     expect(deletionStore.getDeletionStatus(TEST_WORKSPACE_PATH)).toBe("in-progress");
   });
 
@@ -98,7 +98,7 @@ describe("setupDeletionProgress", () => {
 
     // First emit a regular progress
     emit(TEST_PROGRESS);
-    expect(deletionStore.getDeletionState(TEST_WORKSPACE_PATH)).toBeDefined();
+    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeDefined();
 
     // Then emit completed without errors
     const completedProgress: DeletionProgress = {
@@ -109,7 +109,7 @@ describe("setupDeletionProgress", () => {
     emit(completedProgress);
 
     // Should be cleared
-    expect(deletionStore.getDeletionState(TEST_WORKSPACE_PATH)).toBeUndefined();
+    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeUndefined();
     expect(deletionStore.getDeletionStatus(TEST_WORKSPACE_PATH)).toBe("none");
   });
 
@@ -135,7 +135,7 @@ describe("setupDeletionProgress", () => {
     emit(errorProgress);
 
     // Should remain in store for retry/close anyway
-    expect(deletionStore.getDeletionState(TEST_WORKSPACE_PATH)).toEqual(errorProgress);
+    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toEqual(errorProgress);
     expect(deletionStore.getDeletionStatus(TEST_WORKSPACE_PATH)).toBe("error");
   });
 
@@ -146,7 +146,7 @@ describe("setupDeletionProgress", () => {
 
     // Emit before cleanup
     emit(TEST_PROGRESS);
-    expect(deletionStore.getDeletionState(TEST_WORKSPACE_PATH)).toBeDefined();
+    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeDefined();
 
     // Clear and cleanup
     deletionStore.reset();
@@ -157,7 +157,7 @@ describe("setupDeletionProgress", () => {
 
     // Emit after cleanup - should not update store
     emit(TEST_PROGRESS);
-    expect(deletionStore.getDeletionState(TEST_WORKSPACE_PATH)).toBeUndefined();
+    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeUndefined();
   });
 
   it("handles multiple workspaces independently", () => {
@@ -181,14 +181,14 @@ describe("setupDeletionProgress", () => {
     emit(progress1);
     emit(progress2);
 
-    expect(deletionStore.getDeletionState(workspace1Path)).toEqual(progress1);
-    expect(deletionStore.getDeletionState(workspace2Path)).toEqual(progress2);
+    expect(deletionStore.deletionStates.value.get(workspace1Path)).toEqual(progress1);
+    expect(deletionStore.deletionStates.value.get(workspace2Path)).toEqual(progress2);
 
     // Complete workspace1
     emit({ ...progress1, completed: true, hasErrors: false });
 
     // Workspace1 cleared, workspace2 still exists
-    expect(deletionStore.getDeletionState(workspace1Path)).toBeUndefined();
-    expect(deletionStore.getDeletionState(workspace2Path)).toEqual(progress2);
+    expect(deletionStore.deletionStates.value.get(workspace1Path)).toBeUndefined();
+    expect(deletionStore.deletionStates.value.get(workspace2Path)).toEqual(progress2);
   });
 });

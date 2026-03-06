@@ -9,12 +9,12 @@ import { exec } from "node:child_process";
  * Allowed URL schemes. Only these schemes will be opened externally.
  * This is a security measure to prevent opening potentially dangerous schemes.
  */
-export const ALLOWED_SCHEMES: readonly string[] = ["http:", "https:", "mailto:"];
+const ALLOWED_SCHEMES: readonly string[] = ["http:", "https:", "mailto:"];
 
 /**
  * Error thrown when opening an external URL fails.
  */
-export class ExternalUrlError extends Error {
+class ExternalUrlError extends Error {
   constructor(
     message: string,
     public readonly url: string,

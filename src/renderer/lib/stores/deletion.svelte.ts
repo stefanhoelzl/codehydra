@@ -59,21 +59,6 @@ export function getDeletionStatus(workspacePath: string): DeletionStatus {
 }
 
 /**
- * Get the deletion state for a workspace.
- *
- * WARNING: Do not use this function inside $derived() expressions.
- * Svelte 5 may not properly track reactivity when reading from a SvelteMap
- * through a function call. Instead, read directly from
- * deletionStates.value.get(path) in $derived().
- *
- * @param workspacePath - Path to the workspace
- * @returns Deletion progress or undefined if not deleting
- */
-export function getDeletionState(workspacePath: string): DeletionProgress | undefined {
-  return _deletionStates.get(workspacePath);
-}
-
-/**
  * Reactive getter for all deletion states.
  */
 export const deletionStates = {

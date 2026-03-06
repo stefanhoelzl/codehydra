@@ -33,7 +33,7 @@ export const SIDEBAR_MINIMIZED_WIDTH = 20;
  *
  * The `persist:` prefix ensures data survives app restarts.
  */
-export const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
+const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
 
 /**
  * Minimum window dimensions.

@@ -20,7 +20,6 @@ import {
   RestartAgentOperation,
   RESTART_AGENT_OPERATION_ID,
   INTENT_RESTART_AGENT,
-  EVENT_AGENT_RESTARTED,
 } from "./restart-agent";
 import type {
   RestartAgentIntent,
@@ -229,7 +228,7 @@ describe("RestartAgent Operation", () => {
       const { dispatcher, projectId, workspaceName } = setup;
 
       const receivedEvents: DomainEvent[] = [];
-      dispatcher.subscribe(EVENT_AGENT_RESTARTED, (event) => {
+      dispatcher.subscribe("agent:restarted", (event) => {
         receivedEvents.push(event);
       });
 
@@ -237,7 +236,7 @@ describe("RestartAgent Operation", () => {
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentRestartedEvent;
-      expect(event.type).toBe(EVENT_AGENT_RESTARTED);
+      expect(event.type).toBe("agent:restarted");
       expect(event.payload.projectId).toBe(projectId);
       expect(event.payload.workspaceName).toBe(workspaceName);
       expect(event.payload.path).toBe(WORKSPACE_PATH);
@@ -254,7 +253,7 @@ describe("RestartAgent Operation", () => {
       });
 
       const receivedEvents: DomainEvent[] = [];
-      failSetup.dispatcher.subscribe(EVENT_AGENT_RESTARTED, (event) => {
+      failSetup.dispatcher.subscribe("agent:restarted", (event) => {
         receivedEvents.push(event);
       });
 
@@ -283,7 +282,7 @@ describe("RestartAgent Operation", () => {
       });
 
       const receivedEvents: DomainEvent[] = [];
-      setup.dispatcher.subscribe(EVENT_AGENT_RESTARTED, (event) => {
+      setup.dispatcher.subscribe("agent:restarted", (event) => {
         receivedEvents.push(event);
       });
 
