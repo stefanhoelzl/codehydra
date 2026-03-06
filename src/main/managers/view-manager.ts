@@ -349,6 +349,7 @@ export class ViewManager implements IViewManager {
         sandbox: true,
         partition: partitionName,
         webviewTag: true,
+        focusOnNavigation: false,
       },
     });
 
@@ -440,7 +441,7 @@ export class ViewManager implements IViewManager {
 
     // If this was the active workspace, clear it via setActiveWorkspace to trigger callbacks
     if (this.activeWorkspacePath === workspacePath) {
-      this.setActiveWorkspace(null, false);
+      this.setActiveWorkspace(null);
     }
 
     // If this was the attached workspace, clear it
@@ -528,11 +529,7 @@ export class ViewManager implements IViewManager {
     });
 
     // Only update active workspace bounds (O(1) - inactive views are detached).
-    // Skip loading workspaces: they're at z-0 with 1x1 bounds.
-    if (
-      this.activeWorkspacePath !== null &&
-      !this.loadingWorkspaces.has(this.activeWorkspacePath)
-    ) {
+    if (this.activeWorkspacePath !== null) {
       const state = this.workspaceStates.get(this.activeWorkspacePath);
       if (state) {
         this.viewLayer.setBounds(state.handle, {
@@ -543,6 +540,20 @@ export class ViewManager implements IViewManager {
         });
       }
     }
+  }
+
+  /**
+   * Returns the z-index for the UI layer's "bottom" position.
+   * Accounts for loading workspaces attached at z-0 that push the
+   * background (and UI) up by one slot each.
+   */
+  private getUIBottomIndex(): number {
+    let loadingAttached = 0;
+    for (const workspacePath of this.loadingWorkspaces.keys()) {
+      const state = this.workspaceStates.get(workspacePath);
+      if (state?.urlLoaded) loadingAttached++;
+    }
+    return Z_UI_BOTTOM + loadingAttached;
   }
 
   /**
@@ -561,18 +572,22 @@ export class ViewManager implements IViewManager {
     // Mark as loaded first to prevent re-entry
     state.urlLoaded = true;
 
-    const workspaceName = basename(workspacePath);
-    this.logger.info("Loading URL", { workspace: workspaceName, url: state.url });
-
-    // Attach at z-index 0 (behind UI layer) so requestAnimationFrame fires
+    // Attach at z-index 0 (behind background) so requestAnimationFrame fires
     // during VS Code initialization (code-server 4.109+ workaround).
     try {
       if (!this.windowLayer.isDestroyed(this.windowHandle)) {
-        this.viewLayer.attachToWindow(state.handle, this.windowHandle);
-        // Use minimal bounds so the view is invisible at z-0 (prevents white
-        // flash from code-server's HTML rendering before CSS loads). The 1x1
-        // surface is enough for Chromium's compositor to fire rAF callbacks.
-        this.viewLayer.setBounds(state.handle, { x: 0, y: 0, width: 1, height: 1 });
+        this.viewLayer.attachToWindow(state.handle, this.windowHandle, 0);
+        // Full bounds so VS Code initializes layout correctly (view is invisible
+        // behind background at z-0, so no white flash).
+        const bounds = this.windowManager.getBounds();
+        const width = Math.max(bounds.width, MIN_WIDTH);
+        const height = Math.max(bounds.height, MIN_HEIGHT);
+        this.viewLayer.setBounds(state.handle, {
+          x: SIDEBAR_MINIMIZED_WIDTH,
+          y: 0,
+          width: width - SIDEBAR_MINIMIZED_WIDTH,
+          height,
+        });
       }
     } catch {
       // Window may be closing
@@ -681,7 +696,7 @@ export class ViewManager implements IViewManager {
             this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
             // In shortcut mode, restore focus to UI layer (lost during re-attach)
             if (this.mode === "shortcut") {
-              this.focusUI();
+              this.focus();
             }
           }
         } catch {
@@ -689,12 +704,15 @@ export class ViewManager implements IViewManager {
         }
       } else {
         // Windows DirectComposition workaround: force UI view re-composite
-        // so the transparent sidebar strip is rendered on startup
+        // so the transparent sidebar strip is rendered on startup.
         try {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
-            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, Z_UI_BOTTOM, {
-              force: true,
-            });
+            this.viewLayer.attachToWindow(
+              this.uiViewHandle,
+              this.windowHandle,
+              this.getUIBottomIndex(),
+              { force: true }
+            );
           }
         } catch {
           // window may be closing
@@ -704,22 +722,8 @@ export class ViewManager implements IViewManager {
       this.updateBounds();
 
       // Focus after everything is set up
-      // But NOT in shortcut mode - UI layer needs to keep focus for Alt key detection
-      const willFocus = focus && workspacePath !== null && this.mode !== "shortcut";
-      this.logger.debug("Focus decision", {
-        focus,
-        workspacePath: workspacePath ? basename(workspacePath) : null,
-        mode: this.mode,
-        willFocus,
-      });
-      if (willFocus) {
-        const state = this.workspaceStates.get(workspacePath);
-        if (state) {
-          this.viewLayer.focus(state.handle);
-        }
-      } else if (workspacePath === null) {
-        // No workspace active - ensure something is focused for keyboard shortcuts
-        this.focusActiveWorkspace();
+      if (focus) {
+        this.focus();
       }
 
       // Notify subscribers of workspace change
@@ -749,33 +753,51 @@ export class ViewManager implements IViewManager {
   }
 
   /**
-   * Focuses the active workspace view.
-   * Use this to return focus to the workspace (e.g., after exiting shortcut mode).
-   * When no workspace is active, focuses UI as fallback to ensure keyboard shortcuts work.
+   * Returns the topmost focusable view handle.
+   * If an active workspace is attached at top, returns it.
+   * Otherwise returns the UI view (which is always above background).
    */
-  focusActiveWorkspace(): void {
-    // Skip focus operations during shutdown
-    if (this.destroying) return;
-
-    if (!this.activeWorkspacePath) {
-      // No workspace active - focus UI to ensure keyboard shortcuts still work
-      this.focusUI();
-      return;
+  private getTopView(): ViewHandle {
+    if (this.attachedWorkspacePath !== null) {
+      const state = this.workspaceStates.get(this.attachedWorkspacePath);
+      if (state) return state.handle;
     }
-
-    const state = this.workspaceStates.get(this.activeWorkspacePath);
-    if (state) {
-      this.viewLayer.focus(state.handle);
-    }
+    return this.uiViewHandle;
   }
 
   /**
-   * Focuses the UI layer view.
+   * Focuses the correct view based on current mode and attachment state.
+   * Single source of truth for focus management.
+   *
+   * - workspace mode: focuses workspace view if attached, else UI
+   * - shortcut mode: focuses UI (keyboard events go to sidebar)
+   * - dialog/hover mode: no-op (these modes manage their own focus)
    */
-  focusUI(): void {
-    // Skip focus operations during shutdown
+  focus(): void {
     if (this.destroying) return;
-    this.viewLayer.focus(this.uiViewHandle);
+
+    switch (this.mode) {
+      case "dialog":
+      case "hover":
+        // These modes manage their own focus via traps/handlers
+        break;
+      case "shortcut":
+        this.logger.debug("focus", { target: "ui", mode: this.mode });
+        this.viewLayer.focus(this.uiViewHandle);
+        break;
+      case "workspace": {
+        const topView = this.getTopView();
+        this.logger.debug("focus", {
+          target: topView === this.uiViewHandle ? "ui" : "workspace",
+          mode: this.mode,
+          attachedWorkspace: this.attachedWorkspacePath
+            ? basename(this.attachedWorkspacePath)
+            : null,
+        });
+        this.viewLayer.focus(topView);
+        break;
+      }
+    }
   }
 
   /**
@@ -803,17 +825,19 @@ export class ViewManager implements IViewManager {
 
       switch (newMode) {
         case "workspace":
-          // Move UI to bottom (index 0) - workspace on top
-          this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, Z_UI_BOTTOM);
-          // Focus the active workspace
-          this.focusActiveWorkspace();
+          // Move UI to bottom - workspace on top
+          this.viewLayer.attachToWindow(
+            this.uiViewHandle,
+            this.windowHandle,
+            this.getUIBottomIndex()
+          );
+          this.focus();
           break;
 
         case "shortcut":
           // Move UI to top (no index = append to top)
           this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
-          // Focus UI layer so it receives keyboard events
-          this.focusUI();
+          this.focus();
           break;
 
         case "hover":
@@ -930,9 +954,6 @@ export class ViewManager implements IViewManager {
         try {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
             this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
-            // Restore focus to UI layer (may have been lost during re-attach)
-            // Dialog's focus trap will restore focus to the correct element
-            this.focusUI();
           }
         } catch {
           // Ignore errors - window may be closing
@@ -942,22 +963,20 @@ export class ViewManager implements IViewManager {
         // so the transparent sidebar strip is rendered on startup
         try {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
-            this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle, Z_UI_BOTTOM, {
-              force: true,
-            });
+            this.viewLayer.attachToWindow(
+              this.uiViewHandle,
+              this.windowHandle,
+              this.getUIBottomIndex(),
+              { force: true }
+            );
           }
         } catch {
           // window may be closing
         }
       }
 
-      // Only focus if not in dialog mode (native dialog may be open)
-      if (this.mode !== "dialog") {
-        const state = this.workspaceStates.get(workspacePath);
-        if (state) {
-          this.viewLayer.focus(state.handle);
-        }
-      }
+      // Focus the correct view for current mode
+      this.focus();
     } else {
       // Inactive workspace: detach the z-0 temporary attachment from loadViewUrl()
       this.detachView(workspacePath);

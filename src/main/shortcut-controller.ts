@@ -56,8 +56,6 @@ function normalizeKey(key: string): ShortcutKey | null {
 }
 
 export interface ShortcutControllerDeps {
-  /** Focuses the UI layer */
-  focusUI: () => void;
   /** Sets the UI mode (workspace, shortcut, dialog) */
   setMode: (mode: UIMode) => void;
   /** Gets the current UI mode */

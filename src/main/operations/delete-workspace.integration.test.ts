@@ -286,8 +286,7 @@ function createTestViewManager(activeWorkspacePath: string | null = WORKSPACE_PA
     createWorkspaceView: vi.fn(),
     getWorkspaceView: vi.fn(),
     updateBounds: vi.fn(),
-    focusActiveWorkspace: vi.fn(),
-    focusUI: vi.fn(),
+    focus: vi.fn(),
     setMode: vi.fn(),
     getMode: vi.fn().mockReturnValue("workspace"),
     onModeChange: vi.fn().mockReturnValue(() => {}),
@@ -716,7 +715,7 @@ function createTestHarness(options?: {
       [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceSwitchedEvent).payload;
         if (payload === null) {
-          viewManager.setActiveWorkspace(null, false);
+          viewManager.setActiveWorkspace(null);
         }
       },
     },

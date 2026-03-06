@@ -824,26 +824,61 @@ describe("ViewManager", () => {
     });
   });
 
-  describe("focusActiveWorkspace", () => {
+  describe("focus", () => {
     it("focuses UI when no active workspace", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
 
-      manager.focusActiveWorkspace();
+      manager.focus();
 
       // UI should be focused as fallback
       const uiHandle = manager.getUIViewHandle();
       expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
     });
-  });
 
-  describe("focusUI", () => {
-    it("does not throw", () => {
+    it("focuses UI during loading for keyboard event capture", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
 
-      // Should not throw (focus is a no-op in behavioral mock)
-      expect(() => manager.focusUI()).not.toThrow();
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew — loading
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // UI should be focused (not the z-0 loading workspace)
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
+
+    it("focuses UI in shortcut mode even when workspace is attached", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.setMode("shortcut");
+
+      manager.focus();
+
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
+
+    it("is no-op in dialog mode", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.setMode("dialog");
+
+      // Should not throw
+      expect(() => manager.focus()).not.toThrow();
     });
   });
 
@@ -1063,10 +1098,73 @@ describe("ViewManager", () => {
       const children = deps.viewLayer.$.windowChildren.get(windowId);
       expect(children).toContain(wsHandle.id);
 
-      // Minimal bounds (1x1) to avoid white flash while still enabling rAF
+      // Full bounds so VS Code initializes layout correctly (hidden behind background)
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
-        bounds: { x: 0, y: 0, width: 1, height: 1 },
+        bounds: { x: 20, y: 0, width: 1180, height: 800 },
       });
+
+      // Z-order: workspace(0) < background(1) < UI(2) — background covers loading workspace
+      const uiId = manager.getUIViewHandle().id;
+      expect(children).toHaveLength(3);
+      expect(children![0]).toBe(wsHandle.id);
+      // children[1] is background view (neither workspace nor UI)
+      expect(children![1]).not.toBe(wsHandle.id);
+      expect(children![1]).not.toBe(uiId);
+      expect(children![2]).toBe(uiId);
+    });
+
+    it("setMode to workspace during loading preserves z-order", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      manager.setMode("dialog");
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.setMode("workspace");
+
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      const uiId = manager.getUIViewHandle().id;
+      expect(children).toHaveLength(3);
+      expect(children![0]).toBe(wsHandle.id);
+      expect(children![1]).not.toBe(uiId);
+      expect(children![2]).toBe(uiId);
+    });
+
+    it("background preload does not disrupt active workspace z-order", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      // Active loaded workspace
+      const activeHandle = manager.createWorkspaceView(
+        "/path/to/active",
+        "http://127.0.0.1:8080/?folder=/active",
+        "/path/to/project",
+        false
+      );
+      manager.setActiveWorkspace("/path/to/active");
+
+      // Background preload
+      manager.createWorkspaceView(
+        "/path/to/bg",
+        "http://127.0.0.1:8080/?folder=/bg",
+        "/path/to/project",
+        true
+      );
+      manager.preloadWorkspaceUrl("/path/to/bg");
+
+      // Active workspace still on top
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      const uiId = manager.getUIViewHandle().id;
+      expect(children![children!.length - 1]).toBe(activeHandle.id);
+      expect(children).toContain(uiId);
     });
 
     it("detaches inactive view when workspace finishes loading", () => {

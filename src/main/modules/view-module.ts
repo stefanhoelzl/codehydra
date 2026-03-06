@@ -203,7 +203,7 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
             }
 
             // Focus UI
-            viewManager.focusUI();
+            viewManager.focus();
           },
         },
         "show-ui": {
@@ -475,7 +475,7 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         const payload = (event as WorkspaceSwitchedEvent).payload;
         if (payload === null) {
           cachedActiveRef = null;
-          viewManager.setActiveWorkspace(null, false);
+          viewManager.setActiveWorkspace(null);
         } else {
           cachedActiveRef = {
             projectId: payload.projectId,
