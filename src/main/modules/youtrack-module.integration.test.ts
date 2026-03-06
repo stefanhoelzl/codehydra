@@ -18,7 +18,7 @@ import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
-import type { Project, WorkspaceName } from "../../shared/api/types";
+import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
@@ -35,10 +35,13 @@ import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../operations/o
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETE_FAILED,
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
+  type WorkspaceDeleteFailedEvent,
 } from "../operations/delete-workspace";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../operations/set-metadata";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../operations/list-projects";
 import {
   EVENT_CONFIG_UPDATED,
   INTENT_CONFIG_SET_VALUES,
@@ -150,19 +153,28 @@ class TrackingDeleteWorkspaceOperation implements Operation<
 > {
   readonly id = "delete-workspace";
   readonly dispatched: DeleteWorkspaceIntent[] = [];
+  readonly failForPaths = new Set<string>();
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
     this.dispatched.push(ctx.intent);
-    const event: WorkspaceDeletedEvent = {
-      type: EVENT_WORKSPACE_DELETED,
-      payload: {
-        projectId: "project-1" as Project["id"],
-        workspaceName: "PROJ-123" as WorkspaceName,
-        workspacePath: ctx.intent.payload.workspacePath,
-        projectPath: "/home/user/projects/repo",
-      },
-    };
-    ctx.emit(event);
+    if (this.failForPaths.has(ctx.intent.payload.workspacePath)) {
+      const failedEvent: WorkspaceDeleteFailedEvent = {
+        type: EVENT_WORKSPACE_DELETE_FAILED,
+        payload: { workspacePath: ctx.intent.payload.workspacePath },
+      };
+      ctx.emit(failedEvent);
+    } else {
+      const event: WorkspaceDeletedEvent = {
+        type: EVENT_WORKSPACE_DELETED,
+        payload: {
+          projectId: "project-1" as Project["id"],
+          workspaceName: "PROJ-123" as WorkspaceName,
+          workspacePath: ctx.intent.payload.workspacePath,
+          projectPath: "/home/user/projects/repo",
+        },
+      };
+      ctx.emit(event);
+    }
     return { started: true };
   }
 }
@@ -191,6 +203,18 @@ class TrackingSetMetadataOperation implements Operation<SetMetadataIntent, void>
 
   async execute(ctx: OperationContext<SetMetadataIntent>): Promise<void> {
     this.dispatched.push(ctx.intent);
+  }
+}
+
+/**
+ * Tracking operation for project:list — returns configurable projects with workspace metadata.
+ */
+class TrackingListProjectsOperation implements Operation<ListProjectsIntent, Project[]> {
+  readonly id = "list-projects";
+  projects: Project[] = [];
+
+  async execute(): Promise<Project[]> {
+    return this.projects;
   }
 }
 
@@ -241,6 +265,7 @@ interface TestSetup {
   openWorkspaceOp: TrackingOpenWorkspaceOperation;
   deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
   setMetadataOp: TrackingSetMetadataOperation;
+  listProjectsOp: TrackingListProjectsOperation;
 }
 
 const DEFAULT_TEMPLATE_PATH = "/data/youtrack.liquid";
@@ -301,6 +326,7 @@ function createTestSetup(options?: {
   const openWorkspaceOp = new TrackingOpenWorkspaceOperation();
   const deleteWorkspaceOp = new TrackingDeleteWorkspaceOperation();
   const setMetadataOp = new TrackingSetMetadataOperation();
+  const listProjectsOp = new TrackingListProjectsOperation();
 
   const configValues: Record<string, unknown> = {};
   if (baseUrl !== null) configValues["experimental.youtrack.base-url"] = baseUrl;
@@ -315,6 +341,7 @@ function createTestSetup(options?: {
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
   dispatcher.registerOperation(INTENT_SET_METADATA, setMetadataOp);
+  dispatcher.registerOperation(INTENT_LIST_PROJECTS, listProjectsOp);
 
   const youtrackModule = createYouTrackModule({
     httpClient,
@@ -334,6 +361,27 @@ function createTestSetup(options?: {
     openWorkspaceOp,
     deleteWorkspaceOp,
     setMetadataOp,
+    listProjectsOp,
+  };
+}
+
+function youtrackTrackedProject(workspacePath: string): Project {
+  return {
+    id: "project-1" as ProjectId,
+    name: "repo",
+    path: "/home/user/projects/repo",
+    workspaces: [
+      {
+        projectId: "project-1" as ProjectId,
+        name: "PROJ-123" as WorkspaceName,
+        branch: "feature",
+        path: workspacePath,
+        metadata: {
+          source: "youtrack",
+          "youtrack.tracked": "true",
+        },
+      },
+    ],
   };
 }
 
@@ -490,7 +538,7 @@ describe("YouTrackModule Integration", () => {
       expect(openProjectOp.dispatched).toHaveLength(0);
     });
 
-    it("auto-sets source and url metadata on created workspaces", async () => {
+    it("auto-sets source, url, and tracked metadata on created workspaces", async () => {
       const { dispatcher, httpClient, setMetadataOp } = createTestSetup();
 
       httpClient.setResponse(ISSUES_URL, {
@@ -508,18 +556,20 @@ describe("YouTrackModule Integration", () => {
         key: "url",
         value: `${BASE_URL}/issue/PROJ-123`,
       });
+      expect(metaPayloads).toContainEqual({ key: "youtrack.tracked", value: "true" });
     });
   });
 
   describe("issue disappearance", () => {
     it("deletes workspace when tracked issue disappears from query results", async () => {
       const stateKey = `${BASE_URL}/api/issues/2-123`;
+      const wsPath = "/home/user/projects/repo/PROJ-123";
       const existingState = JSON.stringify({
         version: 1,
         workspaces: {
           [stateKey]: {
             workspaceName: "PROJ-123",
-            workspacePath: "/home/user/projects/repo/PROJ-123",
+            workspacePath: wsPath,
             issueId: "2-123",
             idReadable: "PROJ-123",
             projectPath: "/home/user/projects/repo",
@@ -528,15 +578,171 @@ describe("YouTrackModule Integration", () => {
         },
       });
 
-      const { dispatcher, httpClient, deleteWorkspaceOp } = createTestSetup({ existingState });
+      const { dispatcher, httpClient, deleteWorkspaceOp, listProjectsOp } = createTestSetup({
+        existingState,
+      });
 
+      listProjectsOp.projects = [youtrackTrackedProject(wsPath)];
       httpClient.setResponse(ISSUES_URL, { body: issuesResponse([]) });
 
       await dispatcher.dispatch(startIntent());
 
       expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
       expect(deleteWorkspaceOp.dispatched[0]!.payload.removeWorktree).toBe(true);
-      expect(deleteWorkspaceOp.dispatched[0]!.payload.force).toBe(true);
+      expect(deleteWorkspaceOp.dispatched[0]!.payload.force).toBe(false);
+    });
+
+    it("tags workspace and clears tracked metadata when auto-deletion fails", async () => {
+      const stateKey = `${BASE_URL}/api/issues/2-123`;
+      const wsPath = "/home/user/projects/repo/PROJ-123";
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          [stateKey]: {
+            workspaceName: "PROJ-123",
+            workspacePath: wsPath,
+            issueId: "2-123",
+            idReadable: "PROJ-123",
+            projectPath: "/home/user/projects/repo",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, httpClient, deleteWorkspaceOp, setMetadataOp, listProjectsOp } =
+        createTestSetup({ existingState });
+
+      listProjectsOp.projects = [youtrackTrackedProject(wsPath)];
+      deleteWorkspaceOp.failForPaths.add(wsPath);
+      httpClient.setResponse(ISSUES_URL, { body: issuesResponse([]) });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+
+      const trackedDispatch = setMetadataOp.dispatched.find(
+        (i) => i.payload.key === "youtrack.tracked" && i.payload.value === null
+      );
+      expect(trackedDispatch).toBeDefined();
+      expect(trackedDispatch!.payload.workspacePath).toBe(wsPath);
+
+      const tagDispatch = setMetadataOp.dispatched.find(
+        (i) => i.payload.key === "tags.deletion-failed"
+      );
+      expect(tagDispatch).toBeDefined();
+      expect(tagDispatch!.payload.workspacePath).toBe(wsPath);
+      expect(tagDispatch!.payload.value).toBe(JSON.stringify({ color: "#e74c3c" }));
+    });
+
+    it("keeps state entry when deletion fails", async () => {
+      const stateKey = `${BASE_URL}/api/issues/2-123`;
+      const wsPath = "/home/user/projects/repo/PROJ-123";
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          [stateKey]: {
+            workspaceName: "PROJ-123",
+            workspacePath: wsPath,
+            issueId: "2-123",
+            idReadable: "PROJ-123",
+            projectPath: "/home/user/projects/repo",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, httpClient, deleteWorkspaceOp, fs, listProjectsOp } = createTestSetup({
+        existingState,
+      });
+
+      listProjectsOp.projects = [youtrackTrackedProject(wsPath)];
+      deleteWorkspaceOp.failForPaths.add(wsPath);
+      httpClient.setResponse(ISSUES_URL, { body: issuesResponse([]) });
+
+      await dispatcher.dispatch(startIntent());
+
+      // State entry should still exist (not removed)
+      expect(fs).toHaveFileContaining(
+        "/data/youtrack-workspaces.json",
+        '"workspaceName":"PROJ-123"'
+      );
+    });
+
+    it("does not retry deletion on subsequent polls after failure", async () => {
+      const stateKey = `${BASE_URL}/api/issues/2-123`;
+      const wsPath = "/home/user/projects/repo/PROJ-123";
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          [stateKey]: {
+            workspaceName: "PROJ-123",
+            workspacePath: wsPath,
+            issueId: "2-123",
+            idReadable: "PROJ-123",
+            projectPath: "/home/user/projects/repo",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, httpClient, deleteWorkspaceOp, listProjectsOp, setMetadataOp } =
+        createTestSetup({ existingState });
+
+      listProjectsOp.projects = [youtrackTrackedProject(wsPath)];
+      deleteWorkspaceOp.failForPaths.add(wsPath);
+      httpClient.setResponse(ISSUES_URL, { body: issuesResponse([]) });
+
+      // First poll: deletion attempted and fails
+      await dispatcher.dispatch(startIntent());
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+
+      // youtrack.tracked should have been set to null
+      const trackedDispatch = setMetadataOp.dispatched.find(
+        (i) => i.payload.key === "youtrack.tracked" && i.payload.value === null
+      );
+      expect(trackedDispatch).toBeDefined();
+
+      // Second poll: listing no longer has tracked metadata
+      deleteWorkspaceOp.dispatched.length = 0;
+      listProjectsOp.projects = [];
+      httpClient.setResponse(ISSUES_URL, { body: issuesResponse([]) });
+
+      await dispatcher.dispatch(shutdownIntent());
+      await dispatcher.dispatch(startIntent());
+
+      // Should NOT retry deletion (workspace not tracked)
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
+    });
+
+    it("removes state entry on successful auto-deletion", async () => {
+      const stateKey = `${BASE_URL}/api/issues/2-123`;
+      const wsPath = "/home/user/projects/repo/PROJ-123";
+      const existingState = JSON.stringify({
+        version: 1,
+        workspaces: {
+          [stateKey]: {
+            workspaceName: "PROJ-123",
+            workspacePath: wsPath,
+            issueId: "2-123",
+            idReadable: "PROJ-123",
+            projectPath: "/home/user/projects/repo",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, httpClient, deleteWorkspaceOp, fs, listProjectsOp } = createTestSetup({
+        existingState,
+      });
+
+      listProjectsOp.projects = [youtrackTrackedProject(wsPath)];
+      httpClient.setResponse(ISSUES_URL, { body: issuesResponse([]) });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+      // Entry should be fully removed (not set to null)
+      expect(fs).toHaveFileContaining("/data/youtrack-workspaces.json", '"workspaces": {}');
     });
 
     it("cleans up null entry when issue disappears", async () => {

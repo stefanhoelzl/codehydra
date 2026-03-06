@@ -35,8 +35,10 @@ import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../operations/o
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
+  EVENT_WORKSPACE_DELETE_FAILED,
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
+  type WorkspaceDeleteFailedEvent,
 } from "../operations/delete-workspace";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../operations/list-projects";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../operations/set-metadata";
@@ -145,19 +147,28 @@ class TrackingDeleteWorkspaceOperation implements Operation<
 > {
   readonly id = "delete-workspace";
   readonly dispatched: DeleteWorkspaceIntent[] = [];
+  readonly failForPaths = new Set<string>();
 
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
     this.dispatched.push(ctx.intent);
-    const event: WorkspaceDeletedEvent = {
-      type: EVENT_WORKSPACE_DELETED,
-      payload: {
-        projectId: "project-1" as Project["id"],
-        workspaceName: "pr-42/feature-login" as WorkspaceName,
-        workspacePath: ctx.intent.payload.workspacePath,
-        projectPath: "/home/user/projects/repo",
-      },
-    };
-    ctx.emit(event);
+    if (this.failForPaths.has(ctx.intent.payload.workspacePath)) {
+      const failedEvent: WorkspaceDeleteFailedEvent = {
+        type: EVENT_WORKSPACE_DELETE_FAILED,
+        payload: { workspacePath: ctx.intent.payload.workspacePath },
+      };
+      ctx.emit(failedEvent);
+    } else {
+      const event: WorkspaceDeletedEvent = {
+        type: EVENT_WORKSPACE_DELETED,
+        payload: {
+          projectId: "project-1" as Project["id"],
+          workspaceName: "pr-42/feature-login" as WorkspaceName,
+          workspacePath: ctx.intent.payload.workspacePath,
+          projectPath: "/home/user/projects/repo",
+        },
+      };
+      ctx.emit(event);
+    }
     return { started: true };
   }
 }
@@ -205,6 +216,7 @@ function autoPrWorkspace(
           base: "origin/main",
           source: "auto-pr",
           "auto-pr.url": prUrl,
+          "auto-pr.tracked": "true",
           ...extra,
         },
       },
@@ -494,7 +506,7 @@ describe("AutoPrModule Integration", () => {
         "/data/workspaces/repo-abc/workspaces/pr-42/feature-login"
       );
       expect(deleteWorkspaceOp.dispatched[0]!.payload.removeWorktree).toBe(true);
-      expect(deleteWorkspaceOp.dispatched[0]!.payload.force).toBe(true);
+      expect(deleteWorkspaceOp.dispatched[0]!.payload.force).toBe(false);
     });
 
     it("does not add auto-deleted workspace to dismissed set", async () => {
@@ -514,6 +526,121 @@ describe("AutoPrModule Integration", () => {
       expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
       // No dismissed URLs → file should not be written
       expect(fs).not.toHaveFile("/data/auto-pr-workspaces.json");
+    });
+
+    it("tags workspace and clears tracked metadata when auto-deletion fails", async () => {
+      const wsPath = "/data/workspaces/repo-abc/workspaces/pr-42/feature-login";
+      const { dispatcher, httpClient, deleteWorkspaceOp, listProjectsOp, setMetadataOp } =
+        createTestSetup();
+
+      deleteWorkspaceOp.failForPaths.add(wsPath);
+
+      listProjectsOp.projects = [autoPrWorkspace("https://github.com/org/repo/pull/42", wsPath)];
+
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+
+      const trackedDispatch = setMetadataOp.dispatched.find(
+        (i) => i.payload.key === "auto-pr.tracked" && i.payload.value === null
+      );
+      expect(trackedDispatch).toBeDefined();
+      expect(trackedDispatch!.payload.workspacePath).toBe(wsPath);
+
+      const tagDispatch = setMetadataOp.dispatched.find(
+        (i) => i.payload.key === "tags.deletion-failed"
+      );
+      expect(tagDispatch).toBeDefined();
+      expect(tagDispatch!.payload.workspacePath).toBe(wsPath);
+      expect(tagDispatch!.payload.value).toBe(JSON.stringify({ color: "#e74c3c" }));
+    });
+
+    it("does not retry deletion on subsequent polls after failure", async () => {
+      const wsPath = "/data/workspaces/repo-abc/workspaces/pr-42/feature-login";
+      const { dispatcher, httpClient, deleteWorkspaceOp, listProjectsOp, setMetadataOp } =
+        createTestSetup();
+
+      deleteWorkspaceOp.failForPaths.add(wsPath);
+
+      listProjectsOp.projects = [autoPrWorkspace("https://github.com/org/repo/pull/42", wsPath)];
+
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      // First poll: deletion attempted and fails
+      await dispatcher.dispatch(startIntent());
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+
+      // auto-pr.tracked should have been set to null
+      const trackedDispatch = setMetadataOp.dispatched.find(
+        (i) => i.payload.key === "auto-pr.tracked" && i.payload.value === null
+      );
+      expect(trackedDispatch).toBeDefined();
+
+      // Second poll: workspace still in listing but without tracked metadata (simulates null/deleted key)
+      deleteWorkspaceOp.dispatched.length = 0;
+      listProjectsOp.projects = [
+        {
+          id: "project-1" as ProjectId,
+          name: "repo",
+          path: "/home/user/projects/repo",
+          workspaces: [
+            {
+              projectId: "project-1" as ProjectId,
+              name: "pr-workspace" as WorkspaceName,
+              branch: "feature",
+              path: wsPath,
+              metadata: {
+                base: "origin/main",
+                source: "auto-pr",
+                "auto-pr.url": "https://github.com/org/repo/pull/42",
+                // no "auto-pr.tracked" key — simulates cleared metadata
+              },
+            },
+          ],
+        },
+      ];
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      await dispatcher.dispatch(shutdownIntent());
+      await dispatcher.dispatch(startIntent());
+
+      // Should NOT retry deletion (workspace not in tracked map)
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
+    });
+
+    it("clears failed state when workspace is manually deleted", async () => {
+      const wsPath = "/data/workspaces/repo-abc/workspaces/pr-42/feature-login";
+      const { dispatcher, httpClient, deleteWorkspaceOp, listProjectsOp } = createTestSetup();
+
+      deleteWorkspaceOp.failForPaths.add(wsPath);
+
+      listProjectsOp.projects = [autoPrWorkspace("https://github.com/org/repo/pull/42", wsPath)];
+
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      // First poll: deletion attempted and fails
+      await dispatcher.dispatch(startIntent());
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+
+      // User manually deletes the workspace (succeeds)
+      deleteWorkspaceOp.failForPaths.delete(wsPath);
+      await dispatcher.dispatch({
+        type: INTENT_DELETE_WORKSPACE,
+        payload: { workspacePath: wsPath, keepBranch: false, force: true, removeWorktree: true },
+      } as DeleteWorkspaceIntent);
+
+      // Third poll: workspace no longer in listing, should not attempt delete
+      deleteWorkspaceOp.dispatched.length = 0;
+      listProjectsOp.projects = [];
+      httpClient.setResponse(SEARCH_URL, { body: searchResponse([]) });
+
+      await dispatcher.dispatch(shutdownIntent());
+      await dispatcher.dispatch(startIntent());
+
+      // Workspace was removed from map by workspace:deleted event — no delete dispatched
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
     });
   });
 
@@ -830,8 +957,8 @@ describe("AutoPrModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
-      // 2 marker keys (source, auto-pr.url) + 2 template metadata keys
-      expect(setMetadataOp.dispatched).toHaveLength(4);
+      // 3 marker keys (source, auto-pr.url, auto-pr.tracked) + 2 template metadata keys
+      expect(setMetadataOp.dispatched).toHaveLength(5);
 
       const metaPayloads = setMetadataOp.dispatched.map((i) => ({
         key: i.payload.key,
@@ -842,6 +969,7 @@ describe("AutoPrModule Integration", () => {
         key: "auto-pr.url",
         value: "https://github.com/org/repo/pull/42",
       });
+      expect(metaPayloads).toContainEqual({ key: "auto-pr.tracked", value: "true" });
       expect(metaPayloads).toContainEqual({
         key: "pr-url",
         value: "https://github.com/org/repo/pull/42",
@@ -866,8 +994,8 @@ describe("AutoPrModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
-      // 2 marker keys (source, auto-pr.url) only
-      expect(setMetadataOp.dispatched).toHaveLength(2);
+      // 3 marker keys (source, auto-pr.url, auto-pr.tracked) only
+      expect(setMetadataOp.dispatched).toHaveLength(3);
 
       const metaPayloads = setMetadataOp.dispatched.map((i) => ({
         key: i.payload.key,
@@ -878,6 +1006,7 @@ describe("AutoPrModule Integration", () => {
         key: "auto-pr.url",
         value: "https://github.com/org/repo/pull/42",
       });
+      expect(metaPayloads).toContainEqual({ key: "auto-pr.tracked", value: "true" });
     });
 
     it("creates workspace despite unknown front-matter keys (non-fatal warning)", async () => {
