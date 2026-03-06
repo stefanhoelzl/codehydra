@@ -344,6 +344,7 @@ export class DefaultViewLayer implements ViewLayer {
       nodeIntegration: options.webPreferences?.nodeIntegration ?? false,
       contextIsolation: options.webPreferences?.contextIsolation ?? true,
       sandbox: options.webPreferences?.sandbox ?? true,
+      focusOnNavigation: options.webPreferences?.focusOnNavigation ?? true,
     };
     if (options.webPreferences?.partition !== undefined) {
       webPreferences.partition = options.webPreferences.partition;

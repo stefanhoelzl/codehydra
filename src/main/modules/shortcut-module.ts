@@ -26,12 +26,7 @@ import { ApiIpcChannels } from "../../shared/ipc";
 export interface ShortcutModuleDeps {
   readonly viewManager: Pick<
     IViewManager,
-    | "focusUI"
-    | "getUIViewHandle"
-    | "getMode"
-    | "sendToUI"
-    | "getWorkspaceView"
-    | "getActiveWorkspacePath"
+    "getUIViewHandle" | "getMode" | "sendToUI" | "getWorkspaceView" | "getActiveWorkspacePath"
   >;
   readonly viewLayer: Pick<
     ViewLayer,
@@ -65,7 +60,6 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
         init: {
           handler: async (): Promise<void> => {
             controller = new ShortcutController({
-              focusUI: () => deps.viewManager.focusUI(),
               setMode: (mode) => {
                 void deps.dispatch({
                   type: INTENT_SET_MODE,

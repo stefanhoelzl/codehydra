@@ -174,8 +174,7 @@ function createTestHarness(options?: {
     createWorkspaceView: vi.fn(),
     getWorkspaceView: vi.fn(),
     updateBounds: vi.fn(),
-    focusActiveWorkspace: vi.fn(),
-    focusUI: vi.fn(),
+    focus: vi.fn(),
     setMode: vi.fn(),
     getMode: vi.fn().mockReturnValue("workspace"),
     onModeChange: vi.fn().mockReturnValue(() => {}),
@@ -286,7 +285,7 @@ function createTestHarness(options?: {
             // Track that skipSwitch is set
             if (!payload.skipSwitch) {
               // Not expected for project:close -- would indicate a bug
-              viewManager.setActiveWorkspace(null, false);
+              viewManager.setActiveWorkspace(null);
             }
             await viewManager.destroyWorkspaceView(workspacePath);
             return {};
@@ -366,7 +365,7 @@ function createTestHarness(options?: {
             const allProjects: Project[] = await appState.getAllProjects();
             const otherProjectsExist = allProjects.some((p) => p.path !== projectPath);
             if (!otherProjectsExist) {
-              viewManager.setActiveWorkspace(null, false);
+              viewManager.setActiveWorkspace(null);
             }
             return { otherProjectsExist };
           },

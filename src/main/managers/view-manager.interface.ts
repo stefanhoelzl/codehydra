@@ -121,15 +121,14 @@ export interface IViewManager {
   getActiveWorkspacePath(): string | null;
 
   /**
-   * Focuses the active workspace view.
-   * Use this to return focus to the workspace (e.g., after exiting shortcut mode).
+   * Focuses the correct view based on current mode and attachment state.
+   * Single source of truth for focus management.
+   *
+   * - workspace mode: focuses workspace view if attached, else UI
+   * - shortcut mode: focuses UI (keyboard events go to sidebar)
+   * - dialog/hover mode: no-op (these modes manage their own focus)
    */
-  focusActiveWorkspace(): void;
-
-  /**
-   * Focuses the UI layer view.
-   */
-  focusUI(): void;
+  focus(): void;
 
   /**
    * Sets the UI mode.

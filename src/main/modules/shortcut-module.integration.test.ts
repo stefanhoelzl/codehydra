@@ -84,7 +84,6 @@ function createMockViewManager(uiHandle: ViewHandle) {
   const wsHandle = createViewHandle("ws-view");
 
   return {
-    focusUI: vi.fn(),
     getUIViewHandle: vi.fn().mockReturnValue(uiHandle),
     getMode: vi.fn(() => currentMode),
     sendToUI: vi.fn(),

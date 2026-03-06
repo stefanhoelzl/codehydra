@@ -71,7 +71,6 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
   deps: ShortcutControllerDeps;
   callbacks: MockCallbacks;
   mocks: {
-    focusUI: ReturnType<typeof vi.fn<() => void>>;
     setMode: ReturnType<typeof vi.fn<(mode: UIMode) => void>>;
     getMode: ReturnType<typeof vi.fn<() => UIMode>>;
     onShortcut: ReturnType<typeof vi.fn<(key: ShortcutKey) => void>>;
@@ -89,7 +88,6 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
   };
 
   const mocks = {
-    focusUI: vi.fn<() => void>(),
     setMode: vi.fn<(mode: UIMode) => void>().mockImplementation((mode: UIMode) => {
       currentMode = mode;
     }),
@@ -98,7 +96,6 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
   };
 
   const deps: ShortcutControllerDeps = {
-    focusUI: mocks.focusUI,
     setMode: mocks.setMode,
     getMode: mocks.getMode,
     onShortcut: mocks.onShortcut,
@@ -220,7 +217,6 @@ describe("ShortcutController Integration", () => {
       vi.runAllTimers();
 
       expect(mockResult.mocks.getMode()).toBe("shortcut");
-      expect(mockResult.mocks.focusUI).not.toHaveBeenCalled();
     });
 
     it("activates shortcut mode from hover mode", () => {

@@ -119,8 +119,7 @@ function createMockViewManager() {
     getUIViewHandle: vi.fn(),
     getWorkspaceView: vi.fn(),
     updateBounds: vi.fn(),
-    focusActiveWorkspace: vi.fn(),
-    focusUI: vi.fn(),
+    focus: vi.fn(),
     onModeChange: vi.fn(),
     onWorkspaceChange: vi.fn(),
     updateCodeServerPort: vi.fn(),
@@ -752,7 +751,7 @@ describe("ViewModule Integration", () => {
       expect(refAfter).toBeNull();
 
       // Verify setActiveWorkspace(null) was called
-      expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(null, false);
+      expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(null);
     });
   });
 
@@ -1145,7 +1144,7 @@ describe("ViewModule Integration", () => {
         viewManager.getUIViewHandle(),
         "file:///app/ui.html"
       );
-      expect(viewManager.focusUI).toHaveBeenCalled();
+      expect(viewManager.focus).toHaveBeenCalled();
     });
 
     it("skips optional deps when not provided", async () => {
@@ -1176,9 +1175,9 @@ describe("ViewModule Integration", () => {
         } as AppStartIntent)
       ).resolves.not.toThrow();
 
-      // viewManager.create() and focusUI() are always called
+      // viewManager.create() and focus() are always called
       expect(viewManager.create).toHaveBeenCalled();
-      expect(viewManager.focusUI).toHaveBeenCalled();
+      expect(viewManager.focus).toHaveBeenCalled();
     });
   });
 

@@ -52,6 +52,7 @@ export interface WebPreferences {
   readonly partition?: string;
   readonly preload?: string;
   readonly webviewTag?: boolean;
+  readonly focusOnNavigation?: boolean;
 }
 
 /**

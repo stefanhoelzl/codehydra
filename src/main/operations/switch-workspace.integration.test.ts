@@ -74,7 +74,7 @@ import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils
 interface MockViewManager {
   activeWorkspacePath: string | null;
   focusState: boolean;
-  setActiveWorkspace(path: string | null, focus: boolean): void;
+  setActiveWorkspace(path: string | null, focus?: boolean): void;
   getActiveWorkspacePath(): string | null;
 }
 
@@ -82,7 +82,7 @@ function createMockViewManager(initialActive: string | null = null): MockViewMan
   return {
     activeWorkspacePath: initialActive,
     focusState: false,
-    setActiveWorkspace(path: string | null, focus: boolean): void {
+    setActiveWorkspace(path: string | null, focus: boolean = true): void {
       this.activeWorkspacePath = path;
       this.focusState = focus;
     },
@@ -269,7 +269,7 @@ function createTestSetup(opts?: {
       [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
         const payload = (event as WorkspaceSwitchedEvent).payload;
         if (payload === null) {
-          viewManager.setActiveWorkspace(null, false);
+          viewManager.setActiveWorkspace(null);
         }
       },
     },
