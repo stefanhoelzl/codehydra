@@ -361,13 +361,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     try {
       return await fs.readFile(nativePath, "utf-8");
     } catch (error) {
-      const fsError = mapError(error, nativePath);
-      this.logger.warn("Read failed", {
-        path: nativePath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativePath);
     }
   }
 
@@ -377,13 +371,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     try {
       await fs.writeFile(nativePath, content, "utf-8");
     } catch (error) {
-      const fsError = mapError(error, nativePath);
-      this.logger.warn("Write failed", {
-        path: nativePath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativePath);
     }
   }
 
@@ -394,13 +382,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     try {
       await fs.mkdir(nativePath, { recursive });
     } catch (error) {
-      const fsError = mapError(error, nativePath);
-      this.logger.warn("Mkdir failed", {
-        path: nativePath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativePath);
     }
   }
 
@@ -417,13 +399,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       this.logger.debug("Readdir", { path: nativePath, count: result.length });
       return result;
     } catch (error) {
-      const fsError = mapError(error, nativePath);
-      this.logger.warn("Readdir failed", {
-        path: nativePath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativePath);
     }
   }
 
@@ -433,13 +409,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     try {
       await fs.unlink(nativePath);
     } catch (error) {
-      const fsError = mapError(error, nativePath);
-      this.logger.warn("Unlink failed", {
-        path: nativePath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativePath);
     }
   }
 
@@ -475,13 +445,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       if (force && nodeError.code === "ENOENT") {
         return;
       }
-      const fsError = mapError(error, nativePath);
-      this.logger.warn("Rm failed", {
-        path: nativePath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativePath);
     }
   }
 
@@ -496,14 +460,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
         preserveTimestamps: true,
       });
     } catch (error) {
-      const fsError = mapError(error, nativeSrc);
-      this.logger.warn("CopyTree failed", {
-        src: nativeSrc,
-        dest: nativeDest,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativeSrc);
     }
     this.logger.debug("CopyTree complete", { src: nativeSrc, dest: nativeDest });
   }
@@ -528,13 +485,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     try {
       await fs.writeFile(nativePath, content);
     } catch (error) {
-      const fsError = mapError(error, nativePath);
-      this.logger.warn("WriteBuffer failed", {
-        path: nativePath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativePath);
     }
   }
 
@@ -562,14 +513,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       const type = process.platform === "win32" ? "junction" : undefined;
       await fs.symlink(nativeTarget, nativeLinkPath, type);
     } catch (error) {
-      const fsError = mapError(error, nativeLinkPath);
-      this.logger.warn("Symlink failed", {
-        target: nativeTarget,
-        linkPath: nativeLinkPath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativeLinkPath);
     }
   }
 
@@ -580,14 +524,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
     try {
       await fs.rename(nativeOldPath, nativeNewPath);
     } catch (error) {
-      const fsError = mapError(error, nativeOldPath);
-      this.logger.warn("Rename failed", {
-        oldPath: nativeOldPath,
-        newPath: nativeNewPath,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, nativeOldPath);
     }
   }
 
@@ -599,13 +536,7 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       this.logger.debug("Mkdtemp created", { path: created });
       return new Path(created);
     } catch (error) {
-      const fsError = mapError(error, prefix);
-      this.logger.warn("Mkdtemp failed", {
-        prefix,
-        code: fsError.fsCode,
-        error: fsError.message,
-      });
-      throw fsError;
+      throw mapError(error, prefix);
     }
   }
 }
