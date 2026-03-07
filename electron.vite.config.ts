@@ -29,6 +29,10 @@ export default defineConfig({
           // both CJS and ESM packages on Node.js 22.x.
           format: "cjs",
           entryFileNames: "[name].cjs",
+          // Fix fontconfig for Linux AppImage: must run BEFORE require("electron")
+          // initializes Chromium. Rollup hoists require() calls above source-level
+          // code in CJS bundles, so this must be injected via banner.
+          banner: `if (process.env.APPIMAGE || process.env.APPDIR) { process.env.FONTCONFIG_PATH = "/etc/fonts"; }`,
         },
       },
     },
