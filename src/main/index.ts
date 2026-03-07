@@ -3,30 +3,19 @@
  * Initializes all components and manages the application lifecycle.
  *
  * File layout:
- * 1. Pre-import setup (fontconfig fix)
- * 2. Imports
- * 3. Core initializations (buildInfo, platformInfo, pathProvider, logging)
- * 4. Electron layers (all constructors are pure)
- * 5. Service construction
- * 6. Manager construction (two-phase: constructor only, no Electron resources)
- * 7. Intent modules (existing extracted modules)
- * 8. New modules (electron-lifecycle, logging, script, retry, lifecycle-ready)
- * 9. ApiRegistry + Operation registration + IPC event bridge
- * 10. Wire all modules + get API interface
- * 11. Cleanup + dispatch app:start
- * 12. App lifecycle handlers
+ * 1. Imports
+ * 2. Core initializations (buildInfo, platformInfo, pathProvider, logging)
+ * 3. Electron layers (all constructors are pure)
+ * 4. Service construction
+ * 5. Manager construction (two-phase: constructor only, no Electron resources)
+ * 6. Intent modules (existing extracted modules)
+ * 7. New modules (electron-lifecycle, logging, script, retry, lifecycle-ready)
+ * 8. Operation registration + IPC event bridge
+ * 9. Register all modules + dispatch app:start
+ * 10. App lifecycle handlers
  */
 
-// 1. Pre-import setup
-// Fix fontconfig for AppImage builds.
-// Must be set BEFORE any Electron/Chromium code runs.
-// AppImage sets APPIMAGE or APPDIR environment variables.
-if (process.env.APPIMAGE || process.env.APPDIR) {
-  // Point fontconfig to system fonts instead of any bundled config
-  process.env.FONTCONFIG_PATH = "/etc/fonts";
-}
-
-// 2. Imports
+// 1. Imports
 import { app } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
@@ -180,7 +169,7 @@ import { getErrorMessage } from "../shared/error-utils";
 const asyncWatcher = new AsyncWatcher(["PROMISE", "TickObject", "RANDOMBYTESREQUEST"]);
 asyncWatcher.enable();
 
-// 3. Core initializations (buildInfo, platformInfo, pathProvider, logging)
+// 2. Core initializations (buildInfo, platformInfo, pathProvider, logging)
 
 const buildInfo: BuildInfo = new ElectronBuildInfo();
 
@@ -193,7 +182,7 @@ const appLogger = loggingService.createLogger("app");
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));
 
-// 4. Electron layers (all constructors are pure — just store deps)
+// 3. Electron layers (all constructors are pure — just store deps)
 
 const dialogLayer = new DefaultDialogLayer(loggingService.createLogger("dialog"));
 const menuLayer = new DefaultMenuLayer(loggingService.createLogger("menu"));
@@ -208,7 +197,7 @@ const sessionLayer = new DefaultSessionLayer(loggingService.createLogger("view")
 const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
 const ipcLayer = new DefaultIpcLayer();
 
-// 5. Service construction
+// 4. Service construction
 
 const telemetryService = new PostHogTelemetryService({
   buildInfo,
@@ -357,7 +346,7 @@ const workspaceLockHandler = createWorkspaceLockHandler(
 const apiLogger = loggingService.createLogger("api");
 const lifecycleLogger = loggingService.createLogger("lifecycle");
 
-// 6. Manager construction (two-phase: constructor only, no Electron resources)
+// 5. Manager construction (two-phase: constructor only, no Electron resources)
 
 const windowManager = new WindowManager(
   {
@@ -398,7 +387,7 @@ const mcpServerManager = new McpServerManager(
   loggingService.createLogger("mcp")
 );
 
-// 7. Intent modules (all at module level)
+// 6. Intent modules (all at module level)
 
 const idempotencyModule = createIdempotencyModule([
   { intentType: INTENT_APP_SHUTDOWN },
@@ -547,7 +536,7 @@ const autoWorkspaceModule = createAutoWorkspaceModule({
   sources: [githubSource, youtrackSource],
 });
 
-// 8. New modules
+// 7. New modules
 
 const configModule = createConfigModule({
   fileSystem: fileSystemLayer,
@@ -597,7 +586,7 @@ const shortcutModule = createShortcutModule({
   isDevelopment: buildInfo.isDevelopment,
 });
 
-// 9. Operation registration
+// 8. Operation registration
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
@@ -636,7 +625,7 @@ const ipcEventBridge = createIpcEventBridge({
   agentStatusManager,
 });
 
-// 10. Register all modules
+// 9. Register all modules
 
 dispatcher.registerModule(idempotencyModule);
 dispatcher.registerModule(configModule);
@@ -666,7 +655,7 @@ dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(ipcEventBridge);
 
-// 11. Dispatch app:start
+// 10. Dispatch app:start
 
 // Dispatch app:start — orchestrates the entire startup flow via hook points
 void dispatcher
@@ -686,7 +675,7 @@ void dispatcher
     app.quit();
   });
 
-// 12. App lifecycle handlers
+// 11. App lifecycle handlers
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
