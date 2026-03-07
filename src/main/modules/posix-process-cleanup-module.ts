@@ -1,11 +1,11 @@
 /**
- * LinuxProcessCleanupModule — Kills processes whose CWD is under the workspace path during deletion.
+ * PosixProcessCleanupModule — Kills processes whose CWD is under the workspace path during deletion.
  *
  * Hooks:
- * - delete-workspace → release: Scan /proc for CWD matches, kill with SIGTERM (best-effort)
+ * - delete-workspace → release: Use lsof to find CWD matches, kill with SIGTERM (best-effort)
  *
- * Detection uses a shell script that reads /proc/[pid]/cwd symlinks.
- * Workspace path is passed via TARGET_PATH env var to avoid shell injection.
+ * Detection uses `lsof -d cwd +c 0 -Fpnc` for machine-parseable output.
+ * lsof exit code 1 means "no files found" and is not treated as an error.
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -19,71 +19,68 @@ import {
   type ReleaseHookResult,
 } from "../operations/delete-workspace";
 
-/** Detected process info from /proc scan. */
+/** Detected process info from lsof. */
 export interface DetectedProcess {
   readonly pid: number;
   readonly name: string;
   readonly cwd: string;
-  readonly cmdline: string;
 }
 
 const DETECT_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 
 /**
- * Shell script that scans /proc for processes whose CWD starts with TARGET_PATH.
- * Output: tab-separated lines: PID\tNAME\tCWD\tCMDLINE
+ * Parse lsof -Fpnc output into DetectedProcess array.
+ * Format: lines starting with p=PID, c=command, n=path.
+ * Each process entry starts with a 'p' line.
+ * Filters by workspace path prefix and excludes current process PID.
  */
-const DETECT_SCRIPT = `
-for pid_dir in /proc/[0-9]*/; do
-  pid=$(basename "$pid_dir")
-  cwd=$(readlink "$pid_dir/cwd" 2>/dev/null) || continue
-  case "$cwd" in "$TARGET_PATH"|"$TARGET_PATH/"*)
-    name=$(cat "$pid_dir/comm" 2>/dev/null || echo "unknown")
-    cmdline=$(tr '\\0' ' ' < "$pid_dir/cmdline" 2>/dev/null || echo "")
-    printf '%s\\t%s\\t%s\\t%s\\n' "$pid" "$name" "$cwd" "$cmdline"
-  ;; esac
-done
-`;
-
-/**
- * Parse tab-separated /proc scan output into DetectedProcess array.
- * Filters out the current process PID.
- */
-function parseProcOutput(stdout: string): DetectedProcess[] {
+function parseLsofOutput(stdout: string, workspacePath: string): DetectedProcess[] {
   const ownPid = process.pid;
   const results: DetectedProcess[] = [];
+  let currentPid: number | undefined;
+  let currentName = "unknown";
 
   for (const line of stdout.split("\n")) {
-    if (line.trim() === "") continue;
-    const parts = line.split("\t");
-    if (parts.length < 3) continue;
+    if (line.length === 0) continue;
 
-    const pid = Number(parts[0]);
-    if (Number.isNaN(pid) || pid === ownPid) continue;
+    const prefix = line[0];
+    const value = line.slice(1);
 
-    results.push({
-      pid,
-      name: parts[1] ?? "unknown",
-      cwd: parts[2] ?? "",
-      cmdline: parts[3] ?? "",
-    });
+    switch (prefix) {
+      case "p":
+        currentPid = Number(value);
+        currentName = "unknown";
+        break;
+      case "c":
+        currentName = value;
+        break;
+      case "n":
+        if (
+          currentPid !== undefined &&
+          !Number.isNaN(currentPid) &&
+          currentPid !== ownPid &&
+          (value === workspacePath || value.startsWith(workspacePath + "/"))
+        ) {
+          results.push({ pid: currentPid, name: currentName, cwd: value });
+        }
+        break;
+    }
   }
 
   return results;
 }
 
 /**
- * Detect processes whose CWD is under the given workspace path using /proc.
+ * Detect processes whose CWD is under the given workspace path using lsof.
  * Exported for testing.
  */
-export async function detectLinuxCwdProcesses(
+export async function detectCwdProcesses(
   processRunner: ProcessRunner,
   workspacePath: string,
   logger: Logger
 ): Promise<DetectedProcess[]> {
-  const env: NodeJS.ProcessEnv = { ...process.env, TARGET_PATH: workspacePath };
-  const proc = processRunner.run("bash", ["-c", DETECT_SCRIPT], { env });
+  const proc = processRunner.run("lsof", ["-d", "cwd", "+c", "0", "-Fpnc"]);
   const result: ProcessResult = await proc.wait(DETECT_TIMEOUT_MS);
 
   if (result.running) {
@@ -92,7 +89,8 @@ export async function detectLinuxCwdProcesses(
     return [];
   }
 
-  if (result.exitCode !== 0 && result.exitCode !== null) {
+  // lsof exit code 1 = "no files found" (not an error)
+  if (result.exitCode !== null && result.exitCode !== 0 && result.exitCode !== 1) {
     logger.warn("Process detection failed", {
       workspacePath,
       exitCode: result.exitCode,
@@ -101,14 +99,14 @@ export async function detectLinuxCwdProcesses(
     return [];
   }
 
-  return parseProcOutput(result.stdout);
+  return parseLsofOutput(result.stdout, workspacePath);
 }
 
 /**
  * Kill a list of PIDs with SIGTERM via `kill`.
  * Exported for testing.
  */
-export async function killUnixProcesses(
+export async function killPosixProcesses(
   processRunner: ProcessRunner,
   pids: readonly number[]
 ): Promise<void> {
@@ -131,14 +129,14 @@ export async function killUnixProcesses(
   }
 }
 
-interface LinuxProcessCleanupModuleDeps {
+interface PosixProcessCleanupModuleDeps {
   readonly processRunner: ProcessRunner;
   readonly logger: Logger;
 }
 
-export function createLinuxProcessCleanupModule(deps: LinuxProcessCleanupModuleDeps): IntentModule {
+export function createPosixProcessCleanupModule(deps: PosixProcessCleanupModuleDeps): IntentModule {
   return {
-    name: "linux-process-cleanup",
+    name: "posix-process-cleanup",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
@@ -151,7 +149,7 @@ export function createLinuxProcessCleanupModule(deps: LinuxProcessCleanupModuleD
             }
 
             try {
-              const detected = await detectLinuxCwdProcesses(
+              const detected = await detectCwdProcesses(
                 deps.processRunner,
                 workspacePath,
                 deps.logger
@@ -162,7 +160,7 @@ export function createLinuxProcessCleanupModule(deps: LinuxProcessCleanupModuleD
                   workspacePath,
                   pids: detected.map((p) => p.pid).join(","),
                 });
-                await killUnixProcesses(
+                await killPosixProcesses(
                   deps.processRunner,
                   detected.map((p) => p.pid)
                 );

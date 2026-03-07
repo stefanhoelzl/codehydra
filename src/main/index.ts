@@ -89,8 +89,7 @@ import { createOpenCodeAgentModule } from "./modules/opencode-agent-module";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
-import { createLinuxProcessCleanupModule } from "./modules/linux-process-cleanup-module";
-import { createMacOSProcessCleanupModule } from "./modules/macos-process-cleanup-module";
+import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
 import { createTelemetryModule } from "./modules/telemetry-module";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
@@ -476,14 +475,9 @@ const deleteWindowsLockModule =
         logger: apiLogger,
       })
     : undefined;
-const linuxProcessCleanupModule =
-  platformInfo.platform === "linux"
-    ? createLinuxProcessCleanupModule({ processRunner, logger: apiLogger })
-    : undefined;
-const macosProcessCleanupModule =
-  platformInfo.platform === "darwin"
-    ? createMacOSProcessCleanupModule({ processRunner, logger: apiLogger })
-    : undefined;
+const posixProcessCleanupModule = platformInfo.posix
+  ? createPosixProcessCleanupModule({ processRunner, logger: apiLogger })
+  : undefined;
 const windowTitleModule = createWindowTitleModule(
   (title: string) => windowManager.setTitle(title),
   buildInfo.gitBranch ?? buildInfo.version
@@ -643,8 +637,7 @@ dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(keepFilesModule);
 if (deleteWindowsLockModule) dispatcher.registerModule(deleteWindowsLockModule);
-if (linuxProcessCleanupModule) dispatcher.registerModule(linuxProcessCleanupModule);
-if (macosProcessCleanupModule) dispatcher.registerModule(macosProcessCleanupModule);
+if (posixProcessCleanupModule) dispatcher.registerModule(posixProcessCleanupModule);
 dispatcher.registerModule(remoteProjectModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);

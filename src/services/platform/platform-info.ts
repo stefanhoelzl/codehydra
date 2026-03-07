@@ -12,6 +12,9 @@ export interface PlatformInfo {
   /** Operating system platform: 'linux', 'darwin', 'win32' */
   readonly platform: NodeJS.Platform;
 
+  /** True for POSIX platforms (linux, darwin). False for win32. */
+  readonly posix: boolean;
+
   /** CPU architecture: 'x64' or 'arm64' */
   readonly arch: SupportedArch;
 

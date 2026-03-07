@@ -19,7 +19,6 @@
  *        npx tsx scripts/download-binaries.ts (manual run)
  */
 
-import * as os from "node:os";
 import { execSync } from "node:child_process";
 import { DefaultBinaryDownloadService } from "../src/services/binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../src/services/binary-download/archive-extractor";
@@ -42,10 +41,10 @@ import {
   getClaudeLatestVersionUrl,
 } from "../src/agents/claude/setup-info";
 import { DefaultPathProvider } from "../src/services/platform/path-provider";
-import type { PlatformInfo, SupportedArch } from "../src/services/platform/platform-info";
+import { NodePlatformInfo } from "../src/main/platform-info";
 import type { BuildInfo } from "../src/services/platform/build-info";
 import type { DownloadRequest, DownloadProgress } from "../src/services/binary-download/types";
-import type { SupportedPlatform } from "../src/agents/types";
+import type { SupportedPlatform, SupportedArch } from "../src/agents/types";
 import type { Logger } from "../src/services/logging";
 
 // Console logger for the script - suppresses warnings to avoid alarming output
@@ -58,14 +57,6 @@ const logger: Logger = {
   error(): void {},
 };
 
-// Map Node.js arch to SupportedArch
-function getSupportedArch(): SupportedArch {
-  if (process.arch === "x64" || process.arch === "arm64") {
-    return process.arch;
-  }
-  throw new Error(`Unsupported architecture: ${process.arch}. CodeHydra requires x64 or arm64.`);
-}
-
 // Create build info for development mode
 function createDevBuildInfo(): BuildInfo {
   return {
@@ -73,15 +64,6 @@ function createDevBuildInfo(): BuildInfo {
     isDevelopment: true,
     isPackaged: false,
     appPath: process.cwd(),
-  };
-}
-
-// Create platform info
-function createPlatformInfo(): PlatformInfo {
-  return {
-    platform: process.platform,
-    arch: getSupportedArch(),
-    homeDir: os.homedir(),
   };
 }
 
@@ -165,7 +147,7 @@ async function downloadBinary(
 async function main(): Promise<void> {
   console.log("Setting up binary dependencies...\n");
 
-  const platformInfo = createPlatformInfo();
+  const platformInfo = new NodePlatformInfo();
   const buildInfo = createDevBuildInfo();
   const pathProvider = new DefaultPathProvider(buildInfo, platformInfo);
   const platform = platformInfo.platform as SupportedPlatform;

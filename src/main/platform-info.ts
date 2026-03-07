@@ -23,12 +23,14 @@ function mapArchitecture(nodeArch: string): SupportedArch {
  */
 export class NodePlatformInfo implements PlatformInfo {
   readonly platform: NodeJS.Platform;
+  readonly posix: boolean;
   readonly arch: SupportedArch;
   readonly homeDir: string;
 
   constructor() {
     // Cache at construction time for consistency
     this.platform = process.platform;
+    this.posix = this.platform !== "win32";
     this.arch = mapArchitecture(process.arch);
     this.homeDir = os.homedir();
   }

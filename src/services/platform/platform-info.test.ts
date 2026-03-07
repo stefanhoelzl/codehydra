@@ -11,6 +11,7 @@ describe("createMockPlatformInfo", () => {
     const platformInfo = createMockPlatformInfo();
 
     expect(platformInfo.platform).toBe("linux");
+    expect(platformInfo.posix).toBe(true);
     expect(platformInfo.homeDir).toBe("/home/test");
   });
 
@@ -28,6 +29,18 @@ describe("createMockPlatformInfo", () => {
     expect(platformInfo.platform).toBe("linux"); // default still applies
   });
 
+  it("derives posix=false when platform is win32", () => {
+    const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+    expect(platformInfo.posix).toBe(false);
+  });
+
+  it("accepts explicit posix override", () => {
+    const platformInfo = createMockPlatformInfo({ posix: true, platform: "win32" });
+
+    expect(platformInfo.posix).toBe(true);
+  });
+
   it("accepts both overrides together", () => {
     const platformInfo = createMockPlatformInfo({
       platform: "win32",
@@ -35,6 +48,7 @@ describe("createMockPlatformInfo", () => {
     });
 
     expect(platformInfo.platform).toBe("win32");
+    expect(platformInfo.posix).toBe(false);
     expect(platformInfo.homeDir).toBe("C:\\Users\\TestUser");
   });
 
