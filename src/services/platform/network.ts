@@ -155,7 +155,7 @@ export class DefaultNetworkLayer implements HttpClient, PortManager {
       this.logger.debug("Fetch complete", { url, status: response.status });
       return response;
     } catch (error) {
-      this.logger.warn("Fetch failed", { url, error: getErrorMessage(error) });
+      this.logger.silly("Fetch failed", { url, error: getErrorMessage(error) });
       throw error;
     } finally {
       clearTimeout(timeoutId);

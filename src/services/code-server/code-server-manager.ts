@@ -519,7 +519,7 @@ export class CodeServerManager {
       this.logger.debug("Health check", { status: healthy ? "ok" : "failed" });
       return healthy;
     } catch (error) {
-      this.logger.warn("Health check failed", { error: getErrorMessage(error) });
+      this.logger.silly("Health check failed", { error: getErrorMessage(error) });
       return false;
     }
   }
