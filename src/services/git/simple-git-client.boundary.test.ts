@@ -644,6 +644,66 @@ describe("SimpleGitClient", () => {
     });
   });
 
+  describe("bare repository config operations", () => {
+    let bareRepoPath: Path;
+    let sourceCleanup: () => Promise<void>;
+    let targetCleanup: () => Promise<void>;
+
+    beforeEach(async () => {
+      const sourceRepo = await createTestGitRepo();
+      const targetDir = await createTempDir();
+      bareRepoPath = new Path(targetDir.path, "bare.git");
+      await client.clone(sourceRepo.path, bareRepoPath);
+      sourceCleanup = sourceRepo.cleanup;
+      targetCleanup = targetDir.cleanup;
+    });
+
+    afterEach(async () => {
+      await sourceCleanup();
+      await targetCleanup();
+    });
+
+    it("getBranchConfig works on bare repository", async () => {
+      await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.base", "main");
+
+      const value = await client.getBranchConfig(bareRepoPath, "test-branch", "codehydra.base");
+
+      expect(value).toBe("main");
+    });
+
+    it("getBranchConfigsByPrefix works on bare repository", async () => {
+      await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.base", "main");
+      await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.note", "a note");
+
+      const configs = await client.getBranchConfigsByPrefix(
+        bareRepoPath,
+        "test-branch",
+        "codehydra"
+      );
+
+      expect(configs).toEqual({ base: "main", note: "a note" });
+    });
+
+    it("unsetBranchConfig works on bare repository", async () => {
+      await client.setBranchConfig(bareRepoPath, "test-branch", "codehydra.base", "main");
+      await client.unsetBranchConfig(bareRepoPath, "test-branch", "codehydra.base");
+
+      const value = await client.getBranchConfig(bareRepoPath, "test-branch", "codehydra.base");
+
+      expect(value).toBeNull();
+    });
+
+    it("getBranchConfig returns null for non-existent key on bare repo", async () => {
+      const value = await client.getBranchConfig(
+        bareRepoPath,
+        "test-branch",
+        "codehydra.nonexistent"
+      );
+
+      expect(value).toBeNull();
+    });
+  });
+
   /**
    * Git POSIX Path Output Verification
    *

@@ -61,7 +61,12 @@ export class SimpleGitClient implements IGitClient {
     try {
       const git = this.getGit(repoPath);
       const result = await git.checkIsRepo();
-      return result;
+      if (result) {
+        return true;
+      }
+      // checkIsRepo() uses --is-inside-work-tree which returns false for bare repos.
+      // Fall back to isRepositoryRoot which handles bare repos correctly.
+      return await this.isRepositoryRoot(repoPath);
     } catch {
       return false;
     }
