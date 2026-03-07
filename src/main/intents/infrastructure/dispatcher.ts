@@ -6,7 +6,7 @@
  *
  * When a Logger is provided, the dispatcher logs:
  * - Intent dispatch start (info)
- * - Interceptor blocks (warn)
+ * - Interceptor blocks (debug)
  * - Hook point execution with timing, module names, results, errors (debug)
  * - Hook errors (warn)
  * - Event emissions with subscriber names (info)
@@ -288,7 +288,7 @@ export class Dispatcher implements IDispatcher {
       for (const interceptor of this.interceptors) {
         current = await interceptor.before(current);
         if (current === null) {
-          this.logger?.warn("interceptor blocked", {
+          this.logger?.debug("interceptor blocked", {
             intent: intent.type,
             interceptor: interceptor.id,
           });

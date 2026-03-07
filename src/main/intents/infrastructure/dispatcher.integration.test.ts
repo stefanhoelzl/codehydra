@@ -721,7 +721,7 @@ describe("Dispatcher", () => {
       await dispatcher.dispatch(createActionIntent());
 
       const blockLog = logger.calls.find(
-        (c) => c.level === "warn" && c.message === "interceptor blocked"
+        (c) => c.level === "debug" && c.message === "interceptor blocked"
       );
       expect(blockLog).toBeDefined();
       expect(blockLog!.context).toEqual(
