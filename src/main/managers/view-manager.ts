@@ -529,7 +529,12 @@ export class ViewManager implements IViewManager {
     });
 
     // Only update active workspace bounds (O(1) - inactive views are detached).
-    if (this.activeWorkspacePath !== null) {
+    // Skip loading workspaces: they use 1x1 bounds at top z-order so they
+    // don't visually cover the UI while still receiving input events.
+    if (
+      this.activeWorkspacePath !== null &&
+      !this.loadingWorkspaces.has(this.activeWorkspacePath)
+    ) {
       const state = this.workspaceStates.get(this.activeWorkspacePath);
       if (state) {
         this.viewLayer.setBounds(state.handle, {
@@ -544,12 +549,14 @@ export class ViewManager implements IViewManager {
 
   /**
    * Returns the z-index for the UI layer's "bottom" position.
-   * Accounts for loading workspaces attached at z-0 that push the
-   * background (and UI) up by one slot each.
+   * Accounts for background loading workspaces attached at z-0 that push
+   * the background (and UI) up by one slot each. Excludes the active
+   * workspace which is moved from z-0 to top z-order in setActiveWorkspace().
    */
   private getUIBottomIndex(): number {
     let loadingAttached = 0;
     for (const workspacePath of this.loadingWorkspaces.keys()) {
+      if (workspacePath === this.activeWorkspacePath) continue;
       const state = this.workspaceStates.get(workspacePath);
       if (state?.urlLoaded) loadingAttached++;
     }
@@ -572,22 +579,15 @@ export class ViewManager implements IViewManager {
     // Mark as loaded first to prevent re-entry
     state.urlLoaded = true;
 
-    // Attach at z-index 0 (behind background) so requestAnimationFrame fires
-    // during VS Code initialization (code-server 4.109+ workaround).
+    // Attach at z-0 (behind background) so requestAnimationFrame fires during
+    // VS Code initialization (code-server 4.109+ workaround). 1x1 bounds
+    // prevent white flash while the compositor still fires rAF callbacks.
+    // setActiveWorkspace() moves the active workspace to top z-order for
+    // before-input-event (Alt+X shortcut detection).
     try {
       if (!this.windowLayer.isDestroyed(this.windowHandle)) {
         this.viewLayer.attachToWindow(state.handle, this.windowHandle, 0);
-        // Full bounds so VS Code initializes layout correctly (view is invisible
-        // behind background at z-0, so no white flash).
-        const bounds = this.windowManager.getBounds();
-        const width = Math.max(bounds.width, MIN_WIDTH);
-        const height = Math.max(bounds.height, MIN_HEIGHT);
-        this.viewLayer.setBounds(state.handle, {
-          x: SIDEBAR_MINIMIZED_WIDTH,
-          y: 0,
-          width: width - SIDEBAR_MINIMIZED_WIDTH,
-          height,
-        });
+        this.viewLayer.setBounds(state.handle, { x: 0, y: 0, width: 1, height: 1 });
       }
     } catch {
       // Window may be closing
@@ -671,12 +671,24 @@ export class ViewManager implements IViewManager {
       this.activeWorkspacePath = workspacePath;
 
       // Load URL and attach new view FIRST (visual continuity - no gap)
-      // But if workspace is loading, only load URL - don't attach until loaded
       if (workspacePath !== null) {
         this.loadViewUrl(workspacePath);
-        // Only attach if workspace is not loading (loading workspaces stay detached)
         if (!this.loadingWorkspaces.has(workspacePath)) {
           this.attachView(workspacePath);
+        } else {
+          // Loading workspace: move from z-0 to top z-order so it's not
+          // occluded and before-input-event fires for Alt+X. Keeps 1x1
+          // bounds from loadViewUrl() to stay invisible during loading.
+          try {
+            if (!this.windowLayer.isDestroyed(this.windowHandle)) {
+              const state = this.workspaceStates.get(workspacePath);
+              if (state) {
+                this.viewLayer.attachToWindow(state.handle, this.windowHandle);
+              }
+            }
+          } catch {
+            // Window may be closing
+          }
         }
       }
 
@@ -758,8 +770,8 @@ export class ViewManager implements IViewManager {
    * Otherwise returns the UI view (which is always above background).
    */
   private getTopView(): ViewHandle {
-    if (this.attachedWorkspacePath !== null) {
-      const state = this.workspaceStates.get(this.attachedWorkspacePath);
+    if (this.activeWorkspacePath !== null) {
+      const state = this.workspaceStates.get(this.activeWorkspacePath);
       if (state) return state.handle;
     }
     return this.uiViewHandle;
@@ -978,7 +990,7 @@ export class ViewManager implements IViewManager {
       // Focus the correct view for current mode
       this.focus();
     } else {
-      // Inactive workspace: detach the z-0 temporary attachment from loadViewUrl()
+      // Inactive workspace: detach the temporary 1x1 attachment from loadViewUrl()
       this.detachView(workspacePath);
     }
 
