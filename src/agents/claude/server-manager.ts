@@ -668,7 +668,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Find workspace state
     const state = this.workspaces.get(normalizedPath);
     if (!state) {
-      this.logger.warn("Hook received for unknown workspace", {
+      this.logger.silly("Hook received for unknown workspace", {
         hookName,
         workspacePath: normalizedPath,
       });
