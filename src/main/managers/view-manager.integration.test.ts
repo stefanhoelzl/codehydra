@@ -333,7 +333,7 @@ describe("ViewManager", () => {
   });
 
   describe("preloadWorkspaceUrl", () => {
-    it("attaches view at z-index 0 during load", () => {
+    it("attaches view at z-0 with 1x1 bounds during background preload", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -346,10 +346,11 @@ describe("ViewManager", () => {
 
       manager.preloadWorkspaceUrl("/path/to/workspace");
 
-      // URL should be loaded, view attached at z-0 (stays attached until activated)
+      // URL should be loaded, view attached at z-0 with 1x1 bounds for rAF
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
         url: "http://127.0.0.1:8080/?folder=/path",
         attachedTo: windowId,
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
       });
     });
 
@@ -836,11 +837,11 @@ describe("ViewManager", () => {
       expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
     });
 
-    it("focuses UI during loading for keyboard event capture", () => {
+    it("focuses workspace during loading for keyboard input initialization", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
 
-      manager.createWorkspaceView(
+      const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
         "http://127.0.0.1:8080/?folder=/path",
         "/path/to/project",
@@ -848,9 +849,9 @@ describe("ViewManager", () => {
       );
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // UI should be focused (not the z-0 loading workspace)
-      const uiHandle = manager.getUIViewHandle();
-      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+      // Workspace should be focused (at top z-order with 1x1 bounds)
+      // so VS Code keyboard init works and before-input-event fires for Alt+X
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { focused: true });
     });
 
     it("focuses UI in shortcut mode even when workspace is attached", () => {
@@ -1046,10 +1047,10 @@ describe("ViewManager", () => {
         true // isNew - starts loading
       );
 
-      // Activate triggers loadViewUrl (attaches at z-0 for rAF)
+      // Activate triggers loadViewUrl (attaches at top z-order for rAF + input events)
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // View is attached at z-0 during initialization
+      // View is attached during initialization
       expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: windowId });
 
       // Mark as loaded → re-attaches on top
@@ -1079,7 +1080,7 @@ describe("ViewManager", () => {
       }).not.toThrow();
     });
 
-    it("attaches view at z-index 0 before URL load", () => {
+    it("moves active loading workspace to top z-order with 1x1 bounds", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -1091,26 +1092,25 @@ describe("ViewManager", () => {
         true // isNew
       );
 
-      // Activate triggers loadViewUrl
+      // Activate triggers loadViewUrl (z-0) then re-attach at top
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // View should be attached (at z-index 0, behind UI layer)
+      // View should be attached at top z-order with 1x1 bounds
       const children = deps.viewLayer.$.windowChildren.get(windowId);
       expect(children).toContain(wsHandle.id);
 
-      // Full bounds so VS Code initializes layout correctly (hidden behind background)
+      // 1x1 bounds preserved during loading (updateBounds skips loading workspaces)
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
-        bounds: { x: 20, y: 0, width: 1180, height: 800 },
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
       });
 
-      // Z-order: workspace(0) < background(1) < UI(2) — background covers loading workspace
+      // Z-order: background(0) < UI(1) < workspace(2) — workspace on top for input events
       const uiId = manager.getUIViewHandle().id;
       expect(children).toHaveLength(3);
-      expect(children![0]).toBe(wsHandle.id);
-      // children[1] is background view (neither workspace nor UI)
-      expect(children![1]).not.toBe(wsHandle.id);
-      expect(children![1]).not.toBe(uiId);
-      expect(children![2]).toBe(uiId);
+      expect(children![0]).not.toBe(wsHandle.id);
+      expect(children![0]).not.toBe(uiId);
+      expect(children![1]).toBe(uiId);
+      expect(children![2]).toBe(wsHandle.id);
     });
 
     it("setMode to workspace during loading preserves z-order", () => {
@@ -1129,12 +1129,14 @@ describe("ViewManager", () => {
       manager.setActiveWorkspace("/path/to/workspace");
       manager.setMode("workspace");
 
+      // Z-order: background(0) < UI(1) < workspace(2)
       const children = deps.viewLayer.$.windowChildren.get(windowId);
       const uiId = manager.getUIViewHandle().id;
       expect(children).toHaveLength(3);
-      expect(children![0]).toBe(wsHandle.id);
-      expect(children![1]).not.toBe(uiId);
-      expect(children![2]).toBe(uiId);
+      expect(children![0]).not.toBe(wsHandle.id);
+      expect(children![0]).not.toBe(uiId);
+      expect(children![1]).toBe(uiId);
+      expect(children![2]).toBe(wsHandle.id);
     });
 
     it("background preload does not disrupt active workspace z-order", () => {
@@ -1178,7 +1180,7 @@ describe("ViewManager", () => {
         true // isNew
       );
 
-      // Preload (not activate) — view attached at z-0
+      // Preload (not activate) — view attached at z-0 with 1x1 bounds
       manager.preloadWorkspaceUrl("/path/to/workspace");
 
       // Mark as loaded — inactive workspace should be detached
