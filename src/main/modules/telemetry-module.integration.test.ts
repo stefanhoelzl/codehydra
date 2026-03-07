@@ -223,34 +223,34 @@ describe("TelemetryModule Integration", () => {
     it("registers error handlers when telemetry.enabled is true", async () => {
       type Handler = (...args: unknown[]) => void;
       const registeredHandlers: { event: string; handler: Handler }[] = [];
-      const originalPrependListener = process.prependListener;
-      process.prependListener = ((event: string, handler: Handler) => {
+      const originalOn = process.on;
+      process.on = ((event: string, handler: Handler) => {
         registeredHandlers.push({ event, handler });
         return process;
-      }) as typeof process.prependListener;
+      }) as typeof process.on;
 
       try {
         const { dispatcher } = createTestSetup();
 
         await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
 
-        const exceptionHandler = registeredHandlers.find((h) => h.event === "uncaughtException");
-        const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
-        expect(exceptionHandler).toBeDefined();
-        expect(rejectionHandler).toBeDefined();
+        const monitorHandler = registeredHandlers.find(
+          (h) => h.event === "uncaughtExceptionMonitor"
+        );
+        expect(monitorHandler).toBeDefined();
       } finally {
-        process.prependListener = originalPrependListener;
+        process.on = originalOn;
       }
     });
 
     it("does not register error handlers when telemetry.enabled is false", async () => {
       type Handler = (...args: unknown[]) => void;
       const registeredHandlers: { event: string; handler: Handler }[] = [];
-      const originalPrependListener = process.prependListener;
-      process.prependListener = ((event: string, handler: Handler) => {
+      const originalOn = process.on;
+      process.on = ((event: string, handler: Handler) => {
         registeredHandlers.push({ event, handler });
         return process;
-      }) as typeof process.prependListener;
+      }) as typeof process.on;
 
       try {
         const { dispatcher } = createTestSetup();
@@ -259,18 +259,18 @@ describe("TelemetryModule Integration", () => {
 
         expect(registeredHandlers).toHaveLength(0);
       } finally {
-        process.prependListener = originalPrependListener;
+        process.on = originalOn;
       }
     });
 
     it("registers error handlers only once across multiple config:updated events", async () => {
       type Handler = (...args: unknown[]) => void;
       const registeredHandlers: { event: string; handler: Handler }[] = [];
-      const originalPrependListener = process.prependListener;
-      process.prependListener = ((event: string, handler: Handler) => {
+      const originalOn = process.on;
+      process.on = ((event: string, handler: Handler) => {
         registeredHandlers.push({ event, handler });
         return process;
-      }) as typeof process.prependListener;
+      }) as typeof process.on;
 
       try {
         const { dispatcher } = createTestSetup();
@@ -278,14 +278,14 @@ describe("TelemetryModule Integration", () => {
         await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
         await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
 
-        // Should have exactly 2 handlers (one uncaughtException, one unhandledRejection)
-        expect(registeredHandlers).toHaveLength(2);
+        // Should have exactly 1 handler (uncaughtExceptionMonitor)
+        expect(registeredHandlers).toHaveLength(1);
       } finally {
-        process.prependListener = originalPrependListener;
+        process.on = originalOn;
       }
     });
 
-    it("error handlers call captureError and re-throw", async () => {
+    it("error handler calls captureError without re-throwing", async () => {
       const capturedErrors: Error[] = [];
       const service: TelemetryService = {
         configure() {},
@@ -301,30 +301,27 @@ describe("TelemetryModule Integration", () => {
 
       type Handler = (...args: unknown[]) => void;
       const registeredHandlers: { event: string; handler: Handler }[] = [];
-      const originalPrependListener = process.prependListener;
-      process.prependListener = ((event: string, handler: Handler) => {
+      const originalOn = process.on;
+      process.on = ((event: string, handler: Handler) => {
         registeredHandlers.push({ event, handler });
         return process;
-      }) as typeof process.prependListener;
+      }) as typeof process.on;
 
       try {
         const { dispatcher } = createTestSetup({ telemetryService: service });
 
         await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
 
-        const exceptionHandler = registeredHandlers.find((h) => h.event === "uncaughtException");
-        const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
+        const monitorHandler = registeredHandlers.find(
+          (h) => h.event === "uncaughtExceptionMonitor"
+        );
 
-        // uncaughtException handler should call captureError and re-throw
+        // Monitor handler should call captureError without re-throwing
         const testError = new Error("test uncaught");
-        expect(() => exceptionHandler!.handler(testError)).toThrow(testError);
+        monitorHandler!.handler(testError);
         expect(capturedErrors).toContain(testError);
-
-        // unhandledRejection handler should wrap non-Error and re-throw
-        expect(() => rejectionHandler!.handler("test rejection")).toThrow();
-        expect(capturedErrors).toHaveLength(2);
       } finally {
-        process.prependListener = originalPrependListener;
+        process.on = originalOn;
       }
     });
 

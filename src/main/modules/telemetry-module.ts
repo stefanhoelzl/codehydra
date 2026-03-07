@@ -44,14 +44,8 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
     if (errorHandlersRegistered) return;
     errorHandlersRegistered = true;
 
-    process.prependListener("uncaughtException", (error: Error) => {
+    process.on("uncaughtExceptionMonitor", (error: Error) => {
       deps.telemetryService?.captureError(error);
-      throw error;
-    });
-    process.prependListener("unhandledRejection", (reason: unknown) => {
-      const error = reason instanceof Error ? reason : new Error(String(reason));
-      deps.telemetryService?.captureError(error);
-      throw error;
     });
   }
 
