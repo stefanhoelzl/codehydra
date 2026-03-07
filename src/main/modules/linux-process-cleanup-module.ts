@@ -110,8 +110,7 @@ export async function detectLinuxCwdProcesses(
  */
 export async function killUnixProcesses(
   processRunner: ProcessRunner,
-  pids: readonly number[],
-  logger: Logger
+  pids: readonly number[]
 ): Promise<void> {
   if (pids.length === 0) return;
 
@@ -120,9 +119,15 @@ export async function killUnixProcesses(
   const result = await proc.wait(KILL_TIMEOUT_MS);
 
   if (result.exitCode !== 0 && result.exitCode !== null) {
-    const error = `kill -TERM failed: exit ${result.exitCode} — ${result.stderr}`;
-    logger.warn(error, { pids: pids.join(",") });
-    throw new Error(error);
+    const stderrLines = result.stderr.split("\n").filter((l) => l.trim() !== "");
+    const allNoSuchProcess =
+      stderrLines.length > 0 && stderrLines.every((l) => l.includes("No such process"));
+
+    if (allNoSuchProcess) {
+      return;
+    }
+
+    throw new Error(`kill -TERM failed: exit ${result.exitCode} — ${result.stderr}`);
   }
 }
 
@@ -159,8 +164,7 @@ export function createLinuxProcessCleanupModule(deps: LinuxProcessCleanupModuleD
                 });
                 await killUnixProcesses(
                   deps.processRunner,
-                  detected.map((p) => p.pid),
-                  deps.logger
+                  detected.map((p) => p.pid)
                 );
               }
             } catch {

@@ -193,10 +193,6 @@ export class WindowsWorkspaceLockHandler implements WorkspaceLockHandler {
 
     if (result.exitCode !== 0) {
       const failedPids = pids.join(", ");
-      this.logger.warn("Some blocking processes could not be killed", {
-        pids: failedPids,
-        stderr: result.stderr,
-      });
       throw new Error(`Failed to kill processes (PIDs: ${failedPids}): ${result.stderr}`);
     }
   }
@@ -224,9 +220,6 @@ export class WindowsWorkspaceLockHandler implements WorkspaceLockHandler {
     const result = await proc.wait(CLOSE_HANDLES_TIMEOUT_MS);
 
     if (result.running) {
-      this.logger.warn("Close handles operation timed out", {
-        path: path.toString(),
-      });
       await proc.kill(1000, 1000);
       throw new Error("Close handles operation timed out");
     }

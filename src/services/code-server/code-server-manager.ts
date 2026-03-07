@@ -233,7 +233,6 @@ export class CodeServerManager {
       this.logger.info("Code-server binary download complete");
     } catch (error) {
       const message = getErrorMessage(error);
-      this.logger.warn("Code-server binary download failed", { error: message });
       throw new CodeServerError(`Failed to download code-server: ${message}`);
     }
   }
@@ -469,7 +468,6 @@ export class CodeServerManager {
       }
 
       const errorMsg = getErrorMessage(error);
-      this.logger.error("Start failed", { error: errorMsg });
       throw new CodeServerError(`Failed to start code-server: ${errorMsg}`);
     }
   }

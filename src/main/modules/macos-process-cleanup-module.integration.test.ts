@@ -228,25 +228,34 @@ describe("killUnixProcesses", () => {
       onSpawn: () => ({ exitCode: 0 }),
     });
 
-    await killUnixProcesses(runner, [1234, 5678], SILENT_LOGGER);
+    await killUnixProcesses(runner, [1234, 5678]);
 
     expect(runner).toHaveSpawned([{ command: "kill", args: ["-TERM", "1234", "5678"] }]);
   });
 
-  it("throws on non-zero exit code", async () => {
+  it("throws on non-zero exit code with real error", async () => {
     const runner = createMockProcessRunner({
-      onSpawn: () => ({ exitCode: 1, stderr: "No such process" }),
+      onSpawn: () => ({ exitCode: 1, stderr: "kill: (1234): Operation not permitted" }),
     });
 
-    await expect(killUnixProcesses(runner, [1234], SILENT_LOGGER)).rejects.toThrow(
-      "kill -TERM failed"
-    );
+    await expect(killUnixProcesses(runner, [1234])).rejects.toThrow("kill -TERM failed");
+  });
+
+  it("treats 'No such process' as success", async () => {
+    const runner = createMockProcessRunner({
+      onSpawn: () => ({
+        exitCode: 1,
+        stderr: "kill: (1234): No such process\nkill: (5678): No such process\n",
+      }),
+    });
+
+    await expect(killUnixProcesses(runner, [1234, 5678])).resolves.toBeUndefined();
   });
 
   it("does nothing when pids array is empty", async () => {
     const runner = createMockProcessRunner();
 
-    await killUnixProcesses(runner, [], SILENT_LOGGER);
+    await killUnixProcesses(runner, []);
 
     expect(() => runner.$.spawned(0)).toThrow();
   });

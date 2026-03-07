@@ -323,45 +323,37 @@ export class OpenCodeClient implements IDisposable {
 
     this.logger.info("Connecting", { port: this.port });
 
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Connect timeout")), timeoutMs)
-      );
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Connect timeout")), timeoutMs)
+    );
 
-      const events = await Promise.race([this.sdk.event.subscribe(), timeoutPromise]);
+    const events = await Promise.race([this.sdk.event.subscribe(), timeoutPromise]);
 
-      this.eventSubscription = events;
+    this.eventSubscription = events;
 
-      this.logger.info("Connected", { port: this.port });
+    this.logger.info("Connected", { port: this.port });
 
-      // Process events in background with error handling
-      this.processEvents(events.stream).catch((processError) => {
-        if (!this.disposed) {
-          this.logger.warn("Connection error", {
-            port: this.port,
-            error: getErrorMessage(processError),
-          });
-        }
-      });
-
-      // Sync initial status with error handling
-      try {
-        const result = await this.getStatus();
-        if (result.ok) {
-          this.updateCurrentStatus(result.value);
-        }
-      } catch (statusError) {
+    // Process events in background with error handling
+    this.processEvents(events.stream).catch((processError) => {
+      if (!this.disposed) {
         this.logger.warn("Connection error", {
           port: this.port,
-          error: getErrorMessage(statusError),
+          error: getErrorMessage(processError),
         });
       }
-    } catch (connectError) {
+    });
+
+    // Sync initial status with error handling
+    try {
+      const result = await this.getStatus();
+      if (result.ok) {
+        this.updateCurrentStatus(result.value);
+      }
+    } catch (statusError) {
       this.logger.warn("Connection error", {
         port: this.port,
-        error: getErrorMessage(connectError),
+        error: getErrorMessage(statusError),
       });
-      throw connectError;
     }
   }
 
@@ -405,7 +397,6 @@ export class OpenCodeClient implements IDisposable {
       }
     } catch (error) {
       if (this.disposed) return; // Expected during shutdown
-      this.logger.warn("Connection error", { port: this.port, error: getErrorMessage(error) });
       throw error; // Re-throw for .catch() handler
     }
   }
