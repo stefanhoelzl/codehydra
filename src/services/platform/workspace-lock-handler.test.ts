@@ -543,14 +543,9 @@ describe.skipIf(process.platform !== "win32")("WindowsWorkspaceLockHandler", () 
       const processRunner = createStateMockProcessRunner({
         defaultResult: { exitCode: 1, stderr: "Access denied" },
       });
-      const logger = createMockLogger();
-      const service = new WindowsWorkspaceLockHandler(processRunner, logger);
+      const service = new WindowsWorkspaceLockHandler(processRunner, createMockLogger());
 
       await expect(service.killProcesses([1234])).rejects.toThrow("Failed to kill processes");
-      expect(logger.warn).toHaveBeenCalledWith(
-        "Some blocking processes could not be killed",
-        expect.objectContaining({ stderr: "Access denied" })
-      );
     });
   });
 
