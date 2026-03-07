@@ -13,6 +13,7 @@ import type { IKeepFilesService } from "../../services/keepfiles/types";
 import type { Logger } from "../../services/logging/types";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
+  type OpenWorkspaceIntent,
   type SetupHookInput,
   type SetupHookResult,
 } from "../operations/open-workspace";
@@ -31,6 +32,12 @@ export function createKeepFilesModule(deps: KeepFilesModuleDeps): IntentModule {
         setup: {
           handler: async (ctx: HookContext): Promise<SetupHookResult> => {
             const setupCtx = ctx as SetupHookInput;
+            const intent = ctx.intent as OpenWorkspaceIntent;
+
+            // Skip keepfiles for re-opened workspaces — only copy for newly created ones
+            if (intent.payload.existingWorkspace !== undefined) {
+              return {};
+            }
 
             try {
               await deps.keepFilesService.copyToWorkspace(

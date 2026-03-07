@@ -129,5 +129,24 @@ describe("KeepFilesModule Integration", () => {
 
       expect(result).toEqual({});
     });
+
+    it("skips copyToWorkspace when existingWorkspace is set", async () => {
+      const { dispatcher, keepFilesService } = setup;
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectPath: "/projects/my-app",
+          workspacePath: "/workspaces/feature-1",
+          existingWorkspace: {
+            path: "/workspaces/feature-1",
+            name: "feature-1",
+            branch: "feature-1",
+          },
+        },
+      } as Intent);
+
+      expect(keepFilesService.copyToWorkspace).not.toHaveBeenCalled();
+    });
   });
 });
