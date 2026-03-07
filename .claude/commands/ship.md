@@ -66,6 +66,38 @@ Cannot ship with formatting issues.
 Run `pnpm format` to fix, then commit and run `/ship` again.
 ```
 
+**Check application logs:**
+
+Find the most recent `.log` file in `app-data/logs/` (sorted by filename, which is timestamp-based).
+
+If no log files exist: skip this check.
+
+If a log file exists, search it for entries at `error` or `warn` level. Log files use one of two formats:
+
+- **Text**: `[timestamp] [error] [scope] message` or `[timestamp] [warn] [scope] message`
+- **JSON**: each line is a JSON object with a `"level"` field set to `"error"` or `"warn"`
+
+If no error/warn entries found: pass.
+
+If error/warn entries are found:
+
+1. Collect all unique error/warn entries (deduplicate repeated messages)
+2. Get the current diff: `git diff origin/main..HEAD`
+3. For each error/warn entry, determine whether the current change **fixes** the underlying cause
+4. If ALL issues are fixed by the current change: pass
+5. If ANY error/warn entry is NOT addressed by the current change: ABORT with:
+
+```
+Cannot ship with unresolved log issues.
+
+**Log file**: <filename>
+**Unresolved issues**:
+- [<level>] [<scope>] <message>
+- [<level>] [<scope>] <message>
+
+Review these issues. Fix them or confirm they are expected, then run `/ship` again.
+```
+
 ### 0.5. Resolve issue selection (if --resolves ? was passed)
 
 If `--resolves ?` was provided:
