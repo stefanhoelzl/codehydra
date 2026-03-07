@@ -109,8 +109,27 @@ export class AutoUpdater {
 
     try {
       this.logger.info("Checking for updates");
-      const result = await autoUpdater.checkForUpdates();
-      return result?.updateInfo?.version !== undefined;
+      const found = await new Promise<boolean>((resolve) => {
+        const onAvailable = (): void => {
+          cleanup();
+          resolve(true);
+        };
+        const onNotAvailable = (): void => {
+          cleanup();
+          resolve(false);
+        };
+        const cleanup = (): void => {
+          autoUpdater.off("update-available", onAvailable);
+          autoUpdater.off("update-not-available", onNotAvailable);
+        };
+        autoUpdater.on("update-available", onAvailable);
+        autoUpdater.on("update-not-available", onNotAvailable);
+        autoUpdater.checkForUpdates().catch(() => {
+          cleanup();
+          resolve(false);
+        });
+      });
+      return found;
     } catch (error) {
       this.logger.warn("Update check failed", {
         error: error instanceof Error ? error.message : String(error),
