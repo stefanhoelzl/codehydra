@@ -671,6 +671,31 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         );
       });
 
+      it("includes base branch in error when createWorkspace fails", async () => {
+        const { dispatcher, provider } = setup;
+        const projectPath = "/projects/my-app";
+
+        provider.discover.mockResolvedValue([]);
+        await dispatchOpenProject(dispatcher, projectPath);
+
+        provider.createWorkspace.mockRejectedValue(
+          new Error("Failed to create branch focus-test-1: fatal: not a valid object name: 'main'")
+        );
+
+        const createIntent: OpenWorkspaceIntent = {
+          type: "workspace:open",
+          payload: {
+            workspaceName: "focus-test-1",
+            base: "main",
+            projectPath,
+          },
+        };
+
+        await expect(dispatchCreateWorkspace(dispatcher, createIntent)).rejects.toThrow(
+          "(base: 'main')"
+        );
+      });
+
       it("uses explicit base without calling defaultBase()", async () => {
         const { dispatcher, provider } = setup;
         const projectPath = "/projects/my-app";
