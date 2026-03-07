@@ -24,6 +24,9 @@ export type DispatchFn = <I extends Intent>(
 // Hook System
 // =============================================================================
 
+/** Sentinel for requires: capability must exist, any value accepted. */
+export const ANY_VALUE: unique symbol = Symbol("any-value");
+
 /**
  * Base context passed to hook handlers.
  * Operations build extended contexts (with `readonly` fields) to pass data
@@ -31,6 +34,8 @@ export type DispatchFn = <I extends Intent>(
  */
 export interface HookContext {
   readonly intent: Intent;
+  /** Accumulated capabilities from previously-executed handlers. Defaults to {}. */
+  readonly capabilities?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -41,6 +46,11 @@ export interface HookContext {
  */
 export interface HookHandler<T = unknown> {
   readonly handler: (ctx: HookContext) => Promise<T>;
+  /** Capabilities this handler requires before it can execute.
+   *  Key = capability name. Value = required value, or ANY_VALUE for "must exist, any value". */
+  readonly requires?: Readonly<Record<string, unknown>>;
+  /** Capabilities this handler provides after successful execution. */
+  readonly provides?: Readonly<Record<string, unknown>>;
 }
 
 /**

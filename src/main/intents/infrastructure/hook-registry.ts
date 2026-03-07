@@ -7,6 +7,7 @@
  */
 
 import type { HookContext, HookHandler, HookResult, ResolvedHooks } from "./operation";
+import { ANY_VALUE } from "./operation";
 
 // =============================================================================
 // IHookRegistry Interface
@@ -63,23 +64,64 @@ export class HookRegistry implements IHookRegistry {
           return { results: [], errors: [] };
         }
 
+        const capabilities: Record<string, unknown> = {
+          ...((inputCtx.capabilities as Record<string, unknown> | undefined) ?? {}),
+        };
+        let pending = [...handlers];
         const results: T[] = [];
         const errors: Error[] = [];
 
-        const frozenCtx = Object.freeze({ ...inputCtx });
-        for (const entry of handlers) {
-          try {
-            const result = await entry.handler(frozenCtx);
-            if (result !== undefined && result !== null) {
-              results.push(result as T);
+        while (pending.length > 0) {
+          let progressMade = false;
+          const nextPending: HookHandler[] = [];
+
+          for (const entry of pending) {
+            const reqs = entry.requires ?? {};
+            if (requirementsSatisfied(reqs, capabilities)) {
+              const frozenCtx = Object.freeze({
+                ...inputCtx,
+                capabilities: Object.freeze({ ...capabilities }),
+              });
+              try {
+                const result = await entry.handler(frozenCtx);
+                if (result !== undefined && result !== null) {
+                  results.push(result as T);
+                }
+                if (entry.provides) {
+                  Object.assign(capabilities, entry.provides);
+                }
+              } catch (err) {
+                errors.push(err instanceof Error ? err : new Error(String(err)));
+              }
+              progressMade = true;
+            } else {
+              nextPending.push(entry);
             }
-          } catch (err) {
-            errors.push(err instanceof Error ? err : new Error(String(err)));
           }
+
+          pending = nextPending;
+          if (!progressMade) break;
         }
 
         return { results, errors };
       },
     };
   }
+}
+
+function requirementsSatisfied(
+  requires: Readonly<Record<string, unknown>>,
+  capabilities: Record<string, unknown>
+): boolean {
+  for (const [key, value] of Object.entries(requires)) {
+    if (value === undefined) {
+      if (key in capabilities) return false;
+    } else if (value === ANY_VALUE) {
+      if (!(key in capabilities)) return false;
+    } else {
+      if (!(key in capabilities)) return false;
+      if (capabilities[key] !== value) return false;
+    }
+  }
+  return true;
 }

@@ -139,6 +139,6 @@ describe("createMinimalOperation", () => {
     await dispatcher.dispatch(intent);
 
     expect(receivedContext?.intent).toEqual(intent);
-    expect(Object.keys(receivedContext!)).toEqual(["intent"]);
+    expect(Object.keys(receivedContext!)).toEqual(["intent", "capabilities"]);
   });
 });

@@ -53,7 +53,9 @@ export function createMinimalOperation<TIntent extends Intent = Intent, TResult 
   return {
     id: operationId,
     async execute(ctx: OperationContext<TIntent>): Promise<TResult> {
-      const hookCtx = buildHookContext ? buildHookContext(ctx) : { intent: ctx.intent };
+      const hookCtx = buildHookContext
+        ? buildHookContext(ctx)
+        : { intent: ctx.intent, capabilities: {} };
       const { results, errors } = await ctx.hooks.collect<TResult>(hookPoint, hookCtx);
       if (throwOnError && errors.length > 0) throw errors[0]!;
       return results[0] as TResult;
