@@ -115,6 +115,7 @@ import { createElectronLifecycleModule } from "./modules/electron-lifecycle-modu
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
 import { createTempDirModule } from "./modules/temp-dir-module";
+import { createErrorHandlerModule } from "./modules/error-handler-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
@@ -587,6 +588,10 @@ const tempDirModule = createTempDirModule({
   pathProvider,
 });
 
+const errorHandlerModule = createErrorHandlerModule({
+  logger: appLogger,
+});
+
 const shortcutModule = createShortcutModule({
   viewManager,
   viewLayer,
@@ -662,6 +667,7 @@ dispatcher.registerModule(electronLifecycleModule);
 dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
+dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(ipcEventBridge);
