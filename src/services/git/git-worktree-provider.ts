@@ -446,7 +446,7 @@ export class GitWorktreeProvider {
         createdBranch = true;
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error creating branch";
-        throw new WorkspaceError(`Failed to create branch: ${message}`);
+        throw new WorkspaceError(message);
       }
     }
 
@@ -464,7 +464,7 @@ export class GitWorktreeProvider {
       }
 
       const message = error instanceof Error ? error.message : "Unknown error creating worktree";
-      throw new WorkspaceError(`Failed to create worktree: ${message}`);
+      throw new WorkspaceError(message);
     }
 
     // Register workspace in the workspace registry

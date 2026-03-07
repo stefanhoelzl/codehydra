@@ -262,11 +262,17 @@ export function createGitWorktreeWorkspaceModule(
               );
             }
 
-            const internalWorkspace = await globalProvider.createWorkspace(
-              projectPathObj,
-              payload.workspaceName!,
-              base
-            );
+            let internalWorkspace;
+            try {
+              internalWorkspace = await globalProvider.createWorkspace(
+                projectPathObj,
+                payload.workspaceName!,
+                base
+              );
+            } catch (error: unknown) {
+              const message = error instanceof Error ? error.message : String(error);
+              throw new WorkspaceError(`${message} (base: '${base}')`);
+            }
 
             // Update state
             const key = projectPathObj.toString();

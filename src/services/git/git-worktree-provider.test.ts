@@ -211,6 +211,34 @@ describe("GitWorktreeProvider error injection", () => {
       );
     });
 
+    it("passes through error message without adding redundant prefix", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
+      mockClient.createBranch = vi
+        .fn()
+        .mockRejectedValue(
+          new Error("Failed to create branch feature-x: fatal: not a valid object name: 'main'")
+        );
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        mockLogger
+      );
+
+      await expect(provider.createWorkspace(PROJECT_ROOT, "feature-x", "main")).rejects.toThrow(
+        "Failed to create branch feature-x: fatal: not a valid object name: 'main'"
+      );
+    });
+
     it("does not rollback branch when worktree creation fails for existing branch", async () => {
       const mockClient = createMockGitClient({
         repositories: {
