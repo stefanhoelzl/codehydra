@@ -13,6 +13,7 @@ import type { PlatformInfo, SupportedArch } from "./platform-info";
 export function createMockPlatformInfo(overrides?: Partial<PlatformInfo>): PlatformInfo {
   return {
     platform: overrides?.platform ?? "linux",
+    posix: overrides?.posix ?? (overrides?.platform ?? "linux") !== "win32",
     arch: (overrides?.arch as SupportedArch) ?? "x64",
     homeDir: overrides?.homeDir ?? "/home/test",
   };

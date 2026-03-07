@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Integration tests for MacOSProcessCleanupModule.
+ * Integration tests for PosixProcessCleanupModule.
  *
  * Tests verify: lsof output parsing, kill invocation, and module release hook behavior
  * through mocked ProcessRunner (runs on all platforms).
@@ -17,10 +17,10 @@ import {
   type ReleaseHookResult,
 } from "../operations/delete-workspace";
 import {
-  createMacOSProcessCleanupModule,
-  detectMacOSCwdProcesses,
-  killUnixProcesses,
-} from "./macos-process-cleanup-module";
+  createPosixProcessCleanupModule,
+  detectCwdProcesses,
+  killPosixProcesses,
+} from "./posix-process-cleanup-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
 import { createMockProcessRunner } from "../../services/platform/process.state-mock";
@@ -65,7 +65,7 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", releaseOperation);
 
-  const module = createMacOSProcessCleanupModule({
+  const module = createPosixProcessCleanupModule({
     processRunner: runner,
     logger,
   });
@@ -75,10 +75,10 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 }
 
 // =============================================================================
-// detectMacOSCwdProcesses
+// detectCwdProcesses
 // =============================================================================
 
-describe("detectMacOSCwdProcesses", () => {
+describe("detectCwdProcesses", () => {
   it("parses lsof -Fpnc output for matching processes", async () => {
     const lsofOutput = [
       "p1234",
@@ -93,7 +93,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(result).toEqual([
       { pid: 1234, name: "bash", cwd: "/workspaces/feature-1" },
@@ -118,7 +118,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(result).toHaveLength(1);
     expect(result[0]!.pid).toBe(1234);
@@ -131,7 +131,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(result).toEqual([]);
   });
@@ -141,7 +141,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: "", exitCode: 1 }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(result).toEqual([]);
   });
@@ -152,7 +152,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: "", stderr: "lsof error", exitCode: 2 }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", logger);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", logger);
 
     expect(result).toEqual([]);
     const warnings = logger.getMessagesByLevel("warn");
@@ -166,7 +166,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: "", exitCode: null, running: true }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", logger);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", logger);
 
     expect(result).toEqual([]);
     const warnings = logger.getMessagesByLevel("warn");
@@ -189,7 +189,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(result).toHaveLength(1);
     expect(result[0]!.pid).toBe(9999);
@@ -202,7 +202,7 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
     });
 
-    const result = await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(result).toEqual([]);
   });
@@ -212,23 +212,23 @@ describe("detectMacOSCwdProcesses", () => {
       onSpawn: () => ({ stdout: "", exitCode: 0 }),
     });
 
-    await detectMacOSCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+    await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(runner).toHaveSpawned([{ command: "lsof", args: ["-d", "cwd", "+c", "0", "-Fpnc"] }]);
   });
 });
 
 // =============================================================================
-// killUnixProcesses
+// killPosixProcesses
 // =============================================================================
 
-describe("killUnixProcesses", () => {
+describe("killPosixProcesses", () => {
   it("runs kill -TERM with correct PID args", async () => {
     const runner = createMockProcessRunner({
       onSpawn: () => ({ exitCode: 0 }),
     });
 
-    await killUnixProcesses(runner, [1234, 5678]);
+    await killPosixProcesses(runner, [1234, 5678]);
 
     expect(runner).toHaveSpawned([{ command: "kill", args: ["-TERM", "1234", "5678"] }]);
   });
@@ -238,7 +238,7 @@ describe("killUnixProcesses", () => {
       onSpawn: () => ({ exitCode: 1, stderr: "kill: (1234): Operation not permitted" }),
     });
 
-    await expect(killUnixProcesses(runner, [1234])).rejects.toThrow("kill -TERM failed");
+    await expect(killPosixProcesses(runner, [1234])).rejects.toThrow("kill -TERM failed");
   });
 
   it("treats 'No such process' as success", async () => {
@@ -249,13 +249,13 @@ describe("killUnixProcesses", () => {
       }),
     });
 
-    await expect(killUnixProcesses(runner, [1234, 5678])).resolves.toBeUndefined();
+    await expect(killPosixProcesses(runner, [1234, 5678])).resolves.toBeUndefined();
   });
 
   it("does nothing when pids array is empty", async () => {
     const runner = createMockProcessRunner();
 
-    await killUnixProcesses(runner, []);
+    await killPosixProcesses(runner, []);
 
     expect(() => runner.$.spawned(0)).toThrow();
   });
@@ -265,7 +265,7 @@ describe("killUnixProcesses", () => {
 // Module release hook
 // =============================================================================
 
-describe("MacOSProcessCleanupModule Integration", () => {
+describe("PosixProcessCleanupModule Integration", () => {
   let runner: MockProcessRunner;
 
   beforeEach(() => {

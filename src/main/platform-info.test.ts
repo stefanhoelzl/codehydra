@@ -47,6 +47,41 @@ describe("NodePlatformInfo", () => {
     expect(platformInfo.homeDir).toBe("/Users/testuser");
   });
 
+  describe("posix", () => {
+    it("is true for linux", () => {
+      Object.defineProperty(process, "platform", {
+        value: "linux",
+        writable: true,
+      });
+
+      const platformInfo = new NodePlatformInfo();
+
+      expect(platformInfo.posix).toBe(true);
+    });
+
+    it("is true for darwin", () => {
+      Object.defineProperty(process, "platform", {
+        value: "darwin",
+        writable: true,
+      });
+
+      const platformInfo = new NodePlatformInfo();
+
+      expect(platformInfo.posix).toBe(true);
+    });
+
+    it("is false for win32", () => {
+      Object.defineProperty(process, "platform", {
+        value: "win32",
+        writable: true,
+      });
+
+      const platformInfo = new NodePlatformInfo();
+
+      expect(platformInfo.posix).toBe(false);
+    });
+  });
+
   describe("arch", () => {
     it("returns x64 for x64 architecture", () => {
       Object.defineProperty(process, "arch", {
