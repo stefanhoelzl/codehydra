@@ -17,6 +17,7 @@ export type {
   HookResult,
   ResolvedHooks,
 } from "./operation";
+export { ANY_VALUE } from "./operation";
 
 // HookRegistry
 export type { IHookRegistry } from "./hook-registry";
