@@ -4,7 +4,7 @@
  * Tests end-to-end workflows without real git repositories.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
 import { createMockGitClient } from "./git-client.state-mock";
 import {
@@ -1466,6 +1466,51 @@ describe("GitWorktreeProvider", () => {
 
       // Branch still exists but metadata should be cleared
       expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
+      const metadata = await mockClient.getBranchConfigsByPrefix(
+        PROJECT_ROOT,
+        "feature-x",
+        "codehydra"
+      );
+      expect(metadata).toEqual({});
+    });
+
+    it("clears metadata even when worktree removal fails", async () => {
+      const worktreePath = new Path("/data/workspaces/feature-x");
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+            branchConfigs: {
+              "feature-x": {
+                "codehydra.base": "main",
+                "codehydra.note": "WIP feature",
+              },
+            },
+          },
+        },
+      });
+      vi.spyOn(mockClient, "removeWorktree").mockRejectedValue(new Error("worktree locked"));
+      const failingFs = createFileSystemMock({
+        entries: {
+          [WORKSPACES_DIR.toString()]: directory(),
+        },
+      });
+      vi.spyOn(failingFs, "rm").mockRejectedValue(new Error("rm failed"));
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        failingFs,
+        worktreeLogger
+      );
+
+      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, false)).rejects.toThrow(
+        "worktree locked"
+      );
+
+      // Metadata should still have been cleared before the failing worktree removal
       const metadata = await mockClient.getBranchConfigsByPrefix(
         PROJECT_ROOT,
         "feature-x",

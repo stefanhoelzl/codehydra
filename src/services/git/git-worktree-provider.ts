@@ -509,7 +509,32 @@ export class GitWorktreeProvider {
     // Note: Use ternary (not ??) to preserve null for detached HEAD workspaces
     const branchName = worktree ? worktree.branch : unsanitizeWorkspaceName(workspacePath.basename);
 
-    // Step 1: Try to remove worktree, save error if it fails
+    // Step 1: Clear codehydra metadata from branch config
+    // Done before worktree removal because metadata lives in project root's .git/config,
+    // not in the worktree, and clearing after removal can race with shutdown hooks.
+    if (branchName) {
+      try {
+        const metadata = await this.gitClient.getBranchConfigsByPrefix(
+          projectRoot,
+          branchName,
+          GitWorktreeProvider.METADATA_CONFIG_PREFIX
+        );
+        for (const key of Object.keys(metadata)) {
+          await this.gitClient.unsetBranchConfig(
+            projectRoot,
+            branchName,
+            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`
+          );
+        }
+      } catch (error: unknown) {
+        this.logger.warn("Failed to clear branch metadata", {
+          branch: branchName,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    // Step 2: Try to remove worktree, save error if it fails
     // We save the error to throw later, after attempting branch deletion
     let worktreeError: Error | null = null;
     if (worktree) {
@@ -533,27 +558,7 @@ export class GitWorktreeProvider {
       }
     }
 
-    // Step 1.5: Clear codehydra metadata from branch config
-    if (branchName) {
-      try {
-        const metadata = await this.gitClient.getBranchConfigsByPrefix(
-          projectRoot,
-          branchName,
-          GitWorktreeProvider.METADATA_CONFIG_PREFIX
-        );
-        for (const key of Object.keys(metadata)) {
-          await this.gitClient.unsetBranchConfig(
-            projectRoot,
-            branchName,
-            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.${key}`
-          );
-        }
-      } catch {
-        this.logger.warn("Failed to clear branch metadata", { branch: branchName });
-      }
-    }
-
-    // Step 2: Delete the branch (always attempt if requested)
+    // Step 3: Delete the branch (always attempt if requested)
     // This ensures branch is deleted even if worktree removal failed
     // (e.g., due to Windows file locks - directory cleanup happens at startup)
     let baseDeleted = false;
@@ -581,7 +586,7 @@ export class GitWorktreeProvider {
       }
     }
 
-    // Step 3: Throw saved worktree error (after branch deletion attempted)
+    // Step 4: Throw saved worktree error (after branch deletion attempted)
     if (worktreeError) {
       throw worktreeError;
     }
