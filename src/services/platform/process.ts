@@ -282,7 +282,7 @@ export class ExecaSpawnedProcess implements SpawnedProcess {
 
     if (raceResult === TIMEOUT_SYMBOL) {
       // Timeout occurred, process is still running
-      this.logger.warn("Wait timeout", {
+      this.logger.silly("Wait timeout", {
         command: this.command,
         pid: this.pid ?? 0,
         timeout,
