@@ -13,10 +13,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
 import { join, resolve, dirname, delimiter } from "node:path";
-import { spawn } from "node:child_process";
 import { writeFile, mkdir, chmod, access } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { createTempDir } from "../../services/test-utils";
+import { executeScript } from "../wrapper-boundary-test-utils";
 
 const isWindows = process.platform === "win32";
 
@@ -141,52 +141,6 @@ function buildPath(fakeBinDir: string): string {
   return `${fakeBinDir}${delimiter}${dirname(process.execPath)}`;
 }
 
-/**
- * Execute the compiled ch-claude.cjs script and capture output.
- * Strips CodeHydra and test framework env vars, then merges provided vars.
- */
-async function executeScript(
-  env: Record<string, string | undefined>,
-  cwd: string
-): Promise<{ stdout: string; stderr: string; status: number | null }> {
-  const baseEnv: Record<string, string> = {};
-  const excludedPrefixes = ["CH_", "_CH_", "VITEST", "TEST"];
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !excludedPrefixes.some((prefix) => key.startsWith(prefix))) {
-      baseEnv[key] = value;
-    }
-  }
-
-  const finalEnv: Record<string, string> = { ...baseEnv };
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) {
-      finalEnv[key] = value;
-    }
-  }
-
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [COMPILED_SCRIPT_PATH], {
-      env: finalEnv,
-      cwd,
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      resolve({ stdout, stderr, status: code });
-    });
-  });
-}
-
 describe("ch-claude.cjs boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let fakeBinDir: string;
@@ -213,6 +167,7 @@ describe("ch-claude.cjs boundary tests", () => {
   describe("environment variable validation", () => {
     it("errors when _CH_CLAUDE_SETTINGS is not set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
           PATH: buildPath(fakeBinDir),
@@ -227,6 +182,7 @@ describe("ch-claude.cjs boundary tests", () => {
 
     it("errors when _CH_CLAUDE_MCP_CONFIG is not set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           PATH: buildPath(fakeBinDir),
@@ -243,6 +199,7 @@ describe("ch-claude.cjs boundary tests", () => {
   describe("binary not found", () => {
     it("exits with code 3 when claude is not on PATH", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -260,6 +217,7 @@ describe("ch-claude.cjs boundary tests", () => {
   describe("binary spawning", () => {
     it("spawns claude with correct base args", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -281,6 +239,7 @@ describe("ch-claude.cjs boundary tests", () => {
 
     it("deletes CLAUDECODE env var before spawning", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -300,6 +259,7 @@ describe("ch-claude.cjs boundary tests", () => {
       const counterFile = join(tempDir.path, "exit-counter");
 
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -323,6 +283,7 @@ describe("ch-claude.cjs boundary tests", () => {
       await writeFile(promptFile, JSON.stringify({ prompt: "Hello world" }));
 
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -345,6 +306,7 @@ describe("ch-claude.cjs boundary tests", () => {
       await writeFile(promptFile, JSON.stringify({ prompt: "test" }));
 
       await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -359,6 +321,7 @@ describe("ch-claude.cjs boundary tests", () => {
 
     it("has no prompt args when no prompt file is set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -379,6 +342,7 @@ describe("ch-claude.cjs boundary tests", () => {
   describe("permission modes", () => {
     it("uses --dangerously-skip-permissions when no agent is set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -401,6 +365,7 @@ describe("ch-claude.cjs boundary tests", () => {
       await writeFile(promptFile, JSON.stringify({ prompt: "test", agent: "plan" }));
 
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -423,6 +388,7 @@ describe("ch-claude.cjs boundary tests", () => {
   describe("session resume (--continue)", () => {
     it("prepends --continue on first attempt", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -441,6 +407,7 @@ describe("ch-claude.cjs boundary tests", () => {
       const counterFile = join(tempDir.path, "call-counter");
 
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
@@ -465,6 +432,7 @@ describe("ch-claude.cjs boundary tests", () => {
       await writeFile(markerPath, "");
 
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
           _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
