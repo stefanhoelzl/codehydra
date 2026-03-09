@@ -100,6 +100,8 @@ export function validateAndParse(
         value: rawValue,
         reason: "invalid",
         source,
+        ...(def.description !== undefined && { description: def.description }),
+        ...(def.validValues !== undefined && { validValues: def.validValues }),
       });
     }
     result[key] = parsed;
@@ -137,6 +139,8 @@ export function validateTyped(
         value,
         reason: "invalid",
         source,
+        ...(def.description !== undefined && { description: def.description }),
+        ...(def.validValues !== undefined && { validValues: def.validValues }),
       });
     }
     result[key] = validated;

@@ -100,6 +100,8 @@ function testDefinitions(): ConfigKeyDefinition<unknown>[] {
     {
       name: "test.level",
       default: "warn",
+      description: "Log level",
+      validValues: "silly|debug|info|warn|error",
       parse: (s: string) => {
         const valid = ["silly", "debug", "info", "warn", "error"];
         return valid.includes(s) ? s : undefined;
@@ -408,6 +410,30 @@ describe("ConfigModule Integration", () => {
         ConfigValidationError
       );
     });
+
+    it("includes description and validValues in error detail for invalid env var", () => {
+      try {
+        parseEnvVars({ CH_TEST__LEVEL: "not-a-level" }, definitions);
+        expect.unreachable("should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ConfigValidationError);
+        const detail = (error as ConfigValidationError).detail;
+        expect(detail.description).toBe("Log level");
+        expect(detail.validValues).toBe("silly|debug|info|warn|error");
+      }
+    });
+
+    it("omits description and validValues for unknown env var key", () => {
+      try {
+        parseEnvVars({ CH_UNKNOWN_VAR: "value" }, definitions);
+        expect.unreachable("should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ConfigValidationError);
+        const detail = (error as ConfigValidationError).detail;
+        expect(detail.description).toBeUndefined();
+        expect(detail.validValues).toBeUndefined();
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -459,6 +485,19 @@ describe("ConfigModule Integration", () => {
     it("parses boolean flag without value as true", () => {
       const result = parseCliArgs(["--help"], definitions, SILENT_LOGGER);
       expect(result.help).toBe(true);
+    });
+
+    it("includes description and validValues in error detail for invalid CLI flag", () => {
+      try {
+        parseCliArgs(["--test.level=not-a-level"], definitions, SILENT_LOGGER);
+        expect.unreachable("should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ConfigValidationError);
+        const detail = (error as ConfigValidationError).detail;
+        expect(detail.description).toBe("Log level");
+        expect(detail.validValues).toBe("silly|debug|info|warn|error");
+        expect(detail.source).toBe("CLI flag");
+      }
     });
   });
 
