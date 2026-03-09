@@ -11,10 +11,10 @@
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
 import { join, resolve } from "node:path";
-import { spawn } from "node:child_process";
 import { writeFile, mkdir, chmod, access } from "node:fs/promises";
 import { constants } from "node:fs";
-import { createTempDir } from "../test-utils";
+import { createTempDir } from "../../services/test-utils";
+import { executeScript } from "../wrapper-boundary-test-utils";
 
 const isWindows = process.platform === "win32";
 
@@ -91,53 +91,6 @@ exec node "$(dirname "$0")/opencode-fake.cjs" "$@"
   return opencodeDir;
 }
 
-/**
- * Execute the compiled opencode.cjs script and capture output.
- * Uses async spawn to allow mock servers to respond.
- */
-async function executeScript(
-  env: Record<string, string | undefined>,
-  cwd: string
-): Promise<{ stdout: string; stderr: string; status: number | null }> {
-  // Build clean env without CodeHydra vars and test framework vars, then add specified ones
-  const baseEnv: Record<string, string> = {};
-  const excludedPrefixes = ["CH_", "_CH_", "VITEST", "TEST"];
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !excludedPrefixes.some((prefix) => key.startsWith(prefix))) {
-      baseEnv[key] = value;
-    }
-  }
-
-  const finalEnv: Record<string, string> = { ...baseEnv };
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) {
-      finalEnv[key] = value;
-    }
-  }
-
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [COMPILED_SCRIPT_PATH], {
-      env: finalEnv,
-      cwd,
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code: number | null) => {
-      resolve({ stdout, stderr, status: code });
-    });
-  });
-}
-
 describe("ch-opencode.cjs boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let opencodeDir: string;
@@ -165,6 +118,7 @@ describe("ch-opencode.cjs boundary tests", () => {
   describe("environment variable validation", () => {
     it("errors when _CH_OPENCODE_PORT is not set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_DIR: opencodeDir,
           // _CH_OPENCODE_PORT not set
@@ -179,6 +133,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("errors when port is not a number", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "not-a-number",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -192,6 +147,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("errors when port is zero", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "0",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -205,6 +161,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("errors when port is negative", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "-100",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -218,6 +175,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("errors when port is above 65535", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "70000",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -231,6 +189,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("errors when _CH_OPENCODE_DIR is not set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
           // _CH_OPENCODE_DIR not set
@@ -250,6 +209,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("spawns opencode attach with correct URL", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -267,6 +227,7 @@ describe("ch-opencode.cjs boundary tests", () => {
     it("uses 127.0.0.1 (not localhost) in URL", async () => {
       // This test verifies the URL format uses 127.0.0.1
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -283,6 +244,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("propagates exit code from opencode binary", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -301,6 +263,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("includes --session flag when _CH_OPENCODE_SESSION_ID is set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -318,6 +281,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("does not include --session when _CH_OPENCODE_SESSION_ID is not set", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -334,6 +298,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     it("does not include --session when _CH_OPENCODE_SESSION_ID is empty", async () => {
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "14001",
           _CH_OPENCODE_DIR: opencodeDir,
@@ -356,6 +321,7 @@ describe("ch-opencode.cjs boundary tests", () => {
       // Even if the server isn't running, the wrapper should still spawn opencode
       // The session ID comes from the environment, not from querying the server
       const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
         {
           _CH_OPENCODE_PORT: "59999", // Unlikely to be in use
           _CH_OPENCODE_DIR: opencodeDir,
