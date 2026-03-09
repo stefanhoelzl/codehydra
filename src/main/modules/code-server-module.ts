@@ -78,7 +78,7 @@ import {
   getCodeServerExecutablePath,
 } from "../../services/code-server/setup-info";
 import { Path } from "../../services/platform/path";
-import { configString } from "../../services/config/config-definition";
+import { configString, configCustom } from "../../services/config/config-definition";
 import { SetupError, getErrorMessage } from "../../services/errors";
 
 // =============================================================================
@@ -98,6 +98,7 @@ export interface CodeServerModuleDeps {
     | "getConfig"
     | "setPluginPort"
     | "setCodeServerVersion"
+    | "setPort"
     | "stop"
   >;
   readonly extensionManager: Pick<
@@ -148,6 +149,22 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 default: null,
                 description: "Code-server version override (null = built-in)",
                 ...configString({ nullable: true }),
+              },
+              {
+                name: "code-server.port",
+                default: codeServerManager.getConfig().port,
+                description: "Code-server port",
+                ...configCustom<number>({
+                  parse: (raw) => {
+                    const n = Number(raw);
+                    return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : undefined;
+                  },
+                  validate: (v) =>
+                    typeof v === "number" && Number.isInteger(v) && v >= 1024 && v <= 65535
+                      ? v
+                      : undefined,
+                  validValues: "1024-65535",
+                }),
               },
             ],
           }),
@@ -425,6 +442,9 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     events: {
       [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
         const { values } = (event as ConfigUpdatedEvent).payload;
+        if (values["code-server.port"] !== undefined) {
+          codeServerManager.setPort(values["code-server.port"] as number);
+        }
         if (values["version.code-server"] !== undefined) {
           const version = (values["version.code-server"] as string | null) ?? CODE_SERVER_VERSION;
           const codeServerDir = deps.pathProvider.bundlePath(`code-server/${version}`);

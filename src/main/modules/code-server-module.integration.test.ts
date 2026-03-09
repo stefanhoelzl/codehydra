@@ -235,6 +235,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       }),
       setPluginPort: vi.fn(),
       setCodeServerVersion: vi.fn(),
+      setPort: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
     },
     extensionManager: {
@@ -1019,6 +1020,54 @@ describe("CodeServerModule", () => {
 
       expect(deps.codeServerManager.setCodeServerVersion).not.toHaveBeenCalled();
       expect(deps.extensionManager.setCodeServerBinaryPath).not.toHaveBeenCalled();
+    });
+
+    it("propagates port override to manager", async () => {
+      const deps = createMockDeps();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerModule(createMockConfigModule());
+      dispatcher.registerModule(createCodeServerModule(deps));
+      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { "code-server.port": 9999 }, persist: false },
+      } as ConfigSetValuesIntent);
+
+      expect(deps.codeServerManager.setPort).toHaveBeenCalledWith(9999);
+    });
+
+    it("propagates default port value to manager", async () => {
+      const deps = createMockDeps();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerModule(createMockConfigModule());
+      dispatcher.registerModule(createCodeServerModule(deps));
+      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { "code-server.port": 9090 }, persist: false },
+      } as ConfigSetValuesIntent);
+
+      expect(deps.codeServerManager.setPort).toHaveBeenCalledWith(9090);
+    });
+
+    it("does not call setPort when code-server.port is not in changed values", async () => {
+      const deps = createMockDeps();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+      dispatcher.registerModule(createMockConfigModule());
+      dispatcher.registerModule(createCodeServerModule(deps));
+      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
+
+      await dispatcher.dispatch({
+        type: INTENT_CONFIG_SET_VALUES,
+        payload: { values: { agent: "claude" }, persist: false },
+      } as ConfigSetValuesIntent);
+
+      expect(deps.codeServerManager.setPort).not.toHaveBeenCalled();
     });
   });
 

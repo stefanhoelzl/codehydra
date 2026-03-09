@@ -309,6 +309,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | `auto-update`                       | `always` | Auto-update preference: always\|never                                                 |
 | `version.claude`                    | `null`   | Claude agent version override                                                         |
 | `version.opencode`                  | `null`   | OpenCode agent version override                                                       |
+| `code-server.port`                  | (auto)   | Code-server port (auto = 25448 in prod, branch-derived in dev)                        |
 | `version.code-server`               | `null`   | Code-server version override (null = built-in)                                        |
 | `telemetry.enabled`                 | `true`   | Enable telemetry (false in dev/unpackaged)                                            |
 | `telemetry.distinct-id`             | —        | Telemetry user ID (auto-generated)                                                    |
