@@ -474,7 +474,13 @@ export class SimpleGitClient implements IGitClient {
   async countUnmergedCommits(repoPath: Path, branch: string, base: string): Promise<number> {
     return this.wrapGitOperation(async () => {
       const git = this.getGit(repoPath);
-      const result = await git.raw(["rev-list", "--count", `${base}..${branch}`]);
+      const result = await git.raw([
+        "rev-list",
+        "--count",
+        "--cherry-pick",
+        "--right-only",
+        `${base}...${branch}`,
+      ]);
       return parseInt(result.trim(), 10);
     }, `Failed to count unmerged commits for ${branch} against ${base}`);
   }
