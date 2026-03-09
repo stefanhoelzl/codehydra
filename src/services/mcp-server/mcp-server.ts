@@ -394,7 +394,8 @@ export class McpServer implements IMcpServer {
     mcpServer.registerTool(
       "workspace_get_metadata",
       {
-        description: "Get all metadata for the current workspace",
+        description:
+          "Get all metadata for the current workspace. Always includes a 'base' key with the base branch name.",
         inputSchema: z.object({}),
       },
       this.createWorkspaceHandler(async (workspacePath) => this.handlers.getMetadata(workspacePath))
