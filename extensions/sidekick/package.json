@@ -51,13 +51,23 @@
         "category": "CodeHydra"
       },
       {
-        "command": "codehydra.debug.getStatus",
-        "title": "CodeHydra Debug: Get Workspace Status",
-        "enablement": "codehydra.isDevelopment"
+        "command": "codehydra.getMetadata",
+        "title": "Get Metadata",
+        "category": "CodeHydra"
       },
       {
-        "command": "codehydra.debug.getMetadata",
-        "title": "CodeHydra Debug: Get Workspace Metadata",
+        "command": "codehydra.setMetadata",
+        "title": "Set Metadata",
+        "category": "CodeHydra"
+      },
+      {
+        "command": "codehydra.deleteMetadata",
+        "title": "Delete Metadata",
+        "category": "CodeHydra"
+      },
+      {
+        "command": "codehydra.debug.getStatus",
+        "title": "CodeHydra Debug: Get Workspace Status",
         "enablement": "codehydra.isDevelopment"
       },
       {
