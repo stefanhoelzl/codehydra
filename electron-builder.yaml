@@ -57,8 +57,7 @@ win:
 
 # NSIS installer settings
 nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+  oneClick: true
   artifactName: ${productName}-win-installer-${arch}.${ext}
 
 # Linux configuration
