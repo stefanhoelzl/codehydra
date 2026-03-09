@@ -26,8 +26,10 @@ import {
   reconstructVscodeObjects,
   type VscodeFactories,
 } from "../../../src/shared/vscode-serialization";
+import { isValidMetadataKey } from "../../../src/shared/api/types";
 
 const TAGS_PREFIX = "tags.";
+const SYSTEM_METADATA_KEYS = new Set(["base"]);
 
 interface WorkspaceTag {
   readonly name: string;
@@ -61,6 +63,14 @@ function extractTagsFromMetadata(metadata: Record<string, string>): WorkspaceTag
     }
   }
   return tags;
+}
+
+function validateMetadataKeyInput(v: string): string | null {
+  if (!v) return "Key is required";
+  if (!isValidMetadataKey(v)) {
+    return "Must start with a letter, use only letters/digits/hyphens/dots (no trailing hyphens)";
+  }
+  return null;
 }
 
 let socket: TypedSocket | null = null;
@@ -441,13 +451,6 @@ function registerDebugCommands(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("codehydra.debug.getStatus", async () => {
       await runDebugCommand("getStatus", () => codehydraApi.workspace.getStatus());
-    })
-  );
-
-  // Debug: Get Workspace Metadata
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codehydra.debug.getMetadata", async () => {
-      await runDebugCommand("getMetadata", () => codehydraApi.workspace.getMetadata());
     })
   );
 
@@ -851,16 +854,7 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
           const nameInput = await vscode.window.showInputBox({
             title: "Tag Name",
             prompt: "Enter tag name (letters, digits, hyphens, dots)",
-            validateInput: (v) => {
-              if (!v) return "Tag name is required";
-              if (!/^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)*$/.test(v)) {
-                return "Must start with a letter, use only letters/digits/hyphens/dots";
-              }
-              if (v.split(".").some((s) => s.endsWith("-"))) {
-                return "Segments cannot end with a hyphen";
-              }
-              return null;
-            },
+            validateInput: validateMetadataKeyInput,
           });
           if (!nameInput) return;
           name = nameInput;
@@ -916,6 +910,97 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
 
       await codehydraApi.workspace.setMetadata(`tags.${name}`, null);
     })
+  );
+
+  // Metadata commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codehydra.getMetadata",
+      async (): Promise<Record<string, string>> => {
+        const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
+        const entries = Object.entries(metadata);
+        if (entries.length === 0) {
+          await vscode.window.showInformationMessage("No metadata on this workspace");
+        } else {
+          await vscode.window.showQuickPick(
+            entries.map(([key, value]) => ({ label: key, description: value })),
+            { title: "Workspace Metadata", placeHolder: "Metadata (read-only)" }
+          );
+        }
+        return metadata;
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codehydra.setMetadata",
+      async (arg?: { key: string; value: string }): Promise<void> => {
+        let key: string;
+        let value: string;
+
+        if (arg && typeof arg.key === "string" && typeof arg.value === "string") {
+          if (SYSTEM_METADATA_KEYS.has(arg.key)) {
+            throw new Error(`Cannot set system metadata key: ${arg.key}`);
+          }
+          key = arg.key;
+          value = arg.value;
+        } else {
+          const keyInput = await vscode.window.showInputBox({
+            title: "Metadata Key",
+            prompt: "Enter metadata key (letters, digits, hyphens, dots)",
+            validateInput: (v) => {
+              const error = validateMetadataKeyInput(v);
+              if (error) return error;
+              if (SYSTEM_METADATA_KEYS.has(v)) return `"${v}" is a system key and cannot be set`;
+              return null;
+            },
+          });
+          if (keyInput === undefined) return;
+          key = keyInput;
+
+          const valueInput = await vscode.window.showInputBox({
+            title: "Metadata Value",
+            prompt: `Enter value for "${key}"`,
+          });
+          if (valueInput === undefined) return;
+          value = valueInput;
+        }
+
+        await codehydraApi.workspace.setMetadata(key, value);
+      }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codehydra.deleteMetadata",
+      async (arg?: string): Promise<void> => {
+        let key: string;
+
+        if (typeof arg === "string") {
+          if (SYSTEM_METADATA_KEYS.has(arg)) {
+            throw new Error(`Cannot delete system metadata key: ${arg}`);
+          }
+          key = arg;
+        } else {
+          const metadata = (await codehydraApi.workspace.getMetadata()) as Record<string, string>;
+          const deletable = Object.keys(metadata).filter((k) => !SYSTEM_METADATA_KEYS.has(k));
+          if (deletable.length === 0) {
+            await vscode.window.showInformationMessage("No deletable metadata keys");
+            return;
+          }
+          const picked = await vscode.window.showQuickPick(
+            deletable.map((k) => ({ label: k, description: metadata[k] })),
+            { title: "Delete Metadata", placeHolder: "Select a key to delete" }
+          );
+          if (!picked) return;
+          key = picked.label;
+        }
+
+        await codehydraApi.workspace.setMetadata(key, null);
+      }
+    )
   );
 
   const pluginPortStr = process.env._CH_PLUGIN_PORT;
