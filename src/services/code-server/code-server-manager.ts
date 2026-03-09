@@ -324,6 +324,16 @@ export class CodeServerManager {
   }
 
   /**
+   * Override the code-server port.
+   * Must be called before ensureRunning() to take effect.
+   *
+   * @param port - The port number for code-server
+   */
+  setPort(port: number): void {
+    (this.config as { port: number }).port = port;
+  }
+
+  /**
    * Ensure the server is running.
    * If already running, returns the current port.
    * If starting, waits for startup to complete.
