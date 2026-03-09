@@ -205,6 +205,8 @@ export interface ValidationErrorDetail {
   readonly value: unknown;
   readonly reason: "unknown" | "invalid";
   readonly source: string;
+  readonly description?: string;
+  readonly validValues?: string;
 }
 
 /**
@@ -219,7 +221,14 @@ export class ConfigValidationError extends Error {
       detail.reason === "unknown"
         ? `Unknown config key "${detail.key}"`
         : `Invalid value ${JSON.stringify(detail.value)} for config key "${detail.key}"`;
-    super(`${msg}\n  Source: ${detail.source}`);
+    const lines = [msg, `  Source: ${detail.source}`];
+    if (detail.description) {
+      lines.push(`  Description: ${detail.description}`);
+    }
+    if (detail.validValues) {
+      lines.push(`  Valid values: ${detail.validValues}`);
+    }
+    super(lines.join("\n"));
     this.name = "ConfigValidationError";
     this.detail = detail;
   }
