@@ -118,12 +118,16 @@ function buildPermissionArgs(agent?: string): string[] {
  * Returns array of arguments to prepend to claude command.
  *
  * @param config - The initial prompt configuration
+ * @param quote - Whether to wrap the prompt in double quotes (needed on Windows where
+ *   shell: true causes cmd.exe to split unquoted args on spaces).
  * @returns Array of CLI arguments (prompt, --model, --agent flags as needed)
  */
-function buildInitialPromptArgs(config: InitialPromptConfig): string[] {
+function buildInitialPromptArgs(config: InitialPromptConfig, quote: boolean): string[] {
   const args: string[] = [];
   if (config.prompt) {
-    args.push(config.prompt);
+    // When quote is true (Windows), wrap the prompt in double quotes so cmd.exe
+    // doesn't split it on spaces. Escape any internal double quotes.
+    args.push(quote ? `"${config.prompt.replace(/"/g, '""')}"` : config.prompt);
   }
 
   if (config.model !== undefined) {
@@ -415,8 +419,11 @@ async function main(): Promise<never> {
   }
 
   // 3. Check for initial prompt (read and delete file before Claude starts)
+  const isWindows = process.platform === "win32";
   const initialPromptConfig = getInitialPromptConfig();
-  const initialPromptArgs = initialPromptConfig ? buildInitialPromptArgs(initialPromptConfig) : [];
+  const initialPromptArgs = initialPromptConfig
+    ? buildInitialPromptArgs(initialPromptConfig, isWindows)
+    : [];
 
   // 4. Build arguments
   // --ide: Enable IDE-specific features
@@ -424,7 +431,6 @@ async function main(): Promise<never> {
   // --mcp-config: Our MCP config (merges with user's)
   // Initial prompt args come first (prompt as positional, then --model/--agent)
   // User args can override these if they come after
-  const isWindows = process.platform === "win32";
   const args = [
     ...initialPromptArgs,
     ...buildPermissionArgs(initialPromptConfig?.agent),
