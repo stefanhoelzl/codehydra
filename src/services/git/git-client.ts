@@ -196,8 +196,9 @@ export interface IGitClient {
   isBare(repoPath: Path): Promise<boolean>;
 
   /**
-   * Count commits on a branch that are not reachable from a base ref.
-   * Equivalent to `git rev-list --count <base>..<branch>`.
+   * Count commits on a branch whose patch content has not been merged into a base ref.
+   * Uses `git rev-list --count --cherry-pick --right-only <base>...<branch>` to detect
+   * squash-merged and rebase-merged commits by comparing patch-ids.
    * @param repoPath Absolute path to the git repository
    * @param branch Branch to count commits on
    * @param base Base ref to compare against
