@@ -176,7 +176,7 @@ export class AutoUpdater {
     if (this.isDevelopment) return;
 
     this.logger.info("Quitting and installing update");
-    autoUpdater.quitAndInstall();
+    autoUpdater.quitAndInstall(true, true);
   }
 
   /**
