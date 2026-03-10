@@ -15,7 +15,7 @@ import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
-import type { Intent } from "../intents/infrastructure/types";
+import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
 import type { PathProvider } from "../../services/platform/path-provider";
 import type { Workspace } from "../../services/git/types";
@@ -36,6 +36,12 @@ import type { DeleteHookResult, PreflightHookResult } from "../operations/delete
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-status";
 import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../operations/resolve-workspace";
+import {
+  LIST_PROJECTS_OPERATION_ID,
+  type ListWorkspacesHookResult,
+} from "../operations/list-projects";
+import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../operations/set-metadata";
+import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
@@ -301,6 +307,24 @@ class MinimalGetStatusOperation implements Operation<Intent, GetStatusResult> {
   }
 }
 
+/**
+ * Emit-event operation: emits a domain event from within an operation context.
+ * Used to trigger event subscriptions registered by modules.
+ */
+class MinimalEmitEventOperation implements Operation<Intent, void> {
+  readonly id = "emit-event";
+
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
+    const event = ctx.intent.payload as DomainEvent;
+    ctx.emit(event);
+  }
+}
+
+const listProjectsOperation = createMinimalOperation<Intent, ListWorkspacesHookResult>(
+  LIST_PROJECTS_OPERATION_ID,
+  "list-workspaces"
+);
+
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -326,6 +350,8 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation("workspace:resolve", new MinimalResolveWorkspaceOperation());
   dispatcher.registerOperation("project:get-bases", new MinimalGetProjectBasesOperation());
   dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
+  dispatcher.registerOperation("emit-event", new MinimalEmitEventOperation());
+  dispatcher.registerOperation("project:list", listProjectsOperation);
 
   // Wire the module under test
   const module = createGitWorktreeWorkspaceModule(
@@ -1005,6 +1031,118 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const result = await dispatchPreflight(preflightSetup.dispatcher, ws.path.toString());
 
       expect(result.error).toBe("git failed");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // metadata-changed event
+  // ---------------------------------------------------------------------------
+
+  describe("metadata-changed event", () => {
+    async function emitMetadataChanged(
+      dispatcher: Dispatcher,
+      event: MetadataChangedEvent
+    ): Promise<void> {
+      await dispatcher.dispatch({
+        type: "emit-event",
+        payload: event,
+      } as Intent);
+    }
+
+    async function dispatchListWorkspaces(
+      dispatcher: Dispatcher
+    ): Promise<ListWorkspacesHookResult> {
+      return (await dispatcher.dispatch({
+        type: "project:list",
+        payload: {},
+      } as Intent)) as ListWorkspacesHookResult;
+    }
+
+    it("updates metadata when a key is set", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = "/projects/my-app";
+
+      const ws = makeWorkspace("feature-1", projectPath);
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      const event: MetadataChangedEvent = {
+        type: EVENT_METADATA_CHANGED,
+        payload: {
+          projectId: "test-project" as ProjectId,
+          workspaceName: "feature-1" as WorkspaceName,
+          workspacePath: ws.path.toString(),
+          key: "auto-workspace.tracked",
+          value: "true",
+        },
+      };
+      await emitMetadataChanged(dispatcher, event);
+
+      const result = await dispatchListWorkspaces(dispatcher);
+      const entry = result.entries!.find((e) => e.projectPath === projectPath);
+      const updatedWs = entry!.workspaces.find((w) => w.name === "feature-1");
+      expect(updatedWs!.metadata).toEqual({
+        base: "origin/main",
+        "auto-workspace.tracked": "true",
+      });
+    });
+
+    it("removes metadata key when value is null", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = "/projects/my-app";
+
+      const ws: Workspace = {
+        name: "feature-1",
+        path: new Path(`${projectPath}/.worktrees/feature-1`),
+        branch: "feature-1",
+        metadata: { base: "origin/main", "auto-workspace.tracked": "true" },
+      };
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      const event: MetadataChangedEvent = {
+        type: EVENT_METADATA_CHANGED,
+        payload: {
+          projectId: "test-project" as ProjectId,
+          workspaceName: "feature-1" as WorkspaceName,
+          workspacePath: ws.path.toString(),
+          key: "auto-workspace.tracked",
+          value: null,
+        },
+      };
+      await emitMetadataChanged(dispatcher, event);
+
+      const result = await dispatchListWorkspaces(dispatcher);
+      const entry = result.entries!.find((e) => e.projectPath === projectPath);
+      const updatedWs = entry!.workspaces.find((w) => w.name === "feature-1");
+      expect(updatedWs!.metadata).toEqual({ base: "origin/main" });
+    });
+
+    it("ignores event for unknown workspace path", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = "/projects/my-app";
+
+      const ws = makeWorkspace("feature-1", projectPath);
+      provider.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      const event: MetadataChangedEvent = {
+        type: EVENT_METADATA_CHANGED,
+        payload: {
+          projectId: "test-project" as ProjectId,
+          workspaceName: "unknown" as WorkspaceName,
+          workspacePath: "/nonexistent/workspace",
+          key: "auto-workspace.tracked",
+          value: "true",
+        },
+      };
+      await emitMetadataChanged(dispatcher, event);
+
+      // Original workspace should be unchanged
+      const result = await dispatchListWorkspaces(dispatcher);
+      const entry = result.entries!.find((e) => e.projectPath === projectPath);
+      const originalWs = entry!.workspaces.find((w) => w.name === "feature-1");
+      expect(originalWs!.metadata).toEqual({ base: "origin/main" });
     });
   });
 });
