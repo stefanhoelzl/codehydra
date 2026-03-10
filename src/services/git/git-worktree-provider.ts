@@ -39,6 +39,9 @@ export class GitWorktreeProvider {
   /** Git config prefix for workspace metadata */
   private static readonly METADATA_CONFIG_PREFIX = "codehydra";
 
+  /** Timeout for fallback fs.rm() when git worktree remove fails */
+  private static readonly RM_FALLBACK_TIMEOUT_MS = 30_000;
+
   private readonly gitClient: IGitClient;
   private readonly fileSystemLayer: FileSystemLayer;
   private readonly logger: Logger;
@@ -549,6 +552,7 @@ export class GitWorktreeProvider {
             force: true,
             maxRetries: 3,
             retryDelay: 200,
+            timeout: GitWorktreeProvider.RM_FALLBACK_TIMEOUT_MS,
           });
           await this.gitClient.pruneWorktrees(projectRoot);
           this.logger.info("Removed workspace via fallback", { path: workspacePath.toString() });
