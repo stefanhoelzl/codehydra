@@ -33,6 +33,7 @@ export interface SetMetadataIntent extends Intent<void> {
 export interface MetadataChangedPayload {
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
+  readonly workspacePath: string;
   readonly key: string;
   readonly value: string | null;
 }
@@ -96,6 +97,7 @@ export class SetMetadataOperation implements Operation<SetMetadataIntent, void> 
       payload: {
         projectId,
         workspaceName,
+        workspacePath: payload.workspacePath,
         key: payload.key,
         value: payload.value,
       },
