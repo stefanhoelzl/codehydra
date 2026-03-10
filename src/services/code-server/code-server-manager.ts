@@ -390,6 +390,8 @@ export class CodeServerManager {
       "--auth",
       "none",
       "--disable-workspace-trust",
+      "--disable-update-check",
+      "--disable-telemetry",
       "--extensions-dir",
       this.config.extensionsDir,
       "--user-data-dir",
