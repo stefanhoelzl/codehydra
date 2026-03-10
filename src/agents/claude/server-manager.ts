@@ -579,6 +579,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       return;
     }
 
+    this.httpServer.closeAllConnections();
     await new Promise<void>((resolve, reject) => {
       this.httpServer!.close((err) => {
         if (err) {

@@ -595,6 +595,7 @@ export class PluginServer {
     });
 
     // Close HTTP server
+    this.httpServer!.closeAllConnections();
     await new Promise<void>((resolve) => {
       this.httpServer!.close(() => {
         resolve();
