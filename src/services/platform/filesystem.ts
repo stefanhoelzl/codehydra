@@ -63,6 +63,8 @@ export interface RmOptions {
   readonly maxRetries?: number;
   /** Delay in ms between retries (default: 100). Only applies when maxRetries > 0. */
   readonly retryDelay?: number;
+  /** Timeout in ms. If rm doesn't complete within this time, throws FileSystemError (UNKNOWN, originalCode: ETIMEDOUT). */
+  readonly timeout?: number;
 }
 
 /**
@@ -422,12 +424,34 @@ export class DefaultFileSystemLayer implements FileSystemLayer {
       if (recursive) {
         // Use fs.rm for recursive deletion
         // maxRetries/retryDelay handle EBUSY/ENOTEMPTY on Windows (lingering file handles)
-        await fs.rm(nativePath, {
+        const rmPromise = fs.rm(nativePath, {
           recursive,
           force,
           ...(options?.maxRetries !== undefined && { maxRetries: options.maxRetries }),
           ...(options?.retryDelay !== undefined && { retryDelay: options.retryDelay }),
         });
+
+        if (options?.timeout !== undefined) {
+          let timer: ReturnType<typeof setTimeout>;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  Object.assign(new Error(`rm timed out after ${options.timeout}ms`), {
+                    code: "ETIMEDOUT",
+                  })
+                ),
+              options.timeout
+            );
+          });
+          try {
+            await Promise.race([rmPromise, timeoutPromise]);
+          } finally {
+            clearTimeout(timer!);
+          }
+        } else {
+          await rmPromise;
+        }
       } else {
         // For non-recursive: check if directory or file
         const stat = await fs.stat(nativePath);

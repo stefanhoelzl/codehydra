@@ -333,6 +333,7 @@ describe("GitWorktreeProvider error injection", () => {
         force: true,
         maxRetries: 3,
         retryDelay: 200,
+        timeout: 30_000,
       });
       expect(mockClient.pruneWorktrees).toHaveBeenCalledWith(PROJECT_ROOT);
     });
@@ -393,6 +394,47 @@ describe("GitWorktreeProvider error injection", () => {
       // Should throw branch error since worktree succeeded
       await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, true)).rejects.toThrow(
         "Branch deletion failed"
+      );
+    });
+
+    it("rejects with original git error when fallback rm times out", async () => {
+      const worktreePath = new Path("/data/workspaces/feature-x");
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "feature-x"],
+            currentBranch: "main",
+            worktrees: [{ name: "feature-x", path: worktreePath.toString(), branch: "feature-x" }],
+          },
+        },
+      });
+      mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("git worktree error"));
+
+      const spyFs = createSpyFileSystemLayer();
+      // Simulate rm rejecting with ETIMEDOUT (as DefaultFileSystemLayer.rm would on timeout)
+      spyFs.rm = vi
+        .fn()
+        .mockRejectedValue(
+          new FileSystemError(
+            "UNKNOWN",
+            worktreePath.toNative(),
+            "rm timed out after 30000ms",
+            undefined,
+            "ETIMEDOUT"
+          )
+        );
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        spyFs,
+        mockLogger
+      );
+
+      // Should throw the original git error (not the ETIMEDOUT error)
+      await expect(provider.removeWorkspace(PROJECT_ROOT, worktreePath, false)).rejects.toThrow(
+        "git worktree error"
       );
     });
   });

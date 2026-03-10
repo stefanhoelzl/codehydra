@@ -4,8 +4,31 @@
  * Tests filesystem operations against real filesystem with temp directories.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { join } from "node:path";
+import type * as NodeFs from "node:fs/promises";
+
+/**
+ * Hoisted mock control for node:fs/promises rm.
+ * When rmOverride is non-null, the mocked rm delegates to it instead of the real implementation.
+ * This allows the ETIMEDOUT test to inject a never-resolving promise while keeping all
+ * other tests using real filesystem operations.
+ */
+const { rmControl } = vi.hoisted(() => ({
+  rmControl: { override: null as (() => Promise<void>) | null },
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFs>();
+  return {
+    ...actual,
+    rm: (...args: Parameters<typeof actual.rm>) => {
+      if (rmControl.override) return rmControl.override();
+      return actual.rm(...args);
+    },
+  };
+});
+
 import {
   symlink,
   writeFile as nodeWriteFile,
@@ -429,6 +452,41 @@ describe("DefaultFileSystemLayer", () => {
       await fs.rm(dirPath, { recursive: true, force: true });
 
       await expect(fs.readdir(dirPath)).rejects.toThrow();
+    });
+
+    it("rm with timeout succeeds when operation completes within timeout", async () => {
+      const dirPath = join(tempDir.path, "timeout-success");
+      await nodeMkdir(dirPath);
+      await nodeWriteFile(join(dirPath, "file.txt"), "content", "utf-8");
+
+      await fs.rm(dirPath, { recursive: true, force: true, timeout: 5000 });
+
+      await expect(fs.readdir(dirPath)).rejects.toThrow();
+    });
+
+    it("rm with timeout throws ETIMEDOUT when operation exceeds timeout", async () => {
+      vi.useFakeTimers();
+      // Override node:fs/promises rm to return a never-resolving promise
+      rmControl.override = () => new Promise<void>(() => {});
+
+      try {
+        const dirPath = join(tempDir.path, "timeout-hang");
+
+        const rmPromise = fs.rm(dirPath, { recursive: true, timeout: 100 });
+
+        // Attach rejection handler BEFORE advancing timers to avoid unhandled rejection
+        const resultPromise = rmPromise.catch((error: unknown) => error);
+
+        await vi.advanceTimersByTimeAsync(100);
+
+        const error = await resultPromise;
+        expect(error).toBeInstanceOf(FileSystemError);
+        expect((error as FileSystemError).fsCode).toBe("UNKNOWN");
+        expect((error as FileSystemError).originalCode).toBe("ETIMEDOUT");
+      } finally {
+        rmControl.override = null;
+        vi.useRealTimers();
+      }
     });
   });
 
