@@ -8,7 +8,7 @@ import type { SupportedArch, SupportedPlatform } from "../../agents/types";
 /**
  * Current version of code-server to download.
  */
-export const CODE_SERVER_VERSION = "4.109.5";
+export const CODE_SERVER_VERSION = "4.108.2";
 
 /**
  * GitHub repository for Windows code-server builds.
