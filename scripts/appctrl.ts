@@ -77,8 +77,20 @@ function requireRunning(): void {
 /** Graceful async cleanup — for normal stop (appctrl_stop tool). */
 async function killAppAsync(): Promise<void> {
   if (electronApp) {
-    await electronApp.close().catch(() => {});
+    const app = electronApp;
     electronApp = null;
+    const pid = app.process().pid!;
+    const timeout = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // already dead
+        }
+        resolve();
+      }, 5_000)
+    );
+    await Promise.race([app.close().catch(() => {}), timeout]);
   }
   consoleBuffer.length = 0;
 }
