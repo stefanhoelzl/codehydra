@@ -319,6 +319,44 @@ describe("ch-claude.cjs boundary tests", () => {
       expect(existsSync(promptFile)).toBe(false);
     });
 
+    it("preserves multi-line prompt and all flags", async () => {
+      const promptDir = join(tempDir.path, "prompt-dir");
+      await mkdir(promptDir, { recursive: true });
+      const promptFile = join(promptDir, "initial-prompt.json");
+      const multiLinePrompt =
+        "Please review these changes:\n\n- Fix the login bug\n- Update the tests\n\nFocus on error handling.";
+      await writeFile(
+        promptFile,
+        JSON.stringify({ prompt: multiLinePrompt, agent: "plan" })
+      );
+
+      const result = await executeScript(
+        COMPILED_SCRIPT_PATH,
+        {
+          _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+          _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+          _CH_INITIAL_PROMPT_FILE: promptFile,
+          PATH: buildPath(fakeBinDir),
+        },
+        tempDir.path
+      );
+
+      expect(result.status).toBe(0);
+      const output = parseFakeClaudeOutput(result.stdout);
+      expect(output).not.toBeNull();
+      // Verify full multi-line prompt is received as a single argument
+      expect(output!.args).toContain(multiLinePrompt);
+      // Verify all CLI flags are present (not lost due to newline splitting)
+      expect(output!.args).toContain("--ide");
+      expect(output!.args).toContain("--settings");
+      expect(output!.args).toContain("/tmp/settings.json");
+      expect(output!.args).toContain("--mcp-config");
+      expect(output!.args).toContain("/tmp/mcp.json");
+      expect(output!.args).toContain("--allow-dangerously-skip-permissions");
+      expect(output!.args).toContain("--permission-mode");
+      expect(output!.args).toContain("plan");
+    });
+
     it("has no prompt args when no prompt file is set", async () => {
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,
