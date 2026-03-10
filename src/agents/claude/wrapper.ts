@@ -118,16 +118,12 @@ function buildPermissionArgs(agent?: string): string[] {
  * Returns array of arguments to prepend to claude command.
  *
  * @param config - The initial prompt configuration
- * @param quote - Whether to wrap the prompt in double quotes (needed on Windows where
- *   shell: true causes cmd.exe to split unquoted args on spaces).
  * @returns Array of CLI arguments (prompt, --model, --agent flags as needed)
  */
-function buildInitialPromptArgs(config: InitialPromptConfig, quote: boolean): string[] {
+function buildInitialPromptArgs(config: InitialPromptConfig): string[] {
   const args: string[] = [];
   if (config.prompt) {
-    // When quote is true (Windows), wrap the prompt in double quotes so cmd.exe
-    // doesn't split it on spaces. Escape any internal double quotes.
-    args.push(quote ? `"${config.prompt.replace(/"/g, '""')}"` : config.prompt);
+    args.push(config.prompt);
   }
 
   if (config.model !== undefined) {
@@ -158,7 +154,6 @@ export interface SpawnResult {
  * Options for running Claude.
  */
 export interface RunClaudeOptions {
-  shell: boolean;
   /** Skip the automatic --continue attempt (new workspace with no prior session) */
   skipContinue?: boolean;
 }
@@ -175,11 +170,7 @@ interface SpawnSyncResult {
  * Dependencies for runClaude that can be injected for testing.
  */
 export interface RunClaudeDeps {
-  spawnSync: (
-    command: string,
-    args: string[],
-    options: { stdio: "inherit"; shell: boolean }
-  ) => SpawnSyncResult;
+  spawnSync: (command: string, args: string[], options: { stdio: "inherit" }) => SpawnSyncResult;
 }
 
 /**
@@ -187,7 +178,7 @@ export interface RunClaudeDeps {
  */
 const defaultDeps: RunClaudeDeps = {
   spawnSync: (command, args, options) => {
-    const result = spawnSync(command, args, options);
+    const result = spawnSync(command, args, { ...options, shell: false });
     return { status: result.status, error: result.error };
   },
 };
@@ -229,7 +220,6 @@ export function runClaude(
   if (hasUserResumeFlag(baseArgs) || options.skipContinue) {
     const result = deps.spawnSync(claudeBinary, baseArgs, {
       stdio: "inherit",
-      shell: options.shell,
     });
     return {
       exitCode: result.status,
@@ -241,7 +231,6 @@ export function runClaude(
   const continueArgs = ["--continue", ...baseArgs];
   const firstResult = deps.spawnSync(claudeBinary, continueArgs, {
     stdio: "inherit",
-    shell: options.shell,
   });
 
   // If successful, return
@@ -255,7 +244,6 @@ export function runClaude(
   // Retry without --continue
   const retryResult = deps.spawnSync(claudeBinary, baseArgs, {
     stdio: "inherit",
-    shell: options.shell,
   });
 
   return {
@@ -419,11 +407,8 @@ async function main(): Promise<never> {
   }
 
   // 3. Check for initial prompt (read and delete file before Claude starts)
-  const isWindows = process.platform === "win32";
   const initialPromptConfig = getInitialPromptConfig();
-  const initialPromptArgs = initialPromptConfig
-    ? buildInitialPromptArgs(initialPromptConfig, isWindows)
-    : [];
+  const initialPromptArgs = initialPromptConfig ? buildInitialPromptArgs(initialPromptConfig) : [];
 
   // 4. Build arguments
   // --ide: Enable IDE-specific features
@@ -453,10 +438,8 @@ async function main(): Promise<never> {
   await notifyHook("WrapperStart");
 
   // 8. Spawn Claude with automatic session resume
-  // Use shell on Windows to resolve binary name via PATH (handles .cmd shims)
   // Skip --continue attempt for new workspaces (no prior session to resume)
   const result = runClaude(claudeBinary, args, {
-    shell: isWindows,
     skipContinue: consumeNoSessionMarker(),
   });
 
