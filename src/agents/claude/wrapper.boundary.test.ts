@@ -325,10 +325,7 @@ describe("ch-claude.cjs boundary tests", () => {
       const promptFile = join(promptDir, "initial-prompt.json");
       const multiLinePrompt =
         "Please review these changes:\n\n- Fix the login bug\n- Update the tests\n\nFocus on error handling.";
-      await writeFile(
-        promptFile,
-        JSON.stringify({ prompt: multiLinePrompt, agent: "plan" })
-      );
+      await writeFile(promptFile, JSON.stringify({ prompt: multiLinePrompt, agent: "plan" }));
 
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,
