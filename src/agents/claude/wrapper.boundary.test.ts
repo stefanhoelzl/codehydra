@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
 import { join, resolve, dirname, delimiter } from "node:path";
 import { writeFile, mkdir, chmod, access } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
+import { exec as pkgExec } from "@yao-pkg/pkg";
 import { createTempDir } from "../../services/test-utils";
 import { executeScript } from "../wrapper-boundary-test-utils";
 
@@ -117,18 +118,14 @@ process.exit(isNaN(exitCode) ? 0 : exitCode);
 `;
   await writeFile(fakeScriptPath, fakeNodeContent);
 
-  // Create platform-specific wrapper named "claude"
-  const fakeClaudePath = join(binDir, isWindows ? "claude.cmd" : "claude");
-
   if (isWindows) {
-    const nodePath = process.execPath;
-    const batchContent = `@echo off\n"${nodePath}" "%~dp0fake-claude.cjs" %*\nexit /b %ERRORLEVEL%\n`;
-    await writeFile(fakeClaudePath, batchContent);
+    // Compile to real .exe so shell:false works (no cmd.exe involvement)
+    await pkgExec([fakeScriptPath, "--target", "host", "--output", join(binDir, "claude")]);
   } else {
-    // Use ${0%/*} instead of $(dirname "$0") to avoid needing dirname on PATH
+    // Unix: shell script with shebang (kernel handles it, no shell needed)
     const shellContent = `#!/bin/sh\nexec node "\${0%/*}/fake-claude.cjs" "$@"\n`;
-    await writeFile(fakeClaudePath, shellContent);
-    await chmod(fakeClaudePath, 0o755);
+    await writeFile(join(binDir, "claude"), shellContent);
+    await chmod(join(binDir, "claude"), 0o755);
   }
 
   return binDir;

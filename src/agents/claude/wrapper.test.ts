@@ -41,19 +41,19 @@ describe("buildPermissionArgs", () => {
 describe("buildInitialPromptArgs", () => {
   it("with prompt only returns prompt as single argument", () => {
     const config: InitialPromptConfig = { prompt: "Hello, Claude!" };
-    const args = buildInitialPromptArgs(config, false);
+    const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["Hello, Claude!"]);
   });
 
   it("with model adds --model flag", () => {
     const config: InitialPromptConfig = { prompt: "Hi", model: "claude-sonnet" };
-    const args = buildInitialPromptArgs(config, false);
+    const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["Hi", "--model", "claude-sonnet"]);
   });
 
   it("with agent adds --agent flag", () => {
     const config: InitialPromptConfig = { prompt: "Hi", agent: "coder" };
-    const args = buildInitialPromptArgs(config, false);
+    const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["Hi", "--agent", "coder"]);
   });
 
@@ -63,7 +63,7 @@ describe("buildInitialPromptArgs", () => {
       model: "claude-opus",
       agent: "architect",
     };
-    const args = buildInitialPromptArgs(config, false);
+    const args = buildInitialPromptArgs(config);
     expect(args).toEqual([
       "Implement the feature",
       "--model",
@@ -77,7 +77,7 @@ describe("buildInitialPromptArgs", () => {
     const config: InitialPromptConfig = {
       prompt: 'Fix the "login" bug in src/auth.ts',
     };
-    const args = buildInitialPromptArgs(config, false);
+    const args = buildInitialPromptArgs(config);
     expect(args).toEqual(['Fix the "login" bug in src/auth.ts']);
   });
 
@@ -85,33 +85,13 @@ describe("buildInitialPromptArgs", () => {
     const config: InitialPromptConfig = {
       prompt: "Line 1\nLine 2\nLine 3",
     };
-    const args = buildInitialPromptArgs(config, false);
+    const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["Line 1\nLine 2\nLine 3"]);
   });
 
   it("omits empty prompt but includes agent flag", () => {
     const config: InitialPromptConfig = { prompt: "", agent: "plan" };
-    const args = buildInitialPromptArgs(config, false);
-    expect(args).toEqual(["--agent", "plan"]);
-  });
-
-  it("with shell wraps prompt in double quotes", () => {
-    const config: InitialPromptConfig = { prompt: "Hello, Claude!" };
-    const args = buildInitialPromptArgs(config, true);
-    expect(args).toEqual(['"Hello, Claude!"']);
-  });
-
-  it("with shell escapes internal double quotes", () => {
-    const config: InitialPromptConfig = {
-      prompt: 'Fix "login" bug',
-    };
-    const args = buildInitialPromptArgs(config, true);
-    expect(args).toEqual(['"Fix ""login"" bug"']);
-  });
-
-  it("with shell and empty prompt omits prompt", () => {
-    const config: InitialPromptConfig = { prompt: "", agent: "plan" };
-    const args = buildInitialPromptArgs(config, true);
+    const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["--agent", "plan"]);
   });
 });

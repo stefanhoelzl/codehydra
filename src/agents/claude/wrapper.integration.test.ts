@@ -191,13 +191,13 @@ describe("getInitialPromptConfig integration", () => {
  * Tracks all calls for verification.
  */
 function createSpawnMock(exitCodes: (number | null)[]): RunClaudeDeps & {
-  calls: Array<{ cmd: string; args: string[]; opts: { shell: boolean } }>;
+  calls: Array<{ cmd: string; args: string[] }>;
 } {
   let callIndex = 0;
-  const calls: Array<{ cmd: string; args: string[]; opts: { shell: boolean } }> = [];
+  const calls: Array<{ cmd: string; args: string[] }> = [];
 
-  const spawnSync: RunClaudeDeps["spawnSync"] = (cmd, args, opts) => {
-    calls.push({ cmd, args: [...args], opts: { shell: opts.shell } });
+  const spawnSync: RunClaudeDeps["spawnSync"] = (cmd, args) => {
+    calls.push({ cmd, args: [...args] });
     const exitCode = exitCodes[callIndex++] ?? 1;
     return { status: exitCode, error: undefined };
   };
@@ -209,7 +209,7 @@ describe("runClaude session resume", () => {
   it("succeeds on first attempt with --continue when session exists", () => {
     const mock = createSpawnMock([0]);
 
-    const result = runClaude("claude", ["--ide", "--settings", "/path"], { shell: false }, mock);
+    const result = runClaude("claude", ["--ide", "--settings", "/path"], {}, mock);
 
     expect(result.exitCode).toBe(0);
     expect(mock.calls).toHaveLength(1);
@@ -221,7 +221,7 @@ describe("runClaude session resume", () => {
   it("retries without --continue when first attempt fails", () => {
     const mock = createSpawnMock([1, 0]);
 
-    const result = runClaude("claude", ["--ide", "--settings", "/path"], { shell: false }, mock);
+    const result = runClaude("claude", ["--ide", "--settings", "/path"], {}, mock);
 
     expect(result.exitCode).toBe(0);
     expect(mock.calls).toHaveLength(2);
@@ -235,7 +235,7 @@ describe("runClaude session resume", () => {
   it("returns final exit code when both attempts fail", () => {
     const mock = createSpawnMock([1, 2]);
 
-    const result = runClaude("claude", ["--ide"], { shell: false }, mock);
+    const result = runClaude("claude", ["--ide"], {}, mock);
 
     expect(result.exitCode).toBe(2);
     expect(mock.calls).toHaveLength(2);
@@ -244,7 +244,7 @@ describe("runClaude session resume", () => {
   it("skips auto-continue when user passes --resume flag", () => {
     const mock = createSpawnMock([0]);
 
-    const result = runClaude("claude", ["--resume", "my-session", "--ide"], { shell: false }, mock);
+    const result = runClaude("claude", ["--resume", "my-session", "--ide"], {}, mock);
 
     expect(result.exitCode).toBe(0);
     expect(mock.calls).toHaveLength(1);
@@ -256,7 +256,7 @@ describe("runClaude session resume", () => {
   it("skips auto-continue when user passes -c flag", () => {
     const mock = createSpawnMock([0]);
 
-    const result = runClaude("claude", ["-c", "--ide"], { shell: false }, mock);
+    const result = runClaude("claude", ["-c", "--ide"], {}, mock);
 
     expect(result.exitCode).toBe(0);
     expect(mock.calls).toHaveLength(1);
@@ -268,7 +268,7 @@ describe("runClaude session resume", () => {
   it("skips auto-continue when user passes --continue flag", () => {
     const mock = createSpawnMock([0]);
 
-    const result = runClaude("claude", ["--continue", "--ide"], { shell: false }, mock);
+    const result = runClaude("claude", ["--continue", "--ide"], {}, mock);
 
     expect(result.exitCode).toBe(0);
     expect(mock.calls).toHaveLength(1);
@@ -279,12 +279,7 @@ describe("runClaude session resume", () => {
   it("preserves initial prompt args in retry", () => {
     const mock = createSpawnMock([1, 0]);
 
-    const result = runClaude(
-      "claude",
-      ["Hello Claude", "--model", "opus", "--ide"],
-      { shell: false },
-      mock
-    );
+    const result = runClaude("claude", ["Hello Claude", "--model", "opus", "--ide"], {}, mock);
 
     expect(result.exitCode).toBe(0);
     // First attempt should have prompt
@@ -297,29 +292,13 @@ describe("runClaude session resume", () => {
     expect(mock.calls[1]?.args).toContain("opus");
   });
 
-  it("passes shell option correctly for Windows", () => {
-    const mock = createSpawnMock([0]);
-
-    runClaude("claude", ["--ide"], { shell: true }, mock);
-
-    expect(mock.calls[0]?.opts.shell).toBe(true);
-  });
-
-  it("passes shell option correctly for non-Windows", () => {
-    const mock = createSpawnMock([0]);
-
-    runClaude("claude", ["--ide"], { shell: false }, mock);
-
-    expect(mock.calls[0]?.opts.shell).toBe(false);
-  });
-
   it("skips --continue attempt when skipContinue is true", () => {
     const mock = createSpawnMock([0]);
 
     const result = runClaude(
       "claude",
       ["--ide", "--settings", "/path"],
-      { shell: false, skipContinue: true },
+      { skipContinue: true },
       mock
     );
 
@@ -336,7 +315,7 @@ describe("runClaude session resume", () => {
     const result = runClaude(
       "claude",
       ["--ide", "--settings", "/path"],
-      { shell: false, skipContinue: false },
+      { skipContinue: false },
       mock
     );
 
