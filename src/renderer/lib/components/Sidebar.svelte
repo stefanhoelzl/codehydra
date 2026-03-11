@@ -200,18 +200,19 @@
                   : false}
                 {#if isExpanded}
                   <!-- Expanded layout: two-row when tags exist -->
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
                   <li
                     class="workspace-item"
                     class:active={isActive}
                     class:has-tags={hasTags}
                     aria-current={isActive ? "true" : undefined}
+                    onclick={() => onSwitchWorkspace(workspaceRef)}
                   >
                     <div class="workspace-row">
                       <button
                         type="button"
                         class="workspace-btn"
                         aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
-                        onclick={() => onSwitchWorkspace(workspaceRef)}
                       >
                         {#if shortcutModeActive}
                           <vscode-badge
@@ -230,7 +231,10 @@
                           class="action-btn remove-btn"
                           id={`remove-ws-${workspace.path}`}
                           aria-label="Remove workspace"
-                          onclick={() => handleRemoveWorkspace(workspaceRef)}
+                          onclick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveWorkspace(workspaceRef);
+                          }}
                         >
                           <Icon name="trash" size={14} />
                         </button>
@@ -495,6 +499,7 @@
     padding: 4px 12px 4px 12px;
     min-height: 44px; /* Accessible click target */
     min-width: var(--ch-sidebar-width, 250px);
+    cursor: pointer;
   }
 
   .workspace-item.has-tags {
