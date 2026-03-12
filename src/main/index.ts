@@ -65,7 +65,6 @@ import {
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
-  getOpencodeSubPath,
   getOpencodeExecutablePath,
 } from "../agents/opencode/setup-info";
 import {
@@ -284,7 +283,6 @@ const opencodeBinaryManager = new AgentBinaryManager(
     destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
     url: getOpencodeUrl(platform, arch),
     executablePath: getOpencodeExecutablePath(platform),
-    subPath: getOpencodeSubPath(platform, arch),
   },
   binaryDownloadService,
   loggingService.createLogger("agent-binary")

@@ -33,7 +33,6 @@ import {
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
-  getOpencodeSubPath,
   getOpencodeExecutablePath,
 } from "../src/agents/opencode/setup-info";
 import {
@@ -184,7 +183,6 @@ async function main(): Promise<void> {
     url: getOpencodeUrl(platform, arch),
     destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
     executablePath: getOpencodeExecutablePath(platform),
-    subPath: getOpencodeSubPath(platform, arch),
   };
   await downloadBinary(service, opencodeRequest, OPENCODE_VERSION);
 
