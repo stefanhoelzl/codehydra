@@ -22,7 +22,6 @@ import {
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
-  getOpencodeSubPath,
   getOpencodeExecutablePath,
 } from "../../agents/opencode/setup-info";
 import { SILENT_LOGGER } from "../logging";
@@ -96,7 +95,6 @@ function buildDownloadRequest(
       url: getOpencodeUrl(platform, arch),
       destDir,
       executablePath,
-      subPath: getOpencodeSubPath(platform, arch),
     },
     binaryPath: join(destDir, executablePath),
   };

@@ -39,7 +39,6 @@ const opencodeConfig: AgentBinaryConfig = {
   destDir: "/app-data/opencode/0.1.47",
   url: "https://example.com/opencode.tar.gz",
   executablePath: "opencode",
-  subPath: "opencode-linux-x64",
 };
 
 const claudeNullVersionConfig: AgentBinaryConfig = {
@@ -48,7 +47,6 @@ const claudeNullVersionConfig: AgentBinaryConfig = {
   destDir: "/app-data/claude/latest",
   url: "https://example.com/claude.tar.gz",
   executablePath: "claude",
-  subPath: "claude-linux-x64",
 };
 
 // =============================================================================

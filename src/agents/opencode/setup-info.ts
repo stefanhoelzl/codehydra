@@ -59,19 +59,6 @@ export function getOpencodeUrl(platform: SupportedPlatform, arch: SupportedArch)
 }
 
 /**
- * Get the subpath within the extracted archive for OpenCode.
- *
- * @param platform - Operating system platform
- * @param arch - CPU architecture
- * @returns Subpath prefix within the archive
- */
-export function getOpencodeSubPath(platform: SupportedPlatform, arch: SupportedArch): string {
-  const os = platform === "win32" ? "windows" : platform === "darwin" ? "darwin" : "linux";
-  const archName = OPENCODE_ARCH[arch];
-  return `opencode-${os}-${archName}`;
-}
-
-/**
  * Get the relative path to the OpenCode executable within the extracted directory.
  *
  * @param platform - Operating system platform
