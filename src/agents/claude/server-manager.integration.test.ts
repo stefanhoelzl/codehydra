@@ -889,6 +889,115 @@ describe("ClaudeCodeServerManager integration", () => {
       ).resolves.not.toThrow();
     });
 
+    it("WrapperStart with non-plan initial prompt sets status to busy", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      const readyCallback = vi.fn();
+      serverManager.onWorkspaceReady(readyCallback);
+
+      const markActiveHandler = vi.fn();
+      serverManager.setMarkActiveHandler(markActiveHandler);
+
+      // Set initial prompt without plan agent (agent undefined → non-plan)
+      await serverManager.setInitialPrompt("/workspace/feature-a", {
+        prompt: "Build a feature",
+      });
+
+      // WrapperStart should set status to busy instead of idle
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+      expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
+      expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
+    });
+
+    it("SessionStart stays busy with non-plan initial prompt", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await serverManager.setInitialPrompt("/workspace/feature-a", {
+        prompt: "Build a feature",
+      });
+
+      // Full startup sequence: WrapperStart → SessionStart → UserPromptSubmit
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      // Should stay busy throughout — no idle blip
+      expect(statusChanges).toEqual(["busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("WrapperStart with plan initial prompt sets status to idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Set initial prompt with plan agent
+      await serverManager.setInitialPrompt("/workspace/feature-a", {
+        prompt: "Plan a feature",
+        agent: "plan",
+      });
+
+      // WrapperStart should set status to idle (normal behavior)
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("WrapperStart without initial prompt sets status to idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // No setInitialPrompt called
+
+      // WrapperStart should set status to idle (normal behavior)
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("flag consumed on SessionStart, subsequent session goes idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await serverManager.setInitialPrompt("/workspace/feature-a", {
+        prompt: "Build a feature",
+      });
+
+      // First session: flag consumed on SessionStart
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
+
+      // Second session: normal idle behavior
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["busy", "idle", "none", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
     it("setInitialPrompt handles mkdtemp failure gracefully", async () => {
       await serverManager.startServer("/workspace/feature-a");
 

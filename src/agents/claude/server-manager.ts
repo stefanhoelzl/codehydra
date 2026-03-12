@@ -51,6 +51,8 @@ export interface WorkspaceState {
   initialPromptPath?: Path;
   /** Path to the no-session marker file (for getNoSessionMarkerPath) */
   noSessionMarkerPath?: Path;
+  /** Flag: first WrapperStart should set status to busy (non-plan initial prompt) */
+  busyOnWrapperStart?: boolean;
 }
 
 /**
@@ -326,8 +328,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
   /**
    * Subscribe to workspace ready events.
-   * Triggered when status changes to idle (from WrapperStart or SessionStart),
-   * indicating the loading screen should be cleared.
+   * Triggered on WrapperStart (even when status is busy due to an initial prompt)
+   * or when status changes to idle, indicating the loading screen should be cleared.
    *
    * @param callback - Callback invoked with workspace path
    * @returns Unsubscribe function
@@ -445,6 +447,10 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
       // Store the path for later retrieval
       state.initialPromptPath = promptFilePath;
+
+      // Non-plan agents will immediately process the prompt, so the first
+      // WrapperStart should show "busy" instead of "idle".
+      state.busyOnWrapperStart = config.agent !== "plan";
 
       this.logger.info("Initial prompt file created", {
         workspacePath: normalizedPath,
@@ -684,6 +690,15 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Determine status change for this hook
     let newStatus = getStatusChangeForHook(hookName);
 
+    // When a workspace has a non-plan initial prompt, override WrapperStart and
+    // SessionStart to busy so there is no idle blip before UserPromptSubmit.
+    if (state.busyOnWrapperStart && (hookName === "WrapperStart" || hookName === "SessionStart")) {
+      newStatus = "busy";
+      if (hookName === "SessionStart") {
+        state.busyOnWrapperStart = false;
+      }
+    }
+
     // Special handling for permission resolution flow:
     // PermissionRequest sets flag, PreToolUse clears it and transitions to busy
     if (hookName === "PermissionRequest") {
@@ -748,8 +763,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
         callback(newStatus);
       }
 
-      // When status becomes idle, notify workspace is ready (clears loading screen)
-      if (newStatus === "idle") {
+      // When status becomes idle, or WrapperStart fires (even if busy due to initial prompt),
+      // notify workspace is ready (clears loading screen) and mark active.
+      if (hookName === "WrapperStart" || newStatus === "idle") {
         for (const callback of this.workspaceReadyCallbacks) {
           callback(normalizedPath);
         }
