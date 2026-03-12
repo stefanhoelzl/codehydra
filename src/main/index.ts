@@ -84,6 +84,7 @@ import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
 import { createViewModule } from "./modules/view-module";
 import { createCodeServerModule } from "./modules/code-server-module";
+import { createPluginServerModule } from "./modules/plugin-server-module";
 import { createClaudeAgentModule } from "./modules/claude-agent-module";
 import { createOpenCodeAgentModule } from "./modules/opencode-agent-module";
 import { createMetadataModule } from "./modules/metadata-module";
@@ -429,11 +430,16 @@ const { module: viewModule, readyHandler } = createViewModule({
   uiHtmlPath,
 });
 
+const pluginServerModule = createPluginServerModule({
+  pluginServer,
+  dispatcher,
+  logger: apiLogger,
+  onPortReady: (port) => codeServerManager.setPluginPort(port),
+});
+
 const codeServerModule = createCodeServerModule({
   codeServerManager,
   extensionManager: setupExtensionManager,
-  pluginServer,
-  dispatcher,
   fileSystemLayer,
   workspaceFileService,
   pathProvider,
@@ -629,6 +635,7 @@ const ipcEventBridge = createIpcEventBridge({
 dispatcher.registerModule(idempotencyModule);
 dispatcher.registerModule(configModule);
 dispatcher.registerModule(viewModule);
+dispatcher.registerModule(pluginServerModule);
 dispatcher.registerModule(codeServerModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);

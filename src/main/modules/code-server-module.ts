@@ -1,12 +1,12 @@
 /**
  * CodeServerModule - Manages code-server lifecycle, extensions, and per-workspace files.
  *
- * Consolidates seven inline bootstrap modules into a single extracted module:
+ * Consolidates these concerns into a single extracted module:
  * - Binary preflight (code-server part)
  * - Extension preflight
  * - Binary download (code-server part)
  * - Extension install
- * - Code-server lifecycle (start/stop + PluginServer)
+ * - Code-server lifecycle (start/stop)
  * - Per-workspace file creation (finalize hook)
  * - Per-workspace file deletion (delete hook)
  *
@@ -20,17 +20,7 @@ import type { ExtensionManager } from "../../services/vscode-setup/extension-man
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { PathProvider } from "../../services/platform/path-provider";
 import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
-import type { PluginServer, ApiCallHandlers } from "../../services/plugin-server/plugin-server";
-import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Logger } from "../../services/logging/types";
-import type { Workspace } from "../../shared/api/types";
-import type {
-  SetMetadataRequest,
-  DeleteWorkspaceRequest,
-  ExecuteCommandRequest,
-  WorkspaceCreateRequest,
-  PluginResult,
-} from "../../shared/plugin-protocol";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { SupportedPlatform, SupportedArch } from "../../agents/types";
 import type { DownloadRequest } from "../../services/binary-download";
@@ -43,34 +33,15 @@ import type {
   RegisterConfigResult,
 } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
-import type {
-  FinalizeHookInput,
-  FinalizeHookResult,
-  OpenWorkspaceIntent,
-} from "../operations/open-workspace";
+import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { SETUP_OPERATION_ID } from "../operations/setup";
-import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../operations/open-workspace";
-import {
-  DELETE_WORKSPACE_OPERATION_ID,
-  INTENT_DELETE_WORKSPACE,
-} from "../operations/delete-workspace";
-import { INTENT_GET_WORKSPACE_STATUS } from "../operations/get-workspace-status";
-import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
-import { INTENT_GET_AGENT_SESSION } from "../operations/get-agent-session";
-import type { GetAgentSessionIntent } from "../operations/get-agent-session";
-import { INTENT_RESTART_AGENT } from "../operations/restart-agent";
-import type { RestartAgentIntent } from "../operations/restart-agent";
-import { INTENT_GET_METADATA } from "../operations/get-metadata";
-import type { GetMetadataIntent } from "../operations/get-metadata";
-import { INTENT_SET_METADATA } from "../operations/set-metadata";
-import type { SetMetadataIntent } from "../operations/set-metadata";
-import { INTENT_RESOLVE_WORKSPACE } from "../operations/resolve-workspace";
-import type { ResolveWorkspaceIntent } from "../operations/resolve-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import { urlForWorkspace, urlForFolder } from "../../services/code-server/code-server-manager";
 import {
   CODE_SERVER_VERSION,
@@ -96,7 +67,6 @@ export interface CodeServerModuleDeps {
     | "ensureRunning"
     | "port"
     | "getConfig"
-    | "setPluginPort"
     | "setCodeServerVersion"
     | "setPort"
     | "stop"
@@ -105,11 +75,6 @@ export interface CodeServerModuleDeps {
     ExtensionManager,
     "preflight" | "install" | "cleanOutdated" | "setCodeServerBinaryPath"
   >;
-  readonly pluginServer: Pick<
-    PluginServer,
-    "start" | "close" | "setWorkspaceConfig" | "removeWorkspaceConfig" | "onApiCall" | "sendCommand"
-  > | null;
-  readonly dispatcher: Dispatcher;
   readonly fileSystemLayer: Pick<FileSystemLayer, "mkdir">;
   readonly workspaceFileService: IWorkspaceFileService;
   readonly pathProvider: Pick<PathProvider, "bundlePath">;
@@ -128,8 +93,7 @@ export interface CodeServerModuleDeps {
  * and per-workspace .code-workspace files.
  */
 export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule {
-  const { codeServerManager, extensionManager, pluginServer, dispatcher, fileSystemLayer, logger } =
-    deps;
+  const { codeServerManager, extensionManager, fileSystemLayer, logger } = deps;
 
   // Internal state: port set by start hook, read by finalize hook
   let codeServerPort = 0;
@@ -208,28 +172,10 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         },
 
         // -------------------------------------------------------------------
-        // app-start → start: start PluginServer + code-server, update port
+        // app-start → start: start code-server, update port
         // -------------------------------------------------------------------
         start: {
           handler: async (): Promise<StartHookResult> => {
-            // Start PluginServer BEFORE code-server (graceful degradation)
-            let pluginPort: number | undefined;
-            if (pluginServer) {
-              try {
-                pluginPort = await pluginServer.start();
-
-                // Pass pluginPort to CodeServerManager so extensions can connect
-                codeServerManager.setPluginPort(pluginPort);
-
-                // Register plugin API handlers (dispatch intents directly)
-                pluginServer.onApiCall(createPluginApiHandlers(pluginServer, dispatcher, logger));
-                logger.info("Plugin API handlers registered");
-              } catch (error) {
-                const message = error instanceof Error ? error.message : "Unknown error";
-                logger.warn("PluginServer start failed", { error: message });
-              }
-            }
-
             // Ensure required directories exist
             const config = codeServerManager.getConfig();
             await Promise.all([
@@ -251,18 +197,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       },
 
       // -------------------------------------------------------------------
-      // app-shutdown → stop: stop code-server + PluginServer
+      // app-shutdown → stop: stop code-server
       // -------------------------------------------------------------------
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            // Stop code-server
             await codeServerManager.stop();
-
-            // Close PluginServer AFTER code-server (extensions disconnect first)
-            if (pluginServer) {
-              await pluginServer.close();
-            }
           },
         },
       },
@@ -358,18 +298,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
           handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
             const finalizeCtx = ctx as FinalizeHookInput;
 
-            // Push config to PluginServer so connecting extensions get env vars + agent type
-            if (pluginServer && finalizeCtx.agentType) {
-              const intent = ctx.intent as OpenWorkspaceIntent;
-              const resetWorkspace = intent.payload.existingWorkspace === undefined;
-              pluginServer.setWorkspaceConfig(
-                finalizeCtx.workspacePath,
-                finalizeCtx.envVars,
-                finalizeCtx.agentType,
-                resetWorkspace
-              );
-            }
-
             try {
               const workspacePathObj = new Path(finalizeCtx.workspacePath);
               const projectWorkspacesDir = workspacePathObj.dirname;
@@ -411,11 +339,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            // Clean up PluginServer config for this workspace
-            if (pluginServer) {
-              pluginServer.removeWorkspaceConfig(wsPath);
-            }
 
             try {
               const workspacePath = new Path(wsPath);
@@ -464,221 +387,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
           extensionManager.setCodeServerBinaryPath(binaryPath);
         }
       },
-    },
-  };
-}
-
-// =============================================================================
-// Plugin API Handlers
-// =============================================================================
-
-/**
- * Wrap a dispatcher call with error handling, returning a PluginResult.
- */
-async function handlePluginApiCall<T>(
-  workspacePath: string,
-  operation: string,
-  fn: () => Promise<T>,
-  logger: Logger,
-  logContext?: Record<string, unknown>
-): Promise<PluginResult<T>> {
-  try {
-    const result = await fn();
-    logger.debug(`${operation} success`, { workspace: workspacePath, ...logContext });
-    return { success: true, data: result };
-  } catch (error) {
-    const message = getErrorMessage(error);
-    logger.error(`${operation} error`, {
-      workspace: workspacePath,
-      error: message,
-      ...logContext,
-    });
-    return { success: false, error: message };
-  }
-}
-
-/**
- * Create plugin API handlers that dispatch intents directly.
- */
-function createPluginApiHandlers(
-  pluginServer: Pick<PluginServer, "sendCommand">,
-  dispatcher: Dispatcher,
-  logger: Logger
-): ApiCallHandlers {
-  return {
-    async getStatus(workspacePath: string) {
-      return handlePluginApiCall(
-        workspacePath,
-        "getStatus",
-        async () => {
-          const intent: GetWorkspaceStatusIntent = {
-            type: INTENT_GET_WORKSPACE_STATUS,
-            payload: { workspacePath },
-          };
-          const result = await dispatcher.dispatch(intent);
-          if (!result) {
-            throw new Error("Get workspace status dispatch returned no result");
-          }
-          return result;
-        },
-        logger
-      );
-    },
-
-    async getAgentSession(workspacePath: string) {
-      return handlePluginApiCall(
-        workspacePath,
-        "getAgentSession",
-        async () => {
-          const intent: GetAgentSessionIntent = {
-            type: INTENT_GET_AGENT_SESSION,
-            payload: { workspacePath },
-          };
-          return dispatcher.dispatch(intent);
-        },
-        logger
-      );
-    },
-
-    async restartAgentServer(workspacePath: string) {
-      return handlePluginApiCall(
-        workspacePath,
-        "restartAgentServer",
-        async () => {
-          const intent: RestartAgentIntent = {
-            type: INTENT_RESTART_AGENT,
-            payload: { workspacePath },
-          };
-          const result = await dispatcher.dispatch(intent);
-          if (result === undefined) {
-            throw new Error("Restart agent dispatch returned no result");
-          }
-          return result;
-        },
-        logger
-      );
-    },
-
-    async getMetadata(workspacePath: string) {
-      return handlePluginApiCall(
-        workspacePath,
-        "getMetadata",
-        async () => {
-          const intent: GetMetadataIntent = {
-            type: INTENT_GET_METADATA,
-            payload: { workspacePath },
-          };
-          const result = await dispatcher.dispatch(intent);
-          if (!result) {
-            throw new Error("Get metadata dispatch returned no result");
-          }
-          return result as Record<string, string>;
-        },
-        logger
-      );
-    },
-
-    async setMetadata(workspacePath: string, request: SetMetadataRequest) {
-      return handlePluginApiCall(
-        workspacePath,
-        "setMetadata",
-        async () => {
-          const intent: SetMetadataIntent = {
-            type: INTENT_SET_METADATA,
-            payload: {
-              workspacePath,
-              key: request.key,
-              value: request.value,
-            },
-          };
-          await dispatcher.dispatch(intent);
-          return undefined;
-        },
-        logger,
-        { key: request.key }
-      );
-    },
-
-    async delete(workspacePath: string, request: DeleteWorkspaceRequest) {
-      return handlePluginApiCall(
-        workspacePath,
-        "delete",
-        async () => {
-          const intent: DeleteWorkspaceIntent = {
-            type: INTENT_DELETE_WORKSPACE,
-            payload: {
-              workspacePath,
-              keepBranch: request.keepBranch ?? true,
-              force: false,
-              removeWorktree: true,
-            },
-          };
-          const handle = dispatcher.dispatch(intent);
-          if (!(await handle.accepted)) {
-            return { started: false };
-          }
-          void handle;
-          return { started: true };
-        },
-        logger,
-        { keepBranch: request.keepBranch ?? true }
-      );
-    },
-
-    async executeCommand(workspacePath: string, request: ExecuteCommandRequest) {
-      return handlePluginApiCall(
-        workspacePath,
-        "executeCommand",
-        async () => {
-          const result = await pluginServer.sendCommand(
-            workspacePath,
-            request.command,
-            request.args
-          );
-          if (!result.success) {
-            throw new Error(result.error);
-          }
-          return result.data;
-        },
-        logger,
-        { command: request.command }
-      );
-    },
-
-    async create(workspacePath: string, request: WorkspaceCreateRequest) {
-      return handlePluginApiCall(
-        workspacePath,
-        "create",
-        async () => {
-          // Resolve workspacePath → projectPath before dispatching workspace:open
-          const resolved = await dispatcher.dispatch({
-            type: INTENT_RESOLVE_WORKSPACE,
-            payload: { workspacePath },
-          } as ResolveWorkspaceIntent);
-
-          const intent: OpenWorkspaceIntent = {
-            type: INTENT_OPEN_WORKSPACE,
-            payload: {
-              projectPath: resolved.projectPath,
-              workspaceName: request.name,
-              base: request.base,
-              ...(request.initialPrompt !== undefined && {
-                initialPrompt: request.initialPrompt,
-              }),
-              ...(request.stealFocus !== undefined && {
-                stealFocus: request.stealFocus,
-              }),
-            },
-          };
-          const result = await dispatcher.dispatch(intent);
-          if (!result) {
-            throw new Error("Create workspace dispatch returned no result");
-          }
-          return result as Workspace;
-        },
-        logger,
-        { name: request.name }
-      );
     },
   };
 }
