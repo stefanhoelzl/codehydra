@@ -46,4 +46,6 @@ export interface DownloadRequest {
   readonly destDir: string;
   /** Relative path to chmod +x on Unix (optional) */
   readonly executablePath?: string;
+  /** Subpath within the extracted archive to promote to destDir root. */
+  readonly subPath?: string;
 }

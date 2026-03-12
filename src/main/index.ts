@@ -59,14 +59,21 @@ import {
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
+  getCodeServerSubPath,
   getCodeServerExecutablePath,
 } from "../services/code-server/setup-info";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
+  getOpencodeSubPath,
   getOpencodeExecutablePath,
 } from "../agents/opencode/setup-info";
-import { CLAUDE_VERSION, getClaudeUrl, getClaudeExecutablePath } from "../agents/claude/setup-info";
+import {
+  CLAUDE_VERSION,
+  getClaudeUrl,
+  getClaudeSubPath,
+  getClaudeExecutablePath,
+} from "../agents/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "../agents/types";
 import { ExtensionManager } from "../services/vscode-setup/extension-manager";
 import { AgentStatusManager, createAgentServerManager } from "../agents";
@@ -234,6 +241,7 @@ const codeServerDownloadRequest: DownloadRequest = {
   url: getCodeServerUrl(platform, arch),
   destDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
   executablePath: codeServerExecutablePath,
+  subPath: getCodeServerSubPath(platform, arch),
 };
 
 const codeServerConfig: CodeServerConfig = {
@@ -264,6 +272,7 @@ const claudeBinaryManager = new AgentBinaryManager(
     destDir: CLAUDE_VERSION ? pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative() : "",
     url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
     executablePath: getClaudeExecutablePath(platform),
+    ...(CLAUDE_VERSION ? { subPath: getClaudeSubPath(platform, arch) } : {}),
   },
   binaryDownloadService,
   loggingService.createLogger("agent-binary")
@@ -275,6 +284,7 @@ const opencodeBinaryManager = new AgentBinaryManager(
     destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
     url: getOpencodeUrl(platform, arch),
     executablePath: getOpencodeExecutablePath(platform),
+    subPath: getOpencodeSubPath(platform, arch),
   },
   binaryDownloadService,
   loggingService.createLogger("agent-binary")

@@ -66,6 +66,7 @@ describe("DefaultBinaryDownloadService", () => {
       url: "https://example.com/code-server-4.109.2-linux-amd64.tar.gz",
       destDir: "/app-data/code-server/4.109.2",
       executablePath: "bin/code-server",
+      subPath: "code-server-4.109.2-linux-amd64",
     };
 
     it("throws BinaryDownloadError on HTTP 404", async () => {
@@ -103,7 +104,7 @@ describe("DefaultBinaryDownloadService", () => {
       });
     });
 
-    it("flattens nested directory structure using rename", async () => {
+    it("promotes subPath contents to destDir root using rename", async () => {
       const successHttpClient = createMockHttpClient({
         defaultResponse: {
           body: "binary content",
@@ -119,21 +120,13 @@ describe("DefaultBinaryDownloadService", () => {
         },
       });
 
-      // Override readdir to return dynamic results based on call count
-      let readdirCallCount = 0;
+      // Override readdir to return subPath directory contents
       trackingFs.readdir = vi.fn(async () => {
-        readdirCallCount++;
-        if (readdirCallCount === 1) {
-          // First call: destDir has single nested directory
-          return [createDirEntry("code-server-4.109.2-linux-amd64", { isDirectory: true })];
-        } else {
-          // Second call: nested directory contents
-          return [
-            createDirEntry("bin", { isDirectory: true }),
-            createDirEntry("lib", { isDirectory: true }),
-            createDirEntry("package.json", { isFile: true }),
-          ];
-        }
+        return [
+          createDirEntry("bin", { isDirectory: true }),
+          createDirEntry("lib", { isDirectory: true }),
+          createDirEntry("package.json", { isFile: true }),
+        ];
       });
 
       // Override rename and rm to be no-ops (we just want to track calls)
@@ -148,9 +141,14 @@ describe("DefaultBinaryDownloadService", () => {
 
       await trackingService.download(codeServerRequest);
 
+      // Verify readdir was called once (for the subPath directory)
+      expect(trackingFs.readdir).toHaveBeenCalledTimes(1);
+      expect(String(trackingFs.readdir.mock.calls[0]?.[0])).toBe(
+        join("/app-data", "code-server", "4.109.2", "code-server-4.109.2-linux-amd64")
+      );
+
       // Verify rename was called for each nested entry (atomic moves)
       expect(trackingFs.rename).toHaveBeenCalledTimes(3);
-      // Note: Service passes string paths
       const renameCalls = trackingFs.rename.mock.calls;
       expect(String(renameCalls[0]?.[0])).toBe(
         join("/app-data", "code-server", "4.109.2", "code-server-4.109.2-linux-amd64", "bin")
@@ -164,6 +162,81 @@ describe("DefaultBinaryDownloadService", () => {
       );
       expect(nestedDirRmCall).toBeDefined();
       expect(nestedDirRmCall?.[1]).toEqual({ recursive: true, force: true });
+    });
+
+    it("does not flatten when subPath is not set", async () => {
+      const successHttpClient = createMockHttpClient({
+        defaultResponse: {
+          body: "binary content",
+          status: 200,
+          headers: { "content-length": "14" },
+        },
+      });
+
+      const trackingFs = createSpyFileSystemLayer({
+        entries: {
+          [tmpdir()]: directory(),
+        },
+      });
+
+      trackingFs.readdir = vi.fn(async () => []);
+      trackingFs.rename = vi.fn(async () => {});
+
+      const trackingService = new DefaultBinaryDownloadService(
+        successHttpClient,
+        trackingFs,
+        mockArchiveExtractor
+      );
+
+      const requestWithoutSubPath: DownloadRequest = {
+        name: "test-binary",
+        url: "https://example.com/test.tar.gz",
+        destDir: "/app-data/test/1.0.0",
+      };
+
+      await trackingService.download(requestWithoutSubPath);
+
+      // readdir should NOT have been called (no subPath = no promotion)
+      expect(trackingFs.readdir).not.toHaveBeenCalled();
+      expect(trackingFs.rename).not.toHaveBeenCalled();
+    });
+
+    it("throws BinaryDownloadError when subPath does not exist", async () => {
+      const successHttpClient = createMockHttpClient({
+        defaultResponse: {
+          body: "binary content",
+          status: 200,
+          headers: { "content-length": "14" },
+        },
+      });
+
+      // Use empty filesystem - subPath directory won't exist
+      const emptyFs = createSpyFileSystemLayer({
+        entries: {
+          [tmpdir()]: directory(),
+        },
+      });
+
+      const trackingService = new DefaultBinaryDownloadService(
+        successHttpClient,
+        emptyFs,
+        mockArchiveExtractor
+      );
+
+      const requestWithBadSubPath: DownloadRequest = {
+        name: "test-binary",
+        url: "https://example.com/test.tar.gz",
+        destDir: "/app-data/test/1.0.0",
+        subPath: "nonexistent-dir",
+      };
+
+      await expect(trackingService.download(requestWithBadSubPath)).rejects.toThrow(
+        BinaryDownloadError
+      );
+      await expect(trackingService.download(requestWithBadSubPath)).rejects.toMatchObject({
+        errorCode: "EXTRACTION_FAILED",
+        message: expect.stringContaining("nonexistent-dir"),
+      });
     });
   });
 });
