@@ -19,7 +19,7 @@
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType, SetupRowId, SetupRowStatus } from "../../shared/api/types";
-import type { BinaryType } from "../../services/vscode-setup/types";
+import type { BinaryType, ExtensionInstallEntry } from "../../services/vscode-setup/types";
 import type { LifecycleAgentType } from "../../shared/ipc";
 
 // =============================================================================
@@ -35,10 +35,8 @@ export interface SetupPayload {
   readonly missingBinaries?: readonly BinaryType[];
   /** True if extensions need install */
   readonly needsExtensions?: boolean;
-  /** List of extensions that need install */
-  readonly missingExtensions?: readonly string[];
-  /** List of extensions that need update */
-  readonly outdatedExtensions?: readonly string[];
+  /** Extensions to install (from check-deps install plan) */
+  readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
   /** Currently configured agent (may be null) */
   readonly configuredAgent?: ConfigAgentType | null;
 }
@@ -98,11 +96,10 @@ export interface BinaryHookInput extends HookContext {
 }
 
 /**
- * Input context for the "extensions" hook — carries extension info from payload.
+ * Input context for the "extensions" hook — carries install plan from payload.
  */
 export interface ExtensionsHookInput extends HookContext {
-  readonly missingExtensions?: readonly string[];
-  readonly outdatedExtensions?: readonly string[];
+  readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
   readonly report: SetupProgressReporter;
 }
 
@@ -232,11 +229,8 @@ export class SetupOperation implements Operation<SetupIntent, void> {
       const extensionsInput: ExtensionsHookInput = {
         intent: ctx.intent,
         report,
-        ...(payload.missingExtensions !== undefined && {
-          missingExtensions: payload.missingExtensions,
-        }),
-        ...(payload.outdatedExtensions !== undefined && {
-          outdatedExtensions: payload.outdatedExtensions,
+        ...(payload.extensionInstallPlan !== undefined && {
+          extensionInstallPlan: payload.extensionInstallPlan,
         }),
       };
       const { errors: extensionsErrors } = await ctx.hooks.collect<void>(

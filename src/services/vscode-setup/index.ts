@@ -5,6 +5,8 @@
 export {
   type ExtensionsManifest,
   type ExtensionConfig,
+  type ExtensionRequirement,
+  type ExtensionInstallEntry,
   type BinaryType,
   validateExtensionsManifest,
 } from "./types";
@@ -13,11 +15,3 @@ export {
   listInstalledExtensions,
   removeFromExtensionsJson,
 } from "./extension-utils";
-
-// Extension manager
-export type {
-  ExtensionPreflightResult,
-  ExtensionPreflightError,
-  ExtensionProgressCallback,
-} from "./extension-manager";
-export { ExtensionManager } from "./extension-manager";

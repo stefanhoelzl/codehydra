@@ -39,7 +39,11 @@
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
-import type { BinaryType } from "../../services/vscode-setup/types";
+import type {
+  BinaryType,
+  ExtensionRequirement,
+  ExtensionInstallEntry,
+} from "../../services/vscode-setup/types";
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 import { INTENT_SETUP } from "./setup";
 import { INTENT_UPDATE_APPLY } from "./update-apply";
@@ -83,13 +87,13 @@ export const APP_START_OPERATION_ID = "app-start";
 /** Input context for "check-deps". Agent modules use their own isActive flag. */
 export interface CheckDepsHookContext extends HookContext {
   readonly configuredAgent: ConfigAgentType | null;
+  readonly extensionRequirements: readonly ExtensionRequirement[];
 }
 
 /** Per-handler result for "check-deps" hook point. Arrays only -- booleans derived by operation. */
 export interface CheckDepsResult {
   readonly missingBinaries?: readonly BinaryType[];
-  readonly missingExtensions?: readonly string[];
-  readonly outdatedExtensions?: readonly string[];
+  readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
   /** True when auto-update config is "ask" and an update was detected. */
   readonly updateNeedsChoice?: boolean;
 }
@@ -124,10 +128,12 @@ export interface InitHookContext extends HookContext {
 
 /**
  * Per-handler result for "init" hook point.
- * Config module returns configuredAgent; other init handlers return `{}`.
+ * Config module returns configuredAgent; extension module returns extensionRequirements.
+ * Other init handlers return `{}`.
  */
 export interface InitResult {
   readonly configuredAgent?: ConfigAgentType | null;
+  readonly extensionRequirements?: readonly ExtensionRequirement[];
 }
 
 /**
@@ -170,8 +176,7 @@ interface CheckResult {
   readonly needsBinaryDownload: boolean;
   readonly missingBinaries: readonly BinaryType[];
   readonly needsExtensions: boolean;
-  readonly missingExtensions: readonly string[];
-  readonly outdatedExtensions: readonly string[];
+  readonly extensionInstallPlan: readonly ExtensionInstallEntry[];
   readonly updateNeedsChoice: boolean;
 }
 
@@ -216,10 +221,12 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     );
     if (initErrors.length > 0) throw initErrors[0]!;
 
-    // Extract configuredAgent from init results (config module provides it)
+    // Extract configuredAgent and extensionRequirements from init results
     let configuredAgent: ConfigAgentType | null = null;
+    const extensionRequirements: ExtensionRequirement[] = [];
     for (const result of initResults) {
       if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
+      if (result.extensionRequirements) extensionRequirements.push(...result.extensionRequirements);
     }
 
     // Hook 4: "show-ui" -- Show starting screen, capture waitForRetry
@@ -234,7 +241,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     }
 
     // Hook 5: "check-deps" (collect, isolated contexts)
-    let checkResult = await this.runChecks(ctx, configuredAgent);
+    let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
 
     // Dispatch app:update before setup (interceptor rejects if config="never" or no update)
     try {
@@ -260,8 +267,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
               needsBinaryDownload: checkResult.needsBinaryDownload,
               missingBinaries: checkResult.missingBinaries,
               needsExtensions: checkResult.needsExtensions,
-              missingExtensions: checkResult.missingExtensions,
-              outdatedExtensions: checkResult.outdatedExtensions,
+              extensionInstallPlan: checkResult.extensionInstallPlan,
               configuredAgent: checkResult.configuredAgent,
             },
           });
@@ -272,7 +278,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
           if (waitForRetry) {
             await waitForRetry();
             // Re-run check hooks to get fresh preflight state for retry
-            checkResult = await this.runChecks(ctx, configuredAgent);
+            checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
             if (!checkResult.needsSetup) {
               setupComplete = true;
             }
@@ -333,14 +339,20 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
   /**
    * Run check-deps hook point using collect() (isolated contexts).
    * Merges results and derives boolean flags.
-   * configuredAgent is provided by the caller (from config module's init result).
+   * configuredAgent and extensionRequirements are provided by the caller
+   * (from init results).
    */
   private async runChecks(
     ctx: OperationContext<AppStartIntent>,
-    configuredAgent: ConfigAgentType | null
+    configuredAgent: ConfigAgentType | null,
+    extensionRequirements: readonly ExtensionRequirement[]
   ): Promise<CheckResult> {
     // check-deps: binary + extension checks (collect, isolated contexts)
-    const depsCtx: CheckDepsHookContext = { intent: ctx.intent, configuredAgent };
+    const depsCtx: CheckDepsHookContext = {
+      intent: ctx.intent,
+      configuredAgent,
+      extensionRequirements,
+    };
     const { results: depsResults, errors: depsErrors } = await ctx.hooks.collect<CheckDepsResult>(
       "check-deps",
       depsCtx
@@ -351,21 +363,19 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
 
     // Merge dep results (concatenate arrays from all handlers)
     const missingBinaries: BinaryType[] = [];
-    const missingExtensions: string[] = [];
-    const outdatedExtensions: string[] = [];
+    const extensionInstallPlan: ExtensionInstallEntry[] = [];
     let updateNeedsChoice = false;
 
     for (const result of depsResults) {
       if (result.missingBinaries) missingBinaries.push(...result.missingBinaries);
-      if (result.missingExtensions) missingExtensions.push(...result.missingExtensions);
-      if (result.outdatedExtensions) outdatedExtensions.push(...result.outdatedExtensions);
+      if (result.extensionInstallPlan) extensionInstallPlan.push(...result.extensionInstallPlan);
       if (result.updateNeedsChoice) updateNeedsChoice = true;
     }
 
     // Derive booleans (dissolved from needsSetupModule)
     const needsAgentSelection = configuredAgent === null;
     const needsBinaryDownload = missingBinaries.length > 0;
-    const needsExtensions = missingExtensions.length > 0 || outdatedExtensions.length > 0;
+    const needsExtensions = extensionInstallPlan.length > 0;
     const needsSetup = needsAgentSelection || needsBinaryDownload || needsExtensions;
 
     return {
@@ -375,8 +385,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       needsBinaryDownload,
       missingBinaries,
       needsExtensions,
-      missingExtensions,
-      outdatedExtensions,
+      extensionInstallPlan,
       updateNeedsChoice,
     };
   }

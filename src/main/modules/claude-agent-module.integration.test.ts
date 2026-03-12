@@ -78,6 +78,7 @@ class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
     const hookCtx: CheckDepsHookContext = {
       intent: ctx.intent,
       configuredAgent: this.configuredAgent as CheckDepsHookContext["configuredAgent"],
+      extensionRequirements: [],
     };
     const { results } = await ctx.hooks.collect<CheckDepsResult>("check-deps", hookCtx);
     const merged: CheckDepsResult = {};
