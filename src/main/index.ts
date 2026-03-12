@@ -68,7 +68,7 @@ import {
 } from "../agents/opencode/setup-info";
 import { CLAUDE_VERSION, getClaudeUrl, getClaudeExecutablePath } from "../agents/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "../agents/types";
-import { ExtensionManager } from "../services/vscode-setup/extension-manager";
+import { createExtensionModule } from "./modules/extension-module";
 import { AgentStatusManager, createAgentServerManager } from "../agents";
 import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
@@ -280,15 +280,6 @@ const opencodeBinaryManager = new AgentBinaryManager(
   loggingService.createLogger("agent-binary")
 );
 
-// ExtensionManager for extension preflight/install
-const setupExtensionManager = new ExtensionManager(
-  pathProvider,
-  fileSystemLayer,
-  processRunner,
-  codeServerBinaryPath,
-  loggingService.createLogger("ext-manager")
-);
-
 const hookRegistry = new HookRegistry();
 const dispatcher = new Dispatcher(hookRegistry, loggingService.createLogger("dispatcher"));
 
@@ -437,14 +428,21 @@ const pluginServerModule = createPluginServerModule({
   onPortReady: (port) => codeServerManager.setPluginPort(port),
 });
 
+const extensionModule = createExtensionModule({
+  pathProvider,
+  fileSystemLayer,
+  logger: loggingService.createLogger("ext-manager"),
+});
+
 const codeServerModule = createCodeServerModule({
   codeServerManager,
-  extensionManager: setupExtensionManager,
+  processRunner,
   fileSystemLayer,
   workspaceFileService,
   pathProvider,
   platform,
   arch,
+  codeServerBinaryPath,
   wrapperPath: pathProvider.dataPath("bin/ch-claude", { cmd: true }).toString(),
   logger: apiLogger,
 });
@@ -636,6 +634,7 @@ dispatcher.registerModule(idempotencyModule);
 dispatcher.registerModule(configModule);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(pluginServerModule);
+dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(codeServerModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);

@@ -83,6 +83,24 @@ export function validateExtensionsManifest(value: unknown): ExtensionsManifestVa
 }
 
 // ============================================================================
+// Extension Requirement Types
+// ============================================================================
+
+/** What the manifest declares — produced by extension-module, consumed by code-server-module. */
+export interface ExtensionRequirement {
+  readonly id: string;
+  readonly version: string;
+  /** Native path to the .vsix file. */
+  readonly vsixPath: string;
+}
+
+/** What needs to be installed — produced by code-server-module check-deps, consumed by setup. */
+export interface ExtensionInstallEntry {
+  readonly id: string;
+  readonly vsixPath: string;
+}
+
+// ============================================================================
 // Preflight Types
 // ============================================================================
 

@@ -91,7 +91,7 @@ export function parseExtensionDir(dirName: string): ParsedExtension | null {
  * // Returns: Map { "codehydra.codehydra" => "0.0.1", "sst-dev.opencode" => "1.2.3" }
  */
 export async function listInstalledExtensions(
-  fs: FileSystemLayer,
+  fs: Pick<FileSystemLayer, "readdir">,
   extensionsDir: PathLike
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
@@ -144,7 +144,7 @@ interface ExtensionsJsonEntry {
  * await removeFromExtensionsJson(fs, "/app/vscode/extensions", ["sst-dev.opencode"]);
  */
 export async function removeFromExtensionsJson(
-  fs: FileSystemLayer,
+  fs: Pick<FileSystemLayer, "readFile" | "writeFile">,
   extensionsDir: PathLike,
   extensionIds: readonly string[]
 ): Promise<void> {

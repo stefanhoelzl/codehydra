@@ -15,7 +15,12 @@ import type { Operation, OperationContext, HookContext } from "../intents/infras
 import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
+import type {
+  CheckDepsHookContext,
+  CheckDepsResult,
+  ConfigureResult,
+  StartHookResult,
+} from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
@@ -43,6 +48,12 @@ import type {
   ConfigSetHookResult,
 } from "../operations/config-set-values";
 import type { IntentModule } from "../intents/infrastructure/module";
+import type {
+  ExtensionRequirement,
+  ExtensionInstallEntry,
+} from "../../services/vscode-setup/types";
+import type { DirEntry } from "../../services/platform/filesystem";
+import type { SpawnedProcess } from "../../services/platform/process";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import { SetupError } from "../../services/errors";
@@ -66,11 +77,19 @@ class MinimalBeforeReadyOperation implements Operation<Intent, readonly Configur
 
 class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
   readonly id = APP_START_OPERATION_ID;
+  private readonly extensionRequirements: readonly ExtensionRequirement[];
+
+  constructor(extensionRequirements: readonly ExtensionRequirement[] = []) {
+    this.extensionRequirements = extensionRequirements;
+  }
 
   async execute(ctx: OperationContext<Intent>): Promise<CheckDepsResult> {
-    const { results } = await ctx.hooks.collect<CheckDepsResult>("check-deps", {
+    const hookCtx: CheckDepsHookContext = {
       intent: ctx.intent,
-    });
+      configuredAgent: "claude",
+      extensionRequirements: this.extensionRequirements,
+    };
+    const { results } = await ctx.hooks.collect<CheckDepsResult>("check-deps", hookCtx);
     // Merge all results
     const merged: CheckDepsResult = {};
     for (const r of results) {
@@ -80,11 +99,11 @@ class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
           ...r.missingBinaries,
         ];
       }
-      if (r.missingExtensions) {
-        (merged as Record<string, unknown>).missingExtensions = r.missingExtensions;
-      }
-      if (r.outdatedExtensions) {
-        (merged as Record<string, unknown>).outdatedExtensions = r.outdatedExtensions;
+      if (r.extensionInstallPlan) {
+        (merged as Record<string, unknown>).extensionInstallPlan = [
+          ...((merged.extensionInstallPlan as ExtensionInstallEntry[]) ?? []),
+          ...r.extensionInstallPlan,
+        ];
       }
     }
     return merged;
@@ -211,6 +230,14 @@ function createMockConfigModule(): IntentModule {
 // Mock Factories
 // =============================================================================
 
+function createMockProcess(exitCode = 0, stderr = ""): SpawnedProcess {
+  return {
+    wait: vi.fn().mockResolvedValue({ exitCode, stderr, stdout: "" }),
+    kill: vi.fn(),
+    pid: 12345,
+  };
+}
+
 function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
   return {
     codeServerManager: {
@@ -227,19 +254,15 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       setPort: vi.fn(),
       stop: vi.fn().mockResolvedValue(undefined),
     },
-    extensionManager: {
-      preflight: vi.fn().mockResolvedValue({
-        success: true,
-        needsInstall: false,
-        missingExtensions: [],
-        outdatedExtensions: [],
-      }),
-      install: vi.fn().mockResolvedValue(undefined),
-      cleanOutdated: vi.fn().mockResolvedValue(undefined),
-      setCodeServerBinaryPath: vi.fn(),
+    processRunner: {
+      run: vi.fn().mockReturnValue(createMockProcess()),
     },
     fileSystemLayer: {
       mkdir: vi.fn().mockResolvedValue(undefined),
+      readdir: vi.fn().mockResolvedValue([]),
+      rm: vi.fn().mockResolvedValue(undefined),
+      readFile: vi.fn().mockResolvedValue("[]"),
+      writeFile: vi.fn().mockResolvedValue(undefined),
     },
     workspaceFileService: {
       ensureWorkspaceFile: vi
@@ -253,9 +276,13 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       bundlePath: vi.fn().mockImplementation((subpath: string) => {
         return new Path(`/bundles/${subpath}`);
       }),
+      dataPath: vi.fn().mockImplementation((subpath: string) => {
+        return new Path(`/test/app-data/${subpath}`);
+      }),
     },
     platform: "linux",
     arch: "x64",
+    codeServerBinaryPath: "/test/code-server/bin/code-server",
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     ...overrides,
@@ -337,42 +364,88 @@ describe("CodeServerModule", () => {
       expect(result.missingBinaries ?? []).not.toContain("code-server");
     });
 
-    it("returns missing extensions when extensions need install", async () => {
+    it("builds install plan for missing extensions", async () => {
       const deps = createMockDeps();
-      (deps.extensionManager.preflight as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: true,
-        needsInstall: true,
-        missingExtensions: ["ext.one"],
-        outdatedExtensions: ["ext.two"],
-      });
+      // No extensions installed
+      (deps.fileSystemLayer.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([]);
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
+
+      const requirements: ExtensionRequirement[] = [
+        { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.two", version: "2.0.0", vsixPath: "/path/ext-two.vsix" },
+      ];
+      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
         payload: {},
       })) as CheckDepsResult;
 
-      expect(result.missingExtensions).toEqual(["ext.one"]);
-      expect(result.outdatedExtensions).toEqual(["ext.two"]);
+      expect(result.extensionInstallPlan).toEqual([
+        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+        { id: "ext.two", vsixPath: "/path/ext-two.vsix" },
+      ]);
     });
 
-    it("returns empty extensions when preflight fails (graceful)", async () => {
+    it("builds install plan for outdated extensions", async () => {
       const deps = createMockDeps();
-      (deps.extensionManager.preflight as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: false,
-        error: { type: "preflight-failed", message: "disk error" },
-      });
+      const installedEntries: DirEntry[] = [
+        { name: "ext.one-0.9.0", isDirectory: true, isFile: false, isSymbolicLink: false },
+      ];
+      (deps.fileSystemLayer.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(
+        installedEntries
+      );
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
+
+      const requirements: ExtensionRequirement[] = [
+        { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
+      ];
+      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation(requirements));
 
       const result = (await dispatcher.dispatch({
         type: "app:start",
         payload: {},
       })) as CheckDepsResult;
 
-      expect(result.missingExtensions).toBeUndefined();
-      expect(result.outdatedExtensions).toBeUndefined();
+      expect(result.extensionInstallPlan).toEqual([
+        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+      ]);
+    });
+
+    it("returns empty install plan when all extensions up-to-date", async () => {
+      const deps = createMockDeps();
+      const installedEntries: DirEntry[] = [
+        { name: "ext.one-1.0.0", isDirectory: true, isFile: false, isSymbolicLink: false },
+      ];
+      (deps.fileSystemLayer.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(
+        installedEntries
+      );
+      const { dispatcher } = createTestSetup(deps);
+
+      const requirements: ExtensionRequirement[] = [
+        { id: "ext.one", version: "1.0.0", vsixPath: "/path/ext-one.vsix" },
+      ];
+      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation(requirements));
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as CheckDepsResult;
+
+      expect(result.extensionInstallPlan).toEqual([]);
+    });
+
+    it("returns empty install plan when no requirements provided", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation([]));
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as CheckDepsResult;
+
+      expect(result.extensionInstallPlan).toBeUndefined();
     });
   });
 
@@ -510,28 +583,48 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("extensions install", () => {
-    it("installs missing extensions", async () => {
+    it("installs extensions from install plan via processRunner", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalExtensionsOperation({ missingExtensions: ["ext.one"] });
+      const installPlan: ExtensionInstallEntry[] = [
+        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+      ];
+      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.extensionManager.install).toHaveBeenCalledWith(["ext.one"], expect.any(Function));
+      expect(deps.processRunner.run).toHaveBeenCalledWith(
+        "/test/code-server/bin/code-server",
+        expect.arrayContaining(["--install-extension", "/path/ext-one.vsix"])
+      );
       expect(op.report).toHaveBeenCalledWith("setup", "done");
     });
 
-    it("cleans and reinstalls outdated extensions", async () => {
+    it("removes old extension dir before reinstalling", async () => {
       const deps = createMockDeps();
+      // Simulate installed old version
+      const installedEntries: DirEntry[] = [
+        { name: "ext.one-0.9.0", isDirectory: true, isFile: false, isSymbolicLink: false },
+      ];
+      (deps.fileSystemLayer.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(
+        installedEntries
+      );
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalExtensionsOperation({ outdatedExtensions: ["ext.old"] });
+
+      const installPlan: ExtensionInstallEntry[] = [
+        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+      ];
+      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.extensionManager.cleanOutdated).toHaveBeenCalledWith(["ext.old"]);
-      expect(deps.extensionManager.install).toHaveBeenCalledWith(["ext.old"], expect.any(Function));
+      // Should remove old directory
+      expect(deps.fileSystemLayer.rm).toHaveBeenCalledWith(
+        expect.objectContaining({ toString: expect.any(Function) }),
+        { recursive: true, force: true }
+      );
     });
 
     it("skips when no extensions need install", async () => {
@@ -542,33 +635,29 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.extensionManager.install).not.toHaveBeenCalled();
+      expect(deps.processRunner.run).not.toHaveBeenCalled();
       expect(op.report).toHaveBeenCalledWith("setup", "done");
     });
 
     it("throws SetupError on install failure", async () => {
       const deps = createMockDeps();
-      (deps.extensionManager.install as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("install failed")
+      (deps.processRunner.run as ReturnType<typeof vi.fn>).mockReturnValue(
+        createMockProcess(1, "install failed")
       );
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalExtensionsOperation({ missingExtensions: ["ext.one"] });
+      const installPlan: ExtensionInstallEntry[] = [
+        { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
+      ];
+      const op = new MinimalExtensionsOperation({ extensionInstallPlan: installPlan });
       dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(op.report).toHaveBeenCalledWith("setup", "failed", undefined, "install failed");
-    });
-
-    it("throws SetupError on clean failure", async () => {
-      const deps = createMockDeps();
-      (deps.extensionManager.cleanOutdated as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("clean failed")
+      expect(op.report).toHaveBeenCalledWith(
+        "setup",
+        "failed",
+        undefined,
+        expect.stringContaining("Failed to install extension")
       );
-      const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalExtensionsOperation({ outdatedExtensions: ["ext.old"] });
-      dispatcher.registerOperation("setup", op);
-
-      await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
     });
   });
 
@@ -754,7 +843,7 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("config:updated event", () => {
-    it("propagates version override to managers", async () => {
+    it("propagates version override to code-server manager", async () => {
       const deps = createMockDeps();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
@@ -775,9 +864,6 @@ describe("CodeServerModule", () => {
           url: expect.stringContaining("4.200.0"),
           destDir: expect.stringContaining("4.200.0"),
         })
-      );
-      expect(deps.extensionManager.setCodeServerBinaryPath).toHaveBeenCalledWith(
-        expect.stringContaining("4.200.0")
       );
     });
 
@@ -816,7 +902,6 @@ describe("CodeServerModule", () => {
       } as ConfigSetValuesIntent);
 
       expect(deps.codeServerManager.setCodeServerVersion).not.toHaveBeenCalled();
-      expect(deps.extensionManager.setCodeServerBinaryPath).not.toHaveBeenCalled();
     });
 
     it("propagates port override to manager", async () => {

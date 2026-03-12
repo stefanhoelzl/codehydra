@@ -560,8 +560,7 @@ describe("AppStart Operation", () => {
     }
 
     function createExtensionCheckModule(opts: {
-      missing?: string[];
-      outdated?: string[];
+      installPlan?: Array<{ id: string; vsixPath: string }>;
     }): IntentModule {
       return {
         name: "test",
@@ -570,8 +569,9 @@ describe("AppStart Operation", () => {
             "check-deps": {
               handler: async (): Promise<CheckDepsResult> => {
                 return {
-                  ...(opts.missing !== undefined && { missingExtensions: opts.missing }),
-                  ...(opts.outdated !== undefined && { outdatedExtensions: opts.outdated }),
+                  ...(opts.installPlan !== undefined && {
+                    extensionInstallPlan: opts.installPlan,
+                  }),
                 };
               },
             },
@@ -683,7 +683,9 @@ describe("AppStart Operation", () => {
         [
           createConfigCheckModule("claude"),
           createBinaryCheckModule([]),
-          createExtensionCheckModule({ missing: ["ext-a"] }),
+          createExtensionCheckModule({
+            installPlan: [{ id: "ext-a", vsixPath: "/path/ext-a.vsix" }],
+          }),
           createCodeServerModule(state),
           createMcpModule(state),
           createDataModule(state),

@@ -47,7 +47,7 @@ export type LoggerName =
   | "badge" // BadgeManager - app icon badge
   | "mcp" // McpServerManager - MCP server
   | "extension" // PluginServer - extension-side logs forwarded to main
-  | "ext-manager" // ExtensionManager - extension preflight/install
+  | "ext-manager" // ExtensionModule - extension manifest loading
   | "dialog" // DialogLayer - system dialogs
   | "menu" // MenuLayer - application menu
   | "workspace-file" // WorkspaceFileService - .code-workspace file management

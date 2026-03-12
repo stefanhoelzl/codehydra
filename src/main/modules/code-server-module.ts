@@ -16,8 +16,8 @@
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { CodeServerManager } from "../../services/code-server/code-server-manager";
-import type { ExtensionManager } from "../../services/vscode-setup/extension-manager";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
+import type { ProcessRunner } from "../../services/platform/process";
 import type { PathProvider } from "../../services/platform/path-provider";
 import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
 import type { Logger } from "../../services/logging/types";
@@ -27,6 +27,7 @@ import type { DownloadRequest } from "../../services/binary-download";
 import type { BinaryType } from "../../services/vscode-setup/types";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type {
+  CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
   StartHookResult,
@@ -48,6 +49,10 @@ import {
   getCodeServerUrlForVersion,
   getCodeServerExecutablePath,
 } from "../../services/code-server/setup-info";
+import {
+  listInstalledExtensions,
+  removeFromExtensionsJson,
+} from "../../services/vscode-setup/extension-utils";
 import { Path } from "../../services/platform/path";
 import { configString, configCustom } from "../../services/config/config-definition";
 import { SetupError, getErrorMessage } from "../../services/errors";
@@ -71,15 +76,16 @@ export interface CodeServerModuleDeps {
     | "setPort"
     | "stop"
   >;
-  readonly extensionManager: Pick<
-    ExtensionManager,
-    "preflight" | "install" | "cleanOutdated" | "setCodeServerBinaryPath"
+  readonly processRunner: Pick<ProcessRunner, "run">;
+  readonly fileSystemLayer: Pick<
+    FileSystemLayer,
+    "mkdir" | "readdir" | "rm" | "readFile" | "writeFile"
   >;
-  readonly fileSystemLayer: Pick<FileSystemLayer, "mkdir">;
   readonly workspaceFileService: IWorkspaceFileService;
-  readonly pathProvider: Pick<PathProvider, "bundlePath">;
+  readonly pathProvider: Pick<PathProvider, "bundlePath" | "dataPath">;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
+  readonly codeServerBinaryPath: string;
   readonly wrapperPath: string;
   readonly logger: Logger;
 }
@@ -93,10 +99,12 @@ export interface CodeServerModuleDeps {
  * and per-workspace .code-workspace files.
  */
 export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule {
-  const { codeServerManager, extensionManager, fileSystemLayer, logger } = deps;
+  const { codeServerManager, processRunner, fileSystemLayer, logger } = deps;
 
   // Internal state: port set by start hook, read by finalize hook
   let codeServerPort = 0;
+  // Binary path tracked in closure — updated by config:updated events
+  let codeServerBinaryPath = deps.codeServerBinaryPath;
 
   return {
     name: "code-server",
@@ -147,7 +155,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         // app-start → check-deps: preflight code-server binary + extensions
         // -------------------------------------------------------------------
         "check-deps": {
-          handler: async (): Promise<CheckDepsResult> => {
+          handler: async (ctx: HookContext): Promise<CheckDepsResult> => {
+            const { extensionRequirements } = ctx as CheckDepsHookContext;
             const missingBinaries: BinaryType[] = [];
 
             // Check code-server binary
@@ -156,18 +165,30 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               missingBinaries.push("code-server");
             }
 
-            // Check extensions
-            const extResult = await extensionManager.preflight();
-            if (extResult.success) {
-              return {
-                missingBinaries,
-                missingExtensions: extResult.missingExtensions,
-                outdatedExtensions: extResult.outdatedExtensions,
-              };
+            // Compare requirements against installed extensions
+            if (extensionRequirements.length === 0) {
+              return { missingBinaries };
             }
 
-            // Extension preflight failed -- return binaries only
-            return { missingBinaries };
+            try {
+              const extensionsDir = deps.pathProvider.dataPath("vscode/extensions");
+              const installed = await listInstalledExtensions(fileSystemLayer, extensionsDir);
+              const extensionInstallPlan = extensionRequirements
+                .filter((req) => {
+                  const installedVersion = installed.get(req.id);
+                  return !installedVersion || installedVersion !== req.version;
+                })
+                .map((req) => ({ id: req.id, vsixPath: req.vsixPath }));
+
+              logger.debug("Extension check completed", {
+                installPlanCount: extensionInstallPlan.length,
+              });
+
+              return { missingBinaries, extensionInstallPlan };
+            } catch (error) {
+              logger.warn("Extension check failed", { error: getErrorMessage(error) });
+              return { missingBinaries };
+            }
           },
         },
 
@@ -243,41 +264,59 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         },
 
         // -------------------------------------------------------------------
-        // setup → extensions: install missing/outdated extensions
+        // setup → extensions: install extensions from install plan
         // -------------------------------------------------------------------
         extensions: {
           handler: async (ctx: HookContext) => {
             const hookCtx = ctx as ExtensionsHookInput;
-            const missingExtensions = hookCtx.missingExtensions ?? [];
-            const outdatedExtensions = hookCtx.outdatedExtensions ?? [];
+            const installPlan = hookCtx.extensionInstallPlan ?? [];
             const { report } = hookCtx;
 
-            const extensionsToInstall = [...missingExtensions, ...outdatedExtensions];
-            if (extensionsToInstall.length === 0) {
+            if (installPlan.length === 0) {
               report("setup", "done");
               return;
             }
 
             report("setup", "running", "Installing extensions...");
 
-            // Clean outdated extensions before reinstalling
-            if (outdatedExtensions.length > 0) {
-              try {
-                await extensionManager.cleanOutdated(outdatedExtensions);
-              } catch (error) {
-                report("setup", "failed", undefined, getErrorMessage(error));
-                throw new SetupError(
-                  `Failed to clean outdated extensions: ${getErrorMessage(error)}`,
-                  "EXTENSION_INSTALL_FAILED"
-                );
-              }
-            }
+            const extensionsDir = deps.pathProvider.dataPath("vscode/extensions");
 
-            // Install extensions
             try {
-              await extensionManager.install(extensionsToInstall, (message) => {
-                report("setup", "running", message);
-              });
+              // Scan installed to find old dirs to remove
+              const installed = await listInstalledExtensions(fileSystemLayer, extensionsDir);
+
+              for (const entry of installPlan) {
+                report("setup", "running", `Installing ${entry.id}...`);
+
+                // Remove old directory if present
+                const oldVersion = installed.get(entry.id);
+                if (oldVersion) {
+                  const oldDirName = `${entry.id}-${oldVersion}`;
+                  const oldPath = new Path(extensionsDir, oldDirName);
+                  logger.debug("Cleaning extension", { extId: entry.id, path: oldPath.toString() });
+                  await fileSystemLayer.rm(oldPath, { recursive: true, force: true });
+                }
+
+                // Clean stale entry from extensions.json
+                await removeFromExtensionsJson(fileSystemLayer, extensionsDir, [entry.id]);
+
+                // Install via code-server
+                const proc = processRunner.run(codeServerBinaryPath, [
+                  "--install-extension",
+                  entry.vsixPath,
+                  "--extensions-dir",
+                  extensionsDir.toNative(),
+                ]);
+                const result = await proc.wait();
+                if (result.exitCode !== 0) {
+                  throw new Error(
+                    result.stderr.includes("ENOENT") || result.stderr.includes("spawn")
+                      ? `Failed to run code-server: ${result.stderr || "Binary not found"}`
+                      : `Failed to install extension: ${entry.id}`
+                  );
+                }
+                logger.info("Extension installed", { extId: entry.id });
+              }
               report("setup", "done");
             } catch (error) {
               report("setup", "failed", undefined, getErrorMessage(error));
@@ -384,7 +423,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             codeServerDir.toNative(),
             downloadRequest
           );
-          extensionManager.setCodeServerBinaryPath(binaryPath);
+          codeServerBinaryPath = binaryPath;
         }
       },
     },
