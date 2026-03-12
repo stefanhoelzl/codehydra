@@ -37,6 +37,10 @@ import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-s
 import type { GetStatusHookInput, GetStatusHookResult } from "../operations/get-workspace-status";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../operations/resolve-workspace";
 import {
+  SWITCH_WORKSPACE_OPERATION_ID,
+  type FindCandidatesHookResult,
+} from "../operations/switch-workspace";
+import {
   LIST_PROJECTS_OPERATION_ID,
   type ListWorkspacesHookResult,
 } from "../operations/list-projects";
@@ -320,6 +324,11 @@ class MinimalEmitEventOperation implements Operation<Intent, void> {
   }
 }
 
+const switchWorkspaceOperation = createMinimalOperation<Intent, FindCandidatesHookResult>(
+  SWITCH_WORKSPACE_OPERATION_ID,
+  "find-candidates"
+);
+
 const listProjectsOperation = createMinimalOperation<Intent, ListWorkspacesHookResult>(
   LIST_PROJECTS_OPERATION_ID,
   "list-workspaces"
@@ -351,6 +360,7 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation("project:get-bases", new MinimalGetProjectBasesOperation());
   dispatcher.registerOperation("workspace:get-status", new MinimalGetStatusOperation());
   dispatcher.registerOperation("emit-event", new MinimalEmitEventOperation());
+  dispatcher.registerOperation("workspace:switch", switchWorkspaceOperation);
   dispatcher.registerOperation("project:list", listProjectsOperation);
 
   // Wire the module under test
@@ -468,6 +478,20 @@ async function dispatchDeleteWorkspace(
 ): Promise<DeleteResult> {
   // Cast through Intent to bypass phantom type inference (test operation returns DeleteResult)
   return (await dispatcher.dispatch(intent as unknown as Intent)) as DeleteResult;
+}
+
+async function dispatchFindCandidates(dispatcher: Dispatcher): Promise<FindCandidatesHookResult> {
+  return (await dispatcher.dispatch({
+    type: "workspace:switch",
+    payload: {},
+  } as Intent)) as FindCandidatesHookResult;
+}
+
+async function dispatchListWorkspaces(dispatcher: Dispatcher): Promise<ListWorkspacesHookResult> {
+  return (await dispatcher.dispatch({
+    type: "project:list",
+    payload: {},
+  } as Intent)) as ListWorkspacesHookResult;
 }
 
 async function dispatchPreflight(
@@ -1031,6 +1055,184 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const result = await dispatchPreflight(preflightSetup.dispatcher, ws.path.toString());
 
       expect(result.error).toBe("git failed");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // deletionPending preservation
+  // ---------------------------------------------------------------------------
+
+  describe("deletionPending preservation", () => {
+    async function setupWithWorkspace(
+      d: Dispatcher,
+      p: ReturnType<typeof createMockGitWorktreeProvider>
+    ) {
+      const projectPath = "/projects/my-app";
+      const ws = makeWorkspace("feature-1", projectPath);
+      p.discover.mockResolvedValue([ws]);
+      await dispatchOpenProject(d, projectPath);
+      return { projectPath, ws };
+    }
+
+    it("re-discovery preserves deletion-pending workspace", async () => {
+      const { dispatcher, provider } = setup;
+      const { projectPath, ws } = await setupWithWorkspace(dispatcher, provider);
+
+      // Delete fails (non-force) — workspace enters deletionPending
+      provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
+      const deleteIntent: DeleteWorkspaceIntent = {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: ws.path.toString(),
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      };
+      const deleteResult = await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+      expect(deleteResult.error).toBe("EBUSY");
+
+      // Re-discover project — git no longer lists the workspace
+      provider.discover.mockResolvedValue([]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      // Workspace should still be resolvable via deletionPending
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      expect(resolveResult.projectPath).toBe(projectPath);
+    });
+
+    it("successful delete clears deletionPending", async () => {
+      const { dispatcher, provider } = setup;
+      const { ws } = await setupWithWorkspace(dispatcher, provider);
+
+      // Delete succeeds
+      provider.removeWorkspace.mockResolvedValue(undefined);
+      const deleteIntent: DeleteWorkspaceIntent = {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: ws.path.toString(),
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      };
+      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+
+      // Workspace should not be resolvable
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      expect(resolveResult.projectPath).toBeUndefined();
+    });
+
+    it("force delete clears deletionPending", async () => {
+      const { dispatcher, provider } = setup;
+      const { ws } = await setupWithWorkspace(dispatcher, provider);
+
+      // Delete fails but force=true — dismissed from both maps
+      provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
+      const deleteIntent: DeleteWorkspaceIntent = {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: ws.path.toString(),
+          keepBranch: false,
+          force: true,
+          removeWorktree: true,
+        },
+      };
+      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+
+      // Re-discover with empty list
+      provider.discover.mockResolvedValue([]);
+      await dispatchOpenProject(dispatcher, "/projects/my-app");
+
+      // Workspace should not be resolvable (force cleared deletionPending)
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      expect(resolveResult.projectPath).toBeUndefined();
+    });
+
+    it("list-workspaces merges deletion-pending entries", async () => {
+      const { dispatcher, provider } = setup;
+      const { projectPath, ws } = await setupWithWorkspace(dispatcher, provider);
+
+      // Delete fails (non-force) — workspace enters deletionPending
+      provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
+      const deleteIntent: DeleteWorkspaceIntent = {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: ws.path.toString(),
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      };
+      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+
+      // Re-discover — git no longer lists the workspace, but a new one exists
+      const ws2 = makeWorkspace("feature-2", projectPath);
+      provider.discover.mockResolvedValue([ws2]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      // list-workspaces should include both: feature-2 from git + feature-1 from deletionPending
+      const listResult = await dispatchListWorkspaces(dispatcher);
+      const entry = listResult.entries!.find((e) => e.projectPath === projectPath);
+      const names = entry!.workspaces.map((w) => w.name);
+      expect(names).toContain("feature-1");
+      expect(names).toContain("feature-2");
+    });
+
+    it("find-candidates merges deletion-pending entries", async () => {
+      const { dispatcher, provider } = setup;
+      const { projectPath, ws } = await setupWithWorkspace(dispatcher, provider);
+
+      // Delete fails (non-force)
+      provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
+      const deleteIntent: DeleteWorkspaceIntent = {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: ws.path.toString(),
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      };
+      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+
+      // Re-discover without the deleted workspace
+      provider.discover.mockResolvedValue([]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      // find-candidates should still include the deletion-pending workspace
+      const result = await dispatchFindCandidates(dispatcher);
+      const paths = result.candidates!.map((c) => c.workspacePath);
+      expect(paths).toContain(ws.path.toString());
+    });
+
+    it("close-project clears deletionPending entries for that project", async () => {
+      const { dispatcher, provider } = setup;
+      const { projectPath, ws } = await setupWithWorkspace(dispatcher, provider);
+
+      // Delete fails (non-force) — workspace enters deletionPending
+      provider.removeWorkspace.mockRejectedValue(new Error("EBUSY"));
+      const deleteIntent: DeleteWorkspaceIntent = {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: ws.path.toString(),
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+        },
+      };
+      await dispatchDeleteWorkspace(dispatcher, deleteIntent);
+
+      // Close project — should clear deletionPending too
+      await dispatchCloseProject(dispatcher, projectPath);
+
+      // Re-open with empty list
+      provider.discover.mockResolvedValue([]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      // Workspace should not be resolvable (close cleared deletionPending)
+      const resolveResult = await dispatchResolveWorkspace(dispatcher, ws.path.toString());
+      expect(resolveResult.projectPath).toBeUndefined();
     });
   });
 
