@@ -74,7 +74,10 @@ export function getCodeServerSubPathForVersion(
   platform: SupportedPlatform,
   arch: SupportedArch
 ): string {
-  const os = platform === "darwin" ? "macos" : platform === "win32" ? "win32" : "linux";
+  if (platform === "win32") {
+    return `code-server-${version}-win32-x64`;
+  }
+  const os = platform === "darwin" ? "macos" : "linux";
   const archName = CODE_SERVER_ARCH[arch];
   return `code-server-${version}-${os}-${archName}`;
 }
