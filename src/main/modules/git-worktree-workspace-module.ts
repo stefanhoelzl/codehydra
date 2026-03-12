@@ -99,6 +99,7 @@ export function createGitWorktreeWorkspaceModule(
   // Internal state
   const registeredProjects = new Set<string>();
   const workspaces = new Map<string, Workspace[]>();
+  const deletionPending = new Map<string, { projectPath: string; workspace: Workspace }>();
 
   // ---------------------------------------------------------------------------
   // Private Helpers
@@ -116,7 +117,7 @@ export function createGitWorktreeWorkspaceModule(
     | undefined {
     const normalizedPath = new Path(workspacePath).toString();
 
-    for (const [projectKey, wsList] of workspaces) {
+    for (const [projectKey, wsList] of getMergedWorkspaces()) {
       for (const ws of wsList) {
         if (ws.path.toString() === normalizedPath) {
           return {
@@ -140,6 +141,44 @@ export function createGitWorktreeWorkspaceModule(
     if (index !== -1) {
       projectWorkspaces.splice(index, 1);
     }
+  }
+
+  function addToDeletionPending(projectPath: string, workspacePath: string): void {
+    const key = new Path(projectPath).toString();
+    const normalizedWsPath = new Path(workspacePath).toString();
+    const wsList = workspaces.get(key);
+    if (!wsList) return;
+    const ws = wsList.find((w) => w.path.toString() === normalizedWsPath);
+    if (!ws) return;
+    deletionPending.set(normalizedWsPath, { projectPath: key, workspace: ws });
+  }
+
+  function removeFromDeletionPending(workspacePath: string): void {
+    const normalizedWsPath = new Path(workspacePath).toString();
+    deletionPending.delete(normalizedWsPath);
+  }
+
+  /**
+   * Returns the full workspace list: git cache merged with deletion-pending entries.
+   * This is the single source of truth for resolve/list/find-candidates consumers.
+   */
+  function getMergedWorkspaces(): Map<string, Workspace[]> {
+    const merged = new Map<string, Workspace[]>();
+    const seen = new Set<string>();
+
+    for (const [key, wsList] of workspaces) {
+      merged.set(key, [...wsList]);
+      for (const ws of wsList) seen.add(ws.path.toString());
+    }
+
+    for (const [wsPath, entry] of deletionPending) {
+      if (seen.has(wsPath)) continue;
+      const list = merged.get(entry.projectPath) ?? [];
+      list.push(entry.workspace);
+      merged.set(entry.projectPath, list);
+    }
+
+    return merged;
   }
 
   // ---------------------------------------------------------------------------
@@ -204,6 +243,13 @@ export function createGitWorktreeWorkspaceModule(
             const key = projectPathObj.toString();
             registeredProjects.delete(key);
             workspaces.delete(key);
+
+            // Clear deletion-pending entries for this project
+            for (const [wsPath, entry] of deletionPending) {
+              if (entry.projectPath === key) {
+                deletionPending.delete(wsPath);
+              }
+            }
 
             return {};
           },
@@ -344,6 +390,9 @@ export function createGitWorktreeWorkspaceModule(
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             if (payload.removeWorktree) {
+              // Snapshot workspace into deletionPending before removal attempt
+              addToDeletionPending(projectPath, wsPath);
+
               try {
                 await globalProvider.removeWorkspace(
                   new Path(projectPath),
@@ -355,10 +404,16 @@ export function createGitWorktreeWorkspaceModule(
                   logger.warn("WorktreeModule: error in force mode (ignored)", {
                     error: getErrorMessage(error),
                   });
+                  // Dismiss: remove from both maps
+                  removeFromDeletionPending(wsPath);
                   unregisterWorkspaceFromState(projectPath, wsPath);
                 }
+                // Non-force: workspace stays in deletionPending for resolve/list
                 return { error: getErrorMessage(error) };
               }
+
+              // Success: clean up deletionPending
+              removeFromDeletionPending(wsPath);
             }
 
             unregisterWorkspaceFromState(projectPath, wsPath);
@@ -376,7 +431,7 @@ export function createGitWorktreeWorkspaceModule(
               projectName: string;
               workspacePath: string;
             }> = [];
-            for (const [key, wsList] of workspaces) {
+            for (const [key, wsList] of getMergedWorkspaces()) {
               const projectName = new Path(key).basename;
               for (const ws of wsList) {
                 candidates.push({
@@ -408,7 +463,7 @@ export function createGitWorktreeWorkspaceModule(
         "list-workspaces": {
           handler: async (): Promise<ListWorkspacesHookResult> => {
             const entries: ListWorkspacesHookEntry[] = [];
-            for (const [key, wsList] of workspaces) {
+            for (const [key, wsList] of getMergedWorkspaces()) {
               entries.push({
                 projectPath: key,
                 workspaces: wsList,
