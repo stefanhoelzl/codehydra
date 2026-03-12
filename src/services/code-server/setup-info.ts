@@ -62,6 +62,35 @@ export function getCodeServerUrl(platform: SupportedPlatform, arch: SupportedArc
 }
 
 /**
+ * Get the subpath within the extracted archive for a specific code-server version.
+ *
+ * @param version - Code-server version string
+ * @param platform - Operating system platform
+ * @param arch - CPU architecture
+ * @returns Subpath prefix within the archive
+ */
+export function getCodeServerSubPathForVersion(
+  version: string,
+  platform: SupportedPlatform,
+  arch: SupportedArch
+): string {
+  const os = platform === "darwin" ? "macos" : platform === "win32" ? "win32" : "linux";
+  const archName = CODE_SERVER_ARCH[arch];
+  return `code-server-${version}-${os}-${archName}`;
+}
+
+/**
+ * Get the subpath within the extracted archive using the built-in version.
+ *
+ * @param platform - Operating system platform
+ * @param arch - CPU architecture
+ * @returns Subpath prefix within the archive
+ */
+export function getCodeServerSubPath(platform: SupportedPlatform, arch: SupportedArch): string {
+  return getCodeServerSubPathForVersion(CODE_SERVER_VERSION, platform, arch);
+}
+
+/**
  * Get the relative path to the code-server executable within the extracted directory.
  *
  * @param platform - Operating system platform

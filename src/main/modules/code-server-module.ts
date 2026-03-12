@@ -47,6 +47,7 @@ import { urlForWorkspace, urlForFolder } from "../../services/code-server/code-s
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrlForVersion,
+  getCodeServerSubPathForVersion,
   getCodeServerExecutablePath,
 } from "../../services/code-server/setup-info";
 import {
@@ -417,6 +418,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
             destDir: codeServerDir.toNative(),
             executablePath: execPath,
+            subPath: getCodeServerSubPathForVersion(version, deps.platform, deps.arch),
           };
           codeServerManager.setCodeServerVersion(
             binaryPath,

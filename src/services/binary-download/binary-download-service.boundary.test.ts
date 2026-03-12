@@ -154,12 +154,13 @@ describe("BinaryDownloadService (boundary)", () => {
         url: "https://example.com/code-server.tar.gz",
         destDir,
         executablePath: "bin/test-binary",
+        subPath: "test-binary-1.0.0-linux-amd64",
       };
 
       // Download (uses our mock HTTP client)
       await service.download(request);
 
-      // Verify the binary was extracted and flattened (nested dir moved up)
+      // Verify the binary was extracted and subPath promoted
       const binPath = path.join(destDir, "bin", "test-binary");
 
       const content = await fs.readFile(binPath, "utf-8");
@@ -212,6 +213,7 @@ describe("BinaryDownloadService (boundary)", () => {
         name: "code-server",
         url: "https://example.com/code-server.tar.gz",
         destDir,
+        subPath: "test-1.0.0",
       };
 
       const progressUpdates: Array<{

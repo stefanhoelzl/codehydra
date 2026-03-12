@@ -72,17 +72,18 @@ describe("BinaryDownloadService (integration)", () => {
           url: "https://example.com/code-server-4.109.2-linux-amd64.tar.gz",
           destDir,
           executablePath: "bin/code-server",
+          subPath: "code-server-4.109.2-linux-amd64",
         };
 
         // Download code-server
         await service.download(request);
 
-        // Verify binary was extracted and flattened
+        // Verify binary was extracted and subPath promoted
         const binaryPath = path.join(destDir, "bin", "code-server");
         const binaryContent = await fs.readFile(binaryPath, "utf-8");
         expect(binaryContent).toBe("#!/bin/sh\necho code-server");
 
-        // Verify the directory structure was flattened (no nested release dir)
+        // Verify the subPath was promoted (no nested release dir)
         const entries = await fs.readdir(destDir);
         expect(entries).toContain("bin");
         expect(entries).toContain("lib");
@@ -130,6 +131,7 @@ describe("BinaryDownloadService (integration)", () => {
             url: "https://example.com/opencode-0.1.47-linux-x64.tar.gz",
             destDir,
             executablePath: "opencode",
+            subPath: "opencode-0.1.47-linux-x64",
           };
 
           await service.download(request);
@@ -179,6 +181,7 @@ describe("BinaryDownloadService (integration)", () => {
           url: "https://example.com/opencode-0.1.47-linux-x64.tar.gz",
           destDir,
           executablePath: "opencode",
+          subPath: "opencode-0.1.47-linux-x64",
         };
 
         // Before download
@@ -229,6 +232,7 @@ describe("BinaryDownloadService (integration)", () => {
           url: "https://example.com/opencode-0.1.47-linux-x64.tar.gz",
           destDir,
           executablePath: "opencode",
+          subPath: "opencode-0.1.47-linux-x64",
         };
 
         const progressUpdates: {

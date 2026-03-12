@@ -73,6 +73,17 @@ export function getClaudeLatestVersionUrl(): string {
 }
 
 /**
+ * Get the subpath within the extracted archive for Claude.
+ *
+ * @param platform - Operating system platform
+ * @param arch - CPU architecture
+ * @returns Subpath prefix within the archive
+ */
+export function getClaudeSubPath(platform: SupportedPlatform, arch: SupportedArch): string {
+  return `claude-${platform}-${arch}`;
+}
+
+/**
  * Get the relative path to the Claude executable within the extracted directory.
  *
  * @param platform - Operating system platform

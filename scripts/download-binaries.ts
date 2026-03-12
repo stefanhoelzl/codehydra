@@ -27,16 +27,19 @@ import { DefaultFileSystemLayer } from "../src/services/platform/filesystem";
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
+  getCodeServerSubPath,
   getCodeServerExecutablePath,
 } from "../src/services/code-server/setup-info";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
+  getOpencodeSubPath,
   getOpencodeExecutablePath,
 } from "../src/agents/opencode/setup-info";
 import {
   CLAUDE_VERSION,
   getClaudeUrl,
+  getClaudeSubPath,
   getClaudeExecutablePath,
   getClaudeLatestVersionUrl,
 } from "../src/agents/claude/setup-info";
@@ -171,6 +174,7 @@ async function main(): Promise<void> {
     url: getCodeServerUrl(platform, arch),
     destDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
     executablePath: getCodeServerExecutablePath(platform),
+    subPath: getCodeServerSubPath(platform, arch),
   };
   await downloadBinary(service, codeServerRequest, CODE_SERVER_VERSION);
 
@@ -180,6 +184,7 @@ async function main(): Promise<void> {
     url: getOpencodeUrl(platform, arch),
     destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
     executablePath: getOpencodeExecutablePath(platform),
+    subPath: getOpencodeSubPath(platform, arch),
   };
   await downloadBinary(service, opencodeRequest, OPENCODE_VERSION);
 
@@ -194,6 +199,7 @@ async function main(): Promise<void> {
       url: getClaudeUrl(platform, arch),
       destDir: pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative(),
       executablePath: getClaudeExecutablePath(platform),
+      subPath: getClaudeSubPath(platform, arch),
     };
     await downloadBinary(service, claudeRequest, CLAUDE_VERSION);
   } else {

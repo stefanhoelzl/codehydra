@@ -25,6 +25,8 @@ export interface AgentBinaryConfig {
   readonly url: string;
   /** Relative path to the executable within the extracted directory */
   readonly executablePath: string;
+  /** Subpath within the extracted archive to promote to destDir root */
+  readonly subPath?: string;
 }
 
 /**
@@ -136,6 +138,7 @@ export class AgentBinaryManager {
       url: this.config.url,
       destDir: this.config.destDir,
       executablePath: this.config.executablePath,
+      ...(this.config.subPath ? { subPath: this.config.subPath } : {}),
     };
 
     try {

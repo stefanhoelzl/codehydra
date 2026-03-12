@@ -89,8 +89,8 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
       // Extract archive
       await this.archiveExtractor.extract(tempFile, new Path(destDir));
 
-      // Handle nested directory structure (common in releases)
-      await this.flattenExtractedDir(destDir);
+      // Promote subPath contents to destDir root if specified
+      await this.extractSubPath(destDir, request.subPath ?? "");
 
       // Set executable permissions on Unix
       if (executablePath && process.platform !== "win32") {
@@ -184,29 +184,39 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
   }
 
   /**
-   * Handle nested directory structure common in release archives.
-   * Many archives extract to a directory like "code-server-4.106.3-linux-amd64/"
+   * Promote contents of destDir/subPath to destDir root.
+   * If subPath is empty, content is already at root — nothing to do.
    */
-  private async flattenExtractedDir(destDir: string): Promise<void> {
-    this.logger?.debug("Flattening directory", { dir: destDir });
-    const entries = await this.fileSystemLayer.readdir(destDir);
-
-    // If there's exactly one directory entry that looks like a release dir, flatten it
-    const firstEntry = entries[0];
-    if (entries.length === 1 && firstEntry?.isDirectory) {
-      const nestedDir = path.join(destDir, firstEntry.name);
-      const nestedEntries = await this.fileSystemLayer.readdir(nestedDir);
-
-      // Use rename (atomic move) instead of copy+delete
-      for (const entry of nestedEntries) {
-        const src = path.join(nestedDir, entry.name);
-        const dest = path.join(destDir, entry.name);
-        await this.fileSystemLayer.rename(src, dest);
-      }
-
-      // Remove the now-empty nested directory
-      await this.fileSystemLayer.rm(nestedDir, { recursive: true, force: true });
+  private async extractSubPath(destDir: string, subPath: string): Promise<void> {
+    if (!subPath) {
+      return;
     }
+
+    this.logger?.debug("Promoting subPath", { destDir, subPath });
+    const nestedDir = path.join(destDir, subPath);
+
+    let nestedEntries;
+    try {
+      nestedEntries = await this.fileSystemLayer.readdir(nestedDir);
+    } catch (error) {
+      if (error instanceof FileSystemError && error.fsCode === "ENOENT") {
+        throw new BinaryDownloadError(
+          `Expected subPath "${subPath}" not found in extracted archive at ${nestedDir}`,
+          "EXTRACTION_FAILED"
+        );
+      }
+      throw error;
+    }
+
+    // Use rename (atomic move) instead of copy+delete
+    for (const entry of nestedEntries) {
+      const src = path.join(nestedDir, entry.name);
+      const dest = path.join(destDir, entry.name);
+      await this.fileSystemLayer.rename(src, dest);
+    }
+
+    // Remove the now-empty nested directory
+    await this.fileSystemLayer.rm(nestedDir, { recursive: true, force: true });
   }
 
   /**

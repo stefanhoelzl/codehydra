@@ -16,11 +16,13 @@ import { DefaultArchiveExtractor } from "../binary-download/archive-extractor";
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
+  getCodeServerSubPath,
   getCodeServerExecutablePath,
 } from "../code-server/setup-info";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
+  getOpencodeSubPath,
   getOpencodeExecutablePath,
 } from "../../agents/opencode/setup-info";
 import { SILENT_LOGGER } from "../logging";
@@ -80,6 +82,7 @@ function buildDownloadRequest(
         url: getCodeServerUrl(platform, arch),
         destDir,
         executablePath,
+        subPath: getCodeServerSubPath(platform, arch),
       },
       binaryPath: join(destDir, executablePath),
     };
@@ -93,6 +96,7 @@ function buildDownloadRequest(
       url: getOpencodeUrl(platform, arch),
       destDir,
       executablePath,
+      subPath: getOpencodeSubPath(platform, arch),
     },
     binaryPath: join(destDir, executablePath),
   };
