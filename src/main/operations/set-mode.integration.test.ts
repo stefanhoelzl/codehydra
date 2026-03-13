@@ -197,7 +197,7 @@ describe("SetMode Operation", () => {
       expect(event.payload.previousMode).toBe("shortcut");
     });
 
-    it("emits event even when mode is same as current", async () => {
+    it("does not emit event when mode is same as current", async () => {
       const setup = createTestSetup({ initialMode: "workspace" });
       const { dispatcher } = setup;
 
@@ -208,11 +208,8 @@ describe("SetMode Operation", () => {
 
       await dispatcher.dispatch(setModeIntent("workspace"));
 
-      // Domain event is emitted regardless - idempotency is ViewManager's responsibility
-      expect(receivedEvents).toHaveLength(1);
-      const event = receivedEvents[0] as ModeChangedEvent;
-      expect(event.payload.mode).toBe("workspace");
-      expect(event.payload.previousMode).toBe("workspace");
+      // No event emitted when mode didn't change — prevents oscillation feedback loops
+      expect(receivedEvents).toHaveLength(0);
     });
   });
 

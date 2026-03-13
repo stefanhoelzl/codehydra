@@ -81,14 +81,16 @@ export class SetModeOperation implements Operation<SetModeIntent, void> {
       throw new Error("Set mode hook did not provide previousMode result");
     }
 
-    // Emit domain event for subscribers (e.g., IpcEventBridge)
-    const event: ModeChangedEvent = {
-      type: EVENT_MODE_CHANGED,
-      payload: {
-        mode: ctx.intent.payload.mode,
-        previousMode,
-      },
-    };
-    ctx.emit(event);
+    // Emit domain event only when mode actually changed (defense against oscillation)
+    if (ctx.intent.payload.mode !== previousMode) {
+      const event: ModeChangedEvent = {
+        type: EVENT_MODE_CHANGED,
+        payload: {
+          mode: ctx.intent.payload.mode,
+          previousMode,
+        },
+      };
+      ctx.emit(event);
+    }
   }
 }
