@@ -529,8 +529,7 @@ export class ViewManager implements IViewManager {
     });
 
     // Only update active workspace bounds (O(1) - inactive views are detached).
-    // Skip loading workspaces: they use 1x1 bounds at top z-order so they
-    // don't visually cover the UI while still receiving input events.
+    // Skip loading workspaces: they use 1x1 bounds so the loading overlay stays visible.
     if (
       this.activeWorkspacePath !== null &&
       !this.loadingWorkspaces.has(this.activeWorkspacePath)
@@ -549,18 +548,9 @@ export class ViewManager implements IViewManager {
 
   /**
    * Returns the z-index for the UI layer's "bottom" position.
-   * Accounts for background loading workspaces attached at z-0 that push
-   * the background (and UI) up by one slot each. Excludes the active
-   * workspace which is moved from z-0 to top z-order in setActiveWorkspace().
    */
   private getUIBottomIndex(): number {
-    let loadingAttached = 0;
-    for (const workspacePath of this.loadingWorkspaces.keys()) {
-      if (workspacePath === this.activeWorkspacePath) continue;
-      const state = this.workspaceStates.get(workspacePath);
-      if (state?.urlLoaded) loadingAttached++;
-    }
-    return Z_UI_BOTTOM + loadingAttached;
+    return Z_UI_BOTTOM;
   }
 
   /**
@@ -579,21 +569,7 @@ export class ViewManager implements IViewManager {
     // Mark as loaded first to prevent re-entry
     state.urlLoaded = true;
 
-    // Attach at z-0 (behind background) so requestAnimationFrame fires during
-    // VS Code initialization (code-server 4.109+ workaround). 1x1 bounds
-    // prevent white flash while the compositor still fires rAF callbacks.
-    // setActiveWorkspace() moves the active workspace to top z-order for
-    // before-input-event (Alt+X shortcut detection).
-    try {
-      if (!this.windowLayer.isDestroyed(this.windowHandle)) {
-        this.viewLayer.attachToWindow(state.handle, this.windowHandle, 0);
-        this.viewLayer.setBounds(state.handle, { x: 0, y: 0, width: 1, height: 1 });
-      }
-    } catch {
-      // Window may be closing
-    }
-
-    // Load the URL (fire-and-forget)
+    // Load the URL (fire-and-forget). View stays detached until activated.
     void this.viewLayer.loadURL(state.handle, state.url);
   }
 
@@ -676,14 +652,15 @@ export class ViewManager implements IViewManager {
         if (!this.loadingWorkspaces.has(workspacePath)) {
           this.attachView(workspacePath);
         } else {
-          // Loading workspace: move from z-0 to top z-order so it's not
-          // occluded and before-input-event fires for Alt+X. Keeps 1x1
-          // bounds from loadViewUrl() to stay invisible during loading.
+          // Loading workspace: attach at top z-order with 1x1 bounds so
+          // the loading overlay (UI layer) remains visible while
+          // before-input-event still fires for Alt+X shortcut detection.
           try {
             if (!this.windowLayer.isDestroyed(this.windowHandle)) {
               const state = this.workspaceStates.get(workspacePath);
               if (state) {
                 this.viewLayer.attachToWindow(state.handle, this.windowHandle);
+                this.viewLayer.setBounds(state.handle, { x: 0, y: 0, width: 1, height: 1 });
               }
             }
           } catch {
@@ -955,13 +932,12 @@ export class ViewManager implements IViewManager {
     // Notify listeners
     this.notifyLoadingChange(workspacePath, false);
 
-    // If this workspace is active, attach the view and focus it
     if (this.activeWorkspacePath === workspacePath) {
+      // Attach view at full bounds (transitions from 1x1 loading bounds)
       this.attachView(workspacePath);
       this.updateBounds();
 
-      // Maintain z-order if in dialog, shortcut, or hover mode
-      // (UI must stay on top of workspace views)
+      // Maintain z-order: UI must stay in correct position relative to workspace
       if (this.mode === "dialog" || this.mode === "shortcut" || this.mode === "hover") {
         try {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
@@ -972,7 +948,6 @@ export class ViewManager implements IViewManager {
         }
       } else {
         // Windows DirectComposition workaround: force UI view re-composite
-        // so the transparent sidebar strip is rendered on startup
         try {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
             this.viewLayer.attachToWindow(
@@ -989,10 +964,8 @@ export class ViewManager implements IViewManager {
 
       // Focus the correct view for current mode
       this.focus();
-    } else {
-      // Inactive workspace: detach the temporary 1x1 attachment from loadViewUrl()
-      this.detachView(workspacePath);
     }
+    // Inactive: no-op (view stays detached, URL already loaded)
 
     const workspaceName = basename(workspacePath);
     this.logger.debug("Workspace loaded", { workspace: workspaceName });

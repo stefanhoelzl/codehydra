@@ -333,10 +333,9 @@ describe("ViewManager", () => {
   });
 
   describe("preloadWorkspaceUrl", () => {
-    it("attaches view at z-0 with 1x1 bounds during background preload", () => {
+    it("loads URL but keeps view detached during background preload", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
-      const windowId = deps.windowLayer._createdWindowHandle.id;
 
       const wsHandle = manager.createWorkspaceView(
         "/path/to/workspace",
@@ -346,11 +345,10 @@ describe("ViewManager", () => {
 
       manager.preloadWorkspaceUrl("/path/to/workspace");
 
-      // URL should be loaded, view attached at z-0 with 1x1 bounds for rAF
+      // URL should be loaded, view stays detached until activated
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
         url: "http://127.0.0.1:8080/?folder=/path",
-        attachedTo: windowId,
-        bounds: { x: 0, y: 0, width: 1, height: 1 },
+        attachedTo: null,
       });
     });
 
@@ -849,8 +847,8 @@ describe("ViewManager", () => {
       );
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // Workspace should be focused (at top z-order with 1x1 bounds)
-      // so VS Code keyboard init works and before-input-event fires for Alt+X
+      // Workspace should be focused at 1x1 bounds so
+      // before-input-event fires for Alt+X shortcut detection
       expect(deps.viewLayer).toHaveView(wsHandle.id, { focused: true });
     });
 
@@ -1035,7 +1033,7 @@ describe("ViewManager", () => {
   });
 
   describe("setWorkspaceLoaded", () => {
-    it("attaches view if workspace is active", () => {
+    it("transitions from 1x1 to full bounds when active workspace finishes loading", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -1047,17 +1045,19 @@ describe("ViewManager", () => {
         true // isNew - starts loading
       );
 
-      // Activate triggers loadViewUrl (attaches at top z-order for rAF + input events)
+      // Activate attaches view at 1x1 bounds
       manager.setActiveWorkspace("/path/to/workspace");
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        attachedTo: windowId,
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
+      });
 
-      // View is attached during initialization
-      expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: windowId });
-
-      // Mark as loaded → re-attaches on top
+      // Mark as loaded — view transitions to full bounds
       manager.setWorkspaceLoaded("/path/to/workspace");
 
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
         attachedTo: windowId,
+        bounds: { x: 20, y: 0, width: 1180, height: 800 },
       });
     });
 
@@ -1080,7 +1080,7 @@ describe("ViewManager", () => {
       }).not.toThrow();
     });
 
-    it("moves active loading workspace to top z-order with 1x1 bounds", () => {
+    it("attaches active loading workspace at top z-order with 1x1 bounds", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -1092,14 +1092,13 @@ describe("ViewManager", () => {
         true // isNew
       );
 
-      // Activate triggers loadViewUrl (z-0) then re-attach at top
       manager.setActiveWorkspace("/path/to/workspace");
 
       // View should be attached at top z-order with 1x1 bounds
       const children = deps.viewLayer.$.windowChildren.get(windowId);
       expect(children).toContain(wsHandle.id);
 
-      // 1x1 bounds preserved during loading (updateBounds skips loading workspaces)
+      // 1x1 bounds so loading overlay (UI layer) stays visible
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
         bounds: { x: 0, y: 0, width: 1, height: 1 },
       });
@@ -1154,7 +1153,7 @@ describe("ViewManager", () => {
       manager.setActiveWorkspace("/path/to/active");
 
       // Background preload
-      manager.createWorkspaceView(
+      const bgHandle = manager.createWorkspaceView(
         "/path/to/bg",
         "http://127.0.0.1:8080/?folder=/bg",
         "/path/to/project",
@@ -1162,14 +1161,17 @@ describe("ViewManager", () => {
       );
       manager.preloadWorkspaceUrl("/path/to/bg");
 
-      // Active workspace still on top
+      // Preloaded view stays detached — not in window children
       const children = deps.viewLayer.$.windowChildren.get(windowId);
+      expect(children).not.toContain(bgHandle.id);
+
+      // Active workspace still on top
       const uiId = manager.getUIViewHandle().id;
       expect(children![children!.length - 1]).toBe(activeHandle.id);
       expect(children).toContain(uiId);
     });
 
-    it("detaches inactive view when workspace finishes loading", () => {
+    it("keeps inactive view detached when workspace finishes loading", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
 
@@ -1180,13 +1182,46 @@ describe("ViewManager", () => {
         true // isNew
       );
 
-      // Preload (not activate) — view attached at z-0 with 1x1 bounds
+      // Preload (not activate) — view stays detached
       manager.preloadWorkspaceUrl("/path/to/workspace");
 
-      // Mark as loaded — inactive workspace should be detached
+      // Mark as loaded — view should remain detached
       manager.setWorkspaceLoaded("/path/to/workspace");
 
       expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: null });
+    });
+
+    it("switching workspaces while loading maintains correct z-order", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      // Create two loading workspaces
+      const ws1Handle = manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project",
+        true
+      );
+      const ws2Handle = manager.createWorkspaceView(
+        "/path/to/ws2",
+        "http://127.0.0.1:8080/?folder=/ws2",
+        "/path/to/project",
+        true
+      );
+
+      // Activate first, then switch to second
+      manager.setActiveWorkspace("/path/to/ws1");
+      manager.setActiveWorkspace("/path/to/ws2");
+
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      const uiId = manager.getUIViewHandle().id;
+
+      // ws1 detached, ws2 on top — UI stays below workspace
+      expect(children).not.toContain(ws1Handle.id);
+      expect(children).toHaveLength(3);
+      expect(children![1]).toBe(uiId);
+      expect(children![2]).toBe(ws2Handle.id);
     });
   });
 
