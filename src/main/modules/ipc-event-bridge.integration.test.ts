@@ -62,6 +62,10 @@ import { createIpcEventBridge, type IpcEventBridgeDeps } from "./ipc-event-bridg
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../../shared/ipc";
+import {
+  EVENT_SHORTCUT_KEY_PRESSED,
+  type ShortcutKeyPressedEvent,
+} from "../operations/shortcut-key";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { SILENT_LOGGER } from "../../services/logging";
 import {
@@ -633,6 +637,64 @@ describe("IpcEventBridge - setup:error", () => {
       message: "Network timeout",
       code: "ETIMEDOUT",
     });
+  });
+});
+
+// =============================================================================
+// Tests - shortcut:key-pressed event
+// =============================================================================
+
+describe("IpcEventBridge - shortcut:key-pressed", () => {
+  it("forwards recognized shortcut keys to renderer via sendToUI", () => {
+    const deps = createBridgeDeps();
+    const ipcEventBridge = createIpcEventBridge(deps);
+
+    const event: ShortcutKeyPressedEvent = {
+      type: EVENT_SHORTCUT_KEY_PRESSED,
+      payload: { key: "up" },
+    };
+    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "up");
+  });
+
+  it("forwards digit keys to renderer via sendToUI", () => {
+    const deps = createBridgeDeps();
+    const ipcEventBridge = createIpcEventBridge(deps);
+
+    const event: ShortcutKeyPressedEvent = {
+      type: EVENT_SHORTCUT_KEY_PRESSED,
+      payload: { key: "5" },
+    };
+    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "5");
+  });
+
+  it("does not forward unrecognized keys to renderer", () => {
+    const deps = createBridgeDeps();
+    const ipcEventBridge = createIpcEventBridge(deps);
+
+    const event: ShortcutKeyPressedEvent = {
+      type: EVENT_SHORTCUT_KEY_PRESSED,
+      payload: { key: "d" },
+    };
+    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+
+    expect(deps.sendToUI).not.toHaveBeenCalled();
+  });
+
+  it("does not forward escape to renderer", () => {
+    const deps = createBridgeDeps();
+    const ipcEventBridge = createIpcEventBridge(deps);
+
+    const event: ShortcutKeyPressedEvent = {
+      type: EVENT_SHORTCUT_KEY_PRESSED,
+      payload: { key: "escape" },
+    };
+    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+
+    expect(deps.sendToUI).not.toHaveBeenCalled();
   });
 });
 

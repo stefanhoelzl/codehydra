@@ -21,33 +21,15 @@ import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { INTENT_SET_MODE, type SetModeIntent } from "../operations/set-mode";
-import { ApiIpcChannels } from "../../shared/ipc";
+import { INTENT_SHORTCUT_KEY, type ShortcutKeyIntent } from "../operations/shortcut-key";
 
 export interface ShortcutModuleDeps {
-  readonly viewManager: Pick<
-    IViewManager,
-    "getUIViewHandle" | "getMode" | "sendToUI" | "getWorkspaceView" | "getActiveWorkspacePath"
-  >;
-  readonly viewLayer: Pick<
-    ViewLayer,
-    "onBeforeInputEvent" | "onDestroyed" | "openDevTools" | "closeDevTools" | "isDevToolsOpened"
-  >;
+  readonly viewManager: Pick<IViewManager, "getUIViewHandle" | "getMode" | "getWorkspaceView">;
+  readonly viewLayer: Pick<ViewLayer, "onBeforeInputEvent" | "onDestroyed">;
   readonly windowLayer: Pick<WindowLayer, "onBlur">;
   readonly getWindowHandle: () => WindowHandle;
   readonly dispatch: (intent: { type: string; payload: unknown }) => PromiseLike<unknown>;
   readonly logger: Logger;
-  readonly isDevelopment?: boolean;
-}
-
-function toggleDevTools(
-  viewLayer: Pick<ViewLayer, "openDevTools" | "closeDevTools" | "isDevToolsOpened">,
-  handle: ViewHandle
-): void {
-  if (viewLayer.isDevToolsOpened(handle)) {
-    viewLayer.closeDevTools(handle);
-  } else {
-    viewLayer.openDevTools(handle, { mode: "detach" });
-  }
 }
 
 export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
@@ -67,8 +49,11 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
                 } as SetModeIntent);
               },
               getMode: () => deps.viewManager.getMode(),
-              onShortcut: (key) => {
-                deps.viewManager.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
+              onKey: (key) => {
+                void deps.dispatch({
+                  type: INTENT_SHORTCUT_KEY,
+                  payload: { key },
+                } as ShortcutKeyIntent);
               },
               logger: deps.logger,
               viewLayer: deps.viewLayer as {
@@ -82,26 +67,6 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
                 onBlur(handle: WindowHandle, callback: () => void): Unsubscribe;
               },
               windowHandle: deps.getWindowHandle(),
-              ...(deps.isDevelopment && {
-                onRawShortcutKey: (key: string): boolean => {
-                  const lower = key.toLowerCase();
-                  if (lower === "d") {
-                    toggleDevTools(deps.viewLayer, deps.viewManager.getUIViewHandle());
-                    return true;
-                  }
-                  if (lower === "w") {
-                    const activePath = deps.viewManager.getActiveWorkspacePath();
-                    if (activePath) {
-                      const wsHandle = deps.viewManager.getWorkspaceView(activePath);
-                      if (wsHandle) {
-                        toggleDevTools(deps.viewLayer, wsHandle);
-                      }
-                    }
-                    return true;
-                  }
-                  return false;
-                },
-              }),
             });
 
             // Register UI view

@@ -12,8 +12,6 @@
  */
 
 import type { UIMode } from "../shared/ipc";
-import type { ShortcutKey } from "../shared/shortcuts";
-import { isShortcutKey } from "../shared/shortcuts";
 import type { Logger } from "../services/logging";
 import type { KeyboardInput, Unsubscribe } from "../services/shell/view";
 import type { ViewHandle, WindowHandle } from "../services/shell/types";
@@ -25,10 +23,10 @@ const SHORTCUT_MODIFIER_KEY = "Alt";
 const SHORTCUT_ACTIVATION_KEY = "x";
 
 /**
- * Map from Electron key values to normalized ShortcutKey values.
- * Only includes keys that need transformation; digit keys pass through.
+ * Map from Electron key values to normalized key strings.
+ * Keys not in this map are lowercased as-is (e.g., "d" → "d", "Escape" → "escape").
  */
-const KEY_MAP: Record<string, ShortcutKey> = {
+const KEY_MAP: Record<string, string> = {
   ArrowUp: "up",
   ArrowDown: "down",
   ArrowLeft: "left",
@@ -39,20 +37,15 @@ const KEY_MAP: Record<string, ShortcutKey> = {
 };
 
 /**
- * Normalizes an Electron key value to a ShortcutKey, or returns null if not a shortcut key.
- * Handles key mappings (e.g., ArrowUp → "up") and pass-through for digit keys.
+ * Normalizes an Electron key value to a lowercase key string.
+ * Handles key mappings (e.g., ArrowUp → "up") and lowercase passthrough for all other keys.
  */
-function normalizeKey(key: string): ShortcutKey | null {
-  // Check explicit mappings first
+function normalizeKey(key: string): string {
   const mapped = KEY_MAP[key];
   if (mapped !== undefined) {
     return mapped;
   }
-  // Digit keys pass through as-is
-  if (isShortcutKey(key)) {
-    return key;
-  }
-  return null;
+  return key.toLowerCase();
 }
 
 export interface ShortcutControllerDeps {
@@ -60,10 +53,8 @@ export interface ShortcutControllerDeps {
   setMode: (mode: UIMode) => void;
   /** Gets the current UI mode */
   getMode: () => UIMode;
-  /** Callback when a shortcut key is pressed in shortcut mode */
-  onShortcut?: (key: ShortcutKey) => void;
-  /** Intercepts raw key before normalizeKey in shortcut mode. Return true to consume. */
-  onRawShortcutKey?: (key: string) => boolean;
+  /** Callback when any key is pressed in shortcut mode (receives normalized key) */
+  onKey?: (key: string) => void;
   /** Logger for debugging */
   logger?: Logger;
   /** ViewLayer methods for event subscription */
@@ -200,24 +191,13 @@ export class ShortcutController {
 
     const isActivationKey = input.key.toLowerCase() === SHORTCUT_ACTIVATION_KEY;
 
-    // Shortcut key detection in shortcut mode
+    // Key dispatch in shortcut mode
     // NOTE: This runs before Alt+X detection because shortcut mode is already active
     if (currentMode === "shortcut") {
-      // Raw key interception (e.g., dev-only DevTools shortcuts)
-      if (this.deps.onRawShortcutKey?.(input.key)) {
-        return;
-      }
-      const normalizedKey = normalizeKey(input.key);
-      if (normalizedKey !== null) {
-        // NOTE: Do NOT call event.preventDefault() - see Electron bug #37336
-        // Preventing any key breaks keyUp tracking for ALL keys in the sequence
-        if (this.deps.onShortcut) {
-          this.deps.onShortcut(normalizedKey);
-        }
-        return;
-      }
-      // Unknown key in shortcut mode - let it pass through
-      // (e.g., Escape is handled by renderer)
+      // NOTE: Do NOT call event.preventDefault() - see Electron bug #37336
+      // Preventing any key breaks keyUp tracking for ALL keys in the sequence
+      this.deps.onKey?.(normalizeKey(input.key));
+      return;
     }
 
     // NORMAL state: Alt keydown starts waiting

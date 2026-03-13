@@ -12,7 +12,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { UIMode } from "../shared/ipc";
-import type { ShortcutKey } from "../shared/shortcuts";
 import { ShortcutController } from "./shortcut-controller";
 import type { ShortcutControllerDeps } from "./shortcut-controller";
 import type { KeyboardInput, Unsubscribe } from "../services/shell/view";
@@ -73,7 +72,7 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
   mocks: {
     setMode: ReturnType<typeof vi.fn<(mode: UIMode) => void>>;
     getMode: ReturnType<typeof vi.fn<() => UIMode>>;
-    onShortcut: ReturnType<typeof vi.fn<(key: ShortcutKey) => void>>;
+    onKey: ReturnType<typeof vi.fn<(key: string) => void>>;
   };
 } {
   let currentMode: UIMode = initialMode;
@@ -92,13 +91,13 @@ function createMockDeps(initialMode: UIMode = "workspace"): {
       currentMode = mode;
     }),
     getMode: vi.fn<() => UIMode>().mockImplementation(() => currentMode),
-    onShortcut: vi.fn<(key: ShortcutKey) => void>(),
+    onKey: vi.fn<(key: string) => void>(),
   };
 
   const deps: ShortcutControllerDeps = {
     setMode: mocks.setMode,
     getMode: mocks.getMode,
-    onShortcut: mocks.onShortcut,
+    onKey: mocks.onKey,
     viewLayer: {
       onBeforeInputEvent(
         handle: ViewHandle,
@@ -413,7 +412,7 @@ describe("ShortcutController Integration", () => {
       ["7", "7"],
       ["8", "8"],
       ["9", "9"],
-    ] as const)("emits %s as shortcut key %s", (input, expected: ShortcutKey) => {
+    ] as const)("emits %s as normalized key %s", (input, expected) => {
       const shortcutResult = createMockDeps("shortcut");
       const shortcutController = new ShortcutController(shortcutResult.deps);
 
@@ -423,7 +422,7 @@ describe("ShortcutController Integration", () => {
 
         simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput(input, "keyDown"));
 
-        expect(shortcutResult.mocks.onShortcut).toHaveBeenCalledWith(expected);
+        expect(shortcutResult.mocks.onKey).toHaveBeenCalledWith(expected);
       } finally {
         shortcutController.dispose();
       }
@@ -435,7 +434,7 @@ describe("ShortcutController Integration", () => {
 
       simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("ArrowUp", "keyDown"));
 
-      expect(mockResult.mocks.onShortcut).not.toHaveBeenCalled();
+      expect(mockResult.mocks.onKey).not.toHaveBeenCalled();
     });
 
     it("ignores shortcut keys in dialog mode", () => {
@@ -448,13 +447,13 @@ describe("ShortcutController Integration", () => {
 
         simulateInput(dialogResult.callbacks, "view-1", createKeyboardInput("Enter", "keyDown"));
 
-        expect(dialogResult.mocks.onShortcut).not.toHaveBeenCalled();
+        expect(dialogResult.mocks.onKey).not.toHaveBeenCalled();
       } finally {
         dialogController.dispose();
       }
     });
 
-    it("does not emit for unknown key in shortcut mode", () => {
+    it("emits normalized key for any key in shortcut mode", () => {
       const shortcutResult = createMockDeps("shortcut");
       const shortcutController = new ShortcutController(shortcutResult.deps);
 
@@ -464,13 +463,13 @@ describe("ShortcutController Integration", () => {
 
         simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("a", "keyDown"));
 
-        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
+        expect(shortcutResult.mocks.onKey).toHaveBeenCalledWith("a");
       } finally {
         shortcutController.dispose();
       }
     });
 
-    it("Escape is not handled (handled by renderer)", () => {
+    it("Escape is dispatched as normalized key", () => {
       const shortcutResult = createMockDeps("shortcut");
       const shortcutController = new ShortcutController(shortcutResult.deps);
 
@@ -480,7 +479,7 @@ describe("ShortcutController Integration", () => {
 
         simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("Escape", "keyDown"));
 
-        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
+        expect(shortcutResult.mocks.onKey).toHaveBeenCalledWith("escape");
       } finally {
         shortcutController.dispose();
       }
@@ -496,132 +495,7 @@ describe("ShortcutController Integration", () => {
 
         simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("ArrowUp", "keyUp"));
 
-        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
-      } finally {
-        shortcutController.dispose();
-      }
-    });
-  });
-
-  describe("onRawShortcutKey interception", () => {
-    it("is called before normalizeKey in shortcut mode and consumes key when returns true", () => {
-      const onRawShortcutKey = vi.fn().mockReturnValue(true);
-      const shortcutResult = createMockDeps("shortcut");
-      shortcutResult.deps = { ...shortcutResult.deps, onRawShortcutKey };
-      const shortcutController = new ShortcutController(shortcutResult.deps);
-
-      try {
-        const handle = createViewHandle("view-1");
-        shortcutController.registerView(handle);
-
-        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("d", "keyDown"));
-
-        expect(onRawShortcutKey).toHaveBeenCalledWith("d");
-        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
-      } finally {
-        shortcutController.dispose();
-      }
-    });
-
-    it("falls through to normalizeKey/onShortcut when returns false", () => {
-      const onRawShortcutKey = vi.fn().mockReturnValue(false);
-      const shortcutResult = createMockDeps("shortcut");
-      shortcutResult.deps = { ...shortcutResult.deps, onRawShortcutKey };
-      const shortcutController = new ShortcutController(shortcutResult.deps);
-
-      try {
-        const handle = createViewHandle("view-1");
-        shortcutController.registerView(handle);
-
-        simulateInput(
-          shortcutResult.callbacks,
-          "view-1",
-          createKeyboardInput("ArrowUp", "keyDown")
-        );
-
-        expect(onRawShortcutKey).toHaveBeenCalledWith("ArrowUp");
-        expect(shortcutResult.mocks.onShortcut).toHaveBeenCalledWith("up");
-      } finally {
-        shortcutController.dispose();
-      }
-    });
-
-    it("is not called outside shortcut mode", () => {
-      const onRawShortcutKey = vi.fn().mockReturnValue(true);
-      mockResult.deps = { ...mockResult.deps, onRawShortcutKey };
-      const wsController = new ShortcutController(mockResult.deps);
-
-      try {
-        const handle = createViewHandle("view-1");
-        wsController.registerView(handle);
-
-        simulateInput(mockResult.callbacks, "view-1", createKeyboardInput("d", "keyDown"));
-
-        expect(onRawShortcutKey).not.toHaveBeenCalled();
-      } finally {
-        wsController.dispose();
-      }
-    });
-
-    it("is not called on keyUp", () => {
-      const onRawShortcutKey = vi.fn().mockReturnValue(true);
-      const shortcutResult = createMockDeps("shortcut");
-      shortcutResult.deps = { ...shortcutResult.deps, onRawShortcutKey };
-      const shortcutController = new ShortcutController(shortcutResult.deps);
-
-      try {
-        const handle = createViewHandle("view-1");
-        shortcutController.registerView(handle);
-
-        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("d", "keyUp"));
-
-        expect(onRawShortcutKey).not.toHaveBeenCalled();
-      } finally {
-        shortcutController.dispose();
-      }
-    });
-
-    it("is not called on auto-repeat", () => {
-      const onRawShortcutKey = vi.fn().mockReturnValue(true);
-      const shortcutResult = createMockDeps("shortcut");
-      shortcutResult.deps = { ...shortcutResult.deps, onRawShortcutKey };
-      const shortcutController = new ShortcutController(shortcutResult.deps);
-
-      try {
-        const handle = createViewHandle("view-1");
-        shortcutController.registerView(handle);
-
-        simulateInput(
-          shortcutResult.callbacks,
-          "view-1",
-          createKeyboardInput("d", "keyDown", { isAutoRepeat: true })
-        );
-
-        expect(onRawShortcutKey).not.toHaveBeenCalled();
-      } finally {
-        shortcutController.dispose();
-      }
-    });
-
-    it("normal behavior preserved when callback not provided", () => {
-      const shortcutResult = createMockDeps("shortcut");
-      const shortcutController = new ShortcutController(shortcutResult.deps);
-
-      try {
-        const handle = createViewHandle("view-1");
-        shortcutController.registerView(handle);
-
-        // "d" is not a recognized shortcut key, should be ignored
-        simulateInput(shortcutResult.callbacks, "view-1", createKeyboardInput("d", "keyDown"));
-        expect(shortcutResult.mocks.onShortcut).not.toHaveBeenCalled();
-
-        // ArrowUp IS a recognized shortcut key
-        simulateInput(
-          shortcutResult.callbacks,
-          "view-1",
-          createKeyboardInput("ArrowUp", "keyDown")
-        );
-        expect(shortcutResult.mocks.onShortcut).toHaveBeenCalledWith("up");
+        expect(shortcutResult.mocks.onKey).not.toHaveBeenCalled();
       } finally {
         shortcutController.dispose();
       }

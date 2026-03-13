@@ -69,6 +69,9 @@ import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status"
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { BasesUpdatedEvent } from "../operations/get-project-bases";
 import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../operations/get-project-bases";
+import type { ShortcutKeyPressedEvent } from "../operations/shortcut-key";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../operations/shortcut-key";
+import { isShortcutKey } from "../../shared/shortcuts";
 import type { GetProjectBasesIntent } from "../operations/get-project-bases";
 import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../operations/setup";
 import type { SetupErrorEvent, SetupProgressEvent } from "../operations/setup";
@@ -230,6 +233,12 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
         projectPath: p.projectPath,
         bases: p.bases,
       });
+    },
+    [EVENT_SHORTCUT_KEY_PRESSED]: (event: DomainEvent) => {
+      const { key } = (event as ShortcutKeyPressedEvent).payload;
+      if (isShortcutKey(key)) {
+        deps.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
+      }
     },
     [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
       const {
