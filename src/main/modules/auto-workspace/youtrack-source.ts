@@ -63,6 +63,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
 
   return {
     name: "youtrack",
+    fetchBasesBeforeDelete: false,
 
     configDefinitions(): ConfigKeyDefinition<unknown>[] {
       return [

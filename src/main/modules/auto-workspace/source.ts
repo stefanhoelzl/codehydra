@@ -13,6 +13,7 @@ export interface PollResult {
 
 export interface AutoWorkspaceSource {
   readonly name: string;
+  readonly fetchBasesBeforeDelete: boolean;
   configDefinitions(): ConfigKeyDefinition<unknown>[];
   onConfigUpdated(values: Record<string, unknown>): void;
   isConfigured(): boolean;

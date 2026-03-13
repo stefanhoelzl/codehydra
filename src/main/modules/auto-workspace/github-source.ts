@@ -122,6 +122,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
 
   return {
     name: "github",
+    fetchBasesBeforeDelete: true,
 
     configDefinitions(): ConfigKeyDefinition<unknown>[] {
       return [];
