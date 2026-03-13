@@ -98,6 +98,7 @@ export const shortcutModeActive = {
  */
 export function setModeFromMain(mode: UIMode): void {
   _modeFromMain = mode;
+  _lastEmittedMode = mode; // Prevent echoing back what main just told us
 }
 
 /**

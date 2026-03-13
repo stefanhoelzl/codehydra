@@ -211,6 +211,36 @@ describe("ui-mode store", () => {
     });
   });
 
+  describe("setModeFromMain echo prevention", () => {
+    it("setModeFromMain prevents syncMode from echoing same mode back", () => {
+      // Initial sync
+      syncMode();
+      mockApi.ui.setMode.mockClear();
+
+      // Main tells us mode is "shortcut"
+      setModeFromMain("shortcut");
+      flushSync();
+
+      // syncMode should NOT echo "shortcut" back — main already knows
+      syncMode();
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
+    });
+
+    it("after setModeFromMain, syncMode still sends when desiredMode differs", () => {
+      // Initial sync
+      syncMode();
+      mockApi.ui.setMode.mockClear();
+
+      // Main tells us mode is "workspace", but sidebar is expanded so desired is "hover"
+      setSidebarExpanded(true);
+      setModeFromMain("workspace");
+      flushSync();
+
+      syncMode();
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("hover");
+    });
+  });
+
   describe("reset function", () => {
     it("reset() restores initial state", () => {
       // Change state
