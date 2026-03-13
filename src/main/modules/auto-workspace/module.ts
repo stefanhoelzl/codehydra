@@ -597,20 +597,41 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       [EVENT_WORKSPACE_DELETE_FAILED]: (event: DomainEvent) => {
         const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
 
+        const dismissEntry = (key: string): void => {
+          state = { ...state, entries: { ...state.entries, [key]: null } };
+          void saveState();
+        };
+
         for (const [key, entry] of Object.entries(state.entries)) {
           if (entry?.workspacePath === workspacePath && deletingKeys.has(key)) {
-            void deps.dispatcher.dispatch({
-              type: INTENT_SET_METADATA,
-              payload: { workspacePath, key: METADATA_TRACKED_KEY, value: null },
-            } as SetMetadataIntent);
-            void deps.dispatcher.dispatch({
-              type: INTENT_SET_METADATA,
-              payload: {
-                workspacePath,
-                key: TAG_DELETION_FAILED_KEY,
-                value: TAG_DELETION_FAILED_VALUE,
-              },
-            } as SetMetadataIntent);
+            void deps.dispatcher
+              .dispatch({
+                type: INTENT_SET_METADATA,
+                payload: { workspacePath, key: METADATA_TRACKED_KEY, value: null },
+              } as SetMetadataIntent)
+              .catch((err: unknown) => {
+                deps.logger.warn("Failed to clear tracked metadata after delete failure", {
+                  workspacePath,
+                  error: getErrorMessage(err),
+                });
+                dismissEntry(key);
+              });
+            void deps.dispatcher
+              .dispatch({
+                type: INTENT_SET_METADATA,
+                payload: {
+                  workspacePath,
+                  key: TAG_DELETION_FAILED_KEY,
+                  value: TAG_DELETION_FAILED_VALUE,
+                },
+              } as SetMetadataIntent)
+              .catch((err: unknown) => {
+                deps.logger.warn("Failed to set deletion-failed tag after delete failure", {
+                  workspacePath,
+                  error: getErrorMessage(err),
+                });
+                dismissEntry(key);
+              });
             break;
           }
         }

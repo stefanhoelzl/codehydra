@@ -176,9 +176,13 @@ class TrackingDeleteWorkspaceOperation implements Operation<
 class TrackingSetMetadataOperation implements Operation<SetMetadataIntent, void> {
   readonly id = "set-metadata";
   readonly dispatched: SetMetadataIntent[] = [];
+  readonly failForPaths = new Set<string>();
 
   async execute(ctx: OperationContext<SetMetadataIntent>): Promise<void> {
     this.dispatched.push(ctx.intent);
+    if (this.failForPaths.has(ctx.intent.payload.workspacePath)) {
+      throw new Error(`Workspace not found: ${ctx.intent.payload.workspacePath}`);
+    }
   }
 }
 
@@ -870,6 +874,38 @@ describe("AutoWorkspaceModule Integration", () => {
 
       // Should NOT retry deletion
       expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
+    });
+
+    it("dismisses state entry when set-metadata fails after delete failure (workspace gone)", async () => {
+      const wsPath = "/home/user/projects/repo/item-1";
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: wsPath,
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, source, deleteWorkspaceOp, setMetadataOp, listProjectsOp, fs } =
+        createTestSetup({ existingState });
+
+      listProjectsOp.projects = [trackedProject(wsPath)];
+      deleteWorkspaceOp.failForPaths.add(wsPath);
+      setMetadataOp.failForPaths.add(wsPath);
+      source.pollResult = { activeKeys: new Set(), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      // Both set-metadata dispatches were attempted
+      expect(setMetadataOp.dispatched.length).toBeGreaterThanOrEqual(2);
+
+      // State entry should be dismissed (null) so module stops retrying on restart
+      await vi.waitFor(() => {
+        expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1": null');
+      });
     });
   });
 
