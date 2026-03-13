@@ -16,7 +16,7 @@
  */
 
 // 1. Imports
-import { app } from "electron";
+import { app, powerMonitor } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 import {
@@ -121,6 +121,7 @@ import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import { ConfigSetValuesOperation, INTENT_CONFIG_SET_VALUES } from "./operations/config-set-values";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
+import { AppResumeOperation, INTENT_APP_RESUME } from "./operations/app-resume";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./operations/setup";
 import { SetModeOperation, INTENT_SET_MODE } from "./operations/set-mode";
@@ -562,6 +563,8 @@ const electronLifecycleModule = createElectronLifecycleModule({
   buildInfo,
   pathProvider,
   asyncWatcher,
+  powerMonitor,
+  dispatcher,
   logger: lifecycleLogger,
 });
 
@@ -600,6 +603,7 @@ const shortcutModule = createShortcutModule({
 // 8. Operation registration
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
 dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
 dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new ConfigSetValuesOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
