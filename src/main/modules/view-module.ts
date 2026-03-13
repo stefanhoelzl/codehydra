@@ -43,6 +43,7 @@ import {
   type ShowUIHookResult,
   type ActivateHookContext,
   type ActivateHookResult,
+  type RegisterConfigResult,
 } from "../operations/app-start";
 import type { AgentSelectionHookResult, AgentSelectionHookContext } from "../operations/setup";
 import type { GetActiveWorkspaceHookResult } from "../operations/get-active-workspace";
@@ -63,6 +64,7 @@ import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status"
 import { SET_MODE_OPERATION_ID } from "../operations/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
+import { EVENT_APP_RESUMED } from "../operations/app-resume";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import { UPDATE_APPLY_OPERATION_ID, type UpdateChoiceResult } from "../operations/update-apply";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../operations/get-active-workspace";
@@ -72,6 +74,9 @@ import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
+import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import { configBoolean } from "../../services/config/config-definition";
 import {
   ApiIpcChannels,
   type LifecycleAgentType,
@@ -149,6 +154,7 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
   // Internal state
   let cachedActiveRef: WorkspaceRef | null = null;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
+  let loadOnResume = false;
   const mountSignal: MountSignal = { resolve: null };
   let projectsLoadedResolve: (() => void) | null = null;
   const projectsLoadedPromise = new Promise<void>((resolve) => {
@@ -173,11 +179,24 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       },
 
       // -------------------------------------------------------------------
+      // app-start → register-config: declare experimental.load-on-resume
       // app-start → init: Shell creation + UI loading (post-ready)
       // app-start → show-ui: send LIFECYCLE_SHOW_STARTING to renderer
       // app-start → activate: wire loading change callback + mount signal
       // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
+        "register-config": {
+          handler: async (): Promise<RegisterConfigResult> => ({
+            definitions: [
+              {
+                name: "experimental.load-on-resume",
+                default: false,
+                description: "Reload workspace views when system resumes from sleep",
+                ...configBoolean(),
+              },
+            ],
+          }),
+        },
         init: {
           handler: async (): Promise<void> => {
             // Disable application menu
@@ -502,6 +521,25 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
         const payload = (event as AgentStatusUpdatedEvent).payload;
         viewManager.setWorkspaceLoaded(payload.workspacePath);
+      },
+
+      // -------------------------------------------------------------------
+      // config:updated → track experimental.load-on-resume
+      // -------------------------------------------------------------------
+      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
+        const { values } = (event as ConfigUpdatedEvent).payload;
+        if (values["experimental.load-on-resume"] !== undefined) {
+          loadOnResume = values["experimental.load-on-resume"] as boolean;
+        }
+      },
+
+      // -------------------------------------------------------------------
+      // app:resumed → reload workspace views (gated by config)
+      // -------------------------------------------------------------------
+      [EVENT_APP_RESUMED]: () => {
+        if (!loadOnResume) return;
+        logger.info("Reloading workspace views after system resume");
+        viewManager.reloadAllViews();
       },
 
       // -------------------------------------------------------------------

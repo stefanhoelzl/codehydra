@@ -17,9 +17,11 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { ConfigureResult, RegisterConfigResult } from "../operations/app-start";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { configString } from "../../services/config/config-definition";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
+import { INTENT_APP_RESUME } from "../operations/app-resume";
 import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 
 // =============================================================================
@@ -77,6 +79,8 @@ export interface ElectronLifecycleModuleDeps {
   readonly buildInfo?: { isPackaged: boolean } | null;
   readonly pathProvider?: Pick<PathProvider, "dataPath"> | null;
   readonly asyncWatcher?: AsyncWatcher | null;
+  readonly powerMonitor?: { on(event: string, callback: () => void): void } | null;
+  readonly dispatcher?: Pick<Dispatcher, "dispatch"> | null;
   readonly logger: Logger;
 }
 
@@ -121,6 +125,16 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
           handler: async (): Promise<void> => {
             deps.asyncWatcher?.check();
             await deps.app.whenReady();
+          },
+        },
+        activate: {
+          handler: async (): Promise<void> => {
+            if (deps.powerMonitor && deps.dispatcher) {
+              deps.powerMonitor.on("resume", () => {
+                deps.logger.info("System resumed — dispatching app:resume");
+                void deps.dispatcher!.dispatch({ type: INTENT_APP_RESUME, payload: {} });
+              });
+            }
           },
         },
       },

@@ -205,6 +205,15 @@ export interface IViewManager {
   onLoadingChange(callback: LoadingChangeCallback): Unsubscribe;
 
   /**
+   * Reloads all workspace views that have a loaded URL.
+   *
+   * Skips workspaces that haven't loaded yet (urlLoaded === false)
+   * and workspaces currently in loading state.
+   * Used to recover from broken WebSocket connections after system resume.
+   */
+  reloadAllViews(): void;
+
+  /**
    * Preloads a workspace's URL without attaching the view.
    *
    * Loads the code-server URL in the background so the workspace is ready

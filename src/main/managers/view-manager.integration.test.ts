@@ -1325,6 +1325,82 @@ describe("ViewManager", () => {
     });
   });
 
+  describe("reloadAllViews", () => {
+    it("reloads views with urlLoaded === true", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project"
+      );
+
+      // Activate to trigger URL load
+      manager.setActiveWorkspace("/path/to/ws1");
+
+      // Spy on loadURL to verify reload is called
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockClear();
+
+      manager.reloadAllViews();
+
+      const ws1Handle = manager.getWorkspaceView("/path/to/ws1")!;
+      expect(loadURLSpy).toHaveBeenCalledWith(ws1Handle, "http://127.0.0.1:8080/?folder=/ws1");
+    });
+
+    it("skips views with urlLoaded === false", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Create but do NOT activate (URL not loaded)
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project"
+      );
+
+      manager.reloadAllViews();
+
+      // URL should still be null (never loaded)
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { url: null });
+    });
+
+    it("skips workspaces in loading state", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Create as new (loading state)
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project",
+        true // isNew = loading state
+      );
+
+      // Activate to trigger URL load, but workspace is still loading
+      manager.setActiveWorkspace("/path/to/ws1");
+      expect(manager.isWorkspaceLoading("/path/to/ws1")).toBe(true);
+
+      // Spy on loadURL to track calls during reloadAllViews
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockClear();
+
+      manager.reloadAllViews();
+
+      // loadURL should not have been called (loading workspace skipped)
+      expect(loadURLSpy).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when no workspaces exist", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Should not throw
+      expect(() => manager.reloadAllViews()).not.toThrow();
+    });
+  });
+
   describe("loading timeout", () => {
     it("marks workspace as loaded after timeout", async () => {
       vi.useFakeTimers();

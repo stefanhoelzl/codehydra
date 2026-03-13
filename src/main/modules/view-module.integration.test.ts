@@ -83,6 +83,10 @@ import {
 import type { ProjectOpenedEvent, SelectFolderHookResult } from "../operations/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
+import { EVENT_APP_RESUMED } from "../operations/app-resume";
+import type { AppResumedEvent } from "../operations/app-resume";
+import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
@@ -125,6 +129,7 @@ function createMockViewManager() {
     updateCodeServerPort: vi.fn(),
     isWorkspaceLoading: vi.fn(),
     setWorkspaceLoaded: vi.fn(),
+    reloadAllViews: vi.fn(),
     create: vi.fn(),
     destroy: vi.fn(),
     // Test accessors
@@ -393,6 +398,7 @@ interface TestSetup {
   viewManager: ReturnType<typeof createMockViewManager>;
   layers: ReturnType<typeof createMockShellLayers>;
   readyHandler: () => Promise<void>;
+  module: IntentModule;
 }
 
 function createTestSetup(
@@ -428,7 +434,7 @@ function createTestSetup(
 
   dispatcher.registerModule(module);
 
-  return { dispatcher, hookRegistry, viewManager, layers, readyHandler };
+  return { dispatcher, hookRegistry, viewManager, layers, readyHandler, module };
 }
 
 // =============================================================================
@@ -1425,6 +1431,53 @@ describe("ViewModule Integration", () => {
       } as AppStartIntent)) as unknown as ShowUIHookResult;
 
       expect(result.waitForRetry).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // app:resumed event
+  // -------------------------------------------------------------------------
+  describe("app:resumed event", () => {
+    const resumedEvent: AppResumedEvent = { type: EVENT_APP_RESUMED, payload: {} };
+
+    it("calls reloadAllViews when experimental.load-on-resume is true", () => {
+      const { viewManager, module } = createTestSetup();
+
+      // Enable the config via config:updated event
+      module.events![EVENT_CONFIG_UPDATED]!({
+        type: EVENT_CONFIG_UPDATED,
+        payload: { values: { "experimental.load-on-resume": true } },
+      } as ConfigUpdatedEvent);
+
+      module.events![EVENT_APP_RESUMED]!(resumedEvent);
+
+      expect(viewManager.reloadAllViews).toHaveBeenCalledOnce();
+    });
+
+    it("does NOT call reloadAllViews when config is false (default)", () => {
+      const { viewManager, module } = createTestSetup();
+
+      module.events![EVENT_APP_RESUMED]!(resumedEvent);
+
+      expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
+    });
+
+    it("does NOT call reloadAllViews after config is set back to false", () => {
+      const { viewManager, module } = createTestSetup();
+
+      // Enable then disable
+      module.events![EVENT_CONFIG_UPDATED]!({
+        type: EVENT_CONFIG_UPDATED,
+        payload: { values: { "experimental.load-on-resume": true } },
+      } as ConfigUpdatedEvent);
+      module.events![EVENT_CONFIG_UPDATED]!({
+        type: EVENT_CONFIG_UPDATED,
+        payload: { values: { "experimental.load-on-resume": false } },
+      } as ConfigUpdatedEvent);
+
+      module.events![EVENT_APP_RESUMED]!(resumedEvent);
+
+      expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
     });
   });
 });

@@ -260,6 +260,104 @@ describe("ElectronLifecycleModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // app-start/activate — powerMonitor resume dispatches app:resume
+  // ---------------------------------------------------------------------------
+  describe("app-start/activate — powerMonitor resume", () => {
+    it("dispatches app:resume on powerMonitor resume event", async () => {
+      const mockApp = createMockApp();
+      const resumeCallbacks: (() => void)[] = [];
+      const mockPowerMonitor = {
+        on: vi.fn((event: string, callback: () => void) => {
+          if (event === "resume") resumeCallbacks.push(callback);
+        }),
+      };
+      const mockDispatcher = { dispatch: vi.fn().mockResolvedValue(undefined) };
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "activate")
+      );
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        powerMonitor: mockPowerMonitor,
+        dispatcher: mockDispatcher,
+      });
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      // Simulate resume
+      expect(resumeCallbacks.length).toBe(1);
+      resumeCallbacks[0]!();
+
+      expect(mockDispatcher.dispatch).toHaveBeenCalledWith({ type: "app:resume", payload: {} });
+    });
+
+    it("does not crash when powerMonitor is null", async () => {
+      const mockApp = createMockApp();
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "activate")
+      );
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        powerMonitor: null,
+        dispatcher: { dispatch: vi.fn() },
+      });
+      dispatcher.registerModule(module);
+
+      // Should not throw
+      await expect(
+        dispatcher.dispatch({
+          type: INTENT_APP_START,
+          payload: {},
+        } as AppStartIntent)
+      ).resolves.not.toThrow();
+    });
+
+    it("does not register listener when dispatcher is not provided", async () => {
+      const mockApp = createMockApp();
+      const mockPowerMonitor = { on: vi.fn() };
+
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        createMinimalOperation(APP_START_OPERATION_ID, "activate")
+      );
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        powerMonitor: mockPowerMonitor,
+      });
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(mockPowerMonitor.on).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // config:updated event
   // ---------------------------------------------------------------------------
   describe("config:updated event", () => {
