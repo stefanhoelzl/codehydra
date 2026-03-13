@@ -36,6 +36,14 @@ import {
   type WorkspaceDeletedEvent,
   type WorkspaceDeleteFailedEvent,
 } from "../../operations/delete-workspace";
+import {
+  INTENT_RESOLVE_WORKSPACE,
+  type ResolveWorkspaceIntent,
+} from "../../operations/resolve-workspace";
+import {
+  INTENT_GET_PROJECT_BASES,
+  type GetProjectBasesIntent,
+} from "../../operations/get-project-bases";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../operations/open-project";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../operations/list-projects";
 import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../../operations/config-set-values";
@@ -297,11 +305,34 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
   }
 
-  async function deleteWorkspace(key: string, entry: StateEntry): Promise<void> {
+  async function deleteWorkspace(
+    source: AutoWorkspaceSource,
+    key: string,
+    entry: StateEntry
+  ): Promise<void> {
     deps.logger.info("Deleting auto-workspace (item disappeared)", {
       key,
       workspaceName: entry.workspaceName,
     });
+
+    if (source.fetchBasesBeforeDelete) {
+      try {
+        const { projectPath } = await deps.dispatcher.dispatch({
+          type: INTENT_RESOLVE_WORKSPACE,
+          payload: { workspacePath: entry.workspacePath },
+        } as ResolveWorkspaceIntent);
+
+        await deps.dispatcher.dispatch({
+          type: INTENT_GET_PROJECT_BASES,
+          payload: { projectPath, refresh: true, wait: true },
+        } as GetProjectBasesIntent);
+      } catch (error) {
+        deps.logger.warn("Failed to fetch bases before auto-delete (continuing)", {
+          key,
+          error: getErrorMessage(error),
+        });
+      }
+    }
 
     deletingKeys.add(key);
     try {
@@ -366,7 +397,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         state = { ...state, entries: remaining };
       } else if (trackedPaths.has(entry.workspacePath)) {
         // Active entry with tracked metadata — auto-delete
-        await deleteWorkspace(key, entry);
+        await deleteWorkspace(source, key, entry);
       }
       // Entry exists but not tracked → previous failure, leave entry to prevent recreation
     }

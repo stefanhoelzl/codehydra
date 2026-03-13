@@ -38,6 +38,15 @@ import {
   type WorkspaceDeletedEvent,
   type WorkspaceDeleteFailedEvent,
 } from "../../operations/delete-workspace";
+import {
+  INTENT_RESOLVE_WORKSPACE,
+  type ResolveWorkspaceIntent,
+} from "../../operations/resolve-workspace";
+import {
+  INTENT_GET_PROJECT_BASES,
+  type GetProjectBasesIntent,
+  type GetProjectBasesResult,
+} from "../../operations/get-project-bases";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../operations/set-metadata";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../operations/list-projects";
 import {
@@ -182,6 +191,41 @@ class TrackingListProjectsOperation implements Operation<ListProjectsIntent, Pro
   }
 }
 
+class TrackingResolveWorkspaceOperation implements Operation<
+  ResolveWorkspaceIntent,
+  { projectPath: string; workspaceName: WorkspaceName }
+> {
+  readonly id = "resolve-workspace";
+  readonly dispatched: ResolveWorkspaceIntent[] = [];
+  projectPath = "/home/user/projects/repo";
+
+  async execute(
+    ctx: OperationContext<ResolveWorkspaceIntent>
+  ): Promise<{ projectPath: string; workspaceName: WorkspaceName }> {
+    this.dispatched.push(ctx.intent);
+    return { projectPath: this.projectPath, workspaceName: "auto-ws" as WorkspaceName };
+  }
+}
+
+class TrackingGetProjectBasesOperation implements Operation<
+  GetProjectBasesIntent,
+  GetProjectBasesResult
+> {
+  readonly id = "get-project-bases";
+  readonly dispatched: GetProjectBasesIntent[] = [];
+  shouldFail = false;
+
+  async execute(ctx: OperationContext<GetProjectBasesIntent>): Promise<GetProjectBasesResult> {
+    this.dispatched.push(ctx.intent);
+    if (this.shouldFail) throw new Error("fetch failed");
+    return {
+      bases: [],
+      projectPath: ctx.intent.payload.projectPath,
+      projectId: "project-1" as ProjectId,
+    };
+  }
+}
+
 class MinimalConfigSetOperation implements Operation<ConfigSetValuesIntent, void> {
   readonly id = "config-set-values";
 
@@ -204,6 +248,7 @@ function createMockSource(
     isConfigured?: boolean;
     initializeFails?: boolean;
     configKeys?: ConfigKeyDefinition<unknown>[];
+    fetchBasesBeforeDelete?: boolean;
   }
 ): AutoWorkspaceSource & {
   pollResult: PollResult;
@@ -214,6 +259,7 @@ function createMockSource(
 } {
   const mock = {
     name,
+    fetchBasesBeforeDelete: options?.fetchBasesBeforeDelete ?? false,
     pollResult: { activeKeys: new Set<string>(), newItems: [] as PollItem[] } as PollResult,
     onConfigUpdatedCalls: [] as Record<string, unknown>[],
     initializeCalled: false,
@@ -285,6 +331,8 @@ interface TestSetup {
   deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
   setMetadataOp: TrackingSetMetadataOperation;
   listProjectsOp: TrackingListProjectsOperation;
+  resolveWorkspaceOp: TrackingResolveWorkspaceOperation;
+  getProjectBasesOp: TrackingGetProjectBasesOperation;
 }
 
 function createTestSetup(options?: {
@@ -329,6 +377,8 @@ function createTestSetup(options?: {
   const deleteWorkspaceOp = new TrackingDeleteWorkspaceOperation();
   const setMetadataOp = new TrackingSetMetadataOperation();
   const listProjectsOp = new TrackingListProjectsOperation();
+  const resolveWorkspaceOp = new TrackingResolveWorkspaceOperation();
+  const getProjectBasesOp = new TrackingGetProjectBasesOperation();
 
   const configValues: Record<string, unknown> = {};
   if (tplPath !== null) {
@@ -343,6 +393,8 @@ function createTestSetup(options?: {
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
   dispatcher.registerOperation(INTENT_SET_METADATA, setMetadataOp);
   dispatcher.registerOperation(INTENT_LIST_PROJECTS, listProjectsOp);
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, resolveWorkspaceOp);
+  dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, getProjectBasesOp);
 
   const module = createAutoWorkspaceModule({
     fs,
@@ -363,6 +415,8 @@ function createTestSetup(options?: {
     deleteWorkspaceOp,
     setMetadataOp,
     listProjectsOp,
+    resolveWorkspaceOp,
+    getProjectBasesOp,
   };
 }
 
@@ -816,6 +870,110 @@ describe("AutoWorkspaceModule Integration", () => {
 
       // Should NOT retry deletion
       expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
+    });
+  });
+
+  describe("fetch bases before delete", () => {
+    it("fetches bases before auto-delete when source has fetchBasesBeforeDelete: true", async () => {
+      const wsPath = "/home/user/projects/repo/item-1";
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: wsPath,
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const {
+        dispatcher,
+        source,
+        deleteWorkspaceOp,
+        listProjectsOp,
+        resolveWorkspaceOp,
+        getProjectBasesOp,
+      } = createTestSetup({
+        existingState,
+        sourceOptions: { fetchBasesBeforeDelete: true },
+      });
+
+      listProjectsOp.projects = [trackedProject(wsPath)];
+      source.pollResult = { activeKeys: new Set(), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(resolveWorkspaceOp.dispatched).toHaveLength(1);
+      expect(resolveWorkspaceOp.dispatched[0]!.payload.workspacePath).toBe(wsPath);
+
+      expect(getProjectBasesOp.dispatched).toHaveLength(1);
+      expect(getProjectBasesOp.dispatched[0]!.payload.projectPath).toBe("/home/user/projects/repo");
+      expect(getProjectBasesOp.dispatched[0]!.payload.refresh).toBe(true);
+      expect(getProjectBasesOp.dispatched[0]!.payload.wait).toBe(true);
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+    });
+
+    it("does not fetch bases when source has fetchBasesBeforeDelete: false", async () => {
+      const wsPath = "/home/user/projects/repo/item-1";
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: wsPath,
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const {
+        dispatcher,
+        source,
+        deleteWorkspaceOp,
+        listProjectsOp,
+        resolveWorkspaceOp,
+        getProjectBasesOp,
+      } = createTestSetup({ existingState });
+
+      listProjectsOp.projects = [trackedProject(wsPath)];
+      source.pollResult = { activeKeys: new Set(), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(resolveWorkspaceOp.dispatched).toHaveLength(0);
+      expect(getProjectBasesOp.dispatched).toHaveLength(0);
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+    });
+
+    it("proceeds with delete when fetch bases fails", async () => {
+      const wsPath = "/home/user/projects/repo/item-1";
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: wsPath,
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, source, deleteWorkspaceOp, listProjectsOp, getProjectBasesOp } =
+        createTestSetup({
+          existingState,
+          sourceOptions: { fetchBasesBeforeDelete: true },
+        });
+
+      listProjectsOp.projects = [trackedProject(wsPath)];
+      getProjectBasesOp.shouldFail = true;
+      source.pollResult = { activeKeys: new Set(), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(1);
+      expect(deleteWorkspaceOp.dispatched[0]!.payload.workspacePath).toBe(wsPath);
     });
   });
 
