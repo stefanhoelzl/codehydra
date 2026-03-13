@@ -112,6 +112,7 @@ import { createScriptModule } from "./modules/script-module";
 import { createTempDirModule } from "./modules/temp-dir-module";
 import { createErrorHandlerModule } from "./modules/error-handler-module";
 import { createShortcutModule } from "./modules/shortcut-module";
+import { createShortcutDevtoolsModule } from "./modules/shortcut-devtools-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
@@ -161,6 +162,7 @@ import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
 } from "./operations/update-agent-status";
+import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./operations/shortcut-key";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
 import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./operations/update-apply";
 import {
@@ -597,8 +599,14 @@ const shortcutModule = createShortcutModule({
   getWindowHandle: () => windowManager.getWindowHandle(),
   dispatch: (intent) => dispatcher.dispatch(intent),
   logger: loggingService.createLogger("shortcut"),
-  isDevelopment: buildInfo.isDevelopment,
 });
+
+const shortcutDevtoolsModule = buildInfo.isDevelopment
+  ? createShortcutDevtoolsModule({
+      viewManager,
+      viewLayer,
+    })
+  : undefined;
 
 // 8. Operation registration
 
@@ -627,6 +635,7 @@ dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
 
 dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
+dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
 dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation());
 
@@ -669,6 +678,7 @@ dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
+if (shortcutDevtoolsModule) dispatcher.registerModule(shortcutDevtoolsModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(ipcEventBridge);
 

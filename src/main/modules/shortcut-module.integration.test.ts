@@ -1,9 +1,9 @@
 // @vitest-environment node
 /**
- * Integration tests for ShortcutModule DevTools toggling.
+ * Integration tests for ShortcutModule.
  *
- * Tests the onRawShortcutKey callback wiring that enables
- * Alt+X → D/W DevTools shortcuts in development mode.
+ * Tests that the module dispatches shortcut:key intents
+ * when keys are pressed in shortcut mode.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -16,6 +16,8 @@ import {
   type AppStartIntent,
 } from "../operations/app-start";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
+import { INTENT_SHORTCUT_KEY, ShortcutKeyOperation } from "../operations/shortcut-key";
+import { INTENT_SET_MODE, SetModeOperation } from "../operations/set-mode";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createShortcutModule, type ShortcutModuleDeps } from "./shortcut-module";
 import type { ViewHandle, WindowHandle } from "../../services/shell/types";
@@ -55,9 +57,6 @@ function createMockViewLayer() {
       }
     ),
     onDestroyed: vi.fn((): Unsubscribe => vi.fn()),
-    openDevTools: vi.fn(),
-    closeDevTools: vi.fn(),
-    isDevToolsOpened: vi.fn().mockReturnValue(false),
     /** Simulate a key press on a registered view */
     simulateKey(viewId: string, key: string): void {
       const cb = inputCallbacks.get(viewId);
@@ -80,19 +79,12 @@ function createMockViewLayer() {
 
 function createMockViewManager(uiHandle: ViewHandle) {
   let currentMode: UIMode = "shortcut";
-  let activePath: string | null = "/test/workspace";
   const wsHandle = createViewHandle("ws-view");
 
   return {
     getUIViewHandle: vi.fn().mockReturnValue(uiHandle),
     getMode: vi.fn(() => currentMode),
-    sendToUI: vi.fn(),
-    getWorkspaceView: vi.fn((path: string) => (path === activePath ? wsHandle : null)),
-    getActiveWorkspacePath: vi.fn(() => activePath),
-    /** Test helper to set the active workspace path */
-    _setActivePath(path: string | null) {
-      activePath = path;
-    },
+    getWorkspaceView: vi.fn(() => wsHandle),
     /** Test helper to set the mode */
     _setMode(mode: UIMode) {
       currentMode = mode;
@@ -113,9 +105,10 @@ interface TestHarness {
   viewManager: ReturnType<typeof createMockViewManager>;
   dispatcher: Dispatcher;
   uiHandle: ViewHandle;
+  dispatchSpy: ReturnType<typeof vi.fn>;
 }
 
-async function createHarness(isDevelopment: boolean): Promise<TestHarness> {
+async function createHarness(): Promise<TestHarness> {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   const uiHandle = createViewHandle("ui-view");
@@ -128,15 +121,20 @@ async function createHarness(isDevelopment: boolean): Promise<TestHarness> {
     createMinimalOperation(APP_START_OPERATION_ID, "init")
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+  dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
+  dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
+
+  const dispatchSpy = vi.fn((intent: { type: string; payload: unknown }) =>
+    dispatcher.dispatch(intent)
+  );
 
   const module = createShortcutModule({
     viewManager: viewManager as unknown as ShortcutModuleDeps["viewManager"],
     viewLayer: viewLayer as unknown as ShortcutModuleDeps["viewLayer"],
     windowLayer,
     getWindowHandle: () => createWindowHandle(),
-    dispatch: (intent) => dispatcher.dispatch(intent),
+    dispatch: dispatchSpy,
     logger: SILENT_LOGGER,
-    isDevelopment,
   });
 
   dispatcher.registerModule(module);
@@ -146,14 +144,14 @@ async function createHarness(isDevelopment: boolean): Promise<TestHarness> {
     payload: {},
   } as AppStartIntent);
 
-  return { viewLayer, viewManager, dispatcher, uiHandle };
+  return { viewLayer, viewManager, dispatcher, uiHandle, dispatchSpy };
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
 
-describe("ShortcutModule DevTools integration", () => {
+describe("ShortcutModule integration", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -162,82 +160,36 @@ describe("ShortcutModule DevTools integration", () => {
     vi.useRealTimers();
   });
 
-  describe("isDevelopment: true", () => {
-    it("D toggles UI DevTools open", async () => {
-      const { viewLayer, uiHandle } = await createHarness(true);
+  it("dispatches shortcut:key intent for recognized shortcut keys", async () => {
+    const { viewLayer, dispatchSpy } = await createHarness();
 
-      viewLayer.simulateKey("ui-view", "d");
+    viewLayer.simulateKey("ui-view", "ArrowUp");
 
-      expect(viewLayer.openDevTools).toHaveBeenCalledWith(uiHandle, { mode: "detach" });
-    });
-
-    it("D toggles UI DevTools closed when already open", async () => {
-      const { viewLayer, uiHandle } = await createHarness(true);
-      viewLayer.isDevToolsOpened.mockReturnValue(true);
-
-      viewLayer.simulateKey("ui-view", "d");
-
-      expect(viewLayer.closeDevTools).toHaveBeenCalledWith(uiHandle);
-      expect(viewLayer.openDevTools).not.toHaveBeenCalled();
-    });
-
-    it("D is case-insensitive", async () => {
-      const { viewLayer, uiHandle } = await createHarness(true);
-
-      viewLayer.simulateKey("ui-view", "D");
-
-      expect(viewLayer.openDevTools).toHaveBeenCalledWith(uiHandle, { mode: "detach" });
-    });
-
-    it("W toggles active workspace DevTools open", async () => {
-      const { viewLayer, viewManager } = await createHarness(true);
-
-      viewLayer.simulateKey("ui-view", "w");
-
-      expect(viewLayer.openDevTools).toHaveBeenCalledWith(viewManager._wsHandle, {
-        mode: "detach",
-      });
-    });
-
-    it("W toggles workspace DevTools closed when already open", async () => {
-      const { viewLayer, viewManager } = await createHarness(true);
-      viewLayer.isDevToolsOpened.mockReturnValue(true);
-
-      viewLayer.simulateKey("ui-view", "w");
-
-      expect(viewLayer.closeDevTools).toHaveBeenCalledWith(viewManager._wsHandle);
-    });
-
-    it("W is consumed even when no active workspace", async () => {
-      const { viewLayer, viewManager } = await createHarness(true);
-      viewManager._setActivePath(null);
-
-      viewLayer.simulateKey("ui-view", "w");
-
-      // Key consumed (no DevTools call, but no shortcut emission either)
-      expect(viewLayer.openDevTools).not.toHaveBeenCalled();
-      expect(viewLayer.closeDevTools).not.toHaveBeenCalled();
-      expect(viewManager.sendToUI).not.toHaveBeenCalled();
+    expect(dispatchSpy).toHaveBeenCalledWith({
+      type: INTENT_SHORTCUT_KEY,
+      payload: { key: "up" },
     });
   });
 
-  describe("isDevelopment: false", () => {
-    it("D does not trigger DevTools", async () => {
-      const { viewLayer } = await createHarness(false);
+  it("dispatches shortcut:key intent for unrecognized keys (normalized)", async () => {
+    const { viewLayer, dispatchSpy } = await createHarness();
 
-      viewLayer.simulateKey("ui-view", "d");
+    viewLayer.simulateKey("ui-view", "d");
 
-      expect(viewLayer.openDevTools).not.toHaveBeenCalled();
-      expect(viewLayer.closeDevTools).not.toHaveBeenCalled();
+    expect(dispatchSpy).toHaveBeenCalledWith({
+      type: INTENT_SHORTCUT_KEY,
+      payload: { key: "d" },
     });
+  });
 
-    it("W does not trigger DevTools", async () => {
-      const { viewLayer } = await createHarness(false);
+  it("dispatches shortcut:key intent for digit keys", async () => {
+    const { viewLayer, dispatchSpy } = await createHarness();
 
-      viewLayer.simulateKey("ui-view", "w");
+    viewLayer.simulateKey("ui-view", "5");
 
-      expect(viewLayer.openDevTools).not.toHaveBeenCalled();
-      expect(viewLayer.closeDevTools).not.toHaveBeenCalled();
+    expect(dispatchSpy).toHaveBeenCalledWith({
+      type: INTENT_SHORTCUT_KEY,
+      payload: { key: "5" },
     });
   });
 });
