@@ -14,7 +14,6 @@ Documentation for the CodeHydra project.
 | [USER_INTERFACE.md] | UI layout, user flows, dialogs, shortcuts        | UI/UX changes                  |
 | [TESTING.md]        | Testing strategy, test types, conventions        | Writing tests                  |
 | [QUALITY.md]        | Code quality standards, accepted patterns        | Quality reviews                |
-| [PLANNING.md]       | Which docs to read for different change types    | Planning features              |
 | [RELEASE.md]        | Version format, release workflow, Windows builds | Creating releases              |
 
 ## Document Focus
@@ -41,8 +40,6 @@ Documentation for the CodeHydra project.
 
 ### Process
 
-- **PLANNING.md** - Feature planning guide. What documents to read for each change type.
-
 - **QUALITY.md** - Quality standards and accepted patterns for code reviews.
 
 - **RELEASE.md** - Release process documentation.
@@ -66,5 +63,4 @@ Documentation for the CodeHydra project.
 [USER_INTERFACE.md]: ./USER_INTERFACE.md
 [TESTING.md]: ./TESTING.md
 [QUALITY.md]: ./QUALITY.md
-[PLANNING.md]: ./PLANNING.md
 [RELEASE.md]: ./RELEASE.md
