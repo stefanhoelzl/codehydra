@@ -31,7 +31,7 @@
 │  │ BaseWindow    │  │WebContentsView│  │ ├─ Git Worktree Provider      ││
 │  │ resize/bounds │  │ create/destroy│  │ ├─ Code-Server Manager        ││
 │  │               │  │ bounds/z-order│  │ ├─ Project Store              ││
-│  └───────────────┘  └───────────────┘  │ └─ OpenCode Server Manager    ││
+│  └───────────────┘  └───────────────┘  │ └─ Agent Server Managers      ││
 │                                        └───────────────────────────────┘│
 ├──────────────────────────────────────────────────────────────────────────┤
 │  UI Layer (WebContentsView with transparent background)                  │
@@ -622,8 +622,10 @@ All operations use the intent dispatcher (`Dispatcher` + `HookRegistry`). Intent
 | `delete-workspace`     | `workspace:delete`       | `shutdown`, `release`, `delete` | `workspace:deleted` |
 | `open-project`         | `project:open`           | `open`                          | `project:opened`    |
 | `close-project`        | `project:close`          | `close`                         | `project:closed`    |
-| `app-start`            | `app:start`              | `start`, `activate`             | --                  |
+| `app-start`            | `app:start`              | `register-config`, `before-ready`, `await-ready`, `init`, `show-ui`, `check-deps`, `start`, `activate` | -- |
 | `app-shutdown`         | `app:shutdown`           | `stop`                          | --                  |
+| `app-setup`            | `app:setup`              | `setup`                         | --                  |
+| `app-resume`           | `app:resume`             | `resume`                        | --                  |
 
 IPC handlers in `IpcEventBridge` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (IpcEventBridge, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
 
@@ -653,12 +655,18 @@ The `close-project` operation uses these hook modules:
 
 Before the close hook, the operation resolves projectId to path, gets the workspace list, then dispatches `workspace:delete { removeWorktree: false, skipSwitch: true }` per workspace for runtime-only teardown. After all workspaces are torn down, it sets active workspace to null if no other projects are open, runs the close hook, then emits `project:closed`.
 
-The `app-start` operation uses two hook points:
+The `app-start` operation runs eight hook points in sequence:
 
+- **register-config**: All modules return their config key definitions
+- **before-ready**: Env config + script declarations (no I/O, pre-Electron ready)
+- **await-ready**: Wait for Electron `app.whenReady()`
+- **init**: Post-ready initialization (config file, logging, shell, scripts)
+- **show-ui**: Show starting screen, capture waitForRetry callback
+- **check-deps**: Binary + extension checks (collect, isolated contexts). Dispatches `app:setup` if needed.
 - **start**: CodeServerLifecycleModule (start PluginServer with graceful degradation, ensure dirs, start code-server, update ports), AgentLifecycleModule (wire status changes to dispatcher), McpLifecycleModule (start MCP server, wire callbacks, configure agent server manager), TelemetryLifecycleModule (capture app_launched), AutoUpdaterLifecycleModule (start auto-updater, wire title updates), IpcBridgeLifecycleModule (wire API events to IPC, wire Plugin API)
 - **activate**: DataLifecycleModule (load persisted projects), ViewLifecycleModule (wire loading-state IPC, set first workspace active + title)
 
-The two-phase design ensures servers are running before data is loaded (activate hook modules can read ports from the shared hook context). Errors in the start hook abort startup; errors in the activate hook propagate to the renderer error screen.
+The multi-phase design ensures config is loaded before Electron ready, servers are running before data is loaded (activate hook modules can read ports from the shared hook context). Errors in early hooks abort startup; errors in the activate hook propagate to the renderer error screen.
 
 The `app-shutdown` operation uses a single hook point:
 
@@ -784,6 +792,13 @@ index.ts (composition root)
               ▼
         AppStartOperation
               │
+              ├── "register-config" (collect config definitions from all modules)
+              ├── "before-ready" (env config, script declarations)
+              ├── "await-ready" (Electron app.whenReady())
+              ├── "init" (config file, logging, shell, scripts)
+              ├── "show-ui" (starting screen)
+              ├── "check-deps" (binary/extension checks → app:setup if needed)
+              │
               ├── "start" hook point (servers, wiring)
               │     CodeServerModule, PluginServerModule, AgentModules,
               │     TelemetryModule, AutoUpdaterModule, McpModule, etc.
@@ -843,9 +858,9 @@ On first startup (no `config.json` exists), the application follows this flow:
    - `done`: Complete (green checkmark)
    - `failed`: Error occurred (red X, shows Retry/Quit buttons)
 
-5. **Service Startup**: After all binaries are available, the `app:start` operation's `start` hook point initializes servers (code-server, plugin server, agent servers, MCP server) and the `activate` hook point loads persisted projects and sets the active workspace.
+5. **Service Startup**: After all binaries are available, the `app:start` operation's `start` hook point initializes servers (code-server, plugin server, agent servers, MCP server) and the `activate` hook point loads persisted projects and sets the active workspace. Earlier hook points (`register-config` through `check-deps`) handle configuration, Electron readiness, and dependency verification.
 
-**Key invariant**: The renderer ALWAYS goes through "loading" before "ready". The two-phase `app:start` design (`start` then `activate`) ensures servers are running before data is loaded. This allows the UI to display a loading screen during service startup.
+**Key invariant**: The renderer ALWAYS goes through "loading" before "ready". The multi-phase `app:start` design ensures config is loaded, dependencies are checked, and servers are running before data is loaded. This allows the UI to display a loading screen during service startup.
 
 ### Renderer Startup Flow
 
@@ -884,7 +899,7 @@ App.svelte (mode router)
 
 1. **App.svelte owns global events**: Shortcut events and setup progress events work across modes
 2. **MainView.svelte owns domain events**: IPC calls only happen when services are started
-3. **Two-phase startup**: The `app:start` operation has two hook points -- `start` (servers, wiring) and `activate` (load data, set active workspace). Errors in `start` abort startup; errors in `activate` propagate to the renderer error screen.
+3. **Multi-phase startup**: The `app:start` operation runs eight hook points in sequence (`register-config` → `before-ready` → `await-ready` → `init` → `show-ui` → `check-deps` → `start` → `activate`). Errors in early hooks abort startup; errors in `activate` propagate to the renderer error screen.
 4. **Main-process-driven flow**: The main process sends IPC events to tell the renderer which mode to show. The renderer never polls or pulls state.
 5. **Idempotent startup**: The `app:start` intent uses an idempotency interceptor to prevent duplicate execution
 6. **IPC initialization timing**: `listProjects()` and workspace status fetches are called in MainView.onMount, not App.onMount

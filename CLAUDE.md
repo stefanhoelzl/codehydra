@@ -46,8 +46,8 @@ All external access MUST use abstraction interfaces:
 | Port operations  | `PortManager`                         | `net` module            |
 | Process spawning | `ProcessRunner`                       | `execa`                 |
 | Agent operations | `AgentProvider`, `AgentServerManager` | Direct OpenCode SDK     |
-| OpenCode API     | `OpenCodeClient`                      | Direct HTTP/SSE         |
-| Git operations   | `GitClient`                           | `simple-git`            |
+| OpenCode API     | `SdkClientFactory`                    | Direct HTTP/SSE         |
+| Git operations   | `IGitClient`                          | `simple-git`            |
 | Electron Window  | `WindowLayer`                         | `BaseWindow`            |
 | Electron View    | `ViewLayer`                           | `WebContentsView`       |
 | Electron Session | `SessionLayer`                        | `session`               |
@@ -143,7 +143,7 @@ All operations use an intent-based dispatcher with operations, hook modules, and
 
 Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
 
-The `app:start` and `app:shutdown` intents orchestrate application lifecycle. `app:start` has two hook points: `start` (servers, wiring) and `activate` (load data, set active workspace). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`).
+The `app:start` and `app:shutdown` intents orchestrate application lifecycle. `app:start` runs eight hook points in sequence: `register-config` (collect config definitions), `before-ready` (env config, script declarations), `await-ready` (Electron ready), `init` (post-ready config, logging, shell), `show-ui` (starting screen), `check-deps` (binary/extension checks), `start` (servers, wiring), and `activate` (load data, set active workspace). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`).
 
 ---
 
@@ -218,11 +218,11 @@ See docs/PATTERNS.md for full details.
 
 ## Binary Distribution
 
-Versions defined in `src/services/binary-download/versions.ts`. Downloads happen during `pnpm install` (dev) and first-run setup (prod).
+Versions defined per agent in `src/agents/*/setup-info.ts`. Downloads happen during `pnpm install` (dev) and first-run setup (prod).
 
 ## VS Code Assets
 
-Extensions in `extensions/` are packaged at build time. See `extensions/external.json` for external extensions.
+Extensions in `extensions/` are packaged at build time. External extensions are listed in `extensions/external.json` (downloaded during build via `scripts/build-extensions.ts`).
 
 ---
 
@@ -305,7 +305,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | Key                                 | Default  | Description                                                                           |
 | ----------------------------------- | -------- | ------------------------------------------------------------------------------------- |
 | `agent`                             | `null`   | Agent selection: claude\|opencode                                                     |
-| `auto-update`                       | `always` | Auto-update preference: always\|never                                                 |
+| `auto-update`                       | `ask`    | Auto-update preference: always\|ask\|never                                            |
 | `version.claude`                    | `null`   | Claude agent version override                                                         |
 | `version.opencode`                  | `null`   | OpenCode agent version override                                                       |
 | `code-server.port`                  | (auto)   | Code-server port (auto = 25448 in prod, branch-derived in dev)                        |
@@ -320,7 +320,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 
 Any key can appear in config.json, env vars, or CLI flags.
 
-Source of truth: `src/services/config/config-values.ts` (the `CONFIG` schema object).
+Source of truth: Config definitions are distributed across modules via the `register-config` hook. Type aliases live in `src/services/config/config-values.ts`.
 
 ### Log Files
 

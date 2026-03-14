@@ -350,12 +350,17 @@ interface FilterableDropdownProps {
   options: DropdownOption[];
   value: string;
   onSelect: (value: string) => void;
+  filterOption: (option: DropdownOption, filterLowercase: string) => boolean;
   disabled?: boolean;
   placeholder?: string;
-  filterOption: (option: DropdownOption, filterLowercase: string) => boolean;
   id?: string;
   debounceMs?: number;
   optionSnippet?: Snippet<[option: DropdownOption, highlighted: boolean]>;
+  allowFreeText?: boolean; // Enter with no selection calls onSelect with typed text
+  onEnter?: () => void; // Called after Enter key is handled
+  onInput?: (value: string) => void; // Called on every input change
+  openOnFocus?: boolean; // Open dropdown on focus (default: true)
+  autofocus?: boolean; // Focus input on mount
 }
 
 type DropdownOption = {

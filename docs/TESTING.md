@@ -13,6 +13,7 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 | Run integration tests     | `pnpm test:integration`          | [Test Commands](#test-commands)                               |
 | Run boundary tests        | `pnpm test:boundary`             | [Test Commands](#test-commands)                               |
 | Run deprecated unit tests | `pnpm test:legacy`               | [Test Commands](#test-commands)                               |
+| Run extension tests       | `pnpm test:extensions`           | [Test Commands](#test-commands)                               |
 | Quick validation          | `pnpm validate:quick`            | [Targeted Testing](#targeted-testing)                         |
 | Pre-commit validation     | `pnpm validate`                  | [Test Commands](#test-commands)                               |
 | Decide which test type    | See decision guide               | [Decision Guide](#decision-guide)                             |
@@ -1196,6 +1197,7 @@ This is especially important when multiple agents run concurrently, as running `
 | `pnpm test:integration` | Integration tests only      | Primary development feedback  |
 | `pnpm test:boundary`    | Boundary tests only         | Test external interfaces      |
 | `pnpm test:legacy`      | Deprecated unit tests       | Until migrated to integration |
+| `pnpm test:extensions`  | Extension tests only        | Test VS Code extensions       |
 | `pnpm validate:quick`   | Format + lint + types       | Quick validation (~15s)       |
 | `pnpm validate`         | Integration + check + build | Pre-commit validation (fast)  |
 
