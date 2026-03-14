@@ -576,7 +576,6 @@ describe("ClaudeAgentModule", () => {
         payload: {},
       });
 
-
       expect(mockSM.setMcpConfig).not.toHaveBeenCalled();
     });
   });
