@@ -30,79 +30,62 @@ This pattern is used when:
 2. Immediate UI response is more important than confirmation
 3. The renderer should not block on the main process
 
-### Module Registration Pattern
+### IPC-to-Intent Pattern
 
-The API uses a registry pattern where modules self-register their methods and IPC handlers.
+All IPC handlers are registered in `IpcEventBridge`, which is an `IntentModule`. IPC handlers create typed intents and dispatch them through the intent dispatcher. Domain events emitted by operations are forwarded to the renderer via `sendToUI`.
 
 **Architecture:**
 
 ```
-ApiRegistry (created in bootstrap)
+IpcEventBridge (IntentModule)
     │
-    ├── LifecycleModule (created in bootstrap)
-    │   └── registers: lifecycle.getState, lifecycle.setup, lifecycle.quit
+    ├── IPC Handlers (renderer → main)
+    │   registerIpc(channel, handler)
+    │   handler creates Intent → dispatcher.dispatch(intent)
     │
-    ├── CoreModule (created in startServices)
-    │   └── registers: projects.*, workspaces.*
-    │
-    └── UiModule (created in startServices)
-        └── registers: ui.*
+    └── Event Subscriptions (main → renderer)
+        Domain event → sendToUI(channel, payload)
 ```
 
-**Module Registration:**
+**IPC Handler Registration:**
+
+Each IPC handler validates the payload, constructs a typed intent, and dispatches it:
 
 ```typescript
-// src/main/modules/core/index.ts
-export class CoreModule implements IApiModule {
-  constructor(
-    private readonly api: IApiRegistry,
-    private readonly deps: CoreModuleDeps
-  ) {
-    this.registerMethods();
-  }
+// IPC handler creates intent and dispatches it
+registerIpc(ApiIpcChannels.WORKSPACE_CREATE, async (payload) => {
+  const p = payload as WorkspaceCreatePayload;
+  const intent: OpenWorkspaceIntent = {
+    type: INTENT_OPEN_WORKSPACE,
+    payload: { projectPath: p.projectPath, workspaceName: p.name, base: p.base },
+  };
+  return await dispatcher.dispatch(intent);
+});
+```
 
-  private registerMethods(): void {
-    // Register method with automatic IPC handler
-    this.api.register("projects.open", this.projectOpen.bind(this), {
-      ipc: ApiIpcChannels.PROJECT_OPEN,
+**Domain Event Forwarding:**
+
+Domain events emitted by operations are forwarded to the renderer as IPC messages:
+
+```typescript
+// Domain event forwarded to renderer
+const events: EventDeclarations = {
+  [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+    const p = (event as WorkspaceCreatedEvent).payload;
+    deps.sendToUI(ApiIpcChannels.WORKSPACE_CREATED, {
+      projectId: p.projectId,
+      workspace: { projectId: p.projectId, name: p.workspaceName, ... },
     });
-    // ... more registrations
-  }
-
-  private async projectOpen(payload: ProjectOpenPayload): Promise<Project> {
-    const internalProject = await this.deps.appState.openProject(payload.path);
-    const apiProject = this.toApiProject(internalProject);
-
-    // Emit event through registry
-    this.api.emit("project:opened", { project: apiProject });
-
-    return apiProject;
-  }
-}
+  },
+};
 ```
 
 **Key Points:**
 
-- IPC handlers are auto-generated when `ipc` option is provided to `register()`
-- All methods use payload objects (e.g., `{ path: string }`) not positional args
-- `getInterface()` returns `ICodeHydraApi` for external consumers (converts payload → positional)
-- Events are emitted through the registry with type-safe payloads
-
-**Intent Dispatcher Bridge:**
-
-Some methods (e.g., `workspaces.create`, `workspaces.remove`) are handled by the intent dispatcher rather than directly by CoreModule. Bridge handlers in `wireDispatcher()` map IPC payloads to intents and dispatch them:
-
-```typescript
-registry.register(
-  "workspaces.remove",
-  async (payload: WorkspaceRemovePayload) => {
-    const intent: DeleteWorkspaceIntent = { type: INTENT_DELETE_WORKSPACE, payload: { ... } };
-    void dispatcher.dispatch(intent); // Fire-and-forget
-    return { started: true };
-  },
-  { ipc: ApiIpcChannels.WORKSPACE_REMOVE }
-);
-```
+- All business logic lives in operations and hook modules, not in IPC handlers
+- IPC handlers only do payload validation and intent construction
+- Domain events are the mechanism for main-to-renderer communication
+- See [ARCHITECTURE.md](ARCHITECTURE.md#intent-based-architecture) for the full architecture
 
 ### ID Generation Pattern
 
@@ -212,8 +195,6 @@ The `Icon` component wraps `<vscode-icon>` and provides consistent icon renderin
 <!-- Custom size -->
 <Icon name="warning" size={24} />
 ```
-
-See [AGENTS.md Icon Usage](../AGENTS.md#icon-usage) for full documentation.
 
 ### Event Handling in Svelte
 

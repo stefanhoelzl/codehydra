@@ -20,7 +20,7 @@ These rules MUST be followed. Violations require explicit user approval.
 **NEVER modify without explicit user approval:**
 
 - IPC channel names/signatures (`api:project:*`, `api:workspace:*`)
-- API interface definitions (`ICodeHydraApi`, `ElectronApi`, etc.)
+- Intent/event type definitions, operation interfaces
 - Preload script exposed APIs, event names/payloads, shared types in `src/shared/`
 
 **Why**: IPC contracts affect main/renderer sync, type safety, and backwards compatibility.
@@ -113,20 +113,25 @@ Some components use external libraries directly without abstraction layers. Thes
 | `pnpm validate:fix` | Fix lint/format issues, run tests                                          |
 | `pnpm test`         | Run all tests                                                              |
 | `pnpm build`        | Build for production                                                       |
+| `pnpm dist`         | Create distributable for current OS                                        |
+| `pnpm dist:linux`   | Create Linux AppImage                                                      |
+| `pnpm dist:win`     | Create Windows portable exe                                                |
+| `pnpm site:dev`     | Start landing page dev server                                              |
+| `pnpm site:build`   | Build landing page for production                                          |
 | `appctrl_*` MCP     | Control running app for UI debugging (via `scripts/appctrl.ts` MCP server) |
 
 ### Key Documents
 
-| Document         | Location             | Purpose                                           |
-| ---------------- | -------------------- | ------------------------------------------------- |
-| Patterns         | docs/PATTERNS.md     | IPC, UI, CSS implementation patterns              |
-| Architecture     | docs/ARCHITECTURE.md | High-level system design, component relationships |
-| Services         | docs/SERVICES.md     | Service layer patterns, platform abstractions     |
-| Agents           | docs/AGENTS.md       | Agent provider interface, status tracking, MCP    |
-| API Reference    | docs/API.md          | Private/Public API documentation                  |
-| Testing Strategy | docs/TESTING.md      | Test types, conventions, commands                 |
-| Release          | docs/RELEASE.md      | Version format, release workflow, Windows builds  |
-| Contributing     | CONTRIBUTING.md      | GitHub setup, /ship command                       |
+| Document         | Location             | Purpose                                              |
+| ---------------- | -------------------- | ---------------------------------------------------- |
+| Patterns         | docs/PATTERNS.md     | IPC, UI, CSS implementation patterns                 |
+| Architecture     | docs/ARCHITECTURE.md | System design, concepts, rules, components           |
+| Intents          | docs/INTENTS.md      | Intent system, platform abstractions, mock factories |
+| Agents           | docs/AGENTS.md       | Agent provider interface, status tracking, MCP       |
+| API Reference    | docs/API.md          | Private/Public API documentation                     |
+| Testing Strategy | docs/TESTING.md      | Test types, conventions, commands                    |
+| Release          | docs/RELEASE.md      | Version format, release workflow, Windows builds     |
+| Contributing     | CONTRIBUTING.md      | Feature skill workflow, GitHub setup, /ship command  |
 
 **Note**: Files in `planning/` are historical records. Read source code and `docs/` for current state.
 
@@ -134,11 +139,11 @@ Some components use external libraries directly without abstraction layers. Thes
 
 ## Intent Dispatcher
 
-Some API methods use an intent-based dispatcher with operations, hook modules, and domain events. Cross-cutting concerns (e.g., idempotency) are implemented via `createIdempotencyModule()` from `src/main/intents/infrastructure/idempotency-module.ts`. This factory accepts an array of rules and produces a single `IntentModule` with one interceptor and reset event handlers, supporting singleton, singleton-with-reset, and per-key modes. All idempotency rules are declared together in `initializeBootstrap()`.
+All operations use an intent-based dispatcher with operations, hook modules, and domain events. The composition root is `src/main/index.ts`, which constructs all services, registers operations and modules with the dispatcher, then dispatches `app:start`. Cross-cutting concerns (e.g., idempotency) are implemented via `createIdempotencyModule()` from `src/main/intents/infrastructure/idempotency-module.ts`. This factory accepts an array of rules and produces a single `IntentModule` with one interceptor and reset event handlers, supporting singleton, singleton-with-reset, and per-key modes.
 
-Operations using the intent dispatcher include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
+Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
 
-The `app:start` and `app:shutdown` intents orchestrate application lifecycle. `app:start` has two hook points: `start` (servers, wiring) and `activate` (load data, set active workspace). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). Lifecycle modules are defined inline in `wireDispatcher()` in `bootstrap.ts`, alongside per-workspace modules. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. `startServices()` in `index.ts` constructs all services (no I/O), then dispatches `app:start`. `cleanup()` dispatches `app:shutdown`.
+The `app:start` and `app:shutdown` intents orchestrate application lifecycle. `app:start` has two hook points: `start` (servers, wiring) and `activate` (load data, set active workspace). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`).
 
 ---
 
@@ -328,3 +333,22 @@ Source of truth: `src/services/config/config-values.ts` (the `CONFIG` schema obj
 # Debug mode (env var form of log.level=debug, log.output=console)
 CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev
 ```
+
+### Logger Names
+
+| Logger              | Module                  |
+| ------------------- | ----------------------- |
+| `[process]`         | Process spawning        |
+| `[network]`         | HTTP requests, ports    |
+| `[fs]`              | Filesystem operations   |
+| `[git]`             | Git operations          |
+| `[opencode]`        | OpenCode SDK            |
+| `[opencode-server]` | OpenCode server manager |
+| `[code-server]`     | code-server process     |
+| `[keepfiles]`       | .keepfiles copying      |
+| `[api]`             | IPC handlers            |
+| `[window]`          | WindowManager           |
+| `[view]`            | ViewManager             |
+| `[badge]`           | BadgeManager            |
+| `[app]`             | Application lifecycle   |
+| `[ui]`              | Renderer UI components  |
