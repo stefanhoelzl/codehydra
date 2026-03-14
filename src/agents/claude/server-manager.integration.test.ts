@@ -1057,4 +1057,204 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(content).toBe("");
     });
   });
+
+  describe("sub-agent tracking", () => {
+    it("Stop suppressed to busy when sub-agents are active", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      // Sub-agent spawned
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      // Main agent stops, but sub-agent is still running
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // Should stay busy — Stop suppressed
+      expect(statusChanges).toEqual(["idle", "busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("last SubagentStop stays busy, subsequent Stop goes idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-2",
+      });
+      // Main agent stops
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // First sub-agent stops — still one active
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+
+      // Last sub-agent stops — stays busy (main agent will resume to process result)
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-2",
+      });
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+
+      // Main agent resumes, processes result, then stops → real idle
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+    });
+
+    it("SubagentStop without prior SubagentStart is a safe no-op", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      // SubagentStop for unknown agent — should not crash or change status
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "unknown-agent",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("SubagentStart without agent_id is ignored", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      // SubagentStart without agent_id — no tracking
+      await sendHook(port, "SubagentStart", { workspacePath: "/workspace/feature-a" });
+
+      // Stop should go idle normally (no sub-agents tracked)
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("sub-agent result processing: full cycle stays busy until final Stop", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Matches real log trace: SubagentStart → Stop(suppressed) → SubagentStop → UserPromptSubmit → Stop(idle)
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      // Main agent resumes to process sub-agent result
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      // Main agent finishes processing → real idle
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // Only one idle transition — no false idle blip after SubagentStop
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("WrapperEnd clears sub-agent tracking", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      // Main agent stops (suppressed)
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // WrapperEnd — clears all tracking
+      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "none"]);
+
+      // New session: Stop should go idle normally (sub-agent tracking was cleared)
+      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "none", "idle", "busy", "idle"]);
+    });
+
+    it("SessionEnd clears sub-agent tracking", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      // Main agent stops (suppressed)
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // SessionEnd — clears all tracking
+      await sendHook(port, "SessionEnd", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "none"]);
+    });
+
+    it("Stop without sub-agents still transitions to idle normally", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // Normal flow — no sub-agents, Stop goes idle
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+  });
 });

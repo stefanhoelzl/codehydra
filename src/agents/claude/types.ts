@@ -47,6 +47,8 @@ export interface ClaudeCodeHookPayload {
   readonly tool_result?: unknown;
   /** Notification type for Notification hook */
   readonly notification_type?: string;
+  /** Sub-agent ID for SubagentStart/SubagentStop hooks */
+  readonly agent_id?: string;
 }
 
 /**
