@@ -61,7 +61,7 @@ const releaseOperation = createMinimalOperation<Intent, ReleaseHookResult>(
 );
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
-  const hookRegistry = new HookRegistry();
+  const hookRegistry = new HookRegistry({ posix: true });
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", releaseOperation);
 

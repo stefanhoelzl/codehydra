@@ -416,13 +416,17 @@ function createTestHarness(options?: {
       },
     ],
     events: {
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        inProgressDeletions.delete(payload.workspacePath);
+      [EVENT_WORKSPACE_DELETED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceDeletedEvent).payload;
+          inProgressDeletions.delete(payload.workspacePath);
+        },
       },
-      [EVENT_WORKSPACE_DELETE_FAILED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeleteFailedEvent).payload;
-        inProgressDeletions.delete(payload.workspacePath);
+      [EVENT_WORKSPACE_DELETE_FAILED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceDeleteFailedEvent).payload;
+          inProgressDeletions.delete(payload.workspacePath);
+        },
       },
     },
   };
@@ -674,9 +678,11 @@ function createTestHarness(options?: {
   const deleteStateModule: IntentModule = {
     name: "test",
     events: {
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+      [EVENT_WORKSPACE_DELETED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceDeletedEvent).payload;
+          appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+        },
       },
     },
   };
@@ -684,13 +690,15 @@ function createTestHarness(options?: {
   const deleteIpcBridge: IntentModule = {
     name: "test",
     events: {
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        sendToUI("api:workspace:removed", {
-          projectId: payload.projectId,
-          workspaceName: payload.workspaceName,
-          path: payload.workspacePath,
-        });
+      [EVENT_WORKSPACE_DELETED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceDeletedEvent).payload;
+          sendToUI("api:workspace:removed", {
+            projectId: payload.projectId,
+            workspaceName: payload.workspaceName,
+            path: payload.workspacePath,
+          });
+        },
       },
     },
   };
@@ -716,11 +724,13 @@ function createTestHarness(options?: {
       },
     },
     events: {
-      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
-        if (payload === null) {
-          viewManager.setActiveWorkspace(null);
-        }
+      [EVENT_WORKSPACE_SWITCHED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceSwitchedEvent).payload;
+          if (payload === null) {
+            viewManager.setActiveWorkspace(null);
+          }
+        },
       },
     },
   };
@@ -778,8 +788,10 @@ function createTestHarness(options?: {
   const progressCaptureModule: IntentModule = {
     name: "test",
     events: {
-      [EVENT_WORKSPACE_DELETION_PROGRESS]: (event: DomainEvent) => {
-        progressCaptures.push((event as WorkspaceDeletionProgressEvent).payload);
+      [EVENT_WORKSPACE_DELETION_PROGRESS]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          progressCaptures.push((event as WorkspaceDeletionProgressEvent).payload);
+        },
       },
     },
   };
@@ -1676,7 +1688,7 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
     const ctx = {
       intent,
       causation: [],
-      emit: (event: DomainEvent) => {
+      emit: async (event: DomainEvent): Promise<void> => {
         emittedEvents.push(event);
       },
       dispatch: async (dispatchedIntent: Intent) => {

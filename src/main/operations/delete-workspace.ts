@@ -283,7 +283,7 @@ function mergeFlush(
 // Emit function type (for threading ctx.emit through private methods)
 // =============================================================================
 
-type EmitFn = (event: DomainEvent) => void;
+type EmitFn = (event: DomainEvent) => Promise<void>;
 
 // =============================================================================
 // Pipeline State (for progress emission)

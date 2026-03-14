@@ -341,7 +341,7 @@ describe("IpcEventBridge - workspace:deleted", () => {
 // =============================================================================
 
 describe("IpcEventBridge - bases:updated", () => {
-  it("sends project:bases-updated to UI on bases:updated domain event", () => {
+  it("sends project:bases-updated to UI on bases:updated domain event", async () => {
     const deps = createBridgeDeps();
     const ipcEventBridge = createIpcEventBridge(deps);
 
@@ -351,7 +351,7 @@ describe("IpcEventBridge - bases:updated", () => {
     ];
 
     // Call the event handler directly
-    ipcEventBridge.events!["bases:updated"]!({
+    await ipcEventBridge.events!["bases:updated"]!.handler({
       type: "bases:updated",
       payload: {
         projectId: TEST_PROJECT_ID,
@@ -373,7 +373,7 @@ describe("IpcEventBridge - bases:updated", () => {
 // =============================================================================
 
 describe("IpcEventBridge - workspace:deletion-progress", () => {
-  it("sends deletion progress to UI via sendToUI", () => {
+  it("sends deletion progress to UI via sendToUI", async () => {
     const deps = createBridgeDeps();
     const ipcEventBridge = createIpcEventBridge(deps);
 
@@ -397,7 +397,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       payload: progressPayload,
     };
 
-    ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!(event);
+    await ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event);
 
     expect(deps.sendToUI).toHaveBeenCalledWith(
       ApiIpcChannels.WORKSPACE_DELETION_PROGRESS,
@@ -405,7 +405,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
     );
   });
 
-  it("ignores when sendToUI is a no-op", () => {
+  it("ignores when sendToUI is a no-op", async () => {
     const deps = createBridgeDeps();
     const ipcEventBridge = createIpcEventBridge(deps);
 
@@ -421,7 +421,9 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
         hasErrors: false,
       },
     };
-    expect(() => ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!(event)).not.toThrow();
+    await expect(
+      ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event)
+    ).resolves.not.toThrow();
   });
 });
 
@@ -638,7 +640,7 @@ describe("IpcEventBridge - setup:error", () => {
 // =============================================================================
 
 describe("IpcEventBridge - shortcut:key-pressed", () => {
-  it("forwards recognized shortcut keys to renderer via sendToUI", () => {
+  it("forwards recognized shortcut keys to renderer via sendToUI", async () => {
     const deps = createBridgeDeps();
     const ipcEventBridge = createIpcEventBridge(deps);
 
@@ -646,12 +648,12 @@ describe("IpcEventBridge - shortcut:key-pressed", () => {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "up" },
     };
-    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "up");
   });
 
-  it("forwards digit keys to renderer via sendToUI", () => {
+  it("forwards digit keys to renderer via sendToUI", async () => {
     const deps = createBridgeDeps();
     const ipcEventBridge = createIpcEventBridge(deps);
 
@@ -659,12 +661,12 @@ describe("IpcEventBridge - shortcut:key-pressed", () => {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "5" },
     };
-    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "5");
   });
 
-  it("does not forward unrecognized keys to renderer", () => {
+  it("does not forward unrecognized keys to renderer", async () => {
     const deps = createBridgeDeps();
     const ipcEventBridge = createIpcEventBridge(deps);
 
@@ -672,12 +674,12 @@ describe("IpcEventBridge - shortcut:key-pressed", () => {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "d" },
     };
-    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).not.toHaveBeenCalled();
   });
 
-  it("does not forward escape to renderer", () => {
+  it("does not forward escape to renderer", async () => {
     const deps = createBridgeDeps();
     const ipcEventBridge = createIpcEventBridge(deps);
 
@@ -685,7 +687,7 @@ describe("IpcEventBridge - shortcut:key-pressed", () => {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "escape" },
     };
-    ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!(event);
+    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).not.toHaveBeenCalled();
   });

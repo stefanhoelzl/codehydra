@@ -37,6 +37,11 @@ export interface IHookRegistry {
 
 export class HookRegistry implements IHookRegistry {
   private readonly handlers = new Map<string, Map<string, HookHandler[]>>();
+  private readonly initialCapabilities: Readonly<Record<string, unknown>>;
+
+  constructor(initialCapabilities: Readonly<Record<string, unknown>> = {}) {
+    this.initialCapabilities = Object.freeze({ ...initialCapabilities });
+  }
 
   register(operationId: string, hookPointId: string, handler: HookHandler): void {
     let opMap = this.handlers.get(operationId);
@@ -54,6 +59,7 @@ export class HookRegistry implements IHookRegistry {
 
   resolve(operationId: string): ResolvedHooks {
     const opMap = this.handlers.get(operationId);
+    const initCaps = this.initialCapabilities;
     return {
       async collect<T = unknown>(
         hookPointId: string,
@@ -61,15 +67,18 @@ export class HookRegistry implements IHookRegistry {
       ): Promise<HookResult<T>> {
         const handlers = opMap?.get(hookPointId);
         if (!handlers) {
-          const initialCaps = (inputCtx.capabilities as Record<string, unknown> | undefined) ?? {};
           return {
             results: [],
             errors: [],
-            capabilities: Object.freeze({ ...initialCaps }),
+            capabilities: Object.freeze({
+              ...initCaps,
+              ...((inputCtx.capabilities as Record<string, unknown> | undefined) ?? {}),
+            }),
           };
         }
 
         const capabilities: Record<string, unknown> = {
+          ...initCaps,
           ...((inputCtx.capabilities as Record<string, unknown> | undefined) ?? {}),
         };
         let pending = [...handlers];

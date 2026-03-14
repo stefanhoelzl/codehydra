@@ -100,34 +100,36 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
       },
     },
     events: {
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = (event as ConfigUpdatedEvent).payload;
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = (event as ConfigUpdatedEvent).payload;
 
-        // Log all config changes
-        const context: Record<string, string | number | boolean | null> = {};
-        for (const [key, value] of Object.entries(values)) {
-          context[key] = (value ?? null) as string | number | boolean | null;
-        }
-        deps.logger.info("Config updated", context);
+          // Log all config changes
+          const context: Record<string, string | number | boolean | null> = {};
+          for (const [key, value] of Object.entries(values)) {
+            context[key] = (value ?? null) as string | number | boolean | null;
+          }
+          deps.logger.info("Config updated", context);
 
-        // Reconfigure logging when any log-related value changes
-        if (
-          values["log.level"] !== undefined ||
-          values["log.output"] !== undefined ||
-          values["log.format"] !== undefined
-        ) {
-          const levelSpec = (values["log.level"] as string | undefined) ?? "warn";
-          const { level, filter } = splitLogLevelSpec(levelSpec);
-          const output = (values["log.output"] as string | undefined) ?? "file";
-          const logFormat = ((values["log.format"] as string | undefined) ?? "text") as LogFormat;
-          deps.loggingService.configure({
-            logLevel: level,
-            logFile: output.includes("file"),
-            logConsole: output.includes("console"),
-            allowedLoggers: filter,
-            logFormat,
-          });
-        }
+          // Reconfigure logging when any log-related value changes
+          if (
+            values["log.level"] !== undefined ||
+            values["log.output"] !== undefined ||
+            values["log.format"] !== undefined
+          ) {
+            const levelSpec = (values["log.level"] as string | undefined) ?? "warn";
+            const { level, filter } = splitLogLevelSpec(levelSpec);
+            const output = (values["log.output"] as string | undefined) ?? "file";
+            const logFormat = ((values["log.format"] as string | undefined) ?? "text") as LogFormat;
+            deps.loggingService.configure({
+              logLevel: level,
+              logFile: output.includes("file"),
+              logConsole: output.includes("console"),
+              allowedLoggers: filter,
+              logFormat,
+            });
+          }
+        },
       },
     },
   };

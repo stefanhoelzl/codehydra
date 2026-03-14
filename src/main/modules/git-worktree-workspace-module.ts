@@ -486,30 +486,32 @@ export function createGitWorktreeWorkspaceModule(
     // -------------------------------------------------------------------------
 
     events: {
-      [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
-        const { workspacePath, key, value } = (event as MetadataChangedEvent).payload;
+      [EVENT_METADATA_CHANGED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspacePath, key, value } = (event as MetadataChangedEvent).payload;
 
-        for (const [projectKey, wsList] of workspaces) {
-          const index = wsList.findIndex((ws) => ws.path.toString() === workspacePath);
-          if (index === -1) continue;
+          for (const [projectKey, wsList] of workspaces) {
+            const index = wsList.findIndex((ws) => ws.path.toString() === workspacePath);
+            if (index === -1) continue;
 
-          const ws = wsList[index]!;
-          const updatedMetadata =
-            value !== null
-              ? { ...ws.metadata, [key]: value }
-              : Object.fromEntries(Object.entries(ws.metadata).filter(([k]) => k !== key));
+            const ws = wsList[index]!;
+            const updatedMetadata =
+              value !== null
+                ? { ...ws.metadata, [key]: value }
+                : Object.fromEntries(Object.entries(ws.metadata).filter(([k]) => k !== key));
 
-          wsList[index] = {
-            name: ws.name,
-            path: ws.path,
-            branch: ws.branch,
-            metadata: updatedMetadata,
-          };
+            wsList[index] = {
+              name: ws.name,
+              path: ws.path,
+              branch: ws.branch,
+              metadata: updatedMetadata,
+            };
 
-          // Each workspace path is unique — no need to continue searching
-          workspaces.set(projectKey, wsList);
-          return;
-        }
+            // Each workspace path is unique — no need to continue searching
+            workspaces.set(projectKey, wsList);
+            return;
+          }
+        },
       },
     },
   };

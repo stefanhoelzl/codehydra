@@ -137,6 +137,7 @@ interface PosixProcessCleanupModuleDeps {
 export function createPosixProcessCleanupModule(deps: PosixProcessCleanupModuleDeps): IntentModule {
   return {
     name: "posix-process-cleanup",
+    requires: { posix: true },
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {

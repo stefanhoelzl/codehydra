@@ -147,21 +147,23 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
       },
     },
     events: {
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = (event as ConfigUpdatedEvent).payload;
-        if (values["electron.flags"] !== undefined) {
-          const flags = parseElectronFlags(values["electron.flags"] as string | undefined);
-          for (const flag of flags) {
-            deps.app.commandLine.appendSwitch(
-              flag.name,
-              ...(flag.value !== undefined ? [flag.value] : [])
-            );
-            deps.logger.info("Applied Electron flag", {
-              flag: flag.name,
-              ...(flag.value !== undefined && { value: flag.value }),
-            });
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = (event as ConfigUpdatedEvent).payload;
+          if (values["electron.flags"] !== undefined) {
+            const flags = parseElectronFlags(values["electron.flags"] as string | undefined);
+            for (const flag of flags) {
+              deps.app.commandLine.appendSwitch(
+                flag.name,
+                ...(flag.value !== undefined ? [flag.value] : [])
+              );
+              deps.logger.info("Applied Electron flag", {
+                flag: flag.name,
+                ...(flag.value !== undefined && { value: flag.value }),
+              });
+            }
           }
-        }
+        },
       },
     },
   };

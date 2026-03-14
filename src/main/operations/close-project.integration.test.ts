@@ -316,9 +316,11 @@ function createTestHarness(options?: {
   const deleteStateModule: IntentModule = {
     name: "test",
     events: {
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceDeletedEvent).payload;
-        appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+      [EVENT_WORKSPACE_DELETED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceDeletedEvent).payload;
+          appState.unregisterWorkspace(payload.projectPath, payload.workspacePath);
+        },
       },
     },
   };

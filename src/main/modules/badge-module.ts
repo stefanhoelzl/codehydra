@@ -85,15 +85,19 @@ export function createBadgeModule(badgeManager: BadgeManager): IntentModule {
   return {
     name: "badge",
     events: {
-      [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
-        const { workspacePath, status } = (event as AgentStatusUpdatedEvent).payload;
-        workspaceStatuses.set(workspacePath, status);
-        updateBadge();
+      [EVENT_AGENT_STATUS_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspacePath, status } = (event as AgentStatusUpdatedEvent).payload;
+          workspaceStatuses.set(workspacePath, status);
+          updateBadge();
+        },
       },
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-        workspaceStatuses.delete(workspacePath as WorkspacePath);
-        updateBadge();
+      [EVENT_WORKSPACE_DELETED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
+          workspaceStatuses.delete(workspacePath as WorkspacePath);
+          updateBadge();
+        },
       },
     },
     hooks: {

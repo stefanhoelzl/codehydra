@@ -111,7 +111,7 @@ describe("createIdempotencyModule", () => {
       },
     ]);
 
-    let emitFn: ((event: DomainEvent) => void) | undefined;
+    let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
     dispatcher.registerOperation("test:delete", {
       id: "delete-op",
       execute: async (ctx: OperationContext<Intent>) => {
@@ -132,7 +132,7 @@ describe("createIdempotencyModule", () => {
     ).toBe(false);
 
     // Reset /a via event
-    emitFn!({ type: "test:deleted", payload: { path: "/a" } });
+    await emitFn!({ type: "test:deleted", payload: { path: "/a" } });
 
     // /a unblocked, /b still blocked
     expect(
@@ -200,7 +200,7 @@ describe("createIdempotencyModule", () => {
       },
     ]);
 
-    let emitFn: ((event: DomainEvent) => void) | undefined;
+    let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
     dispatcher.registerOperation("test:open", {
       id: "open-op",
       execute: async (ctx: OperationContext<Intent>) => {
@@ -215,7 +215,7 @@ describe("createIdempotencyModule", () => {
     );
 
     // Reset /a via the first event type
-    emitFn!({ type: "test:opened", payload: { path: "/a" } });
+    await emitFn!({ type: "test:opened", payload: { path: "/a" } });
     expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
       true
     );
@@ -224,7 +224,7 @@ describe("createIdempotencyModule", () => {
     expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
       false
     );
-    emitFn!({ type: "test:open-failed", payload: { path: "/a" } });
+    await emitFn!({ type: "test:open-failed", payload: { path: "/a" } });
     expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
       true
     );
@@ -239,7 +239,7 @@ describe("createIdempotencyModule", () => {
       },
     ]);
 
-    let emitFn: ((event: DomainEvent) => void) | undefined;
+    let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
     dispatcher.registerOperation("test:open", {
       id: "open-op",
       execute: async (ctx: OperationContext<Intent>) => {
@@ -251,7 +251,7 @@ describe("createIdempotencyModule", () => {
     await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } });
 
     // Reset event with no path → getKey returns undefined → no keys cleared
-    emitFn!({ type: "test:open-failed", payload: {} });
+    await emitFn!({ type: "test:open-failed", payload: {} });
 
     // /a still blocked
     expect(await dispatcher.dispatch({ type: "test:open", payload: { path: "/a" } }).accepted).toBe(
@@ -293,7 +293,7 @@ describe("createIdempotencyModule", () => {
       },
     ]);
 
-    let emitFn: ((event: DomainEvent) => void) | undefined;
+    let emitFn: ((event: DomainEvent) => Promise<void>) | undefined;
     dispatcher.registerOperation("test:delete", {
       id: "delete-op",
       execute: async (ctx: OperationContext<Intent>) => {
@@ -310,7 +310,7 @@ describe("createIdempotencyModule", () => {
     ).toBe(false);
 
     // Reset via second event type (delete-failed)
-    emitFn!({ type: "test:delete-failed", payload: { path: "/a" } });
+    await emitFn!({ type: "test:delete-failed", payload: { path: "/a" } });
 
     // Now unblocked
     expect(

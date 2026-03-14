@@ -396,9 +396,9 @@ class StartWithMcpPortOperation implements Operation<Intent, void> {
  * The module listens for config:updated events and activates when agent is
  * "opencode" (or null, since default is opencode).
  */
-function fireConfigUpdatedEvent(setup: TestSetup, agent: string | null): void {
-  const handler = setup.module.events![EVENT_CONFIG_UPDATED]!;
-  handler({
+async function fireConfigUpdatedEvent(setup: TestSetup, agent: string | null): Promise<void> {
+  const handler = setup.module.events![EVENT_CONFIG_UPDATED]!.handler;
+  await handler({
     type: EVENT_CONFIG_UPDATED,
     payload: { values: { agent } },
   } as ConfigUpdatedEvent);
@@ -408,7 +408,7 @@ function fireConfigUpdatedEvent(setup: TestSetup, agent: string | null): void {
  * Helper: fire config:updated event and run the start hook so the module becomes active.
  */
 async function activateModule(setup: TestSetup, agent: string | null = null): Promise<void> {
-  fireConfigUpdatedEvent(setup, agent);
+  await fireConfigUpdatedEvent(setup, agent);
   setup.dispatcher.registerOperation("app:start", new MinimalStartOperation());
   await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
 }
@@ -534,7 +534,7 @@ describe("OpenCodeAgentModule Integration", () => {
   describe("start (mcpPort from capabilities)", () => {
     it("calls setMcpConfig when active and mcpPort provided", async () => {
       const setup = createTestSetup();
-      fireConfigUpdatedEvent(setup, null);
+      await fireConfigUpdatedEvent(setup, null);
       setup.dispatcher.registerOperation("app:start", new StartWithMcpPortOperation(5555));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -544,7 +544,7 @@ describe("OpenCodeAgentModule Integration", () => {
 
     it("skips setMcpConfig when mcpPort is null", async () => {
       const setup = createTestSetup();
-      fireConfigUpdatedEvent(setup, null);
+      await fireConfigUpdatedEvent(setup, null);
       setup.dispatcher.registerOperation("app:start", new StartWithMcpPortOperation(null));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -554,7 +554,7 @@ describe("OpenCodeAgentModule Integration", () => {
 
     it("skips setMcpConfig when inactive", async () => {
       const setup = createTestSetup();
-      fireConfigUpdatedEvent(setup, "claude");
+      await fireConfigUpdatedEvent(setup, "claude");
       setup.dispatcher.registerOperation("app:start", new StartWithMcpPortOperation(5555));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -1140,28 +1140,28 @@ describe("OpenCodeAgentModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("config:updated event", () => {
-    it("sets module active when agent is opencode", () => {
+    it("sets module active when agent is opencode", async () => {
       const setup = createTestSetup();
 
       expect(setup.module.events).toBeDefined();
       expect(setup.module.events![EVENT_CONFIG_UPDATED]).toBeDefined();
 
-      fireConfigUpdatedEvent(setup, "opencode");
+      await fireConfigUpdatedEvent(setup, "opencode");
 
       // Verify activation by checking start hook behavior
       // (We confirm it activates in the start tests above)
     });
 
-    it("sets module active when agent is null (default is opencode)", () => {
+    it("sets module active when agent is null (default is opencode)", async () => {
       const setup = createTestSetup();
-      fireConfigUpdatedEvent(setup, null);
+      await fireConfigUpdatedEvent(setup, null);
 
       // The null case defaults to opencode in the module
     });
 
-    it("sets module inactive when agent is claude", () => {
+    it("sets module inactive when agent is claude", async () => {
       const setup = createTestSetup();
-      fireConfigUpdatedEvent(setup, "claude");
+      await fireConfigUpdatedEvent(setup, "claude");
 
       // The module should be inactive -- verified by start tests
     });

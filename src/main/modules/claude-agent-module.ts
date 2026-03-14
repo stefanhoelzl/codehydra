@@ -466,13 +466,15 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
       },
     },
     events: {
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = (event as ConfigUpdatedEvent).payload;
-        if (values.agent !== undefined) {
-          // Agent value received — check if this module should be active
-          const agentType = (values.agent as string | null) ?? "opencode";
-          active = agentType === "claude";
-        }
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = (event as ConfigUpdatedEvent).payload;
+          if (values.agent !== undefined) {
+            // Agent value received — check if this module should be active
+            const agentType = (values.agent as string | null) ?? "opencode";
+            active = agentType === "claude";
+          }
+        },
       },
     },
   };

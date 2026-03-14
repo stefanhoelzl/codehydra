@@ -798,30 +798,32 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       },
     },
     events: {
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = (event as ConfigUpdatedEvent).payload;
-        if (values["code-server.port"] !== undefined) {
-          config.port = values["code-server.port"] as number;
-        }
-        if (values["version.code-server"] !== undefined) {
-          const version = (values["version.code-server"] as string | null) ?? CODE_SERVER_VERSION;
-          const codeServerDir = deps.pathProvider.bundlePath(`code-server/${version}`);
-          const execPath = getCodeServerExecutablePath(deps.platform);
-          const binaryPath = new Path(codeServerDir, execPath).toNative();
-          const downloadRequest: DownloadRequest = {
-            name: "code-server",
-            url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
-            destDir: codeServerDir.toNative(),
-            executablePath: execPath,
-            subPath: getCodeServerSubPathForVersion(version, deps.platform, deps.arch),
-          };
-          config.binaryPath = binaryPath;
-          config.codeServerDir = codeServerDir.toNative();
-          if (binaryDownload) {
-            binaryDownload = { ...binaryDownload, request: downloadRequest };
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = (event as ConfigUpdatedEvent).payload;
+          if (values["code-server.port"] !== undefined) {
+            config.port = values["code-server.port"] as number;
           }
-          codeServerBinaryPath = binaryPath;
-        }
+          if (values["version.code-server"] !== undefined) {
+            const version = (values["version.code-server"] as string | null) ?? CODE_SERVER_VERSION;
+            const codeServerDir = deps.pathProvider.bundlePath(`code-server/${version}`);
+            const execPath = getCodeServerExecutablePath(deps.platform);
+            const binaryPath = new Path(codeServerDir, execPath).toNative();
+            const downloadRequest: DownloadRequest = {
+              name: "code-server",
+              url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
+              destDir: codeServerDir.toNative(),
+              executablePath: execPath,
+              subPath: getCodeServerSubPathForVersion(version, deps.platform, deps.arch),
+            };
+            config.binaryPath = binaryPath;
+            config.codeServerDir = codeServerDir.toNative();
+            if (binaryDownload) {
+              binaryDownload = { ...binaryDownload, request: downloadRequest };
+            }
+            codeServerBinaryPath = binaryPath;
+          }
+        },
       },
     },
   };

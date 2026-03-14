@@ -445,7 +445,7 @@ describe("Dispatcher", () => {
       const testModule: IntentModule = {
         name: "test-event",
         events: {
-          "test:completed": eventHandler,
+          "test:completed": { handler: async (event) => eventHandler(event) },
         },
       };
 
@@ -938,7 +938,7 @@ describe("Dispatcher", () => {
       const testModule: IntentModule = {
         name: "subscriber-mod",
         events: {
-          "test:completed": () => {},
+          "test:completed": { handler: async () => {} },
         },
       };
 
@@ -952,12 +952,19 @@ describe("Dispatcher", () => {
 
       await dispatcher.dispatch(createActionIntent());
 
-      const emitLog = logger.calls.find((c) => c.level === "info" && c.message === "emit");
+      // Events are routed through HookRegistry as hook calls on "event:<type>" / "handle"
+      const emitLog = logger.calls.find(
+        (c) =>
+          c.level === "debug" &&
+          c.message === "hook" &&
+          (c.context as Record<string, unknown>).op === "event:test:completed"
+      );
       expect(emitLog).toBeDefined();
       expect(emitLog!.context).toEqual(
         expect.objectContaining({
-          event: "test:completed",
-          subscribers: "subscriber-mod",
+          op: "event:test:completed",
+          hook: "handle",
+          modules: "subscriber-mod",
         })
       );
     });
@@ -1039,8 +1046,8 @@ describe("Dispatcher", () => {
         const testModule: IntentModule = {
           name: "event-mod",
           events: {
-            "test:completed": () => {},
-            "test:failed": () => {},
+            "test:completed": { handler: async () => {} },
+            "test:failed": { handler: async () => {} },
           },
         };
 
