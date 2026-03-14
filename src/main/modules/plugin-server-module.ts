@@ -22,14 +22,9 @@ import type {
   WorkspaceCreateRequest,
   PluginResult,
 } from "../../shared/plugin-protocol";
-import type {
-  FinalizeHookInput,
-  FinalizeHookResult,
-  OpenWorkspaceIntent,
-} from "../operations/open-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
-import type { StartHookResult } from "../operations/app-start";
 import type { GetWorkspaceStatusIntent } from "../operations/get-workspace-status";
 import type { GetAgentSessionIntent } from "../operations/get-agent-session";
 import type { RestartAgentIntent } from "../operations/restart-agent";
@@ -77,8 +72,8 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
-            if (!pluginServer) return {};
+          handler: async (): Promise<void> => {
+            if (!pluginServer) return;
 
             try {
               const port = await pluginServer.start();
@@ -93,8 +88,6 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
               const message = error instanceof Error ? error.message : "Unknown error";
               logger.warn("PluginServer start failed", { error: message });
             }
-
-            return {};
           },
         },
       },
@@ -111,7 +104,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
 
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+          handler: async (ctx: HookContext): Promise<void> => {
             const finalizeCtx = ctx as FinalizeHookInput;
 
             if (pluginServer && finalizeCtx.agentType) {
@@ -124,8 +117,6 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
                 resetWorkspace
               );
             }
-
-            return {};
           },
         },
       },

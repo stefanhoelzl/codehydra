@@ -11,7 +11,6 @@
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { StartHookResult } from "../operations/app-start";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import type { McpServerManager } from "../../services/mcp-server/mcp-server-manager";
@@ -29,14 +28,20 @@ export interface McpModuleDeps {
 // =============================================================================
 
 export function createMcpModule(deps: McpModuleDeps): IntentModule {
+  /** Capability: mcpPort provided by start handler. */
+  let capMcpPort: number | undefined;
+
   return {
     name: "mcp",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
-            const mcpPort = await deps.mcpServerManager.start();
-            return { mcpPort };
+          provides: () => ({
+            ...(capMcpPort !== undefined && { mcpPort: capMcpPort }),
+          }),
+          handler: async (): Promise<void> => {
+            capMcpPort = undefined;
+            capMcpPort = await deps.mcpServerManager.start();
           },
         },
       },

@@ -16,6 +16,7 @@ import type { Logger } from "../../services/logging/types";
 import type { AgentBinaryManager } from "../../services/binary-download";
 import type { AgentBinaryType } from "../../services/binary-download";
 import type { BinaryType } from "../../services/vscode-setup/types";
+import type { AgentType } from "../../shared/plugin-protocol";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 
 import type { LoggingService } from "../../services/logging";
@@ -26,7 +27,6 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-  StartHookResult,
   ActivateHookContext,
   ActivateHookResult,
   RegisterConfigResult,
@@ -99,6 +99,9 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
 
   /** Whether this module is the active agent (set by config:updated event). */
   let active = false;
+
+  /** Capability: agentType provided by setup handler. */
+  let capAgentType: AgentType | undefined;
 
   /** Tracks pending handleServerStarted() promises for waitForProvider(). */
   const serverStartedPromises = new Map<string, Promise<void>>();
@@ -235,8 +238,8 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
         },
 
         start: {
-          handler: async (): Promise<StartHookResult> => {
-            if (!active) return {};
+          handler: async (): Promise<void> => {
+            if (!active) return;
 
             wireServerCallbacks();
 
@@ -248,7 +251,6 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
                 } as UpdateAgentStatusIntent);
               }
             );
-            return {};
           },
         },
 
@@ -355,7 +357,11 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
 
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
+          provides: () => ({
+            ...(capAgentType !== undefined && { agentType: capAgentType }),
+          }),
           handler: async (ctx: HookContext): Promise<SetupHookResult | undefined> => {
+            capAgentType = undefined;
             if (!active) return undefined;
 
             const setupCtx = ctx as SetupHookInput;
@@ -385,7 +391,8 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
               ...(agentProvider?.getEnvironmentVariables() ?? {}),
             };
 
-            return { envVars, agentType: "claude" };
+            capAgentType = "claude";
+            return { envVars };
           },
         },
       },

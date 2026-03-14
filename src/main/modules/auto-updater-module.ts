@@ -25,7 +25,6 @@ import type { HookContext } from "../intents/infrastructure/operation";
 import type { IpcEventHandler, IpcLayer } from "../../services/platform/ipc";
 import {
   APP_START_OPERATION_ID,
-  type StartHookResult,
   type RegisterConfigResult,
   type CheckDepsResult,
 } from "../operations/app-start";
@@ -125,7 +124,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
           },
         },
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          handler: async (): Promise<void> => {
             deps.autoUpdater.start();
 
             // Wire auto-updater to dispatch update:available intent (for window title backup)
@@ -140,8 +139,6 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
             deps.autoUpdater.onUpdateDetected((version: string) => {
               detectedVersion = version;
             });
-
-            return {};
           },
         },
       },

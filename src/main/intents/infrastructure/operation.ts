@@ -61,6 +61,7 @@ export interface HookHandler<T = unknown> {
 export interface HookResult<T = unknown> {
   readonly results: readonly T[];
   readonly errors: readonly Error[];
+  readonly capabilities: Readonly<Record<string, unknown>>;
 }
 
 /**

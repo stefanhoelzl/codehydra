@@ -52,7 +52,6 @@ import type {
   SetupHookInput,
   SetupHookResult,
   FinalizeHookInput,
-  FinalizeHookResult,
   WorkspaceCreatedEvent,
   ExistingWorkspaceData,
 } from "./open-workspace";
@@ -412,15 +411,15 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       }
     : null;
 
-  // CodeServerModule: "finalize" hook — returns FinalizeHookResult
+  // CodeServerModule: "finalize" hook — provides workspaceUrl capability
   const codeServerModule: IntentModule = {
     name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+          provides: () => ({ workspaceUrl }),
+          handler: async (ctx: HookContext): Promise<void> => {
             void (ctx as FinalizeHookInput).envVars;
-            return { workspaceUrl };
           },
         },
       },
@@ -955,9 +954,9 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             finalize: {
-              handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+              provides: () => ({ workspaceUrl: WORKSPACE_URL }),
+              handler: async (ctx: HookContext): Promise<void> => {
                 capturedEnvVars = (ctx as FinalizeHookInput).envVars;
-                return { workspaceUrl: WORKSPACE_URL };
               },
             },
           },

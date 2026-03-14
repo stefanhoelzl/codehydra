@@ -15,14 +15,9 @@ import type { Operation, OperationContext } from "../intents/infrastructure/oper
 import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import type { StartHookResult } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../operations/open-workspace";
-import type {
-  FinalizeHookInput,
-  FinalizeHookResult,
-  OpenWorkspaceIntent,
-} from "../operations/open-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../operations/open-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
@@ -47,25 +42,18 @@ import { INTENT_RESOLVE_WORKSPACE } from "../operations/resolve-workspace";
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalStartOperation implements Operation<Intent, StartHookResult> {
+class MinimalStartOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
 
-  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
-    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", {
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
+    const { errors } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
-    const merged: StartHookResult = {};
-    for (const r of results) {
-      if (r.codeServerPort !== undefined) {
-        (merged as Record<string, unknown>).codeServerPort = r.codeServerPort;
-      }
-    }
-    return merged;
   }
 }
 
-class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, FinalizeHookResult> {
+class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, void> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
   private readonly hookInput: Partial<FinalizeHookInput>;
 
@@ -73,8 +61,8 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, Finaliz
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<FinalizeHookResult> {
-    const { results, errors } = await ctx.hooks.collect<FinalizeHookResult>("finalize", {
+  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<void> {
+    const { errors } = await ctx.hooks.collect<void>("finalize", {
       intent: ctx.intent,
       workspacePath: "/test/project/.worktrees/feature-1",
       envVars: { OPENCODE_PORT: "8080" },
@@ -82,7 +70,6 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, Finaliz
       ...this.hookInput,
     });
     if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
   }
 }
 
@@ -174,13 +161,13 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
-      const result = (await dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as StartHookResult;
-
-      // Should return empty result without error
-      expect(result).toEqual({});
+      // Should resolve without error
+      await expect(
+        dispatcher.dispatch({
+          type: "app:start",
+          payload: {},
+        })
+      ).resolves.not.toThrow();
     });
 
     it("degrades gracefully when PluginServer fails", async () => {
@@ -318,19 +305,20 @@ describe("PluginServerModule", () => {
         })
       );
 
-      const result = (await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectPath: "/test/project",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as OpenWorkspaceIntent)) as FinalizeHookResult;
-
-      expect(result).toEqual({});
+      // Should resolve without error (no-op with null pluginServer)
+      await expect(
+        dispatcher.dispatch({
+          type: "workspace:open",
+          payload: {
+            projectPath: "/test/project",
+            workspaceName: "feature-1",
+            base: "main",
+          },
+        } as OpenWorkspaceIntent)
+      ).resolves.not.toThrow();
     });
 
-    it("returns empty result (no workspaceUrl)", async () => {
+    it("does not provide workspaceUrl capability (plugin server has no URL)", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
 
@@ -343,16 +331,17 @@ describe("PluginServerModule", () => {
         })
       );
 
-      const result = (await dispatcher.dispatch({
-        type: "workspace:open",
-        payload: {
-          projectPath: "/test/project",
-          workspaceName: "feature-1",
-          base: "main",
-        },
-      } as OpenWorkspaceIntent)) as FinalizeHookResult;
-
-      expect(result.workspaceUrl).toBeUndefined();
+      // Should resolve without error (plugin server does not provide workspaceUrl)
+      await expect(
+        dispatcher.dispatch({
+          type: "workspace:open",
+          payload: {
+            projectPath: "/test/project",
+            workspaceName: "feature-1",
+            base: "main",
+          },
+        } as OpenWorkspaceIntent)
+      ).resolves.not.toThrow();
     });
   });
 

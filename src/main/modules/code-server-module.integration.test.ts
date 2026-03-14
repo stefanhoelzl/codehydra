@@ -20,17 +20,12 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-  StartHookResult,
 } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
-import type {
-  FinalizeHookInput,
-  FinalizeHookResult,
-  OpenWorkspaceIntent,
-} from "../operations/open-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../operations/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
@@ -112,22 +107,15 @@ class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
   }
 }
 
-class MinimalStartOperation implements Operation<Intent, StartHookResult> {
+class MinimalStartOperation implements Operation<Intent, number | undefined> {
   readonly id = APP_START_OPERATION_ID;
 
-  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
-    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", {
+  async execute(ctx: OperationContext<Intent>): Promise<number | undefined> {
+    const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
-    // Merge results
-    const merged: StartHookResult = {};
-    for (const r of results) {
-      if (r.codeServerPort !== undefined) {
-        (merged as Record<string, unknown>).codeServerPort = r.codeServerPort;
-      }
-    }
-    return merged;
+    return capabilities.codeServerPort as number | undefined;
   }
 }
 
@@ -171,7 +159,7 @@ class MinimalExtensionsOperation implements Operation<Intent, void> {
   }
 }
 
-class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, FinalizeHookResult> {
+class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, string | undefined> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
   private readonly hookInput: Partial<FinalizeHookInput>;
 
@@ -179,8 +167,8 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, Finaliz
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<FinalizeHookResult> {
-    const { results, errors } = await ctx.hooks.collect<FinalizeHookResult>("finalize", {
+  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<string | undefined> {
+    const { errors, capabilities } = await ctx.hooks.collect<void>("finalize", {
       intent: ctx.intent,
       workspacePath: "/test/project/.worktrees/feature-1",
       envVars: { OPENCODE_PORT: "8080" },
@@ -188,7 +176,7 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, Finaliz
       ...this.hookInput,
     });
     if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
+    return capabilities.workspaceUrl as string | undefined;
   }
 }
 
@@ -482,13 +470,13 @@ describe("CodeServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
-      const result = (await dispatcher.dispatch({
+      const codeServerPort = (await dispatcher.dispatch({
         type: "app:start",
         payload: {},
-      })) as StartHookResult;
+      })) as number | undefined;
 
       // Port is 25448 (packaged mode)
-      expect(result.codeServerPort).toBe(25448);
+      expect(codeServerPort).toBe(25448);
       expect(deps.processRunner.run).toHaveBeenCalled();
     });
 
@@ -785,17 +773,17 @@ describe("CodeServerModule", () => {
         })
       );
 
-      const result = (await dispatcher.dispatch({
+      const workspaceUrl = (await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
           projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
         },
-      } as OpenWorkspaceIntent)) as FinalizeHookResult;
+      } as OpenWorkspaceIntent)) as unknown as string | undefined;
 
-      expect(result.workspaceUrl).toContain("25448");
-      expect(result.workspaceUrl).toContain("workspace=");
+      expect(workspaceUrl).toContain("25448");
+      expect(workspaceUrl).toContain("workspace=");
       expect(deps.workspaceFileService.ensureWorkspaceFile).toHaveBeenCalledWith(
         new Path("/test/project/.worktrees/feature-1"),
         new Path("/test/project/.worktrees"),
@@ -834,17 +822,17 @@ describe("CodeServerModule", () => {
         })
       );
 
-      const result = (await dispatcher.dispatch({
+      const workspaceUrl = (await dispatcher.dispatch({
         type: "workspace:open",
         payload: {
           projectPath: "/test/project",
           workspaceName: "feature-1",
           base: "main",
         },
-      } as OpenWorkspaceIntent)) as FinalizeHookResult;
+      } as OpenWorkspaceIntent)) as unknown as string | undefined;
 
-      expect(result.workspaceUrl).toContain("25448");
-      expect(result.workspaceUrl).toContain("folder=");
+      expect(workspaceUrl).toContain("25448");
+      expect(workspaceUrl).toContain("folder=");
     });
   });
 
@@ -1027,12 +1015,12 @@ describe("CodeServerModule", () => {
 
       // Start and verify the new port is used
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      const result = (await dispatcher.dispatch({
+      const codeServerPort = (await dispatcher.dispatch({
         type: "app:start",
         payload: {},
-      })) as StartHookResult;
+      })) as number | undefined;
 
-      expect(result.codeServerPort).toBe(9999);
+      expect(codeServerPort).toBe(9999);
       expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(9999);
     });
 
@@ -1052,12 +1040,12 @@ describe("CodeServerModule", () => {
 
       // Start and verify the default port is used
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      const result = (await dispatcher.dispatch({
+      const codeServerPort = (await dispatcher.dispatch({
         type: "app:start",
         payload: {},
-      })) as StartHookResult;
+      })) as number | undefined;
 
-      expect(result.codeServerPort).toBe(25448);
+      expect(codeServerPort).toBe(25448);
     });
   });
 

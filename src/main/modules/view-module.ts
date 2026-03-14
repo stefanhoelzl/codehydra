@@ -45,7 +45,7 @@ import {
   type ActivateHookResult,
   type RegisterConfigResult,
 } from "../operations/app-start";
-import type { AgentSelectionHookResult, AgentSelectionHookContext } from "../operations/setup";
+import type { AgentSelectionHookContext } from "../operations/setup";
 import type { GetActiveWorkspaceHookResult } from "../operations/get-active-workspace";
 import type {
   SwitchWorkspaceIntent,
@@ -153,6 +153,8 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
 
   // Internal state
   let cachedActiveRef: WorkspaceRef | null = null;
+  /** Capability: agentType provided by agent-selection handler. */
+  let capAgentType: LifecycleAgentType | undefined;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
   let loadOnResume = false;
   const mountSignal: MountSignal = { resolve: null };
@@ -287,7 +289,11 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
           },
         },
         "agent-selection": {
-          handler: async (ctx: HookContext): Promise<AgentSelectionHookResult> => {
+          provides: () => ({
+            ...(capAgentType !== undefined && { agentType: capAgentType }),
+          }),
+          handler: async (ctx: HookContext): Promise<void> => {
+            capAgentType = undefined;
             const { availableAgents } = ctx as AgentSelectionHookContext;
 
             if (!viewManager.isUIAvailable()) {
@@ -323,10 +329,8 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
             };
             viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION, selectionPayload);
 
-            const selectedAgent = await agentPromise;
-            logger.info("Agent selected", { agent: selectedAgent });
-
-            return { selectedAgent };
+            capAgentType = await agentPromise;
+            logger.info("Agent selected", { agent: capAgentType });
           },
         },
         "hide-ui": {

@@ -39,7 +39,6 @@ import {
 } from "./app-start";
 import type {
   AppStartIntent,
-  StartHookResult,
   ActivateHookContext,
   ActivateHookResult,
   CheckDepsHookContext,
@@ -92,13 +91,13 @@ function createCodeServerModule(state: TestState, options?: { fail?: boolean }):
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          provides: () => ({ codeServerPort: 8080 }),
+          handler: async (): Promise<void> => {
             if (options?.fail) {
               throw new Error("CodeServer failed to start");
             }
             state.codeServerStarted = true;
             state.executionOrder.push("codeserver-start");
-            return { codeServerPort: 8080 };
           },
         },
       },
@@ -112,13 +111,13 @@ function createMcpModule(state: TestState, options?: { fail?: boolean }): Intent
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          provides: () => ({ mcpPort: 9090 }),
+          handler: async (): Promise<void> => {
             if (options?.fail) {
               throw new Error("MCP server failed to start");
             }
             state.mcpStarted = true;
             state.executionOrder.push("mcp-start");
-            return { mcpPort: 9090 };
           },
         },
       },
@@ -206,7 +205,8 @@ function createCodeServerModuleWithGracefulPluginDegradation(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          provides: () => ({ codeServerPort: 8080 }),
+          handler: async (): Promise<void> => {
             // Simulate PluginServer start attempt (internal try/catch)
             let pluginPort: number | undefined;
             try {
@@ -223,7 +223,6 @@ function createCodeServerModuleWithGracefulPluginDegradation(
             state.codeServerStarted = true;
             state.executionOrder.push("codeserver-start");
             void pluginPort; // Used for code-server config in real impl
-            return { codeServerPort: 8080 };
           },
         },
       },
