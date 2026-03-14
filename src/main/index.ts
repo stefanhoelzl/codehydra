@@ -155,6 +155,11 @@ import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./operations/shortcut
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./operations/update-available";
 import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./operations/update-apply";
 import {
+  VscodeShowMessageOperation,
+  INTENT_VSCODE_SHOW_MESSAGE,
+} from "./operations/vscode-show-message";
+import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./operations/vscode-command";
+import {
   ResolveWorkspaceOperation,
   INTENT_RESOLVE_WORKSPACE,
 } from "./operations/resolve-workspace";
@@ -341,7 +346,7 @@ const badgeManager = new BadgeManager(
 // McpServerManager with handlers factory that dispatches intents directly
 const mcpServerManager = new McpServerManager(
   networkLayer,
-  () => createMcpHandlers(dispatcher, pluginServer),
+  () => createMcpHandlers(dispatcher),
   loggingService.createLogger("mcp")
 );
 
@@ -594,6 +599,8 @@ dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOp
 dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
 dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation());
+dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
+dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
 
 // Create IPC event bridge (registers all IPC handlers directly on ipcLayer)
 const ipcEventBridge = createIpcEventBridge({

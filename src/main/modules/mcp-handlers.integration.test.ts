@@ -2,11 +2,11 @@
 /**
  * Integration tests for createMcpHandlers.
  *
- * Tests verify each handler dispatches the correct intent type and payload,
- * and that executeCommand delegates to the PluginServer.
+ * Tests verify each handler dispatches the correct intent type and payload.
+ * All operations — including UI and command — go through the dispatcher.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Intent } from "../intents/infrastructure/types";
@@ -29,6 +29,11 @@ import {
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../operations/delete-workspace";
 import { INTENT_LIST_PROJECTS, LIST_PROJECTS_OPERATION_ID } from "../operations/list-projects";
+import {
+  INTENT_VSCODE_SHOW_MESSAGE,
+  VSCODE_SHOW_MESSAGE_OPERATION_ID,
+} from "../operations/vscode-show-message";
+import { INTENT_VSCODE_COMMAND, VSCODE_COMMAND_OPERATION_ID } from "../operations/vscode-command";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 
 import { createMcpHandlers } from "./mcp-handlers";
@@ -54,17 +59,6 @@ function createCapturingOperation<TIntent extends Intent = Intent, TResult = voi
   };
 }
 
-function createMockPluginServer() {
-  return {
-    sendCommand: vi.fn().mockResolvedValue({ success: true, data: "result" }),
-    showNotification: vi.fn().mockResolvedValue({ success: true, data: { action: null } }),
-    updateStatusBar: vi.fn().mockResolvedValue({ success: true, data: undefined }),
-    disposeStatusBar: vi.fn().mockResolvedValue({ success: true, data: undefined }),
-    showQuickPick: vi.fn().mockResolvedValue({ success: true, data: { selected: "Option A" } }),
-    showInputBox: vi.fn().mockResolvedValue({ success: true, data: { value: "hello" } }),
-  };
-}
-
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -72,7 +66,6 @@ function createMockPluginServer() {
 function createTestSetup() {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
-  const pluginServer = createMockPluginServer();
   const capturedIntents: Intent[] = [];
 
   dispatcher.registerOperation(
@@ -139,7 +132,25 @@ function createTestSetup() {
     createCapturingOperation(LIST_PROJECTS_OPERATION_ID, capturedIntents, mockProjects)
   );
 
-  return { dispatcher, hookRegistry, pluginServer, capturedIntents, mockProjects };
+  dispatcher.registerOperation(
+    INTENT_VSCODE_SHOW_MESSAGE,
+    createCapturingOperation(
+      VSCODE_SHOW_MESSAGE_OPERATION_ID,
+      capturedIntents,
+      null as string | null
+    )
+  );
+
+  dispatcher.registerOperation(
+    INTENT_VSCODE_COMMAND,
+    createCapturingOperation(
+      VSCODE_COMMAND_OPERATION_ID,
+      capturedIntents,
+      "command-result" as unknown
+    )
+  );
+
+  return { dispatcher, hookRegistry, capturedIntents, mockProjects };
 }
 
 // =============================================================================
@@ -149,8 +160,8 @@ function createTestSetup() {
 describe("createMcpHandlers", () => {
   describe("getStatus", () => {
     it("dispatches GetWorkspaceStatusIntent with correct payload", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.getStatus("/workspace/path");
 
@@ -163,8 +174,8 @@ describe("createMcpHandlers", () => {
 
   describe("getMetadata", () => {
     it("dispatches GetMetadataIntent with correct payload", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.getMetadata("/workspace/path");
 
@@ -177,8 +188,8 @@ describe("createMcpHandlers", () => {
 
   describe("setMetadata", () => {
     it("dispatches SetMetadataIntent with correct payload", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       await handlers.setMetadata("/workspace/path", "note", "test value");
 
@@ -194,8 +205,8 @@ describe("createMcpHandlers", () => {
 
   describe("getAgentSession", () => {
     it("dispatches GetAgentSessionIntent with correct payload", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.getAgentSession("/workspace/path");
 
@@ -208,8 +219,8 @@ describe("createMcpHandlers", () => {
 
   describe("restartAgentServer", () => {
     it("dispatches RestartAgentIntent with correct payload", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.restartAgentServer("/workspace/path");
 
@@ -222,8 +233,8 @@ describe("createMcpHandlers", () => {
 
   describe("listProjects", () => {
     it("dispatches ListProjectsIntent and returns projects", async () => {
-      const { dispatcher, pluginServer, capturedIntents, mockProjects } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents, mockProjects } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.listProjects();
 
@@ -235,8 +246,8 @@ describe("createMcpHandlers", () => {
 
   describe("createWorkspace", () => {
     it("dispatches OpenWorkspaceIntent with mapped payload", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.createWorkspace({
         projectPath: "/projects/my-project",
@@ -257,8 +268,8 @@ describe("createMcpHandlers", () => {
     });
 
     it("includes initialPrompt when provided", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       await handlers.createWorkspace({
         projectPath: "/projects/my-project",
@@ -275,8 +286,8 @@ describe("createMcpHandlers", () => {
 
   describe("deleteWorkspace", () => {
     it("dispatches DeleteWorkspaceIntent and returns started: true on accept", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.deleteWorkspace("/workspace/path", { keepBranch: false });
 
@@ -292,8 +303,8 @@ describe("createMcpHandlers", () => {
     });
 
     it("passes ignoreWarnings through to intent payload", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       await handlers.deleteWorkspace("/workspace/path", {
         keepBranch: false,
@@ -306,8 +317,8 @@ describe("createMcpHandlers", () => {
     });
 
     it("defaults ignoreWarnings to false", async () => {
-      const { dispatcher, pluginServer, capturedIntents } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       await handlers.deleteWorkspace("/workspace/path", { keepBranch: false });
 
@@ -319,7 +330,6 @@ describe("createMcpHandlers", () => {
     it("awaits full result and propagates thrown errors", async () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      const pluginServer = createMockPluginServer();
 
       // Register an operation that throws (simulates preflight failure)
       dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, {
@@ -329,7 +339,7 @@ describe("createMcpHandlers", () => {
         },
       });
 
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const handlers = createMcpHandlers(dispatcher);
 
       await expect(
         handlers.deleteWorkspace("/workspace/path", { keepBranch: false })
@@ -339,7 +349,6 @@ describe("createMcpHandlers", () => {
     it("returns started: false when interceptor rejects", async () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      const pluginServer = createMockPluginServer();
 
       dispatcher.registerOperation(
         INTENT_DELETE_WORKSPACE,
@@ -355,7 +364,7 @@ describe("createMcpHandlers", () => {
         },
       });
 
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+      const handlers = createMcpHandlers(dispatcher);
       const result = await handlers.deleteWorkspace("/workspace/path", { keepBranch: true });
 
       expect(result).toEqual({ started: false });
@@ -363,249 +372,112 @@ describe("createMcpHandlers", () => {
   });
 
   describe("executeCommand", () => {
-    it("delegates to pluginServer.sendCommand", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+    it("dispatches VscodeCommandIntent with correct payload", async () => {
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
       const result = await handlers.executeCommand("/workspace/path", "test.command", ["arg1"]);
 
-      expect(pluginServer.sendCommand).toHaveBeenCalledWith("/workspace/path", "test.command", [
-        "arg1",
-      ]);
-      expect(result).toBe("result");
-    });
-
-    it("throws when pluginServer returns error", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      pluginServer.sendCommand.mockResolvedValue({
-        success: false,
-        error: "Command not found",
+      expect(capturedIntents).toHaveLength(1);
+      expect(capturedIntents[0]!.type).toBe(INTENT_VSCODE_COMMAND);
+      expect(capturedIntents[0]!.payload).toEqual({
+        workspacePath: "/workspace/path",
+        command: "test.command",
+        args: ["arg1"],
       });
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      await expect(handlers.executeCommand("/workspace/path", "unknown.command")).rejects.toThrow(
-        "Command not found"
-      );
-    });
-
-    it("throws when pluginServer is null", async () => {
-      const { dispatcher } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, null);
-
-      await expect(handlers.executeCommand("/workspace/path", "test.command")).rejects.toThrow(
-        "Plugin server not available"
-      );
+      expect(result).toBe("command-result");
     });
   });
 
-  describe("showNotification", () => {
-    it("delegates to pluginServer.showNotification", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
+  describe("showMessage", () => {
+    it("dispatches VscodeShowMessageIntent for notification", async () => {
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
-      const request = { severity: "info" as const, message: "Hello" };
-      const result = await handlers.showNotification("/workspace/path", request);
-
-      expect(pluginServer.showNotification).toHaveBeenCalledWith(
-        "/workspace/path",
-        request,
-        undefined
-      );
-      expect(result).toEqual({ action: null });
-    });
-
-    it("passes timeout to pluginServer", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      const request = { severity: "info" as const, message: "Hello", actions: ["OK"] };
-      await handlers.showNotification("/workspace/path", request, 5000);
-
-      expect(pluginServer.showNotification).toHaveBeenCalledWith("/workspace/path", request, 5000);
-    });
-
-    it("throws when pluginServer returns error", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      pluginServer.showNotification.mockResolvedValue({
-        success: false,
-        error: "Not connected",
+      await handlers.showMessage("/workspace/path", {
+        type: "info",
+        message: "Hello",
       });
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
 
-      await expect(
-        handlers.showNotification("/workspace/path", { severity: "info", message: "Hi" })
-      ).rejects.toThrow("Not connected");
-    });
-
-    it("throws when pluginServer is null", async () => {
-      const { dispatcher } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, null);
-
-      await expect(
-        handlers.showNotification("/workspace/path", { severity: "info", message: "Hi" })
-      ).rejects.toThrow("Plugin server not available");
-    });
-  });
-
-  describe("updateStatusBar", () => {
-    it("delegates to pluginServer.updateStatusBar", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      const request = { id: "my-status", text: "Building..." };
-      await handlers.updateStatusBar("/workspace/path", request);
-
-      expect(pluginServer.updateStatusBar).toHaveBeenCalledWith("/workspace/path", request);
-    });
-
-    it("throws when pluginServer returns error", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      pluginServer.updateStatusBar.mockResolvedValue({
-        success: false,
-        error: "Socket disconnected",
+      expect(capturedIntents).toHaveLength(1);
+      expect(capturedIntents[0]!.type).toBe(INTENT_VSCODE_SHOW_MESSAGE);
+      expect(capturedIntents[0]!.payload).toEqual({
+        workspacePath: "/workspace/path",
+        type: "info",
+        message: "Hello",
       });
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      await expect(
-        handlers.updateStatusBar("/workspace/path", { id: "my-status", text: "Building..." })
-      ).rejects.toThrow("Socket disconnected");
     });
 
-    it("throws when pluginServer is null", async () => {
-      const { dispatcher } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, null);
+    it("dispatches VscodeShowMessageIntent for status bar", async () => {
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
-      await expect(
-        handlers.updateStatusBar("/workspace/path", { id: "my-status", text: "Building..." })
-      ).rejects.toThrow("Plugin server not available");
-    });
-  });
-
-  describe("disposeStatusBar", () => {
-    it("delegates to pluginServer.disposeStatusBar", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      const request = { id: "my-status" };
-      await handlers.disposeStatusBar("/workspace/path", request);
-
-      expect(pluginServer.disposeStatusBar).toHaveBeenCalledWith("/workspace/path", request);
-    });
-
-    it("throws when pluginServer returns error", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      pluginServer.disposeStatusBar.mockResolvedValue({
-        success: false,
-        error: "Item not found",
+      await handlers.showMessage("/workspace/path", {
+        type: "status",
+        message: "Building...",
+        hint: "Running build task",
       });
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
 
-      await expect(
-        handlers.disposeStatusBar("/workspace/path", { id: "my-status" })
-      ).rejects.toThrow("Item not found");
-    });
-
-    it("throws when pluginServer is null", async () => {
-      const { dispatcher } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, null);
-
-      await expect(
-        handlers.disposeStatusBar("/workspace/path", { id: "my-status" })
-      ).rejects.toThrow("Plugin server not available");
-    });
-  });
-
-  describe("showQuickPick", () => {
-    it("delegates to pluginServer.showQuickPick", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      const request = { items: [{ label: "Option A" }, { label: "Option B" }] };
-      const result = await handlers.showQuickPick("/workspace/path", request);
-
-      expect(pluginServer.showQuickPick).toHaveBeenCalledWith(
-        "/workspace/path",
-        request,
-        undefined
-      );
-      expect(result).toEqual({ selected: "Option A" });
-    });
-
-    it("passes timeout to pluginServer", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      const request = { items: [{ label: "Option A" }], title: "Pick one" };
-      await handlers.showQuickPick("/workspace/path", request, 10000);
-
-      expect(pluginServer.showQuickPick).toHaveBeenCalledWith("/workspace/path", request, 10000);
-    });
-
-    it("throws when pluginServer returns error", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      pluginServer.showQuickPick.mockResolvedValue({
-        success: false,
-        error: "Timed out",
+      expect(capturedIntents[0]!.payload).toEqual({
+        workspacePath: "/workspace/path",
+        type: "status",
+        message: "Building...",
+        hint: "Running build task",
       });
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      await expect(
-        handlers.showQuickPick("/workspace/path", { items: [{ label: "A" }] })
-      ).rejects.toThrow("Timed out");
     });
 
-    it("throws when pluginServer is null", async () => {
-      const { dispatcher } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, null);
+    it("dispatches VscodeShowMessageIntent for status bar dismiss", async () => {
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
-      await expect(
-        handlers.showQuickPick("/workspace/path", { items: [{ label: "A" }] })
-      ).rejects.toThrow("Plugin server not available");
-    });
-  });
-
-  describe("showInputBox", () => {
-    it("delegates to pluginServer.showInputBox", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      const request = { prompt: "Enter your name", placeholder: "Name" };
-      const result = await handlers.showInputBox("/workspace/path", request);
-
-      expect(pluginServer.showInputBox).toHaveBeenCalledWith("/workspace/path", request, undefined);
-      expect(result).toEqual({ value: "hello" });
-    });
-
-    it("passes timeout to pluginServer", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
-
-      const request = { prompt: "Enter value", password: true };
-      await handlers.showInputBox("/workspace/path", request, 15000);
-
-      expect(pluginServer.showInputBox).toHaveBeenCalledWith("/workspace/path", request, 15000);
-    });
-
-    it("throws when pluginServer returns error", async () => {
-      const { dispatcher, pluginServer } = createTestSetup();
-      pluginServer.showInputBox.mockResolvedValue({
-        success: false,
-        error: "User cancelled",
+      await handlers.showMessage("/workspace/path", {
+        type: "status",
+        message: null,
       });
-      const handlers = createMcpHandlers(dispatcher, pluginServer as never);
 
-      await expect(
-        handlers.showInputBox("/workspace/path", { prompt: "Enter value" })
-      ).rejects.toThrow("User cancelled");
+      expect(capturedIntents[0]!.payload).toEqual({
+        workspacePath: "/workspace/path",
+        type: "status",
+        message: null,
+      });
     });
 
-    it("throws when pluginServer is null", async () => {
-      const { dispatcher } = createTestSetup();
-      const handlers = createMcpHandlers(dispatcher, null);
+    it("dispatches VscodeShowMessageIntent for select with options", async () => {
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
 
-      await expect(
-        handlers.showInputBox("/workspace/path", { prompt: "Enter value" })
-      ).rejects.toThrow("Plugin server not available");
+      await handlers.showMessage("/workspace/path", {
+        type: "select",
+        message: "Choose a file",
+        options: ["a.ts", "b.ts"],
+        hint: "Filter...",
+      });
+
+      expect(capturedIntents[0]!.payload).toEqual({
+        workspacePath: "/workspace/path",
+        type: "select",
+        message: "Choose a file",
+        options: ["a.ts", "b.ts"],
+        hint: "Filter...",
+      });
+    });
+
+    it("dispatches VscodeShowMessageIntent for free text input", async () => {
+      const { dispatcher, capturedIntents } = createTestSetup();
+      const handlers = createMcpHandlers(dispatcher);
+
+      await handlers.showMessage("/workspace/path", {
+        type: "select",
+        message: "Enter your name",
+        hint: "Name",
+      });
+
+      expect(capturedIntents[0]!.payload).toEqual({
+        workspacePath: "/workspace/path",
+        type: "select",
+        message: "Enter your name",
+        hint: "Name",
+      });
     });
   });
 });

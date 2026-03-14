@@ -25,11 +25,7 @@ function createMockMcpHandlers(): McpApiHandlers {
     createWorkspace: vi.fn(),
     deleteWorkspace: vi.fn(),
     executeCommand: vi.fn(),
-    showNotification: vi.fn(),
-    updateStatusBar: vi.fn(),
-    disposeStatusBar: vi.fn(),
-    showQuickPick: vi.fn(),
-    showInputBox: vi.fn(),
+    showMessage: vi.fn(),
   };
 }
 

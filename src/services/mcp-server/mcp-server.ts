@@ -33,7 +33,7 @@ import {
   normalizeInitialPrompt,
   type PromptModel,
 } from "../../shared/api/types";
-import { COMMAND_TIMEOUT_MS } from "../../shared/plugin-protocol";
+
 import { createOpencodeClient } from "@opencode-ai/sdk";
 
 /**
@@ -68,6 +68,11 @@ export const SERVER_INSTRUCTIONS = [
   "",
   "When working with tool results, write down any important information you might need later in your response,",
   "as the original tool result may be cleared later.",
+  "",
+  "ui_show_message is a unified tool for all VS Code UI interactions. The type field controls the behavior:",
+  '- "info", "warning", "error" — show a notification. Add options for action buttons.',
+  '- "status" — update the status bar (single entry per workspace). Set message to null to clear it. hint is the tooltip.',
+  '- "select" — show a selection dialog. With options: quick pick list. Without options: free text input. hint is the placeholder.',
 ].join("\n");
 
 export function createDefaultMcpServer(): McpServerSdk {
@@ -613,266 +618,79 @@ export class McpServer implements IMcpServer {
       )
     );
 
-    // ui_show_notification
+    // ui_show_message — unified VS Code UI messaging
     mcpServer.registerTool(
-      "ui_show_notification",
+      "ui_show_message",
       {
         description:
-          "Show a notification in the workspace's VS Code editor. " +
-          "Supports info, warning, and error severity levels.\n\n" +
-          "**Fire-and-forget mode** (no actions): The notification is shown and the tool returns immediately " +
-          'with { action: null }. Use this for status updates: ui_show_notification({ severity: "info", message: "Done!" })\n\n' +
-          "**Interactive mode** (with actions): The tool blocks until the user clicks a button or dismisses " +
-          "the notification. Returns the label of the clicked button, or null if dismissed.\n\n" +
-          "Example with actions:\n" +
-          '  ui_show_notification({ severity: "warning", message: "Overwrite file?", actions: ["Yes", "No"] })\n' +
-          '  → { action: "Yes" } or { action: null } if dismissed',
+          "Show a message in the workspace's VS Code editor. Covers notifications, status bar, and selection dialogs.\n\n" +
+          "**Types:**\n" +
+          '- `"info"`, `"warning"`, `"error"` — Show a notification. Add `options` for action buttons (blocks until clicked/dismissed).\n' +
+          '- `"status"` — Update the status bar. Supports codicon syntax: `$(icon-name) text`. ' +
+          "Set `message` to `null` to clear it. `hint` is the tooltip on hover.\n" +
+          '- `"select"` — Show a selection dialog. With `options`: quick pick list. Without `options`: free text input. ' +
+          "`hint` is the placeholder text.\n\n" +
+          "**Result:** `{ result: string | null }` — the selected option, clicked button, entered text, or null if dismissed.\n\n" +
+          "**Examples:**\n" +
+          '  Notification: { type: "info", message: "Build complete" }\n' +
+          '  Notification with actions: { type: "warning", message: "Overwrite?", options: ["Yes", "No"] }\n' +
+          '  Status bar: { type: "status", message: "$(sync~spin) Building...", hint: "Running build task" }\n' +
+          '  Clear status bar: { type: "status", message: null }\n' +
+          '  Quick pick: { type: "select", message: "Choose a file", options: ["a.ts", "b.ts"], hint: "Filter..." }\n' +
+          '  Free text input: { type: "select", message: "Enter your name", hint: "Name" }',
         inputSchema: z.object({
-          severity: z
-            .enum(["info", "warning", "error"])
-            .describe("Notification severity: info (blue), warning (yellow), error (red)"),
-          message: z.string().min(1).max(1000).describe("Notification message text"),
-          actions: z
+          type: z
+            .enum(["info", "warning", "error", "status", "select"])
+            .describe(
+              "Message type: info/warning/error (notification), status (status bar), select (picker or input)"
+            ),
+          message: z
+            .string()
+            .max(1000)
+            .nullable()
+            .describe(
+              "Display text. Set to null to dismiss (only valid for status). " +
+                'For status: supports codicon syntax "$(icon-name) text"'
+            ),
+          hint: z
+            .string()
+            .max(200)
+            .optional()
+            .describe("Secondary text: tooltip for status, placeholder for select"),
+          options: z
             .array(z.string())
-            .max(3)
-            .optional()
-            .describe(
-              "Button labels to show on the notification. When present, the tool blocks until " +
-                "the user clicks a button or dismisses. When absent, fire-and-forget."
-            ),
-          timeout: z
-            .number()
-            .positive()
-            .optional()
-            .describe(
-              "Timeout in seconds (only applies when actions are present). " +
-                "Default: no timeout (waits indefinitely for user interaction)."
-            ),
-        }),
-      },
-      this.createWorkspaceHandler(
-        async (
-          workspacePath,
-          args: {
-            severity: "info" | "warning" | "error";
-            message: string;
-            actions?: string[] | undefined;
-            timeout?: number | undefined;
-          }
-        ) => {
-          const timeoutMs = args.actions?.length
-            ? args.timeout
-              ? args.timeout * 1000
-              : 0
-            : COMMAND_TIMEOUT_MS;
-          return this.handlers.showNotification(
-            workspacePath,
-            {
-              severity: args.severity,
-              message: args.message,
-              ...(args.actions !== undefined && { actions: args.actions }),
-            },
-            timeoutMs
-          );
-        }
-      )
-    );
-
-    // ui_status_bar_update
-    mcpServer.registerTool(
-      "ui_status_bar_update",
-      {
-        description:
-          "Create or update a named status bar item in the workspace's VS Code editor. " +
-          "Uses upsert semantics: if an item with the same id exists, it is updated; otherwise a new item is created. " +
-          "Items persist until explicitly disposed via ui_status_bar_dispose or the workspace disconnects.\n\n" +
-          "The text field supports codicon syntax: $(icon-name) before text. " +
-          'Example: "$(sync~spin) Building..." shows a spinning sync icon.\n\n' +
-          "Common codicons: check, error, warning, info, sync~spin, gear, debug, rocket, beaker",
-        inputSchema: z.object({
-          id: z
-            .string()
-            .min(1)
-            .max(64)
-            .describe(
-              "Unique identifier for the status bar item. Reusing an id updates the existing item."
-            ),
-          text: z
-            .string()
-            .min(1)
             .max(100)
-            .describe('Display text. Supports codicon syntax: "$(icon-name) text"'),
-          tooltip: z.string().max(200).optional().describe("Tooltip shown on hover"),
-          command: z
-            .string()
             .optional()
-            .describe("VS Code command ID to execute when the item is clicked"),
-          color: z
-            .string()
-            .optional()
-            .describe('Text color as CSS value (e.g., "#ff0000") or ThemeColor name'),
-        }),
-      },
-      this.createWorkspaceHandler(
-        async (
-          workspacePath,
-          args: {
-            id: string;
-            text: string;
-            tooltip?: string | undefined;
-            command?: string | undefined;
-            color?: string | undefined;
-          }
-        ) => {
-          await this.handlers.updateStatusBar(workspacePath, args);
-          return null;
-        }
-      )
-    );
-
-    // ui_status_bar_dispose
-    mcpServer.registerTool(
-      "ui_status_bar_dispose",
-      {
-        description:
-          "Remove a status bar item by id. Idempotent: disposing a non-existent id is a no-op.",
-        inputSchema: z.object({
-          id: z.string().min(1).max(64).describe("The id of the status bar item to remove"),
-        }),
-      },
-      this.createWorkspaceHandler(async (workspacePath, args: { id: string }) => {
-        await this.handlers.disposeStatusBar(workspacePath, { id: args.id });
-        return null;
-      })
-    );
-
-    // ui_show_quick_pick
-    mcpServer.registerTool(
-      "ui_show_quick_pick",
-      {
-        description:
-          "Show a quick pick list in the workspace's VS Code editor and wait for the user to select an item. " +
-          "Returns the label of the selected item, or null if the user cancels (Escape).\n\n" +
-          "This tool blocks until the user makes a selection or cancels. " +
-          "Use the timeout parameter to limit how long to wait.\n\n" +
-          "Example:\n" +
-          '  ui_show_quick_pick({ items: [{ label: "Option A" }, { label: "Option B", description: "The B option" }] })\n' +
-          '  → { selected: "Option A" } or { selected: null } if cancelled',
-        inputSchema: z.object({
-          items: z
-            .array(
-              z.object({
-                label: z.string().describe("Item label (returned on selection)"),
-                description: z
-                  .string()
-                  .optional()
-                  .describe("Short description shown next to the label"),
-                detail: z.string().optional().describe("Additional detail shown below the label"),
-              })
-            )
-            .min(1)
-            .max(100)
-            .describe("List of items to show in the quick pick"),
-          title: z.string().max(200).optional().describe("Title shown above the quick pick list"),
-          placeholder: z
-            .string()
-            .max(200)
-            .optional()
-            .describe("Placeholder text in the filter input"),
+            .describe(
+              "Action buttons (notification) or selection items (select). Omit for free text input."
+            ),
           timeout: z
             .number()
             .positive()
             .optional()
-            .describe(
-              "Timeout in seconds. Default: no timeout (waits indefinitely for user selection)."
-            ),
+            .describe("Timeout in seconds for interactive operations. Default: no timeout."),
         }),
       },
       this.createWorkspaceHandler(
         async (
           workspacePath,
           args: {
-            items: Array<{
-              label: string;
-              description?: string | undefined;
-              detail?: string | undefined;
-            }>;
-            title?: string | undefined;
-            placeholder?: string | undefined;
+            type: "info" | "warning" | "error" | "status" | "select";
+            message: string | null;
+            hint?: string | undefined;
+            options?: string[] | undefined;
             timeout?: number | undefined;
           }
         ) => {
-          const timeoutMs = args.timeout ? args.timeout * 1000 : 0;
-          return this.handlers.showQuickPick(
-            workspacePath,
-            {
-              items: args.items,
-              ...(args.title !== undefined && { title: args.title }),
-              ...(args.placeholder !== undefined && { placeholder: args.placeholder }),
-            },
-            timeoutMs
-          );
-        }
-      )
-    );
-
-    // ui_show_input_box
-    mcpServer.registerTool(
-      "ui_show_input_box",
-      {
-        description:
-          "Show an input box in the workspace's VS Code editor and wait for the user to enter text. " +
-          "Returns the entered text, or null if the user cancels (Escape).\n\n" +
-          "This tool blocks until the user submits (Enter) or cancels. " +
-          "Use the timeout parameter to limit how long to wait.\n\n" +
-          "Example:\n" +
-          '  ui_show_input_box({ prompt: "Enter your name", placeholder: "Name" })\n' +
-          '  → { value: "Alice" } or { value: null } if cancelled',
-        inputSchema: z.object({
-          title: z.string().max(200).optional().describe("Title shown above the input box"),
-          prompt: z.string().max(500).optional().describe("Hint text shown below the input"),
-          placeholder: z
-            .string()
-            .max(200)
-            .optional()
-            .describe("Placeholder text in the input field"),
-          value: z.string().optional().describe("Pre-filled default value"),
-          password: z.boolean().optional().describe("If true, mask input characters"),
-          timeout: z
-            .number()
-            .positive()
-            .optional()
-            .describe(
-              "Timeout in seconds. Default: no timeout (waits indefinitely for user input)."
-            ),
-        }),
-      },
-      this.createWorkspaceHandler(
-        async (
-          workspacePath,
-          args: {
-            title?: string | undefined;
-            prompt?: string | undefined;
-            placeholder?: string | undefined;
-            value?: string | undefined;
-            password?: boolean | undefined;
-            timeout?: number | undefined;
-          }
-        ) => {
-          const timeoutMs = args.timeout ? args.timeout * 1000 : 0;
-          const request: {
-            title?: string;
-            prompt?: string;
-            placeholder?: string;
-            value?: string;
-            password?: boolean;
-          } = {};
-          if (args.title !== undefined) request.title = args.title;
-          if (args.prompt !== undefined) request.prompt = args.prompt;
-          if (args.placeholder !== undefined) request.placeholder = args.placeholder;
-          if (args.value !== undefined) request.value = args.value;
-          if (args.password !== undefined) request.password = args.password;
-          return this.handlers.showInputBox(workspacePath, request, timeoutMs);
+          const timeoutMs = args.timeout ? args.timeout * 1000 : undefined;
+          const result = await this.handlers.showMessage(workspacePath, {
+            type: args.type,
+            message: args.message,
+            ...(args.hint !== undefined && { hint: args.hint }),
+            ...(args.options !== undefined && { options: args.options }),
+            ...(timeoutMs !== undefined && { timeoutMs }),
+          });
+          return { result };
         }
       )
     );
@@ -908,7 +726,7 @@ export class McpServer implements IMcpServer {
       }
     );
 
-    this.logger.debug("Registered tools", { count: 15 });
+    this.logger.debug("Registered tools", { count: 11 });
   }
 
   /**
