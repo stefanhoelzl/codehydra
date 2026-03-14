@@ -37,6 +37,8 @@ export type EventDeclarations = Readonly<Record<string, (event: DomainEvent) => 
 export interface IntentModule {
   /** Human-readable module name for logging and diagnostics. */
   readonly name: string;
+  /** Capabilities every hook in this module requires. Merged into each hook's `requires` at registration (hook-level overrides on conflict). */
+  readonly requires?: Readonly<Record<string, unknown>>;
   /** Hook contributions: operationId → hookPointId → HookHandler */
   readonly hooks?: HookDeclarations;
   /** Event subscriptions: eventType → handler */

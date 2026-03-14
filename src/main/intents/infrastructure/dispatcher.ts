@@ -172,7 +172,10 @@ export class Dispatcher implements IDispatcher {
     if (module.hooks) {
       for (const [operationId, hookPoints] of Object.entries(module.hooks)) {
         for (const [hookPointId, handler] of Object.entries(hookPoints)) {
-          this.hookRegistry.register(operationId, hookPointId, handler);
+          const mergedHandler = module.requires
+            ? { ...handler, requires: { ...module.requires, ...handler.requires } }
+            : handler;
+          this.hookRegistry.register(operationId, hookPointId, mergedHandler);
           this.trackHookModule(operationId, hookPointId, module.name);
           this.logger?.silly("  hook", { module: module.name, op: operationId, hook: hookPointId });
         }
