@@ -51,6 +51,16 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${HOOK_HANDLER_PATH} SubagentStart"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [
@@ -99,6 +109,36 @@
           {
             "type": "command",
             "command": "node ${HOOK_HANDLER_PATH} PreCompact"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${HOOK_HANDLER_PATH} PostToolUseFailure"
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${HOOK_HANDLER_PATH} TeammateIdle"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${HOOK_HANDLER_PATH} TaskCompleted"
           }
         ]
       }
