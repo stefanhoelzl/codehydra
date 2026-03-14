@@ -35,17 +35,8 @@ import { GitWorktreeProvider } from "./git/git-worktree-provider";
 export { GitWorktreeProvider };
 
 // Code server
-export type { InstanceState, CodeServerConfig } from "./code-server/types";
-export type {
-  CodeServerPreflightResult,
-  CodeServerPreflightError,
-} from "./code-server/code-server-manager";
-export {
-  CodeServerManager,
-  urlForFolder,
-  urlForWorkspace,
-  getCodeServerPort,
-} from "./code-server/code-server-manager";
+export type { CodeServerConfig } from "./code-server/types";
+export { CodeServerManager, getCodeServerPort } from "./code-server/code-server-manager";
 
 // Project types
 export type { ProjectConfig } from "./project/types";
