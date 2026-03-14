@@ -736,4 +736,75 @@ describe("HookRegistry", () => {
       expect(receivedCaps).toEqual({ port: 8080, host: "127.0.0.1", ready: true });
     });
   });
+
+  // ===========================================================================
+  // Returned capabilities from collect()
+  // ===========================================================================
+
+  describe("returned capabilities", () => {
+    it("collect() returns empty capabilities when no provides", async () => {
+      const registry = new HookRegistry();
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        handler: async () => "a",
+      });
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        handler: async () => "b",
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      const result = await hooks.collect(TEST_HOOK_POINT, createHookContext());
+
+      expect(result.capabilities).toEqual({});
+    });
+
+    it("collect() returns accumulated capabilities", async () => {
+      const registry = new HookRegistry();
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => ({ port: 8080 }),
+        handler: async () => undefined,
+      });
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => ({ host: "127.0.0.1" }),
+        handler: async () => undefined,
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      const result = await hooks.collect(TEST_HOOK_POINT, createHookContext());
+
+      expect(result.capabilities).toEqual({ port: 8080, host: "127.0.0.1" });
+    });
+
+    it("collect() capabilities include initial context capabilities", async () => {
+      const registry = new HookRegistry();
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => ({ port: 3000 }),
+        handler: async () => undefined,
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      const result = await hooks.collect(TEST_HOOK_POINT, createHookContext({ seed: true }));
+
+      expect(result.capabilities).toEqual({ seed: true, port: 3000 });
+    });
+
+    it("failed handler does not contribute to returned capabilities", async () => {
+      const registry = new HookRegistry();
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => ({ token: "x" }),
+        handler: async () => {
+          throw new Error("boom");
+        },
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      const result = await hooks.collect(TEST_HOOK_POINT, createHookContext());
+
+      expect(result.capabilities).toEqual({});
+      expect(result.errors).toHaveLength(1);
+    });
+  });
 });

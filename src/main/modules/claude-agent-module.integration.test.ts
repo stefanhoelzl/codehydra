@@ -18,7 +18,6 @@ import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
   ConfigureResult,
   CheckDepsResult,
-  StartHookResult,
   ActivateHookResult,
   ActivateHookContext,
   CheckDepsHookContext,
@@ -94,21 +93,14 @@ class MinimalCheckDepsOperation implements Operation<Intent, CheckDepsResult> {
   }
 }
 
-class MinimalStartOperation implements Operation<Intent, StartHookResult> {
+class MinimalStartOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
 
-  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
-    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", {
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
+    const { errors } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
-    const merged: StartHookResult = {};
-    for (const r of results) {
-      if (r.codeServerPort !== undefined) {
-        (merged as Record<string, unknown>).codeServerPort = r.codeServerPort;
-      }
-    }
-    return merged;
   }
 }
 
@@ -122,7 +114,7 @@ class MinimalStartAndActivateOperation implements Operation<Intent, readonly Act
 
   async execute(ctx: OperationContext<Intent>): Promise<readonly ActivateHookResult[]> {
     // Run start first to set the active flag
-    const { errors: startErrors } = await ctx.hooks.collect<StartHookResult>("start", {
+    const { errors: startErrors } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
     if (startErrors.length > 0) throw startErrors[0]!;
@@ -192,7 +184,15 @@ class MinimalBinaryOperation implements Operation<Intent, void> {
   }
 }
 
-class MinimalSetupOperation implements Operation<OpenWorkspaceIntent, SetupHookResult | undefined> {
+interface SetupOperationResult {
+  envVars?: Record<string, string>;
+  agentType?: string;
+}
+
+class MinimalSetupOperation implements Operation<
+  OpenWorkspaceIntent,
+  SetupOperationResult | undefined
+> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
   private readonly hookInput: Partial<SetupHookInput>;
 
@@ -200,15 +200,25 @@ class MinimalSetupOperation implements Operation<OpenWorkspaceIntent, SetupHookR
     this.hookInput = hookInput;
   }
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<SetupHookResult | undefined> {
-    const { results, errors } = await ctx.hooks.collect<SetupHookResult | undefined>("setup", {
-      intent: ctx.intent,
-      workspacePath: "/test/workspace",
-      projectPath: "/test/project",
-      ...this.hookInput,
-    });
+  async execute(
+    ctx: OperationContext<OpenWorkspaceIntent>
+  ): Promise<SetupOperationResult | undefined> {
+    const { results, errors, capabilities } = await ctx.hooks.collect<SetupHookResult | undefined>(
+      "setup",
+      {
+        intent: ctx.intent,
+        workspacePath: "/test/workspace",
+        projectPath: "/test/project",
+        ...this.hookInput,
+      }
+    );
     if (errors.length > 0) throw errors[0]!;
-    return results[0];
+    const result = results[0];
+    if (result === undefined) return undefined;
+    return {
+      ...result,
+      ...(capabilities.agentType !== undefined && { agentType: capabilities.agentType as string }),
+    };
   }
 }
 
@@ -768,7 +778,7 @@ describe("ClaudeAgentModule", () => {
           workspaceName: "feature-1",
           base: "main",
         },
-      } as unknown as OpenWorkspaceIntent)) as SetupHookResult | undefined;
+      } as unknown as OpenWorkspaceIntent)) as SetupOperationResult | undefined;
 
       expect(mockSM.startServer).toHaveBeenCalledWith("/test/workspace");
       expect(result).toBeDefined();
@@ -877,7 +887,7 @@ describe("ClaudeAgentModule", () => {
           workspaceName: "feature-1",
           base: "main",
         },
-      } as unknown as OpenWorkspaceIntent)) as SetupHookResult | undefined;
+      } as unknown as OpenWorkspaceIntent)) as SetupOperationResult | undefined;
 
       expect(result).toBeUndefined();
       expect(mockSM.startServer).not.toHaveBeenCalled();

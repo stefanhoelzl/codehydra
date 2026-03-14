@@ -144,15 +144,7 @@ export interface ShowUIHookResult {
   readonly waitForRetry?: () => Promise<void>;
 }
 
-/**
- * Per-handler result for "start" hook point.
- * CodeServerModule returns codeServerPort; McpModule returns mcpPort.
- * Side-effect handlers return `{}`.
- */
-export interface StartHookResult {
-  readonly codeServerPort?: number;
-  readonly mcpPort?: number;
-}
+// StartHookResult removed — mcpPort and codeServerPort are now capabilities.
 
 /** Input context for "activate" -- carries ports from start results. */
 export interface ActivateHookContext extends HookContext {
@@ -292,7 +284,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     }
 
     // Hook 6: "start" -- Start servers and wire services
-    const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
+    const { errors: startErrors, capabilities: startCaps } = await ctx.hooks.collect<void>(
       "start",
       hookCtx
     );
@@ -300,10 +292,9 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       throw startErrors[0]!;
     }
 
-    // Extract ports from start results for activate handlers
-    const mcpPort = startResults.find((r) => r.mcpPort !== undefined)?.mcpPort ?? null;
-    const codeServerPort =
-      startResults.find((r) => r.codeServerPort !== undefined)?.codeServerPort ?? null;
+    // Read ports from capabilities (provided by CodeServerModule and McpModule)
+    const mcpPort = (startCaps.mcpPort as number) ?? null;
+    const codeServerPort = (startCaps.codeServerPort as number) ?? null;
 
     // Hook 7: "activate" -- Wire callbacks, gather project paths, mount renderer
     const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort, codeServerPort };

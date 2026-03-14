@@ -15,12 +15,7 @@ import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import type {
-  CheckDepsResult,
-  ConfigureResult,
-  StartHookResult,
-  ActivateHookResult,
-} from "../operations/app-start";
+import type { CheckDepsResult, ConfigureResult, ActivateHookResult } from "../operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -208,7 +203,7 @@ class MinimalStartOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<StartHookResult>("start", {
+    const { errors } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
@@ -264,7 +259,15 @@ class MinimalBinaryOperation implements Operation<Intent, void> {
   }
 }
 
-class MinimalSetupOperation implements Operation<OpenWorkspaceIntent, SetupHookResult | undefined> {
+interface SetupOperationResult {
+  envVars?: Record<string, string>;
+  agentType?: string;
+}
+
+class MinimalSetupOperation implements Operation<
+  OpenWorkspaceIntent,
+  SetupOperationResult | undefined
+> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
   private readonly workspacePath: string;
 
@@ -272,14 +275,24 @@ class MinimalSetupOperation implements Operation<OpenWorkspaceIntent, SetupHookR
     this.workspacePath = workspacePath;
   }
 
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<SetupHookResult | undefined> {
-    const { results, errors } = await ctx.hooks.collect<SetupHookResult | undefined>("setup", {
-      intent: ctx.intent,
-      workspacePath: this.workspacePath,
-      projectPath: "/test/project",
-    } as SetupHookInput);
+  async execute(
+    ctx: OperationContext<OpenWorkspaceIntent>
+  ): Promise<SetupOperationResult | undefined> {
+    const { results, errors, capabilities } = await ctx.hooks.collect<SetupHookResult | undefined>(
+      "setup",
+      {
+        intent: ctx.intent,
+        workspacePath: this.workspacePath,
+        projectPath: "/test/project",
+      } as SetupHookInput
+    );
     if (errors.length > 0) throw errors[0]!;
-    return results[0];
+    const result = results[0];
+    if (result === undefined) return undefined;
+    return {
+      ...result,
+      ...(capabilities.agentType !== undefined && { agentType: capabilities.agentType as string }),
+    };
   }
 }
 
@@ -367,7 +380,7 @@ class StartThenActivateOperation implements Operation<Intent, void> {
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors: startErrors } = await ctx.hooks.collect<StartHookResult>("start", {
+    const { errors: startErrors } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
     if (startErrors.length > 0) throw startErrors[0]!;
@@ -693,7 +706,7 @@ describe("OpenCodeAgentModule Integration", () => {
           workspaceName: "feature-1",
           base: "main",
         },
-      } as OpenWorkspaceIntent)) as SetupHookResult | undefined;
+      } as OpenWorkspaceIntent)) as SetupOperationResult | undefined;
 
       expect(setup.serverManager.startServer).toHaveBeenCalledWith(wsPath);
       expect(result).toBeDefined();

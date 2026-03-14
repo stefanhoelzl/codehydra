@@ -16,7 +16,7 @@ import type { DomainEvent } from "../intents/infrastructure/types";
 import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_UPDATE_AVAILABLE } from "../operations/update-available";
-import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
+import { APP_START_OPERATION_ID } from "../operations/app-start";
 /**
  * Formats the window title based on current workspace.
  *
@@ -77,9 +77,8 @@ export function createWindowTitleModule(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          handler: async (): Promise<void> => {
             updateTitle();
-            return {};
           },
         },
       },

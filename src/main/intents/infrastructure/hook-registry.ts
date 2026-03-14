@@ -61,7 +61,12 @@ export class HookRegistry implements IHookRegistry {
       ): Promise<HookResult<T>> {
         const handlers = opMap?.get(hookPointId);
         if (!handlers) {
-          return { results: [], errors: [] };
+          const initialCaps = (inputCtx.capabilities as Record<string, unknown> | undefined) ?? {};
+          return {
+            results: [],
+            errors: [],
+            capabilities: Object.freeze({ ...initialCaps }),
+          };
         }
 
         const capabilities: Record<string, unknown> = {
@@ -103,7 +108,7 @@ export class HookRegistry implements IHookRegistry {
           if (!progressMade) break;
         }
 
-        return { results, errors };
+        return { results, errors, capabilities: Object.freeze({ ...capabilities }) };
       },
     };
   }

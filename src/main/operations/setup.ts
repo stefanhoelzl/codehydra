@@ -64,12 +64,7 @@ export interface RegisterAgentResult {
   readonly icon: string;
 }
 
-/**
- * Per-handler result contract for the "agent-selection" hook point.
- */
-export interface AgentSelectionHookResult {
-  readonly selectedAgent: ConfigAgentType;
-}
+// AgentSelectionHookResult removed — selectedAgent is now the `agentType` capability.
 
 /**
  * Input context for the "agent-selection" hook — carries available agents from register-agents.
@@ -178,14 +173,14 @@ export class SetupOperation implements Operation<SetupIntent, void> {
 
         // 2b: Show agent selection UI with collected agents
         const selectionCtx: AgentSelectionHookContext = { ...hookCtx, availableAgents: agentInfos };
-        const { results: agentResults, errors: agentErrors } =
-          await ctx.hooks.collect<AgentSelectionHookResult>("agent-selection", selectionCtx);
+        const { errors: agentErrors, capabilities: agentCaps } = await ctx.hooks.collect<void>(
+          "agent-selection",
+          selectionCtx
+        );
         if (agentErrors.length > 0) {
           throw agentErrors[0]!;
         }
-        for (const result of agentResults) {
-          if (result.selectedAgent !== undefined) selectedAgent = result.selectedAgent;
-        }
+        selectedAgent = agentCaps.agentType as ConfigAgentType | undefined;
       }
 
       // Hook 3: "save-agent" -- (conditional) Persist agent selection

@@ -52,7 +52,6 @@ import {
 import type {
   CreateHookResult,
   FinalizeHookInput,
-  FinalizeHookResult,
   OpenWorkspaceIntent,
   WorkspaceCreatedEvent,
 } from "./open-workspace";
@@ -537,9 +536,9 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+          provides: () => ({ workspaceUrl: WORKSPACE_URL }),
+          handler: async (ctx: HookContext): Promise<void> => {
             void (ctx as FinalizeHookInput).envVars;
-            return { workspaceUrl: WORKSPACE_URL };
           },
         },
       },

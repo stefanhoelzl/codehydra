@@ -41,11 +41,10 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-  StartHookResult,
   RegisterConfigResult,
 } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
-import type { FinalizeHookInput, FinalizeHookResult } from "../operations/open-workspace";
+import type { FinalizeHookInput } from "../operations/open-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
@@ -501,6 +500,9 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
     config.pluginPort = port;
   }
 
+  /** Capability: workspaceUrl provided by finalize handler. */
+  let capWorkspaceUrl: string | undefined;
+
   // -------------------------------------------------------------------------
   // Module definition
   // -------------------------------------------------------------------------
@@ -595,7 +597,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
         // app-start -> start: start code-server, update port
         // -------------------------------------------------------------------
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          provides: () => ({ codeServerPort }),
+          handler: async (): Promise<void> => {
             // Ensure required directories exist
             await Promise.all([
               fileSystemLayer.mkdir(config.runtimeDir),
@@ -609,8 +612,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
 
             // Update internal port (consumed by finalize hook for workspace URLs)
             codeServerPort = port;
-
-            return { codeServerPort: port };
           },
         },
       },
@@ -735,7 +736,11 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
       // -------------------------------------------------------------------
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<FinalizeHookResult> => {
+          provides: () => ({
+            ...(capWorkspaceUrl !== undefined && { workspaceUrl: capWorkspaceUrl }),
+          }),
+          handler: async (ctx: HookContext): Promise<void> => {
+            capWorkspaceUrl = undefined;
             const finalizeCtx = ctx as FinalizeHookInput;
 
             try {
@@ -755,17 +760,13 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
                 projectWorkspacesDir,
                 agentSettings
               );
-              return {
-                workspaceUrl: urlForWorkspace(codeServerPort, workspaceFilePath.toString()),
-              };
+              capWorkspaceUrl = urlForWorkspace(codeServerPort, workspaceFilePath.toString());
             } catch (error) {
               logger.warn("Failed to ensure workspace file, using folder URL", {
                 workspacePath: finalizeCtx.workspacePath,
                 error: error instanceof Error ? error.message : String(error),
               });
-              return {
-                workspaceUrl: urlForFolder(codeServerPort, finalizeCtx.workspacePath),
-              };
+              capWorkspaceUrl = urlForFolder(codeServerPort, finalizeCtx.workspacePath);
             }
           },
         },

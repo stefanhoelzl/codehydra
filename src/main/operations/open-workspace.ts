@@ -126,7 +126,6 @@ export interface SetupHookInput extends HookContext {
 /** Result from the "setup" hook point. */
 export interface SetupHookResult {
   readonly envVars?: Record<string, string>;
-  readonly agentType?: AgentType;
 }
 
 /** Input context for the "finalize" hook point (enriched with create+setup results). */
@@ -134,11 +133,6 @@ export interface FinalizeHookInput extends HookContext {
   readonly workspacePath: string;
   readonly envVars: Record<string, string>;
   readonly agentType: AgentType | null;
-}
-
-/** Result from the "finalize" hook point. */
-export interface FinalizeHookResult {
-  readonly workspaceUrl?: string;
 }
 
 /** Merge hook results field-by-field. Throws if two handlers contribute the same field. */
@@ -189,28 +183,20 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       workspacePath,
       projectPath,
     };
-    const { results: setupResults, errors: setupErrors } = await ctx.hooks.collect<SetupHookResult>(
-      "setup",
-      setupCtx
-    );
+    const setupResult = await ctx.hooks.collect<SetupHookResult>("setup", setupCtx);
 
-    if (setupErrors.length > 0) throw setupErrors[0]!;
+    if (setupResult.errors.length > 0) throw setupResult.errors[0]!;
 
     // Accumulate env vars from all setup hook results (multiple modules can contribute)
     const envVars: Record<string, string> = {};
-    for (const result of setupResults) {
+    for (const result of setupResult.results) {
       if (result.envVars) {
         Object.assign(envVars, result.envVars);
       }
     }
 
-    // Extract agentType from setup results (last one wins)
-    let agentType: AgentType | null = null;
-    for (const result of setupResults) {
-      if (result.agentType !== undefined) {
-        agentType = result.agentType;
-      }
-    }
+    // Read agentType from capabilities (provided by active agent module)
+    const agentType = (setupResult.capabilities.agentType as AgentType) ?? null;
 
     // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
@@ -219,13 +205,15 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       envVars,
       agentType,
     };
-    const { results: finalizeResults, errors: finalizeErrors } =
-      await ctx.hooks.collect<FinalizeHookResult>("finalize", finalizeCtx);
+    const { errors: finalizeErrors, capabilities: finalizeCaps } = await ctx.hooks.collect<void>(
+      "finalize",
+      finalizeCtx
+    );
 
     if (finalizeErrors.length > 0) throw finalizeErrors[0]!;
 
-    const finalize = mergeHookResults(finalizeResults, "finalize");
-    if (!finalize.workspaceUrl) {
+    const workspaceUrl = finalizeCaps.workspaceUrl as string | undefined;
+    if (!workspaceUrl) {
       throw new Error("Finalize hook did not provide workspaceUrl");
     }
 
@@ -251,7 +239,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       branch,
       ...(eventBase !== undefined && { base: eventBase }),
       metadata,
-      workspaceUrl: finalize.workspaceUrl,
+      workspaceUrl,
       ...(ctx.intent.payload.initialPrompt !== undefined && {
         initialPrompt: normalizeInitialPrompt(ctx.intent.payload.initialPrompt),
       }),

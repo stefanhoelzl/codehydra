@@ -15,7 +15,7 @@
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
-import type { StartHookResult, RegisterConfigResult } from "../operations/app-start";
+import type { RegisterConfigResult } from "../operations/app-start";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type { ConfigSetValuesIntent } from "../operations/config-set-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
@@ -87,7 +87,7 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
           }),
         },
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          handler: async (): Promise<void> => {
             // Generate distinctId if needed (after init has loaded stored config)
             if (telemetryEnabled && !distinctId && deps.telemetryService) {
               const newId = deps.telemetryService.generateDistinctId();
@@ -108,7 +108,6 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
             if (configuredAgent !== undefined) {
               deps.telemetryService?.capture("app_launched", eventProperties());
             }
-            return {};
           },
         },
       },

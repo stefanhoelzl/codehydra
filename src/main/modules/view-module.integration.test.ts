@@ -46,7 +46,6 @@ import type { AppShutdownIntent } from "../operations/app-shutdown";
 import { INTENT_SETUP, SETUP_OPERATION_ID } from "../operations/setup";
 import type {
   SetupIntent,
-  AgentSelectionHookResult,
   AgentSelectionHookContext,
   RegisterAgentResult,
 } from "../operations/setup";
@@ -201,27 +200,26 @@ class MinimalSetupOperation implements Operation<SetupIntent, void> {
   }
 }
 
+/** Result type for the agent selection operation. */
+interface AgentSelectionResult {
+  selectedAgent: string;
+}
+
 /** Runs "agent-selection" hook with pre-populated availableAgents context. */
-class MinimalAgentSelectionOperation implements Operation<SetupIntent, AgentSelectionHookResult> {
+class MinimalAgentSelectionOperation implements Operation<SetupIntent, AgentSelectionResult> {
   readonly id = SETUP_OPERATION_ID;
   readonly availableAgents: readonly RegisterAgentResult[];
   constructor(availableAgents: readonly RegisterAgentResult[]) {
     this.availableAgents = availableAgents;
   }
-  async execute(ctx: OperationContext<SetupIntent>): Promise<AgentSelectionHookResult> {
+  async execute(ctx: OperationContext<SetupIntent>): Promise<AgentSelectionResult> {
     const hookCtx: AgentSelectionHookContext = {
       intent: ctx.intent,
       availableAgents: this.availableAgents,
     };
-    const { results, errors } = await ctx.hooks.collect<AgentSelectionHookResult>(
-      "agent-selection",
-      hookCtx
-    );
+    const { errors, capabilities } = await ctx.hooks.collect<void>("agent-selection", hookCtx);
     if (errors.length > 0) throw errors[0]!;
-    let selectedAgent: AgentSelectionHookResult["selectedAgent"] = "claude";
-    for (const r of results) {
-      if (r.selectedAgent !== undefined) selectedAgent = r.selectedAgent;
-    }
+    const selectedAgent = (capabilities.agentType as string) ?? "claude";
     return { selectedAgent };
   }
 }
