@@ -17,6 +17,7 @@ import { join, delimiter } from "node:path";
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
+import { ANY_VALUE } from "../intents/infrastructure/operation";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { ProcessRunner, SpawnedProcess } from "../../services/platform/process";
 import {
@@ -193,10 +194,7 @@ export interface CodeServerModuleDeps {
  *
  * Returns the intent module plus a setPluginPort function for external callers.
  */
-export function createCodeServerModule(deps: CodeServerModuleDeps): {
-  module: IntentModule;
-  setPluginPort: (port: number) => void;
-} {
+export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule {
   const { processRunner, fileSystemLayer, logger } = deps;
 
   // -------------------------------------------------------------------------
@@ -492,14 +490,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Public API
-  // -------------------------------------------------------------------------
-
-  function setPluginPort(port: number): void {
-    config.pluginPort = port;
-  }
-
   /** Capability: workspaceUrl provided by finalize handler. */
   let capWorkspaceUrl: string | undefined;
 
@@ -597,8 +587,15 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
         // app-start -> start: start code-server, update port
         // -------------------------------------------------------------------
         start: {
+          requires: { pluginPort: ANY_VALUE },
           provides: () => ({ codeServerPort }),
-          handler: async (): Promise<void> => {
+          handler: async (ctx: HookContext): Promise<void> => {
+            // Read pluginPort from capabilities (provided by plugin-server-module)
+            const pluginPort = ctx.capabilities?.pluginPort as number | null;
+            if (pluginPort !== null) {
+              config.pluginPort = pluginPort;
+            }
+
             // Ensure required directories exist
             await Promise.all([
               fileSystemLayer.mkdir(config.runtimeDir),
@@ -832,5 +829,5 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): {
     },
   };
 
-  return { module, setPluginPort };
+  return module;
 }

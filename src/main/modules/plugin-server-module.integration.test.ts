@@ -42,14 +42,15 @@ import { INTENT_RESOLVE_WORKSPACE } from "../operations/resolve-workspace";
 // Minimal Test Operations
 // =============================================================================
 
-class MinimalStartOperation implements Operation<Intent, void> {
+class MinimalStartOperation implements Operation<Intent, number | null> {
   readonly id = APP_START_OPERATION_ID;
 
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<void>("start", {
+  async execute(ctx: OperationContext<Intent>): Promise<number | null> {
+    const { errors, capabilities } = await ctx.hooks.collect<void>("start", {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
+    return (capabilities.pluginPort as number | null) ?? null;
   }
 }
 
@@ -145,32 +146,30 @@ describe("PluginServerModule", () => {
       expect(deps.pluginServer!.onApiCall).toHaveBeenCalled();
     });
 
-    it("calls onPortReady with the plugin port", async () => {
-      const onPortReady = vi.fn();
-      const deps = createMockDeps({ onPortReady });
+    it("provides pluginPort capability with the plugin port", async () => {
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      const pluginPort = await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(onPortReady).toHaveBeenCalledWith(3456);
+      expect(pluginPort).toBe(3456);
     });
 
-    it("works with null pluginServer (no-op)", async () => {
+    it("provides null pluginPort capability with null pluginServer", async () => {
       const deps = createMockDeps({ pluginServer: null });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
-      // Should resolve without error
-      await expect(
-        dispatcher.dispatch({
-          type: "app:start",
-          payload: {},
-        })
-      ).resolves.not.toThrow();
+      const pluginPort = await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      });
+
+      expect(pluginPort).toBeNull();
     });
 
-    it("degrades gracefully when PluginServer fails", async () => {
+    it("degrades gracefully when PluginServer fails, provides null pluginPort", async () => {
       const deps = createMockDeps({
         pluginServer: {
           start: vi.fn().mockRejectedValue(new Error("bind failed")),
@@ -184,8 +183,9 @@ describe("PluginServerModule", () => {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
 
-      // Should not throw
-      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).resolves.not.toThrow();
+      const pluginPort = await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(pluginPort).toBeNull();
     });
   });
 

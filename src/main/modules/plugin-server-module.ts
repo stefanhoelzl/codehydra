@@ -6,7 +6,7 @@
  * - Registering plugin API handlers that dispatch intents
  * - Pushing per-workspace config on open/delete
  *
- * Decoupled from code-server via onPortReady callback.
+ * Provides `pluginPort` capability for code-server-module.
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -57,7 +57,6 @@ export interface PluginServerModuleDeps {
   > | null;
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
-  readonly onPortReady?: (port: number) => void;
 }
 
 // =============================================================================
@@ -67,20 +66,21 @@ export interface PluginServerModuleDeps {
 export function createPluginServerModule(deps: PluginServerModuleDeps): IntentModule {
   const { pluginServer, dispatcher, logger } = deps;
 
+  /** Capability: pluginPort provided by start handler. */
+  let capPluginPort: number | null = null;
+
   return {
     name: "plugin-server",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
+          provides: () => ({ pluginPort: capPluginPort }),
           handler: async (): Promise<void> => {
+            capPluginPort = null;
             if (!pluginServer) return;
 
             try {
-              const port = await pluginServer.start();
-
-              if (deps.onPortReady) {
-                deps.onPortReady(port);
-              }
+              capPluginPort = await pluginServer.start();
 
               pluginServer.onApiCall(createPluginApiHandlers(pluginServer, dispatcher, logger));
               logger.info("Plugin API handlers registered");
