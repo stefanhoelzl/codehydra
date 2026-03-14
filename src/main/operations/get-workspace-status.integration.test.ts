@@ -35,7 +35,7 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import type { WorkspaceName, WorkspaceStatus } from "../../shared/api/types";
-import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
+import type { AggregatedAgentStatus } from "../../shared/ipc";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
 
@@ -63,22 +63,6 @@ function createMockWorkspaceProvider(entries: Record<string, boolean> = {}): Moc
   };
 }
 
-interface MockAgentStatusManager {
-  statusMap: Map<string, AggregatedAgentStatus>;
-  getStatus(path: WorkspacePath): AggregatedAgentStatus;
-}
-
-function createMockAgentStatusManager(
-  entries: Record<string, AggregatedAgentStatus> = {}
-): MockAgentStatusManager {
-  const statusMap = new Map(Object.entries(entries));
-  return {
-    statusMap,
-    getStatus: (path: WorkspacePath) =>
-      statusMap.get(path) ?? { status: "none", counts: { idle: 0, busy: 0 } },
-  };
-}
-
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -90,7 +74,7 @@ interface TestSetup {
 
 function createTestSetup(opts: {
   workspaceProvider?: MockWorkspaceProvider | null;
-  agentStatusManager?: MockAgentStatusManager | null;
+  agentStatus?: AggregatedAgentStatus | null;
 }): TestSetup {
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
@@ -135,17 +119,16 @@ function createTestSetup(opts: {
     },
   };
 
-  // agent status module: returns agentStatus from mock manager (reads workspacePath from enriched context)
+  // agent status module: returns agentStatus directly from test data
   const agentStatusModule: IntentModule = {
     name: "test",
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
-            const { workspacePath } = ctx as GetStatusHookInput;
-            const manager = opts.agentStatusManager;
-            if (manager) {
-              return { agentStatus: manager.getStatus(workspacePath as WorkspacePath) };
+          handler: async (): Promise<GetStatusHookResult> => {
+            const status = opts.agentStatus;
+            if (status) {
+              return { agentStatus: status };
             }
             return {};
           },
@@ -185,9 +168,7 @@ describe("GetWorkspaceStatus Operation", () => {
         workspaceProvider: createMockWorkspaceProvider({
           [WORKSPACE_PATH]: true,
         }),
-        agentStatusManager: createMockAgentStatusManager({
-          [WORKSPACE_PATH]: { status: "busy", counts: { idle: 0, busy: 1 } },
-        }),
+        agentStatus: { status: "busy", counts: { idle: 0, busy: 1 } },
       });
     });
 
@@ -208,9 +189,7 @@ describe("GetWorkspaceStatus Operation", () => {
         workspaceProvider: createMockWorkspaceProvider({
           [WORKSPACE_PATH]: false,
         }),
-        agentStatusManager: createMockAgentStatusManager({
-          [WORKSPACE_PATH]: { status: "idle", counts: { idle: 1, busy: 0 } },
-        }),
+        agentStatus: { status: "idle", counts: { idle: 1, busy: 0 } },
       });
 
       const result = (await cleanSetup.dispatcher.dispatch(
@@ -231,7 +210,7 @@ describe("GetWorkspaceStatus Operation", () => {
         workspaceProvider: createMockWorkspaceProvider({
           [WORKSPACE_PATH]: true,
         }),
-        agentStatusManager: null,
+        agentStatus: null,
       });
 
       const result = (await setup.dispatcher.dispatch(
@@ -247,9 +226,7 @@ describe("GetWorkspaceStatus Operation", () => {
         workspaceProvider: createMockWorkspaceProvider({
           [WORKSPACE_PATH]: false,
         }),
-        agentStatusManager: createMockAgentStatusManager({
-          // No entry for workspace — getStatus returns none default
-        }),
+        agentStatus: null,
       });
 
       const result = (await setup.dispatcher.dispatch(
@@ -311,7 +288,7 @@ describe("GetWorkspaceStatus Operation", () => {
         workspaceProvider: createMockWorkspaceProvider({
           [WORKSPACE_PATH]: false,
         }),
-        agentStatusManager: null,
+        agentStatus: null,
       });
 
       const result = (await setup.dispatcher.dispatch(
@@ -326,7 +303,7 @@ describe("GetWorkspaceStatus Operation", () => {
     it("returns isDirty false when no provider", async () => {
       const setup = createTestSetup({
         workspaceProvider: null,
-        agentStatusManager: null,
+        agentStatus: null,
       });
 
       const result = (await setup.dispatcher.dispatch(
@@ -342,7 +319,7 @@ describe("GetWorkspaceStatus Operation", () => {
     it("unknown workspace path throws", async () => {
       const setup = createTestSetup({
         workspaceProvider: createMockWorkspaceProvider(),
-        agentStatusManager: null,
+        agentStatus: null,
       });
 
       const error = await setup.dispatcher
@@ -361,9 +338,7 @@ describe("GetWorkspaceStatus Operation", () => {
         workspaceProvider: createMockWorkspaceProvider({
           [WORKSPACE_PATH]: true,
         }),
-        agentStatusManager: createMockAgentStatusManager({
-          [WORKSPACE_PATH]: { status: "busy", counts: { idle: 0, busy: 1 } },
-        }),
+        agentStatus: { status: "busy", counts: { idle: 0, busy: 1 } },
       });
 
       const cancelInterceptor: IntentInterceptor = {

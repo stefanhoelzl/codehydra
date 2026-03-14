@@ -222,9 +222,6 @@ function createTestHarness(options?: {
         return { success: true };
       }),
     }),
-    getAgentStatusManager: vi.fn().mockReturnValue({
-      clearTuiTracking: vi.fn(),
-    }),
     unregisterWorkspace: vi.fn(),
   };
 

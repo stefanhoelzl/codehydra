@@ -150,9 +150,6 @@ function createBridgeDeps(
     sendToUI,
     logger: SILENT_LOGGER,
     dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
-    agentStatusManager: {
-      getStatus: vi.fn(),
-    } as unknown as IpcEventBridgeDeps["agentStatusManager"],
     ...overrides,
   };
   return { ...base, ipcLayer, sendToUI };

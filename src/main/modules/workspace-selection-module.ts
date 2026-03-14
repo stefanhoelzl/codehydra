@@ -4,29 +4,32 @@
  * Registers a "select-next" hook handler on the switch-workspace operation.
  * Encapsulates the selection algorithm and agent-status scoring.
  *
- * The handler:
- * 1. Receives candidates and the current workspace path
- * 2. Builds a scorer closure over agentStatusManager
- * 3. Calls selectNextWorkspace to find the best candidate
+ * Maintains its own status cache populated by agent:status-updated events
+ * (follows the BadgeModule event-subscription pattern).
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
+import type { DomainEvent } from "../intents/infrastructure/types";
 import { SWITCH_WORKSPACE_OPERATION_ID, selectNextWorkspace } from "../operations/switch-workspace";
 import type {
   SelectNextHookInput,
   SelectNextHookResult,
   AgentStatusScorer,
 } from "../operations/switch-workspace";
+import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
+import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
+import type { WorkspaceDeletedEvent } from "../operations/delete-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../operations/delete-workspace";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 
-export function createWorkspaceSelectionModule(agentStatusManager: {
-  getStatus(path: WorkspacePath): AggregatedAgentStatus;
-}): IntentModule {
+export function createWorkspaceSelectionModule(): IntentModule {
+  const workspaceStatuses = new Map<WorkspacePath, AggregatedAgentStatus>();
+
   const scorer: AgentStatusScorer = (workspacePath: WorkspacePath): number => {
-    const status = agentStatusManager.getStatus(workspacePath);
-    if (status.status === "none") return 2;
+    const status = workspaceStatuses.get(workspacePath);
+    if (!status || status.status === "none") return 2;
     if (status.status === "busy") return 1;
     return 0;
   };
@@ -47,6 +50,16 @@ export function createWorkspaceSelectionModule(agentStatusManager: {
             return result ? { selected: result } : {};
           },
         },
+      },
+    },
+    events: {
+      [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
+        const { workspacePath, status } = (event as AgentStatusUpdatedEvent).payload;
+        workspaceStatuses.set(workspacePath, status);
+      },
+      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
+        const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
+        workspaceStatuses.delete(workspacePath as WorkspacePath);
       },
     },
   };

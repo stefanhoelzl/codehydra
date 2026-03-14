@@ -22,7 +22,7 @@ import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import type { LoggingService } from "../../services/logging";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Unsubscribe } from "../../shared/api/interfaces";
-import type { AgentStatusManager } from "../../agents";
+import type { AgentProvider, AgentStatus } from "../../agents/types";
 import type {
   CheckDepsHookContext,
   CheckDepsResult,
@@ -75,10 +75,10 @@ import { OpenCodeProvider } from "../../agents/opencode/provider";
 export interface OpenCodeAgentModuleDeps {
   readonly agentBinaryManager: AgentBinaryManager;
   readonly serverManager: OpenCodeServerManager;
-  readonly agentStatusManager: AgentStatusManager;
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
   readonly loggingService: LoggingService;
+  readonly providerLogger: Logger;
 }
 
 // =============================================================================
@@ -104,12 +104,118 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
   /** Tracks pending handleServerStarted() promises for waitForProvider(). */
   const serverStartedPromises = new Map<string, Promise<void>>();
 
-  /** Cleanup function for agentStatusManager.onStatusChanged subscription. */
-  let statusUnsubscribeFn: Unsubscribe | null = null;
-
   /** Cleanup functions for onServerStarted/onServerStopped callbacks. */
   let serverStartedCleanupFn: Unsubscribe | null = null;
   let serverStoppedCleanupFn: Unsubscribe | null = null;
+
+  /** Per-workspace provider instances. */
+  const providers = new Map<WorkspacePath, AgentProvider>();
+
+  /** Cached aggregated status per workspace (for deduplication and queries). */
+  const statusCache = new Map<WorkspacePath, AggregatedAgentStatus>();
+
+  /**
+   * Track workspaces that have had TUI attached.
+   * Persists across provider recreations (e.g., server restart) so we can
+   * restore the attached state without waiting for a new MCP request.
+   */
+  const tuiAttachedWorkspaces = new Set<WorkspacePath>();
+
+  // =========================================================================
+  // Provider management helpers
+  // =========================================================================
+
+  function createNoneStatus(): AggregatedAgentStatus {
+    return { status: "none", counts: { idle: 0, busy: 0 } };
+  }
+
+  function convertToAggregatedStatus(status: AgentStatus): AggregatedAgentStatus {
+    switch (status) {
+      case "none":
+        return { status: "none", counts: { idle: 0, busy: 0 } };
+      case "idle":
+        return { status: "idle", counts: { idle: 1, busy: 0 } };
+      case "busy":
+        return { status: "busy", counts: { idle: 0, busy: 1 } };
+    }
+  }
+
+  function getProviderStatus(provider: AgentProvider): AgentStatus {
+    if (provider instanceof OpenCodeProvider) {
+      const counts = provider.getEffectiveCounts();
+      if (counts.idle === 0 && counts.busy === 0) return "none";
+      if (counts.busy > 0) return "busy";
+      return "idle";
+    }
+    return "none";
+  }
+
+  function handleStatusUpdate(path: WorkspacePath, agentStatus: AgentStatus): void {
+    const status = convertToAggregatedStatus(agentStatus);
+    const previous = statusCache.get(path);
+    const hasChanged =
+      !previous ||
+      previous.status !== status.status ||
+      previous.counts.idle !== status.counts.idle ||
+      previous.counts.busy !== status.counts.busy;
+
+    if (hasChanged) {
+      statusCache.set(path, status);
+      void deps.dispatcher.dispatch({
+        type: INTENT_UPDATE_AGENT_STATUS,
+        payload: { workspacePath: path, status },
+      } as UpdateAgentStatusIntent);
+    }
+  }
+
+  function addProvider(path: WorkspacePath, provider: AgentProvider): void {
+    if (providers.has(path)) return;
+
+    provider.onStatusChange((status) => handleStatusUpdate(path, status));
+
+    if (tuiAttachedWorkspaces.has(path)) {
+      provider.markActive();
+    }
+
+    providers.set(path, provider);
+    handleStatusUpdate(path, getProviderStatus(provider));
+  }
+
+  function removeProvider(path: WorkspacePath): void {
+    const provider = providers.get(path);
+    if (provider) {
+      provider.dispose();
+      providers.delete(path);
+      statusCache.delete(path);
+      void deps.dispatcher.dispatch({
+        type: INTENT_UPDATE_AGENT_STATUS,
+        payload: { workspacePath: path, status: createNoneStatus() },
+      } as UpdateAgentStatusIntent);
+    }
+  }
+
+  function disconnectProvider(path: WorkspacePath): void {
+    const provider = providers.get(path);
+    if (provider) {
+      provider.disconnect();
+    }
+  }
+
+  async function reconnectProvider(path: WorkspacePath): Promise<void> {
+    const provider = providers.get(path);
+    if (provider) {
+      await provider.reconnect();
+      handleStatusUpdate(path, getProviderStatus(provider));
+    }
+  }
+
+  function markProviderActive(path: WorkspacePath): void {
+    tuiAttachedWorkspaces.add(path);
+    const provider = providers.get(path);
+    if (provider) {
+      provider.markActive();
+    }
+  }
 
   // =========================================================================
   // Internal functions
@@ -128,12 +234,10 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
     pendingPrompt: PendingPrompt | undefined
   ): Promise<void> {
     try {
-      const agentStatusManager = deps.agentStatusManager;
-
       // Check if this is a restart (provider already exists from disconnect)
-      if (agentStatusManager.hasProvider(workspacePath)) {
+      if (providers.has(workspacePath)) {
         try {
-          await agentStatusManager.reconnectWorkspace(workspacePath);
+          await reconnectProvider(workspacePath);
           logger.info("Reconnected agent provider after restart", {
             workspacePath,
             port,
@@ -150,11 +254,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
       }
 
       // First start: create OpenCode-specific provider directly
-      const provider = new OpenCodeProvider(
-        workspacePath,
-        agentStatusManager.getLogger(),
-        agentStatusManager.getSdkFactory()
-      );
+      const provider = new OpenCodeProvider(workspacePath, deps.providerLogger, undefined);
 
       try {
         await provider.connect(port);
@@ -166,7 +266,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
           provider.setBridgePort(bridgePort);
         }
 
-        agentStatusManager.addProvider(workspacePath, provider);
+        addProvider(workspacePath, provider);
 
         // Send initial prompt if provided
         if (pendingPrompt) {
@@ -206,9 +306,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
   }
 
   function wireServerCallbacks(): void {
-    const agentStatusManager = deps.agentStatusManager;
-
-    serverManager.setMarkActiveHandler((wp) => agentStatusManager.markActive(wp as WorkspacePath));
+    serverManager.setMarkActiveHandler((wp) => markProviderActive(wp as WorkspacePath));
 
     serverStartedCleanupFn = serverManager.onServerStarted((workspacePath, port, pendingPrompt) => {
       const promise = handleServerStarted(workspacePath as WorkspacePath, port, pendingPrompt);
@@ -217,9 +315,9 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
 
     serverStoppedCleanupFn = serverManager.onServerStopped((workspacePath, isRestart) => {
       if (isRestart) {
-        agentStatusManager.disconnectWorkspace(workspacePath as WorkspacePath);
+        disconnectProvider(workspacePath as WorkspacePath);
       } else {
-        agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
+        removeProvider(workspacePath as WorkspacePath);
       }
     });
   }
@@ -275,15 +373,6 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
 
             wireServerCallbacks();
 
-            statusUnsubscribeFn = deps.agentStatusManager.onStatusChanged(
-              (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => {
-                void deps.dispatcher.dispatch({
-                  type: INTENT_UPDATE_AGENT_STATUS,
-                  payload: { workspacePath, status },
-                } as UpdateAgentStatusIntent);
-              }
-            );
-
             const mcpPort = ctx.capabilities?.mcpPort as number | null;
             if (mcpPort !== null) {
               serverManager.setMcpConfig({ port: mcpPort });
@@ -306,13 +395,13 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
 
             await serverManager.dispose();
 
-            if (statusUnsubscribeFn) {
-              statusUnsubscribeFn();
-              statusUnsubscribeFn = null;
-            }
-
             if (active) {
-              deps.agentStatusManager.dispose();
+              for (const provider of providers.values()) {
+                provider.dispose();
+              }
+              providers.clear();
+              statusCache.clear();
+              tuiAttachedWorkspaces.clear();
             }
           },
         },
@@ -406,11 +495,8 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
 
             await waitForProvider(workspacePath);
 
-            const agentProvider = deps.agentStatusManager.getProvider(
-              workspacePath as WorkspacePath
-            );
             const envVars: Record<string, string> = {
-              ...(agentProvider?.getEnvironmentVariables() ?? {}),
+              ...(providers.get(workspacePath as WorkspacePath)?.getEnvironmentVariables() ?? {}),
             };
 
             capAgentType = "opencode";
@@ -437,7 +523,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
                 }
               }
 
-              deps.agentStatusManager.clearTuiTracking(workspacePath as WorkspacePath);
+              tuiAttachedWorkspaces.delete(workspacePath as WorkspacePath);
 
               return serverError
                 ? { serverName: "OpenCode", error: serverError }
@@ -461,7 +547,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
             if (!active) return undefined;
             const { workspacePath } = ctx as GetStatusHookInput;
             return {
-              agentStatus: deps.agentStatusManager.getStatus(workspacePath as WorkspacePath),
+              agentStatus: statusCache.get(workspacePath as WorkspacePath) ?? createNoneStatus(),
             };
           },
         },
@@ -472,8 +558,7 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult | undefined> => {
             if (!active) return undefined;
             const { workspacePath } = ctx as GetAgentSessionHookInput;
-            const session =
-              deps.agentStatusManager.getSession(workspacePath as WorkspacePath) ?? null;
+            const session = providers.get(workspacePath as WorkspacePath)?.getSession() ?? null;
             return { session };
           },
         },

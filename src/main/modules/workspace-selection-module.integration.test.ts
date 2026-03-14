@@ -43,9 +43,11 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import { createWorkspaceSelectionModule } from "./workspace-selection-module";
+import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
+import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
-import type { ProjectId } from "../../shared/api/types";
+import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 // =============================================================================
 // Test Constants
@@ -79,20 +81,11 @@ function busyStatus(): AggregatedAgentStatus {
 
 interface TestSetup {
   dispatcher: Dispatcher;
+  selectionModule: IntentModule;
   activeWorkspacePath: string | null;
 }
 
-function createTestSetup(opts: {
-  candidates: WorkspaceCandidate[];
-  statusMap?: Map<string, AggregatedAgentStatus>;
-}): TestSetup {
-  const statusMap = opts.statusMap ?? new Map();
-  const agentStatusManager = {
-    getStatus(path: WorkspacePath): AggregatedAgentStatus {
-      return statusMap.get(path) ?? noneStatus();
-    },
-  };
-
+function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
@@ -173,7 +166,7 @@ function createTestSetup(opts: {
     },
   };
 
-  const selectionModule = createWorkspaceSelectionModule(agentStatusManager);
+  const selectionModule = createWorkspaceSelectionModule();
 
   for (const m of [
     resolveModule,
@@ -186,6 +179,7 @@ function createTestSetup(opts: {
 
   return {
     dispatcher,
+    selectionModule,
     get activeWorkspacePath() {
       return activeWorkspacePath;
     },
@@ -215,16 +209,29 @@ describe("WorkspaceSelectionModule", () => {
 
   describe("prefers idle over busy (#2)", () => {
     it("selects idle workspace even when busy workspace is closer", async () => {
-      const statusMap = new Map<string, AggregatedAgentStatus>([
+      const setup = createTestSetup({
+        candidates: [candidate(WS_A), candidate(WS_B), candidate(WS_C)],
+      });
+
+      // Populate the module's internal status cache via its event handler
+      const statusHandler = setup.selectionModule.events![EVENT_AGENT_STATUS_UPDATED]!;
+      const projectId = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
+      for (const [wsPath, status] of [
         [WS_A, noneStatus()],
         [WS_B, busyStatus()],
         [WS_C, idleStatus()],
-      ]);
-
-      const setup = createTestSetup({
-        candidates: [candidate(WS_A), candidate(WS_B), candidate(WS_C)],
-        statusMap,
-      });
+      ] as const) {
+        const event: AgentStatusUpdatedEvent = {
+          type: EVENT_AGENT_STATUS_UPDATED,
+          payload: {
+            workspacePath: wsPath as WorkspacePath,
+            projectId,
+            workspaceName: extractWorkspaceName(wsPath) as WorkspaceName,
+            status,
+          },
+        };
+        statusHandler(event);
+      }
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,

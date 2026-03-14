@@ -47,7 +47,6 @@ import type { HookContext, OperationContext } from "../intents/infrastructure/op
 import type { IViewManager } from "../managers/view-manager.interface";
 
 import type { IWorkspaceFileService } from "../../services";
-import type { WorkspacePath } from "../../shared/ipc";
 import type {
   BlockingProcess,
   DeletionProgress,
@@ -144,23 +143,18 @@ interface TestProject {
 interface TestAppState {
   projects: TestProject[];
   serverStopped: boolean;
-  tuiCleared: boolean;
   removedWorkspaces: Array<{ projectPath: string; workspacePath: string }>;
   worktreeRemoved: boolean;
 }
 
 /**
  * Mock interface for test hooks that simulate agent and state interactions.
- * Provides getServerManager/getAgentStatusManager (from AgentModule) plus
+ * Provides getServerManager (from AgentModule) plus
  * test-only methods for project/workspace state simulation.
  */
 interface MockAppState {
   getServerManager: () => {
     stopServer: (path: string) => Promise<{ success: boolean; error?: string }>;
-  } | null;
-  getAgentStatusManager: () => {
-    clearTuiTracking: (path: string) => void;
-    getStatus: (path: string) => { status: string };
   } | null;
   getAllProjects: () => Promise<TestProject[]>;
   getProject: (path: string) => TestProject | undefined;
@@ -210,7 +204,6 @@ function createTestAppState(initial?: Partial<TestAppState>): {
       },
     ],
     serverStopped: false,
-    tuiCleared: false,
     removedWorkspaces: [],
     worktreeRemoved: false,
     ...initial,
@@ -240,12 +233,6 @@ function createTestAppState(initial?: Partial<TestAppState>): {
         state.serverStopped = true;
         return { success: true };
       }),
-    }),
-    getAgentStatusManager: vi.fn().mockReturnValue({
-      clearTuiTracking: vi.fn().mockImplementation(() => {
-        state.tuiCleared = true;
-      }),
-      getStatus: vi.fn().mockReturnValue({ status: "idle" }),
     }),
     unregisterWorkspace: vi
       .fn()
@@ -536,11 +523,6 @@ function createTestHarness(options?: {
                 }
               }
 
-              const agentStatusManager = appState.getAgentStatusManager();
-              if (agentStatusManager) {
-                agentStatusManager.clearTuiTracking(workspacePath as WorkspacePath);
-              }
-
               return serverError ? { error: serverError } : {};
             } catch (error) {
               if (payload.force) {
@@ -804,13 +786,9 @@ function createTestHarness(options?: {
         "select-next": {
           handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
             const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
-            const scorer = (workspacePath: string): number => {
-              const mgr = appState.getAgentStatusManager();
-              const status = mgr?.getStatus(workspacePath as WorkspacePath);
-              if (!status || status.status === "none") return 2;
-              if (status.status === "busy") return 1;
-              return 0;
-            };
+            // In production, scoring uses an internal status cache.
+            // For these tests, all workspaces are treated as idle (score 0).
+            const scorer = (): number => 0;
             const result = selectNextWorkspace(
               currentPath,
               candidates,
@@ -890,9 +868,8 @@ describe("DeleteWorkspaceOperation.normalDeletion", () => {
     // Operation returns { started: true }
     expect(result).toEqual({ started: true });
 
-    // Shutdown: server stopped, TUI cleared (MCP cleared via domain event, not in agent hook)
+    // Shutdown: server stopped
     expect(harness.testState.serverStopped).toBe(true);
-    expect(harness.testState.tuiCleared).toBe(true);
 
     // Shutdown: view destroyed
     expect(harness.destroyedViews).toContain(WORKSPACE_PATH);
@@ -1463,9 +1440,6 @@ describe("DeleteWorkspaceOperation.agentCleanup", () => {
 
     // Server stopped
     expect(harness.testState.serverStopped).toBe(true);
-
-    // TUI tracking cleared (MCP cleared via domain event, not in agent hook)
-    expect(harness.testState.tuiCleared).toBe(true);
   });
 });
 

@@ -146,19 +146,6 @@ function createMockServerManager(opts?: { throwOnStart?: boolean }): MockServerM
   };
 }
 
-interface MockAgentStatusManager {
-  getProvider: (
-    path: string
-  ) => { getEnvironmentVariables: () => Record<string, string> } | undefined;
-}
-
-function createMockAgentStatusManager(envVars?: Record<string, string>): MockAgentStatusManager {
-  return {
-    getProvider: () =>
-      envVars !== undefined ? { getEnvironmentVariables: () => envVars } : undefined,
-  };
-}
-
 interface MockKeepFilesService {
   copyToWorkspace: (
     projectRoot: Path,
@@ -198,7 +185,7 @@ function createMockKeepFilesService(opts?: { throwOnCopy?: boolean }): MockKeepF
 
 interface TestSetupOptions {
   serverManager?: MockServerManager;
-  agentStatusManager?: MockAgentStatusManager;
+  envVars?: Record<string, string>;
   keepFilesService?: MockKeepFilesService;
   throwOnCreate?: boolean;
   setupThrows?: boolean;
@@ -219,8 +206,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const projectId = PROJECT_ID;
   const provider = createMockWorkspaceProvider();
   const serverManager = opts?.serverManager ?? createMockServerManager();
-  const agentStatusManager =
-    opts?.agentStatusManager ?? createMockAgentStatusManager({ AGENT_PORT: "9090" });
+  const envVars = opts?.envVars ?? { AGENT_PORT: "9090" };
   const keepFilesService = opts?.keepFilesService ?? createMockKeepFilesService();
   const workspaceUrl = opts?.workspaceUrl ?? WORKSPACE_URL;
 
@@ -384,8 +370,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
               );
             }
 
-            const agentProvider = agentStatusManager.getProvider(setupCtx.workspacePath);
-            return { envVars: agentProvider?.getEnvironmentVariables() ?? {} };
+            return { envVars };
           },
         },
       },
@@ -536,7 +521,7 @@ describe("OpenWorkspace Operation", () => {
     it("throws error and does not emit event when agent fails", async () => {
       const setup = createTestSetup({
         serverManager: createMockServerManager({ throwOnStart: true }),
-        agentStatusManager: createMockAgentStatusManager(undefined),
+        envVars: {},
       });
 
       const receivedEvents: DomainEvent[] = [];

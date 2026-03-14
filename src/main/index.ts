@@ -62,7 +62,7 @@ import {
 } from "../agents/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "../agents/types";
 import { createExtensionModule } from "./modules/extension-module";
-import { AgentStatusManager, createAgentServerManager } from "../agents";
+import { createAgentServerManager } from "../agents";
 import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
 
@@ -282,7 +282,7 @@ const agentServerManagers = {
   claude: createAgentServerManager("claude", serverManagerDeps),
   opencode: createAgentServerManager("opencode", serverManagerDeps),
 };
-const agentStatusManager = new AgentStatusManager(loggingService.createLogger("agent"));
+const providerLogger = loggingService.createLogger("agent");
 
 const keepFilesService = new KeepFilesService(
   fileSystemLayer,
@@ -410,19 +410,19 @@ const extensionModule = createExtensionModule({
 const claudeAgentModule = createClaudeAgentModule({
   agentBinaryManager: claudeBinaryManager,
   serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
-  agentStatusManager,
   dispatcher,
   logger: apiLogger,
   loggingService,
+  providerLogger,
 });
 
 const opencodeAgentModule = createOpenCodeAgentModule({
   agentBinaryManager: opencodeBinaryManager,
   serverManager: agentServerManagers.opencode as OpenCodeServerManager,
-  agentStatusManager,
   dispatcher,
   logger: apiLogger,
   loggingService,
+  providerLogger,
 });
 
 const metadataModule = createMetadataModule({
@@ -475,7 +475,7 @@ const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   apiLogger
 );
 const badgeModule = createBadgeModule(badgeManager);
-const workspaceSelectionModule = createWorkspaceSelectionModule(agentStatusManager);
+const workspaceSelectionModule = createWorkspaceSelectionModule();
 const mcpModule = createMcpModule({
   mcpServerManager,
 });
@@ -596,7 +596,6 @@ const ipcEventBridge = createIpcEventBridge({
   sendToUI: (...args) => viewManager.sendToUI(...args),
   logger: apiLogger,
   dispatcher,
-  agentStatusManager,
 });
 
 // 9. Register all modules

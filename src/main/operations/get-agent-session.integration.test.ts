@@ -2,8 +2,7 @@
 /**
  * Integration tests for get-agent-session operation through the Dispatcher.
  *
- * Tests verify the full dispatch pipeline: intent -> operation -> hook -> result,
- * using a behavioral mock for AgentStatusManager.
+ * Tests verify the full dispatch pipeline: intent -> operation -> hook -> result.
  *
  * Test plan items covered:
  * #3: get-agent-session returns session info
@@ -20,11 +19,7 @@ import {
   GET_AGENT_SESSION_OPERATION_ID,
   INTENT_GET_AGENT_SESSION,
 } from "./get-agent-session";
-import type {
-  GetAgentSessionIntent,
-  GetAgentSessionHookInput,
-  GetAgentSessionHookResult,
-} from "./get-agent-session";
+import type { GetAgentSessionIntent, GetAgentSessionHookResult } from "./get-agent-session";
 import {
   ResolveWorkspaceOperation,
   RESOLVE_WORKSPACE_OPERATION_ID,
@@ -35,7 +30,6 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import type { WorkspaceName, AgentSession } from "../../shared/api/types";
-import type { WorkspacePath } from "../../shared/ipc";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 
 // =============================================================================
@@ -54,21 +48,6 @@ interface AgentSessionInfo {
   readonly sessionId: string;
 }
 
-interface MockAgentStatusManager {
-  sessionMap: Map<string, AgentSessionInfo | null>;
-  getSession(path: WorkspacePath): AgentSessionInfo | null;
-}
-
-function createMockAgentStatusManager(
-  entries: Record<string, AgentSessionInfo | null> = {}
-): MockAgentStatusManager {
-  const sessionMap = new Map(Object.entries(entries));
-  return {
-    sessionMap,
-    getSession: (path: WorkspacePath) => sessionMap.get(path) ?? null,
-  };
-}
-
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -78,7 +57,7 @@ interface TestSetup {
   workspaceName: WorkspaceName;
 }
 
-function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | null }): TestSetup {
+function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup {
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
   const hookRegistry = new HookRegistry();
@@ -105,17 +84,14 @@ function createTestSetup(opts: { agentStatusManager?: MockAgentStatusManager | n
     },
   };
 
-  // Agent session hook handler module (reads from enriched context)
+  // Agent session hook handler module (returns session from test data)
   const agentSessionModule: IntentModule = {
     name: "test",
     hooks: {
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult> => {
-            const { workspacePath } = ctx as GetAgentSessionHookInput;
-            const manager = opts.agentStatusManager;
-            const session = manager?.getSession(workspacePath as WorkspacePath) ?? null;
-            return { session };
+          handler: async (): Promise<GetAgentSessionHookResult> => {
+            return { session: opts.session ?? null };
           },
         },
       },
@@ -149,9 +125,7 @@ describe("GetAgentSession Operation", () => {
 
     beforeEach(() => {
       setup = createTestSetup({
-        agentStatusManager: createMockAgentStatusManager({
-          [WORKSPACE_PATH]: { port: 8080, sessionId: "ses-001" },
-        }),
+        session: { port: 8080, sessionId: "ses-001" },
       });
     });
 
@@ -169,9 +143,7 @@ describe("GetAgentSession Operation", () => {
   describe("returns null when no session (#4)", () => {
     it("returns null when no session exists for workspace", async () => {
       const setup = createTestSetup({
-        agentStatusManager: createMockAgentStatusManager({
-          // No entry for workspace
-        }),
+        session: null,
       });
 
       const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
@@ -181,7 +153,7 @@ describe("GetAgentSession Operation", () => {
 
     it("returns null when no agent status manager", async () => {
       const setup = createTestSetup({
-        agentStatusManager: null,
+        session: null,
       });
 
       const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
@@ -192,7 +164,7 @@ describe("GetAgentSession Operation", () => {
 
   describe("error cases", () => {
     it("unknown workspace path throws", async () => {
-      const setup = createTestSetup({ agentStatusManager: null });
+      const setup = createTestSetup({ session: null });
 
       await expect(setup.dispatcher.dispatch(sessionIntent("/nonexistent/path"))).rejects.toThrow(
         "Workspace not found: /nonexistent/path"
@@ -203,9 +175,7 @@ describe("GetAgentSession Operation", () => {
   describe("interceptor", () => {
     it("cancellation prevents operation execution (#14)", async () => {
       const setup = createTestSetup({
-        agentStatusManager: createMockAgentStatusManager({
-          [WORKSPACE_PATH]: { port: 8080, sessionId: "ses-001" },
-        }),
+        session: { port: 8080, sessionId: "ses-001" },
       });
 
       const cancelInterceptor: IntentInterceptor = {

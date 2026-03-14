@@ -315,7 +315,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
     // Note: Session selection logic (filtering by directory, excluding sub-agents,
     // selecting most recent) is now handled by OpenCodeProvider, not the wrapper.
-    // Those behaviors are tested in session-utils.test.ts and agent-status-manager.test.ts.
+    // Those behaviors are tested in session-utils.test.ts.
 
     it("handles connection refused gracefully (still spawns opencode)", async () => {
       // Even if the server isn't running, the wrapper should still spawn opencode
