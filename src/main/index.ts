@@ -387,7 +387,7 @@ const { module: viewModule, readyHandler } = createViewModule({
   uiHtmlPath,
 });
 
-const { module: codeServerModule, setPluginPort } = createCodeServerModule({
+const codeServerModule = createCodeServerModule({
   processRunner,
   httpClient: networkLayer,
   portManager: networkLayer,
@@ -406,7 +406,6 @@ const pluginServerModule = createPluginServerModule({
   pluginServer,
   dispatcher,
   logger: apiLogger,
-  onPortReady: setPluginPort,
 });
 
 const extensionModule = createExtensionModule({

@@ -289,15 +289,37 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
 // Test Setup
 // =============================================================================
 
-function createTestSetup(mockDeps?: CodeServerModuleDeps) {
+/**
+ * Helper module that provides the pluginPort capability (null by default).
+ * Code-server-module's start handler has `requires: { pluginPort: ANY_VALUE }`,
+ * so a provider must be registered before it.
+ */
+function createPluginPortProvider(port: number | null = null): IntentModule {
+  return {
+    name: "plugin-port-provider",
+    hooks: {
+      [APP_START_OPERATION_ID]: {
+        start: {
+          provides: () => ({ pluginPort: port }),
+          handler: async () => undefined,
+        },
+      },
+    },
+  };
+}
+
+function createTestSetup(mockDeps?: CodeServerModuleDeps, pluginPort: number | null = null) {
   const deps = mockDeps ?? createMockDeps();
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
-  const { module, setPluginPort } = createCodeServerModule(deps);
 
+  // Register pluginPort provider before code-server module so the capability is available
+  dispatcher.registerModule(createPluginPortProvider(pluginPort));
+
+  const module = createCodeServerModule(deps);
   dispatcher.registerModule(module);
 
-  return { deps, dispatcher, hookRegistry, setPluginPort };
+  return { deps, dispatcher, hookRegistry };
 }
 
 // =============================================================================
@@ -757,7 +779,8 @@ describe("CodeServerModule", () => {
       // Create single setup with both operations
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(createPluginPortProvider());
+      const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Register start operation and run it to set port
@@ -806,7 +829,8 @@ describe("CodeServerModule", () => {
 
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(createPluginPortProvider());
+      const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Start to set port
@@ -933,7 +957,8 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(createPluginPortProvider());
+      const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
@@ -957,7 +982,8 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(createPluginPortProvider());
+      const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
@@ -980,7 +1006,8 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(createPluginPortProvider());
+      const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
@@ -1004,7 +1031,8 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(createPluginPortProvider());
+      const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
@@ -1029,7 +1057,8 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(createPluginPortProvider());
+      const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
@@ -1050,16 +1079,13 @@ describe("CodeServerModule", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // setPluginPort
+  // pluginPort capability
   // ---------------------------------------------------------------------------
 
-  describe("setPluginPort", () => {
-    it("makes plugin port available in spawned process environment", async () => {
+  describe("pluginPort capability", () => {
+    it("makes plugin port available in spawned process environment via capability", async () => {
       const deps = createMockDeps();
-      const { dispatcher, setPluginPort } = createTestSetup(deps);
-
-      // Set plugin port before start
-      setPluginPort(9876);
+      const { dispatcher } = createTestSetup(deps, 9876);
 
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
