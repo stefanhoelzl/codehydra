@@ -52,7 +52,7 @@ export type LoggerName =
   | "menu" // MenuLayer - application menu
   | "workspace-file" // WorkspaceFileService - .code-workspace file management
   | "config" // ConfigService - application config
-  | "telemetry" // TelemetryService - PostHog analytics
+  | "telemetry" // PosthogModule - PostHog analytics
   | "updater" // AutoUpdater - auto-update service
   | "agent" // AgentServerManager / AgentStatusManager - agent lifecycle
   | "shortcut" // ShortcutController - keyboard shortcut detection

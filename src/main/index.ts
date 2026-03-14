@@ -34,7 +34,6 @@ import {
   type BuildInfo,
   type LoggingService,
 } from "../services";
-import { PostHogTelemetryService } from "../services/telemetry";
 import { AutoUpdater } from "../services/auto-updater";
 import { ExecaProcessRunner } from "../services/platform/process";
 import { DefaultIpcLayer } from "../services/platform/ipc";
@@ -87,7 +86,7 @@ import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
-import { createTelemetryModule } from "./modules/telemetry-module";
+import { createPosthogModule } from "./modules/posthog-module";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
@@ -203,14 +202,6 @@ const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
 const ipcLayer = new DefaultIpcLayer();
 
 // 4. Service construction
-
-const telemetryService = new PostHogTelemetryService({
-  buildInfo,
-  platformInfo,
-  logger: loggingService.createLogger("telemetry"),
-  apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
-  host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
-});
 
 // Process runner uses platform-native tree killing (taskkill on Windows, process.kill on Unix)
 const processRunner = new ExecaProcessRunner(loggingService.createLogger("process"));
@@ -458,11 +449,13 @@ const windowTitleModule = createWindowTitleModule(
   (title: string) => windowManager.setTitle(title),
   buildInfo.gitBranch ?? buildInfo.version
 );
-const telemetryLifecycleModule = createTelemetryModule({
-  telemetryService,
+const posthogModule = createPosthogModule({
   platformInfo,
   buildInfo,
   dispatcher,
+  logger: loggingService.createLogger("telemetry"),
+  apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
+  host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
 });
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
@@ -632,7 +625,7 @@ dispatcher.registerModule(remoteProjectModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
 dispatcher.registerModule(windowTitleModule);
-dispatcher.registerModule(telemetryLifecycleModule);
+dispatcher.registerModule(posthogModule);
 dispatcher.registerModule(autoUpdaterLifecycleModule);
 dispatcher.registerModule(mcpModule);
 dispatcher.registerModule(electronLifecycleModule);
