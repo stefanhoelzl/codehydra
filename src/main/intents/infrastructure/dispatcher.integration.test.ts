@@ -12,6 +12,7 @@ import { HookRegistry } from "./hook-registry";
 import type { IntentModule } from "./module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext, HookContext } from "./operation";
+import { ANY_VALUE } from "./operation";
 import type { Logger } from "../../../services/logging/types";
 
 // =============================================================================
@@ -509,6 +510,127 @@ describe("Dispatcher", () => {
       const emptyModule: IntentModule = { name: "test-empty" };
 
       expect(() => dispatcher.registerModule(emptyModule)).not.toThrow();
+    });
+
+    it("module-level requires applied to hooks with no requires", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      // Provider module supplies the capability
+      dispatcher.registerModule({
+        name: "provider",
+        hooks: {
+          "action-op": {
+            run: {
+              provides: () => ({ serverPort: 3000 }),
+              handler: async () => undefined,
+            },
+          },
+        },
+      });
+
+      // Consumer module requires capability at module level
+      let capturedPort: unknown;
+      dispatcher.registerModule({
+        name: "consumer",
+        requires: { serverPort: ANY_VALUE },
+        hooks: {
+          "action-op": {
+            run: {
+              handler: async (ctx) => {
+                capturedPort = ctx.capabilities?.serverPort;
+              },
+            },
+          },
+        },
+      });
+
+      const hooks = hookRegistry.resolve("action-op");
+      await hooks.collect("run", { intent: createActionIntent() });
+
+      expect(capturedPort).toBe(3000);
+    });
+
+    it("module-level requires merged with hook-level requires", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      // Provider supplies both capabilities
+      dispatcher.registerModule({
+        name: "provider",
+        hooks: {
+          "action-op": {
+            run: {
+              provides: () => ({ portA: 1000, portB: 2000 }),
+              handler: async () => undefined,
+            },
+          },
+        },
+      });
+
+      // Consumer requires portA at module level, portB at hook level
+      let capturedCaps: Record<string, unknown> | undefined;
+      dispatcher.registerModule({
+        name: "consumer",
+        requires: { portA: ANY_VALUE },
+        hooks: {
+          "action-op": {
+            run: {
+              requires: { portB: ANY_VALUE },
+              handler: async (ctx) => {
+                capturedCaps = ctx.capabilities as Record<string, unknown>;
+              },
+            },
+          },
+        },
+      });
+
+      const hooks = hookRegistry.resolve("action-op");
+      await hooks.collect("run", { intent: createActionIntent() });
+
+      expect(capturedCaps?.portA).toBe(1000);
+      expect(capturedCaps?.portB).toBe(2000);
+    });
+
+    it("hook-level requires override module-level on conflict", async () => {
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      // Provider supplies capability with value 42
+      dispatcher.registerModule({
+        name: "provider",
+        hooks: {
+          "action-op": {
+            run: {
+              provides: () => ({ setting: 42 }),
+              handler: async () => undefined,
+            },
+          },
+        },
+      });
+
+      // Module requires setting=99 but hook overrides to ANY_VALUE
+      let hookRan = false;
+      dispatcher.registerModule({
+        name: "consumer",
+        requires: { setting: 99 },
+        hooks: {
+          "action-op": {
+            run: {
+              requires: { setting: ANY_VALUE },
+              handler: async () => {
+                hookRan = true;
+              },
+            },
+          },
+        },
+      });
+
+      const hooks = hookRegistry.resolve("action-op");
+      await hooks.collect("run", { intent: createActionIntent() });
+
+      // Hook runs because hook-level ANY_VALUE overrides module-level 99
+      expect(hookRan).toBe(true);
     });
 
     it("registers multiple modules in order", async () => {
