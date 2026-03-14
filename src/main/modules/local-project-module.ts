@@ -74,7 +74,7 @@ export interface LocalProjectModuleDeps {
     FileSystemLayer,
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm" | "rename"
   >;
-  readonly globalProvider: Pick<GitWorktreeProvider, "validateRepository">;
+  readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
 }
 
 // =============================================================================
@@ -290,7 +290,7 @@ async function removeProject(
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
-  const { projectsDir, fs, globalProvider } = deps;
+  const { projectsDir, fs, gitWorktreeProvider } = deps;
 
   /** Internal state: all projects keyed by normalized path string. */
   const projects = new Map<string, LocalProject>();
@@ -336,7 +336,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               };
             }
 
-            await globalProvider.validateRepository(path);
+            await gitWorktreeProvider.validateRepository(path);
 
             return {
               projectPath: path.toString(),

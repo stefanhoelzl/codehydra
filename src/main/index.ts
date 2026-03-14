@@ -256,7 +256,7 @@ const hookRegistry = new HookRegistry();
 const dispatcher = new Dispatcher(hookRegistry, loggingService.createLogger("dispatcher"));
 
 const gitClient = new SimpleGitClient(loggingService.createLogger("git"));
-const globalWorktreeProvider = new GitWorktreeProvider(
+const gitWorktreeProvider = new GitWorktreeProvider(
   gitClient,
   fileSystemLayer,
   loggingService.createLogger("worktree")
@@ -438,7 +438,7 @@ const opencodeAgentModule = createOpenCodeAgentModule({
 });
 
 const metadataModule = createMetadataModule({
-  globalProvider: globalWorktreeProvider,
+  gitWorktreeProvider,
 });
 const keepFilesModule = createKeepFilesModule({
   keepFilesService,
@@ -472,7 +472,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
   fs: fileSystemLayer,
-  globalProvider: globalWorktreeProvider,
+  gitWorktreeProvider,
 });
 const remoteProjectModule = createRemoteProjectModule({
   fs: fileSystemLayer,
@@ -481,7 +481,7 @@ const remoteProjectModule = createRemoteProjectModule({
   logger: lifecycleLogger,
 });
 const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
-  globalWorktreeProvider,
+  gitWorktreeProvider,
   pathProvider,
   apiLogger
 );

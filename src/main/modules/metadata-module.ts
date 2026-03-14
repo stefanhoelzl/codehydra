@@ -16,7 +16,7 @@ import { GET_METADATA_OPERATION_ID } from "../operations/get-metadata";
 import type { GetMetadataHookResult, GetHookInput } from "../operations/get-metadata";
 
 interface MetadataModuleDeps {
-  readonly globalProvider: GitWorktreeProvider;
+  readonly gitWorktreeProvider: GitWorktreeProvider;
 }
 
 export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
@@ -28,7 +28,7 @@ export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
           handler: async (ctx: HookContext) => {
             const { workspacePath } = ctx as SetHookInput;
             const intent = ctx.intent as SetMetadataIntent;
-            await deps.globalProvider.setMetadata(
+            await deps.gitWorktreeProvider.setMetadata(
               new Path(workspacePath),
               intent.payload.key,
               intent.payload.value
@@ -40,7 +40,7 @@ export function createMetadataModule(deps: MetadataModuleDeps): IntentModule {
         get: {
           handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
             const { workspacePath } = ctx as GetHookInput;
-            const metadata = await deps.globalProvider.getMetadata(new Path(workspacePath));
+            const metadata = await deps.gitWorktreeProvider.getMetadata(new Path(workspacePath));
             return { metadata };
           },
         },

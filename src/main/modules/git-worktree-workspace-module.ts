@@ -86,13 +86,13 @@ export interface WorkspaceSetupHookResult {
 /**
  * Create a module that manages workspace-related git worktree operations.
  *
- * @param globalProvider - Global GitWorktreeProvider for all git operations
+ * @param gitWorktreeProvider - Global GitWorktreeProvider for all git operations
  * @param pathProvider - PathProvider for resolving workspace directories
  * @param logger - Logger for warnings and errors
  * @returns IntentModule with hook contributions
  */
 export function createGitWorktreeWorkspaceModule(
-  globalProvider: GitWorktreeProvider,
+  gitWorktreeProvider: GitWorktreeProvider,
   pathProvider: PathProvider,
   logger: Logger
 ): IntentModule {
@@ -207,22 +207,24 @@ export function createGitWorktreeWorkspaceModule(
             const projectPathObj = new Path(projectPath);
             const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
 
-            globalProvider.registerProject(projectPathObj, workspacesDir);
+            gitWorktreeProvider.registerProject(projectPathObj, workspacesDir);
             const key = projectPathObj.toString();
             registeredProjects.add(key);
 
-            const discovered = await globalProvider.discover(projectPathObj);
+            const discovered = await gitWorktreeProvider.discover(projectPathObj);
             workspaces.set(key, [...discovered]);
 
             // Fire-and-forget cleanup
-            void globalProvider.cleanupOrphanedWorkspaces(projectPathObj).catch((err: unknown) => {
-              logger.warn("Workspace cleanup failed", {
-                projectPath,
-                error: getErrorMessage(err),
+            void gitWorktreeProvider
+              .cleanupOrphanedWorkspaces(projectPathObj)
+              .catch((err: unknown) => {
+                logger.warn("Workspace cleanup failed", {
+                  projectPath,
+                  error: getErrorMessage(err),
+                });
               });
-            });
 
-            const defaultBaseBranch = await globalProvider.defaultBase(projectPathObj);
+            const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj);
 
             return {
               workspaces: discovered,
@@ -239,7 +241,7 @@ export function createGitWorktreeWorkspaceModule(
             const { projectPath } = ctx as CloseHookInput;
             const projectPathObj = new Path(projectPath);
 
-            globalProvider.unregisterProject(projectPathObj);
+            gitWorktreeProvider.unregisterProject(projectPathObj);
             const key = projectPathObj.toString();
             registeredProjects.delete(key);
             workspaces.delete(key);
@@ -303,7 +305,7 @@ export function createGitWorktreeWorkspaceModule(
             const projectPathObj = new Path(projectPath);
 
             // Resolve base: explicit or default
-            const base = payload.base ?? (await globalProvider.defaultBase(projectPathObj));
+            const base = payload.base ?? (await gitWorktreeProvider.defaultBase(projectPathObj));
             if (!base) {
               throw new WorkspaceError(
                 "No base branch specified and no default branch found (looked for origin/main, main, origin/master, master)"
@@ -312,7 +314,7 @@ export function createGitWorktreeWorkspaceModule(
 
             let internalWorkspace;
             try {
-              internalWorkspace = await globalProvider.createWorkspace(
+              internalWorkspace = await gitWorktreeProvider.createWorkspace(
                 projectPathObj,
                 payload.workspaceName!,
                 base
@@ -353,8 +355,8 @@ export function createGitWorktreeWorkspaceModule(
             const { projectPath } = ctx as ListBasesHookInput;
             const projectPathObj = new Path(projectPath);
 
-            const bases = await globalProvider.listBases(projectPathObj);
-            const defaultBaseBranch = await globalProvider.defaultBase(projectPathObj);
+            const bases = await gitWorktreeProvider.listBases(projectPathObj);
+            const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj);
 
             return {
               bases,
@@ -365,7 +367,7 @@ export function createGitWorktreeWorkspaceModule(
         refresh: {
           handler: async (ctx: HookContext): Promise<void> => {
             const { projectPath } = ctx as RefreshBasesHookInput;
-            await globalProvider.updateBases(new Path(projectPath));
+            await gitWorktreeProvider.updateBases(new Path(projectPath));
           },
         },
       },
@@ -376,8 +378,10 @@ export function createGitWorktreeWorkspaceModule(
           handler: async (ctx: HookContext): Promise<PreflightHookResult> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             try {
-              const isDirty = await globalProvider.isDirty(new Path(wsPath));
-              const unmergedCommits = await globalProvider.countUnmergedCommits(new Path(wsPath));
+              const isDirty = await gitWorktreeProvider.isDirty(new Path(wsPath));
+              const unmergedCommits = await gitWorktreeProvider.countUnmergedCommits(
+                new Path(wsPath)
+              );
               return { isDirty, unmergedCommits };
             } catch (error) {
               return { error: getErrorMessage(error) };
@@ -394,7 +398,7 @@ export function createGitWorktreeWorkspaceModule(
               addToDeletionPending(projectPath, wsPath);
 
               try {
-                await globalProvider.removeWorkspace(
+                await gitWorktreeProvider.removeWorkspace(
                   new Path(projectPath),
                   new Path(wsPath),
                   !payload.keepBranch
@@ -451,8 +455,10 @@ export function createGitWorktreeWorkspaceModule(
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
             const { workspacePath: wsPath } = ctx as GetStatusHookInput;
-            const isDirty = await globalProvider.isDirty(new Path(wsPath));
-            const unmergedCommits = await globalProvider.countUnmergedCommits(new Path(wsPath));
+            const isDirty = await gitWorktreeProvider.isDirty(new Path(wsPath));
+            const unmergedCommits = await gitWorktreeProvider.countUnmergedCommits(
+              new Path(wsPath)
+            );
             return { isDirty, unmergedCommits };
           },
         },

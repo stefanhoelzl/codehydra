@@ -189,7 +189,7 @@ function createTestHarness(options?: {
       ? undefined
       : undefined;
 
-  const globalProvider = {
+  const gitWorktreeProvider = {
     unregisterProject: (projectPath: Path) => {
       state.unregisteredProjects.push(projectPath.toString());
     },
@@ -448,7 +448,7 @@ function createTestHarness(options?: {
         close: {
           handler: async (ctx: HookContext): Promise<CloseHookResult> => {
             const { projectPath } = ctx as CloseHookInput;
-            globalProvider.unregisterProject(new Path(projectPath));
+            gitWorktreeProvider.unregisterProject(new Path(projectPath));
             return {};
           },
         },

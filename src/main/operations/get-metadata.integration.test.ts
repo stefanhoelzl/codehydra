@@ -96,12 +96,12 @@ function createTestSetup(): TestSetup {
     },
   });
 
-  const globalProvider = new GitWorktreeProvider(mockClient, mockFs, SILENT_LOGGER);
-  globalProvider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
+  const gitWorktreeProvider = new GitWorktreeProvider(mockClient, mockFs, SILENT_LOGGER);
+  gitWorktreeProvider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
 
   // Register workspace so metadata operations can resolve projectRoot
   const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
-  globalProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
+  gitWorktreeProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
 
   const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
@@ -161,7 +161,7 @@ function createTestSetup(): TestSetup {
           handler: async (ctx: HookContext) => {
             const { workspacePath: wp } = ctx as SetHookInput;
             const intent = ctx.intent as SetMetadataIntent;
-            await globalProvider.setMetadata(
+            await gitWorktreeProvider.setMetadata(
               new Path(wp),
               intent.payload.key,
               intent.payload.value
@@ -173,7 +173,7 @@ function createTestSetup(): TestSetup {
         get: {
           handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
             const { workspacePath: wp } = ctx as GetHookInput;
-            const metadata = await globalProvider.getMetadata(new Path(wp));
+            const metadata = await gitWorktreeProvider.getMetadata(new Path(wp));
             return { metadata };
           },
         },

@@ -329,8 +329,8 @@ function createTestHarness(options?: {
     }),
   };
 
-  // Mock globalProvider
-  const globalProvider = {
+  // Mock gitWorktreeProvider
+  const gitWorktreeProvider = {
     validateRepository: vi.fn().mockImplementation(async () => {
       if (validateThrows) {
         throw new Error("Not a valid git repository");
@@ -364,7 +364,7 @@ function createTestHarness(options?: {
               return {};
             }
 
-            await globalProvider.validateRepository(path);
+            await gitWorktreeProvider.validateRepository(path);
             return { projectPath: path.toString() };
           },
         },

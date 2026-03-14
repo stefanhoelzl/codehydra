@@ -71,7 +71,7 @@ const PROJECTS_DIR = "/test/app-data/projects";
 function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): {
   deps: LocalProjectModuleDeps;
   fs: ReturnType<typeof createFileSystemMock>;
-  globalProvider: LocalProjectModuleDeps["globalProvider"];
+  gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
 } {
   const fs = createFileSystemMock({
     entries: {
@@ -80,7 +80,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
     },
   });
 
-  const globalProvider = {
+  const gitWorktreeProvider = {
     validateRepository: vi.fn().mockResolvedValue(undefined),
   };
 
@@ -88,10 +88,10 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
     deps: {
       projectsDir: PROJECTS_DIR,
       fs,
-      globalProvider,
+      gitWorktreeProvider,
     },
     fs,
-    globalProvider,
+    gitWorktreeProvider,
   };
 }
 
@@ -104,13 +104,13 @@ interface TestSetup {
   closeHooks: ResolvedHooks;
   readyHooks: ResolvedHooks;
   fs: ReturnType<typeof createFileSystemMock>;
-  globalProvider: LocalProjectModuleDeps["globalProvider"];
+  gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
 }
 
 function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
-  const { deps, fs, globalProvider } = createMockDeps(fsOverrides);
+  const { deps, fs, gitWorktreeProvider } = createMockDeps(fsOverrides);
 
   const module = createLocalProjectModule(deps);
   dispatcher.registerModule(module);
@@ -120,7 +120,7 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
     closeHooks: hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID),
     readyHooks: hookRegistry.resolve(APP_READY_OPERATION_ID),
     fs,
-    globalProvider,
+    gitWorktreeProvider,
   };
 }
 
@@ -191,7 +191,7 @@ describe("LocalProjectModule Integration", () => {
 
   describe("project:open resolve", () => {
     it("validates local path and returns projectPath (#1)", async () => {
-      const { openHooks, globalProvider } = createTestSetup();
+      const { openHooks, gitWorktreeProvider } = createTestSetup();
 
       const { results, errors } = await openHooks.collect<ResolveHookResult>("resolve", {
         intent: openLocalIntent(PROJECT_PATH),
@@ -200,11 +200,11 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({ projectPath: new Path(PROJECT_PATH).toString() });
-      expect(globalProvider.validateRepository).toHaveBeenCalledWith(new Path(PROJECT_PATH));
+      expect(gitWorktreeProvider.validateRepository).toHaveBeenCalledWith(new Path(PROJECT_PATH));
     });
 
     it("skips for git URL payloads (#2)", async () => {
-      const { openHooks, globalProvider } = createTestSetup();
+      const { openHooks, gitWorktreeProvider } = createTestSetup();
 
       const { results, errors } = await openHooks.collect<ResolveHookResult>("resolve", {
         intent: openGitIntent("https://github.com/user/repo.git"),
@@ -213,12 +213,12 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({});
-      expect(globalProvider.validateRepository).not.toHaveBeenCalled();
+      expect(gitWorktreeProvider.validateRepository).not.toHaveBeenCalled();
     });
 
     it("propagates validation errors (#3)", async () => {
-      const { openHooks, globalProvider } = createTestSetup();
-      vi.mocked(globalProvider.validateRepository).mockRejectedValue(
+      const { openHooks, gitWorktreeProvider } = createTestSetup();
+      vi.mocked(gitWorktreeProvider.validateRepository).mockRejectedValue(
         new Error("Not a git repository")
       );
 
@@ -276,7 +276,7 @@ describe("LocalProjectModule Integration", () => {
         alreadyOpen: true,
         remoteUrl: "https://github.com/user/repo.git",
       });
-      expect(setup.globalProvider.validateRepository).not.toHaveBeenCalled();
+      expect(setup.gitWorktreeProvider.validateRepository).not.toHaveBeenCalled();
     });
 
     it("returns alreadyOpen when path is in internal state (#14)", async () => {
@@ -300,7 +300,7 @@ describe("LocalProjectModule Integration", () => {
         projectPath: new Path(PROJECT_PATH).toString(),
         alreadyOpen: true,
       });
-      expect(setup.globalProvider.validateRepository).not.toHaveBeenCalled();
+      expect(setup.gitWorktreeProvider.validateRepository).not.toHaveBeenCalled();
     });
   });
 
