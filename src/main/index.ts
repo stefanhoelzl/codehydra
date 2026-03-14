@@ -67,7 +67,7 @@ import { createExtensionModule } from "./modules/extension-module";
 import { AgentStatusManager, createAgentServerManager } from "../agents";
 import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
 import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
-import { PluginServer } from "../services/plugin-server";
+
 import { McpServerManager } from "../services/mcp-server";
 import { createMcpHandlers } from "./modules/mcp-handlers";
 import { WindowManager } from "./managers/window-manager";
@@ -255,12 +255,6 @@ const opencodeBinaryManager = new AgentBinaryManager(
 const hookRegistry = new HookRegistry();
 const dispatcher = new Dispatcher(hookRegistry, loggingService.createLogger("dispatcher"));
 
-// Runtime services (non-agent, used by lifecycle modules)
-const pluginServer = new PluginServer(networkLayer, loggingService.createLogger("plugin"), {
-  isDevelopment: buildInfo.isDevelopment,
-  extensionLogger: loggingService.createLogger("extension"),
-});
-
 const gitClient = new SimpleGitClient(loggingService.createLogger("git"));
 const globalWorktreeProvider = new GitWorktreeProvider(
   gitClient,
@@ -410,9 +404,13 @@ const codeServerModule = createCodeServerModule({
 });
 
 const pluginServerModule = createPluginServerModule({
-  pluginServer,
+  portManager: networkLayer,
   dispatcher,
   logger: apiLogger,
+  options: {
+    isDevelopment: buildInfo.isDevelopment,
+    extensionLogger: loggingService.createLogger("extension"),
+  },
 });
 
 const extensionModule = createExtensionModule({
