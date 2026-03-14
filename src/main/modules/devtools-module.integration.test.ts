@@ -6,10 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import {
-  createDevtoolsModule,
-  type DevtoolsModuleDeps,
-} from "./devtools-module";
+import { createDevtoolsModule, type DevtoolsModuleDeps } from "./devtools-module";
 import {
   EVENT_SHORTCUT_KEY_PRESSED,
   type ShortcutKeyPressedEvent,
