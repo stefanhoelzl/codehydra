@@ -143,7 +143,7 @@ All operations use an intent-based dispatcher with operations, hook modules, and
 
 Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
 
-The `app:start` and `app:shutdown` intents orchestrate application lifecycle. `app:start` runs eight hook points in sequence: `register-config` (collect config definitions), `before-ready` (env config, script declarations), `await-ready` (Electron ready), `init` (post-ready config, logging, shell), `show-ui` (starting screen), `check-deps` (binary/extension checks), `start` (servers, wiring), and `activate` (load data, set active workspace). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`).
+The `app:start` and `app:shutdown` intents orchestrate application lifecycle. `app:start` runs eight hook points in sequence: `register-config` (collect config definitions), `before-ready` (env config, script declarations), `await-ready` (Electron ready), `init` (post-ready config, logging, shell), `show-ui` (starting screen), `check-deps` (binary/extension checks), `start` (servers, wiring), and `activate` (load data, set active workspace). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`). See `docs/INTENTS.md` for the complete reference.
 
 ---
 
@@ -302,21 +302,21 @@ All settings use dot-separated, kebab-case config keys. The same key works in th
 
 Precedence (highest wins): CLI flag > env var > config.json > computed defaults > static defaults.
 
-| Key                                 | Default  | Description                                                                           |
-| ----------------------------------- | -------- | ------------------------------------------------------------------------------------- |
-| `agent`                             | `null`   | Agent selection: claude\|opencode                                                     |
-| `auto-update`                       | `ask`    | Auto-update preference: always\|ask\|never                                            |
-| `version.claude`                    | `null`   | Claude agent version override                                                         |
-| `version.opencode`                  | `null`   | OpenCode agent version override                                                       |
-| `code-server.port`                  | (auto)   | Code-server port (auto = 25448 in prod, branch-derived in dev)                        |
-| `version.code-server`               | `null`   | Code-server version override (null = built-in)                                        |
-| `telemetry.enabled`                 | `true`   | Enable telemetry (false in dev/unpackaged)                                            |
-| `telemetry.distinct-id`             | —        | Telemetry user ID (auto-generated)                                                    |
-| `log.level`                         | `warn`   | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`)               |
-| `log.output`                        | `file`   | Output destinations: `file`, `console`, or `file,console`                             |
-| `electron.flags`                    | —        | Electron switches (e.g., `--disable-gpu`)                                             |
-| `experimental.github.template-path` | `null`   | Path to Liquid template for GitHub auto-workspaces; set to enable (requires `gh` CLI) |
-| `help`                              | `false`  | Print config help and exit                                                            |
+| Key                                 | Default | Description                                                                           |
+| ----------------------------------- | ------- | ------------------------------------------------------------------------------------- |
+| `agent`                             | `null`  | Agent selection: claude\|opencode                                                     |
+| `auto-update`                       | `ask`   | Auto-update preference: always\|ask\|never                                            |
+| `version.claude`                    | `null`  | Claude agent version override                                                         |
+| `version.opencode`                  | `null`  | OpenCode agent version override                                                       |
+| `code-server.port`                  | (auto)  | Code-server port (auto = 25448 in prod, branch-derived in dev)                        |
+| `version.code-server`               | `null`  | Code-server version override (null = built-in)                                        |
+| `telemetry.enabled`                 | `true`  | Enable telemetry (false in dev/unpackaged)                                            |
+| `telemetry.distinct-id`             | —       | Telemetry user ID (auto-generated)                                                    |
+| `log.level`                         | `warn`  | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`)               |
+| `log.output`                        | `file`  | Output destinations: `file`, `console`, or `file,console`                             |
+| `electron.flags`                    | —       | Electron switches (e.g., `--disable-gpu`)                                             |
+| `experimental.github.template-path` | `null`  | Path to Liquid template for GitHub auto-workspaces; set to enable (requires `gh` CLI) |
+| `help`                              | `false` | Print config help and exit                                                            |
 
 Any key can appear in config.json, env vars, or CLI flags.
 

@@ -57,7 +57,7 @@ Review CodeHydra for ARCHITECTURE quality issues.
 
 - docs/QUALITY.md (Architecture section + Accepted Patterns)
 - docs/ARCHITECTURE.md
-- docs/SERVICES.md
+- docs/INTENTS.md
 - docs/AGENTS.md
 - CLAUDE.md (External System Access Rules, Path Handling)
 
@@ -108,7 +108,7 @@ Review CodeHydra for CONSISTENCY issues.
 
 - docs/QUALITY.md (Consistency section + Accepted Patterns)
 - docs/PATTERNS.md (IPC, UI, CSS patterns)
-- docs/SERVICES.md (service layer patterns)
+- docs/INTENTS.md (service layer patterns)
 
 **Look for deviations from established patterns:**
 

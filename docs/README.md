@@ -6,8 +6,8 @@ Documentation for the CodeHydra project.
 
 | Document            | Purpose                                          | When to Use                    |
 | ------------------- | ------------------------------------------------ | ------------------------------ |
-| [ARCHITECTURE.md]   | System design, intent-based architecture, layers | Understanding system structure |
-| [SERVICES.md]       | Service layer implementation, abstractions       | Working with services          |
+| [ARCHITECTURE.md]   | System design, concepts, rules, layers           | Understanding system structure |
+| [INTENTS.md]        | Intent system, platform abstractions, mocks      | Working with intents/services  |
 | [AGENTS.md]         | Agent provider interface and integration         | Adding/modifying agent support |
 | [PATTERNS.md]       | IPC, UI, CSS patterns and conventions            | Following code patterns        |
 | [API.md]            | Private/Public API reference                     | API usage and integration      |
@@ -20,9 +20,9 @@ Documentation for the CodeHydra project.
 
 ### System Understanding
 
-- **ARCHITECTURE.md** - Start here for system overview. Contains the intent-based architecture (dispatcher, operations, hooks, domain events), layer architecture, component relationships, startup flows, and key diagrams.
+- **ARCHITECTURE.md** - Start here for system overview. Contains intent-based architecture concepts and rules, layer architecture, component relationships, startup flows, and key diagrams.
 
-- **SERVICES.md** - Deep dive into service implementation. Covers external system access rules, platform abstractions (FileSystemLayer, NetworkLayer, ProcessRunner), and mock factories.
+- **INTENTS.md** - Complete intent system reference. Covers infrastructure types, operations, hook points, domain events, platform abstractions (FileSystemLayer, NetworkLayer, ProcessRunner), and mock factories.
 
 - **AGENTS.md** - Agent integration system. How to implement new agents, status tracking, MCP integration, and OpenCode/Claude Code specifics.
 
@@ -46,19 +46,19 @@ Documentation for the CodeHydra project.
 
 ## Change Type Quick Reference
 
-| Change Type             | Read First                               |
-| ----------------------- | ---------------------------------------- |
-| Service layer changes   | SERVICES.md, ARCHITECTURE.md             |
-| Agent integration       | AGENTS.md, SERVICES.md                   |
-| IPC/API changes         | API.md, PATTERNS.md, ARCHITECTURE.md     |
-| UI components           | USER_INTERFACE.md, PATTERNS.md           |
-| New external dependency | SERVICES.md (External System Access)     |
-| Testing infrastructure  | TESTING.md, SERVICES.md (Mock Factories) |
-| New operation/intent    | ARCHITECTURE.md, TESTING.md              |
-| New hook module         | ARCHITECTURE.md, TESTING.md              |
+| Change Type             | Read First                              |
+| ----------------------- | --------------------------------------- |
+| Service layer changes   | INTENTS.md, ARCHITECTURE.md             |
+| Agent integration       | AGENTS.md, INTENTS.md                   |
+| IPC/API changes         | API.md, PATTERNS.md, INTENTS.md         |
+| UI components           | USER_INTERFACE.md, PATTERNS.md          |
+| New external dependency | INTENTS.md (External System Access)     |
+| Testing infrastructure  | TESTING.md, INTENTS.md (Mock Factories) |
+| New operation/intent    | INTENTS.md, ARCHITECTURE.md, TESTING.md |
+| New hook module         | INTENTS.md, ARCHITECTURE.md, TESTING.md |
 
 [ARCHITECTURE.md]: ./ARCHITECTURE.md
-[SERVICES.md]: ./SERVICES.md
+[INTENTS.md]: ./INTENTS.md
 [AGENTS.md]: ./AGENTS.md
 [PATTERNS.md]: ./PATTERNS.md
 [API.md]: ./API.md
