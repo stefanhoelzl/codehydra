@@ -16,9 +16,9 @@
  * #8: close resolve returns empty for unknown project path
  * #9: close removes from state and config
  * #10: close removes remote project from state and config
- * #11: activate returns all project paths including remote
- * #12: activate returns empty when no projects saved
- * #13: activate does NOT populate internal state — project:open register handles that
+ * #11: start returns all project paths including remote
+ * #12: start returns empty when no projects saved
+ * #13: start does NOT populate internal state — project:open register handles that
  * #14: resolve returns alreadyOpen when path is in internal state
  * #15: register returns alreadyOpen for duplicate path
  * #16: close resolve returns remoteUrl from config
@@ -46,7 +46,7 @@ import {
   type CloseHookInput,
 } from "../operations/close-project";
 import type { CloseProjectIntent } from "../operations/close-project";
-import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
+import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
 import { Path } from "../../services/platform/path";
 import type { ProjectId } from "../../shared/api/types";
@@ -578,10 +578,10 @@ describe("LocalProjectModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // app:start → activate
+  // app:start → start
   // ---------------------------------------------------------------------------
 
-  describe("app:start activate", () => {
+  describe("app:start start", () => {
     it("returns all project paths including remote (#11)", async () => {
       const localPath = "/projects/alpha";
       const remotePath = "/remotes/repo";
@@ -591,7 +591,7 @@ describe("LocalProjectModule Integration", () => {
       writeConfig(setup.fs, localPath);
       writeConfig(setup.fs, remotePath, "https://github.com/org/repo.git");
 
-      const { results, errors } = await setup.startHooks.collect<ActivateHookResult>("activate", {
+      const { results, errors } = await setup.startHooks.collect<StartHookResult>("start", {
         intent: appStartIntent(),
       });
 
@@ -604,7 +604,7 @@ describe("LocalProjectModule Integration", () => {
     it("returns empty when no projects saved (#12)", async () => {
       const { startHooks } = createTestSetup();
 
-      const { results, errors } = await startHooks.collect<ActivateHookResult>("activate", {
+      const { results, errors } = await startHooks.collect<StartHookResult>("start", {
         intent: appStartIntent(),
       });
 
@@ -619,11 +619,11 @@ describe("LocalProjectModule Integration", () => {
       // Pre-populate config
       writeConfig(setup.fs, PROJECT_PATH);
 
-      await setup.startHooks.collect<ActivateHookResult>("activate", {
+      await setup.startHooks.collect<StartHookResult>("start", {
         intent: appStartIntent(),
       });
 
-      // activate should NOT populate internal state — resolve reads config from disk,
+      // start should NOT populate internal state — resolve reads config from disk,
       // so it returns {} for a local project (no remoteUrl)
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
         "resolve",

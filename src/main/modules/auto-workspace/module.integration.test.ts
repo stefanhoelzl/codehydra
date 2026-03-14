@@ -21,7 +21,7 @@ import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-  type ActivateHookResult,
+  type StartHookResult,
 } from "../../operations/app-start";
 import {
   AppShutdownOperation,
@@ -86,7 +86,7 @@ class MinimalActivateOperation implements Operation<AppStartIntent, void> {
     }
 
     const hookCtx: HookContext = { intent: ctx.intent };
-    const { errors } = await ctx.hooks.collect<ActivateHookResult>("activate", hookCtx);
+    const { errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
   }
 }

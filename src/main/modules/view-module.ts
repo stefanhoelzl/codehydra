@@ -11,8 +11,8 @@
  * - deleteViewModule (delete-workspace/shutdown hook)
  * - switchViewModule (switch-workspace/activate hook + workspace:switched event)
  * - projectViewModule (project:opened event)
- * - viewLifecycleModule (app-start/activate + app-shutdown/stop hooks)
- * - mountModule (app-start/activate hook)
+ * - viewLifecycleModule (app-start/start + app-shutdown/stop hooks)
+ * - mountModule (app-start/start hook)
  * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
  *
  * Also owns the lifecycle.ready handler (merged from LifecycleReadyModule):
@@ -25,7 +25,7 @@
 
 import type { DialogLayer } from "../../services/platform/dialog";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { HookContext } from "../intents/infrastructure/operation";
+import { ANY_VALUE, type HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { IViewManager } from "../managers/view-manager.interface";
 import type { Logger } from "../../services/logging";
@@ -41,8 +41,7 @@ import {
   APP_START_OPERATION_ID,
   EVENT_APP_STARTED,
   type ShowUIHookResult,
-  type ActivateHookContext,
-  type ActivateHookResult,
+  type StartHookResult,
   type RegisterConfigResult,
 } from "../operations/app-start";
 import type { AgentSelectionHookContext } from "../operations/setup";
@@ -184,7 +183,7 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
       // app-start → register-config: declare experimental.load-on-resume
       // app-start → init: Shell creation + UI loading (post-ready)
       // app-start → show-ui: send LIFECYCLE_SHOW_STARTING to renderer
-      // app-start → activate: wire loading change callback + mount signal
+      // app-start → start: wire loading change callback + mount signal
       // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
         "register-config": {
@@ -244,10 +243,11 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
             };
           },
         },
-        activate: {
-          handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-            // Update code-server port from start results
-            const { codeServerPort } = ctx as ActivateHookContext;
+        start: {
+          requires: { codeServerPort: ANY_VALUE },
+          handler: async (ctx: HookContext): Promise<StartHookResult> => {
+            // Update code-server port from capabilities
+            const codeServerPort = ctx.capabilities?.codeServerPort as number | null;
             if (codeServerPort !== null) {
               viewManager.updateCodeServerPort(codeServerPort);
             }

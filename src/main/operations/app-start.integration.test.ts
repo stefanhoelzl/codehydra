@@ -5,10 +5,10 @@
  * Tests verify the full dispatch pipeline: intent -> operation -> hook execution.
  *
  * Test plan items covered:
- * #1: start hook runs before activate hook
+ * #1: all start hooks run (servers, data, view)
  * #2: start abort on CodeServer failure
  * #3: start abort on MCP failure (non-optional)
- * #4: activate hook failure propagates
+ * #4: start hook failure (data) propagates
  * #5: PluginServer graceful degradation
  * #6: project:open dispatched for each saved project path
  * #7: mount blocks until resolved, project:open dispatches run after
@@ -19,12 +19,12 @@
  * #12: init error aborts startup (configuredAgent path)
  * #13: check-deps error aborts
  * #14: configuredAgent flows from init results to check-deps
- * #15: before-ready hook collects scripts from multiple modules
+ * #15: ports available via capabilities in start hook
  * #16: before-ready hook error aborts startup
  * #17: await-ready hook error aborts startup
  * #18: init hook receives requiredScripts from before-ready results
  * #19: init hook error aborts startup
- * #20: full sequence: before-ready -> await-ready -> init -> show-ui -> ...
+ * #20: full sequence: before-ready -> await-ready -> init -> show-ui -> start
  */
 
 import { describe, it, expect } from "vitest";
@@ -39,8 +39,7 @@ import {
 } from "./app-start";
 import type {
   AppStartIntent,
-  ActivateHookContext,
-  ActivateHookResult,
+  StartHookResult,
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
@@ -52,7 +51,12 @@ import type { SetupIntent } from "./setup";
 import { INTENT_OPEN_PROJECT } from "./open-project";
 import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { HookContext, Operation, OperationContext } from "../intents/infrastructure/operation";
+import {
+  ANY_VALUE,
+  type HookContext,
+  type Operation,
+  type OperationContext,
+} from "../intents/infrastructure/operation";
 import type { ConfigAgentType, Project } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
 
@@ -133,8 +137,8 @@ function createDataModule(
     name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
+        start: {
+          handler: async (): Promise<StartHookResult> => {
             if (options?.fail) {
               throw new Error("Failed to load persisted projects");
             }
@@ -157,8 +161,8 @@ function createViewModule(state: TestState): IntentModule {
     name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
+        start: {
+          handler: async (): Promise<StartHookResult> => {
             state.viewActivated = true;
             state.executionOrder.push("view-activate");
             return {};
@@ -170,7 +174,7 @@ function createViewModule(state: TestState): IntentModule {
 }
 
 /**
- * Simulates the mountModule pattern: activate handler that blocks until resolved.
+ * Simulates the mountModule pattern: start handler that blocks until resolved.
  * In the real implementation, mount sends show-main-view IPC and blocks until
  * lifecycle.ready() resolves the promise. In tests, we auto-resolve immediately.
  */
@@ -179,8 +183,8 @@ function createMountModule(state: TestState): IntentModule {
     name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
+        start: {
+          handler: async (): Promise<StartHookResult> => {
             state.mountCompleted = true;
             state.executionOrder.push("mount");
             return {};
@@ -312,8 +316,8 @@ function appStartIntent(): AppStartIntent {
 // =============================================================================
 
 describe("AppStart Operation", () => {
-  describe("start hook runs before activate hook (#1)", () => {
-    it("activate modules observe state set by start modules", async () => {
+  describe("all start hooks run (#1)", () => {
+    it("all start handlers execute in dependency order", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createCodeServerModule(state),
@@ -329,7 +333,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(true);
       expect(state.viewActivated).toBe(true);
 
-      // Verify ordering: start hooks before activate hooks
+      // Verify all start hooks ran
       expect(state.executionOrder).toEqual([
         "codeserver-start",
         "mcp-start",
@@ -340,7 +344,7 @@ describe("AppStart Operation", () => {
   });
 
   describe("start abort on CodeServer failure (#2)", () => {
-    it("propagates error and does not run activate hook", async () => {
+    it("propagates error and remaining start hooks still run (collect)", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createCodeServerModule(state, { fail: true }),
@@ -354,11 +358,11 @@ describe("AppStart Operation", () => {
       );
 
       expect(state.codeServerStarted).toBe(false);
-      // With collect(), MCP still runs even though CodeServer threw (errors collected)
+      // With collect(), MCP still runs even though CodeServer threw (errors collected).
+      // Data and view modules also run since they are in the same "start" hook point.
       expect(state.mcpStarted).toBe(true);
-      // Activate hooks never ran (operation throws after collecting start errors)
-      expect(state.dataLoaded).toBe(false);
-      expect(state.viewActivated).toBe(false);
+      expect(state.dataLoaded).toBe(true);
+      expect(state.viewActivated).toBe(true);
     });
   });
 
@@ -379,14 +383,14 @@ describe("AppStart Operation", () => {
       // CodeServer ran before MCP
       expect(state.codeServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(false);
-      // Activate hooks never ran
-      expect(state.dataLoaded).toBe(false);
-      expect(state.viewActivated).toBe(false);
+      // Data and view modules also run since they are in the same "start" hook point
+      expect(state.dataLoaded).toBe(true);
+      expect(state.viewActivated).toBe(true);
     });
   });
 
-  describe("activate hook failure propagates (#4)", () => {
-    it("propagates error, no active workspace set", async () => {
+  describe("start hook failure (data) propagates (#4)", () => {
+    it("propagates error from data handler, other start handlers still run", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createCodeServerModule(state),
@@ -399,10 +403,10 @@ describe("AppStart Operation", () => {
         "Failed to load persisted projects"
       );
 
-      // Start hooks succeeded
+      // All start hooks ran (collect() continues after errors)
       expect(state.codeServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(true);
-      // DataModule failed, but with collect() ViewModule still runs
+      // DataModule failed, but with collect() other start handlers still run
       expect(state.dataLoaded).toBe(false);
       expect(state.viewActivated).toBe(true);
     });
@@ -429,7 +433,7 @@ describe("AppStart Operation", () => {
   });
 
   describe("project:open dispatch for saved projects (#6)", () => {
-    it("dispatches project:open for each project path set by activate hook", async () => {
+    it("dispatches project:open for each project path set by start hook", async () => {
       const state = createTestState();
       const stub = createProjectOpenStub(state);
       const { dispatcher } = createTestSetup(
@@ -492,8 +496,8 @@ describe("AppStart Operation", () => {
     });
   });
 
-  describe("mount blocks in activate, project:open dispatches run after (#7)", () => {
-    it("mount runs in activate, project:open dispatches follow", async () => {
+  describe("mount blocks in start, project:open dispatches run after (#7)", () => {
+    it("mount runs in start, project:open dispatches follow", async () => {
       const state = createTestState();
       const stub = createProjectOpenStub(state);
       const { dispatcher } = createTestSetup(
@@ -509,7 +513,7 @@ describe("AppStart Operation", () => {
 
       await dispatcher.dispatch(appStartIntent());
 
-      // Verify ordering: start → activate (data + view + mount) → project:open
+      // Verify ordering: start (all handlers) → project:open
       expect(state.executionOrder).toEqual([
         "codeserver-start",
         "mcp-start",
@@ -788,46 +792,47 @@ describe("AppStart Operation", () => {
   });
 
   // ===========================================================================
-  // Activate Hook Context (mcpPort flowing from start to activate)
+  // Capabilities (ports available via ctx.capabilities in start hook)
   // ===========================================================================
 
-  describe("activate hook receives mcpPort from start results (#15)", () => {
+  describe("ports available via capabilities in start hook (#15)", () => {
     it.each([
       {
         portName: "mcpPort" as const,
         modules: (s: TestState) => [createCodeServerModule(s), createMcpModule(s)],
         expected: 9090,
-        label: "passes mcpPort from MCP start handler to activate handlers",
+        label: "mcpPort available via capabilities from MCP start handler",
       },
       {
         portName: "mcpPort" as const,
         modules: (s: TestState) => [createCodeServerModule(s)],
-        expected: null,
-        label: "passes null mcpPort when no start handler returns mcpPort",
+        expected: undefined,
+        label: "mcpPort undefined when no start handler provides it",
       },
       {
         portName: "codeServerPort" as const,
         modules: (s: TestState) => [createCodeServerModule(s), createMcpModule(s)],
         expected: 8080,
-        label: "passes codeServerPort from CodeServer start handler to activate handlers",
+        label: "codeServerPort available via capabilities from CodeServer start handler",
       },
       {
         portName: "codeServerPort" as const,
         modules: (s: TestState) => [createMcpModule(s)],
-        expected: null,
-        label: "passes null codeServerPort when no start handler returns codeServerPort",
+        expected: undefined,
+        label: "codeServerPort undefined when no start handler provides it",
       },
     ])("$label", async ({ portName, modules, expected }) => {
       const state = createTestState();
-      let receivedPort: number | null | undefined;
+      let receivedPort: number | undefined;
 
       const readerModule: IntentModule = {
         name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
-            activate: {
-              handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-                receivedPort = (ctx as ActivateHookContext)[portName];
+            start: {
+              requires: { [portName]: ANY_VALUE },
+              handler: async (ctx: HookContext): Promise<StartHookResult> => {
+                receivedPort = ctx.capabilities?.[portName] as number | undefined;
                 return {};
               },
             },
@@ -838,8 +843,8 @@ describe("AppStart Operation", () => {
       const { dispatcher } = createTestSetup([...modules(state), readerModule]);
       await dispatcher.dispatch(appStartIntent());
 
-      if (expected === null) {
-        expect(receivedPort).toBeNull();
+      if (expected === undefined) {
+        expect(receivedPort).toBeUndefined();
       } else {
         expect(receivedPort).toBe(expected);
       }
@@ -1072,7 +1077,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("full sequence: before-ready -> await-ready -> init -> show-ui -> start -> activate (#20)", async () => {
+    it("full sequence: before-ready -> await-ready -> init -> show-ui -> start (#20)", async () => {
       const state = createTestState();
 
       const configureTracker: IntentModule = {
