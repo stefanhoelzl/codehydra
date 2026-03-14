@@ -82,6 +82,8 @@ export interface WorkspaceCreatedPayload {
   readonly workspaceUrl: string;
   readonly initialPrompt?: NormalizedInitialPrompt;
   readonly stealFocus?: boolean;
+  /** True when re-activating a discovered workspace (not a fresh creation). */
+  readonly reopened?: boolean;
 }
 
 export interface WorkspaceCreatedEvent extends DomainEvent {
@@ -256,6 +258,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       ...(ctx.intent.payload.stealFocus !== undefined && {
         stealFocus: ctx.intent.payload.stealFocus,
       }),
+      ...(ctx.intent.payload.existingWorkspace !== undefined && { reopened: true }),
     };
 
     const event: WorkspaceCreatedEvent = {

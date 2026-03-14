@@ -9,6 +9,8 @@
  * Events:
  * - config:updated: configures PosthogTelemetryService when telemetry values arrive,
  *   registers error handlers when telemetry.enabled is true
+ * - workspace:created: captures "workspace_created" for new workspaces (not reopened)
+ * - app:resumed: captures "app_resume" on system wake from sleep/hibernate
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -19,6 +21,8 @@ import type { ConfigSetValuesIntent } from "../operations/config-set-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../operations/open-workspace";
+import { EVENT_APP_RESUMED } from "../operations/app-resume";
 import { configBoolean, configString } from "../../services/config/config-definition";
 import type { TelemetryService } from "../../services/telemetry/types";
 import type { PlatformInfo } from "../../services/platform/platform-info";
@@ -39,6 +43,15 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
   let telemetryEnabled: boolean | undefined;
   let distinctId: string | undefined;
   let errorHandlersRegistered = false;
+
+  function eventProperties(): Record<string, unknown> {
+    return {
+      platform: deps.platformInfo.platform,
+      arch: deps.platformInfo.arch,
+      isDevelopment: deps.buildInfo.isDevelopment,
+      agent: configuredAgent,
+    };
+  }
 
   function registerErrorHandlers(): void {
     if (errorHandlersRegistered) return;
@@ -93,12 +106,7 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
             }
 
             if (configuredAgent !== undefined) {
-              deps.telemetryService?.capture("app_launched", {
-                platform: deps.platformInfo.platform,
-                arch: deps.platformInfo.arch,
-                isDevelopment: deps.buildInfo.isDevelopment,
-                agent: configuredAgent,
-              });
+              deps.telemetryService?.capture("app_launched", eventProperties());
             }
             return {};
           },
@@ -115,6 +123,15 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
       },
     },
     events: {
+      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
+        const { reopened } = (event as WorkspaceCreatedEvent).payload;
+        if (!reopened) {
+          deps.telemetryService?.capture("workspace_created", eventProperties());
+        }
+      },
+      [EVENT_APP_RESUMED]: () => {
+        deps.telemetryService?.capture("app_resume", eventProperties());
+      },
       [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
         const { values } = (event as ConfigUpdatedEvent).payload;
 

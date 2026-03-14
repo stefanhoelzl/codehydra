@@ -34,6 +34,13 @@ import {
   INTENT_CONFIG_SET_VALUES,
   type ConfigSetValuesIntent,
 } from "../operations/config-set-values";
+import {
+  INTENT_OPEN_WORKSPACE,
+  type OpenWorkspaceIntent,
+  type WorkspaceCreatedPayload,
+} from "../operations/open-workspace";
+import { INTENT_APP_RESUME, type AppResumeIntent } from "../operations/app-resume";
+import { AppResumeOperation } from "../operations/app-resume";
 import { createTelemetryModule } from "./telemetry-module";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
 import type { TelemetryService, TelemetryConfigureOptions } from "../../services/telemetry/types";
@@ -52,6 +59,20 @@ class MinimalConfigSetValuesOperation implements Operation<ConfigSetValuesIntent
       type: "config:updated",
       payload: { values: ctx.intent.payload.values },
     });
+  }
+}
+
+/**
+ * Minimal workspace:open operation that emits workspace:created with a given payload.
+ * Skips the full hook pipeline (create/setup/finalize) — just emits the event.
+ */
+class MinimalOpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, void> {
+  readonly id = "open-workspace";
+
+  constructor(private readonly eventPayload: WorkspaceCreatedPayload) {}
+
+  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<void> {
+    ctx.emit({ type: "workspace:created", payload: this.eventPayload });
   }
 }
 
@@ -126,7 +147,25 @@ interface TestSetup {
   shutdownCalled: boolean;
 }
 
-function createTestSetup(overrides?: { telemetryService?: TelemetryService | null }): TestSetup {
+const NEW_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
+  projectId: "project-1" as WorkspaceCreatedPayload["projectId"],
+  workspaceName: "ws-1" as WorkspaceCreatedPayload["workspaceName"],
+  workspacePath: "/ws",
+  projectPath: "/proj",
+  branch: "ws-1",
+  metadata: {},
+  workspaceUrl: "http://127.0.0.1:8080",
+};
+
+const REOPENED_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
+  ...NEW_WORKSPACE_PAYLOAD,
+  reopened: true,
+};
+
+function createTestSetup(overrides?: {
+  telemetryService?: TelemetryService | null;
+  workspacePayload?: WorkspaceCreatedPayload;
+}): TestSetup {
   const tracking = createTrackingTelemetryService();
   const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
@@ -148,6 +187,11 @@ function createTestSetup(overrides?: { telemetryService?: TelemetryService | nul
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new MinimalConfigSetValuesOperation());
+  dispatcher.registerOperation(
+    INTENT_OPEN_WORKSPACE,
+    new MinimalOpenWorkspaceOperation(overrides?.workspacePayload ?? NEW_WORKSPACE_PAYLOAD)
+  );
+  dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
 
   dispatcher.registerModule(telemetryModule);
 
@@ -175,6 +219,17 @@ function configSetValuesIntent(values: Record<string, unknown>): ConfigSetValues
     type: INTENT_CONFIG_SET_VALUES,
     payload: { values },
   } as ConfigSetValuesIntent;
+}
+
+function openWorkspaceIntent(): OpenWorkspaceIntent {
+  return {
+    type: INTENT_OPEN_WORKSPACE,
+    payload: { workspaceName: "ws-1", projectPath: "/proj" },
+  } as OpenWorkspaceIntent;
+}
+
+function appResumeIntent(): AppResumeIntent {
+  return { type: INTENT_APP_RESUME, payload: {} as AppResumeIntent["payload"] };
 }
 
 // =============================================================================
@@ -490,6 +545,68 @@ describe("TelemetryModule Integration", () => {
 
       // Handler throws, but collect() catches it and shutdown is best-effort
       await expect(dispatcher.dispatch(shutdownIntent())).resolves.toBeUndefined();
+    });
+  });
+
+  describe("workspace:created event", () => {
+    const expectedProperties = {
+      platform: "darwin",
+      arch: "arm64",
+      isDevelopment: true,
+      agent: "opencode",
+    };
+
+    it("captures workspace_created for new workspaces", async () => {
+      const { dispatcher, captures } = createTestSetup();
+
+      await dispatcher.dispatch(configSetValuesIntent({ agent: "opencode" }));
+      await dispatcher.dispatch(openWorkspaceIntent());
+
+      expect(captures).toEqual([{ event: "workspace_created", properties: expectedProperties }]);
+    });
+
+    it("does not capture workspace_created for reopened workspaces", async () => {
+      const { dispatcher, captures } = createTestSetup({
+        workspacePayload: REOPENED_WORKSPACE_PAYLOAD,
+      });
+
+      await dispatcher.dispatch(configSetValuesIntent({ agent: "opencode" }));
+      await dispatcher.dispatch(openWorkspaceIntent());
+
+      expect(captures).toHaveLength(0);
+    });
+
+    it("does not throw when telemetryService is null", async () => {
+      const { dispatcher } = createTestSetup({ telemetryService: null });
+
+      await expect(dispatcher.dispatch(openWorkspaceIntent())).resolves.toBeUndefined();
+    });
+  });
+
+  describe("app:resumed event", () => {
+    it("captures app_resume on system wake", async () => {
+      const { dispatcher, captures } = createTestSetup();
+
+      await dispatcher.dispatch(configSetValuesIntent({ agent: "claude" }));
+      await dispatcher.dispatch(appResumeIntent());
+
+      expect(captures).toEqual([
+        {
+          event: "app_resume",
+          properties: {
+            platform: "darwin",
+            arch: "arm64",
+            isDevelopment: true,
+            agent: "claude",
+          },
+        },
+      ]);
+    });
+
+    it("does not throw when telemetryService is null", async () => {
+      const { dispatcher } = createTestSetup({ telemetryService: null });
+
+      await expect(dispatcher.dispatch(appResumeIntent())).resolves.toBeUndefined();
     });
   });
 });
