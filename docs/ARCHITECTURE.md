@@ -2,14 +2,14 @@
 
 ## Quick Navigation
 
-| Section                                           | Description                        |
-| ------------------------------------------------- | ---------------------------------- |
-| [System Overview](#system-overview)               | High-level architecture            |
-| [Core Concepts](#core-concepts)                   | Project, Workspace, Views          |
-| [Component Architecture](#component-architecture) | Main components and their roles    |
-| [API Layer](#api-layer-architecture)              | ICodeHydraApi design and contracts |
-| [Theming System](#theming-system)                 | CSS variables and VS Code theming  |
-| [Logging](#logging-system)                        | Log levels, files, and debugging   |
+| Section                                                 | Description                          |
+| ------------------------------------------------------- | ------------------------------------ |
+| [System Overview](#system-overview)                     | High-level architecture              |
+| [Core Concepts](#core-concepts)                         | Project, Workspace, Views            |
+| [Component Architecture](#component-architecture)       | Main components and their roles      |
+| [Intent-Based Architecture](#intent-based-architecture) | Intent dispatcher, operations, hooks |
+| [Theming System](#theming-system)                       | CSS variables and VS Code theming    |
+| [Logging](#logging-system)                              | Log levels, files, and debugging     |
 
 **Related Documentation:**
 
@@ -522,68 +522,92 @@ For detailed platform abstraction documentation including interface definitions,
 | SetupError            | Error display with Retry and Quit buttons            |
 | Stores                | projects, dialogs, shortcuts, setup (Svelte 5 runes) |
 
-## API Layer Architecture
+## Intent-Based Architecture
 
-The application uses a registry-based API layer (`ApiRegistry`) where modules self-register their methods and IPC handlers. This enables multiple consumers (UI, MCP Server, Plugin API) without duplicating business logic.
+All application behavior flows through an intent-based dispatcher. External triggers (IPC from the renderer, MCP commands, Electron lifecycle events) create typed intents that the dispatcher routes to operations. Operations orchestrate hook points where modules contribute behavior. Domain events propagate outcomes to subscribers.
 
 ### Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            Consumers                                     │
-├─────────────────────┬─────────────────────┬─────────────────────────────┤
-│   UI (Renderer)     │   MCP Server        │   Plugin API                │
-│   FULL API          │   CORE API          │   WORKSPACE API             │
-└──────────┬──────────┴──────────┬──────────┴──────────┬──────────────────┘
-           │                     │                     │
-           ▼                     ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        ApiRegistry + IPC                                 │
-│  (Auto-generates IPC handlers when methods are registered)              │
-└─────────────────────────────────┬───────────────────────────────────────┘
-                                  │
-         ┌────────────────────────┼────────────────────────┐
-         ▼                        ▼                        ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ LifecycleModule │    │   CoreModule    │    │    UiModule     │
-│ (bootstrap)     │    │ (startServices) │    │ (startServices) │
-│                 │    │                 │    │                 │
-│ lifecycle.*     │    │ projects.*      │    │ ui.*            │
-│ (3 methods)     │    │ workspaces.*    │    │ (4 methods)     │
-│                 │    │ (13 methods)    │    │                 │
-└────────┬────────┘    └────────┬────────┘    └────────┬────────┘
-         │                      │                      │
-         └──────────────────────┼──────────────────────┘
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Services                                       │
-│  GitWorktreeProvider, AgentStatusManager, ViewManager, etc.             │
-└─────────────────────────────────────────────────────────────────────────┘
+External Trigger (IPC / MCP / Electron lifecycle)
+       │
+       ▼
+     Intent (typed, registered)
+       │
+       ▼
+  Dispatcher
+       │
+       ├── Interceptors (may cancel — e.g., idempotency checks)
+       │
+       ▼
+  Operation (1:1 with intent)
+       │
+       ├── Hook points (modules contribute behavior)
+       ├── May dispatch child intents
+       ├── Emits domain events
+       │
+       ▼
+    Result
 ```
+
+### Core Concepts
+
+| Concept         | Responsibility                                               |
+| --------------- | ------------------------------------------------------------ |
+| **Intent**      | Declarative request describing _what should happen_          |
+| **Operation**   | Orchestrates the workflow for one intent type                |
+| **Hook**        | Module-provided behavior contributing data or side effects   |
+| **Interceptor** | Pre-execution check or transformation (e.g., idempotency)    |
+| **Event**       | Fire-and-forget signal emitted after something happened      |
+| **Module**      | Declares hooks, interceptors, and event subscribers          |
+| **Dispatcher**  | Routes intents to operations, delivers events to subscribers |
 
 ### Layer Ownership
 
-| Component     | Owns                                             | Does NOT Own                       |
-| ------------- | ------------------------------------------------ | ---------------------------------- |
-| `ApiRegistry` | Method registration, IPC auto-generation, events | Business logic (in modules)        |
-| `Modules`     | Business logic, ID resolution, event emission    | IPC serialization (auto-generated) |
+| Component        | Owns                                                  | Does NOT Own                           |
+| ---------------- | ----------------------------------------------------- | -------------------------------------- |
+| `Dispatcher`     | Intent routing, interceptor pipeline, event delivery  | Business logic (in modules)            |
+| `Operations`     | Workflow orchestration, control flow decisions        | Side effects (delegated to hooks)      |
+| `Modules`        | Hook handlers, event subscriptions, domain logic      | Workflow orchestration (in operations) |
+| `IpcEventBridge` | IPC-to-intent mapping, domain-event-to-IPC forwarding | Business logic or workflow control     |
 
-### API Interfaces
+### IPC-to-Intent Mapping
 
-The API is split into focused sub-interfaces following Interface Segregation Principle:
+IPC channels map directly to intents through `IpcEventBridge`. There are no separate API interfaces -- each IPC handler creates a typed intent and dispatches it:
 
-| Interface       | Methods                                      | Purpose                |
-| --------------- | -------------------------------------------- | ---------------------- |
-| `IProjectApi`   | `open`, `close`, `list`, `get`, `fetchBases` | Project management     |
-| `IWorkspaceApi` | `create`, `remove`, `get`, `getStatus`       | Workspace operations   |
-| `IUiApi`        | `selectFolder`, `switchWorkspace`, `setMode` | UI-specific operations |
-| `ILifecycleApi` | `getState`, `setup`, `quit`                  | Application lifecycle  |
+| IPC Channel            | Intent Type        | Operation                |
+| ---------------------- | ------------------ | ------------------------ |
+| `api:project:open`     | `project:open`     | OpenProjectOperation     |
+| `api:project:close`    | `project:close`    | CloseProjectOperation    |
+| `api:workspace:create` | `workspace:open`   | OpenWorkspaceOperation   |
+| `api:workspace:remove` | `workspace:delete` | DeleteWorkspaceOperation |
+| `api:workspace:switch` | `workspace:switch` | SwitchWorkspaceOperation |
+| `api:ui:set-mode`      | `ui:setMode`       | SetModeOperation         |
+| `api:lifecycle:quit`   | `app:shutdown`     | AppShutdownOperation     |
 
-Non-UI consumers (MCP Server, CLI) use `ICoreApi` which excludes `IUiApi` and `ILifecycleApi`.
+Non-IPC consumers (MCP Server, Plugin API) dispatch intents directly through the Dispatcher.
 
-### Intent Dispatcher
+### Core Principles
 
-Some API methods are implemented through an intent-based dispatcher (`Dispatcher` + `HookRegistry`). Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
+1. **All externally visible behavior starts with an Intent**
+2. **1 Intent = 1 Operation** (enforced by registry)
+3. **Operations orchestrate workflows, but do not implement business logic**
+4. **Hooks, Events, and Interceptors are the only extension points**
+5. **Hooks are unordered by default** -- any ordering must be declared explicitly
+6. **Operations decide what happens next**, based on hook outcomes
+7. **Modules never call each other**
+8. **Composition happens only in the application shell** (`src/main/index.ts`)
+
+### Key Rules
+
+- **Hook execution**: Operations call `hooks.collect(hookPointId, ctx)` which runs all registered handlers. All handlers always run regardless of earlier errors. The operation inspects `HookResult.errors` and decides whether to continue, abort, or compensate.
+- **Control flow**: Hooks do not decide control flow. Operations always decide. Examples: fail-fast (stop on first error), best-effort (collect errors, continue), compensate (run cleanup hooks).
+- **Child intents**: Only operations dispatch child intents (via `ctx.dispatch()`). Hooks return data; operations decide whether to dispatch further.
+- **Events**: Domain events are fire-and-forget signals emitted via `ctx.emit()`. They cannot affect control flow. Subscribers (IpcEventBridge, BadgeModule, WindowTitleModule) react independently.
+
+### Operations and Hooks
+
+All operations use the intent dispatcher (`Dispatcher` + `HookRegistry`). Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
 
 | Operation              | Intent Type              | Hook Points                     | Domain Event        |
 | ---------------------- | ------------------------ | ------------------------------- | ------------------- |
@@ -601,7 +625,7 @@ Some API methods are implemented through an intent-based dispatcher (`Dispatcher
 | `app-start`            | `app:start`              | `start`, `activate`             | --                  |
 | `app-shutdown`         | `app:shutdown`           | `stop`                          | --                  |
 
-Bridge handlers in `wireDispatcher()` map IPC payloads to intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event modules (StateModule, ViewModule) and transformed to IPC events by IpcEventBridge.
+IPC handlers in `IpcEventBridge` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (IpcEventBridge, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
 
 The `create-workspace` operation uses these hook modules:
 
@@ -640,6 +664,24 @@ The `app-shutdown` operation uses a single hook point:
 
 - **stop**: All lifecycle modules dispose their resources independently, each wrapping its own logic in try/catch (best-effort). A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across `window-all-closed` and `before-quit` entry points.
 
+### Capability-Based Hook Ordering
+
+Hooks are unordered by default. When execution order matters, handlers declare `requires` and `provides` capabilities. The `collect()` function topologically sorts handlers based on these declarations, running providers before consumers.
+
+Each `HookHandler` has three fields:
+
+| Field      | Type                               | Purpose                                                      |
+| ---------- | ---------------------------------- | ------------------------------------------------------------ |
+| `handler`  | `(ctx: HookContext) => Promise<T>` | The hook logic                                               |
+| `requires` | `Record<string, unknown>`          | Capabilities this handler needs before it can run            |
+| `provides` | `() => Record<string, unknown>`    | Capabilities this handler makes available after it completes |
+
+The `ANY_VALUE` sentinel (exported from `operation.ts`) matches any value for a required capability -- it means "this capability must exist, but I do not care about its value."
+
+**Example**: In the `app:start` operation's `start` hook point, the code-server module provides `{ codeServerPort: number }` after starting code-server. The plugin-server module requires `{ codeServerPort: ANY_VALUE }` so it runs after the port is known.
+
+Capabilities accumulate across handlers within a single `collect()` call and are available on `HookResult.capabilities` for the operation to inspect.
+
 ### Branded ID Types
 
 The API uses branded types (`ProjectId`, `WorkspaceName`) for type safety:
@@ -671,29 +713,32 @@ function generateProjectId(absolutePath: string): ProjectId {
 
 ### Event Flow
 
-IPC handlers subscribe to API events and emit to the renderer:
+Operations emit domain events via `ctx.emit()`. The dispatcher delivers these to all module event subscribers. `IpcEventBridge` forwards relevant events to the renderer via `sendToUI()`:
 
 ```
-API event emission                    IPC handler subscription
-      │                                      │
-      │  api.on('workspace:switched')        │
-      ├─────────────────────────────────────►│
-      │                                      │  webContents.send('api:workspace:switched')
-      │                                      ├─────────────────────────────────────────────►
-      │                                      │                                            UI
+Operation
+    │
+    ├── ctx.emit({ type: "workspace:switched", payload })
+    │
+    ▼
+Dispatcher delivers to subscribers
+    │
+    ├── IpcEventBridge  →  sendToUI("api:workspace:switched", payload)  →  Renderer
+    ├── BadgeModule     →  updates dock badge
+    └── WindowTitleModule → updates window title
 ```
 
-### Intent-Based Workspace Switching
+### Workspace Switching Example
 
 The `workspace:switched` event is emitted through the intent dispatcher via `SwitchWorkspaceOperation`:
 
 - `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace, calls `ViewManager.setActiveWorkspace`) then emits `workspace:switched` via `ctx.emit()`
-- Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `CreateWorkspaceOperation` dispatches after creating a workspace)
+- Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `OpenWorkspaceOperation` dispatches after creating a workspace)
 - Null deactivation (delete last workspace, close last project) emits `workspace:switched(null)` directly via `ctx.emit()` without going through the intent
-- `IpcEventBridge` subscribes to `workspace:switched` and forwards to the renderer via `apiRegistry.emit()`
-- `SwitchTitleModule` subscribes to `workspace:switched` and updates the window title
+- `IpcEventBridge` subscribes to `workspace:switched` and forwards to the renderer via `deps.sendToUI()`
+- `WindowTitleModule` subscribes to `workspace:switched` and updates the window title
 
-### API Events
+### Domain Events
 
 | Event                        | Payload                                                    | Description                                 |
 | ---------------------------- | ---------------------------------------------------------- | ------------------------------------------- |
@@ -724,21 +769,30 @@ The v2 API uses `api:` prefixed IPC channels:
 
 ### Main Process Startup Architecture
 
-The main process uses a multi-phase startup where services ONLY start when the renderer explicitly requests them:
+The main process uses a composition-root pattern in `src/main/index.ts`. All services are constructed (pure, no I/O), all operations and modules are registered, then `app:start` is dispatched to orchestrate the startup flow:
 
 ```
-bootstrap()                                    # Infrastructure only
+index.ts (composition root)
     │
-    ├── Create ConfigService, BinaryResolutionService
-    ├── Create vscodeSetupService
-    ├── Create LifecycleApi (standalone)
-    ├── Register lifecycle handlers (api:lifecycle:*)
-    └── Load UI (services NOT started)
+    ├── Construct all services (no I/O)
+    ├── Create Dispatcher + HookRegistry
+    ├── Register all operations (25+)
+    ├── Create IpcEventBridge (registers IPC handlers)
+    ├── Register all modules (30+)
+    └── Dispatch app:start intent
               │
-              v
-    UI loads → lifecycle.getState() called
+              ▼
+        AppStartOperation
               │
-              └─► Returns { state, agent }
+              ├── "start" hook point (servers, wiring)
+              │     CodeServerModule, PluginServerModule, AgentModules,
+              │     TelemetryModule, AutoUpdaterModule, McpModule, etc.
+              │
+              ├── "activate" hook point (load data, set active workspace)
+              │     DataModule (load persisted projects),
+              │     ViewModule (wire loading-state IPC, set first workspace active)
+              │
+              └── Renderer notified → ready
                                │
                ┌───────────────┴───────────────────────────┐
                │ "agent-selection"  │ "loading"  │ "setup" │
@@ -746,8 +800,6 @@ bootstrap()                                    # Infrastructure only
                v                    v            v
         AgentSelectionDialog   Loading      SetupScreen
                │               Screen       (3 rows)
-               │                  │              │
-        lifecycle.setAgent()      │       lifecycle.setup()
                │                  │              │
                └───────┬──────────┘              │
                        │                         │
@@ -763,8 +815,6 @@ bootstrap()                                    # Infrastructure only
                └───────┬───────┘
                        │
                        v
-             lifecycle.startServices()
-                       │
                ┌───────┴───────┐
                │ success       │ failure
                v               v
@@ -793,41 +843,38 @@ On first startup (no `config.json` exists), the application follows this flow:
    - `done`: Complete (green checkmark)
    - `failed`: Error occurred (red X, shows Retry/Quit buttons)
 
-5. **Service Startup**: After all binaries available, `lifecycle.startServices()` initializes:
-   - Project store
-   - Code-server manager
-   - Agent server manager
-   - Plugin server
+5. **Service Startup**: After all binaries are available, the `app:start` operation's `start` hook point initializes servers (code-server, plugin server, agent servers, MCP server) and the `activate` hook point loads persisted projects and sets the active workspace.
 
-**Key invariant**: The renderer ALWAYS goes through "loading" before "ready". Services ONLY start when the renderer calls `startServices()`. This allows the UI to display a loading screen during service startup.
+**Key invariant**: The renderer ALWAYS goes through "loading" before "ready". The two-phase `app:start` design (`start` then `activate`) ensures servers are running before data is loaded. This allows the UI to display a loading screen during service startup.
 
 ### Renderer Startup Flow
 
-The renderer uses a three-state flow with explicit service startup:
+The renderer is event-driven — the main process controls mode transitions via IPC events:
 
 ```
 App.svelte (mode router)
 │
-├── onMount: const state = await api.lifecycle.getState()
-│   └── Returns "setup" | "loading" (NEVER "ready")
+├── Starts in "initializing" mode (blank state)
+│   └── Waits for IPC events from main process
 │
-├── state === "setup" (setup needed)
-│   ├── Calls api.lifecycle.setup() → returns Promise<SetupResult>
-│   ├── Subscribes to api.on("setup:progress") for progress updates
-│   ├── SetupScreen.svelte (progress bar, shows progress messages)
-│   ├── On success: appMode = "loading" (falls through to loading state)
-│   └── SetupError.svelte (Retry calls lifecycle.setup(), Quit calls lifecycle.quit())
+├── lifecycle:show-agent-selection → "agent-selection" mode
+│   ├── AgentSelectionDialog (user selects Claude/OpenCode)
+│   ├── sendAgentSelected(agent) → main process continues
+│   └── Transitions to "setup" mode
 │
-├── state === "loading" OR after setup success
-│   ├── Show SetupScreen with message="Starting services..."
-│   ├── Calls api.lifecycle.startServices() → returns Promise<SetupResult>
-│   ├── On success: appMode = "ready"
-│   └── On failure: SetupError (Retry calls startServices(), Quit calls quit())
+├── lifecycle:show-setup → "setup" mode
+│   ├── SetupScreen.svelte (progress rows: vscode, agent, setup)
+│   ├── lifecycle:setup-progress events → update row statuses
+│   └── lifecycle:setup-error → SetupError (Retry sends sendRetry(), Quit calls lifecycle.quit())
 │
-└── appMode === "ready" (services started)
+├── lifecycle:show-starting → "loading" mode
+│   └── SetupScreen with message="CodeHydra is starting..."
+│
+└── lifecycle:show-main-view → "ready" mode
     └── MainView.svelte
         │
         └── onMount:
+            ├── lifecycle.ready() signals main process
             ├── listProjects()
             ├── Workspace status fetches
             └── Domain event subscriptions (project/workspace/agent)
@@ -837,9 +884,9 @@ App.svelte (mode router)
 
 1. **App.svelte owns global events**: Shortcut events and setup progress events work across modes
 2. **MainView.svelte owns domain events**: IPC calls only happen when services are started
-3. **Two-phase handler registration**: Main process registers lifecycle handlers (`api:lifecycle:*`) in `bootstrap()`, normal handlers in `startServices()`
-4. **Promise-based setup**: `lifecycle.setup()` returns success/failure via Promise, no separate complete/error events
-5. **Explicit service startup**: `lifecycle.startServices()` is idempotent - second call returns success immediately
+3. **Two-phase startup**: The `app:start` operation has two hook points -- `start` (servers, wiring) and `activate` (load data, set active workspace). Errors in `start` abort startup; errors in `activate` propagate to the renderer error screen.
+4. **Main-process-driven flow**: The main process sends IPC events to tell the renderer which mode to show. The renderer never polls or pulls state.
+5. **Idempotent startup**: The `app:start` intent uses an idempotency interceptor to prevent duplicate execution
 6. **IPC initialization timing**: `listProjects()` and workspace status fetches are called in MainView.onMount, not App.onMount
 7. **Loading screen UX**: Services start AFTER UI loads so the loading screen can be displayed during service startup
 
@@ -1169,7 +1216,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  └─────────────────────────────────────────────────────────────────────┘  │
 │                                           ▲                               │
 │                                           │ wirePluginApi() registers     │
-│                                           │ handlers in startServices()   │
+│                                           │ handlers during app:start     │
 │  ┌────────────────────────────────────────┴────────────────────────────┐  │
 │  │  wirePluginApi() - src/main/index.ts                                │  │
 │  │                                                                     │  │
@@ -1179,7 +1226,7 @@ CodeHydra and VS Code extensions communicate via Socket.IO WebSocket connection.
 │  │  3. path.basename(workspacePath) as WorkspaceName                   │  │
 │  │  4. If not found → return { success: false, error: "..." }          │  │
 │  │                                                                     │  │
-│  │  Delegates to ICodeHydraApi after resolution                        │  │
+│  │  Dispatches intents via Dispatcher after resolution                 │  │
 │  └─────────────────────────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────────────────┘
                     │ WebSocket (localhost only)
@@ -1281,23 +1328,24 @@ type PluginResult<T> = { success: true; data: T } | { success: false; error: str
 
 ### API Wiring
 
-The `wirePluginApi()` function in `src/main/index.ts` connects PluginServer to the CodeHydra API:
+The Plugin API connects PluginServer to the intent dispatcher via MCP handlers that dispatch intents directly:
 
 ```typescript
-function wirePluginApi(pluginServer: PluginServer, api: ICodeHydraApi): void {
-  pluginServer.onApiCall({
+// MCP handlers dispatch intents directly through the Dispatcher
+function createMcpHandlers(dispatcher: Dispatcher, pluginServer: PluginServer) {
+  return {
     getStatus: async (workspacePath) => {
-      // 1. Resolve workspace path to projectId + workspaceName
-      // 2. Call api.workspaces.getStatus(projectId, workspaceName)
-      // 3. Return PluginResult
+      // 1. Resolve workspace path
+      // 2. Dispatch workspace:getStatus intent
+      // 3. Return result
     },
     getMetadata: async (workspacePath) => {
-      /* similar */
+      /* similar — dispatches workspace:getMetadata intent */
     },
     setMetadata: async (workspacePath, key, value) => {
-      /* similar */
+      /* similar — dispatches workspace:setMetadata intent */
     },
-  });
+  };
 }
 ```
 
@@ -1683,11 +1731,13 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
 ```
 User: Click "Open Project"
   → System folder picker
-  → Validate: is git repository?
-      → If NO: show error "Not a git repository", return to picker
-      → If YES: continue
-  → Git Worktree Provider: discover worktrees (NOT main directory)
-  → Project Store: save project
+  → IPC: api:project:open → project:open intent dispatched
+  → OpenProjectOperation runs "open" hook point:
+      → LocalProjectModule: validate git repository, discover worktrees
+      → (or RemoteProjectModule: clone from URL)
+  → Operation dispatches workspace:open per discovered worktree
+  → Sets first workspace as active
+  → Emits project:opened domain event → IpcEventBridge → sendToUI → Renderer
   → If 0 worktrees: auto-open create dialog
   → If 1+ worktrees: activate first workspace
 ```
@@ -1696,12 +1746,10 @@ User: Click "Open Project"
 
 ```
 User: Click workspace (or keyboard shortcut)
-  → IPC: switch-workspace
-  → View Manager: attach target view (addChildView) - FIRST for visual continuity
-  → View Manager: set target bounds to content area
-  → View Manager: detach previous view (removeChildView) - AFTER attach
-  → Store: update activeWorkspace
-  → Focus: code-server view
+  → IPC: api:workspace:switch → workspace:switch intent dispatched
+  → SwitchWorkspaceOperation runs "activate" hook:
+      → ViewModule: attach target view, set bounds, detach previous view
+  → Emits workspace:switched domain event → IpcEventBridge → sendToUI → Renderer
 ```
 
 ### Creating a Workspace
@@ -1711,33 +1759,34 @@ User: Click [+], fill dialog, click OK
   → Validate name (frontend)
       → If invalid: show error, stay in dialog
       → If valid: continue
-  → IPC: create-workspace
-  → Git Worktree Provider: create in managed location
-      → If git error: return error, show in dialog
-      → If success: continue
-  → Code-Server Manager: get URL
-  → View Manager: create WebContentsView
-  → Store: add workspace, set active
+  → IPC: api:workspace:create → workspace:open intent dispatched
+  → OpenWorkspaceOperation runs hook points:
+      → "create": GitWorktreeWorkspaceModule creates git worktree
+      → "setup": KeepFilesModule copies .keepfiles, AgentModule starts agent server
+      → "finalize": CodeServerModule creates .code-workspace file
+  → Operation dispatches workspace:switch to activate the new workspace
+  → Emits workspace:created domain event → IpcEventBridge → sendToUI → Renderer
 ```
 
 ### Closing a Project
 
 ```
-User: Click [×] on project row
-  → Store: remove project from list
-  → View Manager: destroy all workspace views for project
-  → If active workspace was in project:
-      → Switch to first workspace of another project
-      → If no other projects: show empty state
-  → Project Store: update persisted list
-  (NO files or git data deleted)
+User: Click [x] on project row
+  → IPC: api:project:close → project:close intent dispatched
+  → CloseProjectOperation:
+      → Dispatches workspace:delete { removeWorktree: false } per workspace (runtime teardown)
+      → Runs "close" hook point:
+          → LocalProjectModule: dispose provider
+          → (or RemoteProjectModule: delete cloned dir if removeLocalRepo)
+      → Emits project:closed domain event → IpcEventBridge → sendToUI → Renderer
+  (NO files or git data deleted unless removeLocalRepo is true for remote projects)
 ```
 
 ## IPC Contract
 
 All IPC channels are defined in `src/shared/ipc.ts` with TypeScript types for compile-time safety.
 
-**Architecture Note**: IPC handlers are thin adapters over `ICodeHydraApi`. They only perform input validation and serialization - all business logic lives in the API implementation. See [API Layer Architecture](#api-layer-architecture) for details.
+**Architecture Note**: IPC handlers in `IpcEventBridge` create typed intents and dispatch them through the Dispatcher. They only perform input validation and intent construction -- all business logic lives in operations and hook modules. See [Intent-Based Architecture](#intent-based-architecture) for details.
 
 ### Commands (renderer → main)
 
@@ -1775,10 +1824,10 @@ All IPC channels are defined in `src/shared/ipc.ts` with TypeScript types for co
 ### IPC Data Flow
 
 ```
-┌─────────────┐  IPC invoke   ┌─────────────┐  direct call  ┌─────────────┐
-│  Renderer   │ ────────────► │    Main     │ ────────────► │  Services   │
-│  (Svelte)   │               │  (handlers) │               │  (Node.js)  │
-│             │ ◄──────────── │             │ ◄──────────── │             │
-└─────────────┘  IPC response/ └─────────────┘  return value/ └─────────────┘
-                    events                      throw error
+┌─────────────┐  IPC invoke   ┌────────────────┐  dispatch   ┌────────────┐  hooks   ┌──────────┐
+│  Renderer   │ ────────────► │ IpcEventBridge │ ─────────► │ Dispatcher │ ───────► │ Modules  │
+│  (Svelte)   │               │ (intent+IPC)   │            │ +Operation │          │(services)│
+│             │ ◄──────────── │                │ ◄────────── │            │ ◄─────── │          │
+└─────────────┘  IPC events/   └────────────────┘  domain     └────────────┘  results └──────────┘
+                 response       (sendToUI)         events
 ```

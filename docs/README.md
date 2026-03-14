@@ -6,7 +6,7 @@ Documentation for the CodeHydra project.
 
 | Document            | Purpose                                          | When to Use                    |
 | ------------------- | ------------------------------------------------ | ------------------------------ |
-| [ARCHITECTURE.md]   | High-level system design, layers, components     | Understanding system structure |
+| [ARCHITECTURE.md]   | System design, intent-based architecture, layers | Understanding system structure |
 | [SERVICES.md]       | Service layer implementation, abstractions       | Working with services          |
 | [AGENTS.md]         | Agent provider interface and integration         | Adding/modifying agent support |
 | [PATTERNS.md]       | IPC, UI, CSS patterns and conventions            | Following code patterns        |
@@ -20,7 +20,7 @@ Documentation for the CodeHydra project.
 
 ### System Understanding
 
-- **ARCHITECTURE.md** - Start here for system overview. Contains layer architecture, component relationships, startup flows, and key diagrams.
+- **ARCHITECTURE.md** - Start here for system overview. Contains the intent-based architecture (dispatcher, operations, hooks, domain events), layer architecture, component relationships, startup flows, and key diagrams.
 
 - **SERVICES.md** - Deep dive into service implementation. Covers external system access rules, platform abstractions (FileSystemLayer, NetworkLayer, ProcessRunner), and mock factories.
 
@@ -32,7 +32,7 @@ Documentation for the CodeHydra project.
 
 - **API.md** - Complete API reference including IPC channels, events, and Plugin API for extensions.
 
-- **TESTING.md** - How to write tests. Test types (integration, boundary, focused), behavioral mocks, and coverage requirements.
+- **TESTING.md** - How to write tests. Test types (integration, boundary, focused), behavioral mocks, operation/module testing patterns, and coverage requirements.
 
 ### UI/UX
 
@@ -54,6 +54,8 @@ Documentation for the CodeHydra project.
 | UI components           | USER_INTERFACE.md, PATTERNS.md           |
 | New external dependency | SERVICES.md (External System Access)     |
 | Testing infrastructure  | TESTING.md, SERVICES.md (Mock Factories) |
+| New operation/intent    | ARCHITECTURE.md, TESTING.md              |
+| New hook module         | ARCHITECTURE.md, TESTING.md              |
 
 [ARCHITECTURE.md]: ./ARCHITECTURE.md
 [SERVICES.md]: ./SERVICES.md

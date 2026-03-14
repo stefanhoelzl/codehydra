@@ -6,7 +6,7 @@ Quality assessment for the CodeHydra codebase, designed for AI agent review.
 
 | Document                                 | Quality Relevance                                      |
 | ---------------------------------------- | ------------------------------------------------------ |
-| [AGENTS.md](../AGENTS.md)                | Critical rules, forbidden patterns, required practices |
+| [CLAUDE.md](../CLAUDE.md)                | Critical rules, forbidden patterns, required practices |
 | [PATTERNS.md](./PATTERNS.md)             | Implementation patterns with code examples             |
 | [ARCHITECTURE.md](./ARCHITECTURE.md)     | System structure, component relationships, layers      |
 | [TESTING.md](./TESTING.md)               | Testing strategy, test types, behavioral mocks         |
@@ -22,11 +22,11 @@ Reviews structural integrity across the codebase:
 - **Layer violations**: platform ↔ shell, renderer ↔ main process boundaries
 - **Circular dependencies**: Modules importing each other
 - **God modules**: Files with too many responsibilities (>500 lines, >10 exports)
-- **Boundary interface violations**: Direct fs/fetch/execa usage bypassing abstractions (see AGENTS.md "External System Access Rules")
+- **Boundary interface violations**: Direct fs/fetch/execa usage bypassing abstractions (see CLAUDE.md "External System Access Rules")
 - **Dependency injection**: Improper DI patterns
 - **Cross-cutting concerns**: Logging, error handling leaking into domain logic
 
-**Reference:** [ARCHITECTURE.md](./ARCHITECTURE.md), [AGENTS.md](../AGENTS.md) § External System Access Rules
+**Reference:** [ARCHITECTURE.md](./ARCHITECTURE.md), [CLAUDE.md](../CLAUDE.md) § External System Access Rules
 
 ### Code Quality
 
@@ -39,7 +39,7 @@ Reviews code patterns that spread across the codebase (not localized issues):
 - **Complexity hotspots**: Modules that are consistently hard to understand
 - **Copy-paste code**: Repeated patterns that should be utilities
 
-**Reference:** [AGENTS.md](../AGENTS.md) § Code Quality Standards
+**Reference:** [CLAUDE.md](../CLAUDE.md) § Code Quality Standards
 
 ### Consistency
 
@@ -64,7 +64,7 @@ Reviews documentation quality and completeness:
 - **Cross-references**: Do docs link to each other appropriately?
 - **Actionable guidance**: Do docs tell you _what to do_, not just _what exists_?
 
-**Reference:** All docs/\*.md files, [AGENTS.md](../AGENTS.md)
+**Reference:** All docs/\*.md files, [CLAUDE.md](../CLAUDE.md)
 
 ### Type Safety
 
@@ -79,7 +79,7 @@ Reviews TypeScript usage for correctness enforcement:
 - **Type narrowing**: Are type guards used appropriately?
 - **Branded types**: Are distinct primitives (IDs, paths) distinguished?
 
-**Reference:** tsconfig.json, [AGENTS.md](../AGENTS.md) § Code Quality Standards
+**Reference:** tsconfig.json, [CLAUDE.md](../CLAUDE.md) § Code Quality Standards
 
 ### Testing
 

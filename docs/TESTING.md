@@ -6,18 +6,19 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 
 ## Quick Reference
 
-| Task                      | Command                          | Section                                             |
-| ------------------------- | -------------------------------- | --------------------------------------------------- |
-| Run all tests             | `pnpm test`                      | [Test Commands](#test-commands)                     |
-| Run targeted tests        | `pnpm test:related -- <pattern>` | [Targeted Testing](#targeted-testing)               |
-| Run integration tests     | `pnpm test:integration`          | [Test Commands](#test-commands)                     |
-| Run boundary tests        | `pnpm test:boundary`             | [Test Commands](#test-commands)                     |
-| Run deprecated unit tests | `pnpm test:legacy`               | [Test Commands](#test-commands)                     |
-| Quick validation          | `pnpm validate:quick`            | [Targeted Testing](#targeted-testing)               |
-| Pre-commit validation     | `pnpm validate`                  | [Test Commands](#test-commands)                     |
-| Decide which test type    | See decision guide               | [Decision Guide](#decision-guide)                   |
-| Create test git repo      | `createTestGitRepo()`            | [Test Helpers](#test-helpers)                       |
-| Create behavioral mock    | `createXMock()`                  | [Behavioral Mock Pattern](#behavioral-mock-pattern) |
+| Task                      | Command                          | Section                                                       |
+| ------------------------- | -------------------------------- | ------------------------------------------------------------- |
+| Run all tests             | `pnpm test`                      | [Test Commands](#test-commands)                               |
+| Run targeted tests        | `pnpm test:related -- <pattern>` | [Targeted Testing](#targeted-testing)                         |
+| Run integration tests     | `pnpm test:integration`          | [Test Commands](#test-commands)                               |
+| Run boundary tests        | `pnpm test:boundary`             | [Test Commands](#test-commands)                               |
+| Run deprecated unit tests | `pnpm test:legacy`               | [Test Commands](#test-commands)                               |
+| Quick validation          | `pnpm validate:quick`            | [Targeted Testing](#targeted-testing)                         |
+| Pre-commit validation     | `pnpm validate`                  | [Test Commands](#test-commands)                               |
+| Decide which test type    | See decision guide               | [Decision Guide](#decision-guide)                             |
+| Create test git repo      | `createTestGitRepo()`            | [Test Helpers](#test-helpers)                                 |
+| Create behavioral mock    | `createXMock()`                  | [Behavioral Mock Pattern](#behavioral-mock-pattern)           |
+| Test operation or module  | See patterns                     | [Operation and Module Testing](#operation-and-module-testing) |
 
 ---
 
@@ -257,13 +258,205 @@ Code change involves external system interface?
 
 ### Entry Point Selection Guide
 
-| Condition                                     | Entry Point                        | Example                                 |
-| --------------------------------------------- | ---------------------------------- | --------------------------------------- |
-| Module is public API                          | `CodeHydraApi` or `LifecycleApi`   | ProjectStore, AgentModule               |
-| Module is internal service with complex state | Direct service                     | CodeServerManager, PluginServer         |
-| Module is Electron wrapper                    | Direct with mocked Electron APIs   | ViewManager, WindowManager              |
-| Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog          |
-| Module is pure utility function               | Focused test (no entry point)      | generateProjectId, normalizeMetadataKey |
+| Condition                                     | Entry Point                        | Example                                     |
+| --------------------------------------------- | ---------------------------------- | ------------------------------------------- |
+| Module is public API                          | `CodeHydraApi` or `LifecycleApi`   | ProjectStore, AgentModule                   |
+| Module is internal service with complex state | Direct service                     | CodeServerManager, PluginServer             |
+| Module is Electron wrapper                    | Direct with mocked Electron APIs   | ViewManager, WindowManager                  |
+| Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |
+| Module is pure utility function               | Focused test (no entry point)      | generateProjectId, normalizeMetadataKey     |
+| New operation                                 | Operation tests + module tests     | CreateWorkspaceOperation, AppStartOperation |
+| New hook module                               | Module tests (integration tests)   | KeepFilesModule, CodeServerModule           |
+
+---
+
+## Operation and Module Testing
+
+All CodeHydra operations use the intent dispatcher. Operations and hook modules have distinct testing strategies based on their roles.
+
+> **Test against contracts, not wiring.**
+
+- **Modules** are tested in isolation -- instantiate the module, inject mocked providers, call hook/event/interceptor functions directly
+- **Operations** are tested with mocked hooks -- never use real modules, assert control flow and event emission
+- **Dispatcher internals** are not tested through operations or modules
+
+### Module Testing
+
+Modules declare hooks, event handlers, and interceptors. They depend only on injected providers and have no knowledge of the dispatcher or operations.
+
+**Rules:**
+
+1. Instantiate the module directly (call its factory function)
+2. Inject mocked providers
+3. Call hook/event/interceptor functions directly
+4. Assert observable behavior
+5. Never use the dispatcher
+
+#### Hook Behavior
+
+```typescript
+it("copies keepfiles to new workspace", async () => {
+  const keepFilesService = { copyToWorkspace: vi.fn().mockResolvedValue({ copiedCount: 2 }) };
+  const module = createKeepFilesModule({ keepFilesService, logger: SILENT_LOGGER });
+
+  const handler = module.hooks["workspace:open"].setup.handler;
+  const ctx = {
+    intent: { type: "workspace:open", payload: {} },
+    projectPath: "/project",
+    workspacePath: "/project/.worktrees/feature-1",
+  };
+
+  await handler(ctx);
+
+  expect(keepFilesService.copyToWorkspace).toHaveBeenCalledWith(
+    new Path("/project"),
+    new Path("/project/.worktrees/feature-1")
+  );
+});
+```
+
+#### Hook Failure
+
+Modules throw when they encounter errors. Operations decide what failures mean.
+
+```typescript
+it("logs error but does not throw on copy failure", async () => {
+  const keepFilesService = {
+    copyToWorkspace: vi.fn().mockRejectedValue(new Error("IO error")),
+  };
+  const logger = createBehavioralLogger();
+  const module = createKeepFilesModule({ keepFilesService, logger });
+
+  const handler = module.hooks["workspace:open"].setup.handler;
+  await handler(ctx); // Does not throw -- keepfiles is best-effort
+
+  expect(logger.error).toHaveBeenCalled();
+});
+```
+
+#### Event Handler
+
+Event handlers are side-effect consumers. Test them by calling the handler directly.
+
+```typescript
+it("tracks workspace creation in telemetry", () => {
+  const telemetry = { track: vi.fn() };
+  const module = createTelemetryModule({ telemetry });
+
+  module.events["workspace:created"]({
+    type: "workspace:created",
+    payload: { projectPath: "/project", workspaceName: "feature-1" },
+  });
+
+  expect(telemetry.track).toHaveBeenCalledWith("workspace_created", expect.any(Object));
+});
+```
+
+#### Interceptor
+
+Interceptors are intent guards. Test the `before` function directly.
+
+```typescript
+it("blocks duplicate intent execution", async () => {
+  const interceptor = createIdempotencyModule(rules).interceptors[0];
+
+  const intent = { type: "workspace:create", payload: { name: "feat-1" } };
+  const first = await interceptor.before(intent);
+  const second = await interceptor.before(intent);
+
+  expect(first).not.toBeNull(); // First call proceeds
+  expect(second).toBeNull(); // Duplicate blocked
+});
+```
+
+### Operation Testing
+
+Operations own workflow, control flow, error handling, and intent chaining. They do not implement business logic -- they call hooks and interpret outcomes.
+
+**Rules:**
+
+1. Never use real modules
+2. Mock hooks as plain async functions
+3. Explicitly control hook outcomes
+4. Assert control flow decisions and event emission
+
+#### Successful Flow
+
+```typescript
+it("emits event when all hooks succeed", async () => {
+  const op = new CreateWorkspaceOperation();
+  const ctx = {
+    intent: { type: "workspace:create", payload: { name: "feat-1" } },
+    hooks: {
+      setup: [async () => ({ workspacePath: "/project/.worktrees/feat-1" })],
+    },
+    emit: vi.fn(),
+    dispatch: vi.fn(),
+  };
+
+  await op.execute(ctx);
+
+  expect(ctx.emit).toHaveBeenCalledWith(expect.objectContaining({ type: "workspace:created" }));
+});
+```
+
+#### Hook Failure Handling
+
+```typescript
+it("fails when a required hook throws", async () => {
+  const op = new CreateWorkspaceOperation();
+  const ctx = {
+    intent: { type: "workspace:create", payload: { name: "feat-1" } },
+    hooks: {
+      setup: [
+        async () => {
+          throw new Error("git worktree failed");
+        },
+      ],
+    },
+    emit: vi.fn(),
+    dispatch: vi.fn(),
+  };
+
+  await expect(op.execute(ctx)).rejects.toThrow();
+  expect(ctx.emit).not.toHaveBeenCalled();
+});
+```
+
+#### Intent Chaining
+
+```typescript
+it("dispatches workspace:switch after creation", async () => {
+  const op = new CreateWorkspaceOperation();
+  const dispatch = vi.fn().mockResolvedValue({});
+
+  await op.execute({
+    intent: { type: "workspace:create", payload: { name: "feat-1" } },
+    hooks: { setup: [async () => ({ workspacePath: "/ws/feat-1" })] },
+    emit: vi.fn(),
+    dispatch,
+  });
+
+  expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "workspace:switch" }));
+});
+```
+
+### What NOT to Test in Operations/Modules
+
+- **Hook ordering** -- ordering is the dispatcher's responsibility (capabilities handle this)
+- **Dispatcher internals** -- registry, resolution, and dispatch mechanics
+- **Other modules** -- a module test never imports another module
+- **Provider implementations** -- tested separately via boundary tests
+
+### Mental Model
+
+| Concept       | Analogy            | Test Focus                                |
+| ------------- | ------------------ | ----------------------------------------- |
+| **Module**    | Library            | Contract: "given input X, produces Y"     |
+| **Operation** | State machine      | Flow: "on success emit, on failure abort" |
+| **Hook**      | Data + side effect | Called directly, never through dispatcher |
+
+If a test needs the dispatcher, it is testing at the wrong layer. If a test imports another module, it is crossing boundaries.
 
 ---
 
