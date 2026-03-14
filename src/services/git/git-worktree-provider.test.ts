@@ -490,6 +490,7 @@ describe("GitWorktreeProvider error injection", () => {
               path: new Path(WORKSPACES_DIR, "orphan-workspace"),
               branch: "orphan-workspace",
               isMain: false,
+              prunable: false,
             },
           ];
         }
@@ -607,6 +608,7 @@ describe("GitWorktreeProvider error injection", () => {
             path: PROJECT_ROOT,
             branch: "main",
             isMain: true,
+            prunable: false,
           },
         ];
       });

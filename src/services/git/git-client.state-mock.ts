@@ -50,6 +50,7 @@ interface WorktreeState {
   readonly branch: string | null;
   readonly isDirty: boolean;
   readonly unmergedCommits: number;
+  readonly prunable: boolean;
 }
 
 /**
@@ -94,6 +95,8 @@ export interface WorktreeInit {
   readonly isDirty?: boolean;
   /** Number of commits not merged into base. Defaults to `0`. */
   readonly unmergedCommits?: number;
+  /** Whether the worktree is prunable (directory missing). Defaults to `false`. */
+  readonly prunable?: boolean;
 }
 
 /**
@@ -287,6 +290,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
             branch: wt.branch,
             isDirty: wt.isDirty ?? false,
             unmergedCommits: wt.unmergedCommits ?? 0,
+            prunable: wt.prunable ?? false,
           });
         }
       }
@@ -353,6 +357,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         path: new Path(normalizedRepoPath),
         branch: repo.currentBranch,
         isMain: true,
+        prunable: false,
       });
 
       // Non-main worktrees
@@ -363,6 +368,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
           path: new Path(wtPath),
           branch: wt.branch,
           isMain: false,
+          prunable: wt.prunable,
         });
       }
 
@@ -398,6 +404,7 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         branch,
         isDirty: false,
         unmergedCommits: 0,
+        prunable: false,
       });
     },
 
@@ -412,8 +419,13 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       repo.worktrees.delete(normalizedWorktreePath);
     },
 
-    async pruneWorktrees(_repoPath: Path): Promise<void> {
-      // No-op in mock - nothing to prune
+    async pruneWorktrees(repoPath: Path): Promise<void> {
+      const repo = getRepoOrThrow(repoPath);
+      for (const [wtPath, wt] of repo.worktrees) {
+        if (wt.prunable) {
+          repo.worktrees.delete(wtPath);
+        }
+      }
     },
 
     async listBranches(repoPath: Path): Promise<readonly BranchInfo[]> {

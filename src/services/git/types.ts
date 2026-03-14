@@ -17,6 +17,8 @@ export interface WorktreeInfo {
   readonly branch: string | null;
   /** Whether this is the main worktree */
   readonly isMain: boolean;
+  /** Whether git considers this worktree prunable (directory missing or corrupt) */
+  readonly prunable: boolean;
 }
 
 /**
