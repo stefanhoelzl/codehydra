@@ -117,16 +117,16 @@ Some components use external libraries directly without abstraction layers. Thes
 
 ### Key Documents
 
-| Document         | Location             | Purpose                                             |
-| ---------------- | -------------------- | --------------------------------------------------- |
-| Patterns         | docs/PATTERNS.md     | IPC, UI, CSS implementation patterns                |
-| Architecture     | docs/ARCHITECTURE.md | High-level system design, component relationships   |
-| Services         | docs/SERVICES.md     | Service layer patterns, platform abstractions       |
-| Agents           | docs/AGENTS.md       | Agent provider interface, status tracking, MCP      |
-| API Reference    | docs/API.md          | Private/Public API documentation                    |
-| Testing Strategy | docs/TESTING.md      | Test types, conventions, commands                   |
-| Release          | docs/RELEASE.md      | Version format, release workflow, Windows builds    |
-| Contributing     | CONTRIBUTING.md      | GitHub setup, /ship command                         |
+| Document         | Location             | Purpose                                           |
+| ---------------- | -------------------- | ------------------------------------------------- |
+| Patterns         | docs/PATTERNS.md     | IPC, UI, CSS implementation patterns              |
+| Architecture     | docs/ARCHITECTURE.md | High-level system design, component relationships |
+| Services         | docs/SERVICES.md     | Service layer patterns, platform abstractions     |
+| Agents           | docs/AGENTS.md       | Agent provider interface, status tracking, MCP    |
+| API Reference    | docs/API.md          | Private/Public API documentation                  |
+| Testing Strategy | docs/TESTING.md      | Test types, conventions, commands                 |
+| Release          | docs/RELEASE.md      | Version format, release workflow, Windows builds  |
+| Contributing     | CONTRIBUTING.md      | GitHub setup, /ship command                       |
 
 **Note**: Files in `planning/` are historical records. Read source code and `docs/` for current state.
 
