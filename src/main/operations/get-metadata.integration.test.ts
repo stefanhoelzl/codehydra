@@ -247,20 +247,20 @@ describe("GetMetadata Operation", () => {
     // Then get metadata
     const result = await dispatcher.dispatch(getMetadataIntent(workspacePath));
 
-    // Should contain both the base key (fallback to branch name) and our custom key
+    // Should contain our custom key; no base since none was set in config
     expect(result).toBeDefined();
-    expect(result.base).toBe("feature-x"); // Fallback: no codehydra.base in config, so uses branch name
+    expect(result.base).toBeUndefined();
     expect(result.description).toBe("my workspace");
   });
 
-  it("returns base metadata even without custom keys (#11)", async () => {
+  it("returns empty metadata without custom keys (#11)", async () => {
     const { dispatcher, workspacePath } = setup;
 
     const result = await dispatcher.dispatch(getMetadataIntent(workspacePath));
 
-    // Should have base key from fallback
+    // No config set, so metadata is empty
     expect(result).toBeDefined();
-    expect(result.base).toBe("feature-x");
+    expect(result.base).toBeUndefined();
   });
 
   it("hook data flows from hook to operation via extended context (#16)", async () => {

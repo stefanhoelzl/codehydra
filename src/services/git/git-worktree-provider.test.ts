@@ -69,8 +69,8 @@ describe("GitWorktreeProvider error injection", () => {
       const workspaces = await provider.discover(PROJECT_ROOT);
 
       expect(workspaces).toHaveLength(1);
-      // Should fall back to branch name
-      expect(workspaces[0]!.metadata.base).toBe("feature-x");
+      // Error path returns empty metadata
+      expect(workspaces[0]!.metadata.base).toBeUndefined();
     });
   });
 

@@ -91,22 +91,23 @@ describe("GitWorktreeProvider integration", () => {
       expect(discovered[0]?.metadata.base).toBe("main");
     });
 
-    it("legacy workspace (no config) returns branch name as metadata.base", async () => {
-      // Create a mock with worktree but no config set (simulates legacy workspace)
+    it("workspace without config returns empty metadata", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
-            branches: ["main", "legacy-branch"],
+            branches: ["main", "no-config-branch"],
             currentBranch: "main",
             worktrees: [
-              { name: "legacy-branch", path: "/workspaces/legacy-branch", branch: "legacy-branch" },
+              {
+                name: "no-config-branch",
+                path: "/workspaces/no-config-branch",
+                branch: "no-config-branch",
+              },
             ],
-            // No branchConfigs - simulates legacy workspace
           },
         },
       });
 
-      // Discover should fall back to branch name
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -117,54 +118,7 @@ describe("GitWorktreeProvider integration", () => {
       const discovered = await provider.discover(PROJECT_ROOT);
 
       expect(discovered).toHaveLength(1);
-      expect(discovered[0]?.metadata.base).toBe("legacy-branch");
-    });
-
-    it("handles mixed state workspaces", async () => {
-      const mockClient = createMockGitClient({
-        repositories: {
-          [PROJECT_ROOT.toString()]: {
-            branches: ["main", "feature-with-config", "legacy-branch"],
-            currentBranch: "main",
-            worktrees: [
-              // Workspace with config
-              {
-                name: "feature-with-config",
-                path: "/workspaces/feature-with-config",
-                branch: "feature-with-config",
-              },
-              // Legacy workspace (no config)
-              {
-                name: "legacy-branch",
-                path: "/workspaces/legacy-branch",
-                branch: "legacy-branch",
-              },
-            ],
-            branchConfigs: {
-              "feature-with-config": { "codehydra.base": "main" },
-              // No config for legacy-branch
-            },
-          },
-        },
-      });
-
-      const provider = await GitWorktreeProvider.create(
-        PROJECT_ROOT,
-        mockClient,
-        WORKSPACES_DIR,
-        mockFs,
-        worktreeLogger
-      );
-
-      // Discover should handle both correctly
-      const discovered = await provider.discover(PROJECT_ROOT);
-      expect(discovered).toHaveLength(2);
-
-      const featureWorkspace = discovered.find((w) => w.name === "feature-with-config");
-      const legacyWorkspace = discovered.find((w) => w.name === "legacy-branch");
-
-      expect(featureWorkspace?.metadata.base).toBe("main");
-      expect(legacyWorkspace?.metadata.base).toBe("legacy-branch");
+      expect(discovered[0]?.metadata.base).toBeUndefined();
     });
 
     it("stores metadata.base in branch config", async () => {
@@ -317,17 +271,19 @@ describe("GitWorktreeProvider integration", () => {
       expect(metadata.base).toBe("main");
     });
 
-    it("base fallback applies in getMetadata for legacy workspace", async () => {
-      // Create legacy workspace manually (no config set)
+    it("getMetadata returns empty metadata for workspace without config", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
-            branches: ["main", "legacy-branch"],
+            branches: ["main", "no-config-branch"],
             currentBranch: "main",
             worktrees: [
-              { name: "legacy-branch", path: "/workspaces/legacy-branch", branch: "legacy-branch" },
+              {
+                name: "no-config-branch",
+                path: "/workspaces/no-config-branch",
+                branch: "no-config-branch",
+              },
             ],
-            // No config - simulates legacy
           },
         },
       });
@@ -339,12 +295,10 @@ describe("GitWorktreeProvider integration", () => {
         mockFs,
         worktreeLogger
       );
-      // Must discover to populate workspace registry before getMetadata
       await provider.discover(PROJECT_ROOT);
-      const metadata = await provider.getMetadata(new Path("/workspaces/legacy-branch"));
+      const metadata = await provider.getMetadata(new Path("/workspaces/no-config-branch"));
 
-      // Should fall back to branch name
-      expect(metadata.base).toBe("legacy-branch");
+      expect(metadata.base).toBeUndefined();
     });
 
     it("invalid key format throws WorkspaceError with INVALID_METADATA_KEY code", async () => {
@@ -625,18 +579,18 @@ describe("GitWorktreeProvider", () => {
       expect(workspaces[0]!.metadata.base).toBe("develop");
     });
 
-    it("fallback priority: config > branch > name", async () => {
+    it("metadata comes from config only, no fallback for missing base", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "branch-a", "branch-b"],
             currentBranch: "main",
             worktrees: [
-              // Has config - should use config value
+              // Has config
               { name: "workspace-a", path: "/data/workspaces/workspace-a", branch: "branch-a" },
-              // No config - should use branch
+              // No config
               { name: "workspace-b", path: "/data/workspaces/workspace-b", branch: "branch-b" },
-              // No config, no branch (detached) - should use name
+              // No config, no branch (detached)
               { name: "workspace-c", path: "/data/workspaces/workspace-c", branch: null },
             ],
             branchConfigs: {
@@ -657,14 +611,13 @@ describe("GitWorktreeProvider", () => {
 
       expect(workspaces).toHaveLength(3);
 
-      // name is derived from branch (or filesystem name for detached HEAD)
       const workspaceA = workspaces.find((w) => w.name === "branch-a");
       const workspaceB = workspaces.find((w) => w.name === "branch-b");
       const workspaceC = workspaces.find((w) => w.name === "workspace-c");
 
-      expect(workspaceA?.metadata.base).toBe("configured-base"); // Uses config
-      expect(workspaceB?.metadata.base).toBe("branch-b"); // Uses branch
-      expect(workspaceC?.metadata.base).toBe("workspace-c"); // Uses name
+      expect(workspaceA?.metadata.base).toBe("configured-base");
+      expect(workspaceB?.metadata.base).toBeUndefined();
+      expect(workspaceC?.metadata.base).toBeUndefined();
     });
   });
 
