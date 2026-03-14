@@ -229,7 +229,7 @@ Extensions in `extensions/` are packaged at build time. See `extensions/external
 
 ### Showing Commands to the User
 
-When the user needs to run a command (for verification, testing, or any other reason), **show it in the VS Code status bar** using the `mcp__codehydra__ui_status_bar_update` MCP tool. Put the full command in the `tooltip` and a short summary in `text`. Use the `mcp__codehydra__ui_status_bar_dispose` tool to clean it up afterward when appropriate.
+When the user needs to run a command (for verification, testing, or any other reason), **show it in the VS Code status bar** using the `mcp__codehydra__ui_show_message` MCP tool with `type: "status"`. Put the full command in `hint` (tooltip) and a short summary in `message`. To clear it afterward, call `ui_show_message` with `type: "status"` and `message: null`.
 
 ### Git Worktree Merge
 

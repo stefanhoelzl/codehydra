@@ -5,6 +5,7 @@
  * - Starting/stopping the server
  * - Registering plugin API handlers that dispatch intents
  * - Pushing per-workspace config on open/delete
+ * - Handling vscode:show-message and vscode:command intents
  *
  * Provides `pluginPort` capability for code-server-module.
  */
@@ -31,6 +32,10 @@ import type { RestartAgentIntent } from "../operations/restart-agent";
 import type { GetMetadataIntent } from "../operations/get-metadata";
 import type { SetMetadataIntent } from "../operations/set-metadata";
 import type { ResolveWorkspaceIntent } from "../operations/resolve-workspace";
+import type { VscodeShowMessageIntent } from "../operations/vscode-show-message";
+import type { ShowHookInput, ShowHookResult } from "../operations/vscode-show-message";
+import type { VscodeCommandIntent } from "../operations/vscode-command";
+import type { ExecuteHookInput, ExecuteHookResult } from "../operations/vscode-command";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../operations/open-workspace";
@@ -44,7 +49,17 @@ import { INTENT_RESTART_AGENT } from "../operations/restart-agent";
 import { INTENT_GET_METADATA } from "../operations/get-metadata";
 import { INTENT_SET_METADATA } from "../operations/set-metadata";
 import { INTENT_RESOLVE_WORKSPACE } from "../operations/resolve-workspace";
+import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../operations/vscode-show-message";
+import { VSCODE_COMMAND_OPERATION_ID } from "../operations/vscode-command";
+import { INTENT_VSCODE_COMMAND } from "../operations/vscode-command";
 import { getErrorMessage } from "../../services/errors";
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+/** Fixed status bar item ID — single entry per workspace. */
+const STATUS_BAR_ID = "mcp";
 
 // =============================================================================
 // Dependency Interfaces
@@ -53,7 +68,17 @@ import { getErrorMessage } from "../../services/errors";
 export interface PluginServerModuleDeps {
   readonly pluginServer: Pick<
     PluginServer,
-    "start" | "close" | "setWorkspaceConfig" | "removeWorkspaceConfig" | "onApiCall" | "sendCommand"
+    | "start"
+    | "close"
+    | "setWorkspaceConfig"
+    | "removeWorkspaceConfig"
+    | "onApiCall"
+    | "sendCommand"
+    | "showNotification"
+    | "updateStatusBar"
+    | "disposeStatusBar"
+    | "showQuickPick"
+    | "showInputBox"
   > | null;
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
@@ -82,7 +107,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
             try {
               capPluginPort = await pluginServer.start();
 
-              pluginServer.onApiCall(createPluginApiHandlers(pluginServer, dispatcher, logger));
+              pluginServer.onApiCall(createPluginApiHandlers(dispatcher, logger));
               logger.info("Plugin API handlers registered");
             } catch (error) {
               const message = error instanceof Error ? error.message : "Unknown error";
@@ -142,8 +167,132 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
           },
         },
       },
+
+      [VSCODE_SHOW_MESSAGE_OPERATION_ID]: {
+        show: {
+          handler: async (ctx: HookContext): Promise<ShowHookResult> => {
+            if (!pluginServer) {
+              throw new Error("Plugin server not available");
+            }
+
+            const { workspacePath } = ctx as ShowHookInput;
+            const intent = ctx.intent as VscodeShowMessageIntent;
+            const { type, message, hint, options, timeoutMs } = intent.payload;
+
+            return {
+              result: await handleShowMessage(
+                pluginServer,
+                workspacePath,
+                type,
+                message,
+                hint,
+                options,
+                timeoutMs
+              ),
+            };
+          },
+        },
+      },
+
+      [VSCODE_COMMAND_OPERATION_ID]: {
+        execute: {
+          handler: async (ctx: HookContext): Promise<ExecuteHookResult> => {
+            if (!pluginServer) {
+              throw new Error("Plugin server not available");
+            }
+
+            const { workspacePath } = ctx as ExecuteHookInput;
+            const intent = ctx.intent as VscodeCommandIntent;
+            const { command, args } = intent.payload;
+
+            const commandResult = await pluginServer.sendCommand(workspacePath, command, args);
+            if (!commandResult.success) {
+              throw new Error(commandResult.error);
+            }
+
+            return { result: commandResult.data };
+          },
+        },
+      },
     },
   };
+}
+
+// =============================================================================
+// Show Message Handler
+// =============================================================================
+
+type PluginServerUi = Pick<
+  PluginServer,
+  "showNotification" | "updateStatusBar" | "disposeStatusBar" | "showQuickPick" | "showInputBox"
+>;
+
+async function handleShowMessage(
+  ps: PluginServerUi,
+  workspacePath: string,
+  type: string,
+  message: string | null,
+  hint: string | undefined,
+  options: readonly string[] | undefined,
+  timeoutMs: number | undefined
+): Promise<string | null> {
+  if (type === "status") {
+    if (message === null) {
+      const result = await ps.disposeStatusBar(workspacePath, { id: STATUS_BAR_ID });
+      if (!result.success) throw new Error(result.error);
+      return null;
+    }
+    const result = await ps.updateStatusBar(workspacePath, {
+      id: STATUS_BAR_ID,
+      text: message,
+      ...(hint !== undefined && { tooltip: hint }),
+    });
+    if (!result.success) throw new Error(result.error);
+    return null;
+  }
+
+  if (type === "info" || type === "warning" || type === "error") {
+    const result = await ps.showNotification(
+      workspacePath,
+      {
+        severity: type,
+        message: message!,
+        ...(options !== undefined && { actions: [...options] }),
+      },
+      timeoutMs
+    );
+    if (!result.success) throw new Error(result.error);
+    return result.data.action;
+  }
+
+  if (type === "select") {
+    if (options !== undefined) {
+      const result = await ps.showQuickPick(
+        workspacePath,
+        {
+          items: options.map((label) => ({ label })),
+          ...(hint !== undefined && { placeholder: hint }),
+        },
+        timeoutMs
+      );
+      if (!result.success) throw new Error(result.error);
+      return result.data.selected;
+    }
+
+    // No options = free text input
+    const result = await ps.showInputBox(
+      workspacePath,
+      {
+        ...(message !== null && { prompt: message }),
+        ...(hint !== undefined && { placeholder: hint }),
+      },
+      timeoutMs
+    );
+    if (!result.success) throw new Error(result.error);
+    return result.data.value;
+  }
+
+  throw new Error(`Unknown show-message type: ${type}`);
 }
 
 // =============================================================================
@@ -178,11 +327,7 @@ async function handlePluginApiCall<T>(
 /**
  * Create plugin API handlers that dispatch intents directly.
  */
-function createPluginApiHandlers(
-  pluginServer: Pick<PluginServer, "sendCommand">,
-  dispatcher: Dispatcher,
-  logger: Logger
-): ApiCallHandlers {
+function createPluginApiHandlers(dispatcher: Dispatcher, logger: Logger): ApiCallHandlers {
   return {
     async getStatus(workspacePath: string) {
       return handlePluginApiCall(
@@ -308,15 +453,15 @@ function createPluginApiHandlers(
         workspacePath,
         "executeCommand",
         async () => {
-          const result = await pluginServer.sendCommand(
-            workspacePath,
-            request.command,
-            request.args
-          );
-          if (!result.success) {
-            throw new Error(result.error);
-          }
-          return result.data;
+          const intent: VscodeCommandIntent = {
+            type: INTENT_VSCODE_COMMAND,
+            payload: {
+              workspacePath,
+              command: request.command,
+              args: request.args,
+            },
+          };
+          return dispatcher.dispatch(intent);
         },
         logger,
         { command: request.command }

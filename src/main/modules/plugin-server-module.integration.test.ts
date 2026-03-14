@@ -37,6 +37,7 @@ import { INTENT_RESTART_AGENT } from "../operations/restart-agent";
 import { INTENT_GET_METADATA } from "../operations/get-metadata";
 import { INTENT_SET_METADATA } from "../operations/set-metadata";
 import { INTENT_RESOLVE_WORKSPACE } from "../operations/resolve-workspace";
+import { INTENT_VSCODE_COMMAND } from "../operations/vscode-command";
 
 // =============================================================================
 // Minimal Test Operations
@@ -103,6 +104,11 @@ function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServ
       removeWorkspaceConfig: vi.fn(),
       onApiCall: vi.fn(),
       sendCommand: vi.fn(),
+      showNotification: vi.fn().mockResolvedValue({ success: true, data: { action: null } }),
+      updateStatusBar: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+      disposeStatusBar: vi.fn().mockResolvedValue({ success: true, data: undefined }),
+      showQuickPick: vi.fn().mockResolvedValue({ success: true, data: { selected: null } }),
+      showInputBox: vi.fn().mockResolvedValue({ success: true, data: { value: null } }),
     },
     dispatcher: { dispatch: vi.fn() } as unknown as PluginServerModuleDeps["dispatcher"],
     logger: SILENT_LOGGER,
@@ -178,6 +184,11 @@ describe("PluginServerModule", () => {
           removeWorkspaceConfig: vi.fn(),
           onApiCall: vi.fn(),
           sendCommand: vi.fn(),
+          showNotification: vi.fn(),
+          updateStatusBar: vi.fn(),
+          disposeStatusBar: vi.fn(),
+          showQuickPick: vi.fn(),
+          showInputBox: vi.fn(),
         },
       });
       const { dispatcher } = createTestSetup(deps);
@@ -405,6 +416,11 @@ describe("PluginServerModule", () => {
           }),
           onApiCall: vi.fn(),
           sendCommand: vi.fn(),
+          showNotification: vi.fn(),
+          updateStatusBar: vi.fn(),
+          disposeStatusBar: vi.fn(),
+          showQuickPick: vi.fn(),
+          showInputBox: vi.fn(),
         },
       });
       const { dispatcher } = createTestSetup(deps);
@@ -604,12 +620,8 @@ describe("PluginServerModule", () => {
       }
     });
 
-    it("executeCommand calls pluginServer.sendCommand directly", async () => {
-      const { handlers, deps } = await setupPluginHandlers();
-      vi.mocked(deps.pluginServer!.sendCommand as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: true,
-        data: "command result",
-      });
+    it("executeCommand dispatches VscodeCommandIntent", async () => {
+      const { handlers, mockDispatch } = await setupPluginHandlers("command result");
 
       const result = await handlers.executeCommand(testWorkspacePath, {
         command: "test.command",
@@ -619,10 +631,14 @@ describe("PluginServerModule", () => {
       if (result.success) {
         expect(result.data).toBe("command result");
       }
-      expect(deps.pluginServer!.sendCommand).toHaveBeenCalledWith(
-        testWorkspacePath,
-        "test.command",
-        undefined
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_VSCODE_COMMAND,
+          payload: expect.objectContaining({
+            workspacePath: testWorkspacePath,
+            command: "test.command",
+          }),
+        })
       );
     });
 

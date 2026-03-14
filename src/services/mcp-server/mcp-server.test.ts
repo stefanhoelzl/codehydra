@@ -55,11 +55,7 @@ function createMockMcpHandlers(overrides?: Partial<McpApiHandlers>): McpApiHandl
     }),
     deleteWorkspace: vi.fn().mockResolvedValue({ started: true }),
     executeCommand: vi.fn().mockResolvedValue(undefined),
-    showNotification: vi.fn().mockResolvedValue({ action: null }),
-    updateStatusBar: vi.fn().mockResolvedValue(undefined),
-    disposeStatusBar: vi.fn().mockResolvedValue(undefined),
-    showQuickPick: vi.fn().mockResolvedValue({ selected: null }),
-    showInputBox: vi.fn().mockResolvedValue({ value: null }),
+    showMessage: vi.fn().mockResolvedValue(null),
     ...overrides,
   };
 }
@@ -182,8 +178,9 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_execute_command");
       expect(toolNames).toContain("project_list");
       expect(toolNames).toContain("workspace_create");
+      expect(toolNames).toContain("ui_show_message");
       expect(toolNames).toContain("log");
-      expect(tools.length).toBe(15);
+      expect(tools.length).toBe(11);
     });
 
     it("workspace_restart_agent_server tool calls handler and returns port", async () => {

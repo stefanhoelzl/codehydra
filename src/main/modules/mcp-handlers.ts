@@ -1,12 +1,11 @@
 /**
  * MCP API handlers factory.
  *
- * Creates a flat McpApiHandlers implementation that dispatches intents,
- * following the same pattern as ipc-event-bridge.ts bridge handlers.
+ * Creates a flat McpApiHandlers implementation that dispatches intents.
+ * All operations — including UI and command — go through the dispatcher.
  */
 
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
-import type { PluginServer } from "../../services/plugin-server/plugin-server";
 import type { McpApiHandlers } from "../../services/mcp-server/types";
 import type { Workspace } from "../../shared/api/types";
 import { INTENT_GET_WORKSPACE_STATUS } from "../operations/get-workspace-status";
@@ -25,17 +24,15 @@ import { INTENT_DELETE_WORKSPACE } from "../operations/delete-workspace";
 import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import { INTENT_LIST_PROJECTS } from "../operations/list-projects";
 import type { ListProjectsIntent } from "../operations/list-projects";
+import { INTENT_VSCODE_SHOW_MESSAGE } from "../operations/vscode-show-message";
+import type { VscodeShowMessageIntent } from "../operations/vscode-show-message";
+import { INTENT_VSCODE_COMMAND } from "../operations/vscode-command";
+import type { VscodeCommandIntent } from "../operations/vscode-command";
 
 /**
  * Create McpApiHandlers that dispatch intents via the Dispatcher.
- *
- * @param dispatcher - The intent dispatcher
- * @param pluginServer - Plugin server for executeCommand (may be null)
  */
-export function createMcpHandlers(
-  dispatcher: Dispatcher,
-  pluginServer: PluginServer | null
-): McpApiHandlers {
+export function createMcpHandlers(dispatcher: Dispatcher): McpApiHandlers {
   return {
     async getStatus(workspacePath) {
       const intent: GetWorkspaceStatusIntent = {
@@ -139,67 +136,19 @@ export function createMcpHandlers(
     },
 
     async executeCommand(workspacePath, command, args) {
-      if (!pluginServer) {
-        throw new Error("Plugin server not available");
-      }
-      const result = await pluginServer.sendCommand(workspacePath, command, args);
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-      return result.data;
+      const intent: VscodeCommandIntent = {
+        type: INTENT_VSCODE_COMMAND,
+        payload: { workspacePath, command, args },
+      };
+      return dispatcher.dispatch(intent);
     },
 
-    async showNotification(workspacePath, request, timeoutMs) {
-      if (!pluginServer) {
-        throw new Error("Plugin server not available");
-      }
-      const result = await pluginServer.showNotification(workspacePath, request, timeoutMs);
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-      return result.data;
-    },
-
-    async updateStatusBar(workspacePath, request) {
-      if (!pluginServer) {
-        throw new Error("Plugin server not available");
-      }
-      const result = await pluginServer.updateStatusBar(workspacePath, request);
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-    },
-
-    async disposeStatusBar(workspacePath, request) {
-      if (!pluginServer) {
-        throw new Error("Plugin server not available");
-      }
-      const result = await pluginServer.disposeStatusBar(workspacePath, request);
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-    },
-
-    async showQuickPick(workspacePath, request, timeoutMs) {
-      if (!pluginServer) {
-        throw new Error("Plugin server not available");
-      }
-      const result = await pluginServer.showQuickPick(workspacePath, request, timeoutMs);
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-      return result.data;
-    },
-
-    async showInputBox(workspacePath, request, timeoutMs) {
-      if (!pluginServer) {
-        throw new Error("Plugin server not available");
-      }
-      const result = await pluginServer.showInputBox(workspacePath, request, timeoutMs);
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-      return result.data;
+    async showMessage(workspacePath, request) {
+      const intent: VscodeShowMessageIntent = {
+        type: INTENT_VSCODE_SHOW_MESSAGE,
+        payload: { workspacePath, ...request },
+      };
+      return dispatcher.dispatch(intent);
     },
   };
 }
