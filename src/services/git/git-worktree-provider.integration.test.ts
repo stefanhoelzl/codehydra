@@ -2247,6 +2247,111 @@ describe("GitWorktreeProvider", () => {
       });
     });
   });
+
+  describe("stale worktree handling", () => {
+    it("discover() excludes prunable worktrees from results", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "valid-branch", "stale-branch"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "valid-ws",
+                path: "/workspaces/valid-ws",
+                branch: "valid-branch",
+              },
+              {
+                name: "stale-ws",
+                path: "/workspaces/stale-ws",
+                branch: "stale-branch",
+                prunable: true,
+              },
+            ],
+            branchConfigs: {
+              "valid-branch": { "codehydra.base": "main" },
+              "stale-branch": { "codehydra.base": "main" },
+            },
+          },
+        },
+      });
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const discovered = await provider.discover(PROJECT_ROOT);
+      expect(discovered).toHaveLength(1);
+      expect(discovered[0]?.name).toBe("valid-branch");
+    });
+
+    it("discover() calls pruneWorktrees when stale entries exist", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "stale-branch"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "stale-ws",
+                path: "/workspaces/stale-ws",
+                branch: "stale-branch",
+                prunable: true,
+              },
+            ],
+          },
+        },
+      });
+
+      const pruneSpy = vi.spyOn(mockClient, "pruneWorktrees");
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await provider.discover(PROJECT_ROOT);
+      expect(pruneSpy).toHaveBeenCalledWith(PROJECT_ROOT);
+    });
+
+    it("discover() does not call pruneWorktrees when all entries are healthy", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "healthy-branch"],
+            currentBranch: "main",
+            worktrees: [
+              {
+                name: "healthy-ws",
+                path: "/workspaces/healthy-ws",
+                branch: "healthy-branch",
+              },
+            ],
+          },
+        },
+      });
+
+      const pruneSpy = vi.spyOn(mockClient, "pruneWorktrees");
+
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await provider.discover(PROJECT_ROOT);
+      expect(pruneSpy).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("GitWorktreeProvider bare repository support", () => {

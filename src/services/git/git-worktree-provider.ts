@@ -201,10 +201,21 @@ export class GitWorktreeProvider {
   async discover(projectRoot: Path): Promise<readonly Workspace[]> {
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
-    // Filter out the main worktree and map to Workspace objects with metadata
+    // Prune stale worktrees (directory deleted outside of CodeHydra)
+    const hasPrunable = worktrees.some((wt) => wt.prunable);
+    if (hasPrunable) {
+      for (const wt of worktrees) {
+        if (wt.prunable) {
+          this.logger.warn("Pruning stale worktree", { name: wt.name, path: wt.path.toString() });
+        }
+      }
+      await this.gitClient.pruneWorktrees(projectRoot);
+    }
+
+    // Filter out the main worktree and prunable entries, map to Workspace objects
     const workspaces: Workspace[] = [];
     for (const wt of worktrees) {
-      if (wt.isMain) continue;
+      if (wt.isMain || wt.prunable) continue;
 
       // Register workspace in the workspace registry for metadata resolution
       this.ensureWorkspaceRegistered(wt.path, projectRoot);

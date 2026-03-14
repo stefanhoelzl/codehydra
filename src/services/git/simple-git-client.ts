@@ -143,6 +143,7 @@ export class SimpleGitClient implements IGitClient {
         const lines = entry.split("\n");
         let worktreePath: Path | null = null;
         let branch: string | null = null;
+        let prunable = false;
 
         for (const line of lines) {
           if (line.startsWith("worktree ")) {
@@ -160,6 +161,8 @@ export class SimpleGitClient implements IGitClient {
           } else if (line === "bare") {
             // Skip bare repository entries
             continue;
+          } else if (line.startsWith("prunable")) {
+            prunable = true;
           }
         }
 
@@ -173,6 +176,7 @@ export class SimpleGitClient implements IGitClient {
             path: worktreePath,
             branch,
             isMain,
+            prunable,
           });
         }
       }
