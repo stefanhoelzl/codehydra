@@ -61,10 +61,7 @@ import {
   getCodeServerExecutablePath,
 } from "../../services/code-server/setup-info";
 import { OPENCODE_VERSION } from "../../agents/opencode/setup-info";
-import {
-  listInstalledExtensions,
-  removeFromExtensionsJson,
-} from "../../services/vscode-setup/extension-utils";
+import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
 import { Path } from "../../services/platform/path";
 import { encodePathForUrl } from "../../services/platform/paths";
 import { configString, configCustom } from "../../services/config/config-definition";

@@ -10,13 +10,9 @@ import { join } from "node:path";
 import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import {
-  parseExtensionDir,
-  listInstalledExtensions,
-  removeFromExtensionsJson,
-} from "./extension-utils";
-import { DefaultFileSystemLayer } from "../platform/filesystem";
-import { createMockLogger } from "../logging/logging.test-utils";
+import { parseExtensionDir, listInstalledExtensions, removeFromExtensionsJson } from "./extension";
+import { DefaultFileSystemLayer } from "../../services/platform/filesystem";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 describe("parseExtensionDir", () => {
   describe("standard versions", () => {
