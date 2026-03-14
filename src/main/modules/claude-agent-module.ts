@@ -10,7 +10,7 @@
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { HookContext } from "../intents/infrastructure/operation";
+import { ANY_VALUE, type HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { Logger } from "../../services/logging/types";
 import type { AgentBinaryManager } from "../../services/binary-download";
@@ -27,8 +27,7 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-  ActivateHookContext,
-  ActivateHookResult,
+  StartHookResult,
   RegisterConfigResult,
 } from "../operations/app-start";
 import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../operations/setup";
@@ -238,8 +237,9 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
         },
 
         start: {
-          handler: async (): Promise<void> => {
-            if (!active) return;
+          requires: { mcpPort: ANY_VALUE },
+          handler: async (ctx: HookContext): Promise<StartHookResult> => {
+            if (!active) return {};
 
             wireServerCallbacks();
 
@@ -251,13 +251,8 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
                 } as UpdateAgentStatusIntent);
               }
             );
-          },
-        },
 
-        activate: {
-          handler: async (ctx: HookContext): Promise<ActivateHookResult> => {
-            if (!active) return {};
-            const { mcpPort } = ctx as ActivateHookContext;
+            const mcpPort = ctx.capabilities?.mcpPort as number | null;
             if (mcpPort !== null) {
               serverManager.setMcpConfig({ port: mcpPort });
             }

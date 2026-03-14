@@ -9,7 +9,7 @@
  *
  * Hooks:
  * - app:start -> "register-config": register per-source template-path + source config keys
- * - app:start -> "activate": initialize active sources, load state, run initial poll, start timer
+ * - app:start -> "start": initialize active sources, load state, run initial poll, start timer
  * - app:shutdown -> "stop": clear poll timer, dispose sources
  *
  * Events:
@@ -23,7 +23,7 @@ import type { Dispatcher } from "../../intents/infrastructure/dispatcher";
 import type { DomainEvent } from "../../intents/infrastructure/types";
 import {
   APP_START_OPERATION_ID,
-  type ActivateHookResult,
+  type StartHookResult,
   type RegisterConfigResult,
 } from "../../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../operations/app-shutdown";
@@ -518,8 +518,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
             return { definitions };
           },
         },
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
+        start: {
+          handler: async (): Promise<StartHookResult> => {
             await activateAll();
             initialActivationDone = true;
             return {};

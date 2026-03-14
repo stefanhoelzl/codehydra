@@ -10,7 +10,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
@@ -18,8 +18,7 @@ import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
   ConfigureResult,
   CheckDepsResult,
-  ActivateHookResult,
-  ActivateHookContext,
+  StartHookResult,
   CheckDepsHookContext,
 } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
@@ -97,14 +96,17 @@ class MinimalStartOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<void>("start", {
+    // Pre-populate mcpPort capability so handlers with requires: { mcpPort: ANY_VALUE } run
+    const hookCtx: HookContext = {
       intent: ctx.intent,
-    });
+      capabilities: { mcpPort: null },
+    };
+    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
   }
 }
 
-class MinimalStartAndActivateOperation implements Operation<Intent, readonly ActivateHookResult[]> {
+class MinimalStartWithMcpPortOperation implements Operation<Intent, readonly StartHookResult[]> {
   readonly id = APP_START_OPERATION_ID;
   private readonly mcpPort: number | null;
 
@@ -112,23 +114,13 @@ class MinimalStartAndActivateOperation implements Operation<Intent, readonly Act
     this.mcpPort = mcpPort;
   }
 
-  async execute(ctx: OperationContext<Intent>): Promise<readonly ActivateHookResult[]> {
-    // Run start first to set the active flag
-    const { errors: startErrors } = await ctx.hooks.collect<void>("start", {
+  async execute(ctx: OperationContext<Intent>): Promise<readonly StartHookResult[]> {
+    // Run start with mcpPort as a pre-populated capability
+    const hookCtx: HookContext = {
       intent: ctx.intent,
-    });
-    if (startErrors.length > 0) throw startErrors[0]!;
-
-    // Then run activate
-    const activateCtx: ActivateHookContext = {
-      intent: ctx.intent,
-      mcpPort: this.mcpPort,
-      codeServerPort: null,
+      capabilities: { mcpPort: this.mcpPort },
     };
-    const { results, errors } = await ctx.hooks.collect<ActivateHookResult>(
-      "activate",
-      activateCtx
-    );
+    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     return results;
   }
@@ -555,11 +547,11 @@ describe("ClaudeAgentModule", () => {
   // activate
   // ---------------------------------------------------------------------------
 
-  describe("activate", () => {
+  describe("start (mcpPort from capabilities)", () => {
     it("calls setMcpConfig when active and mcpPort provided", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       simulateConfigUpdated(module, "claude");
-      dispatcher.registerOperation("app:start", new MinimalStartAndActivateOperation(9999));
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -569,7 +561,7 @@ describe("ClaudeAgentModule", () => {
     it("skips setMcpConfig when mcpPort is null", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       simulateConfigUpdated(module, "claude");
-      dispatcher.registerOperation("app:start", new MinimalStartAndActivateOperation(null));
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(null));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -579,12 +571,12 @@ describe("ClaudeAgentModule", () => {
     it("returns empty result when inactive", async () => {
       const { dispatcher, mockSM } = createTestSetup();
       // No config:updated event -- module stays inactive
-      dispatcher.registerOperation("app:start", new MinimalStartAndActivateOperation(9999));
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
 
       const results = (await dispatcher.dispatch({
         type: "app:start",
         payload: {},
-      })) as readonly ActivateHookResult[];
+      })) as readonly StartHookResult[];
 
       expect(mockSM.setMcpConfig).not.toHaveBeenCalled();
       expect(results[0]).toEqual({});

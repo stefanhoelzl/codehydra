@@ -7,12 +7,13 @@
  * 3. "init" - Post-ready initialization (config file, logging, shell, scripts)
  * 4. "show-ui" - Show starting screen
  * 5. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 6. "start" - Start servers and wire services (CodeServer, Agent, Badge, MCP,
- *              Telemetry, AutoUpdater, IpcBridge)
- * 7. "activate" - Wire callbacks, gather project paths, mount renderer (Data, View, Mount)
+ * 6. "start" - Start servers, wire services, gather project paths, mount renderer.
+ *              Handlers that need ports (mcpPort, codeServerPort) declare
+ *              `requires` and read from ctx.capabilities. Capability-based
+ *              ordering replaces the former separate "activate" hook point.
  *
- * After "activate", dispatches project:open for each saved project path
- * (best-effort, skips invalid projects). The mount handler in activate
+ * After "start", dispatches project:open for each saved project path
+ * (best-effort, skips invalid projects). The mount handler in start
  * blocks until the renderer signals ready, ensuring event subscriptions
  * are in place before project:open dispatches fire.
  *
@@ -144,19 +145,13 @@ export interface ShowUIHookResult {
   readonly waitForRetry?: () => Promise<void>;
 }
 
-// StartHookResult removed — mcpPort and codeServerPort are now capabilities.
-
-/** Input context for "activate" -- carries ports from start results. */
-export interface ActivateHookContext extends HookContext {
-  readonly mcpPort: number | null;
-  readonly codeServerPort: number | null;
-}
+// ActivateHookContext removed — ports are now read from capabilities within the "start" hook point.
 
 /**
- * Per-handler result for "activate" hook point.
- * LocalProjectModule and RemoteProjectModule return projectPaths; others return `{}`.
+ * Per-handler result for "start" hook point.
+ * LocalProjectModule and RemoteProjectModule return projectPaths; others return `void` or `{}`.
  */
-export interface ActivateHookResult {
+export interface StartHookResult {
   readonly projectPaths?: readonly string[];
 }
 
@@ -283,28 +278,19 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 6: "start" -- Start servers and wire services
-    const { errors: startErrors, capabilities: startCaps } = await ctx.hooks.collect<void>(
+    // Hook 6: "start" -- Start servers, wire callbacks, gather project paths, mount renderer
+    // Handlers that need ports (mcpPort, codeServerPort) declare `requires` and
+    // read from ctx.capabilities. Capability-based ordering replaces the former
+    // separate "activate" hook point.
+    const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
       "start",
       hookCtx
     );
     if (startErrors.length > 0) {
       throw startErrors[0]!;
     }
-
-    // Read ports from capabilities (provided by CodeServerModule and McpModule)
-    const mcpPort = (startCaps.mcpPort as number) ?? null;
-    const codeServerPort = (startCaps.codeServerPort as number) ?? null;
-
-    // Hook 7: "activate" -- Wire callbacks, gather project paths, mount renderer
-    const activateCtx: ActivateHookContext = { ...hookCtx, mcpPort, codeServerPort };
-    const { results: activateResults, errors: activateErrors } =
-      await ctx.hooks.collect<ActivateHookResult>("activate", activateCtx);
-    if (activateErrors.length > 0) {
-      throw activateErrors[0]!;
-    }
     const projectPaths: string[] = [];
-    for (const result of activateResults) {
+    for (const result of startResults) {
       if (result.projectPaths) projectPaths.push(...result.projectPaths);
     }
 

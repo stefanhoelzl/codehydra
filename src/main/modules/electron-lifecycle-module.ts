@@ -127,7 +127,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             await deps.app.whenReady();
           },
         },
-        activate: {
+        start: {
           handler: async (): Promise<void> => {
             if (deps.powerMonitor && deps.dispatcher) {
               deps.powerMonitor.on("resume", () => {

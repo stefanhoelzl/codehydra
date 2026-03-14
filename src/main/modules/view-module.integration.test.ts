@@ -20,7 +20,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -31,12 +31,7 @@ import {
   APP_START_OPERATION_ID,
   EVENT_APP_STARTED,
 } from "../operations/app-start";
-import type {
-  AppStartIntent,
-  ShowUIHookResult,
-  ActivateHookContext,
-  ActivateHookResult,
-} from "../operations/app-start";
+import type { AppStartIntent, ShowUIHookResult, StartHookResult } from "../operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -281,15 +276,18 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, Shutdow
   }
 }
 
-/** Runs "activate" hook only (for mount + loading change wiring). */
-class MinimalActivateOperation implements Operation<Intent, ActivateHookResult> {
+/** Runs "start" hook only (for mount + loading change wiring). */
+class MinimalActivateOperation implements Operation<Intent, StartHookResult> {
   readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<ActivateHookResult> {
-    const { results, errors } = await ctx.hooks.collect<ActivateHookResult>("activate", {
+  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
+    // Pre-populate codeServerPort capability so handlers with requires run
+    const hookCtx: HookContext = {
       intent: ctx.intent,
-    });
+      capabilities: { codeServerPort: null },
+    };
+    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
-    const merged: ActivateHookResult = {};
+    const merged: StartHookResult = {};
     for (const r of results) {
       if (r.projectPaths) {
         (merged as Record<string, unknown>).projectPaths = [
@@ -302,16 +300,19 @@ class MinimalActivateOperation implements Operation<Intent, ActivateHookResult> 
   }
 }
 
-/** Runs "activate" hook then emits app:started (for tests needing readyHandler to complete). */
-class MinimalActivateAndStartedOperation implements Operation<Intent, ActivateHookResult> {
+/** Runs "start" hook then emits app:started (for tests needing readyHandler to complete). */
+class MinimalActivateAndStartedOperation implements Operation<Intent, StartHookResult> {
   readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<ActivateHookResult> {
-    const { results, errors } = await ctx.hooks.collect<ActivateHookResult>("activate", {
+  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
+    // Pre-populate codeServerPort capability so handlers with requires run
+    const hookCtx: HookContext = {
       intent: ctx.intent,
-    });
+      capabilities: { codeServerPort: null },
+    };
+    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
-    const merged: ActivateHookResult = {};
+    const merged: StartHookResult = {};
     for (const r of results) {
       if (r.projectPaths) {
         (merged as Record<string, unknown>).projectPaths = [
@@ -324,23 +325,19 @@ class MinimalActivateAndStartedOperation implements Operation<Intent, ActivateHo
   }
 }
 
-/** Runs "activate" hook with ports then emits app:started. */
-class MinimalActivateWithPortsAndStartedOperation implements Operation<Intent, ActivateHookResult> {
+/** Runs "start" hook with codeServerPort capability then emits app:started. */
+class MinimalActivateWithPortsAndStartedOperation implements Operation<Intent, StartHookResult> {
   readonly id = APP_START_OPERATION_ID;
   private readonly codeServerPort: number | null;
   constructor(codeServerPort: number | null) {
     this.codeServerPort = codeServerPort;
   }
-  async execute(ctx: OperationContext<Intent>): Promise<ActivateHookResult> {
-    const activateCtx: ActivateHookContext = {
+  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
-      mcpPort: null,
-      codeServerPort: this.codeServerPort,
+      capabilities: { codeServerPort: this.codeServerPort },
     };
-    const { results, errors } = await ctx.hooks.collect<ActivateHookResult>(
-      "activate",
-      activateCtx
-    );
+    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
     ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
     return results[0] ?? {};

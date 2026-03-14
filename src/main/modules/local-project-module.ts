@@ -10,7 +10,7 @@
  * - project:open  → register: generate ID, persist, add to internal state (all projects)
  * - project:close → resolve:  look up projectPath in config to get remoteUrl
  * - project:close → close:    remove from internal state and config (all projects)
- * - app:start     → activate: load ALL saved project configs
+ * - app:start     → start:    load ALL saved project configs
  */
 
 import * as crypto from "node:crypto";
@@ -39,7 +39,7 @@ import {
   type CloseHookInput,
   type CloseHookResult,
 } from "../operations/close-project";
-import { APP_START_OPERATION_ID, type ActivateHookResult } from "../operations/app-start";
+import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
 import {
   RESOLVE_PROJECT_OPERATION_ID,
   type ResolveHookInput as ResolveProjectHookInput,
@@ -425,9 +425,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [APP_START_OPERATION_ID]: {
-        // activate: load all saved project configs
-        activate: {
-          handler: async (): Promise<ActivateHookResult> => {
+        // start: load all saved project configs
+        start: {
+          handler: async (): Promise<StartHookResult> => {
             const configs = await loadAllProjectConfigs(fs, projectsDir);
             return { projectPaths: configs.map((c) => c.path) };
           },

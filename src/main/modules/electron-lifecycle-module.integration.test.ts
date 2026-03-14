@@ -278,7 +278,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(
         INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "activate")
+        createMinimalOperation(APP_START_OPERATION_ID, "start")
       );
 
       const module = createElectronLifecycleModule({
@@ -309,7 +309,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(
         INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "activate")
+        createMinimalOperation(APP_START_OPERATION_ID, "start")
       );
 
       const module = createElectronLifecycleModule({
@@ -338,7 +338,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(
         INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "activate")
+        createMinimalOperation(APP_START_OPERATION_ID, "start")
       );
 
       const module = createElectronLifecycleModule({

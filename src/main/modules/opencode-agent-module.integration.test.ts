@@ -10,12 +10,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import type { CheckDepsResult, ConfigureResult, ActivateHookResult } from "../operations/app-start";
+import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -203,9 +203,12 @@ class MinimalStartOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect<void>("start", {
+    // Pre-populate mcpPort capability so handlers with requires: { mcpPort: ANY_VALUE } run
+    const hookCtx: HookContext = {
       intent: ctx.intent,
-    });
+      capabilities: { mcpPort: null },
+    };
+    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
   }
 }
@@ -367,11 +370,10 @@ function createTestSetup(): TestSetup {
 }
 
 /**
- * Runs both "start" and "activate" hook points in sequence, simulating
- * what AppStartOperation does. This allows a single operation registration
- * that can exercise both hooks.
+ * Runs "start" hook point with mcpPort as a pre-populated capability,
+ * simulating what AppStartOperation does.
  */
-class StartThenActivateOperation implements Operation<Intent, void> {
+class StartWithMcpPortOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
   private readonly mcpPort: number | null;
 
@@ -380,16 +382,12 @@ class StartThenActivateOperation implements Operation<Intent, void> {
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors: startErrors } = await ctx.hooks.collect<void>("start", {
+    const hookCtx: HookContext = {
       intent: ctx.intent,
-    });
-    if (startErrors.length > 0) throw startErrors[0]!;
-
-    const { errors: activateErrors } = await ctx.hooks.collect<ActivateHookResult>("activate", {
-      intent: ctx.intent,
-      mcpPort: this.mcpPort,
-    } as never);
-    if (activateErrors.length > 0) throw activateErrors[0]!;
+      capabilities: { mcpPort: this.mcpPort },
+    };
+    const { errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    if (errors.length > 0) throw errors[0]!;
   }
 }
 
@@ -530,14 +528,14 @@ describe("OpenCodeAgentModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // activate
+  // start (mcpPort from capabilities)
   // ---------------------------------------------------------------------------
 
-  describe("activate", () => {
+  describe("start (mcpPort from capabilities)", () => {
     it("calls setMcpConfig when active and mcpPort provided", async () => {
       const setup = createTestSetup();
       fireConfigUpdatedEvent(setup, null);
-      setup.dispatcher.registerOperation("app:start", new StartThenActivateOperation(5555));
+      setup.dispatcher.registerOperation("app:start", new StartWithMcpPortOperation(5555));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -547,7 +545,7 @@ describe("OpenCodeAgentModule Integration", () => {
     it("skips setMcpConfig when mcpPort is null", async () => {
       const setup = createTestSetup();
       fireConfigUpdatedEvent(setup, null);
-      setup.dispatcher.registerOperation("app:start", new StartThenActivateOperation(null));
+      setup.dispatcher.registerOperation("app:start", new StartWithMcpPortOperation(null));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -557,7 +555,7 @@ describe("OpenCodeAgentModule Integration", () => {
     it("skips setMcpConfig when inactive", async () => {
       const setup = createTestSetup();
       fireConfigUpdatedEvent(setup, "claude");
-      setup.dispatcher.registerOperation("app:start", new StartThenActivateOperation(5555));
+      setup.dispatcher.registerOperation("app:start", new StartWithMcpPortOperation(5555));
 
       await setup.dispatcher.dispatch({ type: "app:start", payload: {} });
 
