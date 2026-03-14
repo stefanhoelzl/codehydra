@@ -296,7 +296,7 @@ describe("HookRegistry", () => {
         },
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { port: 3000 },
+        provides: () => ({ port: 3000 }),
         handler: async () => {
           order.push("provider");
         },
@@ -319,13 +319,13 @@ describe("HookRegistry", () => {
         },
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { a: 1 },
+        provides: () => ({ a: 1 }),
         handler: async () => {
           order.push("provides-a");
         },
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { b: 2 },
+        provides: () => ({ b: 2 }),
         handler: async () => {
           order.push("provides-b");
         },
@@ -342,7 +342,7 @@ describe("HookRegistry", () => {
       let receivedCaps: Record<string, unknown> | undefined;
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { port: 8080 },
+        provides: () => ({ port: 8080 }),
         handler: async () => undefined,
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
@@ -363,7 +363,7 @@ describe("HookRegistry", () => {
       let receivedCaps: Record<string, unknown> | undefined;
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { url: "http://127.0.0.1:3000" },
+        provides: () => ({ url: "http://127.0.0.1:3000" }),
         handler: async () => undefined,
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
@@ -384,7 +384,7 @@ describe("HookRegistry", () => {
       const ran: string[] = [];
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { token: "abc" },
+        provides: () => ({ token: "abc" }),
         handler: async () => {
           throw new Error("provider failed");
         },
@@ -429,20 +429,20 @@ describe("HookRegistry", () => {
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
         requires: { y: ANY_VALUE },
-        provides: { z: 3 },
+        provides: () => ({ z: 3 }),
         handler: async () => {
           order.push("C");
         },
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
         requires: { x: ANY_VALUE },
-        provides: { y: 2 },
+        provides: () => ({ y: 2 }),
         handler: async () => {
           order.push("B");
         },
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { x: 1 },
+        provides: () => ({ x: 1 }),
         handler: async () => {
           order.push("A");
         },
@@ -460,14 +460,14 @@ describe("HookRegistry", () => {
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
         requires: { b: ANY_VALUE },
-        provides: { a: 1 },
+        provides: () => ({ a: 1 }),
         handler: async () => {
           ran.push("A");
         },
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
         requires: { a: ANY_VALUE },
-        provides: { b: 2 },
+        provides: () => ({ b: 2 }),
         handler: async () => {
           ran.push("B");
         },
@@ -497,7 +497,7 @@ describe("HookRegistry", () => {
         },
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { setup: true },
+        provides: () => ({ setup: true }),
         handler: async () => {
           order.push("provides-setup");
         },
@@ -531,7 +531,7 @@ describe("HookRegistry", () => {
       let receivedCaps: Record<string, unknown> | undefined;
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { contributed: "yes" },
+        provides: () => ({ contributed: "yes" }),
         handler: async () => undefined,
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
@@ -552,7 +552,7 @@ describe("HookRegistry", () => {
       const ran: string[] = [];
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { key: 42 },
+        provides: () => ({ key: 42 }),
         handler: async () => undefined,
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
@@ -573,7 +573,7 @@ describe("HookRegistry", () => {
       const ran: string[] = [];
 
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-        provides: { platform: "darwin" },
+        provides: () => ({ platform: "darwin" }),
         handler: async () => undefined,
       });
       registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
@@ -621,6 +621,119 @@ describe("HookRegistry", () => {
       await hooks.collect(TEST_HOOK_POINT, createHookContext({ flag: true }));
 
       expect(ran).toEqual([]);
+    });
+
+    it("dynamic provides: closure value read at call time", async () => {
+      const registry = new HookRegistry();
+      let port = 0;
+      let receivedCaps: Record<string, unknown> | undefined;
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => ({ port }),
+        handler: async () => {
+          port = 9090;
+        },
+      });
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        requires: { port: ANY_VALUE },
+        handler: async (ctx) => {
+          receivedCaps = { ...ctx.capabilities };
+        },
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      await hooks.collect(TEST_HOOK_POINT, createHookContext());
+
+      expect(receivedCaps).toEqual({ port: 9090 });
+    });
+
+    it("dynamic provides: ordering chain with dynamic provider in middle", async () => {
+      const registry = new HookRegistry();
+      const order: string[] = [];
+      let computedB = 0;
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        requires: { b: ANY_VALUE },
+        handler: async () => {
+          order.push("C");
+        },
+      });
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        requires: { a: ANY_VALUE },
+        provides: () => ({ b: computedB }),
+        handler: async () => {
+          computedB = 42;
+          order.push("B");
+        },
+      });
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => ({ a: 1 }),
+        handler: async () => {
+          order.push("A");
+        },
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      const result = await hooks.collect(TEST_HOOK_POINT, createHookContext());
+
+      expect(order).toEqual(["A", "B", "C"]);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("dynamic provides: failed handler does not call provides", async () => {
+      const registry = new HookRegistry();
+      let providesCalled = false;
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => {
+          providesCalled = true;
+          return { token: "secret" };
+        },
+        handler: async () => {
+          throw new Error("handler exploded");
+        },
+      });
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        requires: { token: ANY_VALUE },
+        handler: async () => {
+          return "should-not-run";
+        },
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      const result = await hooks.collect(TEST_HOOK_POINT, createHookContext());
+
+      expect(providesCalled).toBe(false);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]?.message).toBe("handler exploded");
+    });
+
+    it("dynamic provides: multiple dynamic capabilities", async () => {
+      const registry = new HookRegistry();
+      let port = 0;
+      let host = "";
+      let ready = false;
+      let receivedCaps: Record<string, unknown> | undefined;
+
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        provides: () => ({ port, host, ready }),
+        handler: async () => {
+          port = 8080;
+          host = "127.0.0.1";
+          ready = true;
+        },
+      });
+      registry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
+        requires: { port: ANY_VALUE, host: ANY_VALUE, ready: ANY_VALUE },
+        handler: async (ctx) => {
+          receivedCaps = { ...ctx.capabilities };
+        },
+      });
+
+      const hooks = registry.resolve(TEST_OPERATION_ID);
+      await hooks.collect(TEST_HOOK_POINT, createHookContext());
+
+      expect(receivedCaps).toEqual({ port: 8080, host: "127.0.0.1", ready: true });
     });
   });
 });
