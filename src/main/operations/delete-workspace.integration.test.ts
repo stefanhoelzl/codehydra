@@ -169,8 +169,8 @@ interface MockAppState {
   findProjectForWorkspace: (wsPath: string) => TestProject | undefined;
 }
 
-function createMockGlobalProvider(opts?: { removeError?: string }): {
-  globalProvider: {
+function createMockGitWorktreeProvider(opts?: { removeError?: string }): {
+  gitWorktreeProvider: {
     removeWorkspace: (
       projectPath: Path,
       workspacePath: Path,
@@ -181,7 +181,7 @@ function createMockGlobalProvider(opts?: { removeError?: string }): {
 } {
   const result = { removed: false };
   return {
-    globalProvider: {
+    gitWorktreeProvider: {
       removeWorkspace: async () => {
         if (opts?.removeError) {
           throw new Error(opts.removeError);
@@ -328,9 +328,9 @@ interface TestHarness {
   destroyedViews: string[];
   emittedEvents: Array<{ event: string; payload: unknown }>;
   inProgressDeletions: Set<string>;
-  globalProviderState: { removed: boolean };
-  globalProviderMock: {
-    globalProvider: { removeWorkspace: ReturnType<typeof vi.fn> };
+  gitWorktreeProviderState: { removed: boolean };
+  gitWorktreeProviderMock: {
+    gitWorktreeProvider: { removeWorkspace: ReturnType<typeof vi.fn> };
   };
 }
 
@@ -364,7 +364,7 @@ function createTestHarness(options?: {
   }
 
   // Create global provider (with optional remove error)
-  const globalProviderMock = createMockGlobalProvider(
+  const gitWorktreeProviderMock = createMockGitWorktreeProvider(
     options?.worktreeRemoveError ? { removeError: options.worktreeRemoveError } : undefined
   );
 
@@ -615,7 +615,7 @@ function createTestHarness(options?: {
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
-              await globalProviderMock.globalProvider.removeWorkspace(
+              await gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace(
                 new Path(projectPath),
                 new Path(workspacePath),
                 !payload.keepBranch
@@ -854,8 +854,9 @@ function createTestHarness(options?: {
     destroyedViews,
     emittedEvents,
     inProgressDeletions,
-    globalProviderState: globalProviderMock,
-    globalProviderMock: globalProviderMock as unknown as TestHarness["globalProviderMock"],
+    gitWorktreeProviderState: gitWorktreeProviderMock,
+    gitWorktreeProviderMock:
+      gitWorktreeProviderMock as unknown as TestHarness["gitWorktreeProviderMock"],
   };
 }
 
@@ -1067,7 +1068,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     };
 
     // Make first delete fail, second succeed
-    const globalProvider = {
+    const gitWorktreeProvider = {
       removeWorkspace: vi.fn().mockImplementation(async () => {
         deleteAttempts++;
         if (deleteAttempts === 1) {
@@ -1077,7 +1078,8 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     };
 
     const harness = createTestHarness({ workspaceLockHandler });
-    harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
+    harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace =
+      gitWorktreeProvider.removeWorkspace;
 
     // First attempt: fails, detects blockers, returns
     const intent = buildDeleteIntent();
@@ -1170,7 +1172,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
       closeHandles: vi.fn().mockResolvedValue(undefined),
     };
 
-    const globalProvider = {
+    const gitWorktreeProvider = {
       removeWorkspace: vi.fn().mockImplementation(async () => {
         deleteAttempts++;
         // First two fail, third succeeds
@@ -1181,7 +1183,8 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     };
 
     const harness = createTestHarness({ workspaceLockHandler });
-    harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
+    harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace =
+      gitWorktreeProvider.removeWorkspace;
 
     // First attempt: fails
     const result1 = await harness.dispatcher.dispatch(buildDeleteIntent());
@@ -1330,7 +1333,7 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
       closeHandles: vi.fn().mockResolvedValue(undefined),
     };
 
-    const globalProvider = {
+    const gitWorktreeProvider = {
       removeWorkspace: vi.fn().mockImplementation(async () => {
         deleteAttempts++;
         if (deleteAttempts === 1) {
@@ -1340,7 +1343,8 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
     };
 
     const harness = createTestHarness({ workspaceLockHandler });
-    harness.globalProviderMock.globalProvider.removeWorkspace = globalProvider.removeWorkspace;
+    harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace =
+      gitWorktreeProvider.removeWorkspace;
 
     // First attempt: fails, detect runs
     await harness.dispatcher.dispatch(buildDeleteIntent());
@@ -1400,7 +1404,7 @@ describe("DeleteWorkspaceOperation.workspaceSwitching", () => {
 
     // Simulate user navigating to workspace A during the delete hook
     // (after the initial shutdown switch-away already ran, finding wasActive=false)
-    harness.globalProviderMock.globalProvider.removeWorkspace = vi
+    harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace = vi
       .fn()
       .mockImplementation(async () => {
         // User navigates to workspace A mid-deletion

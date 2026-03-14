@@ -85,11 +85,11 @@ function createTestSetup(): TestSetup {
     },
   });
 
-  const globalProvider = new GitWorktreeProvider(mockClient, mockFs, SILENT_LOGGER);
-  globalProvider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
+  const gitWorktreeProvider = new GitWorktreeProvider(mockClient, mockFs, SILENT_LOGGER);
+  gitWorktreeProvider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
 
   const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
-  globalProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
+  gitWorktreeProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
 
   const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
@@ -139,7 +139,7 @@ function createTestSetup(): TestSetup {
   };
 
   // Module under test
-  const metadataModule = createMetadataModule({ globalProvider });
+  const metadataModule = createMetadataModule({ gitWorktreeProvider });
 
   dispatcher.registerModule(resolveModule);
   dispatcher.registerModule(resolveProjectModule);
