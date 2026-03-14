@@ -2,10 +2,10 @@
 /**
  * Integration tests for WindowsFileLockModule through the Dispatcher.
  *
- * Tests verify: dispatcher -> operation -> release/detect/flush hooks -> lockHandler calls.
+ * Tests verify: dispatcher -> operation -> release/detect/flush hooks -> ProcessRunner calls.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
@@ -23,20 +23,31 @@ import {
 import { createWindowsFileLockModule } from "./windows-file-lock-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
-import type { WorkspaceLockHandler } from "../../services/platform/workspace-lock-handler";
-import type { BlockingProcess } from "../../shared/api/types";
+import { createMockProcessRunner } from "../../services/platform/process.state-mock";
+import type { MockProcessRunner } from "../../services/platform/process.state-mock";
 
 // =============================================================================
-// Mock Dependencies
+// Test Helpers
 // =============================================================================
 
-function createMockLockHandler() {
-  return {
-    detect: vi.fn<WorkspaceLockHandler["detect"]>().mockResolvedValue([]),
-    detectCwd: vi.fn<WorkspaceLockHandler["detectCwd"]>().mockResolvedValue([]),
-    killProcesses: vi.fn<WorkspaceLockHandler["killProcesses"]>().mockResolvedValue(undefined),
-    closeHandles: vi.fn<WorkspaceLockHandler["closeHandles"]>().mockResolvedValue(undefined),
-  };
+function createDetectJson(
+  blocking: Array<{
+    pid: number;
+    name: string;
+    commandLine: string;
+    files?: string[];
+    cwd?: string | null;
+  }>
+): string {
+  return JSON.stringify({
+    blocking: blocking.map((p) => ({
+      pid: p.pid,
+      name: p.name,
+      commandLine: p.commandLine,
+      files: p.files ?? [],
+      cwd: p.cwd ?? null,
+    })),
+  });
 }
 
 function makeDeleteIntent(overrides?: Partial<DeleteWorkspaceIntent["payload"]>): Intent {
@@ -112,13 +123,16 @@ class FlushOperation implements Operation<Intent, FlushHookResult> {
 // Test Setup Helpers
 // =============================================================================
 
-function createReleaseSetup(lockHandler: WorkspaceLockHandler, logger = SILENT_LOGGER) {
+const SCRIPT_PATH = "/scripts/blocking-processes.ps1";
+
+function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", releaseOperation);
 
   const module = createWindowsFileLockModule({
-    workspaceLockHandler: lockHandler,
+    processRunner: runner,
+    scriptPath: SCRIPT_PATH,
     logger,
   });
   dispatcher.registerModule(module);
@@ -126,13 +140,14 @@ function createReleaseSetup(lockHandler: WorkspaceLockHandler, logger = SILENT_L
   return dispatcher;
 }
 
-function createDetectSetup(lockHandler: WorkspaceLockHandler, logger = SILENT_LOGGER) {
+function createDetectSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", detectOperation);
 
   const module = createWindowsFileLockModule({
-    workspaceLockHandler: lockHandler,
+    processRunner: runner,
+    scriptPath: SCRIPT_PATH,
     logger,
   });
   dispatcher.registerModule(module);
@@ -141,7 +156,7 @@ function createDetectSetup(lockHandler: WorkspaceLockHandler, logger = SILENT_LO
 }
 
 function createFlushSetup(
-  lockHandler: WorkspaceLockHandler,
+  runner: MockProcessRunner,
   blockingPids: readonly number[],
   logger = SILENT_LOGGER
 ) {
@@ -150,7 +165,8 @@ function createFlushSetup(
   dispatcher.registerOperation("workspace:delete", new FlushOperation(blockingPids));
 
   const module = createWindowsFileLockModule({
-    workspaceLockHandler: lockHandler,
+    processRunner: runner,
+    scriptPath: SCRIPT_PATH,
     logger,
   });
   dispatcher.registerModule(module);
@@ -162,19 +178,11 @@ function createFlushSetup(
 // Tests
 // =============================================================================
 
-const BLOCKING_PROCESS: BlockingProcess = {
-  pid: 1234,
-  name: "node.exe",
-  commandLine: "node server.js",
-  files: [],
-  cwd: "/workspaces/feature-1",
-};
-
 describe("WindowsFileLockModule Integration", () => {
-  let handler: ReturnType<typeof createMockLockHandler>;
+  let runner: MockProcessRunner;
 
   beforeEach(() => {
-    handler = createMockLockHandler();
+    runner = createMockProcessRunner();
   });
 
   // ---------------------------------------------------------------------------
@@ -183,32 +191,71 @@ describe("WindowsFileLockModule Integration", () => {
 
   describe("delete-workspace -> release", () => {
     it("kills CWD-blocking processes", async () => {
-      handler.detectCwd.mockResolvedValue([BLOCKING_PROCESS]);
-      const dispatcher = createReleaseSetup(handler);
+      let callIndex = 0;
+      runner = createMockProcessRunner({
+        onSpawn: () => {
+          callIndex++;
+          if (callIndex === 1) {
+            // DetectCwd: return a blocking process
+            return {
+              stdout: createDetectJson([
+                { pid: 1234, name: "node.exe", commandLine: "node server.js", cwd: "." },
+              ]),
+              exitCode: 0,
+            };
+          }
+          // taskkill: success
+          return { exitCode: 0 };
+        },
+      });
 
+      const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      expect(handler.detectCwd).toHaveBeenCalledOnce();
-      expect(handler.killProcesses).toHaveBeenCalledWith([1234]);
+      // Verify detection was called (powershell -Action DetectCwd)
+      const detectProc = runner.$.spawned(0);
+      expect(detectProc.$.command).toBe("powershell");
+      expect(detectProc.$.args).toEqual(
+        expect.arrayContaining(["-Action", "DetectCwd", "-File", SCRIPT_PATH])
+      );
+
+      // Verify kill was called
+      const killProc = runner.$.spawned(1);
+      expect(killProc.$.command).toBe("taskkill");
+      expect(killProc.$.args).toEqual(["/pid", "1234", "/t", "/f"]);
     });
 
     it("skips when force=true", async () => {
-      const dispatcher = createReleaseSetup(handler);
-
+      const dispatcher = createReleaseSetup(runner);
       await dispatcher.dispatch(makeDeleteIntent({ force: true }));
 
-      expect(handler.detectCwd).not.toHaveBeenCalled();
-      expect(handler.killProcesses).not.toHaveBeenCalled();
+      // No processes spawned
+      expect(() => runner.$.spawned(0)).toThrow();
     });
 
-    it("swallows errors from detectCwd", async () => {
-      handler.detectCwd.mockRejectedValue(new Error("powershell failed"));
-      const dispatcher = createReleaseSetup(handler);
+    it("swallows errors from detection", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: () => ({ exitCode: null, running: true }),
+      });
 
+      const dispatcher = createReleaseSetup(runner);
       const result = await dispatcher.dispatch(makeDeleteIntent());
 
       // No error propagated
       expect(result).toEqual({});
+    });
+
+    it("skips kill when no processes detected", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: () => ({ stdout: createDetectJson([]), exitCode: 0 }),
+      });
+
+      const dispatcher = createReleaseSetup(runner);
+      await dispatcher.dispatch(makeDeleteIntent());
+
+      // Only detection was spawned, no taskkill
+      expect(runner.$.spawned(0).$.command).toBe("powershell");
+      expect(() => runner.$.spawned(1)).toThrow();
     });
   });
 
@@ -218,25 +265,52 @@ describe("WindowsFileLockModule Integration", () => {
 
   describe("delete-workspace -> detect", () => {
     it("returns blocking processes", async () => {
-      handler.detect.mockResolvedValue([BLOCKING_PROCESS]);
-      const dispatcher = createDetectSetup(handler);
+      runner = createMockProcessRunner({
+        onSpawn: () => ({
+          stdout: createDetectJson([
+            {
+              pid: 1234,
+              name: "node.exe",
+              commandLine: "node server.js",
+              files: ["src/index.ts"],
+              cwd: null,
+            },
+          ]),
+          exitCode: 0,
+        }),
+      });
 
+      const dispatcher = createDetectSetup(runner);
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as DetectHookResult;
 
-      expect(result.blockingProcesses).toEqual([BLOCKING_PROCESS]);
+      expect(result.blockingProcesses).toEqual([
+        {
+          pid: 1234,
+          name: "node.exe",
+          commandLine: "node server.js",
+          files: ["src/index.ts"],
+          cwd: null,
+        },
+      ]);
+
+      // Verify -Action Detect was used
+      expect(runner.$.spawned(0).$.args).toEqual(expect.arrayContaining(["-Action", "Detect"]));
     });
 
-    it("returns empty array on error", async () => {
-      handler.detect.mockRejectedValue(new Error("detection failed"));
+    it("returns empty array on timeout", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: () => ({ exitCode: null, running: true }),
+      });
+
       const logger = createBehavioralLogger();
-      const dispatcher = createDetectSetup(handler, logger);
+      const dispatcher = createDetectSetup(runner, logger);
 
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as DetectHookResult;
 
       expect(result.blockingProcesses).toEqual([]);
       const warnings = logger.getMessagesByLevel("warn");
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]!.message).toBe("Detection failed");
+      expect(warnings[0]!.message).toBe("Blocking process detection timed out");
     });
   });
 
@@ -246,28 +320,34 @@ describe("WindowsFileLockModule Integration", () => {
 
   describe("delete-workspace -> flush", () => {
     it("kills collected PIDs", async () => {
-      const dispatcher = createFlushSetup(handler, [1234, 5678]);
+      runner = createMockProcessRunner({
+        onSpawn: () => ({ exitCode: 0 }),
+      });
 
+      const dispatcher = createFlushSetup(runner, [1234, 5678]);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      expect(handler.killProcesses).toHaveBeenCalledWith([1234, 5678]);
+      expect(runner.$.spawned(0).$.command).toBe("taskkill");
+      expect(runner.$.spawned(0).$.args).toEqual(["/pid", "1234", "/pid", "5678", "/t", "/f"]);
     });
 
     it("returns error on failure", async () => {
-      handler.killProcesses.mockRejectedValue(new Error("access denied"));
-      const dispatcher = createFlushSetup(handler, [1234]);
+      runner = createMockProcessRunner({
+        onSpawn: () => ({ exitCode: 1, stderr: "access denied" }),
+      });
 
+      const dispatcher = createFlushSetup(runner, [1234]);
       const result = (await dispatcher.dispatch(makeDeleteIntent())) as FlushHookResult;
 
-      expect(result.error).toBe("access denied");
+      expect(result.error).toContain("Failed to kill processes");
     });
 
     it("skips kill when blockingPids is empty", async () => {
-      const dispatcher = createFlushSetup(handler, []);
-
+      const dispatcher = createFlushSetup(runner, []);
       await dispatcher.dispatch(makeDeleteIntent());
 
-      expect(handler.killProcesses).not.toHaveBeenCalled();
+      // No processes spawned
+      expect(() => runner.$.spawned(0)).toThrow();
     });
   });
 });

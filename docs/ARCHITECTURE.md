@@ -288,15 +288,15 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 
 **Resilient Deletion**: When `git worktree remove --force` fails but the worktree was successfully unregistered (e.g., due to locked files in code-server), the deletion is considered successful. The orphaned directory will be cleaned up on next startup.
 
-**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), `WorkspaceLockHandler` handles blocking processes using the Windows Restart Manager API via a PowerShell script. The service provides three operations:
+**Blocking Process Detection (Windows)**: When deletion fails due to locked files (EBUSY, EACCES, EPERM), the `WindowsFileLockModule` handles blocking processes using the Windows Restart Manager API via a PowerShell script. The module provides three hook-based operations:
 
-| Operation      | Method            | Description                                          |
-| -------------- | ----------------- | ---------------------------------------------------- |
-| Detect         | `detect(path)`    | Find processes with handles on files under path      |
-| Kill processes | `killProcesses()` | Terminate all detected processes via taskkill        |
-| Close handles  | `closeHandles()`  | Forcibly close file handles (requires UAC elevation) |
+| Operation | Hook Point | Description                                  |
+| --------- | ---------- | -------------------------------------------- |
+| Release   | `release`  | CWD-only scan + kill before deletion attempt |
+| Detect    | `detect`   | Full handle detection after deletion failure |
+| Flush     | `flush`    | Kill user-selected PIDs on retry             |
 
-The UI shows a scrollable list of blocking processes (with files and CWD) and offers a split button with "Retry" as the main action and a dropdown menu with "Kill Processes" (terminates processes), "Close Handles" (closes handles with elevation), or "Ignore Blockers" (skips detection). A "Dismiss" button closes the dialog. On non-Windows platforms, this service is undefined (detection steps are skipped).
+The UI shows a scrollable list of blocking processes (with files and CWD) and offers a split button with "Retry" as the main action and a dropdown menu with "Kill Processes" (terminates processes), "Close Handles" (closes handles with elevation), or "Ignore Blockers" (skips detection). A "Dismiss" button closes the dialog. On non-Windows platforms, the module is not registered (detection steps are skipped).
 
 **Startup Cleanup**: On project open, `cleanupOrphanedWorkspaces()` runs non-blocking to remove directories in the workspaces folder that are not registered with git. This handles cases where previous deletions partially failed.
 
@@ -491,17 +491,17 @@ All external system access goes through abstraction interfaces defined in `src/s
 
 For detailed platform abstraction documentation including interface definitions, mock factories, and usage patterns, see [INTENTS.md](INTENTS.md#platform-abstractions).
 
-| External System    | Interface              | Implementation                |
-| ------------------ | ---------------------- | ----------------------------- |
-| Filesystem         | `FileSystemLayer`      | `DefaultFileSystemLayer`      |
-| HTTP requests      | `HttpClient`           | `DefaultNetworkLayer`         |
-| Port operations    | `PortManager`          | `DefaultNetworkLayer`         |
-| Process spawning   | `ProcessRunner`        | `ExecaProcessRunner`          |
-| Build info         | `BuildInfo`            | `ElectronBuildInfo`           |
-| Platform info      | `PlatformInfo`         | `NodePlatformInfo`            |
-| Path resolution    | `PathProvider`         | `DefaultPathProvider`         |
-| Path normalization | `Path` (class)         | Self-normalizing object       |
-| Blocking processes | `WorkspaceLockHandler` | `WindowsWorkspaceLockHandler` |
+| External System    | Interface               | Implementation               |
+| ------------------ | ----------------------- | ---------------------------- |
+| Filesystem         | `FileSystemLayer`       | `DefaultFileSystemLayer`     |
+| HTTP requests      | `HttpClient`            | `DefaultNetworkLayer`        |
+| Port operations    | `PortManager`           | `DefaultNetworkLayer`        |
+| Process spawning   | `ProcessRunner`         | `ExecaProcessRunner`         |
+| Build info         | `BuildInfo`             | `ElectronBuildInfo`          |
+| Platform info      | `PlatformInfo`          | `NodePlatformInfo`           |
+| Path resolution    | `PathProvider`          | `DefaultPathProvider`        |
+| Path normalization | `Path` (class)          | Self-normalizing object      |
+| Blocking processes | `WindowsFileLockModule` | Intent module (Windows only) |
 
 ### Frontend Components (Svelte 5)
 

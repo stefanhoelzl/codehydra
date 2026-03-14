@@ -46,7 +46,6 @@ import type {
 import type { HookContext, OperationContext } from "../intents/infrastructure/operation";
 import type { IViewManager } from "../managers/view-manager.interface";
 
-import type { WorkspaceLockHandler } from "../../services/platform/workspace-lock-handler";
 import type { IWorkspaceFileService } from "../../services";
 import type { WorkspacePath } from "../../shared/ipc";
 import type {
@@ -336,7 +335,12 @@ interface TestHarness {
 
 function createTestHarness(options?: {
   activeWorkspacePath?: string | null;
-  workspaceLockHandler?: WorkspaceLockHandler;
+  workspaceLockHandler?: {
+    detect: (...args: unknown[]) => Promise<BlockingProcess[]>;
+    detectCwd: (...args: unknown[]) => Promise<BlockingProcess[]>;
+    killProcesses: (...args: unknown[]) => Promise<void>;
+    closeHandles: (...args: unknown[]) => Promise<void>;
+  };
   killTerminalsCallback?: (workspacePath: string) => Promise<void>;
   serverStopError?: string;
   worktreeRemoveError?: string;
@@ -1024,7 +1028,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     ];
     let detectCwdCalls = 0;
 
-    const workspaceLockHandler: WorkspaceLockHandler = {
+    const workspaceLockHandler = {
       detect: vi.fn().mockResolvedValue([]),
       detectCwd: vi.fn().mockImplementation(async () => {
         detectCwdCalls++;
@@ -1060,7 +1064,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     ];
 
     let deleteAttempts = 0;
-    const workspaceLockHandler: WorkspaceLockHandler = {
+    const workspaceLockHandler = {
       detect: vi.fn().mockResolvedValue(blockingProcesses),
       detectCwd: vi.fn().mockResolvedValue([]),
       killProcesses: vi.fn().mockResolvedValue(undefined),
@@ -1125,7 +1129,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
       { pid: 9999, name: "code.exe", commandLine: "code .", files: ["file.txt"], cwd: null },
     ];
 
-    const workspaceLockHandler: WorkspaceLockHandler = {
+    const workspaceLockHandler = {
       detect: vi.fn().mockResolvedValue(blockingProcesses),
       detectCwd: vi.fn().mockResolvedValue([]),
       killProcesses: vi.fn().mockResolvedValue(undefined),
@@ -1165,7 +1169,7 @@ describe("DeleteWorkspaceOperation.windowsBlockerDetection", () => {
     ];
 
     let deleteAttempts = 0;
-    const workspaceLockHandler: WorkspaceLockHandler = {
+    const workspaceLockHandler = {
       detect: vi.fn().mockResolvedValue(blockingProcesses),
       detectCwd: vi.fn().mockResolvedValue([]),
       killProcesses: vi.fn().mockResolvedValue(undefined),
@@ -1326,7 +1330,7 @@ describe("DeleteWorkspaceOperation.inProgressSpinner", () => {
     ];
 
     let deleteAttempts = 0;
-    const workspaceLockHandler: WorkspaceLockHandler = {
+    const workspaceLockHandler = {
       detect: vi.fn().mockResolvedValue(blockingProcesses),
       detectCwd: vi.fn().mockResolvedValue([]),
       killProcesses: vi.fn().mockResolvedValue(undefined),
@@ -1731,7 +1735,7 @@ describe("DeleteWorkspaceOperation.safetyNet", () => {
       { pid: 7777, name: "node.exe", commandLine: "node", files: ["x.js"], cwd: null },
     ];
 
-    const workspaceLockHandler: WorkspaceLockHandler = {
+    const workspaceLockHandler = {
       detect: vi.fn().mockResolvedValue(blockingProcesses),
       detectCwd: vi.fn().mockResolvedValue([]),
       killProcesses: vi.fn().mockResolvedValue(undefined),
@@ -1874,7 +1878,7 @@ describe("DeleteWorkspaceOperation.preflight", () => {
       { pid: 7777, name: "node.exe", commandLine: "node server.js", files: ["file.txt"], cwd: "." },
     ];
 
-    const workspaceLockHandler: WorkspaceLockHandler = {
+    const workspaceLockHandler = {
       detect: vi.fn().mockResolvedValue(blockingProcesses),
       detectCwd: vi.fn().mockResolvedValue([]),
       killProcesses: vi.fn().mockResolvedValue(undefined),

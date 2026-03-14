@@ -24,7 +24,6 @@ import {
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
   ElectronLogService,
-  createWorkspaceLockHandler,
   WorkspaceFileService,
   createWorkspaceFileConfig,
   GitWorktreeProvider,
@@ -285,13 +284,6 @@ const keepFilesService = new KeepFilesService(
   loggingService.createLogger("keepfiles")
 );
 
-const workspaceLockHandler = createWorkspaceLockHandler(
-  processRunner,
-  platformInfo,
-  loggingService.createLogger("process"),
-  pathProvider.runtimePath("scripts/blocking-processes.ps1").toNative()
-);
-
 const apiLogger = loggingService.createLogger("api");
 const lifecycleLogger = loggingService.createLogger("lifecycle");
 
@@ -438,7 +430,8 @@ const keepFilesModule = createKeepFilesModule({
 const deleteWindowsLockModule =
   platformInfo.platform === "win32"
     ? createWindowsFileLockModule({
-        workspaceLockHandler: workspaceLockHandler!,
+        processRunner,
+        scriptPath: pathProvider.runtimePath("scripts/blocking-processes.ps1").toNative(),
         logger: apiLogger,
       })
     : undefined;
