@@ -653,11 +653,12 @@ codeServerManager = new CodeServerManager(config, processRunner, networkLayer, n
 
 `WorkspaceLockHandler` detects and manages processes that block file operations (Windows-only). It uses a three-operation model:
 
-| Method            | Description                                           |
-| ----------------- | ----------------------------------------------------- |
-| `detect(path)`    | Detect processes with handles on files under path     |
-| `killProcesses()` | Kill all detected processes via taskkill              |
-| `closeHandles()`  | Close file handles (requires UAC elevation on Win 10) |
+| Method                | Description                                                     |
+| --------------------- | --------------------------------------------------------------- |
+| `detect(path)`        | Detect processes with handles on files under path (full scan)   |
+| `detectCwd(path)`     | Detect processes with CWD under path (lightweight, no RM/handles) |
+| `killProcesses(pids)` | Kill processes by PID array via taskkill                        |
+| `closeHandles(path)`  | Close file handles in path (requires UAC elevation on Win 10)   |
 
 ```typescript
 // Factory creates platform-specific implementation
@@ -675,11 +676,12 @@ const workspaceLockHandler = createWorkspaceLockHandler(
 **Three-Operation Workflow:**
 
 ```
-detect(path)         →  Returns DetectionResult with processes array
+detect(path)           →  Returns BlockingProcess[] (full: RM + CWD + handles)
+detectCwd(path)        →  Returns BlockingProcess[] (lightweight: CWD only)
     │
-    ├─ killProcesses()   →  Terminates all detected processes
+    ├─ killProcesses(pids) →  Terminates processes by PID array
     │
-    └─ closeHandles()    →  Closes file handles (may require elevation)
+    └─ closeHandles(path)  →  Closes file handles (may require elevation)
 ```
 
 **Usage in Deletion Flow:**

@@ -341,11 +341,11 @@ Agent servers are configured to connect to CodeHydra's MCP server for workspace 
 
 When spawning agent servers, the following environment variables are set:
 
-| Variable             | Purpose                                                      |
-| -------------------- | ------------------------------------------------------------ |
-| `_CH_WORKSPACE_PATH` | Absolute path to the workspace (for X-Workspace-Path header) |
-| `_CH_MCP_PORT`       | Port of CodeHydra's MCP server                               |
-| `_CH_PLUGIN_PORT`    | Port of CodeHydra's Plugin server (for extensions)           |
+| Variable             | Set for     | Purpose                                                      |
+| -------------------- | ----------- | ------------------------------------------------------------ |
+| `_CH_WORKSPACE_PATH` | Agents      | Absolute path to the workspace (for X-Workspace-Path header) |
+| `_CH_MCP_PORT`       | Agents      | Port of CodeHydra's MCP server                               |
+| `_CH_PLUGIN_PORT`    | code-server | Port of CodeHydra's Plugin server (for VS Code extensions)   |
 
 ### OpenCode MCP Configuration
 
