@@ -52,21 +52,6 @@ export class GitWorktreeProvider {
   /** Map of normalized workspace path strings to project root Path (for metadata resolution) */
   private readonly workspaceRegistry: Map<string, Path> = new Map();
 
-  /**
-   * Apply base fallback to metadata if not present.
-   * Fallback priority: config > branch > name
-   */
-  private applyBaseFallback(
-    metadata: Record<string, string>,
-    branch: string | null,
-    name: string
-  ): Record<string, string> {
-    if (!metadata.base) {
-      return { ...metadata, base: branch ?? name };
-    }
-    return metadata;
-  }
-
   constructor(gitClient: IGitClient, fileSystemLayer: FileSystemLayer, logger: Logger) {
     this.gitClient = gitClient;
     this.fileSystemLayer = fileSystemLayer;
@@ -224,23 +209,22 @@ export class GitWorktreeProvider {
       // Register workspace in the workspace registry for metadata resolution
       this.ensureWorkspaceRegistered(wt.path, projectRoot);
 
-      // Try to get metadata from git config, with fallback for base key
+      // Get metadata from git config
       let metadata: Record<string, string>;
       try {
-        const configs = wt.branch
-          ? await this.gitClient.getBranchConfigsByPrefix(
-              projectRoot,
-              wt.branch,
-              GitWorktreeProvider.METADATA_CONFIG_PREFIX
-            )
+        metadata = wt.branch
+          ? {
+              ...(await this.gitClient.getBranchConfigsByPrefix(
+                projectRoot,
+                wt.branch,
+                GitWorktreeProvider.METADATA_CONFIG_PREFIX
+              )),
+            }
           : {};
-        // Apply base fallback: config > branch > name
-        metadata = this.applyBaseFallback({ ...configs }, wt.branch, wt.name);
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error";
         this.logger.warn("Failed to get metadata config", { workspace: wt.name, error: message });
-        // Use fallback on error - only base key
-        metadata = { base: wt.branch ?? wt.name };
+        metadata = {};
       }
 
       workspaces.push({
@@ -854,10 +838,9 @@ export class GitWorktreeProvider {
   /**
    * Get all metadata for a workspace.
    * Resolves projectRoot from workspace registry automatically.
-   * Always includes `base` key (with fallback if not in config).
    *
    * @param workspacePath Absolute path to the workspace
-   * @returns Metadata record with at least `base` key
+   * @returns Metadata record from git config
    */
   async getMetadata(workspacePath: Path): Promise<Readonly<Record<string, string>>> {
     const projectRoot = this.resolveProjectRoot(workspacePath);
@@ -871,18 +854,15 @@ export class GitWorktreeProvider {
       );
     }
 
-    let metadata: Record<string, string>;
-    if (worktree.branch) {
-      const configs = await this.gitClient.getBranchConfigsByPrefix(
-        projectRoot,
-        worktree.branch,
-        GitWorktreeProvider.METADATA_CONFIG_PREFIX
-      );
-      metadata = this.applyBaseFallback({ ...configs }, worktree.branch, worktree.name);
-    } else {
-      // Detached HEAD - only fallback base
-      metadata = { base: worktree.name };
-    }
+    const metadata: Record<string, string> = worktree.branch
+      ? {
+          ...(await this.gitClient.getBranchConfigsByPrefix(
+            projectRoot,
+            worktree.branch,
+            GitWorktreeProvider.METADATA_CONFIG_PREFIX
+          )),
+        }
+      : {};
 
     return metadata;
   }
