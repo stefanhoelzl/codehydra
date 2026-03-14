@@ -43,9 +43,47 @@ import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import type { RestartAgentHookResult } from "../operations/restart-agent";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { EVENT_CONFIG_UPDATED, INTENT_CONFIG_SET_VALUES } from "../operations/config-set-values";
+import { INTENT_UPDATE_AGENT_STATUS } from "../operations/update-agent-status";
 import { createClaudeAgentModule, type ClaudeAgentModuleDeps } from "./claude-agent-module";
 import { SILENT_LOGGER } from "../../services/logging";
 import { SetupError } from "../../services/errors";
+import type { AgentProvider, AgentStatus } from "../../agents/types";
+
+// =============================================================================
+// Mock ClaudeCodeProvider
+// =============================================================================
+
+/** Captured status-change callback from the most recent provider's onStatusChange */
+let capturedProviderStatusCallback: ((status: AgentStatus) => void) | null = null;
+
+let latestMockProvider: AgentProvider;
+
+vi.mock("../../agents/claude/provider", () => {
+  function setLatestProvider(provider: AgentProvider): void {
+    latestMockProvider = provider;
+  }
+
+  return {
+    ClaudeCodeProvider: class MockClaudeCodeProvider {
+      connect = vi.fn().mockResolvedValue(undefined);
+      disconnect = vi.fn();
+      reconnect = vi.fn().mockResolvedValue(undefined);
+      dispose = vi.fn();
+      onStatusChange = vi.fn((cb: (status: AgentStatus) => void) => {
+        capturedProviderStatusCallback = cb;
+        return vi.fn();
+      });
+      getSession = vi.fn().mockReturnValue({ port: 8080, sessionId: "session-1" });
+      getEnvironmentVariables = vi.fn().mockReturnValue({ CLAUDE_PORT: "8080" });
+      markActive = vi.fn();
+
+      constructor() {
+        capturedProviderStatusCallback = null;
+        setLatestProvider(this as unknown as AgentProvider);
+      }
+    },
+  };
+});
 
 // =============================================================================
 // Minimal Test Operations
@@ -265,39 +303,19 @@ function createMockClaudeServerManager() {
   };
 }
 
-function createMockAgentStatusManager() {
-  return {
-    onStatusChanged: vi.fn().mockReturnValue(vi.fn()),
-    getStatus: vi.fn().mockReturnValue({ status: "idle", counts: { idle: 1, busy: 0 } }),
-    getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "session-1" }),
-    getProvider: vi.fn().mockReturnValue({
-      getEnvironmentVariables: vi.fn().mockReturnValue({ CLAUDE_PORT: "8080" }),
-    }),
-    hasProvider: vi.fn().mockReturnValue(false),
-    markActive: vi.fn(),
-    clearTuiTracking: vi.fn(),
-    dispose: vi.fn(),
-    getLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
-    getSdkFactory: vi.fn().mockReturnValue(undefined),
-    addProvider: vi.fn(),
-    removeWorkspace: vi.fn(),
-    disconnectWorkspace: vi.fn(),
-    reconnectWorkspace: vi.fn().mockResolvedValue(undefined),
-  };
-}
-
 function createMockDeps(
   overrides?: Partial<{
     serverManager: ReturnType<typeof createMockClaudeServerManager>;
-    agentStatusManager: ReturnType<typeof createMockAgentStatusManager>;
   }>
 ): {
   deps: ClaudeAgentModuleDeps;
   mockSM: ReturnType<typeof createMockClaudeServerManager>;
-  mockASM: ReturnType<typeof createMockAgentStatusManager>;
 } {
   const mockSM = overrides?.serverManager ?? createMockClaudeServerManager();
-  const mockASM = overrides?.agentStatusManager ?? createMockAgentStatusManager();
+
+  const mockDispatcher = {
+    dispatch: vi.fn().mockResolvedValue(undefined),
+  } as unknown as Dispatcher;
 
   const deps: ClaudeAgentModuleDeps = {
     agentBinaryManager: {
@@ -306,15 +324,15 @@ function createMockDeps(
       getBinaryType: vi.fn().mockReturnValue("claude"),
     } as unknown as ClaudeAgentModuleDeps["agentBinaryManager"],
     serverManager: mockSM as unknown as ClaudeAgentModuleDeps["serverManager"],
-    agentStatusManager: mockASM as unknown as ClaudeAgentModuleDeps["agentStatusManager"],
-    dispatcher: new Dispatcher(new HookRegistry()),
+    dispatcher: mockDispatcher,
     logger: SILENT_LOGGER,
     loggingService: {
       createLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
     } as unknown as ClaudeAgentModuleDeps["loggingService"],
+    providerLogger: SILENT_LOGGER,
   };
 
-  return { deps, mockSM, mockASM };
+  return { deps, mockSM };
 }
 
 // =============================================================================
@@ -322,14 +340,14 @@ function createMockDeps(
 // =============================================================================
 
 function createTestSetup(mockDepsResult?: ReturnType<typeof createMockDeps>) {
-  const { deps, mockSM, mockASM } = mockDepsResult ?? createMockDeps();
+  const { deps, mockSM } = mockDepsResult ?? createMockDeps();
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
   const module = createClaudeAgentModule(deps);
 
   dispatcher.registerModule(module);
 
-  return { deps, dispatcher, hookRegistry, mockSM, mockASM, module };
+  return { deps, dispatcher, hookRegistry, mockSM, module };
 }
 
 /**
@@ -337,12 +355,12 @@ function createTestSetup(mockDepsResult?: ReturnType<typeof createMockDeps>) {
  * This calls the module's event handler directly, mirroring what the Dispatcher
  * does when a config:set-values operation emits the config:updated event.
  */
-async function simulateConfigUpdated(module: IntentModule, agent: string | null): Promise<void> {
+function simulateConfigUpdated(module: IntentModule, agent: string | null): void {
   const event: ConfigUpdatedEvent = {
     type: EVENT_CONFIG_UPDATED,
     payload: { values: { agent } as Readonly<Record<string, unknown>> },
   };
-  await module.events![EVENT_CONFIG_UPDATED]!.handler(event as DomainEvent);
+  module.events![EVENT_CONFIG_UPDATED]!(event as DomainEvent);
 }
 
 /**
@@ -350,9 +368,31 @@ async function simulateConfigUpdated(module: IntentModule, agent: string | null)
  * operation to activate the module before testing hooks that require lifecycle state.
  */
 async function activateModule(dispatcher: Dispatcher, module: IntentModule): Promise<void> {
-  await simulateConfigUpdated(module, "claude");
+  simulateConfigUpdated(module, "claude");
   dispatcher.registerOperation("app:start", new MinimalStartOperation());
   await dispatcher.dispatch({ type: "app:start", payload: {} });
+}
+
+/**
+ * Wire the mock server manager so that startServer triggers the onServerStarted callback,
+ * simulating real behavior where a server start leads to provider creation.
+ */
+function wireStartServerToCallback(
+  mockSM: ReturnType<typeof createMockClaudeServerManager>,
+  port = 8080
+): void {
+  const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
+    workspacePath: string,
+    port: number
+  ) => void;
+  mockSM.startServer.mockImplementation(async (workspacePath: string) => {
+    startedCallback(workspacePath, port);
+    // Wait for the provider creation to complete
+    await vi.waitFor(() => {
+      expect(latestMockProvider.connect).toHaveBeenCalled();
+    });
+    return port;
+  });
 }
 
 // =============================================================================
@@ -436,18 +476,17 @@ describe("ClaudeAgentModule", () => {
 
   describe("start", () => {
     it("activates when config:updated event sets agent to claude", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
       // Verify wiring: setMarkActiveHandler and onServerStarted/onServerStopped called
       expect(mockSM.setMarkActiveHandler).toHaveBeenCalled();
       expect(mockSM.onServerStarted).toHaveBeenCalled();
       expect(mockSM.onServerStopped).toHaveBeenCalled();
-      expect(mockASM.onStatusChanged).toHaveBeenCalled();
     });
 
     it("does not activate when no config:updated event received", async () => {
-      const { dispatcher, mockSM, mockASM } = createTestSetup();
+      const { dispatcher, mockSM } = createTestSetup();
       // Do NOT call simulateConfigUpdated -- module stays inactive
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -455,23 +494,21 @@ describe("ClaudeAgentModule", () => {
       expect(mockSM.setMarkActiveHandler).not.toHaveBeenCalled();
       expect(mockSM.onServerStarted).not.toHaveBeenCalled();
       expect(mockSM.onServerStopped).not.toHaveBeenCalled();
-      expect(mockASM.onStatusChanged).not.toHaveBeenCalled();
     });
 
     it("does not activate when config:updated event sets agent to opencode", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
-      await simulateConfigUpdated(module, "opencode");
+      const { dispatcher, mockSM, module } = createTestSetup();
+      simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       expect(mockSM.setMarkActiveHandler).not.toHaveBeenCalled();
       expect(mockSM.onServerStarted).not.toHaveBeenCalled();
       expect(mockSM.onServerStopped).not.toHaveBeenCalled();
-      expect(mockASM.onStatusChanged).not.toHaveBeenCalled();
     });
 
     it("wires server callbacks that handle server started", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
       // Capture the onServerStarted callback
@@ -485,28 +522,61 @@ describe("ClaudeAgentModule", () => {
 
       // Wait for the async handleServerStarted to complete
       await vi.waitFor(() => {
-        expect(mockASM.addProvider).toHaveBeenCalled();
+        expect(latestMockProvider.connect).toHaveBeenCalledWith(8080);
       });
     });
 
     it("wires server callbacks that handle server stopped (non-restart)", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      const { dispatcher, mockSM, deps, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
-      // Capture the onServerStopped callback
+      // First add a provider via server started
+      const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
+        workspacePath: string,
+        port: number
+      ) => void;
+      startedCallback("/test/workspace", 8080);
+      await vi.waitFor(() => {
+        expect(latestMockProvider.connect).toHaveBeenCalled();
+      });
+      const provider = latestMockProvider;
+
+      // Spy on dispatcher to capture the status update dispatch
+      const dispatchSpy = vi.spyOn(deps.dispatcher, "dispatch").mockResolvedValue(undefined);
+
+      // Capture the onServerStopped callback and trigger non-restart stop
       const stoppedCallback = mockSM.onServerStopped.mock.calls[0]![0] as (
         workspacePath: string,
         isRestart: boolean
       ) => void;
-
       stoppedCallback("/test/workspace", false);
 
-      expect(mockASM.removeWorkspace).toHaveBeenCalledWith("/test/workspace");
+      expect(provider.dispose).toHaveBeenCalled();
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: INTENT_UPDATE_AGENT_STATUS,
+          payload: expect.objectContaining({
+            workspacePath: "/test/workspace",
+            status: { status: "none", counts: { idle: 0, busy: 0 } },
+          }),
+        })
+      );
     });
 
     it("wires server callbacks that handle server stopped (restart)", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
+
+      // First add a provider via server started
+      const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
+        workspacePath: string,
+        port: number
+      ) => void;
+      startedCallback("/test/workspace", 8080);
+      await vi.waitFor(() => {
+        expect(latestMockProvider.connect).toHaveBeenCalled();
+      });
+      const provider = latestMockProvider;
 
       const stoppedCallback = mockSM.onServerStopped.mock.calls[0]![0] as (
         workspacePath: string,
@@ -515,29 +585,30 @@ describe("ClaudeAgentModule", () => {
 
       stoppedCallback("/test/workspace", true);
 
-      expect(mockASM.disconnectWorkspace).toHaveBeenCalledWith("/test/workspace");
+      expect(provider.disconnect).toHaveBeenCalled();
     });
 
     it("reconnects provider on server restart when provider already exists", async () => {
-      const mockDepsResult = createMockDeps();
-      mockDepsResult.mockASM.hasProvider.mockReturnValue(true);
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup(mockDepsResult);
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
-      // Capture the onServerStarted callback
+      // First create a provider via server started
       const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
         workspacePath: string,
         port: number
       ) => void;
-
       startedCallback("/test/workspace", 8080);
+      await vi.waitFor(() => {
+        expect(latestMockProvider.connect).toHaveBeenCalled();
+      });
+      const provider = latestMockProvider;
+
+      // Now trigger another server started for the same workspace (restart scenario)
+      startedCallback("/test/workspace", 8081);
 
       await vi.waitFor(() => {
-        expect(mockASM.reconnectWorkspace).toHaveBeenCalledWith("/test/workspace");
+        expect(provider.reconnect).toHaveBeenCalled();
       });
-
-      // Should not create a new provider
-      expect(mockASM.addProvider).not.toHaveBeenCalled();
     });
   });
 
@@ -548,7 +619,7 @@ describe("ClaudeAgentModule", () => {
   describe("start (mcpPort from capabilities)", () => {
     it("calls setMcpConfig when active and mcpPort provided", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      await simulateConfigUpdated(module, "claude");
+      simulateConfigUpdated(module, "claude");
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -558,7 +629,7 @@ describe("ClaudeAgentModule", () => {
 
     it("skips setMcpConfig when mcpPort is null", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      await simulateConfigUpdated(module, "claude");
+      simulateConfigUpdated(module, "claude");
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(null));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -751,6 +822,7 @@ describe("ClaudeAgentModule", () => {
     it("starts server and returns envVars when active", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
+      wireStartServerToCallback(mockSM);
 
       dispatcher.registerOperation(
         "workspace:open",
@@ -857,7 +929,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      await simulateConfigUpdated(module, "opencode");
+      simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -889,7 +961,7 @@ describe("ClaudeAgentModule", () => {
 
   describe("delete shutdown", () => {
     it("stops server when active", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
@@ -905,7 +977,6 @@ describe("ClaudeAgentModule", () => {
       } as DeleteWorkspaceIntent)) as ShutdownHookResult | undefined;
 
       expect(mockSM.stopServer).toHaveBeenCalledWith("/test/workspace");
-      expect(mockASM.clearTuiTracking).toHaveBeenCalledWith("/test/workspace");
       expect(result).toBeDefined();
       expect(result!.serverName).toBe("Claude Code hook");
     });
@@ -963,7 +1034,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      await simulateConfigUpdated(module, "opencode");
+      simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -989,9 +1060,22 @@ describe("ClaudeAgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("get-status", () => {
-    it("returns status when active", async () => {
-      const { dispatcher, mockASM, module } = createTestSetup();
+    it("returns status from internal cache when active", async () => {
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
+
+      // Trigger server started to add a provider and populate the status cache
+      const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
+        workspacePath: string,
+        port: number
+      ) => void;
+      startedCallback("/test/workspace", 8080);
+      await vi.waitFor(() => {
+        expect(latestMockProvider.connect).toHaveBeenCalled();
+      });
+
+      // Simulate a status change from the provider to update the cache
+      capturedProviderStatusCallback!("idle");
 
       dispatcher.registerOperation(
         "workspace:get-status",
@@ -1009,13 +1093,12 @@ describe("ClaudeAgentModule", () => {
 
       expect(result).toBeDefined();
       expect(result!.agentStatus).toEqual({ status: "idle", counts: { idle: 1, busy: 0 } });
-      expect(mockASM.getStatus).toHaveBeenCalledWith("/test/workspace");
     });
 
     it("returns undefined when inactive", async () => {
       const { dispatcher, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      await simulateConfigUpdated(module, "opencode");
+      simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1042,9 +1125,19 @@ describe("ClaudeAgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("get-session", () => {
-    it("returns session when active", async () => {
-      const { dispatcher, mockASM, module } = createTestSetup();
+    it("returns session when active and provider exists", async () => {
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
+
+      // Add a provider via server started
+      const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
+        workspacePath: string,
+        port: number
+      ) => void;
+      startedCallback("/test/workspace", 8080);
+      await vi.waitFor(() => {
+        expect(latestMockProvider.connect).toHaveBeenCalled();
+      });
 
       dispatcher.registerOperation(
         "agent:get-session",
@@ -1062,13 +1155,10 @@ describe("ClaudeAgentModule", () => {
 
       expect(result).toBeDefined();
       expect(result!.session).toEqual({ port: 8080, sessionId: "session-1" });
-      expect(mockASM.getSession).toHaveBeenCalledWith("/test/workspace");
     });
 
-    it("returns null session when no session exists", async () => {
-      const mockDepsResult = createMockDeps();
-      mockDepsResult.mockASM.getSession.mockReturnValue(null);
-      const { dispatcher, module } = createTestSetup(mockDepsResult);
+    it("returns null session when no provider exists for workspace", async () => {
+      const { dispatcher, module } = createTestSetup();
       await activateModule(dispatcher, module);
 
       dispatcher.registerOperation(
@@ -1092,7 +1182,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      await simulateConfigUpdated(module, "opencode");
+      simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1171,7 +1261,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      await simulateConfigUpdated(module, "opencode");
+      simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1199,9 +1289,20 @@ describe("ClaudeAgentModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("stop", () => {
-    it("disposes server manager and agent status manager when active", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+    it("disposes server manager and providers when active", async () => {
+      const { dispatcher, mockSM, module } = createTestSetup();
       await activateModule(dispatcher, module);
+
+      // Add a provider so we can verify it gets disposed
+      const startedCallback = mockSM.onServerStarted.mock.calls[0]![0] as (
+        workspacePath: string,
+        port: number
+      ) => void;
+      startedCallback("/test/workspace", 8080);
+      await vi.waitFor(() => {
+        expect(latestMockProvider.connect).toHaveBeenCalled();
+      });
+      const provider = latestMockProvider;
 
       dispatcher.registerOperation(
         "app:shutdown",
@@ -1211,13 +1312,13 @@ describe("ClaudeAgentModule", () => {
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
       expect(mockSM.dispose).toHaveBeenCalled();
-      expect(mockASM.dispose).toHaveBeenCalled();
+      expect(provider.dispose).toHaveBeenCalled();
     });
 
-    it("disposes server manager but not agent status manager when inactive", async () => {
-      const { dispatcher, mockSM, mockASM, module } = createTestSetup();
+    it("disposes server manager but not providers when inactive", async () => {
+      const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      await simulateConfigUpdated(module, "opencode");
+      simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1229,7 +1330,6 @@ describe("ClaudeAgentModule", () => {
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
       expect(mockSM.dispose).toHaveBeenCalled();
-      expect(mockASM.dispose).not.toHaveBeenCalled();
     });
 
     it("collect catches stop error, dispatch still resolves", async () => {
@@ -1257,7 +1357,7 @@ describe("ClaudeAgentModule", () => {
   describe("config:updated event", () => {
     it("sets active=true when agent is claude", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      await simulateConfigUpdated(module, "claude");
+      simulateConfigUpdated(module, "claude");
 
       // Verify the module is now active by running start and checking wiring
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
@@ -1268,7 +1368,7 @@ describe("ClaudeAgentModule", () => {
 
     it("sets active=false when agent is opencode", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      await simulateConfigUpdated(module, "opencode");
+      simulateConfigUpdated(module, "opencode");
 
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -1278,7 +1378,7 @@ describe("ClaudeAgentModule", () => {
 
     it("defaults to opencode when agent is null", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      await simulateConfigUpdated(module, null);
+      simulateConfigUpdated(module, null);
 
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });

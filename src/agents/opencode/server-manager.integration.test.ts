@@ -6,14 +6,12 @@
  * - Server starts when workspace is added
  * - Server stops when workspace is removed
  * - All servers stop when project is closed
- * - AgentStatusManager receives start/stop events correctly
+ * - Callbacks fire correctly for start/stop events
  */
 
 import { request as httpRequest } from "http";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
-import { AgentStatusManager } from "./status-manager";
-import { OpenCodeProvider } from "./provider";
 import {
   createMockProcessRunner,
   type MockProcessRunner,
@@ -26,27 +24,6 @@ import {
 import { SILENT_LOGGER } from "../../services/logging";
 import type { HttpClient } from "../../services/platform/network";
 import type { PathProvider } from "../../services/platform/path-provider";
-import type { WorkspacePath } from "../../shared/ipc";
-import {
-  createSdkClientMock,
-  createSdkFactoryMock,
-  asSdkFactory,
-  type SdkClientFactory,
-} from "./sdk-client.state-mock";
-
-/**
- * Helper to create and initialize a provider for testing.
- */
-async function createAndInitializeProvider(
-  port: number,
-  sdkFactory: SdkClientFactory,
-  workspacePath = "/test/workspace"
-): Promise<OpenCodeProvider> {
-  const provider = new OpenCodeProvider(workspacePath, SILENT_LOGGER, asSdkFactory(sdkFactory));
-  await provider.connect(port);
-  await provider.fetchStatus();
-  return provider;
-}
 
 /**
  * Create a mock HttpClient with vitest spies.
@@ -68,13 +45,11 @@ function createTestPathProvider(): PathProvider {
 
 describe("OpenCodeServerManager integration", () => {
   let serverManager: OpenCodeServerManager;
-  let agentStatusManager: AgentStatusManager;
   let mockProcessRunner: MockProcessRunner;
   let mockPortManager: MockPortManager;
   let mockHttpClient: ReturnType<typeof createTestHttpClient>;
   let mockPathProvider: PathProvider;
   let processCount: number;
-  let mockSdkFactory: SdkClientFactory;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -101,16 +76,10 @@ describe("OpenCodeServerManager integration", () => {
       mockPathProvider,
       SILENT_LOGGER
     );
-
-    // Create AgentStatusManager with mock SDK
-    const mockSdk = createSdkClientMock();
-    mockSdkFactory = createSdkFactoryMock(mockSdk);
-    agentStatusManager = new AgentStatusManager(SILENT_LOGGER, asSdkFactory(mockSdkFactory));
   });
 
   afterEach(async () => {
     await serverManager.dispose();
-    agentStatusManager.dispose();
   });
 
   describe("callback wiring", () => {
@@ -137,23 +106,20 @@ describe("OpenCodeServerManager integration", () => {
       expect(stoppedCallback).toHaveBeenCalledWith("/workspace/feature-a", false);
     });
 
-    it("AgentStatusManager receives stop event via callback wiring", async () => {
-      // Wire callbacks like AgentModule does
+    it("onServerStopped callback receives correct workspace path", async () => {
+      const receivedPaths: string[] = [];
       serverManager.onServerStopped((path) => {
-        agentStatusManager.removeWorkspace(path as WorkspacePath);
+        receivedPaths.push(path);
       });
 
-      // Initialize workspace directly (simulating start callback with provider creation)
-      const provider = await createAndInitializeProvider(14001, mockSdkFactory);
-      agentStatusManager.addProvider("/workspace/feature-a" as WorkspacePath, provider);
-
-      // Start and stop server (stop triggers the callback)
+      // Start and stop two servers
       await serverManager.startServer("/workspace/feature-a");
+      await serverManager.startServer("/workspace/feature-b");
       await serverManager.stopServer("/workspace/feature-a");
+      await serverManager.stopServer("/workspace/feature-b");
 
-      // AgentStatusManager should report "none" status after removal
-      const status = agentStatusManager.getStatus("/workspace/feature-a" as WorkspacePath);
-      expect(status.status).toBe("none");
+      // Both paths should have been received in order
+      expect(receivedPaths).toEqual(["/workspace/feature-a", "/workspace/feature-b"]);
     });
   });
 

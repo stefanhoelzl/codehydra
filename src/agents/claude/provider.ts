@@ -8,7 +8,7 @@
  *
  * The provider bridges between:
  * - ServerManager (receives hook notifications, tracks status)
- * - AgentStatusManager (aggregates status across workspaces)
+ * - AgentModule (aggregates status across workspaces)
  */
 
 import type { AgentProvider, AgentSessionInfo, AgentStatus } from "../types";

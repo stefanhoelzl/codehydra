@@ -54,7 +54,7 @@ export type LoggerName =
   | "config" // ConfigService - application config
   | "telemetry" // PosthogModule - PostHog analytics
   | "updater" // AutoUpdater - auto-update service
-  | "agent" // AgentServerManager / AgentStatusManager - agent lifecycle
+  | "agent" // AgentServerManager - agent lifecycle
   | "shortcut" // ShortcutController - keyboard shortcut detection
   | "dispatcher" // Dispatcher - intent dispatch pipeline
   | "auto-workspace" // AutoWorkspaceModule - auto-workspace orchestrator

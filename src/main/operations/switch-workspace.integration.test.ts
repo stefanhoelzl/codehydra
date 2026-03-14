@@ -332,9 +332,6 @@ function createTestSetup(opts?: {
       sendToUI,
       logger: SILENT_LOGGER,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-      agentStatusManager: {
-        getStatus: vi.fn(),
-      } as unknown as IpcEventBridgeDeps["agentStatusManager"],
     });
     modules.push(ipcEventBridge);
   }

@@ -44,6 +44,7 @@ import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import type { RestartAgentHookResult } from "../operations/restart-agent";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
+import { INTENT_UPDATE_AGENT_STATUS } from "../operations/update-agent-status";
 import { createOpenCodeAgentModule, type OpenCodeAgentModuleDeps } from "./opencode-agent-module";
 import { SILENT_LOGGER } from "../../services/logging";
 
@@ -61,6 +62,7 @@ function createMockProvider() {
     setBridgePort: vi.fn(),
     onStatusChange: vi.fn().mockReturnValue(vi.fn()),
     getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "sess-1" }),
+    getEffectiveCounts: vi.fn().mockReturnValue({ idle: 1, busy: 0 }),
     markActive: vi.fn(),
     disconnect: vi.fn(),
     reconnect: vi.fn().mockResolvedValue(undefined),
@@ -81,6 +83,7 @@ vi.mock("../../agents/opencode/provider", () => {
       setBridgePort: ReturnType<typeof vi.fn>;
       onStatusChange: ReturnType<typeof vi.fn>;
       getSession: ReturnType<typeof vi.fn>;
+      getEffectiveCounts: ReturnType<typeof vi.fn>;
       markActive: ReturnType<typeof vi.fn>;
       disconnect: ReturnType<typeof vi.fn>;
       reconnect: ReturnType<typeof vi.fn>;
@@ -95,6 +98,7 @@ vi.mock("../../agents/opencode/provider", () => {
         this.setBridgePort = mockProviderInstance.setBridgePort;
         this.onStatusChange = mockProviderInstance.onStatusChange;
         this.getSession = mockProviderInstance.getSession;
+        this.getEffectiveCounts = mockProviderInstance.getEffectiveCounts;
         this.markActive = mockProviderInstance.markActive;
         this.disconnect = mockProviderInstance.disconnect;
         this.reconnect = mockProviderInstance.reconnect;
@@ -109,8 +113,16 @@ vi.mock("../../agents/opencode/provider", () => {
 // =============================================================================
 
 function createMockOpenCodeServerManager() {
-  return {
-    startServer: vi.fn().mockResolvedValue(8080),
+  const mgr = {
+    startServer: vi.fn().mockImplementation(async (workspacePath: string) => {
+      // Trigger the onServerStarted callback if registered, simulating real behavior.
+      const onStartedCall = mgr.onServerStarted.mock.calls[0];
+      if (onStartedCall) {
+        const cb = onStartedCall[0] as (wp: string, port: number, pendingPrompt: unknown) => void;
+        cb(workspacePath, 8080, undefined);
+      }
+      return 8080;
+    }),
     stopServer: vi.fn().mockResolvedValue({ success: true }),
     restartServer: vi.fn().mockResolvedValue({ success: true, port: 8081 }),
     isRunning: vi.fn().mockReturnValue(true),
@@ -126,27 +138,7 @@ function createMockOpenCodeServerManager() {
     consumePendingPrompt: vi.fn(),
     onWorkspaceReady: vi.fn().mockReturnValue(vi.fn()),
   };
-}
-
-function createMockAgentStatusManager() {
-  return {
-    onStatusChanged: vi.fn().mockReturnValue(vi.fn()),
-    getStatus: vi.fn().mockReturnValue({ status: "idle", counts: { idle: 1, busy: 0 } }),
-    getSession: vi.fn().mockReturnValue({ port: 8080, sessionId: "sess-1" }),
-    getProvider: vi.fn().mockReturnValue({
-      getEnvironmentVariables: () => ({ _CH_OPENCODE_PORT: "8080" }),
-    }),
-    hasProvider: vi.fn().mockReturnValue(false),
-    markActive: vi.fn(),
-    clearTuiTracking: vi.fn(),
-    dispose: vi.fn(),
-    getLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
-    getSdkFactory: vi.fn().mockReturnValue(undefined),
-    addProvider: vi.fn(),
-    removeWorkspace: vi.fn(),
-    disconnectWorkspace: vi.fn(),
-    reconnectWorkspace: vi.fn().mockResolvedValue(undefined),
-  };
+  return mgr;
 }
 
 function createMockAgentBinaryManager() {
@@ -331,7 +323,6 @@ interface TestSetup {
   dispatcher: Dispatcher;
   hookRegistry: HookRegistry;
   serverManager: ReturnType<typeof createMockOpenCodeServerManager>;
-  agentStatusManager: ReturnType<typeof createMockAgentStatusManager>;
   agentBinaryManager: ReturnType<typeof createMockAgentBinaryManager>;
   module: IntentModule;
 }
@@ -341,29 +332,33 @@ function createTestSetup(): TestSetup {
   const dispatcher = new Dispatcher(hookRegistry);
 
   const serverManager = createMockOpenCodeServerManager();
-  const agentStatusManager = createMockAgentStatusManager();
   const agentBinaryManager = createMockAgentBinaryManager();
 
   const module = createOpenCodeAgentModule({
     agentBinaryManager:
       agentBinaryManager as unknown as OpenCodeAgentModuleDeps["agentBinaryManager"],
     serverManager: serverManager as unknown as OpenCodeAgentModuleDeps["serverManager"],
-    agentStatusManager:
-      agentStatusManager as unknown as OpenCodeAgentModuleDeps["agentStatusManager"],
     dispatcher: dispatcher as unknown as OpenCodeAgentModuleDeps["dispatcher"],
     logger: SILENT_LOGGER,
     loggingService: {
       createLogger: vi.fn().mockReturnValue(SILENT_LOGGER),
     } as unknown as OpenCodeAgentModuleDeps["loggingService"],
+    providerLogger: SILENT_LOGGER,
   });
 
   dispatcher.registerModule(module);
+
+  // Register a no-op operation for agent:update-status so dispatches from
+  // handleStatusUpdate (triggered by addProvider) don't cause unhandled rejections.
+  dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, {
+    id: "update-agent-status" as const,
+    async execute() {},
+  });
 
   return {
     dispatcher,
     hookRegistry,
     serverManager,
-    agentStatusManager,
     agentBinaryManager,
     module,
   };
@@ -502,9 +497,6 @@ describe("OpenCodeAgentModule Integration", () => {
       expect(setup.serverManager.setMarkActiveHandler).toHaveBeenCalled();
       expect(setup.serverManager.onServerStarted).toHaveBeenCalled();
       expect(setup.serverManager.onServerStopped).toHaveBeenCalled();
-
-      // Should subscribe to status changes
-      expect(setup.agentStatusManager.onStatusChanged).toHaveBeenCalled();
     });
 
     it("activates when agent is explicitly opencode", async () => {
@@ -523,7 +515,6 @@ describe("OpenCodeAgentModule Integration", () => {
       expect(setup.serverManager.setMarkActiveHandler).not.toHaveBeenCalled();
       expect(setup.serverManager.onServerStarted).not.toHaveBeenCalled();
       expect(setup.serverManager.onServerStopped).not.toHaveBeenCalled();
-      expect(setup.agentStatusManager.onStatusChanged).not.toHaveBeenCalled();
     });
   });
 
@@ -761,7 +752,6 @@ describe("OpenCodeAgentModule Integration", () => {
       } as DeleteWorkspaceIntent)) as ShutdownHookResult | undefined;
 
       expect(setup.serverManager.stopServer).toHaveBeenCalledWith(wsPath);
-      expect(setup.agentStatusManager.clearTuiTracking).toHaveBeenCalled();
       expect(result).toBeDefined();
       expect(result!.serverName).toBe("OpenCode");
     });
@@ -797,7 +787,7 @@ describe("OpenCodeAgentModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("get-status", () => {
-    it("returns status when active", async () => {
+    it("returns none status when no provider exists", async () => {
       const setup = createTestSetup();
       await activateModule(setup, null);
 
@@ -817,7 +807,7 @@ describe("OpenCodeAgentModule Integration", () => {
       })) as GetStatusHookResult | undefined;
 
       expect(result).toBeDefined();
-      expect(result!.agentStatus).toEqual({ status: "idle", counts: { idle: 1, busy: 0 } });
+      expect(result!.agentStatus).toEqual({ status: "none", counts: { idle: 0, busy: 0 } });
     });
   });
 
@@ -826,7 +816,7 @@ describe("OpenCodeAgentModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("get-session", () => {
-    it("returns session when active", async () => {
+    it("returns null session when no provider exists", async () => {
       const setup = createTestSetup();
       await activateModule(setup, null);
 
@@ -846,7 +836,7 @@ describe("OpenCodeAgentModule Integration", () => {
       })) as GetAgentSessionHookResult | undefined;
 
       expect(result).toBeDefined();
-      expect(result!.session).toEqual({ port: 8080, sessionId: "sess-1" });
+      expect(result!.session).toBeNull();
     });
   });
 
@@ -988,9 +978,22 @@ describe("OpenCodeAgentModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("stop", () => {
-    it("disposes server manager and status manager when active", async () => {
+    it("disposes server manager and providers when active", async () => {
       const setup = createTestSetup();
       await activateModule(setup, null);
+
+      // Simulate a provider being added via onServerStarted
+      const onServerStartedCall = setup.serverManager.onServerStarted.mock.calls[0]!;
+      const callback = onServerStartedCall[0] as (
+        wp: string,
+        port: number,
+        pendingPrompt: unknown
+      ) => void;
+      callback("/test/ws", 8080, undefined);
+
+      await vi.waitFor(() => {
+        expect(mockProviderInstance.connect).toHaveBeenCalled();
+      });
 
       // Need a quit hook module to avoid errors in AppShutdownOperation
       const quitModule: IntentModule = {
@@ -1010,10 +1013,10 @@ describe("OpenCodeAgentModule Integration", () => {
       } as AppShutdownIntent);
 
       expect(setup.serverManager.dispose).toHaveBeenCalled();
-      expect(setup.agentStatusManager.dispose).toHaveBeenCalled();
+      expect(mockProviderInstance.dispose).toHaveBeenCalled();
     });
 
-    it("disposes server manager but not status manager when inactive", async () => {
+    it("disposes server manager but not providers when inactive", async () => {
       const setup = createTestSetup();
       await activateModule(setup, "claude");
 
@@ -1034,7 +1037,7 @@ describe("OpenCodeAgentModule Integration", () => {
       } as AppShutdownIntent);
 
       expect(setup.serverManager.dispose).toHaveBeenCalled();
-      expect(setup.agentStatusManager.dispose).not.toHaveBeenCalled();
+      expect(mockProviderInstance.dispose).not.toHaveBeenCalled();
     });
   });
 
@@ -1043,29 +1046,56 @@ describe("OpenCodeAgentModule Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("server callbacks", () => {
-    it("onServerStopped with isRestart=false calls removeWorkspace", async () => {
+    it("onServerStopped with isRestart=false disposes provider", async () => {
       const setup = createTestSetup();
       await activateModule(setup, null);
 
-      // Extract the onServerStopped callback
+      // First add a provider via onServerStarted
+      const onServerStartedCall = setup.serverManager.onServerStarted.mock.calls[0]!;
+      const startCallback = onServerStartedCall[0] as (
+        wp: string,
+        port: number,
+        pendingPrompt: unknown
+      ) => void;
+      startCallback("/test/ws", 8080, undefined);
+
+      // Wait for addProvider to complete (onStatusChange is called during addProvider)
+      await vi.waitFor(() => {
+        expect(mockProviderInstance.onStatusChange).toHaveBeenCalled();
+      });
+
+      // Now trigger server stopped (not a restart)
       const onServerStoppedCall = setup.serverManager.onServerStopped.mock.calls[0]!;
-      const callback = onServerStoppedCall[0] as (wp: string, isRestart: boolean) => void;
+      const stopCallback = onServerStoppedCall[0] as (wp: string, isRestart: boolean) => void;
+      stopCallback("/test/ws", false);
 
-      callback("/test/ws", false);
-
-      expect(setup.agentStatusManager.removeWorkspace).toHaveBeenCalledWith("/test/ws");
+      expect(mockProviderInstance.dispose).toHaveBeenCalled();
     });
 
-    it("onServerStopped with isRestart=true calls disconnectWorkspace", async () => {
+    it("onServerStopped with isRestart=true disconnects provider", async () => {
       const setup = createTestSetup();
       await activateModule(setup, null);
 
+      // First add a provider via onServerStarted
+      const onServerStartedCall = setup.serverManager.onServerStarted.mock.calls[0]!;
+      const startCallback = onServerStartedCall[0] as (
+        wp: string,
+        port: number,
+        pendingPrompt: unknown
+      ) => void;
+      startCallback("/test/ws", 8080, undefined);
+
+      // Wait for addProvider to complete (onStatusChange is called during addProvider)
+      await vi.waitFor(() => {
+        expect(mockProviderInstance.onStatusChange).toHaveBeenCalled();
+      });
+
+      // Now trigger server stopped (restart)
       const onServerStoppedCall = setup.serverManager.onServerStopped.mock.calls[0]!;
-      const callback = onServerStoppedCall[0] as (wp: string, isRestart: boolean) => void;
+      const stopCallback = onServerStoppedCall[0] as (wp: string, isRestart: boolean) => void;
+      stopCallback("/test/ws", true);
 
-      callback("/test/ws", true);
-
-      expect(setup.agentStatusManager.disconnectWorkspace).toHaveBeenCalledWith("/test/ws");
+      expect(mockProviderInstance.disconnect).toHaveBeenCalled();
     });
 
     it("onServerStarted creates provider and connects", async () => {
@@ -1082,9 +1112,9 @@ describe("OpenCodeAgentModule Integration", () => {
 
       callback("/test/ws", 8080, undefined);
 
-      // Wait for async handleServerStarted to fully complete (addProvider is the last step)
+      // Wait for async handleServerStarted to fully complete
       await vi.waitFor(() => {
-        expect(setup.agentStatusManager.addProvider).toHaveBeenCalled();
+        expect(mockProviderInstance.onStatusChange).toHaveBeenCalled();
       });
 
       expect(mockProviderInstance.connect).toHaveBeenCalledWith(8080);
@@ -1094,7 +1124,6 @@ describe("OpenCodeAgentModule Integration", () => {
 
     it("onServerStarted reconnects when provider already exists", async () => {
       const setup = createTestSetup();
-      (setup.agentStatusManager.hasProvider as ReturnType<typeof vi.fn>).mockReturnValue(true);
       await activateModule(setup, null);
 
       const onServerStartedCall = setup.serverManager.onServerStarted.mock.calls[0]!;
@@ -1104,14 +1133,21 @@ describe("OpenCodeAgentModule Integration", () => {
         pendingPrompt: unknown
       ) => void;
 
+      // First start: creates provider
       callback("/test/ws", 8080, undefined);
-
       await vi.waitFor(() => {
-        expect(setup.agentStatusManager.reconnectWorkspace).toHaveBeenCalledWith("/test/ws");
+        expect(mockProviderInstance.onStatusChange).toHaveBeenCalled();
       });
 
-      // Should NOT create a new provider
-      expect(mockProviderInstance.connect).not.toHaveBeenCalled();
+      // Second start: should reconnect existing provider instead of creating new one
+      callback("/test/ws", 8081, undefined);
+
+      await vi.waitFor(() => {
+        expect(mockProviderInstance.reconnect).toHaveBeenCalled();
+      });
+
+      // connect should only have been called once (the first time)
+      expect(mockProviderInstance.connect).toHaveBeenCalledTimes(1);
     });
 
     it("onServerStarted sends pending prompt when provided", async () => {

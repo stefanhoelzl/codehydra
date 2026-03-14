@@ -22,7 +22,6 @@ import type {
   UiSwitchWorkspacePayload,
   UiSetModePayload,
   SetupErrorPayload,
-  WorkspacePath,
 } from "../../shared/ipc";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { Logger } from "../../services/logging";
@@ -103,9 +102,6 @@ export interface IpcEventBridgeDeps {
   readonly sendToUI: (channel: string, ...args: unknown[]) => void;
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
-  readonly agentStatusManager: {
-    getStatus(wp: WorkspacePath): { status: string } | undefined;
-  };
 }
 
 /**

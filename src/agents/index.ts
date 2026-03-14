@@ -40,9 +40,6 @@ export type {
   RestartServerResult,
 } from "./types";
 
-// Re-export status manager
-export { AgentStatusManager, type StatusChangedCallback } from "./status-manager";
-
 /**
  * Dependencies for creating AgentSetupInfo instances.
  */

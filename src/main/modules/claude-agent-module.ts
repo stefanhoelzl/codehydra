@@ -22,7 +22,7 @@ import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import type { LoggingService } from "../../services/logging";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Unsubscribe } from "../../shared/api/interfaces";
-import type { AgentStatusManager } from "../../agents";
+import type { AgentProvider, AgentStatus } from "../../agents/types";
 import type {
   CheckDepsHookContext,
   CheckDepsResult,
@@ -75,10 +75,10 @@ import { ClaudeCodeProvider } from "../../agents/claude/provider";
 export interface ClaudeAgentModuleDeps {
   readonly agentBinaryManager: AgentBinaryManager;
   readonly serverManager: ClaudeCodeServerManager;
-  readonly agentStatusManager: AgentStatusManager;
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
   readonly loggingService: LoggingService;
+  readonly providerLogger: Logger;
 }
 
 // =============================================================================
@@ -104,12 +104,110 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
   /** Tracks pending handleServerStarted() promises for waitForProvider(). */
   const serverStartedPromises = new Map<string, Promise<void>>();
 
-  /** Cleanup function for agentStatusManager.onStatusChanged subscription. */
-  let statusUnsubscribeFn: Unsubscribe | null = null;
-
   /** Cleanup functions for onServerStarted/onServerStopped callbacks. */
   let serverStartedCleanupFn: Unsubscribe | null = null;
   let serverStoppedCleanupFn: Unsubscribe | null = null;
+
+  /** Per-workspace provider instances. */
+  const providers = new Map<WorkspacePath, AgentProvider>();
+
+  /** Cached aggregated status per workspace (for deduplication and queries). */
+  const statusCache = new Map<WorkspacePath, AggregatedAgentStatus>();
+
+  /**
+   * Track workspaces that have had TUI attached.
+   * Persists across provider recreations (e.g., server restart) so we can
+   * restore the attached state without waiting for a new MCP request.
+   */
+  const tuiAttachedWorkspaces = new Set<WorkspacePath>();
+
+  // =========================================================================
+  // Provider management helpers
+  // =========================================================================
+
+  function createNoneStatus(): AggregatedAgentStatus {
+    return { status: "none", counts: { idle: 0, busy: 0 } };
+  }
+
+  function convertToAggregatedStatus(status: AgentStatus): AggregatedAgentStatus {
+    switch (status) {
+      case "none":
+        return { status: "none", counts: { idle: 0, busy: 0 } };
+      case "idle":
+        return { status: "idle", counts: { idle: 1, busy: 0 } };
+      case "busy":
+        return { status: "busy", counts: { idle: 0, busy: 1 } };
+    }
+  }
+
+  function handleStatusUpdate(path: WorkspacePath, agentStatus: AgentStatus): void {
+    const status = convertToAggregatedStatus(agentStatus);
+    const previous = statusCache.get(path);
+    const hasChanged =
+      !previous ||
+      previous.status !== status.status ||
+      previous.counts.idle !== status.counts.idle ||
+      previous.counts.busy !== status.counts.busy;
+
+    if (hasChanged) {
+      statusCache.set(path, status);
+      void deps.dispatcher.dispatch({
+        type: INTENT_UPDATE_AGENT_STATUS,
+        payload: { workspacePath: path, status },
+      } as UpdateAgentStatusIntent);
+    }
+  }
+
+  function addProvider(path: WorkspacePath, provider: AgentProvider): void {
+    if (providers.has(path)) return;
+
+    provider.onStatusChange((status) => handleStatusUpdate(path, status));
+
+    if (tuiAttachedWorkspaces.has(path)) {
+      provider.markActive();
+    }
+
+    providers.set(path, provider);
+    // ClaudeCodeProvider: initial status is "none" (status comes via onStatusChange from ServerManager)
+    handleStatusUpdate(path, "none");
+  }
+
+  function removeProvider(path: WorkspacePath): void {
+    const provider = providers.get(path);
+    if (provider) {
+      provider.dispose();
+      providers.delete(path);
+      statusCache.delete(path);
+      void deps.dispatcher.dispatch({
+        type: INTENT_UPDATE_AGENT_STATUS,
+        payload: { workspacePath: path, status: createNoneStatus() },
+      } as UpdateAgentStatusIntent);
+    }
+  }
+
+  function disconnectProvider(path: WorkspacePath): void {
+    const provider = providers.get(path);
+    if (provider) {
+      provider.disconnect();
+    }
+  }
+
+  async function reconnectProvider(path: WorkspacePath): Promise<void> {
+    const provider = providers.get(path);
+    if (provider) {
+      await provider.reconnect();
+      // ClaudeCodeProvider: status comes via onStatusChange, initial reconnect status is "none"
+      handleStatusUpdate(path, "none");
+    }
+  }
+
+  function markProviderActive(path: WorkspacePath): void {
+    tuiAttachedWorkspaces.add(path);
+    const provider = providers.get(path);
+    if (provider) {
+      provider.markActive();
+    }
+  }
 
   // =========================================================================
   // Internal functions
@@ -124,12 +222,10 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
 
   async function handleServerStarted(workspacePath: WorkspacePath, port: number): Promise<void> {
     try {
-      const agentStatusManager = deps.agentStatusManager;
-
       // Check if this is a restart (provider already exists from disconnect)
-      if (agentStatusManager.hasProvider(workspacePath)) {
+      if (providers.has(workspacePath)) {
         try {
-          await agentStatusManager.reconnectWorkspace(workspacePath);
+          await reconnectProvider(workspacePath);
           logger.info("Reconnected agent provider after restart", {
             workspacePath,
             port,
@@ -149,12 +245,12 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
       const provider = new ClaudeCodeProvider({
         serverManager,
         workspacePath,
-        logger: agentStatusManager.getLogger(),
+        logger: deps.providerLogger,
       });
 
       try {
         await provider.connect(port);
-        agentStatusManager.addProvider(workspacePath, provider);
+        addProvider(workspacePath, provider);
       } catch (error) {
         logger.error(
           "Failed to initialize agent provider",
@@ -168,9 +264,7 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
   }
 
   function wireServerCallbacks(): void {
-    const agentStatusManager = deps.agentStatusManager;
-
-    serverManager.setMarkActiveHandler((wp) => agentStatusManager.markActive(wp as WorkspacePath));
+    serverManager.setMarkActiveHandler((wp) => markProviderActive(wp as WorkspacePath));
 
     serverStartedCleanupFn = serverManager.onServerStarted((workspacePath, port) => {
       const promise = handleServerStarted(workspacePath as WorkspacePath, port);
@@ -179,9 +273,9 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
 
     serverStoppedCleanupFn = serverManager.onServerStopped((workspacePath, isRestart) => {
       if (isRestart) {
-        agentStatusManager.disconnectWorkspace(workspacePath as WorkspacePath);
+        disconnectProvider(workspacePath as WorkspacePath);
       } else {
-        agentStatusManager.removeWorkspace(workspacePath as WorkspacePath);
+        removeProvider(workspacePath as WorkspacePath);
       }
     });
   }
@@ -242,15 +336,6 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
 
             wireServerCallbacks();
 
-            statusUnsubscribeFn = deps.agentStatusManager.onStatusChanged(
-              (workspacePath: WorkspacePath, status: AggregatedAgentStatus) => {
-                void deps.dispatcher.dispatch({
-                  type: INTENT_UPDATE_AGENT_STATUS,
-                  payload: { workspacePath, status },
-                } as UpdateAgentStatusIntent);
-              }
-            );
-
             const mcpPort = ctx.capabilities?.mcpPort as number | null;
             if (mcpPort !== null) {
               serverManager.setMcpConfig({ port: mcpPort });
@@ -273,13 +358,13 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
 
             await serverManager.dispose();
 
-            if (statusUnsubscribeFn) {
-              statusUnsubscribeFn();
-              statusUnsubscribeFn = null;
-            }
-
             if (active) {
-              deps.agentStatusManager.dispose();
+              for (const provider of providers.values()) {
+                provider.dispose();
+              }
+              providers.clear();
+              statusCache.clear();
+              tuiAttachedWorkspaces.clear();
             }
           },
         },
@@ -377,11 +462,8 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
               await serverManager.setNoSessionMarker(workspacePath);
             }
 
-            const agentProvider = deps.agentStatusManager.getProvider(
-              workspacePath as WorkspacePath
-            );
             const envVars: Record<string, string> = {
-              ...(agentProvider?.getEnvironmentVariables() ?? {}),
+              ...(providers.get(workspacePath as WorkspacePath)?.getEnvironmentVariables() ?? {}),
             };
 
             capAgentType = "claude";
@@ -408,7 +490,7 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
                 }
               }
 
-              deps.agentStatusManager.clearTuiTracking(workspacePath as WorkspacePath);
+              tuiAttachedWorkspaces.delete(workspacePath as WorkspacePath);
 
               return serverError
                 ? { serverName: "Claude Code hook", error: serverError }
@@ -432,7 +514,7 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
             if (!active) return undefined;
             const { workspacePath } = ctx as GetStatusHookInput;
             return {
-              agentStatus: deps.agentStatusManager.getStatus(workspacePath as WorkspacePath),
+              agentStatus: statusCache.get(workspacePath as WorkspacePath) ?? createNoneStatus(),
             };
           },
         },
@@ -443,8 +525,7 @@ export function createClaudeAgentModule(deps: ClaudeAgentModuleDeps): IntentModu
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult | undefined> => {
             if (!active) return undefined;
             const { workspacePath } = ctx as GetAgentSessionHookInput;
-            const session =
-              deps.agentStatusManager.getSession(workspacePath as WorkspacePath) ?? null;
+            const session = providers.get(workspacePath as WorkspacePath)?.getSession() ?? null;
             return { session };
           },
         },
