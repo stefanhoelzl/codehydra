@@ -4,8 +4,6 @@
  * Subscribes to shortcut:key-pressed domain event and handles:
  * - "d": Toggle UI DevTools
  * - "w": Toggle active workspace DevTools
- *
- * Only created when isDevelopment is true (guarded in bootstrap).
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -40,24 +38,27 @@ function toggleDevTools(
 export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
   return {
     name: "devtools",
+    requires: { development: true },
     events: {
-      [EVENT_SHORTCUT_KEY_PRESSED]: (event: DomainEvent) => {
-        const { key } = (event as ShortcutKeyPressedEvent).payload;
+      [EVENT_SHORTCUT_KEY_PRESSED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { key } = (event as ShortcutKeyPressedEvent).payload;
 
-        if (key === "d") {
-          toggleDevTools(deps.viewLayer, deps.viewManager.getUIViewHandle());
-          return;
-        }
+          if (key === "d") {
+            toggleDevTools(deps.viewLayer, deps.viewManager.getUIViewHandle());
+            return;
+          }
 
-        if (key === "w") {
-          const activePath = deps.viewManager.getActiveWorkspacePath();
-          if (activePath) {
-            const wsHandle = deps.viewManager.getWorkspaceView(activePath);
-            if (wsHandle) {
-              toggleDevTools(deps.viewLayer, wsHandle);
+          if (key === "w") {
+            const activePath = deps.viewManager.getActiveWorkspacePath();
+            if (activePath) {
+              const wsHandle = deps.viewManager.getWorkspaceView(activePath);
+              if (wsHandle) {
+                toggleDevTools(deps.viewLayer, wsHandle);
+              }
             }
           }
-        }
+        },
       },
     },
   };

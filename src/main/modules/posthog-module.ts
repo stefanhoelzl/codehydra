@@ -313,44 +313,50 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
       },
     },
     events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const { reopened } = (event as WorkspaceCreatedEvent).payload;
-        if (!reopened) {
-          capture("workspace_created", eventProperties());
-        }
-      },
-      [EVENT_APP_RESUMED]: () => {
-        capture("app_resume", eventProperties());
-      },
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = (event as ConfigUpdatedEvent).payload;
-
-        if (values.agent !== undefined) {
-          configuredAgent = values.agent as ConfigAgentType;
-        }
-
-        if (values["telemetry.enabled"] !== undefined) {
-          telemetryEnabled = values["telemetry.enabled"] as boolean;
-        }
-
-        const rawDistinctId = values["telemetry.distinct-id"];
-        if (typeof rawDistinctId === "string") {
-          distinctId = rawDistinctId;
-        }
-
-        // Configure PostHog client when relevant values arrive
-        if (telemetryEnabled !== undefined) {
-          configure({
-            enabled: telemetryEnabled,
-            distinctId: distinctId ?? undefined,
-            agent: configuredAgent ?? undefined,
-          });
-
-          // Register error handlers when telemetry is enabled
-          if (telemetryEnabled) {
-            registerErrorHandlers();
+      [EVENT_WORKSPACE_CREATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { reopened } = (event as WorkspaceCreatedEvent).payload;
+          if (!reopened) {
+            capture("workspace_created", eventProperties());
           }
-        }
+        },
+      },
+      [EVENT_APP_RESUMED]: {
+        handler: async (): Promise<void> => {
+          capture("app_resume", eventProperties());
+        },
+      },
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = (event as ConfigUpdatedEvent).payload;
+
+          if (values.agent !== undefined) {
+            configuredAgent = values.agent as ConfigAgentType;
+          }
+
+          if (values["telemetry.enabled"] !== undefined) {
+            telemetryEnabled = values["telemetry.enabled"] as boolean;
+          }
+
+          const rawDistinctId = values["telemetry.distinct-id"];
+          if (typeof rawDistinctId === "string") {
+            distinctId = rawDistinctId;
+          }
+
+          // Configure PostHog client when relevant values arrive
+          if (telemetryEnabled !== undefined) {
+            configure({
+              enabled: telemetryEnabled,
+              distinctId: distinctId ?? undefined,
+              agent: configuredAgent ?? undefined,
+            });
+
+            // Register error handlers when telemetry is enabled
+            if (telemetryEnabled) {
+              registerErrorHandlers();
+            }
+          }
+        },
       },
     },
   };

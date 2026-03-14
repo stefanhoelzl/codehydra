@@ -21,10 +21,20 @@ import type { IntentInterceptor } from "./dispatcher";
 export type HookDeclarations = Readonly<Record<string, Readonly<Record<string, HookHandler>>>>;
 
 /**
- * Event declarations: eventType → handler function.
- * Each module subscribes to domain events by type.
+ * A handler registered for a domain event type.
+ * Mirrors HookHandler: supports `requires` for capability-based gating.
  */
-export type EventDeclarations = Readonly<Record<string, (event: DomainEvent) => void>>;
+export interface EventHandler {
+  readonly handler: (event: DomainEvent) => Promise<void>;
+  /** Capabilities this handler requires. Checked against initial capabilities at emit time. */
+  readonly requires?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Event declarations: eventType → EventHandler.
+ * Each module contributes handlers for domain events.
+ */
+export type EventDeclarations = Readonly<Record<string, EventHandler>>;
 
 // =============================================================================
 // IntentModule Interface
@@ -37,7 +47,7 @@ export type EventDeclarations = Readonly<Record<string, (event: DomainEvent) => 
 export interface IntentModule {
   /** Human-readable module name for logging and diagnostics. */
   readonly name: string;
-  /** Capabilities every hook in this module requires. Merged into each hook's `requires` at registration (hook-level overrides on conflict). */
+  /** Capabilities every handler in this module requires. Merged into each hook and event handler's `requires` at registration (handler-level overrides on conflict). */
   readonly requires?: Readonly<Record<string, unknown>>;
   /** Hook contributions: operationId → hookPointId → HookHandler */
   readonly hooks?: HookDeclarations;

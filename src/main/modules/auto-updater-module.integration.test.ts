@@ -286,15 +286,15 @@ function createTestSetup(overrides?: { disposeThrows?: Error; checkReturns?: boo
   };
 }
 
-function simulateConfigUpdated(
+async function simulateConfigUpdated(
   module: IntentModule,
   values: Readonly<Record<string, unknown>>
-): void {
+): Promise<void> {
   const event: ConfigUpdatedEvent = {
     type: EVENT_CONFIG_UPDATED,
     payload: { values },
   };
-  module.events![EVENT_CONFIG_UPDATED]!(event as DomainEvent);
+  await module.events![EVENT_CONFIG_UPDATED]!.handler(event as DomainEvent);
 }
 
 function startIntent(): AppStartIntent {
@@ -355,7 +355,7 @@ describe("AutoUpdaterModule Integration", () => {
   it("auto-update=never skips autoUpdater via interceptor", async () => {
     const { dispatcher, module } = createTestSetup();
 
-    simulateConfigUpdated(module, { "auto-update": "never" });
+    await simulateConfigUpdated(module, { "auto-update": "never" });
 
     // The interceptor should reject the app:update intent
     const handle = dispatcher.dispatch({
@@ -383,7 +383,7 @@ describe("AutoUpdaterModule Integration", () => {
   it("auto-update=never still calls dispose() on shutdown", async () => {
     const { dispatcher, autoUpdater, module } = createTestSetup();
 
-    simulateConfigUpdated(module, { "auto-update": "never" });
+    await simulateConfigUpdated(module, { "auto-update": "never" });
 
     await dispatcher.dispatch(startIntent());
     await dispatcher.dispatch(shutdownIntent());

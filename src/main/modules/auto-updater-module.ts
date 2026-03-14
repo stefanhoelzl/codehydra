@@ -218,11 +218,13 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       },
     },
     events: {
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = event.payload as ConfigUpdatedPayload;
-        if (values["auto-update"] !== undefined) {
-          autoUpdate = values["auto-update"] as AutoUpdatePreference;
-        }
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = event.payload as ConfigUpdatedPayload;
+          if (values["auto-update"] !== undefined) {
+            autoUpdate = values["auto-update"] as AutoUpdatePreference;
+          }
+        },
       },
     },
   };

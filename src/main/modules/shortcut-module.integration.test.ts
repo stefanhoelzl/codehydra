@@ -270,7 +270,7 @@ describe("ShortcutModule integration", () => {
       const wsHandle = viewManager._wsHandle;
 
       // Call the module's event handler directly (same pattern as devtools-module tests)
-      module.events![EVENT_WORKSPACE_CREATED]!({
+      await module.events![EVENT_WORKSPACE_CREATED]!.handler({
         type: EVENT_WORKSPACE_CREATED,
         payload: { workspacePath: "/test/workspace" },
       } as WorkspaceCreatedEvent);
@@ -573,7 +573,7 @@ describe("ShortcutModule integration", () => {
       const { callbacks, dispatcher, module } = await createHarness();
 
       // Register an extra view via workspace:created event
-      module.events![EVENT_WORKSPACE_CREATED]!({
+      await module.events![EVENT_WORKSPACE_CREATED]!.handler({
         type: EVENT_WORKSPACE_CREATED,
         payload: { workspacePath: "/test/workspace" },
       } as WorkspaceCreatedEvent);

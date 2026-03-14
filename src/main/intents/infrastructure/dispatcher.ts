@@ -2,14 +2,13 @@
  * Dispatcher — single entry point for the intent-operation pipeline.
  *
  * Orchestrates: interceptor pipeline → operation resolution → hook injection → execute → emit events.
- * Events are emitted inline when `ctx.emit()` is called during operation execution.
+ * Events are routed through HookRegistry (same as hooks) for unified capability-based gating.
  *
  * When a Logger is provided, the dispatcher logs:
  * - Intent dispatch start (info)
  * - Interceptor blocks (debug)
  * - Hook point execution with timing, module names, results, errors (debug)
  * - Hook errors (warn)
- * - Event emissions with subscriber names (info)
  * - Intent completion with timing (info)
  * - Intent failure (error)
  */
@@ -22,6 +21,7 @@ import type {
   DispatchFn,
   ResolvedHooks,
   HookContext,
+  HookHandler,
 } from "./operation";
 import type { HookResult } from "./operation";
 import type { IHookRegistry } from "./hook-registry";
@@ -101,15 +101,6 @@ export interface IntentInterceptor {
 }
 
 // =============================================================================
-// Event Handler
-// =============================================================================
-
-/**
- * Handler for domain events emitted by operations.
- */
-export type EventHandler = (event: DomainEvent) => void;
-
-// =============================================================================
 // IDispatcher Interface
 // =============================================================================
 
@@ -121,7 +112,7 @@ export interface IDispatcher {
     intent: I,
     causation?: readonly string[]
   ): IntentHandle<IntentResult<I>>;
-  subscribe(eventType: string, handler: EventHandler): () => void;
+  subscribe(eventType: string, handler: (event: DomainEvent) => void): () => void;
   addInterceptor(interceptor: IntentInterceptor): void;
   registerModule(module: IntentModule): void;
 }
@@ -133,14 +124,10 @@ export interface IDispatcher {
 export class Dispatcher implements IDispatcher {
   private readonly operations = new Map<string, Operation<Intent, unknown>>();
   private readonly interceptors: IntentInterceptor[] = [];
-  private readonly subscribers = new Map<string, Set<EventHandler>>();
   private readonly causationContext = new AsyncLocalStorage<readonly string[]>();
 
   /** operationId → hookPointId → module names[] */
   private readonly hookModuleNames = new Map<string, Map<string, string[]>>();
-
-  /** eventType → module names[] */
-  private readonly eventSubscriberNames = new Map<string, string[]>();
 
   constructor(
     private readonly hookRegistry: IHookRegistry,
@@ -182,9 +169,19 @@ export class Dispatcher implements IDispatcher {
       }
     }
     if (module.events) {
-      for (const [eventType, handler] of Object.entries(module.events)) {
-        this.subscribe(eventType, handler);
-        this.trackEventSubscriber(eventType, module.name);
+      for (const [eventType, eventHandler] of Object.entries(module.events)) {
+        const mergedRequires =
+          module.requires || eventHandler.requires
+            ? { ...module.requires, ...eventHandler.requires }
+            : undefined;
+        const hookHandler: HookHandler = {
+          handler: async (ctx: HookContext): Promise<void> => {
+            await eventHandler.handler(ctx.intent as unknown as DomainEvent);
+          },
+          ...(mergedRequires && { requires: mergedRequires }),
+        };
+        this.hookRegistry.register(`event:${eventType}`, "handle", hookHandler);
+        this.trackHookModule(`event:${eventType}`, "handle", module.name);
         this.logger?.silly("  event", { module: module.name, event: eventType });
       }
     }
@@ -196,15 +193,15 @@ export class Dispatcher implements IDispatcher {
     }
   }
 
-  subscribe(eventType: string, handler: EventHandler): () => void {
-    let handlers = this.subscribers.get(eventType);
-    if (!handlers) {
-      handlers = new Set<EventHandler>();
-      this.subscribers.set(eventType, handlers);
-    }
-    handlers.add(handler);
+  subscribe(eventType: string, handler: (event: DomainEvent) => void): () => void {
+    let active = true;
+    this.hookRegistry.register(`event:${eventType}`, "handle", {
+      handler: async (ctx: HookContext): Promise<void> => {
+        if (active) handler(ctx.intent as unknown as DomainEvent);
+      },
+    });
     return () => {
-      handlers.delete(handler);
+      active = false;
     };
   }
 
@@ -228,15 +225,6 @@ export class Dispatcher implements IDispatcher {
     if (!names) {
       names = [];
       opMap.set(hookPointId, names);
-    }
-    names.push(moduleName);
-  }
-
-  private trackEventSubscriber(eventType: string, moduleName: string): void {
-    let names = this.eventSubscriberNames.get(eventType);
-    if (!names) {
-      names = [];
-      this.eventSubscriberNames.set(eventType, names);
     }
     names.push(moduleName);
   }
@@ -271,6 +259,14 @@ export class Dispatcher implements IDispatcher {
         return result;
       },
     };
+  }
+
+  private async emitEvent(event: DomainEvent): Promise<void> {
+    const eventOpId = `event:${event.type}`;
+    const resolved = this.logger
+      ? this.createLoggedHooks(this.hookRegistry.resolve(eventOpId), eventOpId)
+      : this.hookRegistry.resolve(eventOpId);
+    await resolved.collect("handle", { intent: event as unknown as Intent });
   }
 
   private async runPipeline<I extends Intent>(
@@ -330,21 +326,7 @@ export class Dispatcher implements IDispatcher {
       const ctx: OperationContext<Intent> = {
         intent: current,
         dispatch: nestedDispatch,
-        emit: (event: DomainEvent) => {
-          const handlers = this.subscribers.get(event.type);
-          if (handlers) {
-            if (this.logger) {
-              const names = this.eventSubscriberNames.get(event.type) ?? [];
-              this.logger.info("emit", {
-                event: event.type,
-                subscribers: names.join(","),
-              });
-            }
-            for (const handler of handlers) {
-              handler(event);
-            }
-          }
-        },
+        emit: (event: DomainEvent) => this.emitEvent(event),
         hooks: loggedHooks,
         causation: causationChain,
       };

@@ -337,12 +337,12 @@ function createTestSetup(mockDepsResult?: ReturnType<typeof createMockDeps>) {
  * This calls the module's event handler directly, mirroring what the Dispatcher
  * does when a config:set-values operation emits the config:updated event.
  */
-function simulateConfigUpdated(module: IntentModule, agent: string | null): void {
+async function simulateConfigUpdated(module: IntentModule, agent: string | null): Promise<void> {
   const event: ConfigUpdatedEvent = {
     type: EVENT_CONFIG_UPDATED,
     payload: { values: { agent } as Readonly<Record<string, unknown>> },
   };
-  module.events![EVENT_CONFIG_UPDATED]!(event as DomainEvent);
+  await module.events![EVENT_CONFIG_UPDATED]!.handler(event as DomainEvent);
 }
 
 /**
@@ -350,7 +350,7 @@ function simulateConfigUpdated(module: IntentModule, agent: string | null): void
  * operation to activate the module before testing hooks that require lifecycle state.
  */
 async function activateModule(dispatcher: Dispatcher, module: IntentModule): Promise<void> {
-  simulateConfigUpdated(module, "claude");
+  await simulateConfigUpdated(module, "claude");
   dispatcher.registerOperation("app:start", new MinimalStartOperation());
   await dispatcher.dispatch({ type: "app:start", payload: {} });
 }
@@ -460,7 +460,7 @@ describe("ClaudeAgentModule", () => {
 
     it("does not activate when config:updated event sets agent to opencode", async () => {
       const { dispatcher, mockSM, mockASM, module } = createTestSetup();
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -548,7 +548,7 @@ describe("ClaudeAgentModule", () => {
   describe("start (mcpPort from capabilities)", () => {
     it("calls setMcpConfig when active and mcpPort provided", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      simulateConfigUpdated(module, "claude");
+      await simulateConfigUpdated(module, "claude");
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -558,7 +558,7 @@ describe("ClaudeAgentModule", () => {
 
     it("skips setMcpConfig when mcpPort is null", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      simulateConfigUpdated(module, "claude");
+      await simulateConfigUpdated(module, "claude");
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(null));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -857,7 +857,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -963,7 +963,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1015,7 +1015,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1092,7 +1092,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1171,7 +1171,7 @@ describe("ClaudeAgentModule", () => {
     it("returns undefined when inactive", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1217,7 +1217,7 @@ describe("ClaudeAgentModule", () => {
     it("disposes server manager but not agent status manager when inactive", async () => {
       const { dispatcher, mockSM, mockASM, module } = createTestSetup();
       // Simulate config:updated with opencode so module stays inactive
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
@@ -1257,7 +1257,7 @@ describe("ClaudeAgentModule", () => {
   describe("config:updated event", () => {
     it("sets active=true when agent is claude", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      simulateConfigUpdated(module, "claude");
+      await simulateConfigUpdated(module, "claude");
 
       // Verify the module is now active by running start and checking wiring
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
@@ -1268,7 +1268,7 @@ describe("ClaudeAgentModule", () => {
 
     it("sets active=false when agent is opencode", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      simulateConfigUpdated(module, "opencode");
+      await simulateConfigUpdated(module, "opencode");
 
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
@@ -1278,7 +1278,7 @@ describe("ClaudeAgentModule", () => {
 
     it("defaults to opencode when agent is null", async () => {
       const { dispatcher, mockSM, module } = createTestSetup();
-      simulateConfigUpdated(module, null);
+      await simulateConfigUpdated(module, null);
 
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });

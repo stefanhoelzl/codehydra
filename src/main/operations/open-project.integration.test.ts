@@ -469,11 +469,13 @@ function createTestHarness(options?: {
       },
     },
     events: {
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const { project } = (event as ProjectOpenedEvent).payload;
-        if (project.defaultBaseBranch) {
-          appState.setLastBaseBranch(project.path, project.defaultBaseBranch);
-        }
+      [EVENT_PROJECT_OPENED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { project } = (event as ProjectOpenedEvent).payload;
+          if (project.defaultBaseBranch) {
+            appState.setLastBaseBranch(project.path, project.defaultBaseBranch);
+          }
+        },
       },
     },
   };
@@ -549,14 +551,16 @@ function createTestHarness(options?: {
   const stateModule: IntentModule = {
     name: "test",
     events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        appState.registerWorkspace(payload.projectPath, {
-          path: new Path(payload.workspacePath),
-          name: payload.workspaceName,
-          branch: payload.branch,
-          metadata: payload.metadata,
-        });
+      [EVENT_WORKSPACE_CREATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceCreatedEvent).payload;
+          appState.registerWorkspace(payload.projectPath, {
+            path: new Path(payload.workspacePath),
+            name: payload.workspaceName,
+            branch: payload.branch,
+            metadata: payload.metadata,
+          });
+        },
       },
     },
   };
@@ -565,14 +569,16 @@ function createTestHarness(options?: {
   const viewModule: IntentModule = {
     name: "test",
     events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        viewManager.createWorkspaceView(
-          payload.workspacePath,
-          payload.workspaceUrl,
-          payload.projectPath,
-          true
-        );
+      [EVENT_WORKSPACE_CREATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceCreatedEvent).payload;
+          viewManager.createWorkspaceView(
+            payload.workspacePath,
+            payload.workspaceUrl,
+            payload.projectPath,
+            true
+          );
+        },
       },
     },
   };
@@ -582,12 +588,14 @@ function createTestHarness(options?: {
   const projectViewModule: IntentModule = {
     name: "test",
     events: {
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const payload = (event as ProjectOpenedEvent).payload;
-        const workspaces = payload.project.workspaces;
-        for (let i = 1; i < workspaces.length; i++) {
-          viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
-        }
+      [EVENT_PROJECT_OPENED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as ProjectOpenedEvent).payload;
+          const workspaces = payload.project.workspaces;
+          for (let i = 1; i < workspaces.length; i++) {
+            viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
+          }
+        },
       },
     },
   };

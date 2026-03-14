@@ -1286,42 +1286,42 @@ describe("ViewModule Integration", () => {
   describe("app:resumed event", () => {
     const resumedEvent: AppResumedEvent = { type: EVENT_APP_RESUMED, payload: {} };
 
-    it("calls reloadAllViews when experimental.load-on-resume is true", () => {
+    it("calls reloadAllViews when experimental.load-on-resume is true", async () => {
       const { viewManager, module } = createTestSetup();
 
       // Enable the config via config:updated event
-      module.events![EVENT_CONFIG_UPDATED]!({
+      await module.events![EVENT_CONFIG_UPDATED]!.handler({
         type: EVENT_CONFIG_UPDATED,
         payload: { values: { "experimental.load-on-resume": true } },
       } as ConfigUpdatedEvent);
 
-      module.events![EVENT_APP_RESUMED]!(resumedEvent);
+      await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
 
       expect(viewManager.reloadAllViews).toHaveBeenCalledOnce();
     });
 
-    it("does NOT call reloadAllViews when config is false (default)", () => {
+    it("does NOT call reloadAllViews when config is false (default)", async () => {
       const { viewManager, module } = createTestSetup();
 
-      module.events![EVENT_APP_RESUMED]!(resumedEvent);
+      await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
 
       expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
     });
 
-    it("does NOT call reloadAllViews after config is set back to false", () => {
+    it("does NOT call reloadAllViews after config is set back to false", async () => {
       const { viewManager, module } = createTestSetup();
 
       // Enable then disable
-      module.events![EVENT_CONFIG_UPDATED]!({
+      await module.events![EVENT_CONFIG_UPDATED]!.handler({
         type: EVENT_CONFIG_UPDATED,
         payload: { values: { "experimental.load-on-resume": true } },
       } as ConfigUpdatedEvent);
-      module.events![EVENT_CONFIG_UPDATED]!({
+      await module.events![EVENT_CONFIG_UPDATED]!.handler({
         type: EVENT_CONFIG_UPDATED,
         payload: { values: { "experimental.load-on-resume": false } },
       } as ConfigUpdatedEvent);
 
-      module.events![EVENT_APP_RESUMED]!(resumedEvent);
+      await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
 
       expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
     });

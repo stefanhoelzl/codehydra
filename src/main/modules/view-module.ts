@@ -448,71 +448,83 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       // workspace:created → create view + preload URL
       // -------------------------------------------------------------------
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        viewManager.createWorkspaceView(
-          payload.workspacePath,
-          payload.workspaceUrl,
-          payload.projectPath,
-          true
-        );
-        viewManager.preloadWorkspaceUrl(payload.workspacePath);
+      [EVENT_WORKSPACE_CREATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceCreatedEvent).payload;
+          viewManager.createWorkspaceView(
+            payload.workspacePath,
+            payload.workspaceUrl,
+            payload.projectPath,
+            true
+          );
+          viewManager.preloadWorkspaceUrl(payload.workspacePath);
+        },
       },
 
       // -------------------------------------------------------------------
       // workspace:switched → update cachedActiveRef + handle null (clear)
       // Merged from uiHookModule + switchViewModule event handlers.
       // -------------------------------------------------------------------
-      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
-        if (payload === null) {
-          cachedActiveRef = null;
-          viewManager.setActiveWorkspace(null);
-        } else {
-          cachedActiveRef = {
-            projectId: payload.projectId,
-            workspaceName: payload.workspaceName,
-            path: payload.path,
-          };
-        }
+      [EVENT_WORKSPACE_SWITCHED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceSwitchedEvent).payload;
+          if (payload === null) {
+            cachedActiveRef = null;
+            viewManager.setActiveWorkspace(null);
+          } else {
+            cachedActiveRef = {
+              projectId: payload.projectId,
+              workspaceName: payload.workspaceName,
+              path: payload.path,
+            };
+          }
+        },
       },
 
       // -------------------------------------------------------------------
       // project:opened → preload non-first workspaces
       // -------------------------------------------------------------------
-      [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-        const payload = (event as ProjectOpenedEvent).payload;
-        const workspaces = payload.project.workspaces;
-        for (let i = 1; i < workspaces.length; i++) {
-          viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
-        }
+      [EVENT_PROJECT_OPENED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as ProjectOpenedEvent).payload;
+          const workspaces = payload.project.workspaces;
+          for (let i = 1; i < workspaces.length; i++) {
+            viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
+          }
+        },
       },
 
       // -------------------------------------------------------------------
       // agent:status-updated → clear loading screen (idempotent)
       // -------------------------------------------------------------------
-      [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
-        const payload = (event as AgentStatusUpdatedEvent).payload;
-        viewManager.setWorkspaceLoaded(payload.workspacePath);
+      [EVENT_AGENT_STATUS_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as AgentStatusUpdatedEvent).payload;
+          viewManager.setWorkspaceLoaded(payload.workspacePath);
+        },
       },
 
       // -------------------------------------------------------------------
       // config:updated → track experimental.load-on-resume
       // -------------------------------------------------------------------
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = (event as ConfigUpdatedEvent).payload;
-        if (values["experimental.load-on-resume"] !== undefined) {
-          loadOnResume = values["experimental.load-on-resume"] as boolean;
-        }
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = (event as ConfigUpdatedEvent).payload;
+          if (values["experimental.load-on-resume"] !== undefined) {
+            loadOnResume = values["experimental.load-on-resume"] as boolean;
+          }
+        },
       },
 
       // -------------------------------------------------------------------
       // app:resumed → reload workspace views (gated by config)
       // -------------------------------------------------------------------
-      [EVENT_APP_RESUMED]: () => {
-        if (!loadOnResume) return;
-        logger.info("Reloading workspace views after system resume");
-        viewManager.reloadAllViews();
+      [EVENT_APP_RESUMED]: {
+        handler: async (): Promise<void> => {
+          if (!loadOnResume) return;
+          logger.info("Reloading workspace views after system resume");
+          viewManager.reloadAllViews();
+        },
       },
     },
   };

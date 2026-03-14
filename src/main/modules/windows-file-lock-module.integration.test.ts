@@ -126,7 +126,7 @@ class FlushOperation implements Operation<Intent, FlushHookResult> {
 const SCRIPT_PATH = "/scripts/blocking-processes.ps1";
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
-  const hookRegistry = new HookRegistry();
+  const hookRegistry = new HookRegistry({ platform: "win32" });
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", releaseOperation);
 
@@ -141,7 +141,7 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 }
 
 function createDetectSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
-  const hookRegistry = new HookRegistry();
+  const hookRegistry = new HookRegistry({ platform: "win32" });
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", detectOperation);
 
@@ -160,7 +160,7 @@ function createFlushSetup(
   blockingPids: readonly number[],
   logger = SILENT_LOGGER
 ) {
-  const hookRegistry = new HookRegistry();
+  const hookRegistry = new HookRegistry({ platform: "win32" });
   const dispatcher = new Dispatcher(hookRegistry);
   dispatcher.registerOperation("workspace:delete", new FlushOperation(blockingPids));
 

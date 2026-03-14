@@ -24,11 +24,11 @@ export type { IHookRegistry } from "./hook-registry";
 export { HookRegistry } from "./hook-registry";
 
 // Dispatcher
-export type { IDispatcher, IntentInterceptor, EventHandler } from "./dispatcher";
+export type { IDispatcher, IntentInterceptor } from "./dispatcher";
 export { Dispatcher, IntentHandle } from "./dispatcher";
 
 // Module
-export type { IntentModule, HookDeclarations, EventDeclarations } from "./module";
+export type { IntentModule, HookDeclarations, EventDeclarations, EventHandler } from "./module";
 
 // Idempotency
 export type { IdempotencyRule } from "./idempotency-module";

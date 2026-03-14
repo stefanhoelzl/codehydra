@@ -137,140 +137,172 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   // ---------------------------------------------------------------------------
 
   const events: EventDeclarations = {
-    [EVENT_METADATA_CHANGED]: (event: DomainEvent) => {
-      const payload = (event as MetadataChangedEvent).payload as MetadataChangedPayload;
-      deps.sendToUI(ApiIpcChannels.WORKSPACE_METADATA_CHANGED, {
-        projectId: payload.projectId,
-        workspaceName: payload.workspaceName,
-        key: payload.key,
-        value: payload.value,
-      });
-    },
-    [EVENT_MODE_CHANGED]: (event: DomainEvent) => {
-      const payload = (event as ModeChangedEvent).payload as ModeChangedPayload;
-      deps.sendToUI(ApiIpcChannels.UI_MODE_CHANGED, {
-        mode: payload.mode,
-        previousMode: payload.previousMode,
-      });
-    },
-    [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-      const p = (event as WorkspaceCreatedEvent).payload;
-      deps.sendToUI(ApiIpcChannels.WORKSPACE_CREATED, {
-        projectId: p.projectId,
-        workspace: {
-          projectId: p.projectId,
-          name: p.workspaceName,
-          branch: p.branch,
-          metadata: p.metadata,
-          path: p.workspacePath,
-        },
-        ...(p.initialPrompt && { hasInitialPrompt: true }),
-        ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
-      });
-    },
-    [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-      const payload = (event as WorkspaceDeletedEvent).payload;
-      deps.sendToUI(ApiIpcChannels.WORKSPACE_REMOVED, {
-        projectId: payload.projectId,
-        workspaceName: payload.workspaceName,
-        path: payload.workspacePath,
-      });
-    },
-    [EVENT_WORKSPACE_DELETION_PROGRESS]: (event: DomainEvent) => {
-      const progress = (event as WorkspaceDeletionProgressEvent).payload;
-      deps.sendToUI(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
-    },
-    [EVENT_PROJECT_OPENED]: (event: DomainEvent) => {
-      const p = (event as ProjectOpenedEvent).payload;
-      deps.sendToUI(ApiIpcChannels.PROJECT_OPENED, { project: p.project });
-    },
-    [EVENT_PROJECT_CLOSED]: (event: DomainEvent) => {
-      const p = (event as ProjectClosedEvent).payload;
-      deps.sendToUI(ApiIpcChannels.PROJECT_CLOSED, { projectId: p.projectId });
-    },
-    [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-      const payload = (event as WorkspaceSwitchedEvent).payload;
-      if (payload === null) {
-        deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, null);
-      } else {
-        deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, {
+    [EVENT_METADATA_CHANGED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as MetadataChangedEvent).payload as MetadataChangedPayload;
+        deps.sendToUI(ApiIpcChannels.WORKSPACE_METADATA_CHANGED, {
           projectId: payload.projectId,
           workspaceName: payload.workspaceName,
-          path: payload.path,
+          key: payload.key,
+          value: payload.value,
         });
-      }
+      },
     },
-    [EVENT_SETUP_PROGRESS]: (event: DomainEvent) => {
-      const payload = (event as SetupProgressEvent).payload;
-      deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
+    [EVENT_MODE_CHANGED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as ModeChangedEvent).payload as ModeChangedPayload;
+        deps.sendToUI(ApiIpcChannels.UI_MODE_CHANGED, {
+          mode: payload.mode,
+          previousMode: payload.previousMode,
+        });
+      },
     },
-    [EVENT_CLONE_PROGRESS]: (event: DomainEvent) => {
-      const payload = (event as CloneProgressEvent).payload;
-      deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_PROGRESS, payload);
+    [EVENT_WORKSPACE_CREATED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const p = (event as WorkspaceCreatedEvent).payload;
+        deps.sendToUI(ApiIpcChannels.WORKSPACE_CREATED, {
+          projectId: p.projectId,
+          workspace: {
+            projectId: p.projectId,
+            name: p.workspaceName,
+            branch: p.branch,
+            metadata: p.metadata,
+            path: p.workspacePath,
+          },
+          ...(p.initialPrompt && { hasInitialPrompt: true }),
+          ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
+        });
+      },
     },
-    [EVENT_PROJECT_OPEN_FAILED]: (event: DomainEvent) => {
-      const payload = (event as ProjectOpenFailedEvent).payload;
-      deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, {
-        reason: payload.reason,
-        url: payload.git,
-      });
+    [EVENT_WORKSPACE_DELETED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as WorkspaceDeletedEvent).payload;
+        deps.sendToUI(ApiIpcChannels.WORKSPACE_REMOVED, {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          path: payload.workspacePath,
+        });
+      },
     },
-    [EVENT_SETUP_ERROR]: (event: DomainEvent) => {
-      const { message, code } = (event as SetupErrorEvent).payload;
-      const errorPayload: SetupErrorPayload = {
-        message,
-        ...(code !== undefined && { code }),
-      };
-      deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
+    [EVENT_WORKSPACE_DELETION_PROGRESS]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const progress = (event as WorkspaceDeletionProgressEvent).payload;
+        deps.sendToUI(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
+      },
     },
-    [EVENT_UPDATE_PROGRESS]: (event: DomainEvent) => {
-      const payload = (event as UpdateProgressEvent).payload;
-      deps.sendToUI(ApiIpcChannels.UPDATE_PROGRESS, payload);
+    [EVENT_PROJECT_OPENED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const p = (event as ProjectOpenedEvent).payload;
+        deps.sendToUI(ApiIpcChannels.PROJECT_OPENED, { project: p.project });
+      },
     },
-    [EVENT_BASES_UPDATED]: (event: DomainEvent) => {
-      const p = (event as BasesUpdatedEvent).payload;
-      deps.sendToUI(ApiIpcChannels.PROJECT_BASES_UPDATED, {
-        projectId: p.projectId,
-        projectPath: p.projectPath,
-        bases: p.bases,
-      });
+    [EVENT_PROJECT_CLOSED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const p = (event as ProjectClosedEvent).payload;
+        deps.sendToUI(ApiIpcChannels.PROJECT_CLOSED, { projectId: p.projectId });
+      },
     },
-    [EVENT_SHORTCUT_KEY_PRESSED]: (event: DomainEvent) => {
-      const { key } = (event as ShortcutKeyPressedEvent).payload;
-      if (isShortcutKey(key)) {
-        deps.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
-      }
+    [EVENT_WORKSPACE_SWITCHED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as WorkspaceSwitchedEvent).payload;
+        if (payload === null) {
+          deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, null);
+        } else {
+          deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, {
+            projectId: payload.projectId,
+            workspaceName: payload.workspaceName,
+            path: payload.path,
+          });
+        }
+      },
     },
-    [EVENT_AGENT_STATUS_UPDATED]: (event: DomainEvent) => {
-      const {
-        workspacePath,
-        projectId,
-        workspaceName,
-        status: aggregatedStatus,
-      } = (event as AgentStatusUpdatedEvent).payload;
+    [EVENT_SETUP_PROGRESS]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as SetupProgressEvent).payload;
+        deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
+      },
+    },
+    [EVENT_CLONE_PROGRESS]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as CloneProgressEvent).payload;
+        deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_PROGRESS, payload);
+      },
+    },
+    [EVENT_PROJECT_OPEN_FAILED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as ProjectOpenFailedEvent).payload;
+        deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, {
+          reason: payload.reason,
+          url: payload.git,
+        });
+      },
+    },
+    [EVENT_SETUP_ERROR]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const { message, code } = (event as SetupErrorEvent).payload;
+        const errorPayload: SetupErrorPayload = {
+          message,
+          ...(code !== undefined && { code }),
+        };
+        deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
+      },
+    },
+    [EVENT_UPDATE_PROGRESS]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as UpdateProgressEvent).payload;
+        deps.sendToUI(ApiIpcChannels.UPDATE_PROGRESS, payload);
+      },
+    },
+    [EVENT_BASES_UPDATED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const p = (event as BasesUpdatedEvent).payload;
+        deps.sendToUI(ApiIpcChannels.PROJECT_BASES_UPDATED, {
+          projectId: p.projectId,
+          projectPath: p.projectPath,
+          bases: p.bases,
+        });
+      },
+    },
+    [EVENT_SHORTCUT_KEY_PRESSED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const { key } = (event as ShortcutKeyPressedEvent).payload;
+        if (isShortcutKey(key)) {
+          deps.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
+        }
+      },
+    },
+    [EVENT_AGENT_STATUS_UPDATED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const {
+          workspacePath,
+          projectId,
+          workspaceName,
+          status: aggregatedStatus,
+        } = (event as AgentStatusUpdatedEvent).payload;
 
-      const status: WorkspaceStatus =
-        aggregatedStatus.status === "none"
-          ? { isDirty: false, unmergedCommits: 0, agent: { type: "none" } }
-          : {
-              isDirty: false,
-              unmergedCommits: 0,
-              agent: {
-                type: aggregatedStatus.status,
-                counts: {
-                  idle: aggregatedStatus.counts.idle,
-                  busy: aggregatedStatus.counts.busy,
-                  total: aggregatedStatus.counts.idle + aggregatedStatus.counts.busy,
+        const status: WorkspaceStatus =
+          aggregatedStatus.status === "none"
+            ? { isDirty: false, unmergedCommits: 0, agent: { type: "none" } }
+            : {
+                isDirty: false,
+                unmergedCommits: 0,
+                agent: {
+                  type: aggregatedStatus.status,
+                  counts: {
+                    idle: aggregatedStatus.counts.idle,
+                    busy: aggregatedStatus.counts.busy,
+                    total: aggregatedStatus.counts.idle + aggregatedStatus.counts.busy,
+                  },
                 },
-              },
-            };
+              };
 
-      deps.sendToUI(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
-        projectId,
-        workspaceName,
-        path: workspacePath,
-        status,
-      });
+        deps.sendToUI(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
+          projectId,
+          workspaceName,
+          path: workspacePath,
+          status,
+        });
+      },
     },
   };
 

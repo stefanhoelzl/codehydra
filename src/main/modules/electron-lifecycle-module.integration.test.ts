@@ -361,7 +361,7 @@ describe("ElectronLifecycleModule Integration", () => {
   // config:updated event
   // ---------------------------------------------------------------------------
   describe("config:updated event", () => {
-    it("applies electron flags from config:updated event", () => {
+    it("applies electron flags from config:updated event", async () => {
       const mockApp = createMockApp();
 
       const module = createElectronLifecycleModule({
@@ -374,13 +374,13 @@ describe("ElectronLifecycleModule Integration", () => {
         payload: { values: { "electron.flags": "--disable-gpu --use-gl=swiftshader" } },
       };
 
-      module.events![EVENT_CONFIG_UPDATED]!(event);
+      await module.events![EVENT_CONFIG_UPDATED]!.handler(event);
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
     });
 
-    it("does not apply flags when electron.flags is not in payload", () => {
+    it("does not apply flags when electron.flags is not in payload", async () => {
       const mockApp = createMockApp();
 
       const module = createElectronLifecycleModule({
@@ -393,12 +393,12 @@ describe("ElectronLifecycleModule Integration", () => {
         payload: { values: { "log.level": "debug" } },
       };
 
-      module.events![EVENT_CONFIG_UPDATED]!(event);
+      await module.events![EVENT_CONFIG_UPDATED]!.handler(event);
 
       expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
     });
 
-    it("handles empty electron.flags value", () => {
+    it("handles empty electron.flags value", async () => {
       const mockApp = createMockApp();
 
       const module = createElectronLifecycleModule({
@@ -411,7 +411,7 @@ describe("ElectronLifecycleModule Integration", () => {
         payload: { values: { "electron.flags": "" } },
       };
 
-      module.events![EVENT_CONFIG_UPDATED]!(event);
+      await module.events![EVENT_CONFIG_UPDATED]!.handler(event);
 
       expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
     });

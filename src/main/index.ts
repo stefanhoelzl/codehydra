@@ -242,7 +242,12 @@ const opencodeBinaryManager = new AgentBinaryManager(
   loggingService.createLogger("agent-binary")
 );
 
-const hookRegistry = new HookRegistry();
+const hookRegistry = new HookRegistry({
+  platform: platformInfo.platform,
+  posix: platformInfo.posix,
+  arch: platformInfo.arch,
+  development: buildInfo.isDevelopment,
+});
 const dispatcher = new Dispatcher(hookRegistry, loggingService.createLogger("dispatcher"));
 
 const gitClient = new SimpleGitClient(loggingService.createLogger("git"));
@@ -427,17 +432,15 @@ const keepFilesModule = createKeepFilesModule({
   keepFilesService,
   logger: apiLogger,
 });
-const deleteWindowsLockModule =
-  platformInfo.platform === "win32"
-    ? createWindowsFileLockModule({
-        processRunner,
-        scriptPath: pathProvider.runtimePath("scripts/blocking-processes.ps1").toNative(),
-        logger: apiLogger,
-      })
-    : undefined;
-const posixProcessCleanupModule = platformInfo.posix
-  ? createPosixProcessCleanupModule({ processRunner, logger: apiLogger })
-  : undefined;
+const deleteWindowsLockModule = createWindowsFileLockModule({
+  processRunner,
+  scriptPath: pathProvider.runtimePath("scripts/blocking-processes.ps1").toNative(),
+  logger: apiLogger,
+});
+const posixProcessCleanupModule = createPosixProcessCleanupModule({
+  processRunner,
+  logger: apiLogger,
+});
 const windowTitleModule = createWindowTitleModule(
   (title: string) => windowManager.setTitle(title),
   buildInfo.gitBranch ?? buildInfo.version
@@ -548,12 +551,10 @@ const shortcutModule = createShortcutModule({
   logger: loggingService.createLogger("shortcut"),
 });
 
-const devtoolsModule = buildInfo.isDevelopment
-  ? createDevtoolsModule({
-      viewManager,
-      viewLayer,
-    })
-  : undefined;
+const devtoolsModule = createDevtoolsModule({
+  viewManager,
+  viewLayer,
+});
 
 // 8. Operation registration
 
@@ -612,8 +613,8 @@ dispatcher.registerModule(badgeModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(keepFilesModule);
-if (deleteWindowsLockModule) dispatcher.registerModule(deleteWindowsLockModule);
-if (posixProcessCleanupModule) dispatcher.registerModule(posixProcessCleanupModule);
+dispatcher.registerModule(deleteWindowsLockModule);
+dispatcher.registerModule(posixProcessCleanupModule);
 dispatcher.registerModule(remoteProjectModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
@@ -627,7 +628,7 @@ dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
-if (devtoolsModule) dispatcher.registerModule(devtoolsModule);
+dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(ipcEventBridge);
 

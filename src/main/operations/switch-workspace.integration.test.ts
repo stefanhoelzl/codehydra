@@ -266,11 +266,13 @@ function createTestSetup(opts?: {
       },
     },
     events: {
-      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
-        if (payload === null) {
-          viewManager.setActiveWorkspace(null);
-        }
+      [EVENT_WORKSPACE_SWITCHED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceSwitchedEvent).payload;
+          if (payload === null) {
+            viewManager.setActiveWorkspace(null);
+          }
+        },
       },
     },
   };

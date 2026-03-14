@@ -10,7 +10,7 @@
  */
 
 import type { Intent, DomainEvent } from "./types";
-import type { IntentModule, EventDeclarations } from "./module";
+import type { IntentModule, EventDeclarations, EventHandler } from "./module";
 
 // =============================================================================
 // Configuration
@@ -80,17 +80,19 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
 
   const events: EventDeclarations = {};
   for (const [eventType, resetRules] of resetRulesByEvent) {
-    (events as Record<string, (event: DomainEvent) => void>)[eventType] = (event: DomainEvent) => {
-      for (const rule of resetRules) {
-        if (rule.getKey) {
-          const key = rule.getKey(event.payload);
-          if (key !== undefined) {
-            perKeyFlags.get(rule.intentType)?.delete(key);
+    (events as Record<string, EventHandler>)[eventType] = {
+      handler: async (event: DomainEvent): Promise<void> => {
+        for (const rule of resetRules) {
+          if (rule.getKey) {
+            const key = rule.getKey(event.payload);
+            if (key !== undefined) {
+              perKeyFlags.get(rule.intentType)?.delete(key);
+            }
+          } else {
+            singletonFlags.set(rule.intentType, false);
           }
-        } else {
-          singletonFlags.set(rule.intentType, false);
         }
-      }
+      },
     };
   }
 

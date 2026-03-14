@@ -84,22 +84,26 @@ export function createWindowTitleModule(
       },
     },
     events: {
-      [EVENT_WORKSPACE_SWITCHED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceSwitchedEvent).payload;
+      [EVENT_WORKSPACE_SWITCHED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceSwitchedEvent).payload;
 
-        if (payload === null) {
-          currentProjectName = undefined;
-          currentWorkspaceName = undefined;
-        } else {
-          currentProjectName = payload.projectName;
-          currentWorkspaceName = payload.workspaceName;
-        }
+          if (payload === null) {
+            currentProjectName = undefined;
+            currentWorkspaceName = undefined;
+          } else {
+            currentProjectName = payload.projectName;
+            currentWorkspaceName = payload.workspaceName;
+          }
 
-        updateTitle();
+          updateTitle();
+        },
       },
-      [EVENT_UPDATE_AVAILABLE]: () => {
-        hasUpdate = true;
-        updateTitle();
+      [EVENT_UPDATE_AVAILABLE]: {
+        handler: async (): Promise<void> => {
+          hasUpdate = true;
+          updateTitle();
+        },
       },
     },
   };

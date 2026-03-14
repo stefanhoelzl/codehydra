@@ -84,7 +84,7 @@ export interface ResolvedHooks {
 export interface OperationContext<I extends Intent = Intent> {
   readonly intent: I;
   readonly dispatch: DispatchFn;
-  readonly emit: (event: DomainEvent) => void;
+  readonly emit: (event: DomainEvent) => Promise<void>;
   readonly hooks: ResolvedHooks;
   readonly causation: readonly string[];
 }

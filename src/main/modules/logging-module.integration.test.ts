@@ -129,12 +129,12 @@ describe("LoggingModule Integration", () => {
     expect(logOrder).toBeLessThan(initOrder);
   });
 
-  it("logs all changed config values on config:updated event", () => {
+  it("logs all changed config values on config:updated event", async () => {
     const deps = createDeps();
     const module = createLoggingModule(deps);
 
-    const handler = module.events![EVENT_CONFIG_UPDATED]!;
-    handler({
+    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
+    await handler({
       type: EVENT_CONFIG_UPDATED,
       payload: { values: { agent: "claude", "log.level": "debug" } },
     } as ConfigUpdatedEvent);
@@ -145,12 +145,12 @@ describe("LoggingModule Integration", () => {
     });
   });
 
-  it("converts undefined config values to null when logging", () => {
+  it("converts undefined config values to null when logging", async () => {
     const deps = createDeps();
     const module = createLoggingModule(deps);
 
-    const handler = module.events![EVENT_CONFIG_UPDATED]!;
-    handler({
+    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
+    await handler({
       type: EVENT_CONFIG_UPDATED,
       payload: { values: { "telemetry.distinct-id": undefined } },
     } as unknown as ConfigUpdatedEvent);
@@ -160,12 +160,12 @@ describe("LoggingModule Integration", () => {
     });
   });
 
-  it("reconfigures logging when log.format changes", () => {
+  it("reconfigures logging when log.format changes", async () => {
     const deps = createDeps();
     const module = createLoggingModule(deps);
 
-    const handler = module.events![EVENT_CONFIG_UPDATED]!;
-    handler({
+    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
+    await handler({
       type: EVENT_CONFIG_UPDATED,
       payload: { values: { "log.level": "debug", "log.output": "file", "log.format": "json" } },
     } as ConfigUpdatedEvent);
@@ -179,12 +179,12 @@ describe("LoggingModule Integration", () => {
     });
   });
 
-  it("reconfigures with logFormat when only log.format changes", () => {
+  it("reconfigures with logFormat when only log.format changes", async () => {
     const deps = createDeps();
     const module = createLoggingModule(deps);
 
-    const handler = module.events![EVENT_CONFIG_UPDATED]!;
-    handler({
+    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
+    await handler({
       type: EVENT_CONFIG_UPDATED,
       payload: { values: { "log.format": "json" } },
     } as ConfigUpdatedEvent);
@@ -194,12 +194,12 @@ describe("LoggingModule Integration", () => {
     );
   });
 
-  it("includes logFormat in reconfigure when log.level changes", () => {
+  it("includes logFormat in reconfigure when log.level changes", async () => {
     const deps = createDeps();
     const module = createLoggingModule(deps);
 
-    const handler = module.events![EVENT_CONFIG_UPDATED]!;
-    handler({
+    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
+    await handler({
       type: EVENT_CONFIG_UPDATED,
       payload: { values: { "log.level": "info" } },
     } as ConfigUpdatedEvent);

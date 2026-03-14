@@ -530,106 +530,112 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       },
     },
     events: {
-      [EVENT_CONFIG_UPDATED]: (event: DomainEvent) => {
-        const { values } = (event as ConfigUpdatedEvent).payload;
+      [EVENT_CONFIG_UPDATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { values } = (event as ConfigUpdatedEvent).payload;
 
-        for (const source of deps.sources) {
-          const tplKey = templatePathConfigKey(source.name);
-          if (tplKey in values) {
-            templatePaths.set(source.name, (values[tplKey] as string | null) ?? null);
-          }
+          for (const source of deps.sources) {
+            const tplKey = templatePathConfigKey(source.name);
+            if (tplKey in values) {
+              templatePaths.set(source.name, (values[tplKey] as string | null) ?? null);
+            }
 
-          source.onConfigUpdated(values);
+            source.onConfigUpdated(values);
 
-          if (!initialActivationDone) continue;
+            if (!initialActivationDone) continue;
 
-          const wasActive = activeSources.has(source.name);
-          const shouldBeActive = isSourceActive(source);
+            const wasActive = activeSources.has(source.name);
+            const shouldBeActive = isSourceActive(source);
 
-          if (!wasActive && shouldBeActive) {
-            void activateSource(source).then(() => {
-              if (activeSources.size > 0) {
-                void poll().then(() => {
-                  startPolling();
-                });
+            if (!wasActive && shouldBeActive) {
+              void activateSource(source).then(() => {
+                if (activeSources.size > 0) {
+                  void poll().then(() => {
+                    startPolling();
+                  });
+                }
+              });
+            } else if (wasActive && !shouldBeActive) {
+              deactivateSource(source);
+              if (activeSources.size === 0) {
+                stopPolling();
               }
-            });
-          } else if (wasActive && !shouldBeActive) {
-            deactivateSource(source);
-            if (activeSources.size === 0) {
-              stopPolling();
             }
           }
-        }
+        },
       },
-      [EVENT_WORKSPACE_DELETED]: (event: DomainEvent) => {
-        const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
+      [EVENT_WORKSPACE_DELETED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
 
-        for (const [key, entry] of Object.entries(state.entries)) {
-          if (entry?.workspacePath === workspacePath) {
-            if (deletingKeys.has(key)) {
-              // Auto-deletion — remove entry entirely
-              const remaining = Object.fromEntries(
-                Object.entries(state.entries).filter(([k]) => k !== key)
-              );
-              state = { ...state, entries: remaining };
-            } else {
-              // Manual deletion — set to null to prevent re-creation
-              state = {
-                ...state,
-                entries: { ...state.entries, [key]: null },
-              };
+          for (const [key, entry] of Object.entries(state.entries)) {
+            if (entry?.workspacePath === workspacePath) {
+              if (deletingKeys.has(key)) {
+                // Auto-deletion — remove entry entirely
+                const remaining = Object.fromEntries(
+                  Object.entries(state.entries).filter(([k]) => k !== key)
+                );
+                state = { ...state, entries: remaining };
+              } else {
+                // Manual deletion — set to null to prevent re-creation
+                state = {
+                  ...state,
+                  entries: { ...state.entries, [key]: null },
+                };
+              }
+              void saveState();
+              deps.logger.info("Marked auto-workspace as dismissed", {
+                key,
+                workspaceName: entry.workspaceName,
+              });
+              break;
             }
+          }
+        },
+      },
+      [EVENT_WORKSPACE_DELETE_FAILED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
+
+          const dismissEntry = (key: string): void => {
+            state = { ...state, entries: { ...state.entries, [key]: null } };
             void saveState();
-            deps.logger.info("Marked auto-workspace as dismissed", {
-              key,
-              workspaceName: entry.workspaceName,
-            });
-            break;
-          }
-        }
-      },
-      [EVENT_WORKSPACE_DELETE_FAILED]: (event: DomainEvent) => {
-        const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
+          };
 
-        const dismissEntry = (key: string): void => {
-          state = { ...state, entries: { ...state.entries, [key]: null } };
-          void saveState();
-        };
-
-        for (const [key, entry] of Object.entries(state.entries)) {
-          if (entry?.workspacePath === workspacePath && deletingKeys.has(key)) {
-            void deps.dispatcher
-              .dispatch({
-                type: INTENT_SET_METADATA,
-                payload: { workspacePath, key: METADATA_TRACKED_KEY, value: null },
-              } as SetMetadataIntent)
-              .catch((err: unknown) => {
-                deps.logger.warn("Failed to clear tracked metadata after delete failure", {
-                  workspacePath,
-                  error: getErrorMessage(err),
+          for (const [key, entry] of Object.entries(state.entries)) {
+            if (entry?.workspacePath === workspacePath && deletingKeys.has(key)) {
+              void deps.dispatcher
+                .dispatch({
+                  type: INTENT_SET_METADATA,
+                  payload: { workspacePath, key: METADATA_TRACKED_KEY, value: null },
+                } as SetMetadataIntent)
+                .catch((err: unknown) => {
+                  deps.logger.warn("Failed to clear tracked metadata after delete failure", {
+                    workspacePath,
+                    error: getErrorMessage(err),
+                  });
+                  dismissEntry(key);
                 });
-                dismissEntry(key);
-              });
-            void deps.dispatcher
-              .dispatch({
-                type: INTENT_SET_METADATA,
-                payload: {
-                  workspacePath,
-                  key: TAG_DELETION_FAILED_KEY,
-                  value: TAG_DELETION_FAILED_VALUE,
-                },
-              } as SetMetadataIntent)
-              .catch((err: unknown) => {
-                deps.logger.warn("Failed to set deletion-failed tag after delete failure", {
-                  workspacePath,
-                  error: getErrorMessage(err),
+              void deps.dispatcher
+                .dispatch({
+                  type: INTENT_SET_METADATA,
+                  payload: {
+                    workspacePath,
+                    key: TAG_DELETION_FAILED_KEY,
+                    value: TAG_DELETION_FAILED_VALUE,
+                  },
+                } as SetMetadataIntent)
+                .catch((err: unknown) => {
+                  deps.logger.warn("Failed to set deletion-failed tag after delete failure", {
+                    workspacePath,
+                    error: getErrorMessage(err),
+                  });
+                  dismissEntry(key);
                 });
-                dismissEntry(key);
-              });
-            break;
+              break;
+            }
           }
-        }
+        },
       },
     },
   };

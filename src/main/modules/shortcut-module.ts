@@ -242,12 +242,14 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     },
 
     events: {
-      [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-        const payload = (event as WorkspaceCreatedEvent).payload;
-        const handle = deps.viewManager.getWorkspaceView(payload.workspacePath);
-        if (handle) {
-          registerView(handle);
-        }
+      [EVENT_WORKSPACE_CREATED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const payload = (event as WorkspaceCreatedEvent).payload;
+          const handle = deps.viewManager.getWorkspaceView(payload.workspacePath);
+          if (handle) {
+            registerView(handle);
+          }
+        },
       },
     },
   };
