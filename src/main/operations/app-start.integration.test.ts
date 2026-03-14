@@ -3,6 +3,8 @@
  * Integration tests for app:start operation through the Dispatcher.
  *
  * Tests verify the full dispatch pipeline: intent -> operation -> hook execution.
+ * Project loading (project:open dispatches, app:started event) is tested in
+ * app-ready.integration.test.ts.
  *
  * Test plan items covered:
  * #1: all start hooks run (servers, data, view)
@@ -10,36 +12,29 @@
  * #3: start abort on MCP failure (non-optional)
  * #4: start hook failure (data) propagates
  * #5: PluginServer graceful degradation
- * #6: project:open dispatched for each saved project path
- * #7: mount blocks until resolved, project:open dispatches run after
- * #8: check hooks -- no setup needed
- * #9: check hooks -- setup needed (agent null)
- * #10: check hooks -- setup needed (binaries)
- * #11: check hooks -- setup needed (extensions)
- * #12: init error aborts startup (configuredAgent path)
- * #13: check-deps error aborts
- * #14: configuredAgent flows from init results to check-deps
- * #15: ports available via capabilities in start hook
- * #16: before-ready hook error aborts startup
- * #17: await-ready hook error aborts startup
- * #18: init hook receives requiredScripts from before-ready results
- * #19: init hook error aborts startup
- * #20: full sequence: before-ready -> await-ready -> init -> show-ui -> start
+ * #6: check hooks -- no setup needed
+ * #7: check hooks -- setup needed (agent null)
+ * #8: check hooks -- setup needed (binaries)
+ * #9: check hooks -- setup needed (extensions)
+ * #10: init error aborts startup (configuredAgent path)
+ * #11: check-deps error aborts
+ * #12: configuredAgent flows from init results to check-deps
+ * #13: before-ready hook collects scripts from multiple modules
+ * #14: before-ready hook error aborts startup
+ * #15: await-ready hook error aborts startup
+ * #16: init hook receives requiredScripts from before-ready results
+ * #17: init hook error aborts startup
+ * #18: full sequence: before-ready -> await-ready -> init -> show-ui -> start
+ * #19: ports available via capabilities in start hook
  */
 
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import {
-  AppStartOperation,
-  INTENT_APP_START,
-  APP_START_OPERATION_ID,
-  EVENT_APP_STARTED,
-} from "./app-start";
+import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
 import type {
   AppStartIntent,
-  StartHookResult,
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
@@ -48,8 +43,6 @@ import type {
 } from "./app-start";
 import { INTENT_SETUP } from "./setup";
 import type { SetupIntent } from "./setup";
-import { INTENT_OPEN_PROJECT } from "./open-project";
-import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "../intents/infrastructure/module";
 import {
   ANY_VALUE,
@@ -57,7 +50,7 @@ import {
   type Operation,
   type OperationContext,
 } from "../intents/infrastructure/operation";
-import type { ConfigAgentType, Project } from "../../shared/api/types";
+import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/vscode-setup/types";
 
 // =============================================================================
@@ -71,10 +64,6 @@ interface TestState {
   viewActivated: boolean;
   /** Tracks ordering: modules append their name when they run */
   executionOrder: string[];
-  /** Tracks project paths dispatched via project:open */
-  openedProjectPaths: string[];
-  /** Whether mount handler ran and was resolved */
-  mountCompleted: boolean;
 }
 
 function createTestState(): TestState {
@@ -84,8 +73,6 @@ function createTestState(): TestState {
     dataLoaded: false,
     viewActivated: false,
     executionOrder: [],
-    openedProjectPaths: [],
-    mountCompleted: false,
   };
 }
 
@@ -129,26 +116,18 @@ function createMcpModule(state: TestState, options?: { fail?: boolean }): Intent
   };
 }
 
-function createDataModule(
-  state: TestState,
-  options?: { fail?: boolean; projectPaths?: readonly string[] }
-): IntentModule {
+function createDataModule(state: TestState, options?: { fail?: boolean }): IntentModule {
   return {
     name: "test",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          handler: async (): Promise<void> => {
             if (options?.fail) {
               throw new Error("Failed to load persisted projects");
             }
             state.dataLoaded = true;
             state.executionOrder.push("data-activate");
-            // Return project paths (simulates DataLifecycleModule)
-            if (options?.projectPaths) {
-              return { projectPaths: options.projectPaths };
-            }
-            return {};
           },
         },
       },
@@ -162,32 +141,9 @@ function createViewModule(state: TestState): IntentModule {
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          handler: async (): Promise<void> => {
             state.viewActivated = true;
             state.executionOrder.push("view-activate");
-            return {};
-          },
-        },
-      },
-    },
-  };
-}
-
-/**
- * Simulates the mountModule pattern: start handler that blocks until resolved.
- * In the real implementation, mount sends show-main-view IPC and blocks until
- * lifecycle.ready() resolves the promise. In tests, we auto-resolve immediately.
- */
-function createMountModule(state: TestState): IntentModule {
-  return {
-    name: "test",
-    hooks: {
-      [APP_START_OPERATION_ID]: {
-        start: {
-          handler: async (): Promise<StartHookResult> => {
-            state.mountCompleted = true;
-            state.executionOrder.push("mount");
-            return {};
           },
         },
       },
@@ -235,32 +191,6 @@ function createCodeServerModuleWithGracefulPluginDegradation(
 }
 
 /**
- * Stub operation for project:open that records paths dispatched.
- */
-function createProjectOpenStub(
-  state: TestState,
-  options?: { failForPath?: string }
-): Operation<OpenProjectIntent, Project> {
-  return {
-    id: "open-project",
-    async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
-      const pathStr = ctx.intent.payload.path?.toString() ?? "";
-      if (options?.failForPath === pathStr) {
-        throw new Error(`Project not found: ${pathStr}`);
-      }
-      state.openedProjectPaths.push(pathStr);
-      state.executionOrder.push(`project-open:${pathStr}`);
-      return {
-        id: `id-${pathStr}`,
-        path: pathStr,
-        name: "test",
-        workspaces: [],
-      } as unknown as Project;
-    },
-  };
-}
-
-/**
  * Default check modules that make checks pass (agent configured, no missing deps).
  * Existing tests that don't care about check hooks get these by default.
  * The config module's "init" handler returns configuredAgent via InitResult.
@@ -286,7 +216,6 @@ function createTestSetup(
   modules: IntentModule[],
   options?: {
     state?: TestState;
-    projectOpenStub?: Operation<OpenProjectIntent, Project>;
     skipDefaultChecks?: boolean;
   }
 ): { dispatcher: Dispatcher } {
@@ -294,9 +223,6 @@ function createTestSetup(
   const dispatcher = new Dispatcher(hookRegistry);
 
   dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
-  if (options?.projectOpenStub) {
-    dispatcher.registerOperation(INTENT_OPEN_PROJECT, options.projectOpenStub);
-  }
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -432,99 +358,6 @@ describe("AppStart Operation", () => {
     });
   });
 
-  describe("project:open dispatch for saved projects (#6)", () => {
-    it("dispatches project:open for each project path set by start hook", async () => {
-      const state = createTestState();
-      const stub = createProjectOpenStub(state);
-      const { dispatcher } = createTestSetup(
-        [
-          createCodeServerModule(state),
-          createMcpModule(state),
-          createDataModule(state, { projectPaths: ["/project-a", "/project-b"] }),
-          createViewModule(state),
-          createMountModule(state),
-        ],
-        { projectOpenStub: stub }
-      );
-
-      await dispatcher.dispatch(appStartIntent());
-
-      expect(state.openedProjectPaths).toEqual(["/project-a", "/project-b"]);
-    });
-
-    it("skips invalid projects without aborting startup", async () => {
-      const state = createTestState();
-      const stub = createProjectOpenStub(state, { failForPath: "/invalid" });
-      const { dispatcher } = createTestSetup(
-        [
-          createCodeServerModule(state),
-          createMcpModule(state),
-          createDataModule(state, { projectPaths: ["/invalid", "/valid"] }),
-          createViewModule(state),
-          createMountModule(state),
-        ],
-        { projectOpenStub: stub }
-      );
-
-      // Should not throw despite /invalid failing
-      await dispatcher.dispatch(appStartIntent());
-
-      // Only /valid was successfully opened
-      expect(state.openedProjectPaths).toEqual(["/valid"]);
-      // Mount still completed
-      expect(state.mountCompleted).toBe(true);
-    });
-
-    it("skips dispatch when no project paths set", async () => {
-      const state = createTestState();
-      const stub = createProjectOpenStub(state);
-      const { dispatcher } = createTestSetup(
-        [
-          createCodeServerModule(state),
-          createMcpModule(state),
-          createDataModule(state),
-          createViewModule(state),
-          createMountModule(state),
-        ],
-        { projectOpenStub: stub }
-      );
-
-      await dispatcher.dispatch(appStartIntent());
-
-      expect(state.openedProjectPaths).toEqual([]);
-      expect(state.mountCompleted).toBe(true);
-    });
-  });
-
-  describe("mount blocks in start, project:open dispatches run after (#7)", () => {
-    it("mount runs in start, project:open dispatches follow", async () => {
-      const state = createTestState();
-      const stub = createProjectOpenStub(state);
-      const { dispatcher } = createTestSetup(
-        [
-          createCodeServerModule(state),
-          createMcpModule(state),
-          createDataModule(state, { projectPaths: ["/project-a"] }),
-          createViewModule(state),
-          createMountModule(state),
-        ],
-        { projectOpenStub: stub }
-      );
-
-      await dispatcher.dispatch(appStartIntent());
-
-      // Verify ordering: start (all handlers) → project:open
-      expect(state.executionOrder).toEqual([
-        "codeserver-start",
-        "mcp-start",
-        "data-activate",
-        "view-activate",
-        "mount",
-        "project-open:/project-a",
-      ]);
-    });
-  });
-
   // ===========================================================================
   // Check Hooks (collect-based, isolated contexts)
   // ===========================================================================
@@ -610,7 +443,7 @@ describe("AppStart Operation", () => {
       return { dispatcher };
     }
 
-    it("no setup needed -- all checks pass, app:setup not dispatched (#8)", async () => {
+    it("no setup needed -- all checks pass, app:setup not dispatched (#6)", async () => {
       const state = createTestState();
       const setupStub = createSetupStub(state);
       const { dispatcher } = createCheckTestSetup(
@@ -635,7 +468,7 @@ describe("AppStart Operation", () => {
       expect(state.mcpStarted).toBe(true);
     });
 
-    it("setup needed -- agent null triggers app:setup (#9)", async () => {
+    it("setup needed -- agent null triggers app:setup (#7)", async () => {
       const state = createTestState();
       const setupStub = createSetupStub(state);
       const { dispatcher } = createCheckTestSetup(
@@ -658,7 +491,7 @@ describe("AppStart Operation", () => {
       expect(state.codeServerStarted).toBe(true);
     });
 
-    it("setup needed -- missing binaries triggers app:setup (#10)", async () => {
+    it("setup needed -- missing binaries triggers app:setup (#8)", async () => {
       const state = createTestState();
       const setupStub = createSetupStub(state);
       const { dispatcher } = createCheckTestSetup(
@@ -679,7 +512,7 @@ describe("AppStart Operation", () => {
       expect(state.executionOrder).toContain("setup");
     });
 
-    it("setup needed -- missing extensions triggers app:setup (#11)", async () => {
+    it("setup needed -- missing extensions triggers app:setup (#9)", async () => {
       const state = createTestState();
       const setupStub = createSetupStub(state);
       const { dispatcher } = createCheckTestSetup(
@@ -702,7 +535,7 @@ describe("AppStart Operation", () => {
       expect(state.executionOrder).toContain("setup");
     });
 
-    it("init error from config module aborts startup (#12)", async () => {
+    it("init error from config module aborts startup (#10)", async () => {
       const state = createTestState();
       const failingInitConfigModule: IntentModule = {
         name: "test",
@@ -727,7 +560,7 @@ describe("AppStart Operation", () => {
       expect(state.codeServerStarted).toBe(false);
     });
 
-    it("check-deps error aborts startup (#13)", async () => {
+    it("check-deps error aborts startup (#11)", async () => {
       const state = createTestState();
       const failingDepsModule: IntentModule = {
         name: "test",
@@ -754,7 +587,7 @@ describe("AppStart Operation", () => {
       expect(state.codeServerStarted).toBe(false);
     });
 
-    it("configuredAgent flows from init results to check-deps context (#14)", async () => {
+    it("configuredAgent flows from init results to check-deps context (#12)", async () => {
       const state = createTestState();
       let receivedAgent: ConfigAgentType | null | undefined;
 
@@ -795,7 +628,7 @@ describe("AppStart Operation", () => {
   // Capabilities (ports available via ctx.capabilities in start hook)
   // ===========================================================================
 
-  describe("ports available via capabilities in start hook (#15)", () => {
+  describe("ports available via capabilities in start hook (#19)", () => {
     it.each([
       {
         portName: "mcpPort" as const,
@@ -831,9 +664,8 @@ describe("AppStart Operation", () => {
           [APP_START_OPERATION_ID]: {
             start: {
               requires: { [portName]: ANY_VALUE },
-              handler: async (ctx: HookContext): Promise<StartHookResult> => {
+              handler: async (ctx: HookContext): Promise<void> => {
                 receivedPort = ctx.capabilities?.[portName] as number | undefined;
-                return {};
               },
             },
           },
@@ -848,64 +680,6 @@ describe("AppStart Operation", () => {
       } else {
         expect(receivedPort).toBe(expected);
       }
-    });
-  });
-
-  // ===========================================================================
-  // app:started Domain Event
-  // ===========================================================================
-
-  describe("app:started event emitted after project:open dispatches (#16)", () => {
-    it("emits app:started after project:open dispatches complete", async () => {
-      const state = createTestState();
-      const stub = createProjectOpenStub(state);
-      const { dispatcher } = createTestSetup(
-        [
-          createCodeServerModule(state),
-          createMcpModule(state),
-          createDataModule(state, { projectPaths: ["/project-a", "/project-b"] }),
-          createViewModule(state),
-          createMountModule(state),
-        ],
-        { projectOpenStub: stub }
-      );
-
-      dispatcher.subscribe(EVENT_APP_STARTED, () => {
-        state.executionOrder.push("app:started");
-      });
-
-      await dispatcher.dispatch(appStartIntent());
-
-      // app:started fires after all project:open dispatches
-      expect(state.executionOrder).toEqual([
-        "codeserver-start",
-        "mcp-start",
-        "data-activate",
-        "view-activate",
-        "mount",
-        "project-open:/project-a",
-        "project-open:/project-b",
-        "app:started",
-      ]);
-    });
-
-    it("emits app:started even when no projects to open", async () => {
-      const state = createTestState();
-      const { dispatcher } = createTestSetup([
-        createCodeServerModule(state),
-        createMcpModule(state),
-        createDataModule(state),
-        createViewModule(state),
-      ]);
-
-      let eventFired = false;
-      dispatcher.subscribe(EVENT_APP_STARTED, () => {
-        eventFired = true;
-      });
-
-      await dispatcher.dispatch(appStartIntent());
-
-      expect(eventFired).toBe(true);
     });
   });
 
@@ -986,7 +760,7 @@ describe("AppStart Operation", () => {
       };
     }
 
-    it("before-ready hook collects scripts from multiple modules (#15)", async () => {
+    it("before-ready hook collects scripts from multiple modules (#13)", async () => {
       const state = createTestState();
       let capturedScripts: readonly string[] = [];
 
@@ -1009,7 +783,7 @@ describe("AppStart Operation", () => {
       expect(capturedScripts).toEqual(["script-a", "script-b", "script-c"]);
     });
 
-    it("before-ready hook error aborts startup (#16)", async () => {
+    it("before-ready hook error aborts startup (#14)", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createFailingConfigureModule("Config failed"),
@@ -1025,7 +799,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("await-ready hook error aborts startup (#17)", async () => {
+    it("await-ready hook error aborts startup (#15)", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createAwaitReadyModule({ fail: true }),
@@ -1040,7 +814,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("init hook receives requiredScripts from before-ready results (#18)", async () => {
+    it("init hook receives requiredScripts from before-ready results (#16)", async () => {
       const state = createTestState();
       let capturedScripts: readonly string[] = [];
 
@@ -1062,7 +836,7 @@ describe("AppStart Operation", () => {
       expect(capturedScripts).toEqual(["bin/agent-wrapper"]);
     });
 
-    it("init hook error aborts startup (#19)", async () => {
+    it("init hook error aborts startup (#17)", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createInitModule(state, { fail: true }),
@@ -1077,7 +851,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("full sequence: before-ready -> await-ready -> init -> show-ui -> start (#20)", async () => {
+    it("full sequence: before-ready -> await-ready -> init -> show-ui -> start (#18)", async () => {
       const state = createTestState();
 
       const configureTracker: IntentModule = {

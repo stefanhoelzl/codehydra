@@ -7,18 +7,13 @@
  * 3. "init" - Post-ready initialization (config file, logging, shell, scripts)
  * 4. "show-ui" - Show starting screen
  * 5. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 6. "start" - Start servers, wire services, gather project paths, mount renderer.
+ * 6. "start" - Start servers, wire services, mount renderer.
  *              Handlers that need ports (mcpPort, codeServerPort) declare
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
  *
- * After "start", dispatches project:open for each saved project path
- * (best-effort, skips invalid projects). The mount handler in start
- * blocks until the renderer signals ready, ensuring event subscriptions
- * are in place before project:open dispatches fire.
- *
- * After all project:open dispatches complete, emits an `app:started` domain
- * event so subscribers (e.g., lifecycle.ready) know startup is done.
+ * After "start", the renderer signals ready via lifecycle.ready IPC,
+ * which dispatches app:ready to load initial projects (see app-ready.ts).
  *
  * The "check-deps" hook point uses collect() for isolated handler contexts.
  * Each handler returns a typed result; the operation merges results and
@@ -37,7 +32,7 @@
  * No provider dependencies - hook handlers do the actual work.
  */
 
-import type { Intent, DomainEvent } from "../intents/infrastructure/types";
+import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type {
@@ -48,8 +43,6 @@ import type {
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
 import { INTENT_SETUP } from "./setup";
 import { INTENT_UPDATE_APPLY } from "./update-apply";
-import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
-import { Path } from "../../services/platform/path";
 
 // =============================================================================
 // Intent Types
@@ -66,18 +59,6 @@ export interface AppStartIntent extends Intent<void> {
 }
 
 export const INTENT_APP_START = "app:start" as const;
-
-// =============================================================================
-// Domain Events
-// =============================================================================
-
-/** Emitted after all initial project:open dispatches complete. */
-export interface AppStartedEvent extends DomainEvent {
-  readonly type: typeof EVENT_APP_STARTED;
-  readonly payload: Record<string, never>;
-}
-
-export const EVENT_APP_STARTED = "app:started" as const;
 
 // =============================================================================
 // Hook Context & Result Types
@@ -146,14 +127,6 @@ export interface ShowUIHookResult {
 }
 
 // ActivateHookContext removed — ports are now read from capabilities within the "start" hook point.
-
-/**
- * Per-handler result for "start" hook point.
- * LocalProjectModule and RemoteProjectModule return projectPaths; others return `void` or `{}`.
- */
-export interface StartHookResult {
-  readonly projectPaths?: readonly string[];
-}
 
 /** Merged check results produced by runChecks(). */
 interface CheckResult {
@@ -278,39 +251,14 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 6: "start" -- Start servers, wire callbacks, gather project paths, mount renderer
+    // Hook 6: "start" -- Start servers, wire callbacks, mount renderer
     // Handlers that need ports (mcpPort, codeServerPort) declare `requires` and
     // read from ctx.capabilities. Capability-based ordering replaces the former
     // separate "activate" hook point.
-    const { results: startResults, errors: startErrors } = await ctx.hooks.collect<StartHookResult>(
-      "start",
-      hookCtx
-    );
+    const { errors: startErrors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (startErrors.length > 0) {
       throw startErrors[0]!;
     }
-    const projectPaths: string[] = [];
-    for (const result of startResults) {
-      if (result.projectPaths) projectPaths.push(...result.projectPaths);
-    }
-
-    // Dispatch project:open for each saved project (best-effort).
-    // Each project:open dispatches workspace:create + workspace:switch internally.
-    // The mount handler in activate ensures the renderer is subscribed before these fire.
-    for (const projectPath of projectPaths) {
-      try {
-        await ctx.dispatch({
-          type: INTENT_OPEN_PROJECT,
-          payload: { path: new Path(projectPath) },
-        } as OpenProjectIntent);
-      } catch {
-        // Skip invalid projects (no longer exist, not git repos, etc.)
-      }
-    }
-
-    // Signal that initial project:open dispatches are complete.
-    // lifecycle.ready awaits this event before returning to the renderer.
-    ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
   }
 
   /**

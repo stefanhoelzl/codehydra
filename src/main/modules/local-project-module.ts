@@ -39,7 +39,7 @@ import {
   type CloseHookInput,
   type CloseHookResult,
 } from "../operations/close-project";
-import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
+import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../operations/app-ready";
 import {
   RESOLVE_PROJECT_OPERATION_ID,
   type ResolveHookInput as ResolveProjectHookInput,
@@ -424,10 +424,10 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
         },
       },
 
-      [APP_START_OPERATION_ID]: {
-        // start: load all saved project configs
-        start: {
-          handler: async (): Promise<StartHookResult> => {
+      [APP_READY_OPERATION_ID]: {
+        // load-projects: load all saved project configs
+        "load-projects": {
+          handler: async (): Promise<LoadProjectsResult> => {
             const configs = await loadAllProjectConfigs(fs, projectsDir);
             return { projectPaths: configs.map((c) => c.path) };
           },

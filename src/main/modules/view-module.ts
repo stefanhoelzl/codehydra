@@ -1,5 +1,5 @@
 /**
- * ViewModule - Manages workspace views, UI modes, loading states, mount coordination,
+ * ViewModule - Manages workspace views, UI modes, loading states,
  * and shell layer disposal.
  *
  * Consolidates 11 inline bootstrap modules into a single extracted module:
@@ -15,12 +15,7 @@
  * - mountModule (app-start/start hook)
  * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
  *
- * Also owns the lifecycle.ready handler (merged from LifecycleReadyModule):
- * - app:started event resolves projectsLoadedPromise
- * - readyHandler resolves mountSignal and awaits projectsLoadedPromise
- *
- * Internal state: cachedActiveRef, loadingChangeCleanupFn, mountSignal,
- * projectsLoadedPromise.
+ * Internal state: cachedActiveRef, loadingChangeCleanupFn.
  */
 
 import type { DialogLayer } from "../../services/platform/dialog";
@@ -39,9 +34,7 @@ import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../../shared
 import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
 import {
   APP_START_OPERATION_ID,
-  EVENT_APP_STARTED,
   type ShowUIHookResult,
-  type StartHookResult,
   type RegisterConfigResult,
 } from "../operations/app-start";
 import type { AgentSelectionHookContext } from "../operations/setup";
@@ -93,14 +86,6 @@ import { getErrorMessage } from "../../shared/error-utils";
 // =============================================================================
 
 /**
- * Mount coordination signal used internally by ViewModule.
- */
-interface MountSignal {
-  /** Set by mountModule's activate handler; called by readyHandler. */
-  resolve: (() => void) | null;
-}
-
-/**
  * Dependencies for ViewModule.
  *
  * Shell layers are nullable because they may not exist in test environments
@@ -130,24 +115,15 @@ export interface ViewModuleDeps {
   readonly uiHtmlPath?: string | null;
 }
 
-/**
- * Result of createViewModule.
- */
-export interface ViewModuleResult {
-  readonly module: IntentModule;
-  /** Handler for the lifecycle.ready API method. Call from registry.register(). */
-  readonly readyHandler: () => Promise<void>;
-}
-
 // =============================================================================
 // Factory
 // =============================================================================
 
 /**
  * Create a ViewModule that manages workspace views, UI modes, loading states,
- * mount coordination, and shell layer disposal.
+ * and shell layer disposal.
  */
-export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
+export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const { viewManager, logger } = deps;
 
   // Internal state
@@ -156,11 +132,6 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
   let capAgentType: LifecycleAgentType | undefined;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
   let loadOnResume = false;
-  const mountSignal: MountSignal = { resolve: null };
-  let projectsLoadedResolve: (() => void) | null = null;
-  const projectsLoadedPromise = new Promise<void>((resolve) => {
-    projectsLoadedResolve = resolve;
-  });
 
   const module: IntentModule = {
     name: "view",
@@ -245,7 +216,7 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         },
         start: {
           requires: { codeServerPort: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<StartHookResult> => {
+          handler: async (ctx: HookContext): Promise<void> => {
             // Update code-server port from capabilities
             const codeServerPort = ctx.capabilities?.codeServerPort as number | null;
             if (codeServerPort !== null) {
@@ -263,17 +234,15 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
               }
             );
 
-            // Mount: send show-main-view and block until lifecycle.ready resolves
+            // Send show-main-view to trigger renderer mount.
+            // The renderer will call lifecycle.ready() IPC when mounted,
+            // which dispatches app:ready to load initial projects.
             if (!viewManager.isUIAvailable()) {
               logger.warn("UI not available for mount");
-              return {};
+              return;
             }
-            logger.debug("Mounting renderer — waiting for lifecycle.ready");
-            await new Promise<void>((resolve) => {
-              mountSignal.resolve = resolve;
-              viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
-            });
-            return {};
+            logger.debug("Mounting renderer");
+            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
           },
         },
       },
@@ -545,26 +514,8 @@ export function createViewModule(deps: ViewModuleDeps): ViewModuleResult {
         logger.info("Reloading workspace views after system resume");
         viewManager.reloadAllViews();
       },
-
-      // -------------------------------------------------------------------
-      // app:started → resolve projectsLoadedPromise
-      // -------------------------------------------------------------------
-      [EVENT_APP_STARTED]: () => {
-        if (projectsLoadedResolve) {
-          projectsLoadedResolve();
-          projectsLoadedResolve = null;
-        }
-      },
     },
   };
 
-  const readyHandler = async (): Promise<void> => {
-    if (mountSignal.resolve) {
-      mountSignal.resolve();
-      mountSignal.resolve = null;
-      await projectsLoadedPromise;
-    }
-  };
-
-  return { module, readyHandler };
+  return module;
 }

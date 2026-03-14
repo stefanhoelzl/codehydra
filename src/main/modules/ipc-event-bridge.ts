@@ -90,6 +90,8 @@ import { INTENT_GET_ACTIVE_WORKSPACE } from "../operations/get-active-workspace"
 import type { GetActiveWorkspaceIntent } from "../operations/get-active-workspace";
 import { INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
+import { INTENT_APP_READY } from "../operations/app-ready";
+import type { AppReadyIntent } from "../operations/app-ready";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { Path } from "../../services/platform/path";
 
@@ -101,7 +103,6 @@ export interface IpcEventBridgeDeps {
   readonly sendToUI: (channel: string, ...args: unknown[]) => void;
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
-  readonly readyHandler: (payload: object) => Promise<void>;
   readonly agentStatusManager: {
     getStatus(wp: WorkspacePath): { status: string } | undefined;
   };
@@ -277,8 +278,11 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
   // Register IPC handlers directly on ipcLayer
   // ---------------------------------------------------------------------------
 
-  registerIpc(ApiIpcChannels.LIFECYCLE_READY, async (payload) => {
-    await deps.readyHandler(payload as object);
+  registerIpc(ApiIpcChannels.LIFECYCLE_READY, async () => {
+    await dispatcher.dispatch({
+      type: INTENT_APP_READY,
+      payload: {},
+    } as AppReadyIntent);
   });
 
   registerIpc(ApiIpcChannels.LIFECYCLE_QUIT, async () => {

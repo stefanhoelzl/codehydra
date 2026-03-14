@@ -46,8 +46,8 @@ import {
   type CloseHookInput,
 } from "../operations/close-project";
 import type { CloseProjectIntent } from "../operations/close-project";
-import { APP_START_OPERATION_ID, type StartHookResult } from "../operations/app-start";
-import type { AppStartIntent } from "../operations/app-start";
+import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../operations/app-ready";
+import type { AppReadyIntent } from "../operations/app-ready";
 import { Path } from "../../services/platform/path";
 import type { ProjectId } from "../../shared/api/types";
 import type { ResolvedHooks } from "../intents/infrastructure/operation";
@@ -102,7 +102,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
 interface TestSetup {
   openHooks: ResolvedHooks;
   closeHooks: ResolvedHooks;
-  startHooks: ResolvedHooks;
+  readyHooks: ResolvedHooks;
   fs: ReturnType<typeof createFileSystemMock>;
   globalProvider: LocalProjectModuleDeps["globalProvider"];
 }
@@ -118,7 +118,7 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
   return {
     openHooks: hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID),
     closeHooks: hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID),
-    startHooks: hookRegistry.resolve(APP_START_OPERATION_ID),
+    readyHooks: hookRegistry.resolve(APP_READY_OPERATION_ID),
     fs,
     globalProvider,
   };
@@ -173,10 +173,10 @@ function closeIntent(projectPath: string): CloseProjectIntent {
   };
 }
 
-function appStartIntent(): AppStartIntent {
+function appReadyIntent(): AppReadyIntent {
   return {
-    type: "app:start",
-    payload: {} as AppStartIntent["payload"],
+    type: "app:ready",
+    payload: {} as AppReadyIntent["payload"],
   };
 }
 
@@ -578,10 +578,10 @@ describe("LocalProjectModule Integration", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // app:start → start
+  // app:ready → load-projects
   // ---------------------------------------------------------------------------
 
-  describe("app:start start", () => {
+  describe("app:ready load-projects", () => {
     it("returns all project paths including remote (#11)", async () => {
       const localPath = "/projects/alpha";
       const remotePath = "/remotes/repo";
@@ -591,9 +591,12 @@ describe("LocalProjectModule Integration", () => {
       writeConfig(setup.fs, localPath);
       writeConfig(setup.fs, remotePath, "https://github.com/org/repo.git");
 
-      const { results, errors } = await setup.startHooks.collect<StartHookResult>("start", {
-        intent: appStartIntent(),
-      });
+      const { results, errors } = await setup.readyHooks.collect<LoadProjectsResult>(
+        "load-projects",
+        {
+          intent: appReadyIntent(),
+        }
+      );
 
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
@@ -602,10 +605,10 @@ describe("LocalProjectModule Integration", () => {
     });
 
     it("returns empty when no projects saved (#12)", async () => {
-      const { startHooks } = createTestSetup();
+      const { readyHooks } = createTestSetup();
 
-      const { results, errors } = await startHooks.collect<StartHookResult>("start", {
-        intent: appStartIntent(),
+      const { results, errors } = await readyHooks.collect<LoadProjectsResult>("load-projects", {
+        intent: appReadyIntent(),
       });
 
       expect(errors).toHaveLength(0);
@@ -619,11 +622,11 @@ describe("LocalProjectModule Integration", () => {
       // Pre-populate config
       writeConfig(setup.fs, PROJECT_PATH);
 
-      await setup.startHooks.collect<StartHookResult>("start", {
-        intent: appStartIntent(),
+      await setup.readyHooks.collect<LoadProjectsResult>("load-projects", {
+        intent: appReadyIntent(),
       });
 
-      // start should NOT populate internal state — resolve reads config from disk,
+      // load-projects should NOT populate internal state — resolve reads config from disk,
       // so it returns {} for a local project (no remoteUrl)
       const { results, errors } = await setup.closeHooks.collect<CloseResolveHookResult>(
         "resolve",
