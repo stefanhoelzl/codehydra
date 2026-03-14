@@ -1114,9 +1114,10 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
+      const binDir = new Path("/test/app-data/bin").toNative();
       const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
       const env = runCall![2].env as Record<string, string>;
-      expect(env.PATH).toBe(`/test/app-data/bin${delimiter}/usr/bin:/usr/local/bin`);
+      expect(env.PATH).toBe(`${binDir}${delimiter}/usr/bin:/usr/local/bin`);
     });
 
     it("includes EDITOR with absolute path and flags", async () => {
@@ -1126,10 +1127,9 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
+      const binDir = new Path("/test/app-data/bin").toNative();
       const isWindows = process.platform === "win32";
-      const expectedCodeCmd = isWindows
-        ? `"${join("/test/app-data/bin", "code.cmd")}"`
-        : join("/test/app-data/bin", "code");
+      const expectedCodeCmd = isWindows ? `"${join(binDir, "code.cmd")}"` : join(binDir, "code");
       const expectedEditor = `${expectedCodeCmd} --wait --reuse-window`;
 
       const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
