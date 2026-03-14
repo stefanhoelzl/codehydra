@@ -49,8 +49,9 @@ export interface HookHandler<T = unknown> {
   /** Capabilities this handler requires before it can execute.
    *  Key = capability name. Value = required value, or ANY_VALUE for "must exist, any value". */
   readonly requires?: Readonly<Record<string, unknown>>;
-  /** Capabilities this handler provides after successful execution. */
-  readonly provides?: Readonly<Record<string, unknown>>;
+  /** Capabilities this handler provides after successful execution.
+   *  Called after the handler completes; return value is merged into capabilities. */
+  readonly provides?: () => Readonly<Record<string, unknown>>;
 }
 
 /**

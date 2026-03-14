@@ -88,7 +88,7 @@ export class HookRegistry implements IHookRegistry {
                   results.push(result as T);
                 }
                 if (entry.provides) {
-                  Object.assign(capabilities, entry.provides);
+                  Object.assign(capabilities, entry.provides());
                 }
               } catch (err) {
                 errors.push(err instanceof Error ? err : new Error(String(err)));
