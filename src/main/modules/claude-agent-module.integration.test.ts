@@ -18,7 +18,6 @@ import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
   ConfigureResult,
   CheckDepsResult,
-  StartHookResult,
   CheckDepsHookContext,
 } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
@@ -106,7 +105,7 @@ class MinimalStartOperation implements Operation<Intent, void> {
   }
 }
 
-class MinimalStartWithMcpPortOperation implements Operation<Intent, readonly StartHookResult[]> {
+class MinimalStartWithMcpPortOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
   private readonly mcpPort: number | null;
 
@@ -114,15 +113,14 @@ class MinimalStartWithMcpPortOperation implements Operation<Intent, readonly Sta
     this.mcpPort = mcpPort;
   }
 
-  async execute(ctx: OperationContext<Intent>): Promise<readonly StartHookResult[]> {
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
     // Run start with mcpPort as a pre-populated capability
     const hookCtx: HookContext = {
       intent: ctx.intent,
       capabilities: { mcpPort: this.mcpPort },
     };
-    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
-    return results;
   }
 }
 
@@ -573,13 +571,13 @@ describe("ClaudeAgentModule", () => {
       // No config:updated event -- module stays inactive
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
 
-      const results = (await dispatcher.dispatch({
+      await dispatcher.dispatch({
         type: "app:start",
         payload: {},
-      })) as readonly StartHookResult[];
+      });
+
 
       expect(mockSM.setMcpConfig).not.toHaveBeenCalled();
-      expect(results[0]).toEqual({});
     });
   });
 

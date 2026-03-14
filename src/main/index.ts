@@ -109,6 +109,7 @@ import { createGitHubSource } from "./modules/auto-workspace/github-source";
 import { createYouTrackSource } from "./modules/auto-workspace/youtrack-source";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
+import { AppReadyOperation, INTENT_APP_READY } from "./operations/app-ready";
 import { ConfigSetValuesOperation, INTENT_CONFIG_SET_VALUES } from "./operations/config-set-values";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
 import { AppResumeOperation, INTENT_APP_RESUME } from "./operations/app-resume";
@@ -354,6 +355,7 @@ const mcpServerManager = new McpServerManager(
 
 const idempotencyModule = createIdempotencyModule([
   { intentType: INTENT_APP_SHUTDOWN },
+  { intentType: INTENT_APP_READY },
   { intentType: INTENT_SETUP, resetOn: EVENT_SETUP_ERROR },
   {
     intentType: INTENT_DELETE_WORKSPACE,
@@ -378,7 +380,7 @@ const idempotencyModule = createIdempotencyModule([
 
 const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
 
-const { module: viewModule, readyHandler } = createViewModule({
+const viewModule = createViewModule({
   viewManager,
   logger: apiLogger,
   viewLayer,
@@ -574,6 +576,7 @@ const shortcutDevtoolsModule = buildInfo.isDevelopment
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
 dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation());
 dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new ConfigSetValuesOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
@@ -608,7 +611,6 @@ const ipcEventBridge = createIpcEventBridge({
   sendToUI: (...args) => viewManager.sendToUI(...args),
   logger: apiLogger,
   dispatcher,
-  readyHandler,
   agentStatusManager,
 });
 

@@ -15,7 +15,7 @@ import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import type { CheckDepsResult, ConfigureResult, StartHookResult } from "../operations/app-start";
+import type { CheckDepsResult, ConfigureResult } from "../operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -386,7 +386,7 @@ class StartWithMcpPortOperation implements Operation<Intent, void> {
       intent: ctx.intent,
       capabilities: { mcpPort: this.mcpPort },
     };
-    const { errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
   }
 }

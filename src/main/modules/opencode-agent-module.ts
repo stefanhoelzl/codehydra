@@ -27,7 +27,6 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-  StartHookResult,
   RegisterConfigResult,
 } from "../operations/app-start";
 import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../operations/setup";
@@ -271,8 +270,8 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
 
         start: {
           requires: { mcpPort: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<StartHookResult> => {
-            if (!active) return {};
+          handler: async (ctx: HookContext): Promise<void> => {
+            if (!active) return;
 
             wireServerCallbacks();
 
@@ -289,7 +288,6 @@ export function createOpenCodeAgentModule(deps: OpenCodeAgentModuleDeps): Intent
             if (mcpPort !== null) {
               serverManager.setMcpConfig({ port: mcpPort });
             }
-            return {};
           },
         },
       },

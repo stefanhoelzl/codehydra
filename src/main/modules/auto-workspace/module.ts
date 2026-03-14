@@ -21,11 +21,7 @@
 import type { IntentModule } from "../../intents/infrastructure/module";
 import type { Dispatcher } from "../../intents/infrastructure/dispatcher";
 import type { DomainEvent } from "../../intents/infrastructure/types";
-import {
-  APP_START_OPERATION_ID,
-  type StartHookResult,
-  type RegisterConfigResult,
-} from "../../operations/app-start";
+import { APP_START_OPERATION_ID, type RegisterConfigResult } from "../../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../operations/app-shutdown";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../operations/open-workspace";
 import {
@@ -519,10 +515,9 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           },
         },
         start: {
-          handler: async (): Promise<StartHookResult> => {
+          handler: async (): Promise<void> => {
             await activateAll();
             initialActivationDone = true;
-            return {};
           },
         },
       },

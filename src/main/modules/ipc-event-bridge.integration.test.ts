@@ -150,7 +150,6 @@ function createBridgeDeps(
     sendToUI,
     logger: SILENT_LOGGER,
     dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
-    readyHandler: vi.fn<(payload: object) => Promise<void>>(),
     agentStatusManager: {
       getStatus: vi.fn(),
     } as unknown as IpcEventBridgeDeps["agentStatusManager"],
@@ -445,26 +444,20 @@ describe("IpcEventBridge - IPC handlers", () => {
     expect(state.handlers.has(ApiIpcChannels.UI_SET_MODE)).toBe(true);
   });
 
-  it("lifecycle.ready IPC handler delegates to readyHandler", async () => {
+  it("lifecycle.ready IPC handler dispatches app:ready intent", async () => {
     const ipcLayer = createBehavioralIpcLayer();
-    const readyHandler = vi.fn<(payload: object) => Promise<void>>();
-    const deps = createBridgeDeps({ ipcLayer, readyHandler });
+    const dispatcher = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IpcEventBridgeDeps["dispatcher"];
+    const deps = createBridgeDeps({ ipcLayer, dispatcher });
     createIpcEventBridge(deps);
 
     await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, undefined);
 
-    expect(readyHandler).toHaveBeenCalledWith({});
-  });
-
-  it("IPC handler converts null payload to empty object", async () => {
-    const ipcLayer = createBehavioralIpcLayer();
-    const readyHandler = vi.fn<(payload: object) => Promise<void>>();
-    const deps = createBridgeDeps({ ipcLayer, readyHandler });
-    createIpcEventBridge(deps);
-
-    await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, null);
-
-    expect(readyHandler).toHaveBeenCalledWith({});
+    expect(dispatcher.dispatch).toHaveBeenCalledWith({
+      type: "app:ready",
+      payload: {},
+    });
   });
 });
 

@@ -26,12 +26,8 @@ import { createMinimalOperation } from "../intents/infrastructure/operation.test
 import type { IntentModule } from "../intents/infrastructure/module";
 import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../operations/set-mode";
 import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
-import {
-  INTENT_APP_START,
-  APP_START_OPERATION_ID,
-  EVENT_APP_STARTED,
-} from "../operations/app-start";
-import type { AppStartIntent, ShowUIHookResult, StartHookResult } from "../operations/app-start";
+import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
+import type { AppStartIntent, ShowUIHookResult } from "../operations/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -277,70 +273,33 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, Shutdow
 }
 
 /** Runs "start" hook only (for mount + loading change wiring). */
-class MinimalActivateOperation implements Operation<Intent, StartHookResult> {
+class MinimalActivateOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
     // Pre-populate codeServerPort capability so handlers with requires run
     const hookCtx: HookContext = {
       intent: ctx.intent,
       capabilities: { codeServerPort: null },
     };
-    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
-    const merged: StartHookResult = {};
-    for (const r of results) {
-      if (r.projectPaths) {
-        (merged as Record<string, unknown>).projectPaths = [
-          ...((merged.projectPaths as string[]) ?? []),
-          ...r.projectPaths,
-        ];
-      }
-    }
-    return merged;
   }
 }
 
-/** Runs "start" hook then emits app:started (for tests needing readyHandler to complete). */
-class MinimalActivateAndStartedOperation implements Operation<Intent, StartHookResult> {
-  readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
-    // Pre-populate codeServerPort capability so handlers with requires run
-    const hookCtx: HookContext = {
-      intent: ctx.intent,
-      capabilities: { codeServerPort: null },
-    };
-    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-    ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
-    const merged: StartHookResult = {};
-    for (const r of results) {
-      if (r.projectPaths) {
-        (merged as Record<string, unknown>).projectPaths = [
-          ...((merged.projectPaths as string[]) ?? []),
-          ...r.projectPaths,
-        ];
-      }
-    }
-    return merged;
-  }
-}
-
-/** Runs "start" hook with codeServerPort capability then emits app:started. */
-class MinimalActivateWithPortsAndStartedOperation implements Operation<Intent, StartHookResult> {
+/** Runs "start" hook with codeServerPort capability. */
+class MinimalActivateWithPortsOperation implements Operation<Intent, void> {
   readonly id = APP_START_OPERATION_ID;
   private readonly codeServerPort: number | null;
   constructor(codeServerPort: number | null) {
     this.codeServerPort = codeServerPort;
   }
-  async execute(ctx: OperationContext<Intent>): Promise<StartHookResult> {
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
       capabilities: { codeServerPort: this.codeServerPort },
     };
-    const { results, errors } = await ctx.hooks.collect<StartHookResult>("start", hookCtx);
+    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
-    ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
-    return results[0] ?? {};
   }
 }
 
@@ -392,7 +351,6 @@ interface TestSetup {
   hookRegistry: HookRegistry;
   viewManager: ReturnType<typeof createMockViewManager>;
   layers: ReturnType<typeof createMockShellLayers>;
-  readyHandler: () => Promise<void>;
   module: IntentModule;
 }
 
@@ -421,7 +379,7 @@ function createTestSetup(
     ...(options?.dialogLayer !== undefined && { dialogLayer: options.dialogLayer }),
   };
 
-  const { module, readyHandler } = createViewModule(deps);
+  const module = createViewModule(deps);
 
   if (operationOverride) {
     dispatcher.registerOperation(operationOverride.intentType, operationOverride.operation);
@@ -429,7 +387,7 @@ function createTestSetup(
 
   dispatcher.registerModule(module);
 
-  return { dispatcher, hookRegistry, viewManager, layers, readyHandler, module };
+  return { dispatcher, hookRegistry, viewManager, layers, module };
 }
 
 // =============================================================================
@@ -543,7 +501,7 @@ describe("ViewModule Integration", () => {
         new MinimalAgentSelectionOperation(availableAgents)
       );
 
-      const { module } = createViewModule({
+      const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
         viewLayer: null,
@@ -891,28 +849,18 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("app-start/activate", () => {
     it("wires onLoadingChange and sends LIFECYCLE_SHOW_MAIN_VIEW", async () => {
-      const { dispatcher, viewManager, readyHandler } = createTestSetup({
+      const { dispatcher, viewManager } = createTestSetup({
         intentType: INTENT_APP_START,
-        operation: new MinimalActivateAndStartedOperation(),
+        operation: new MinimalActivateOperation(),
       });
 
-      // Start dispatch in background - it will block on mount
-      const dispatchPromise = dispatcher.dispatch({
+      await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
 
-      // Wait a tick for the activate handler to wire up
-      await new Promise<void>((r) => setTimeout(r, 10));
-
-      // Verify onLoadingChange was wired
       expect(viewManager.onLoadingChange).toHaveBeenCalled();
-
-      // Verify webContents.send was called with LIFECYCLE_SHOW_MAIN_VIEW
       expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
-
-      // Call readyHandler to unblock mount (operation emits app:started to complete)
-      await Promise.all([dispatchPromise, readyHandler()]);
     });
   });
 
@@ -921,35 +869,29 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("app-start/activate (codeServerPort)", () => {
     it("calls updateCodeServerPort when codeServerPort is set in context", async () => {
-      const { dispatcher, viewManager, readyHandler } = createTestSetup({
+      const { dispatcher, viewManager } = createTestSetup({
         intentType: INTENT_APP_START,
-        operation: new MinimalActivateWithPortsAndStartedOperation(9090),
+        operation: new MinimalActivateWithPortsOperation(9090),
       });
 
-      const dispatchPromise = dispatcher.dispatch({
+      await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
-
-      await new Promise<void>((r) => setTimeout(r, 10));
-      await Promise.all([dispatchPromise, readyHandler()]);
 
       expect(viewManager.updateCodeServerPort).toHaveBeenCalledWith(9090);
     });
 
     it("does not call updateCodeServerPort when codeServerPort is null", async () => {
-      const { dispatcher, viewManager, readyHandler } = createTestSetup({
+      const { dispatcher, viewManager } = createTestSetup({
         intentType: INTENT_APP_START,
-        operation: new MinimalActivateWithPortsAndStartedOperation(null),
+        operation: new MinimalActivateWithPortsOperation(null),
       });
 
-      const dispatchPromise = dispatcher.dispatch({
+      await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
-
-      await new Promise<void>((r) => setTimeout(r, 10));
-      await Promise.all([dispatchPromise, readyHandler()]);
 
       expect(viewManager.updateCodeServerPort).not.toHaveBeenCalled();
     });
@@ -977,7 +919,7 @@ describe("ViewModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-      const { module } = createViewModule({
+      const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
@@ -1023,10 +965,10 @@ describe("ViewModule Integration", () => {
       // onLoadingChange returns our trackable cleanup
       viewManager.onLoadingChange.mockReturnValue(cleanupFn);
 
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateAndStartedOperation());
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation());
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-      const { module, readyHandler } = createViewModule({
+      const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
@@ -1038,13 +980,10 @@ describe("ViewModule Integration", () => {
       dispatcher.registerModule(quitModule);
 
       // Start app (wires loading change callback)
-      const startPromise = dispatcher.dispatch({
+      await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
-
-      await new Promise<void>((r) => setTimeout(r, 10));
-      await Promise.all([startPromise, readyHandler()]);
 
       // Shutdown (should call cleanup)
       await dispatcher.dispatch({
@@ -1076,7 +1015,7 @@ describe("ViewModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-      const { module } = createViewModule({
+      const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
         viewLayer: null,
@@ -1117,7 +1056,7 @@ describe("ViewModule Integration", () => {
         maximizeAsync: vi.fn().mockResolvedValue(undefined),
         focus: vi.fn(),
       };
-      const { module } = createViewModule({
+      const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
@@ -1158,7 +1097,7 @@ describe("ViewModule Integration", () => {
         createMinimalOperation(APP_START_OPERATION_ID, "init")
       );
 
-      const { module } = createViewModule({
+      const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
         viewLayer: null,
@@ -1247,94 +1186,6 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Lifecycle-ready (merged from LifecycleReadyModule)
-  // -------------------------------------------------------------------------
-  describe("readyHandler (lifecycle-ready)", () => {
-    it("resolves mount signal and awaits projectsLoadedPromise", async () => {
-      const { dispatcher, readyHandler } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalActivateOperation(),
-      });
-
-      // Start dispatch - blocks on mount signal in activate hook
-      const dispatchPromise = dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      await new Promise<void>((r) => setTimeout(r, 10));
-
-      // Call readyHandler - resolves mount (unblocks dispatch) but blocks on projectsLoadedPromise
-      let handlerCompleted = false;
-      const readyPromise = readyHandler().then(() => {
-        handlerCompleted = true;
-      });
-
-      // Dispatch completes because mount was resolved
-      await dispatchPromise;
-      // But readyHandler is still blocked on projectsLoadedPromise
-      expect(handlerCompleted).toBe(false);
-
-      // Emit app:started to resolve projectsLoadedPromise
-      const emitOp: Operation<Intent, void> = {
-        id: "emit-started",
-        async execute(ctx: OperationContext<Intent>): Promise<void> {
-          ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
-        },
-      };
-      dispatcher.registerOperation("test:emit-started", emitOp);
-      await dispatcher.dispatch({ type: "test:emit-started", payload: {} });
-
-      await readyPromise;
-      expect(handlerCompleted).toBe(true);
-    });
-
-    it("app:started event resolves projectsLoadedPromise so readyHandler completes", async () => {
-      const { dispatcher, readyHandler } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalActivateAndStartedOperation(),
-      });
-
-      // Dispatch app:start - blocks on mount, then emits app:started
-      const dispatchPromise = dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      await new Promise<void>((r) => setTimeout(r, 10));
-
-      // readyHandler resolves mount; operation continues and emits app:started
-      await Promise.all([dispatchPromise, readyHandler()]);
-    });
-
-    it("readyHandler is idempotent (second call is no-op)", async () => {
-      const { dispatcher, readyHandler } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalActivateAndStartedOperation(),
-      });
-
-      const dispatchPromise = dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      await new Promise<void>((r) => setTimeout(r, 10));
-      await Promise.all([dispatchPromise, readyHandler()]);
-
-      // Second call is a no-op (mount signal already consumed)
-      await readyHandler();
-    });
-
-    it("readyHandler is no-op when mount signal resolve is null", async () => {
-      // Create module without triggering activate (mountSignal.resolve stays null)
-      const { readyHandler } = createTestSetup();
-
-      // Should complete immediately without error
-      await readyHandler();
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // Retry (absorbed from RetryModule)
   // -------------------------------------------------------------------------
   describe("app-start/show-ui (retry)", () => {
@@ -1350,7 +1201,7 @@ describe("ViewModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalShowUIOperation());
 
-      const { module } = createViewModule({
+      const module = createViewModule({
         viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
         logger: SILENT_LOGGER,
         viewLayer: null,
