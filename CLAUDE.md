@@ -126,7 +126,7 @@ Some components use external libraries directly without abstraction layers. Thes
 | API Reference    | docs/API.md          | Private/Public API documentation                    |
 | Testing Strategy | docs/TESTING.md      | Test types, conventions, commands                   |
 | Release          | docs/RELEASE.md      | Version format, release workflow, Windows builds    |
-| Contributing     | CONTRIBUTING.md      | Feature skill workflow, GitHub setup, /ship command |
+| Contributing     | CONTRIBUTING.md      | GitHub setup, /ship command                         |
 
 **Note**: Files in `planning/` are historical records. Read source code and `docs/` for current state.
 
@@ -266,12 +266,6 @@ cd /path/to/main && git merge --ff-only <branch>  # Fast-forward only
 | `pnpm validate:fix`     | Auto-fix + validate          |
 
 Integration tests MUST be fast (<50ms per test).
-
----
-
-## Feature Agent Workflow
-
-The `/feature` skill orchestrates features from planning to merge. See [CONTRIBUTING.md](CONTRIBUTING.md) for full workflow details, plan status transitions, and `/ship` command documentation.
 
 ---
 

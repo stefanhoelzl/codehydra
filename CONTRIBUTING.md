@@ -4,54 +4,7 @@
 
 See [README.md](README.md) for quick start instructions.
 
-## Feature Workflow
-
-The feature workflow uses explicit commands for each phase transition:
-
-| Command                | Purpose                                          |
-| ---------------------- | ------------------------------------------------ |
-| `/feature:plan`        | Discuss feature, enter planning mode, write plan |
-| `/feature:plan-review` | Invoke parallel plan reviewers                   |
-| `/feature:implement`   | Start implementation                             |
-| `/feature:code-review` | Review implementation against plan               |
-| `/ship`                | Create PR with auto-merge                        |
-
-### Workflow Overview
-
-```
-/feature:plan → Enter plan mode → Discussion phases → Write plan → User approves
-       ↓
-/feature:plan-review → Invoke reviewers (parallel) → Summarize → Fix issues
-       ↓
-/feature:implement → implement agent → validates
-       ↓
-/feature:code-review → code-review agent → Fix issues → User testing
-       ↓
-User accepts → commit → /ship
-       ↓
-┌──────┼──────┬─────────┐
-↓      ↓      ↓         ↓
-MERGED FAILED TIMEOUT
-```
-
-### Plan Status Transitions
-
-| Status                  | Set By    | When                                                |
-| ----------------------- | --------- | --------------------------------------------------- |
-| `REVIEW_PENDING`        | plan      | Plan created                                        |
-| `APPROVED`              | implement | Starting implementation                             |
-| `IMPLEMENTATION_REVIEW` | implement | Implementation complete, ready for review & testing |
-| `COMPLETED`             | user      | User accepted, committed                            |
-
-### Planning Requirements
-
-See [docs/PLANNING.md](docs/PLANNING.md) for:
-
-- Which documents to read for each change type
-- What a plan must contain
-- Questions to answer during discussion
-
-### /ship Command
+## /ship Command
 
 The `/ship` command creates a PR with auto-merge and waits for merge via client-side queue:
 
