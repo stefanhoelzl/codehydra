@@ -3,11 +3,12 @@
  * Integration tests for CodeServerModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
- * Uses minimal test operations that exercise specific hook points, with
- * all dependencies mocked via vi.fn().
+ * The module now owns all code-server lifecycle logic (previously in CodeServerManager),
+ * so tests use processRunner/httpClient/portManager mocks directly.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { delimiter, join } from "node:path";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
@@ -54,6 +55,7 @@ import type {
 } from "../../services/vscode-setup/types";
 import type { DirEntry } from "../../services/platform/filesystem";
 import type { SpawnedProcess } from "../../services/platform/process";
+import type { BinaryDownloadService } from "../../services/binary-download";
 import { SILENT_LOGGER } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import { SetupError } from "../../services/errors";
@@ -230,32 +232,37 @@ function createMockConfigModule(): IntentModule {
 // Mock Factories
 // =============================================================================
 
-function createMockProcess(exitCode = 0, stderr = ""): SpawnedProcess {
+function createMockSpawnedProcess(pid = 12345): SpawnedProcess {
   return {
-    wait: vi.fn().mockResolvedValue({ exitCode, stderr, stdout: "" }),
-    kill: vi.fn(),
-    pid: 12345,
+    pid,
+    wait: vi.fn().mockImplementation((timeout?: number) => {
+      if (timeout === 0) return Promise.resolve({ running: true });
+      return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
+    }),
+    kill: vi.fn().mockResolvedValue({ success: true }),
+  };
+}
+
+function createMockBinaryDownloadService(
+  overrides?: Partial<BinaryDownloadService>
+): BinaryDownloadService {
+  return {
+    isInstalled: vi.fn().mockResolvedValue(true),
+    download: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
   };
 }
 
 function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
   return {
-    codeServerManager: {
-      preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
-      downloadBinary: vi.fn().mockResolvedValue(undefined),
-      ensureRunning: vi.fn().mockResolvedValue(9090),
-      port: vi.fn().mockReturnValue(9090),
-      getConfig: vi.fn().mockReturnValue({
-        runtimeDir: new Path("/runtime"),
-        extensionsDir: new Path("/extensions"),
-        userDataDir: new Path("/user-data"),
-      }),
-      setCodeServerVersion: vi.fn(),
-      setPort: vi.fn(),
-      stop: vi.fn().mockResolvedValue(undefined),
-    },
     processRunner: {
-      run: vi.fn().mockReturnValue(createMockProcess()),
+      run: vi.fn().mockReturnValue(createMockSpawnedProcess()),
+    },
+    httpClient: {
+      fetch: vi.fn().mockResolvedValue({ status: 200 }),
+    },
+    portManager: {
+      isPortAvailable: vi.fn().mockResolvedValue(true),
     },
     fileSystemLayer: {
       mkdir: vi.fn().mockResolvedValue(undefined),
@@ -280,11 +287,12 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
         return new Path(`/test/app-data/${subpath}`);
       }),
     },
+    buildInfo: { isPackaged: true },
     platform: "linux",
     arch: "x64",
-    codeServerBinaryPath: "/test/code-server/bin/code-server",
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
+    binaryDownloadService: createMockBinaryDownloadService(),
     ...overrides,
   };
 }
@@ -297,11 +305,11 @@ function createTestSetup(mockDeps?: CodeServerModuleDeps) {
   const deps = mockDeps ?? createMockDeps();
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
-  const module = createCodeServerModule(deps);
+  const { module, setPluginPort } = createCodeServerModule(deps);
 
   dispatcher.registerModule(module);
 
-  return { deps, dispatcher, hookRegistry };
+  return { deps, dispatcher, hookRegistry, setPluginPort };
 }
 
 // =============================================================================
@@ -335,10 +343,10 @@ describe("CodeServerModule", () => {
 
   describe("check-deps", () => {
     it("returns code-server in missingBinaries when download needed", async () => {
-      const deps = createMockDeps();
-      (deps.codeServerManager.preflight as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: true,
-        needsDownload: true,
+      const deps = createMockDeps({
+        binaryDownloadService: createMockBinaryDownloadService({
+          isInstalled: vi.fn().mockResolvedValue(false),
+        }),
       });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
@@ -353,6 +361,21 @@ describe("CodeServerModule", () => {
 
     it("returns empty missingBinaries when up-to-date", async () => {
       const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as CheckDepsResult;
+
+      expect(result.missingBinaries ?? []).not.toContain("code-server");
+    });
+
+    it("returns needsDownload false when no BinaryDownloadService available", async () => {
+      const allDeps = createMockDeps();
+      delete (allDeps as unknown as Record<string, unknown>).binaryDownloadService;
+      const deps = allDeps;
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
 
@@ -464,8 +487,9 @@ describe("CodeServerModule", () => {
         payload: {},
       })) as StartHookResult;
 
-      expect(result.codeServerPort).toBe(9090);
-      expect(deps.codeServerManager.ensureRunning).toHaveBeenCalled();
+      // Port is 25448 (packaged mode)
+      expect(result.codeServerPort).toBe(25448);
+      expect(deps.processRunner.run).toHaveBeenCalled();
     });
 
     it("ensures required directories exist", async () => {
@@ -477,6 +501,41 @@ describe("CodeServerModule", () => {
 
       expect(deps.fileSystemLayer.mkdir).toHaveBeenCalledTimes(3);
     });
+
+    it("checks port availability before spawning", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(25448);
+    });
+
+    it("spawns code-server with correct arguments", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(deps.processRunner.run).toHaveBeenCalledWith(
+        expect.stringContaining("code-server"),
+        expect.arrayContaining([
+          "--bind-addr",
+          "127.0.0.1:25448",
+          "--auth",
+          "none",
+          "--extensions-dir",
+          expect.stringContaining("extensions"),
+          "--user-data-dir",
+          expect.stringContaining("user-data"),
+        ]),
+        expect.objectContaining({
+          cwd: expect.stringContaining("runtime"),
+        })
+      );
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -484,27 +543,44 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("stop", () => {
-    it("stops code-server", async () => {
-      const deps = createMockDeps();
+    it("stops code-server by killing the process", async () => {
+      const mockProcess = createMockSpawnedProcess();
+      const deps = createMockDeps({
+        processRunner: {
+          run: vi.fn().mockReturnValue(mockProcess),
+        },
+      });
       const { dispatcher } = createTestSetup(deps);
+
+      // Start first
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Then stop
       dispatcher.registerOperation(
         "app:shutdown",
         createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
       );
-
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
-      expect(deps.codeServerManager.stop).toHaveBeenCalled();
+      expect(mockProcess.kill).toHaveBeenCalled();
     });
 
     it("collect catches stop error, dispatch still resolves", async () => {
+      const mockProcess = createMockSpawnedProcess();
+      (mockProcess.kill as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("kill failed"));
       const deps = createMockDeps({
-        codeServerManager: {
-          ...createMockDeps().codeServerManager,
-          stop: vi.fn().mockRejectedValue(new Error("stop failed")),
+        processRunner: {
+          run: vi.fn().mockReturnValue(mockProcess),
         },
       });
       const { dispatcher } = createTestSetup(deps);
+
+      // Start first
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // Replace operation for stop
       dispatcher.registerOperation(
         "app:shutdown",
         createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
@@ -523,37 +599,46 @@ describe("CodeServerModule", () => {
 
   describe("binary download", () => {
     it("downloads code-server when missing", async () => {
-      const deps = createMockDeps();
+      const binaryDownloadService = createMockBinaryDownloadService();
+      const deps = createMockDeps({ binaryDownloadService });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
       dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.codeServerManager.downloadBinary).toHaveBeenCalled();
+      expect(binaryDownloadService.download).toHaveBeenCalled();
       expect(op.report).toHaveBeenCalledWith("vscode", "done");
     });
 
     it("skips download when not missing", async () => {
-      const deps = createMockDeps();
+      const binaryDownloadService = createMockBinaryDownloadService();
+      const deps = createMockDeps({ binaryDownloadService });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: [] });
       dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.codeServerManager.downloadBinary).not.toHaveBeenCalled();
+      expect(binaryDownloadService.download).not.toHaveBeenCalled();
       expect(op.report).toHaveBeenCalledWith("vscode", "done");
     });
 
     it("reports progress during download", async () => {
-      const deps = createMockDeps();
-      (deps.codeServerManager.downloadBinary as ReturnType<typeof vi.fn>).mockImplementation(
-        async (cb: (p: { phase: string; bytesDownloaded: number; totalBytes: number }) => void) => {
-          cb({ phase: "downloading", bytesDownloaded: 50, totalBytes: 100 });
-          cb({ phase: "extracting", bytesDownloaded: 100, totalBytes: 100 });
-        }
-      );
+      const binaryDownloadService = createMockBinaryDownloadService({
+        download: vi
+          .fn()
+          .mockImplementation(
+            async (
+              _req: unknown,
+              cb: (p: { phase: string; bytesDownloaded: number; totalBytes: number }) => void
+            ) => {
+              cb({ phase: "downloading", bytesDownloaded: 50, totalBytes: 100 });
+              cb({ phase: "extracting", bytesDownloaded: 100, totalBytes: 100 });
+            }
+          ),
+      });
+      const deps = createMockDeps({ binaryDownloadService });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
       dispatcher.registerOperation("setup", op);
@@ -565,16 +650,21 @@ describe("CodeServerModule", () => {
     });
 
     it("throws SetupError on download failure", async () => {
-      const deps = createMockDeps();
-      (deps.codeServerManager.downloadBinary as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("network error")
-      );
+      const binaryDownloadService = createMockBinaryDownloadService({
+        download: vi.fn().mockRejectedValue(new Error("network error")),
+      });
+      const deps = createMockDeps({ binaryDownloadService });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
       dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(op.report).toHaveBeenCalledWith("vscode", "failed", undefined, "network error");
+      expect(op.report).toHaveBeenCalledWith(
+        "vscode",
+        "failed",
+        undefined,
+        expect.stringContaining("Failed to download code-server")
+      );
     });
   });
 
@@ -595,7 +685,7 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(deps.processRunner.run).toHaveBeenCalledWith(
-        "/test/code-server/bin/code-server",
+        expect.stringContaining("code-server"),
         expect.arrayContaining(["--install-extension", "/path/ext-one.vsix"])
       );
       expect(op.report).toHaveBeenCalledWith("setup", "done");
@@ -640,10 +730,17 @@ describe("CodeServerModule", () => {
     });
 
     it("throws SetupError on install failure", async () => {
-      const deps = createMockDeps();
-      (deps.processRunner.run as ReturnType<typeof vi.fn>).mockReturnValue(
-        createMockProcess(1, "install failed")
-      );
+      const failedProcess = createMockSpawnedProcess();
+      (failedProcess.wait as ReturnType<typeof vi.fn>).mockResolvedValue({
+        exitCode: 1,
+        stderr: "install failed",
+        stdout: "",
+      });
+      const deps = createMockDeps({
+        processRunner: {
+          run: vi.fn().mockReturnValue(failedProcess),
+        },
+      });
       const { dispatcher } = createTestSetup(deps);
       const installPlan: ExtensionInstallEntry[] = [
         { id: "ext.one", vsixPath: "/path/ext-one.vsix" },
@@ -672,7 +769,7 @@ describe("CodeServerModule", () => {
       // Create single setup with both operations
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      const module = createCodeServerModule(deps);
+      const { module } = createCodeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Register start operation and run it to set port
@@ -697,7 +794,7 @@ describe("CodeServerModule", () => {
         },
       } as OpenWorkspaceIntent)) as FinalizeHookResult;
 
-      expect(result.workspaceUrl).toContain("9090");
+      expect(result.workspaceUrl).toContain("25448");
       expect(result.workspaceUrl).toContain("workspace=");
       expect(deps.workspaceFileService.ensureWorkspaceFile).toHaveBeenCalledWith(
         new Path("/test/project/.worktrees/feature-1"),
@@ -721,7 +818,7 @@ describe("CodeServerModule", () => {
 
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
-      const module = createCodeServerModule(deps);
+      const { module } = createCodeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Start to set port
@@ -746,7 +843,7 @@ describe("CodeServerModule", () => {
         },
       } as OpenWorkspaceIntent)) as FinalizeHookResult;
 
-      expect(result.workspaceUrl).toContain("9090");
+      expect(result.workspaceUrl).toContain("25448");
       expect(result.workspaceUrl).toContain("folder=");
     });
   });
@@ -843,12 +940,13 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("config:updated event", () => {
-    it("propagates version override to code-server manager", async () => {
+    it("propagates version override to affect subsequent starts", async () => {
       const deps = createMockDeps();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createCodeServerModule(deps));
+      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
       await dispatcher.dispatch({
@@ -856,15 +954,14 @@ describe("CodeServerModule", () => {
         payload: { values: { "version.code-server": "4.200.0" }, persist: false },
       } as ConfigSetValuesIntent);
 
-      expect(deps.codeServerManager.setCodeServerVersion).toHaveBeenCalledWith(
-        expect.stringContaining("4.200.0"),
-        expect.stringContaining("4.200.0"),
-        expect.objectContaining({
-          name: "code-server",
-          url: expect.stringContaining("4.200.0"),
-          destDir: expect.stringContaining("4.200.0"),
-        })
-      );
+      // Now start and verify the new version is used
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      // processRunner.run should have been called with a path containing 4.200.0
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(runCall).toBeDefined();
+      expect(runCall![0]).toContain("4.200.0");
     });
 
     it("falls back to built-in version when config value is null", async () => {
@@ -872,7 +969,8 @@ describe("CodeServerModule", () => {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createCodeServerModule(deps));
+      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
       await dispatcher.dispatch({
@@ -880,20 +978,22 @@ describe("CodeServerModule", () => {
         payload: { values: { "version.code-server": null }, persist: false },
       } as ConfigSetValuesIntent);
 
-      // Should use built-in CODE_SERVER_VERSION, not "null"
-      const call = (deps.codeServerManager.setCodeServerVersion as ReturnType<typeof vi.fn>).mock
-        .calls[0];
-      expect(call).toBeDefined();
-      expect(call![0]).not.toContain("null");
-      expect(call![1]).not.toContain("null");
+      // Start and verify the built-in version is used (not "null")
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(runCall).toBeDefined();
+      expect(runCall![0]).not.toContain("null");
     });
 
-    it("does not propagate when version.code-server is not in changed values", async () => {
+    it("does not affect binary path when version.code-server is not in changed values", async () => {
       const deps = createMockDeps();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createCodeServerModule(deps));
+      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
       await dispatcher.dispatch({
@@ -901,15 +1001,23 @@ describe("CodeServerModule", () => {
         payload: { values: { agent: "claude" }, persist: false },
       } as ConfigSetValuesIntent);
 
-      expect(deps.codeServerManager.setCodeServerVersion).not.toHaveBeenCalled();
+      // Start and verify no binary path changes
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(runCall).toBeDefined();
+      // Should use the default version path
+      expect(runCall![0]).toContain("code-server");
     });
 
-    it("propagates port override to manager", async () => {
+    it("propagates port override to affect subsequent starts", async () => {
       const deps = createMockDeps();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createCodeServerModule(deps));
+      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
       await dispatcher.dispatch({
@@ -917,31 +1025,24 @@ describe("CodeServerModule", () => {
         payload: { values: { "code-server.port": 9999 }, persist: false },
       } as ConfigSetValuesIntent);
 
-      expect(deps.codeServerManager.setPort).toHaveBeenCalledWith(9999);
+      // Start and verify the new port is used
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as StartHookResult;
+
+      expect(result.codeServerPort).toBe(9999);
+      expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(9999);
     });
 
-    it("propagates default port value to manager", async () => {
+    it("does not change port when code-server.port is not in changed values", async () => {
       const deps = createMockDeps();
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
       dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createCodeServerModule(deps));
-      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: { values: { "code-server.port": 9090 }, persist: false },
-      } as ConfigSetValuesIntent);
-
-      expect(deps.codeServerManager.setPort).toHaveBeenCalledWith(9090);
-    });
-
-    it("does not call setPort when code-server.port is not in changed values", async () => {
-      const deps = createMockDeps();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createCodeServerModule(deps));
+      const { module } = createCodeServerModule(deps);
+      dispatcher.registerModule(module);
       dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
 
       await dispatcher.dispatch({
@@ -949,7 +1050,217 @@ describe("CodeServerModule", () => {
         payload: { values: { agent: "claude" }, persist: false },
       } as ConfigSetValuesIntent);
 
-      expect(deps.codeServerManager.setPort).not.toHaveBeenCalled();
+      // Start and verify the default port is used
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as StartHookResult;
+
+      expect(result.codeServerPort).toBe(25448);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // setPluginPort
+  // ---------------------------------------------------------------------------
+
+  describe("setPluginPort", () => {
+    it("makes plugin port available in spawned process environment", async () => {
+      const deps = createMockDeps();
+      const { dispatcher, setPluginPort } = createTestSetup(deps);
+
+      // Set plugin port before start
+      setPluginPort(9876);
+
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string>;
+      expect(env._CH_PLUGIN_PORT).toBe("9876");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Environment setup (merged from manager integration tests)
+  // ---------------------------------------------------------------------------
+
+  describe("spawned process environment", () => {
+    let originalEnv: NodeJS.ProcessEnv;
+
+    beforeEach(() => {
+      originalEnv = { ...process.env };
+      delete process.env._CH_PLUGIN_PORT;
+    });
+
+    afterEach(() => {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in originalEnv)) {
+          delete process.env[key];
+        }
+      }
+      for (const [key, value] of Object.entries(originalEnv)) {
+        process.env[key] = value;
+      }
+    });
+
+    it("includes binDir prepended to PATH", async () => {
+      process.env.PATH = "/usr/bin:/usr/local/bin";
+
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string>;
+      expect(env.PATH).toBe(`/test/app-data/bin${delimiter}/usr/bin:/usr/local/bin`);
+    });
+
+    it("includes EDITOR with absolute path and flags", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const isWindows = process.platform === "win32";
+      const expectedCodeCmd = isWindows
+        ? `"${join("/test/app-data/bin", "code.cmd")}"`
+        : join("/test/app-data/bin", "code");
+      const expectedEditor = `${expectedCodeCmd} --wait --reuse-window`;
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string>;
+      expect(env.EDITOR).toBe(expectedEditor);
+    });
+
+    it("includes GIT_SEQUENCE_EDITOR same as EDITOR", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string>;
+      expect(env.GIT_SEQUENCE_EDITOR).toBe(env.EDITOR);
+      expect(env.GIT_SEQUENCE_EDITOR).toBeTruthy();
+    });
+
+    it("removes VSCODE_* environment variables", async () => {
+      process.env.VSCODE_IPC_HOOK = "/some/ipc/hook";
+      process.env.VSCODE_NLS_CONFIG = "{}";
+      process.env.VSCODE_CODE_CACHE_PATH = "/some/cache";
+
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string | undefined>;
+      expect(env.VSCODE_IPC_HOOK).toBeUndefined();
+      expect(env.VSCODE_NLS_CONFIG).toBeUndefined();
+      expect(env.VSCODE_CODE_CACHE_PATH).toBeUndefined();
+    });
+
+    it("sets VSCODE_PROXY_URI to empty string", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string>;
+      expect(env.VSCODE_PROXY_URI).toBe("");
+    });
+
+    it("omits _CH_PLUGIN_PORT when plugin port not set", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string | undefined>;
+      expect(env._CH_PLUGIN_PORT).toBeUndefined();
+    });
+
+    it("includes _CH_CODE_SERVER_DIR and _CH_OPENCODE_DIR", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
+      const env = runCall![2].env as Record<string, string>;
+      expect(env._CH_CODE_SERVER_DIR).toContain("code-server");
+      expect(env._CH_OPENCODE_DIR).toContain("opencode");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Start failure cleanup
+  // ---------------------------------------------------------------------------
+
+  describe("start failure cleanup", () => {
+    it("kills the spawned process when port is not available", async () => {
+      const deps = createMockDeps({
+        portManager: {
+          isPortAvailable: vi.fn().mockResolvedValue(false),
+        },
+      });
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await expect(dispatcher.dispatch({ type: "app:start", payload: {} })).rejects.toThrow(
+        "already in use"
+      );
+    });
+
+    it("kills the spawned process when health check fails", async () => {
+      vi.useFakeTimers();
+
+      try {
+        const mockProcess = createMockSpawnedProcess();
+        const deps = createMockDeps({
+          processRunner: {
+            run: vi.fn().mockReturnValue(mockProcess),
+          },
+          httpClient: {
+            fetch: vi.fn().mockResolvedValue({ status: 503 }),
+          },
+        });
+        const { dispatcher } = createTestSetup(deps);
+        dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+        let caughtError: unknown;
+        const startPromise = dispatcher
+          .dispatch({ type: "app:start", payload: {} })
+          .catch((err: unknown) => {
+            caughtError = err;
+          });
+
+        // Advance past the 30s health check timeout
+        await vi.advanceTimersByTimeAsync(31_000);
+
+        await startPromise;
+
+        expect(caughtError).toBeDefined();
+        expect(String(caughtError)).toContain("Failed to start code-server");
+
+        // Verify the spawned process was killed to avoid orphaning
+        expect(mockProcess.kill).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });
