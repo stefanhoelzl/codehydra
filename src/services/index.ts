@@ -34,10 +34,6 @@ export { SimpleGitClient };
 import { GitWorktreeProvider } from "./git/git-worktree-provider";
 export { GitWorktreeProvider };
 
-// Code server
-export type { CodeServerConfig } from "./code-server/types";
-export { CodeServerManager, getCodeServerPort } from "./code-server/code-server-manager";
-
 // Project types
 export type { ProjectConfig } from "./project/types";
 export { CURRENT_PROJECT_VERSION } from "./project/types";

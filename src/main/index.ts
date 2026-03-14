@@ -20,7 +20,6 @@ import { app, powerMonitor } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 import {
-  CodeServerManager,
   DefaultPathProvider,
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
@@ -28,11 +27,9 @@ import {
   createWorkspaceLockHandler,
   WorkspaceFileService,
   createWorkspaceFileConfig,
-  getCodeServerPort,
   GitWorktreeProvider,
   SimpleGitClient,
   KeepFilesService,
-  type CodeServerConfig,
   type PathProvider,
   type BuildInfo,
   type LoggingService,
@@ -40,7 +37,6 @@ import {
 import { PostHogTelemetryService } from "../services/telemetry";
 import { AutoUpdater } from "../services/auto-updater";
 import { ExecaProcessRunner } from "../services/platform/process";
-import { Path } from "../services/platform/path";
 import { DefaultIpcLayer } from "../services/platform/ipc";
 import { DefaultAppLayer } from "../services/platform/app";
 import { DefaultImageLayer } from "../services/platform/image";
@@ -54,14 +50,7 @@ import {
   DefaultArchiveExtractor,
   AgentBinaryManager,
   type BinaryDownloadService,
-  type DownloadRequest,
 } from "../services/binary-download";
-import {
-  CODE_SERVER_VERSION,
-  getCodeServerUrl,
-  getCodeServerSubPath,
-  getCodeServerExecutablePath,
-} from "../services/code-server/setup-info";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
@@ -232,40 +221,6 @@ const binaryDownloadService: BinaryDownloadService = new DefaultBinaryDownloadSe
 const platform = platformInfo.platform as SupportedPlatform;
 const arch = platformInfo.arch as SupportedArch;
 
-const codeServerExecutablePath = getCodeServerExecutablePath(platform);
-const codeServerBinaryPath = new Path(
-  pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`),
-  codeServerExecutablePath
-).toNative();
-
-const codeServerDownloadRequest: DownloadRequest = {
-  name: "code-server",
-  url: getCodeServerUrl(platform, arch),
-  destDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
-  executablePath: codeServerExecutablePath,
-  subPath: getCodeServerSubPath(platform, arch),
-};
-
-const codeServerConfig: CodeServerConfig = {
-  port: getCodeServerPort(buildInfo),
-  binaryPath: codeServerBinaryPath,
-  runtimeDir: pathProvider.dataPath("runtime").toNative(),
-  extensionsDir: pathProvider.dataPath("vscode/extensions").toNative(),
-  userDataDir: pathProvider.dataPath("vscode/user-data").toNative(),
-  binDir: pathProvider.dataPath("bin").toNative(),
-  codeServerDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
-  opencodeDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
-};
-
-const codeServerManager = new CodeServerManager(
-  codeServerConfig,
-  processRunner,
-  networkLayer,
-  networkLayer,
-  loggingService.createLogger("code-server"),
-  { service: binaryDownloadService, request: codeServerDownloadRequest }
-);
-
 // Per-agent binary managers (one per agent type, created upfront)
 const claudeBinaryManager = new AgentBinaryManager(
   {
@@ -432,30 +387,32 @@ const { module: viewModule, readyHandler } = createViewModule({
   uiHtmlPath,
 });
 
+const { module: codeServerModule, setPluginPort } = createCodeServerModule({
+  processRunner,
+  httpClient: networkLayer,
+  portManager: networkLayer,
+  fileSystemLayer,
+  workspaceFileService,
+  pathProvider,
+  buildInfo,
+  platform,
+  arch,
+  wrapperPath: pathProvider.dataPath("bin/ch-claude", { cmd: true }).toString(),
+  logger: apiLogger,
+  binaryDownloadService,
+});
+
 const pluginServerModule = createPluginServerModule({
   pluginServer,
   dispatcher,
   logger: apiLogger,
-  onPortReady: (port) => codeServerManager.setPluginPort(port),
+  onPortReady: setPluginPort,
 });
 
 const extensionModule = createExtensionModule({
   pathProvider,
   fileSystemLayer,
   logger: loggingService.createLogger("ext-manager"),
-});
-
-const codeServerModule = createCodeServerModule({
-  codeServerManager,
-  processRunner,
-  fileSystemLayer,
-  workspaceFileService,
-  pathProvider,
-  platform,
-  arch,
-  codeServerBinaryPath,
-  wrapperPath: pathProvider.dataPath("bin/ch-claude", { cmd: true }).toString(),
-  logger: apiLogger,
 });
 
 const claudeAgentModule = createClaudeAgentModule({
