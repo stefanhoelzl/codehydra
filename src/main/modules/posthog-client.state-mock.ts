@@ -8,14 +8,14 @@
  *
  * @example
  * const { factory, getMock } = createMockPostHogClientFactory();
- * const service = new PostHogTelemetryService({ postHogClientFactory: factory, ... });
+ * const module = createPosthogModule({ postHogClientFactory: factory, ... });
  *
- * service.capture('app_launched', { version: '1.0.0' });
+ * // drive events through the dispatcher, then:
  * expect(getMock()).toHaveCaptured('app_launched');
  */
 
 import { expect } from "vitest";
-import type { PostHogClient, PostHogClientFactory } from "./types";
+import type { PostHogClient, PostHogClientFactory } from "./posthog-module";
 import type {
   MockState,
   MockWithState,
@@ -112,7 +112,7 @@ class PostHogClientMockStateImpl implements PostHogClientMockState {
  * Result of createMockPostHogClientFactory.
  */
 export interface MockPostHogClientFactoryResult {
-  /** Factory function to pass to TelemetryServiceDeps */
+  /** Factory function to pass to PosthogModuleDeps */
   factory: PostHogClientFactory;
 
   /**
@@ -127,14 +127,13 @@ export interface MockPostHogClientFactoryResult {
  *
  * @example
  * const { factory, getMock } = createMockPostHogClientFactory();
- * const service = new PostHogTelemetryService({
+ * const module = createPosthogModule({
  *   postHogClientFactory: factory,
  *   apiKey: 'test-key',
  *   ...
  * });
  *
- * service.capture('app_launched', { version: '1.0.0' });
- *
+ * // drive events through the dispatcher, then:
  * const mock = getMock();
  * expect(mock).toHaveCaptured('app_launched');
  */
