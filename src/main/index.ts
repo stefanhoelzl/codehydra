@@ -53,19 +53,18 @@ import {
   OPENCODE_VERSION,
   getOpencodeUrl,
   getOpencodeExecutablePath,
-} from "../agents/opencode/setup-info";
+} from "../services/agents/opencode/setup-info";
 import {
   CLAUDE_VERSION,
   getClaudeUrl,
   getClaudeSubPath,
   getClaudeExecutablePath,
-} from "../agents/claude/setup-info";
-import type { SupportedPlatform, SupportedArch } from "../agents/types";
+} from "../services/agents/claude/setup-info";
+import type { SupportedPlatform, SupportedArch } from "../services/agents/types";
 import { createExtensionModule } from "./modules/extension-module";
-import { createAgentServerManager } from "../agents";
-import type { ClaudeCodeServerManager } from "../agents/claude/server-manager";
-import type { OpenCodeServerManager } from "../agents/opencode/server-manager";
-
+import { createAgentServerManager } from "../services/agents";
+import type { ClaudeCodeServerManager } from "../services/agents/claude/server-manager";
+import type { OpenCodeServerManager } from "../services/agents/opencode/server-manager";
 import { McpServerManager } from "../services/mcp-server";
 import { createMcpHandlers } from "./modules/mcp-handlers";
 import { WindowManager } from "./managers/window-manager";
@@ -78,8 +77,9 @@ import { createIdempotencyModule } from "./intents/infrastructure/idempotency-mo
 import { createViewModule } from "./modules/view-module";
 import { createCodeServerModule } from "./modules/code-server-module";
 import { createPluginServerModule } from "./modules/plugin-server-module";
-import { createClaudeAgentModule } from "./modules/claude-agent-module";
-import { createOpenCodeAgentModule } from "./modules/opencode-agent-module";
+import { createAgentModule } from "./modules/agent-module";
+import { createClaudeModuleProvider } from "../services/agents/claude/module-provider";
+import { createOpenCodeModuleProvider } from "../services/agents/opencode/module-provider";
 import { createMetadataModule } from "./modules/metadata-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
@@ -407,23 +407,23 @@ const extensionModule = createExtensionModule({
   logger: loggingService.createLogger("ext-manager"),
 });
 
-const claudeAgentModule = createClaudeAgentModule({
-  agentBinaryManager: claudeBinaryManager,
-  serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
-  dispatcher,
-  logger: apiLogger,
-  loggingService,
-  providerLogger,
-});
+const claudeAgentModule = createAgentModule(
+  createClaudeModuleProvider({
+    serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
+    binaryManager: claudeBinaryManager,
+    logger: providerLogger,
+  }),
+  { dispatcher, logger: apiLogger }
+);
 
-const opencodeAgentModule = createOpenCodeAgentModule({
-  agentBinaryManager: opencodeBinaryManager,
-  serverManager: agentServerManagers.opencode as OpenCodeServerManager,
-  dispatcher,
-  logger: apiLogger,
-  loggingService,
-  providerLogger,
-});
+const opencodeAgentModule = createAgentModule(
+  createOpenCodeModuleProvider({
+    serverManager: agentServerManagers.opencode as OpenCodeServerManager,
+    binaryManager: opencodeBinaryManager,
+    logger: providerLogger,
+  }),
+  { dispatcher, logger: apiLogger }
+);
 
 const metadataModule = createMetadataModule({
   gitWorktreeProvider,

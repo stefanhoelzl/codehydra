@@ -8,13 +8,13 @@
  * - Factory functions enable dependency injection for testability
  */
 
-import type { Path } from "../services/platform/path";
-import type { FileSystemLayer } from "../services/platform/filesystem";
-import type { ProcessRunner } from "../services/platform/process";
-import type { PortManager, HttpClient } from "../services/platform/network";
-import type { PathProvider } from "../services/platform/path-provider";
-import type { Logger } from "../services/logging";
-import type { NormalizedInitialPrompt } from "../shared/api/types";
+import type { Path } from "../platform/path";
+import type { FileSystemLayer } from "../platform/filesystem";
+import type { ProcessRunner } from "../platform/process";
+import type { PortManager, HttpClient } from "../platform/network";
+import type { PathProvider } from "../platform/path-provider";
+import type { Logger } from "../logging";
+import type { NormalizedInitialPrompt } from "../../shared/api/types";
 
 /**
  * MCP server configuration shared by both agent server managers.
@@ -25,7 +25,7 @@ export interface McpConfig {
 }
 
 // Re-export AggregatedAgentStatus from shared/ipc (single source of truth)
-export type { AggregatedAgentStatus, InternalAgentCounts } from "../shared/ipc";
+export type { AggregatedAgentStatus, InternalAgentCounts } from "../../shared/ipc";
 
 /** Agent types supported by CodeHydra */
 export type AgentType = "opencode" | "claude";

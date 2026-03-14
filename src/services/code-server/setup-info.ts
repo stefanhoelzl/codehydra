@@ -3,7 +3,7 @@
  * Provides version, download URLs, and executable path for code-server.
  */
 
-import type { SupportedArch, SupportedPlatform } from "../../agents/types";
+import type { SupportedArch, SupportedPlatform } from "../agents/types";
 
 /**
  * Current version of code-server to download.

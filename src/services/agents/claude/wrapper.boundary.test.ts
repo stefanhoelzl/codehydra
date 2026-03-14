@@ -16,7 +16,7 @@ import { join, resolve, dirname, delimiter } from "node:path";
 import { writeFile, mkdir, chmod, access } from "node:fs/promises";
 import { constants, existsSync } from "node:fs";
 import { exec as pkgExec } from "@yao-pkg/pkg";
-import { createTempDir } from "../../services/test-utils";
+import { createTempDir } from "../../test-utils";
 import { executeScript } from "../wrapper-boundary-test-utils";
 
 const isWindows = process.platform === "win32";
@@ -25,7 +25,7 @@ const isWindows = process.platform === "win32";
  * Path to the compiled ch-claude.cjs script.
  * Built by `pnpm build:wrappers`.
  */
-const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../dist/bin/ch-claude.cjs");
+const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../../dist/bin/ch-claude.cjs");
 
 /**
  * Output from the fake claude binary.

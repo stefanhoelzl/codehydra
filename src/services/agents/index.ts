@@ -12,12 +12,12 @@
  * ```
  */
 
-import type { ProcessRunner } from "../services/platform/process";
-import type { PortManager, HttpClient } from "../services/platform/network";
-import type { PathProvider } from "../services/platform/path-provider";
-import type { FileSystemLayer } from "../services/platform/filesystem";
-import type { Logger } from "../services/logging";
-import type { SupportedArch } from "../services/platform/platform-info";
+import type { ProcessRunner } from "../platform/process";
+import type { PortManager, HttpClient } from "../platform/network";
+import type { PathProvider } from "../platform/path-provider";
+import type { FileSystemLayer } from "../platform/filesystem";
+import type { Logger } from "../logging";
+import type { SupportedArch } from "../platform/platform-info";
 import type { SdkClientFactory } from "./opencode/client";
 
 import type { AgentType, AgentSetupInfo, AgentServerManager, AgentProvider } from "./types";
@@ -39,6 +39,10 @@ export type {
   StopServerResult,
   RestartServerResult,
 } from "./types";
+
+export type { AgentModuleProvider } from "./agent-module-provider";
+export { createClaudeModuleProvider } from "./claude/module-provider";
+export { createOpenCodeModuleProvider } from "./opencode/module-provider";
 
 /**
  * Dependencies for creating AgentSetupInfo instances.

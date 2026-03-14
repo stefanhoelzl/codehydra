@@ -10,8 +10,8 @@ import {
   type Event as SdkEvent,
   type SessionStatus as SdkSessionStatus,
 } from "@opencode-ai/sdk";
-import { OpenCodeError, getErrorMessage } from "../../services/errors";
-import type { Logger } from "../../services/logging";
+import { OpenCodeError, getErrorMessage } from "../../errors";
+import type { Logger } from "../../logging";
 import {
   ok,
   err,

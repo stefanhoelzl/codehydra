@@ -29,7 +29,7 @@ import type { PathProvider } from "../../services/platform/path-provider";
 import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
 import type { Logger } from "../../services/logging/types";
 import type { DomainEvent } from "../intents/infrastructure/types";
-import type { SupportedPlatform, SupportedArch } from "../../agents/types";
+import type { SupportedPlatform, SupportedArch } from "../../services/agents/types";
 import type { BuildInfo } from "../../services/platform/build-info";
 import type {
   BinaryDownloadService,
@@ -60,7 +60,7 @@ import {
   getCodeServerSubPathForVersion,
   getCodeServerExecutablePath,
 } from "../../services/code-server/setup-info";
-import { OPENCODE_VERSION } from "../../agents/opencode/setup-info";
+import { OPENCODE_VERSION } from "../../services/agents/opencode/setup-info";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
 import { Path } from "../../services/platform/path";
 import { encodePathForUrl } from "../../services/platform/paths";

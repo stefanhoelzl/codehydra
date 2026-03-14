@@ -230,7 +230,7 @@ describe("WorkspaceSelectionModule", () => {
             status,
           },
         };
-        statusHandler(event);
+        await statusHandler.handler(event);
       }
 
       const autoIntent: SwitchWorkspaceIntent = {

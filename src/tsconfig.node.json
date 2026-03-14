@@ -16,7 +16,6 @@
     "services/**/*",
     "shared/**/*",
     "test/**/*",
-    "agents/**/*",
-    "agents/**/*.json"
+    "services/agents/**/*.json"
   ]
 }

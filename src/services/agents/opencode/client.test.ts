@@ -23,7 +23,7 @@ import {
   type MockSdkClient,
 } from "./sdk-client.state-mock";
 import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER } from "../../logging";
 
 describe("OpenCodeClient", () => {
   let client: OpenCodeClient;

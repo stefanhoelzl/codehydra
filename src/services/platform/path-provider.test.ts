@@ -9,7 +9,7 @@ import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "./path";
 import { CODE_SERVER_VERSION } from "../code-server/setup-info";
-import { OPENCODE_VERSION } from "../../agents/opencode/setup-info";
+import { OPENCODE_VERSION } from "../agents/opencode/setup-info";
 
 describe("createMockPathProvider", () => {
   it("returns sensible default paths", () => {

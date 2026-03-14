@@ -12,17 +12,17 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
-import type { PortManager } from "../../services/platform/network";
-import type { PathProvider } from "../../services/platform/path-provider";
-import type { FileSystemLayer } from "../../services/platform/filesystem";
-import type { Logger } from "../../services/logging";
+import type { PortManager } from "../../platform/network";
+import type { PathProvider } from "../../platform/path-provider";
+import type { FileSystemLayer } from "../../platform/filesystem";
+import type { Logger } from "../../logging";
 import type {
   AgentServerManager,
   StopServerResult,
   RestartServerResult,
   AgentStatus,
 } from "../types";
-import { Path } from "../../services/platform/path";
+import { Path } from "../../platform/path";
 import {
   type ClaudeCodeHookName,
   type ClaudeCodeBridgePayload,
@@ -31,7 +31,7 @@ import {
 } from "./types";
 import hooksConfigTemplate from "./hooks.template.json";
 import mcpConfigTemplate from "./mcp.template.json";
-import type { NormalizedInitialPrompt } from "../../shared/api/types";
+import type { NormalizedInitialPrompt } from "../../../shared/api/types";
 
 /**
  * Per-workspace state tracked by the server manager.

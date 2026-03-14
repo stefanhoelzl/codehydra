@@ -11,15 +11,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ClaudeCodeServerManager } from "./server-manager";
-import {
-  createPortManagerMock,
-  type MockPortManager,
-} from "../../services/platform/network.test-utils";
-import { createMockPathProvider } from "../../services/platform/path-provider.test-utils";
-import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
-import { SILENT_LOGGER } from "../../services/logging";
-import type { PathProvider } from "../../services/platform/path-provider";
-import type { MockFileSystemLayer } from "../../services/platform/filesystem.state-mock";
+import { createPortManagerMock, type MockPortManager } from "../../platform/network.test-utils";
+import { createMockPathProvider } from "../../platform/path-provider.test-utils";
+import { createFileSystemMock, directory } from "../../platform/filesystem.state-mock";
+import { SILENT_LOGGER } from "../../logging";
+import type { PathProvider } from "../../platform/path-provider";
+import type { MockFileSystemLayer } from "../../platform/filesystem.state-mock";
 import type { AgentStatus } from "../types";
 
 /**

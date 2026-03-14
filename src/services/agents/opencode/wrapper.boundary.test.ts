@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
 import { join, resolve } from "node:path";
 import { writeFile, mkdir, chmod, access } from "node:fs/promises";
 import { constants } from "node:fs";
-import { createTempDir } from "../../services/test-utils";
+import { createTempDir } from "../../test-utils";
 import { executeScript } from "../wrapper-boundary-test-utils";
 
 const isWindows = process.platform === "win32";
@@ -22,7 +22,7 @@ const isWindows = process.platform === "win32";
  * Path to the compiled ch-opencode.cjs script.
  * This is built by `pnpm build:wrappers` before running tests.
  */
-const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../dist/bin/ch-opencode.cjs");
+const COMPILED_SCRIPT_PATH = resolve(__dirname, "../../../../dist/bin/ch-opencode.cjs");
 
 /**
  * Output from the fake opencode binary.

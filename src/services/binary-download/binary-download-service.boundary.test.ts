@@ -19,7 +19,7 @@ import { DefaultFileSystemLayer } from "../platform/filesystem";
 import { SILENT_LOGGER } from "../logging";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
 import { getCodeServerUrl } from "../code-server/setup-info";
-import { getOpencodeUrl } from "../../agents/opencode/setup-info";
+import { getOpencodeUrl } from "../agents/opencode/setup-info";
 import type { SupportedArch, SupportedPlatform, DownloadRequest } from "./types";
 
 describe("BinaryDownloadService (boundary)", () => {
