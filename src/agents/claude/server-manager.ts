@@ -53,6 +53,10 @@ export interface WorkspaceState {
   noSessionMarkerPath?: Path;
   /** Flag: first WrapperStart should set status to busy (non-plan initial prompt) */
   busyOnWrapperStart?: boolean;
+  /** Set of active sub-agent IDs (tracked via SubagentStart/SubagentStop) */
+  activeSubagents: Set<string>;
+  /** True when main agent has stopped but sub-agents are still running */
+  mainAgentStopped?: boolean;
 }
 
 /**
@@ -174,6 +178,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.workspaces.set(normalizedPath, {
       status: "none",
       statusCallbacks: new Set(),
+      activeSubagents: new Set(),
     });
 
     // Generate config files for this workspace
@@ -255,6 +260,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.workspaces.set(normalizedPath, {
       status: "none",
       statusCallbacks: savedCallbacks,
+      activeSubagents: new Set(),
     });
 
     // Regenerate config files
@@ -737,6 +743,32 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     ) {
       newStatus = "idle";
       state.ignoreNextSessionStart = false;
+    }
+
+    // Sub-agent lifecycle tracking:
+    // SubagentStart adds to active set, SubagentStop removes.
+    // When Stop fires with active sub-agents, suppress idle transition.
+    // When last sub-agent stops and main agent has stopped, transition to idle.
+    if (hookName === "SubagentStart" && payload.agent_id) {
+      state.activeSubagents.add(payload.agent_id);
+    } else if (hookName === "SubagentStop" && payload.agent_id) {
+      state.activeSubagents.delete(payload.agent_id);
+      if (state.activeSubagents.size === 0 && state.mainAgentStopped) {
+        // Don't go idle here — the main agent will resume via UserPromptSubmit
+        // to process the sub-agent result, then Stop will transition to idle.
+        state.mainAgentStopped = false;
+      }
+    } else if (hookName === "Stop" && state.activeSubagents.size > 0) {
+      state.mainAgentStopped = true;
+      newStatus = null;
+    } else if (hookName === "UserPromptSubmit") {
+      state.mainAgentStopped = false;
+    }
+
+    // Terminal hooks clear sub-agent tracking as defensive cleanup
+    if (hookName === "WrapperEnd" || hookName === "SessionEnd") {
+      state.activeSubagents.clear();
+      state.mainAgentStopped = false;
     }
 
     this.logger.debug("Hook received", {
