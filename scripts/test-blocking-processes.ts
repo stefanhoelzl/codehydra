@@ -14,7 +14,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { WindowsWorkspaceLockHandler } from "../src/services/platform/workspace-lock-handler";
+import { runDetectAction, closeFileHandles } from "../src/main/modules/windows-file-lock-module";
 import { ExecaProcessRunner } from "../src/services/platform/process";
 import type { Logger } from "../src/services/logging";
 import { Path } from "../src/services/platform/path";
@@ -68,7 +68,6 @@ async function main(): Promise<void> {
   };
 
   const processRunner = new ExecaProcessRunner(logger);
-  const service = new WindowsWorkspaceLockHandler(processRunner, logger, scriptPath);
 
   // Spawn a process that locks the file WITH CWD inside the temp directory
   console.log("Spawning process to lock the file (with CWD inside workspace)...");
@@ -105,7 +104,13 @@ async function main(): Promise<void> {
   console.log("=".repeat(60));
   console.log("Calling detect() - detecting blocking processes...");
   console.log("=".repeat(60));
-  const detected = await service.detect(new Path(tempDir));
+  const detected = await runDetectAction(
+    processRunner,
+    scriptPath,
+    new Path(tempDir),
+    "Detect",
+    logger
+  );
   console.log();
   console.log(`Detected ${detected.length} blocking process(es):`);
   for (const proc of detected) {
@@ -124,7 +129,7 @@ async function main(): Promise<void> {
   console.log();
 
   try {
-    await service.closeHandles(new Path(tempDir));
+    await closeFileHandles(processRunner, scriptPath, new Path(tempDir), logger);
     console.log();
     console.log("closeHandles() completed successfully!");
   } catch (error) {

@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Boundary tests for WindowsWorkspaceLockHandler.
+ * Boundary tests for Windows file lock functions.
  *
  * These tests verify actual interaction with Windows Restart Manager API,
  * NtQuerySystemInformation for file enumeration, and taskkill.
@@ -10,19 +10,21 @@
  * 1. Create a temp directory
  * 2. Spawn a helper process that locks a file in that directory
  * 3. Verify detection finds the blocking process with file paths
- * 4. Verify killProcesses terminates the blocking process
- * 5. Verify closeHandles releases file locks (when run elevated)
+ * 4. Verify killBlockingProcesses terminates the blocking process
  */
 
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { WindowsWorkspaceLockHandler, createWorkspaceLockHandler } from "./workspace-lock-handler";
-import { ExecaProcessRunner, type ProcessRunner, type SpawnedProcess } from "./process";
-import { createMockPlatformInfo } from "./platform-info.test-utils";
-import { SILENT_LOGGER, createMockLogger } from "../logging";
-import { Path } from "./path";
+import { runDetectAction, killBlockingProcesses } from "./windows-file-lock-module";
+import {
+  ExecaProcessRunner,
+  type ProcessRunner,
+  type SpawnedProcess,
+} from "../../services/platform/process";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
+import { Path } from "../../services/platform/path";
 import { delay } from "@shared/test-fixtures";
 
 const isWindows = process.platform === "win32";
@@ -43,13 +45,13 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
+describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => {
   let tempDir: string;
   let lockedFile: string;
   let lockingProcess: SpawnedProcess | null = null;
   let lockingPid: number | undefined;
-  let service: WindowsWorkspaceLockHandler;
   let processRunner: ProcessRunner;
+  let scriptPath: string;
 
   beforeEach(async () => {
     // Create temp directory with unique name
@@ -63,8 +65,7 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
 
     processRunner = new ExecaProcessRunner(SILENT_LOGGER);
     // Script path for boundary tests - relative to project root
-    const scriptPath = path.join(process.cwd(), "resources", "scripts", "blocking-processes.ps1");
-    service = new WindowsWorkspaceLockHandler(processRunner, createMockLogger(), scriptPath);
+    scriptPath = path.join(process.cwd(), "resources", "scripts", "blocking-processes.ps1");
   });
 
   afterEach(async () => {
@@ -139,7 +140,7 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
     return { proc: lockingProcess, pid: lockingPid };
   }
 
-  describe("detect", () => {
+  describe("runDetectAction", () => {
     it(
       "detects blocking process with file handle",
       async () => {
@@ -147,7 +148,13 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
         const { pid } = await spawnFileLockingProcess();
 
         // Detect blocking processes
-        const processes = await service.detect(new Path(tempDir));
+        const processes = await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
 
         // Verify the blocking process is detected
         expect(processes.length).toBeGreaterThan(0);
@@ -168,19 +175,17 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
     it(
       "includes cwd field in detection output",
       async () => {
-        // This test verifies the cwd field exists in the output structure.
-        // CWD detection via Windows APIs (reading from PEB) can be unreliable:
-        // - PowerShell's Set-Location doesn't always update Win32 CWD immediately
-        // - Access to process memory may be restricted
-        // Manual testing confirmed CWD detection works (see plan notes).
-        //
-        // We verify: the cwd field is present (null or string), structure is correct
-
         // Spawn a process that locks a file (to be detected by Restart Manager)
         const { pid } = await spawnFileLockingProcess();
 
         // Detect blocking processes
-        const processes = await service.detect(new Path(tempDir));
+        const processes = await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
 
         // Find our process
         const proc = processes.find((p) => p.pid === pid);
@@ -197,7 +202,13 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
       "returns empty array when no processes are blocking",
       async () => {
         // No locking process, just query the empty temp dir
-        const processes = await service.detect(new Path(tempDir));
+        const processes = await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
 
         expect(processes).toEqual([]);
       },
@@ -209,7 +220,13 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
       async () => {
         const start = Date.now();
 
-        await service.detect(new Path(tempDir));
+        await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
 
         const elapsed = Date.now() - start;
 
@@ -220,7 +237,7 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
     );
   });
 
-  describe("killProcesses", () => {
+  describe("killBlockingProcesses", () => {
     it(
       "kills processes via taskkill",
       async () => {
@@ -231,7 +248,7 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
         expect(isProcessRunning(pid)).toBe(true);
 
         // Kill the process
-        await service.killProcesses([pid]);
+        await killBlockingProcesses(processRunner, [pid], createMockLogger());
 
         // Give taskkill time to complete
         await delay(500);
@@ -250,34 +267,14 @@ describe.skipIf(!isWindows)("WindowsWorkspaceLockHandler (boundary)", () => {
       "succeeds when no PIDs are provided",
       async () => {
         // Should not throw even with empty array
-        await expect(service.killProcesses([])).resolves.toBeUndefined();
+        await expect(
+          killBlockingProcesses(processRunner, [], createMockLogger())
+        ).resolves.toBeUndefined();
       },
       TEST_TIMEOUT
     );
   });
 
-  // Note: closeHandles() tests require elevation and are not practical for automated testing
+  // Note: closeFileHandles() tests require elevation and are not practical for automated testing
   // Manual testing is required for the UAC flow
-});
-
-describe.skipIf(!isWindows)("createWorkspaceLockHandler (boundary)", () => {
-  const processRunner = new ExecaProcessRunner(SILENT_LOGGER);
-
-  it("returns WindowsWorkspaceLockHandler on Windows", () => {
-    const platformInfo = createMockPlatformInfo({ platform: "win32" });
-    const service = createWorkspaceLockHandler(processRunner, platformInfo, SILENT_LOGGER);
-
-    expect(service).toBeInstanceOf(WindowsWorkspaceLockHandler);
-  });
-});
-
-describe.skipIf(isWindows)("createWorkspaceLockHandler (non-Windows boundary)", () => {
-  const processRunner = new ExecaProcessRunner(SILENT_LOGGER);
-
-  it("returns undefined on non-Windows", () => {
-    const platformInfo = createMockPlatformInfo({ platform: process.platform as "linux" });
-    const service = createWorkspaceLockHandler(processRunner, platformInfo, SILENT_LOGGER);
-
-    expect(service).toBeUndefined();
-  });
 });

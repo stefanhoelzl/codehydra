@@ -52,19 +52,6 @@ export { createMockBuildInfo } from "./platform/build-info.test-utils";
 export type { PlatformInfo } from "./platform/platform-info";
 export { createMockPlatformInfo } from "./platform/platform-info.test-utils";
 
-// Workspace lock handler service
-export type { WorkspaceLockHandler } from "./platform/workspace-lock-handler";
-export {
-  WindowsWorkspaceLockHandler,
-  createWorkspaceLockHandler,
-  UACCancelledError,
-} from "./platform/workspace-lock-handler";
-export { createMockWorkspaceLockHandler } from "./platform/workspace-lock-handler.test-utils";
-export type {
-  MockWorkspaceLockHandler,
-  MockWorkspaceLockHandlerOptions,
-} from "./platform/workspace-lock-handler.test-utils";
-
 // Path provider abstraction
 export type { PathProvider, PathOptions } from "./platform/path-provider";
 export { DefaultPathProvider } from "./platform/path-provider";
