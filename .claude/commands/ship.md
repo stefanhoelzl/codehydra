@@ -25,9 +25,9 @@ $ARGUMENTS
 You are a BUILD AUTOMATION agent. Execute the workflow below. On FAILED or TIMEOUT,
 return immediately with a report - do NOT attempt to diagnose or fix issues.
 
-### 0. Validate preconditions
+### 1. Basic preconditions
 
-**Check for uncommitted changes:**
+**1.1. Check for uncommitted changes:**
 
 ```bash
 git status --porcelain
@@ -44,7 +44,7 @@ Cannot ship with uncommitted changes.
 Commit your changes first, then run `/ship` again.
 ```
 
-**Check we're not on main:**
+**1.2. Check we're not on main:**
 
 ```bash
 git branch --show-current
@@ -52,7 +52,26 @@ git branch --show-current
 
 If on main: ABORT with "Cannot ship from main branch"
 
-**Check formatting:**
+### 2. Check if already pushed
+
+```bash
+git fetch origin
+```
+
+Compare local HEAD with the remote tracking branch:
+
+```bash
+git rev-parse HEAD
+git rev-parse origin/<current-branch>
+```
+
+If the remote branch exists and both SHAs match: skip to step 5 (check for existing PR).
+
+If the remote branch does not exist or the SHAs differ: continue to step 3.
+
+### 3. Local checks (skipped when already pushed)
+
+**3.1. Check formatting:**
 
 ```bash
 pnpm format:check
@@ -66,7 +85,7 @@ Cannot ship with formatting issues.
 Run `pnpm format` to fix, then commit and run `/ship` again.
 ```
 
-**Check application logs:**
+**3.2. Check application logs:**
 
 Find the most recent `.log` file in `app-data/logs/` (sorted by filename, which is timestamp-based).
 
@@ -98,7 +117,7 @@ Cannot ship with unresolved log issues.
 Review these issues. Fix them or confirm they are expected, then run `/ship` again.
 ```
 
-### 0.5. Resolve issue selection (if --resolves ? was passed)
+### 4. Resolve issue selection (if --resolves ? was passed)
 
 If `--resolves ?` was provided:
 
@@ -126,9 +145,9 @@ If `--resolves ?` was provided:
    Which issue does this PR resolve? Enter the issue number (e.g., 123):
    ```
 
-5. Wait for user response and store the issue number for step 3.
+5. Wait for user response and store the issue number for step 8.
 
-### 1. Check for existing PR (idempotency)
+### 5. Check for existing PR (idempotency)
 
 ```bash
 gh pr list --repo stefanhoelzl/codehydra --head <current-branch> --json number,url,state
@@ -136,11 +155,11 @@ gh pr list --repo stefanhoelzl/codehydra --head <current-branch> --json number,u
 
 If a PR already exists for this branch:
 
-- If state is OPEN: skip to step 5 (run ship-wait script)
-- If state is MERGED: skip to step 6 (delete workspace) with exit code 0
+- If state is OPEN: skip to step 10 (run ship-wait script)
+- If state is MERGED: skip to step 12 (delete workspace) with exit code 0
 - If state is CLOSED: continue to create new PR
 
-### 1.5. Rebase onto main
+### 6. Rebase onto main
 
 ```bash
 git fetch origin main
@@ -155,13 +174,13 @@ Rebase onto main failed (conflicts?).
 Resolve conflicts manually, then run `/ship` again.
 ```
 
-### 2. Push
+### 7. Push
 
 ```bash
 git push --force-with-lease origin HEAD
 ```
 
-### 3. Create PR
+### 8. Create PR
 
 Generate title and summary from commits:
 
@@ -175,7 +194,7 @@ Also get the diff for changelog analysis:
 git diff origin/main..HEAD
 ```
 
-#### 3a. Determine changelog category
+#### 8.1. Determine changelog category
 
 A `changelog_category` variable tracks the result: `"feature"`, `"bugfix"`, or `null` (internal).
 
@@ -200,7 +219,7 @@ Internal changes include: refactors, test additions/fixes, documentation, CI/CD,
     Set `changelog_category` based on the user's choice (`"feature"`, `"bugfix"`, or `null`).
 - If changes appear **purely internal**: set `changelog_category` to `null` (no prompt).
 
-#### 3b. Determine PR title
+#### 8.2. Determine PR title
 
 **If `changelog_category` is `"feature"` or `"bugfix"`:**
 
@@ -225,7 +244,7 @@ Determine PR title using the standard convention:
 | `test`  | adding/fixing tests                             |
 | `infra` | CI/CD, build system                             |
 
-#### 3c. Create the PR
+#### 8.3. Create the PR
 
 - **PR body**: Bullet-point summary of changes
   - If `--resolves <number>` was provided (directly or via `?` selection), append an empty line followed by `resolves #<number>`
@@ -253,7 +272,7 @@ gh pr create --repo stefanhoelzl/codehydra --title "<title>" --label "<label>" -
 
 Capture the PR URL and number from output.
 
-### 4. Enable Auto-merge
+### 9. Enable Auto-merge
 
 ```bash
 gh pr merge --repo stefanhoelzl/codehydra <number> --auto --rebase --delete-branch
@@ -265,7 +284,7 @@ This:
 - Uses **rebase** to maintain linear history
 - Sets branch to auto-delete after merge
 
-### 5. Run ship-wait script
+### 10. Run ship-wait script
 
 ```bash
 npx tsx .claude/commands/ship-wait.ts <number>
@@ -285,7 +304,7 @@ The script handles:
 - 1: FAILED
 - 2: TIMEOUT
 
-### 5.5. CI failure retry (one attempt)
+### 10.1. CI failure retry (one attempt)
 
 If ship-wait exited with code 1 and the output contains "CI failed":
 
@@ -322,7 +341,7 @@ If ship-wait exited with code 1 and the output contains "CI failed":
 
 5. If code issue: proceed to FAILED report as usual.
 
-### 6. Delete workspace
+### 11. Delete workspace
 
 If `--keep-workspace` was NOT passed and merge succeeded (exit code 0):
 
