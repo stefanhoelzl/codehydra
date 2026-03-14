@@ -1,5 +1,5 @@
 /**
- * ShortcutDevtoolsModule - Dev-only DevTools toggling via shortcut keys.
+ * DevtoolsModule - Dev-only DevTools toggling via shortcut keys.
  *
  * Subscribes to shortcut:key-pressed domain event and handles:
  * - "d": Toggle UI DevTools
@@ -18,7 +18,7 @@ import {
   type ShortcutKeyPressedEvent,
 } from "../operations/shortcut-key";
 
-export interface ShortcutDevtoolsModuleDeps {
+export interface DevtoolsModuleDeps {
   readonly viewManager: Pick<
     IViewManager,
     "getUIViewHandle" | "getWorkspaceView" | "getActiveWorkspacePath"
@@ -37,9 +37,9 @@ function toggleDevTools(
   }
 }
 
-export function createShortcutDevtoolsModule(deps: ShortcutDevtoolsModuleDeps): IntentModule {
+export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
   return {
-    name: "shortcut-devtools",
+    name: "devtools",
     events: {
       [EVENT_SHORTCUT_KEY_PRESSED]: (event: DomainEvent) => {
         const { key } = (event as ShortcutKeyPressedEvent).payload;

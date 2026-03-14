@@ -99,7 +99,7 @@ import { createScriptModule } from "./modules/script-module";
 import { createTempDirModule } from "./modules/temp-dir-module";
 import { createErrorHandlerModule } from "./modules/error-handler-module";
 import { createShortcutModule } from "./modules/shortcut-module";
-import { createShortcutDevtoolsModule } from "./modules/shortcut-devtools-module";
+import { createDevtoolsModule } from "./modules/devtools-module";
 import { createIpcEventBridge } from "./modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
@@ -548,8 +548,8 @@ const shortcutModule = createShortcutModule({
   logger: loggingService.createLogger("shortcut"),
 });
 
-const shortcutDevtoolsModule = buildInfo.isDevelopment
-  ? createShortcutDevtoolsModule({
+const devtoolsModule = buildInfo.isDevelopment
+  ? createDevtoolsModule({
       viewManager,
       viewLayer,
     })
@@ -627,7 +627,7 @@ dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
-if (shortcutDevtoolsModule) dispatcher.registerModule(shortcutDevtoolsModule);
+if (devtoolsModule) dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(ipcEventBridge);
 

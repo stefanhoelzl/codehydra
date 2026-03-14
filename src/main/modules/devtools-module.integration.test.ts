@@ -1,15 +1,15 @@
 // @vitest-environment node
 /**
- * Integration tests for ShortcutDevtoolsModule.
+ * Integration tests for DevtoolsModule.
  *
  * Tests DevTools toggling via shortcut:key-pressed domain event subscription.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import {
-  createShortcutDevtoolsModule,
-  type ShortcutDevtoolsModuleDeps,
-} from "./shortcut-devtools-module";
+  createDevtoolsModule,
+  type DevtoolsModuleDeps,
+} from "./devtools-module";
 import {
   EVENT_SHORTCUT_KEY_PRESSED,
   type ShortcutKeyPressedEvent,
@@ -43,7 +43,7 @@ function createMockDeps() {
 
   return {
     viewLayer,
-    viewManager: viewManager as unknown as ShortcutDevtoolsModuleDeps["viewManager"],
+    viewManager: viewManager as unknown as DevtoolsModuleDeps["viewManager"],
     uiHandle,
     wsHandle,
     _setActivePath(path: string | null) {
@@ -52,7 +52,7 @@ function createMockDeps() {
   };
 }
 
-function emitKeyEvent(module: ReturnType<typeof createShortcutDevtoolsModule>, key: string): void {
+function emitKeyEvent(module: ReturnType<typeof createDevtoolsModule>, key: string): void {
   const event: ShortcutKeyPressedEvent = {
     type: EVENT_SHORTCUT_KEY_PRESSED,
     payload: { key },
@@ -64,10 +64,10 @@ function emitKeyEvent(module: ReturnType<typeof createShortcutDevtoolsModule>, k
 // Tests
 // =============================================================================
 
-describe("ShortcutDevtoolsModule", () => {
+describe("DevtoolsModule", () => {
   it("D toggles UI DevTools open", () => {
     const mock = createMockDeps();
-    const module = createShortcutDevtoolsModule(mock);
+    const module = createDevtoolsModule(mock);
 
     emitKeyEvent(module, "d");
 
@@ -77,7 +77,7 @@ describe("ShortcutDevtoolsModule", () => {
   it("D toggles UI DevTools closed when already open", () => {
     const mock = createMockDeps();
     mock.viewLayer.isDevToolsOpened.mockReturnValue(true);
-    const module = createShortcutDevtoolsModule(mock);
+    const module = createDevtoolsModule(mock);
 
     emitKeyEvent(module, "d");
 
@@ -87,7 +87,7 @@ describe("ShortcutDevtoolsModule", () => {
 
   it("W toggles active workspace DevTools open", () => {
     const mock = createMockDeps();
-    const module = createShortcutDevtoolsModule(mock);
+    const module = createDevtoolsModule(mock);
 
     emitKeyEvent(module, "w");
 
@@ -97,7 +97,7 @@ describe("ShortcutDevtoolsModule", () => {
   it("W toggles workspace DevTools closed when already open", () => {
     const mock = createMockDeps();
     mock.viewLayer.isDevToolsOpened.mockReturnValue(true);
-    const module = createShortcutDevtoolsModule(mock);
+    const module = createDevtoolsModule(mock);
 
     emitKeyEvent(module, "w");
 
@@ -107,7 +107,7 @@ describe("ShortcutDevtoolsModule", () => {
   it("W does nothing when no active workspace", () => {
     const mock = createMockDeps();
     mock._setActivePath(null);
-    const module = createShortcutDevtoolsModule(mock);
+    const module = createDevtoolsModule(mock);
 
     emitKeyEvent(module, "w");
 
@@ -117,7 +117,7 @@ describe("ShortcutDevtoolsModule", () => {
 
   it("ignores unrelated keys", () => {
     const mock = createMockDeps();
-    const module = createShortcutDevtoolsModule(mock);
+    const module = createDevtoolsModule(mock);
 
     emitKeyEvent(module, "up");
     emitKeyEvent(module, "enter");
