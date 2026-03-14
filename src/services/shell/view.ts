@@ -388,8 +388,9 @@ export class DefaultViewLayer implements ViewLayer {
 
     this.views.delete(handle.id);
 
-    if (!state.view.webContents.isDestroyed()) {
-      state.view.webContents.close();
+    const wc = state.view.webContents;
+    if (wc && !wc.isDestroyed()) {
+      wc.close();
     }
 
     this.logger.debug("View destroyed", { id: handle.id });
@@ -540,8 +541,9 @@ export class DefaultViewLayer implements ViewLayer {
     const state = this.getView(handle);
     state.view.webContents.on("did-finish-load", callback);
     return () => {
-      if (!state.view.webContents.isDestroyed()) {
-        state.view.webContents.off("did-finish-load", callback);
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("did-finish-load", callback);
       }
     };
   }
@@ -550,8 +552,9 @@ export class DefaultViewLayer implements ViewLayer {
     const state = this.getView(handle);
     state.view.webContents.on("dom-ready", callback);
     return () => {
-      if (!state.view.webContents.isDestroyed()) {
-        state.view.webContents.off("dom-ready", callback);
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("dom-ready", callback);
       }
     };
   }
@@ -566,8 +569,9 @@ export class DefaultViewLayer implements ViewLayer {
     };
     state.view.webContents.on("will-navigate", handler);
     return () => {
-      if (!state.view.webContents.isDestroyed()) {
-        state.view.webContents.off("will-navigate", handler);
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("will-navigate", handler);
       }
     };
   }
@@ -595,8 +599,9 @@ export class DefaultViewLayer implements ViewLayer {
 
   send(handle: ViewHandle, channel: string, ...args: unknown[]): void {
     const state = this.getView(handle);
-    if (!state.view.webContents.isDestroyed()) {
-      state.view.webContents.send(channel, ...args);
+    const wc = state.view.webContents;
+    if (wc && !wc.isDestroyed()) {
+      wc.send(channel, ...args);
     }
   }
 
@@ -619,8 +624,9 @@ export class DefaultViewLayer implements ViewLayer {
     };
     state.view.webContents.on("before-input-event", handler);
     return () => {
-      if (!state.view.webContents.isDestroyed()) {
-        state.view.webContents.off("before-input-event", handler);
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("before-input-event", handler);
       }
     };
   }
@@ -629,8 +635,9 @@ export class DefaultViewLayer implements ViewLayer {
     const state = this.getView(handle);
     state.view.webContents.on("destroyed", callback);
     return () => {
-      if (!state.view.webContents.isDestroyed()) {
-        state.view.webContents.off("destroyed", callback);
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("destroyed", callback);
       }
     };
   }
@@ -638,7 +645,8 @@ export class DefaultViewLayer implements ViewLayer {
   isAvailable(handle: ViewHandle): boolean {
     const state = this.views.get(handle.id);
     if (!state) return false;
-    return !state.view.webContents.isDestroyed();
+    const wc = state.view.webContents;
+    return !!wc && !wc.isDestroyed();
   }
 
   openDevTools(handle: ViewHandle, options?: { mode?: string }): void {
@@ -665,7 +673,8 @@ export class DefaultViewLayer implements ViewLayer {
     if (!state) {
       throw new ShellError("VIEW_NOT_FOUND", `View ${handle.id} not found`, handle.id);
     }
-    if (state.view.webContents.isDestroyed()) {
+    const wc = state.view.webContents;
+    if (!wc || wc.isDestroyed()) {
       this.views.delete(handle.id);
       throw new ShellError("VIEW_DESTROYED", `View ${handle.id} was destroyed`, handle.id);
     }

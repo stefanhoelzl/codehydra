@@ -35,6 +35,7 @@ export class AssemblyAIProvider implements SpeechToTextProvider {
     // Create streaming transcriber with configuration
     // Use defaults with formatting enabled for proper punctuation/capitalization
     this.transcriber = this.client.streaming.transcriber({
+      speechModel: "universal-streaming-english",
       sampleRate: 16_000,
       formatTurns: true,
     });

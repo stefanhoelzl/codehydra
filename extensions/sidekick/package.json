@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "color-name": "^2.1.0",
-    "socket.io-client": "^4.7.0"
+    "socket.io-client": "^4.8.3"
   },
   "contributes": {
     "commands": [
