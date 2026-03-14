@@ -28,7 +28,7 @@ import type {
   Snapshot,
   MatcherResult,
   MatcherImplementationsFor,
-} from "../../test/state-mock";
+} from "../../../test/state-mock";
 import type { SdkClientFactory as OpenCodeSdkClientFactory } from "./client";
 
 // Re-export SDK types for convenience

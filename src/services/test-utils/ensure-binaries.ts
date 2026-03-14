@@ -23,13 +23,13 @@ import {
   OPENCODE_VERSION,
   getOpencodeUrl,
   getOpencodeExecutablePath,
-} from "../../agents/opencode/setup-info";
+} from "../agents/opencode/setup-info";
 import { SILENT_LOGGER } from "../logging";
 import { createMockBuildInfo } from "../platform/build-info.test-utils";
 import { NodePlatformInfo } from "../../main/platform-info";
 import type { DownloadRequest } from "../binary-download/types";
 import type { PlatformInfo } from "../platform/platform-info";
-import type { SupportedPlatform, SupportedArch } from "../../agents/types";
+import type { SupportedPlatform, SupportedArch } from "../agents/types";
 
 /**
  * Binary types supported for test downloads.

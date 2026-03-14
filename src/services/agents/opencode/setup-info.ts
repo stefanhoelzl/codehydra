@@ -3,8 +3,8 @@
  * Provides version, binary paths, and config generation for OpenCode.
  */
 
-import type { Path } from "../../services/platform/path";
-import type { FileSystemLayer } from "../../services/platform/filesystem";
+import type { Path } from "../../platform/path";
+import type { FileSystemLayer } from "../../platform/filesystem";
 import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
 
 /**

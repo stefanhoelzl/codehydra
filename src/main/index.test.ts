@@ -16,10 +16,10 @@ import {
   CODE_SERVER_VERSION,
   getCodeServerExecutablePath,
 } from "../services/code-server/setup-info";
-import { OPENCODE_VERSION } from "../agents/opencode/setup-info";
+import { OPENCODE_VERSION } from "../services/agents/opencode/setup-info";
 import { Path } from "../services/platform/path";
 import type { PathProvider } from "../services/platform/path-provider";
-import type { SupportedPlatform } from "../agents/types";
+import type { SupportedPlatform } from "../services/agents/types";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;

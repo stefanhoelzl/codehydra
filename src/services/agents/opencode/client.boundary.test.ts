@@ -16,13 +16,10 @@
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { OpenCodeClient } from "./client";
 import { withOpencode } from "./boundary-test-utils";
-import { CI_TIMEOUT_MS } from "../../services/platform/network.test-utils";
+import { CI_TIMEOUT_MS } from "../../platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
-import { SILENT_LOGGER } from "../../services/logging";
-import {
-  ensureBinaryForTests,
-  getBinaryPathForTests,
-} from "../../services/test-utils/ensure-binaries";
+import { SILENT_LOGGER } from "../../logging";
+import { ensureBinaryForTests, getBinaryPathForTests } from "../../test-utils/ensure-binaries";
 import type { ClientStatus } from "./types";
 
 describe("OpenCodeClient boundary tests", () => {

@@ -11,10 +11,10 @@
 import type { AgentProvider, AgentSessionInfo, AgentStatus } from "../types";
 import type { IDisposable, Unsubscribe, ClientStatus, Result, Session } from "./types";
 import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./client";
-import { OpenCodeError } from "../../services/errors";
+import { OpenCodeError } from "../../errors";
 import { findMatchingSession } from "./session-utils";
 import { err } from "./types";
-import type { Logger } from "../../services/logging";
+import type { Logger } from "../../logging";
 
 /**
  * Per-workspace provider that manages a single OpenCode client connection.

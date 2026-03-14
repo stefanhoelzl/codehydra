@@ -34,19 +34,19 @@ import {
   OPENCODE_VERSION,
   getOpencodeUrl,
   getOpencodeExecutablePath,
-} from "../src/agents/opencode/setup-info";
+} from "../src/services/agents/opencode/setup-info";
 import {
   CLAUDE_VERSION,
   getClaudeUrl,
   getClaudeSubPath,
   getClaudeExecutablePath,
   getClaudeLatestVersionUrl,
-} from "../src/agents/claude/setup-info";
+} from "../src/services/agents/claude/setup-info";
 import { DefaultPathProvider } from "../src/services/platform/path-provider";
 import { NodePlatformInfo } from "../src/main/platform-info";
 import type { BuildInfo } from "../src/services/platform/build-info";
 import type { DownloadRequest, DownloadProgress } from "../src/services/binary-download/types";
-import type { SupportedPlatform, SupportedArch } from "../src/agents/types";
+import type { SupportedPlatform, SupportedArch } from "../src/services/agents/types";
 import type { Logger } from "../src/services/logging";
 
 // Console logger for the script - suppresses warnings to avoid alarming output

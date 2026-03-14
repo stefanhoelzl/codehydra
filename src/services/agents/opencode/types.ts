@@ -30,7 +30,7 @@ export function err<E>(error: E): Result<never, E> {
 // ============ Re-exports from shared types ============
 
 // Re-export from shared types (single source of truth)
-export type { IDisposable, Unsubscribe } from "../../shared/types";
+export type { IDisposable, Unsubscribe } from "../../../shared/types";
 
 /**
  * Client status - simplified to just idle or busy.
