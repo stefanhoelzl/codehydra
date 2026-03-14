@@ -13,7 +13,7 @@
 
 **Related Documentation:**
 
-- [SERVICES.md](SERVICES.md) - Service layer implementation patterns, platform abstractions, external system access
+- [INTENTS.md](INTENTS.md) - Intent system implementation, platform abstractions, mock factories
 - [AGENTS.md](AGENTS.md) - Agent provider interface, status tracking, MCP integration
 - [PATTERNS.md](PATTERNS.md) - IPC, UI, and CSS implementation patterns
 
@@ -489,7 +489,7 @@ All external system access goes through abstraction interfaces defined in `src/s
 
 **CRITICAL RULE**: Services MUST use these interfaces, NOT direct library imports.
 
-For detailed platform abstraction documentation including interface definitions, mock factories, and usage patterns, see [SERVICES.md](SERVICES.md).
+For detailed platform abstraction documentation including interface definitions, mock factories, and usage patterns, see [INTENTS.md](INTENTS.md#platform-abstractions).
 
 | External System    | Interface              | Implementation                |
 | ------------------ | ---------------------- | ----------------------------- |
@@ -571,22 +571,6 @@ External Trigger (IPC / MCP / Electron lifecycle)
 | `Modules`        | Hook handlers, event subscriptions, domain logic      | Workflow orchestration (in operations) |
 | `IpcEventBridge` | IPC-to-intent mapping, domain-event-to-IPC forwarding | Business logic or workflow control     |
 
-### IPC-to-Intent Mapping
-
-IPC channels map directly to intents through `IpcEventBridge`. There are no separate API interfaces -- each IPC handler creates a typed intent and dispatches it:
-
-| IPC Channel            | Intent Type        | Operation                |
-| ---------------------- | ------------------ | ------------------------ |
-| `api:project:open`     | `project:open`     | OpenProjectOperation     |
-| `api:project:close`    | `project:close`    | CloseProjectOperation    |
-| `api:workspace:create` | `workspace:open`   | OpenWorkspaceOperation   |
-| `api:workspace:remove` | `workspace:delete` | DeleteWorkspaceOperation |
-| `api:workspace:switch` | `workspace:switch` | SwitchWorkspaceOperation |
-| `api:ui:set-mode`      | `ui:setMode`       | SetModeOperation         |
-| `api:lifecycle:quit`   | `app:shutdown`     | AppShutdownOperation     |
-
-Non-IPC consumers (MCP Server, Plugin API) dispatch intents directly through the Dispatcher.
-
 ### Core Principles
 
 1. **All externally visible behavior starts with an Intent**
@@ -605,90 +589,7 @@ Non-IPC consumers (MCP Server, Plugin API) dispatch intents directly through the
 - **Child intents**: Only operations dispatch child intents (via `ctx.dispatch()`). Hooks return data; operations decide whether to dispatch further.
 - **Events**: Domain events are fire-and-forget signals emitted via `ctx.emit()`. They cannot affect control flow. Subscribers (IpcEventBridge, BadgeModule, WindowTitleModule) react independently.
 
-### Operations and Hooks
-
-All operations use the intent dispatcher (`Dispatcher` + `HookRegistry`). Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
-
-| Operation              | Intent Type              | Hook Points                     | Domain Event        |
-| ---------------------- | ------------------------ | ------------------------------- | ------------------- |
-| `set-metadata`         | `workspace:setMetadata`  | `set`                           | --                  |
-| `get-metadata`         | `workspace:getMetadata`  | `get`                           | --                  |
-| `get-workspace-status` | `workspace:getStatus`    | `get`                           | --                  |
-| `get-agent-session`    | `workspace:getSession`   | `get`                           | --                  |
-| `restart-agent`        | `workspace:restartAgent` | `restart`                       | --                  |
-| `set-mode`             | `ui:setMode`             | `set`                           | --                  |
-| `get-active-workspace` | `ui:getActiveWorkspace`  | `get`                           | --                  |
-| `create-workspace`     | `workspace:create`       | `create`, `setup`, `finalize`   | `workspace:created` |
-| `delete-workspace`     | `workspace:delete`       | `shutdown`, `release`, `delete` | `workspace:deleted` |
-| `open-project`         | `project:open`           | `open`                          | `project:opened`    |
-| `close-project`        | `project:close`          | `close`                         | `project:closed`    |
-| `app-start`            | `app:start`              | `register-config`, `before-ready`, `await-ready`, `init`, `show-ui`, `check-deps`, `start`, `activate` | -- |
-| `app-shutdown`         | `app:shutdown`           | `stop`                          | --                  |
-| `app-setup`            | `app:setup`              | `setup`                         | --                  |
-| `app-resume`           | `app:resume`             | `resume`                        | --                  |
-
-IPC handlers in `IpcEventBridge` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (IpcEventBridge, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
-
-The `create-workspace` operation uses these hook modules:
-
-- **create**: WorktreeModule (creates git worktree, or populates context from `existingWorkspace` data when activating discovered workspaces)
-- **setup**: KeepFilesModule (copies .keepfiles), AgentModule (starts agent server) -- both best-effort with internal try/catch
-- **finalize**: CodeServerModule (creates .code-workspace file)
-
-The `delete-workspace` operation uses these hook modules:
-
-- **shutdown**: ViewModule (switch active workspace + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI tracking)
-- **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode. Skipped when `removeWorktree` is false.
-- **delete**: WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
-
-The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), IpcEventBridge (emits `workspace:removed` IPC event), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
-
-The `open-project` operation uses these hook modules:
-
-- **open**: ProjectResolverModule (clone if URL, validate git, create provider), ProjectDiscoveryModule (discover workspaces, orphan cleanup), ProjectRegistryModule (generate ID, load config, register state, persist)
-
-After the open hook, the operation dispatches `workspace:create` per discovered workspace (best-effort, continues on failure), sets the first workspace as active, and emits `project:opened`. A `ProjectOpenIdempotencyInterceptor` prevents concurrent/duplicate opens of the same project path.
-
-The `close-project` operation uses these hook modules:
-
-- **close**: ProjectCloseManagerModule (dispose provider, delete cloned dir if removeLocalRepo), ProjectCloseRegistryModule (remove from state + store)
-
-Before the close hook, the operation resolves projectId to path, gets the workspace list, then dispatches `workspace:delete { removeWorktree: false, skipSwitch: true }` per workspace for runtime-only teardown. After all workspaces are torn down, it sets active workspace to null if no other projects are open, runs the close hook, then emits `project:closed`.
-
-The `app-start` operation runs eight hook points in sequence:
-
-- **register-config**: All modules return their config key definitions
-- **before-ready**: Env config + script declarations (no I/O, pre-Electron ready)
-- **await-ready**: Wait for Electron `app.whenReady()`
-- **init**: Post-ready initialization (config file, logging, shell, scripts)
-- **show-ui**: Show starting screen, capture waitForRetry callback
-- **check-deps**: Binary + extension checks (collect, isolated contexts). Dispatches `app:setup` if needed.
-- **start**: CodeServerLifecycleModule (start PluginServer with graceful degradation, ensure dirs, start code-server, update ports), AgentLifecycleModule (wire status changes to dispatcher), McpLifecycleModule (start MCP server, wire callbacks, configure agent server manager), TelemetryLifecycleModule (capture app_launched), AutoUpdaterLifecycleModule (start auto-updater, wire title updates), IpcBridgeLifecycleModule (wire API events to IPC, wire Plugin API)
-- **activate**: DataLifecycleModule (load persisted projects), ViewLifecycleModule (wire loading-state IPC, set first workspace active + title)
-
-The multi-phase design ensures config is loaded before Electron ready, servers are running before data is loaded (activate hook modules can read ports from the shared hook context). Errors in early hooks abort startup; errors in the activate hook propagate to the renderer error screen.
-
-The `app-shutdown` operation uses a single hook point:
-
-- **stop**: All lifecycle modules dispose their resources independently, each wrapping its own logic in try/catch (best-effort). A shutdown idempotency interceptor (boolean flag) ensures only one execution proceeds across `window-all-closed` and `before-quit` entry points.
-
-### Capability-Based Hook Ordering
-
-Hooks are unordered by default. When execution order matters, handlers declare `requires` and `provides` capabilities. The `collect()` function topologically sorts handlers based on these declarations, running providers before consumers.
-
-Each `HookHandler` has three fields:
-
-| Field      | Type                               | Purpose                                                      |
-| ---------- | ---------------------------------- | ------------------------------------------------------------ |
-| `handler`  | `(ctx: HookContext) => Promise<T>` | The hook logic                                               |
-| `requires` | `Record<string, unknown>`          | Capabilities this handler needs before it can run            |
-| `provides` | `() => Record<string, unknown>`    | Capabilities this handler makes available after it completes |
-
-The `ANY_VALUE` sentinel (exported from `operation.ts`) matches any value for a required capability -- it means "this capability must exist, but I do not care about its value."
-
-**Example**: In the `app:start` operation's `start` hook point, the code-server module provides `{ codeServerPort: number }` after starting code-server. The plugin-server module requires `{ codeServerPort: ANY_VALUE }` so it runs after the port is known.
-
-Capabilities accumulate across handlers within a single `collect()` call and are available on `HookResult.capabilities` for the operation to inspect.
+For concrete operations, hook points, domain events, IPC mappings, capability ordering, platform abstractions, and mock factories, see [INTENTS.md](INTENTS.md).
 
 ### Branded ID Types
 
@@ -719,49 +620,6 @@ function generateProjectId(absolutePath: string): ProjectId {
 | `/home/user/projects/my-app/` | `my-app-<hash8>` (same) |
 | `/home/user/Projects/My App`  | `My-App-<hash8>`        |
 
-### Event Flow
-
-Operations emit domain events via `ctx.emit()`. The dispatcher delivers these to all module event subscribers. `IpcEventBridge` forwards relevant events to the renderer via `sendToUI()`:
-
-```
-Operation
-    │
-    ├── ctx.emit({ type: "workspace:switched", payload })
-    │
-    ▼
-Dispatcher delivers to subscribers
-    │
-    ├── IpcEventBridge  →  sendToUI("api:workspace:switched", payload)  →  Renderer
-    ├── BadgeModule     →  updates dock badge
-    └── WindowTitleModule → updates window title
-```
-
-### Workspace Switching Example
-
-The `workspace:switched` event is emitted through the intent dispatcher via `SwitchWorkspaceOperation`:
-
-- `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace, calls `ViewManager.setActiveWorkspace`) then emits `workspace:switched` via `ctx.emit()`
-- Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `OpenWorkspaceOperation` dispatches after creating a workspace)
-- Null deactivation (delete last workspace, close last project) emits `workspace:switched(null)` directly via `ctx.emit()` without going through the intent
-- `IpcEventBridge` subscribes to `workspace:switched` and forwards to the renderer via `deps.sendToUI()`
-- `WindowTitleModule` subscribes to `workspace:switched` and updates the window title
-
-### Domain Events
-
-| Event                        | Payload                                                    | Description                                 |
-| ---------------------------- | ---------------------------------------------------------- | ------------------------------------------- |
-| `project:opened`             | `{ project: Project }`                                     | Project was opened                          |
-| `project:closed`             | `{ projectId: ProjectId }`                                 | Project was closed                          |
-| `project:bases-updated`      | `{ projectId, bases }`                                     | Branch list refreshed                       |
-| `workspace:created`          | `{ projectId, workspace }`                                 | Workspace was created                       |
-| `workspace:removed`          | `WorkspaceRef`                                             | Workspace was removed                       |
-| `workspace:switched`         | `WorkspaceRef \| null`                                     | Active workspace changed                    |
-| `workspace:status-changed`   | `WorkspaceRef & { status }`                                | Dirty/agent status changed                  |
-| `workspace:metadata-changed` | `{ projectId, workspaceName, key, value: string \| null }` | Metadata key set or deleted                 |
-| `ui:mode-changed`            | `{ mode, previousMode }`                                   | UI mode changed (shortcut/dialog/workspace) |
-| `shortcut:key`               | `ShortcutKey`                                              | Shortcut action key pressed                 |
-| `setup:progress`             | `{ step, message }`                                        | Setup progress update                       |
-
 ### IPC Channel Naming
 
 The v2 API uses `api:` prefixed IPC channels:
@@ -777,65 +635,7 @@ The v2 API uses `api:` prefixed IPC channels:
 
 ### Main Process Startup Architecture
 
-The main process uses a composition-root pattern in `src/main/index.ts`. All services are constructed (pure, no I/O), all operations and modules are registered, then `app:start` is dispatched to orchestrate the startup flow:
-
-```
-index.ts (composition root)
-    │
-    ├── Construct all services (no I/O)
-    ├── Create Dispatcher + HookRegistry
-    ├── Register all operations (25+)
-    ├── Create IpcEventBridge (registers IPC handlers)
-    ├── Register all modules (30+)
-    └── Dispatch app:start intent
-              │
-              ▼
-        AppStartOperation
-              │
-              ├── "register-config" (collect config definitions from all modules)
-              ├── "before-ready" (env config, script declarations)
-              ├── "await-ready" (Electron app.whenReady())
-              ├── "init" (config file, logging, shell, scripts)
-              ├── "show-ui" (starting screen)
-              ├── "check-deps" (binary/extension checks → app:setup if needed)
-              │
-              ├── "start" hook point (servers, wiring)
-              │     CodeServerModule, PluginServerModule, AgentModules,
-              │     TelemetryModule, AutoUpdaterModule, McpModule, etc.
-              │
-              ├── "activate" hook point (load data, set active workspace)
-              │     DataModule (load persisted projects),
-              │     ViewModule (wire loading-state IPC, set first workspace active)
-              │
-              └── Renderer notified → ready
-                               │
-               ┌───────────────┴───────────────────────────┐
-               │ "agent-selection"  │ "loading"  │ "setup" │
-               │ (agent not chosen) │ (ready)    │ (needed)│
-               v                    v            v
-        AgentSelectionDialog   Loading      SetupScreen
-               │               Screen       (3 rows)
-               │                  │              │
-               └───────┬──────────┘              │
-                       │                         │
-                       v                         │
-                Check binaries ◄─────────────────┘
-                       │
-               ┌───────┴───────┐
-               │ missing?      │
-               v               v
-        SetupScreen         Loading
-        (downloads)         Screen
-               │               │
-               └───────┬───────┘
-                       │
-                       v
-               ┌───────┴───────┐
-               │ success       │ failure
-               v               v
-        appMode = "ready"   SetupError
-        MainView loads      (Retry/Quit)
-```
+The main process uses a composition-root pattern in `src/main/index.ts`. All services are constructed (pure, no I/O), all operations and modules are registered, then `app:start` is dispatched. See [INTENTS.md — Composition Root](INTENTS.md#composition-root) for the full bootstrap diagram.
 
 ### First-Run Flow
 

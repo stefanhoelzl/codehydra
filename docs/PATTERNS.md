@@ -7,7 +7,7 @@
 - [UI Patterns](#ui-patterns)
 - [CSS Theming Patterns](#css-theming-patterns)
 - [Renderer Setup Functions](#renderer-setup-functions)
-- [Service Layer Patterns](#service-layer-patterns) - See [SERVICES.md](SERVICES.md)
+- [Service Layer Patterns](#service-layer-patterns) - See [INTENTS.md](INTENTS.md)
 - [Path Handling Patterns](#path-handling-patterns)
 - [OpenCode Integration](#opencode-integration) - See [AGENTS.md](AGENTS.md)
 - [Plugin Interface](#plugin-interface)
@@ -611,11 +611,11 @@ it("cleanup stops updates", () => {
 
 ## Service Layer Patterns
 
-Service layer patterns including platform abstractions (FileSystemLayer, NetworkLayer, ProcessRunner), external system access rules, mock factories, and shell/platform layers are documented in [SERVICES.md](SERVICES.md).
+Service layer patterns including platform abstractions (FileSystemLayer, NetworkLayer, ProcessRunner), external system access rules, mock factories, and shell/platform layers are documented in [INTENTS.md](INTENTS.md).
 
 ---
 
-<!-- Service layer content moved to SERVICES.md -->
+<!-- Service layer content moved to INTENTS.md -->
 
 ---
 
