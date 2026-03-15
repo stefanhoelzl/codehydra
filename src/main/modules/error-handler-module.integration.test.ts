@@ -119,4 +119,51 @@ describe("ErrorHandlerModule Integration", () => {
       cleanup();
     }
   });
+
+  it("registers unhandledRejection listener during before-ready hook", async () => {
+    const { dispatcher, registeredHandlers, cleanup } = createTestSetup();
+    try {
+      await dispatcher.dispatch(startIntent());
+
+      const handler = registeredHandlers.find((h) => h.event === "unhandledRejection");
+      expect(handler).toBeDefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("logs unhandled rejection without crashing", async () => {
+    const { dispatcher, logger, registeredHandlers, cleanup } = createTestSetup();
+    try {
+      await dispatcher.dispatch(startIntent());
+
+      const handler = registeredHandlers.find((h) => h.event === "unhandledRejection")!;
+      const testError = new Error("test rejection");
+
+      handler.handler(testError);
+
+      expect(logger.error).toHaveBeenCalledWith("Unhandled promise rejection", {}, testError);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("wraps non-Error rejection reasons", async () => {
+    const { dispatcher, logger, registeredHandlers, cleanup } = createTestSetup();
+    try {
+      await dispatcher.dispatch(startIntent());
+
+      const handler = registeredHandlers.find((h) => h.event === "unhandledRejection")!;
+
+      handler.handler("string rejection");
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "Unhandled promise rejection",
+        {},
+        expect.objectContaining({ message: "string rejection" })
+      );
+    } finally {
+      cleanup();
+    }
+  });
 });

@@ -2,14 +2,20 @@
  * ErrorHandlerModule - Logs uncaught exceptions and unhandled rejections.
  *
  * Hook handlers:
- * - app:start / before-ready: registers process.on('uncaughtException') handler
+ * - app:start / before-ready: registers process error handlers
  *
- * The handler logs the error and re-throws to ensure the process crashes
- * (adding a listener suppresses the default crash behavior).
+ * Two handlers are registered:
  *
- * Node v15+ converts unhandled rejections to uncaught exceptions by default,
- * so no separate 'unhandledRejection' listener is needed. The handler uses
- * the `origin` parameter to distinguish the source.
+ * 1. `process.on('unhandledRejection')` — Electron overrides Node.js's default
+ *    `--unhandled-rejections=throw` mode and uses `warn` mode instead (this is
+ *    an intentional Electron design decision, see electron/electron#36528).
+ *    Without this handler, unhandled rejections only print a warning to stderr
+ *    and are never logged or reported to telemetry. The handler logs the error
+ *    but does not crash — matching Electron's intended non-fatal behavior.
+ *
+ * 2. `process.on('uncaughtException')` — Logs the error and re-throws to ensure
+ *    the process crashes (adding a listener suppresses the default crash behavior).
+ *    Uses the `origin` parameter to distinguish the source.
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
@@ -35,6 +41,11 @@ export function createErrorHandlerModule(deps: ErrorHandlerModuleDeps): IntentMo
       [APP_START_OPERATION_ID]: {
         "before-ready": {
           handler: async (): Promise<Record<string, never>> => {
+            process.on("unhandledRejection", (reason: unknown) => {
+              const error =
+                reason instanceof Error ? reason : new Error(String(reason), { cause: reason });
+              deps.logger.error("Unhandled promise rejection", {}, error);
+            });
             process.on("uncaughtException", (error: Error, origin: string) => {
               if (origin === "unhandledRejection") {
                 deps.logger.error("Unhandled promise rejection", {}, error);

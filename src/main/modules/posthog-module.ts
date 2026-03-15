@@ -246,6 +246,13 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
     process.on("uncaughtExceptionMonitor", (error: Error) => {
       captureError(error);
     });
+
+    // Electron uses --unhandled-rejections=warn (not throw), so unhandled
+    // rejections never trigger uncaughtExceptionMonitor. Capture them directly.
+    process.on("unhandledRejection", (reason: unknown) => {
+      const error = reason instanceof Error ? reason : new Error(String(reason), { cause: reason });
+      captureError(error);
+    });
   }
 
   // ---------------------------------------------------------------------------
