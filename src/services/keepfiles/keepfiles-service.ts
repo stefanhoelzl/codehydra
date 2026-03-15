@@ -8,7 +8,7 @@
 
 import * as path from "node:path";
 import ignore, { type Ignore } from "ignore";
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import type { IKeepFilesService, CopyResult, CopyError } from "./types";
 import type { Logger } from "../../boundaries/platform/logging";
 import { getErrorMessage } from "../errors";
@@ -33,7 +33,7 @@ const UTF8_BOM = "\ufeff";
  */
 export class KeepFilesService implements IKeepFilesService {
   constructor(
-    private readonly fileSystem: FileSystemLayer,
+    private readonly fileSystem: FileSystemBoundary,
     private readonly logger: Logger
   ) {}
 

@@ -15,7 +15,7 @@
 import type { ProcessRunner } from "../../boundaries/platform/process/process";
 import type { PortManager, HttpClient } from "../../boundaries/platform/network/network";
 import type { PathProvider } from "../../boundaries/platform/env/path-provider";
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import type { Logger } from "../../boundaries/platform/logging";
 import type { SupportedArch } from "../../boundaries/platform/env/platform-info";
 import type { SdkClientFactory } from "./opencode/client";
@@ -48,7 +48,7 @@ export { createOpenCodeModuleProvider } from "./opencode/module-provider";
  * Dependencies for creating AgentSetupInfo instances.
  */
 export interface SetupInfoDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly httpClient: HttpClient;
   readonly platform: "darwin" | "linux" | "win32";
   readonly arch: SupportedArch;
@@ -62,7 +62,7 @@ export interface ServerManagerDeps {
   readonly portManager: PortManager;
   readonly httpClient: HttpClient;
   readonly pathProvider: PathProvider;
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
 }
 

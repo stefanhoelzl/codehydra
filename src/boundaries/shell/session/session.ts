@@ -1,5 +1,5 @@
 /**
- * SessionLayer - Abstraction over Electron's session API.
+ * SessionBoundary - Abstraction over Electron's session API.
  *
  * Provides an injectable interface for session management, enabling:
  * - Unit testing with behavioral mocks
@@ -68,7 +68,7 @@ export type PermissionCheckHandler = (permission: Permission) => boolean;
  * This allows testing without Electron dependencies and ensures all session
  * access goes through this abstraction.
  */
-export interface SessionLayer {
+export interface SessionBoundary {
   /**
    * Get or create a session for a given partition.
    *
@@ -134,9 +134,9 @@ interface SessionState {
 }
 
 /**
- * Default implementation of SessionLayer using Electron's session API.
+ * Default implementation of SessionBoundary using Electron's session API.
  */
-export class DefaultSessionLayer implements SessionLayer {
+export class DefaultSessionBoundary implements SessionBoundary {
   private readonly sessions = new Map<string, SessionState>();
   private nextId = 1;
 

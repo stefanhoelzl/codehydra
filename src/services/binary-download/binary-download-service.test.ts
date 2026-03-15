@@ -10,7 +10,7 @@ import { BinaryDownloadError } from "./errors";
 import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
 import {
   createFileSystemMock,
-  createSpyFileSystemLayer,
+  createSpyFileSystemBoundary,
   directory,
   createDirEntry,
 } from "../../boundaries/platform/filesystem/filesystem.state-mock";
@@ -114,7 +114,7 @@ describe("DefaultBinaryDownloadService", () => {
       });
 
       // Use spy filesystem to track calls - include temp directory for temp file writes
-      const trackingFs = createSpyFileSystemLayer({
+      const trackingFs = createSpyFileSystemBoundary({
         entries: {
           [tmpdir()]: directory(),
         },
@@ -173,7 +173,7 @@ describe("DefaultBinaryDownloadService", () => {
         },
       });
 
-      const trackingFs = createSpyFileSystemLayer({
+      const trackingFs = createSpyFileSystemBoundary({
         entries: {
           [tmpdir()]: directory(),
         },
@@ -211,7 +211,7 @@ describe("DefaultBinaryDownloadService", () => {
       });
 
       // Use empty filesystem - subPath directory won't exist
-      const emptyFs = createSpyFileSystemLayer({
+      const emptyFs = createSpyFileSystemBoundary({
         entries: {
           [tmpdir()]: directory(),
         },

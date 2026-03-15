@@ -1,10 +1,10 @@
 /**
- * Test utilities for DialogLayer.
+ * Test utilities for DialogBoundary.
  * Provides behavioral mock for testing dialog operations without Electron.
  */
 
 import type {
-  DialogLayer,
+  DialogBoundary,
   OpenDialogOptions,
   OpenDialogResult,
   SaveDialogOptions,
@@ -55,9 +55,9 @@ export interface DialogCall {
 }
 
 /**
- * State of the DialogLayer behavioral mock.
+ * State of the DialogBoundary behavioral mock.
  */
-export interface DialogLayerState {
+export interface DialogBoundaryState {
   /** All dialog calls in order */
   readonly calls: readonly DialogCall[];
   /** Count of showOpenDialog calls */
@@ -71,13 +71,13 @@ export interface DialogLayerState {
 }
 
 /**
- * Extended DialogLayer interface with state inspection and response configuration.
+ * Extended DialogBoundary interface with state inspection and response configuration.
  */
-export interface BehavioralDialogLayer extends DialogLayer {
+export interface BehavioralDialogBoundary extends DialogBoundary {
   /**
    * Get internal state for test assertions.
    */
-  _getState(): DialogLayerState;
+  _getState(): DialogBoundaryState;
 
   /**
    * Set the next response for showOpenDialog.
@@ -108,14 +108,14 @@ export interface BehavioralDialogLayer extends DialogLayer {
 // ============================================================================
 
 /**
- * Creates a behavioral mock of DialogLayer for testing.
+ * Creates a behavioral mock of DialogBoundary for testing.
  *
  * By default, dialogs return canceled state. Use `_setNextResponse()` methods
  * to configure specific responses for the next dialog call.
  *
  * @example Basic usage - verify dialog was shown
  * ```typescript
- * const dialogLayer = createBehavioralDialogLayer();
+ * const dialogLayer = createBehavioralDialogBoundary();
  * await dialogLayer.showOpenDialog({ properties: ["openDirectory"] });
  *
  * const state = dialogLayer._getState();
@@ -125,7 +125,7 @@ export interface BehavioralDialogLayer extends DialogLayer {
  *
  * @example Configure response
  * ```typescript
- * const dialogLayer = createBehavioralDialogLayer();
+ * const dialogLayer = createBehavioralDialogBoundary();
  * dialogLayer._setNextOpenDialogResponse({
  *   canceled: false,
  *   filePaths: ["/path/to/folder"],
@@ -136,7 +136,7 @@ export interface BehavioralDialogLayer extends DialogLayer {
  * expect(result.filePaths[0].toString()).toBe("/path/to/folder");
  * ```
  */
-export function createBehavioralDialogLayer(): BehavioralDialogLayer {
+export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
   // State tracking
   const calls: DialogCall[] = [];
   let openDialogCount = 0;
@@ -197,7 +197,7 @@ export function createBehavioralDialogLayer(): BehavioralDialogLayer {
       errorBoxCount++;
     },
 
-    _getState(): DialogLayerState {
+    _getState(): DialogBoundaryState {
       return {
         calls: [...calls],
         openDialogCount,

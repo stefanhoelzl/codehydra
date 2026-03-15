@@ -1,8 +1,8 @@
 // @vitest-environment node
 /**
  * Integration tests for BinaryDownloadService.
- * Tests multi-component flows: BinaryDownloadService + ArchiveExtractor + FileSystemLayer.
- * Uses real FileSystemLayer but mocked HttpClient.
+ * Tests multi-component flows: BinaryDownloadService + ArchiveExtractor + FileSystemBoundary.
+ * Uses real FileSystemBoundary but mocked HttpClient.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -11,7 +11,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { DefaultArchiveExtractor } from "./archive-extractor";
-import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
 import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
@@ -54,8 +54,8 @@ describe("BinaryDownloadService (integration)", () => {
           },
         });
 
-        // Create real FileSystemLayer and ArchiveExtractor
-        const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
+        // Create real FileSystemBoundary and ArchiveExtractor
+        const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
         const archiveExtractor = new DefaultArchiveExtractor();
 
         const destDir = path.join(tempDir, "code-server", "4.109.2");
@@ -115,7 +115,7 @@ describe("BinaryDownloadService (integration)", () => {
             },
           });
 
-          const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
+          const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
           const archiveExtractor = new DefaultArchiveExtractor();
 
           const destDir = path.join(tempDir, "opencode", "0.1.47");
@@ -165,7 +165,7 @@ describe("BinaryDownloadService (integration)", () => {
           },
         });
 
-        const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
+        const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
         const archiveExtractor = new DefaultArchiveExtractor();
 
         const destDir = path.join(tempDir, "opencode", "0.1.47");
@@ -216,7 +216,7 @@ describe("BinaryDownloadService (integration)", () => {
           },
         });
 
-        const fileSystemLayer = new DefaultFileSystemLayer(createMockLogger());
+        const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
         const archiveExtractor = new DefaultArchiveExtractor();
 
         const destDir = path.join(tempDir, "opencode", "0.1.47");

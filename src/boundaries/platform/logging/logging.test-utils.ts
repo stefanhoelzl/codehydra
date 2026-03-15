@@ -6,13 +6,7 @@
  */
 
 import { vi, type Mock } from "vitest";
-import type {
-  Logger,
-  LoggerName,
-  LoggingConfigureOptions,
-  LoggingService,
-  LogContext,
-} from "./types";
+import type { Logger, LoggerName, LoggingConfigureOptions, Logging, LogContext } from "./types";
 
 /**
  * Mock logger with vitest spy methods.
@@ -30,7 +24,7 @@ export interface MockLogger extends Logger {
  * Mock logging service with vitest spy methods.
  * Tracks all loggers created via `getCreatedLoggers()`.
  */
-export interface MockLoggingService extends LoggingService {
+export interface MockLogging extends Logging {
   createLogger: Mock<(name: LoggerName) => Logger>;
   configure: Mock<(options: LoggingConfigureOptions) => void>;
   initialize: Mock<() => void>;
@@ -80,7 +74,7 @@ export function createMockLogger(): MockLogger {
  *
  * @example
  * ```typescript
- * const loggingService = createMockLoggingService();
+ * const loggingService = createMockLogging();
  * const gitLogger = loggingService.createLogger('git');
  *
  * // After running code that uses the logger:
@@ -88,10 +82,10 @@ export function createMockLogger(): MockLogger {
  * expect(loggingService.getLogger('git')?.info).toHaveBeenCalled();
  * ```
  */
-export function createMockLoggingService(): MockLoggingService {
+export function createMockLogging(): MockLogging {
   const loggers = new Map<LoggerName, MockLogger>();
 
-  const service: MockLoggingService = {
+  const service: MockLogging = {
     createLogger: vi.fn((name: LoggerName): Logger => {
       const existing = loggers.get(name);
       if (existing) {

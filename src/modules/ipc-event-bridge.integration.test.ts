@@ -68,8 +68,8 @@ import {
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
-  createBehavioralIpcLayer,
-  type BehavioralIpcLayer,
+  createBehavioralIpcBoundary,
+  type BehavioralIpcBoundary,
 } from "../boundaries/shell/ipc/ipc.test-utils";
 
 // =============================================================================
@@ -140,8 +140,8 @@ type SendToUIMock = ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]
 
 function createBridgeDeps(
   overrides?: Partial<IpcEventBridgeDeps>
-): IpcEventBridgeDeps & { ipcLayer: BehavioralIpcLayer; sendToUI: SendToUIMock } {
-  const ipcLayer = (overrides?.ipcLayer as BehavioralIpcLayer) ?? createBehavioralIpcLayer();
+): IpcEventBridgeDeps & { ipcLayer: BehavioralIpcBoundary; sendToUI: SendToUIMock } {
+  const ipcLayer = (overrides?.ipcLayer as BehavioralIpcBoundary) ?? createBehavioralIpcBoundary();
   const sendToUI: SendToUIMock =
     (overrides?.viewManager?.sendToUI as SendToUIMock) ??
     vi.fn<(channel: string, ...args: unknown[]) => void>();
@@ -428,7 +428,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
 
 describe("IpcEventBridge - IPC handlers", () => {
   it("registers IPC handlers on ipcLayer", () => {
-    const ipcLayer = createBehavioralIpcLayer();
+    const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({ ipcLayer });
     createIpcEventBridge(deps);
 
@@ -442,7 +442,7 @@ describe("IpcEventBridge - IPC handlers", () => {
   });
 
   it("lifecycle.ready IPC handler dispatches app:ready intent", async () => {
-    const ipcLayer = createBehavioralIpcLayer();
+    const ipcLayer = createBehavioralIpcBoundary();
     const dispatcher = {
       dispatch: vi.fn().mockResolvedValue(undefined),
     } as unknown as IpcEventBridgeDeps["dispatcher"];
@@ -467,7 +467,7 @@ describe("IpcEventBridge - shutdown", () => {
     const dispatcher = new Dispatcher({ logger: createMockLogger() });
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-    const ipcLayer = createBehavioralIpcLayer();
+    const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({
       ipcLayer,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -505,7 +505,7 @@ describe("IpcEventBridge - shutdown", () => {
     const dispatcher = new Dispatcher({ logger: createMockLogger() });
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-    const ipcLayer = createBehavioralIpcLayer();
+    const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({
       ipcLayer,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
@@ -693,7 +693,7 @@ describe("IpcEventBridge - executeCommand", () => {
     // executeCommand is registered as an apiRegistry method in the old code
     // but was not exposed via IPC. Now it's gone entirely from the bridge.
     // MCP/Plugin handlers dispatch intents directly.
-    const ipcLayer = createBehavioralIpcLayer();
+    const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({ ipcLayer });
     createIpcEventBridge(deps);
 

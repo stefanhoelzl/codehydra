@@ -1,16 +1,16 @@
 /**
- * Integration tests for ViewLayer using behavioral mock.
+ * Integration tests for ViewBoundary using behavioral mock.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createViewLayerMock, type MockViewLayer } from "./view.state-mock";
+import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
 import { ShellError, isShellErrorWithCode } from "../../../services/shell/errors";
 
-describe("ViewLayer (integration)", () => {
-  let viewLayer: MockViewLayer;
+describe("ViewBoundary (integration)", () => {
+  let viewLayer: MockViewBoundary;
 
   beforeEach(() => {
-    viewLayer = createViewLayerMock();
+    viewLayer = createViewBoundaryMock();
   });
 
   describe("createView", () => {

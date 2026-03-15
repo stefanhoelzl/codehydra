@@ -52,8 +52,11 @@ import { createBadgeModule } from "./badge-module";
 import { BadgeManager } from "../main/managers/badge-manager";
 import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { createAppLayerMock, type MockAppLayer } from "../boundaries/shell/app/app.state-mock";
-import { createImageLayerMock } from "../boundaries/shell/image/image.state-mock";
+import {
+  createAppBoundaryMock,
+  type MockAppBoundary,
+} from "../boundaries/shell/app/app.state-mock";
+import { createImageBoundaryMock } from "../boundaries/shell/image/image.state-mock";
 import type { WindowManager } from "../boundaries/shell/window/window-manager";
 import type { ImageHandle } from "../services/platform/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
@@ -100,7 +103,7 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  appLayer: MockAppLayer;
+  appLayer: MockAppBoundary;
   badgeManager: BadgeManager;
 }
 
@@ -137,8 +140,8 @@ function createMockResolveModule(): IntentModule {
 
 function createTestSetup(): TestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-  const appLayer = createAppLayerMock({ platform: "darwin" });
-  const imageLayer = createImageLayerMock();
+  const appLayer = createAppBoundaryMock({ platform: "darwin" });
+  const imageLayer = createImageBoundaryMock();
   const windowManager = createMockWindowManager();
 
   const badgeManager = new BadgeManager(

@@ -6,11 +6,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ViewManager, SIDEBAR_MINIMIZED_WIDTH, type ViewManagerDeps } from "./view-manager";
 import type { WindowManager } from "../window/window-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import { createViewLayerMock, type MockViewLayer } from "./view.state-mock";
-import { createSessionLayerMock, type MockSessionLayer } from "../session/session.state-mock";
+import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
+import { createSessionBoundaryMock, type MockSessionBoundary } from "../session/session.state-mock";
 import {
-  createWindowLayerInternalMock,
-  type MockWindowLayerInternal,
+  createWindowBoundaryInternalMock,
+  type MockWindowBoundaryInternal,
 } from "../window/window.state-mock";
 import { createViewHandle, type WindowHandle } from "../../../services/shell/types";
 import { createMockWindowManager } from "../window/window-manager.test-utils";
@@ -25,10 +25,10 @@ vi.mock("../utils/external-url", () => ({
 /**
  * Creates a test window layer with a pre-created window for ViewManager tests.
  */
-function createViewManagerWindowLayer(): MockWindowLayerInternal & {
+function createViewManagerWindowBoundary(): MockWindowBoundaryInternal & {
   _createdWindowHandle: WindowHandle;
 } {
-  const behavioralLayer = createWindowLayerInternalMock();
+  const behavioralLayer = createWindowBoundaryInternalMock();
 
   // Create a window to get a handle
   const windowHandle = behavioralLayer.createWindow({
@@ -40,20 +40,20 @@ function createViewManagerWindowLayer(): MockWindowLayerInternal & {
 
   return Object.assign(behavioralLayer, {
     _createdWindowHandle: windowHandle,
-  }) as unknown as MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
+  }) as unknown as MockWindowBoundaryInternal & { _createdWindowHandle: WindowHandle };
 }
 
 /**
  * Creates ViewManager deps with behavioral mocks.
  */
 function createViewManagerDeps(): ViewManagerDeps & {
-  viewLayer: MockViewLayer;
-  windowLayer: MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
-  sessionLayer: MockSessionLayer;
+  viewLayer: MockViewBoundary;
+  windowLayer: MockWindowBoundaryInternal & { _createdWindowHandle: WindowHandle };
+  sessionLayer: MockSessionBoundary;
 } {
-  const windowLayer = createViewManagerWindowLayer();
-  const viewLayer = createViewLayerMock();
-  const sessionLayer = createSessionLayerMock();
+  const windowLayer = createViewManagerWindowBoundary();
+  const viewLayer = createViewBoundaryMock();
+  const sessionLayer = createSessionBoundaryMock();
   const windowManager = createMockWindowManager({
     windowHandle: windowLayer._createdWindowHandle,
   }) as unknown as WindowManager;

@@ -16,7 +16,7 @@ import type { Logger } from "../boundaries/platform/logging/types";
 import type { BinaryType } from "../services/binary-resolution/types";
 import type { AgentType } from "../shared/plugin-protocol";
 import type { WorkspacePath } from "../shared/ipc";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type {
@@ -75,7 +75,7 @@ import type { AgentModuleProvider } from "../services/agents/agent-module-provid
 export interface AgentModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
-  readonly configService: ConfigService;
+  readonly configService: Config;
 }
 
 // =============================================================================

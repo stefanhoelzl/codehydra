@@ -1,19 +1,19 @@
 /**
- * Integration tests for IpcLayer using behavioral mock.
+ * Integration tests for IpcBoundary using behavioral mock.
  *
- * These tests verify the IpcLayer interface contract using the behavioral mock.
+ * These tests verify the IpcBoundary interface contract using the behavioral mock.
  * The boundary tests verify the same behavior against real Electron ipcMain.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { createBehavioralIpcLayer, type BehavioralIpcLayer } from "./ipc.test-utils";
+import { createBehavioralIpcBoundary, type BehavioralIpcBoundary } from "./ipc.test-utils";
 import { PlatformError } from "../../../services/platform/errors";
 
-describe("IpcLayer.handle", () => {
-  let ipcLayer: BehavioralIpcLayer;
+describe("IpcBoundary.handle", () => {
+  let ipcLayer: BehavioralIpcBoundary;
 
   beforeEach(() => {
-    ipcLayer = createBehavioralIpcLayer();
+    ipcLayer = createBehavioralIpcBoundary();
   });
 
   it("registers handler for channel", () => {
@@ -53,11 +53,11 @@ describe("IpcLayer.handle", () => {
   });
 });
 
-describe("IpcLayer.removeHandler", () => {
-  let ipcLayer: BehavioralIpcLayer;
+describe("IpcBoundary.removeHandler", () => {
+  let ipcLayer: BehavioralIpcBoundary;
 
   beforeEach(() => {
-    ipcLayer = createBehavioralIpcLayer();
+    ipcLayer = createBehavioralIpcBoundary();
   });
 
   it("removes registered handler", () => {
@@ -92,11 +92,11 @@ describe("IpcLayer.removeHandler", () => {
   });
 });
 
-describe("IpcLayer.removeAllHandlers", () => {
-  let ipcLayer: BehavioralIpcLayer;
+describe("IpcBoundary.removeAllHandlers", () => {
+  let ipcLayer: BehavioralIpcBoundary;
 
   beforeEach(() => {
-    ipcLayer = createBehavioralIpcLayer();
+    ipcLayer = createBehavioralIpcBoundary();
   });
 
   it("removes all handlers", () => {
@@ -128,11 +128,11 @@ describe("IpcLayer.removeAllHandlers", () => {
   });
 });
 
-describe("IpcLayer._invoke (test helper)", () => {
-  let ipcLayer: BehavioralIpcLayer;
+describe("IpcBoundary._invoke (test helper)", () => {
+  let ipcLayer: BehavioralIpcBoundary;
 
   beforeEach(() => {
-    ipcLayer = createBehavioralIpcLayer();
+    ipcLayer = createBehavioralIpcBoundary();
   });
 
   it("invokes registered handler with arguments", async () => {

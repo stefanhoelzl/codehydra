@@ -13,7 +13,7 @@ import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspa
 import { WorkspaceError, getErrorMessage } from "../../../services/errors";
 import { sanitizeWorkspaceName, unsanitizeWorkspaceName } from "../env/paths";
 import { isValidMetadataKey } from "../../../shared/api/types";
-import type { FileSystemLayer } from "../filesystem/filesystem";
+import type { FileSystemBoundary } from "../filesystem/filesystem";
 import type { Logger } from "../logging";
 import { Path } from "../../../utils/path/path";
 
@@ -43,7 +43,7 @@ export class GitWorktreeProvider {
   private static readonly RM_FALLBACK_TIMEOUT_MS = 30_000;
 
   private readonly gitClient: IGitClient;
-  private readonly fileSystemLayer: FileSystemLayer;
+  private readonly fileSystemLayer: FileSystemBoundary;
   private readonly logger: Logger;
 
   /** Map of normalized project root strings to project registration data */
@@ -52,7 +52,7 @@ export class GitWorktreeProvider {
   /** Map of normalized workspace path strings to project root Path (for metadata resolution) */
   private readonly workspaceRegistry: Map<string, Path> = new Map();
 
-  constructor(gitClient: IGitClient, fileSystemLayer: FileSystemLayer, logger: Logger) {
+  constructor(gitClient: IGitClient, fileSystemLayer: FileSystemBoundary, logger: Logger) {
     this.gitClient = gitClient;
     this.fileSystemLayer = fileSystemLayer;
     this.logger = logger;
@@ -65,7 +65,7 @@ export class GitWorktreeProvider {
    * @param projectRoot Absolute path to the git repository
    * @param gitClient Git client to use for operations
    * @param workspacesDir Directory where worktrees will be created
-   * @param fileSystemLayer FileSystemLayer for cleanup operations
+   * @param fileSystemLayer FileSystemBoundary for cleanup operations
    * @param logger Logger for worktree operations
    * @returns Promise resolving to a GitWorktreeProvider with the project registered
    * @throws WorkspaceError if path is invalid or not a git repository
@@ -74,7 +74,7 @@ export class GitWorktreeProvider {
     projectRoot: Path,
     gitClient: IGitClient,
     workspacesDir: Path,
-    fileSystemLayer: FileSystemLayer,
+    fileSystemLayer: FileSystemBoundary,
     logger: Logger
   ): Promise<GitWorktreeProvider> {
     const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);

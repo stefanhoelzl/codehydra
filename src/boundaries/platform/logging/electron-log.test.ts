@@ -1,5 +1,5 @@
 /**
- * Unit tests for ElectronLogService.
+ * Unit tests for ElectronLog.
  *
  * Note: These tests mock electron-log to verify configuration logic.
  * Boundary tests verify actual file writing behavior.
@@ -31,7 +31,7 @@ vi.mock("electron-log/main", () => ({
   },
 }));
 
-describe("ElectronLogService", () => {
+describe("ElectronLog", () => {
   beforeEach(() => {
     vi.resetAllMocks();
 
@@ -64,11 +64,11 @@ describe("ElectronLogService", () => {
     dataRootDir?: string;
     skipConfigure?: boolean;
   }) {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createMockPathProvider({
       dataRootDir: options?.dataRootDir ?? "/test/app-data",
     });
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     if (!options?.skipConfigure) {
       service.configure(options?.configureOptions ?? DEFAULT_OPTIONS);
     }
@@ -354,9 +354,9 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLogService } = await import("./electron-log-service");
+      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
-      const service = new ElectronLogService(pathProvider);
+      const service = new ElectronLog(pathProvider);
 
       const logger = service.createLogger("git");
       logger.info("Before configure");
@@ -384,9 +384,9 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLogService } = await import("./electron-log-service");
+      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
-      const service = new ElectronLogService(pathProvider);
+      const service = new ElectronLog(pathProvider);
 
       const logger = service.createLogger("app");
       logger.info("First");
@@ -426,9 +426,9 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLogService } = await import("./electron-log-service");
+      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
-      const service = new ElectronLogService(pathProvider);
+      const service = new ElectronLog(pathProvider);
 
       // Get reference before configure
       const logger = service.createLogger("git");
@@ -441,9 +441,9 @@ describe("ElectronLogService", () => {
     });
 
     it("configure() can be called multiple times (reconfigures)", async () => {
-      const { ElectronLogService } = await import("./electron-log-service");
+      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
-      const service = new ElectronLogService(pathProvider);
+      const service = new ElectronLog(pathProvider);
 
       service.configure({
         logLevel: "debug",
@@ -475,9 +475,9 @@ describe("ElectronLogService", () => {
       };
       mockScope.mockReturnValue(scopeLogger);
 
-      const { ElectronLogService } = await import("./electron-log-service");
+      const { ElectronLog } = await import("./electron-log");
       const pathProvider = createMockPathProvider({ dataRootDir: "/test/app-data" });
-      const service = new ElectronLogService(pathProvider);
+      const service = new ElectronLog(pathProvider);
 
       const logger = service.createLogger("app");
       const testError = new Error("Test error");
@@ -491,7 +491,7 @@ describe("ElectronLogService", () => {
 
   describe("parseLogLevel", () => {
     it("parses valid log levels", async () => {
-      const { parseLogLevel } = await import("./electron-log-service");
+      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("debug")).toBe("debug");
       expect(parseLogLevel("info")).toBe("info");
       expect(parseLogLevel("warn")).toBe("warn");
@@ -500,18 +500,18 @@ describe("ElectronLogService", () => {
     });
 
     it("handles uppercase input", async () => {
-      const { parseLogLevel } = await import("./electron-log-service");
+      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("ERROR")).toBe("error");
       expect(parseLogLevel("DEBUG")).toBe("debug");
     });
 
     it("handles whitespace", async () => {
-      const { parseLogLevel } = await import("./electron-log-service");
+      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("  info  ")).toBe("info");
     });
 
     it("returns undefined for invalid input", async () => {
-      const { parseLogLevel } = await import("./electron-log-service");
+      const { parseLogLevel } = await import("./electron-log");
       expect(parseLogLevel("invalid")).toBeUndefined();
       expect(parseLogLevel("")).toBeUndefined();
       expect(parseLogLevel(undefined)).toBeUndefined();
@@ -520,7 +520,7 @@ describe("ElectronLogService", () => {
 
   describe("parseLogLevelSpec", () => {
     it("validates plain log levels", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log-service");
+      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug")).toBe("debug");
       expect(parseLogLevelSpec("warn")).toBe("warn");
       expect(parseLogLevelSpec("error")).toBe("error");
@@ -529,96 +529,96 @@ describe("ElectronLogService", () => {
     });
 
     it("validates combined level:filter format", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log-service");
+      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug:git,process")).toBe("debug:git,process");
       expect(parseLogLevelSpec("warn:network")).toBe("warn:network");
     });
 
     it("validates wildcard filter", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log-service");
+      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug:*")).toBe("debug:*");
     });
 
     it("trims whitespace", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log-service");
+      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("  debug  ")).toBe("debug");
     });
 
     it("returns undefined for invalid level", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log-service");
+      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("invalid")).toBeUndefined();
       expect(parseLogLevelSpec("invalid:git")).toBeUndefined();
     });
 
     it("returns undefined for empty or undefined input", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log-service");
+      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec(undefined)).toBeUndefined();
       expect(parseLogLevelSpec("")).toBeUndefined();
       expect(parseLogLevelSpec("  ")).toBeUndefined();
     });
 
     it("returns undefined for level with empty filter", async () => {
-      const { parseLogLevelSpec } = await import("./electron-log-service");
+      const { parseLogLevelSpec } = await import("./electron-log");
       expect(parseLogLevelSpec("debug:")).toBeUndefined();
     });
   });
 
   describe("splitLogLevelSpec", () => {
     it("extracts level from plain spec", async () => {
-      const { splitLogLevelSpec } = await import("./electron-log-service");
+      const { splitLogLevelSpec } = await import("./electron-log");
       expect(splitLogLevelSpec("debug")).toEqual({ level: "debug", filter: undefined });
       expect(splitLogLevelSpec("warn")).toEqual({ level: "warn", filter: undefined });
     });
 
     it("extracts level and filter from combined spec", async () => {
-      const { splitLogLevelSpec } = await import("./electron-log-service");
+      const { splitLogLevelSpec } = await import("./electron-log");
       const result = splitLogLevelSpec("debug:git,process");
       expect(result.level).toBe("debug");
       expect(result.filter).toEqual(new Set(["git", "process"]));
     });
 
     it("treats * filter as undefined (all loggers)", async () => {
-      const { splitLogLevelSpec } = await import("./electron-log-service");
+      const { splitLogLevelSpec } = await import("./electron-log");
       expect(splitLogLevelSpec("debug:*")).toEqual({ level: "debug", filter: undefined });
     });
   });
 
   describe("parseLogOutput", () => {
     it("validates file output", async () => {
-      const { parseLogOutput } = await import("./electron-log-service");
+      const { parseLogOutput } = await import("./electron-log");
       expect(parseLogOutput("file")).toBe("file");
     });
 
     it("validates console output", async () => {
-      const { parseLogOutput } = await import("./electron-log-service");
+      const { parseLogOutput } = await import("./electron-log");
       expect(parseLogOutput("console")).toBe("console");
     });
 
     it("validates combined output and sorts canonically", async () => {
-      const { parseLogOutput } = await import("./electron-log-service");
+      const { parseLogOutput } = await import("./electron-log");
       expect(parseLogOutput("file,console")).toBe("console,file");
       expect(parseLogOutput("console,file")).toBe("console,file");
     });
 
     it("deduplicates tokens", async () => {
-      const { parseLogOutput } = await import("./electron-log-service");
+      const { parseLogOutput } = await import("./electron-log");
       expect(parseLogOutput("file,file")).toBe("file");
     });
 
     it("handles whitespace and case", async () => {
-      const { parseLogOutput } = await import("./electron-log-service");
+      const { parseLogOutput } = await import("./electron-log");
       expect(parseLogOutput("  FILE  ")).toBe("file");
       expect(parseLogOutput(" Console , File ")).toBe("console,file");
     });
 
     it("returns undefined for invalid tokens", async () => {
-      const { parseLogOutput } = await import("./electron-log-service");
+      const { parseLogOutput } = await import("./electron-log");
       expect(parseLogOutput("stdout")).toBeUndefined();
       expect(parseLogOutput("file,stdout")).toBeUndefined();
     });
 
     it("returns undefined for empty or undefined input", async () => {
-      const { parseLogOutput } = await import("./electron-log-service");
+      const { parseLogOutput } = await import("./electron-log");
       expect(parseLogOutput(undefined)).toBeUndefined();
       expect(parseLogOutput("")).toBeUndefined();
     });
@@ -626,26 +626,26 @@ describe("ElectronLogService", () => {
 
   describe("parseLogFormat", () => {
     it("parses valid format values", async () => {
-      const { parseLogFormat } = await import("./electron-log-service");
+      const { parseLogFormat } = await import("./electron-log");
       expect(parseLogFormat("text")).toBe("text");
       expect(parseLogFormat("json")).toBe("json");
     });
 
     it("handles case-insensitive input", async () => {
-      const { parseLogFormat } = await import("./electron-log-service");
+      const { parseLogFormat } = await import("./electron-log");
       expect(parseLogFormat("TEXT")).toBe("text");
       expect(parseLogFormat("JSON")).toBe("json");
       expect(parseLogFormat("Json")).toBe("json");
     });
 
     it("returns undefined for invalid input", async () => {
-      const { parseLogFormat } = await import("./electron-log-service");
+      const { parseLogFormat } = await import("./electron-log");
       expect(parseLogFormat("xml")).toBeUndefined();
       expect(parseLogFormat("csv")).toBeUndefined();
     });
 
     it("returns undefined for empty or undefined input", async () => {
-      const { parseLogFormat } = await import("./electron-log-service");
+      const { parseLogFormat } = await import("./electron-log");
       expect(parseLogFormat(undefined)).toBeUndefined();
       expect(parseLogFormat("")).toBeUndefined();
     });

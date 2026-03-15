@@ -423,11 +423,11 @@ Electron APIs are abstracted behind testable interfaces in two domains. This ena
 │  │          Shell Layers           │  │         Platform Layers           │ │
 │  │         (services/shell/)       │  │       (services/platform/)        │ │
 │  │                                 │  │                                   │ │
-│  │  WindowLayer ───► ImageLayer ───┼──┼─► ImageLayer                      │ │
-│  │       │                         │  │   IpcLayer                        │ │
-│  │       ▼                         │  │   DialogLayer                     │ │
-│  │  ViewLayer ───► SessionLayer    │  │   AppLayer                        │ │
-│  │                                 │  │   MenuLayer                       │ │
+│  │  WindowBoundary ───► ImageBoundary ───┼──┼─► ImageBoundary                      │ │
+│  │       │                         │  │   IpcBoundary                        │ │
+│  │       ▼                         │  │   DialogBoundary                     │ │
+│  │  ViewBoundary ───► SessionBoundary    │  │   AppBoundary                        │ │
+│  │                                 │  │   MenuBoundary                       │ │
 │  └─────────────────────────────────┘  └───────────────────────────────────┘ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -444,23 +444,23 @@ Electron APIs are abstracted behind testable interfaces in two domains. This ena
 
 **Layer Dependency Rules:**
 
-| Rule                | Description                                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------------------ |
-| Shell → Platform    | Shell layers may depend on Platform layers (e.g., WindowLayer uses ImageLayer for overlay icons) |
-| Platform → Platform | Platform layers are independent (no dependencies on each other)                                  |
-| Shell → Shell       | Shell layers may depend on each other (e.g., ViewLayer uses SessionLayer)                        |
-| Platform ↛ Shell    | Platform layers may NOT depend on Shell layers                                                   |
+| Rule                | Description                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| Shell → Platform    | Shell layers may depend on Platform layers (e.g., WindowBoundary uses ImageBoundary for overlay icons) |
+| Platform → Platform | Platform layers are independent (no dependencies on each other)                                        |
+| Shell → Shell       | Shell layers may depend on each other (e.g., ViewBoundary uses SessionBoundary)                        |
+| Platform ↛ Shell    | Platform layers may NOT depend on Shell layers                                                         |
 
 **Handle-Based Design:**
 
 Layers return opaque handles instead of raw Electron objects:
 
-| Layer          | Returns         | Instead of        |
-| -------------- | --------------- | ----------------- |
-| `WindowLayer`  | `WindowHandle`  | `BaseWindow`      |
-| `ViewLayer`    | `ViewHandle`    | `WebContentsView` |
-| `SessionLayer` | `SessionHandle` | `Session`         |
-| `ImageLayer`   | `ImageHandle`   | `NativeImage`     |
+| Layer             | Returns         | Instead of        |
+| ----------------- | --------------- | ----------------- |
+| `WindowBoundary`  | `WindowHandle`  | `BaseWindow`      |
+| `ViewBoundary`    | `ViewHandle`    | `WebContentsView` |
+| `SessionBoundary` | `SessionHandle` | `Session`         |
+| `ImageBoundary`   | `ImageHandle`   | `NativeImage`     |
 
 This pattern:
 
@@ -472,16 +472,16 @@ This pattern:
 
 Each layer has boundary tests (`*.boundary.test.ts`) that verify behavior against real Electron APIs:
 
-| Layer          | Boundary Test              |
-| -------------- | -------------------------- |
-| `IpcLayer`     | `ipc.boundary.test.ts`     |
-| `DialogLayer`  | `dialog.boundary.test.ts`  |
-| `ImageLayer`   | `image.boundary.test.ts`   |
-| `AppLayer`     | `app.boundary.test.ts`     |
-| `MenuLayer`    | `menu.boundary.test.ts`    |
-| `WindowLayer`  | `window.boundary.test.ts`  |
-| `ViewLayer`    | `view.boundary.test.ts`    |
-| `SessionLayer` | `session.boundary.test.ts` |
+| Layer             | Boundary Test              |
+| ----------------- | -------------------------- |
+| `IpcBoundary`     | `ipc.boundary.test.ts`     |
+| `DialogBoundary`  | `dialog.boundary.test.ts`  |
+| `ImageBoundary`   | `image.boundary.test.ts`   |
+| `AppBoundary`     | `app.boundary.test.ts`     |
+| `MenuBoundary`    | `menu.boundary.test.ts`    |
+| `WindowBoundary`  | `window.boundary.test.ts`  |
+| `ViewBoundary`    | `view.boundary.test.ts`    |
+| `SessionBoundary` | `session.boundary.test.ts` |
 
 ### Platform Abstractions Overview
 
@@ -493,7 +493,7 @@ For detailed platform abstraction documentation including interface definitions,
 
 | External System    | Interface               | Implementation               |
 | ------------------ | ----------------------- | ---------------------------- |
-| Filesystem         | `FileSystemLayer`       | `DefaultFileSystemLayer`     |
+| Filesystem         | `FileSystemBoundary`    | `DefaultFileSystemBoundary`  |
 | HTTP requests      | `HttpClient`            | `DefaultNetworkLayer`        |
 | Port operations    | `PortManager`           | `DefaultNetworkLayer`        |
 | Process spawning   | `ProcessRunner`         | `ExecaProcessRunner`         |
@@ -641,7 +641,7 @@ The main process uses a composition-root pattern in `src/main/index.ts`. All ser
 
 On first startup (no `config.json` exists), the application follows this flow:
 
-1. **Config Loading**: `ConfigService.load()` reads `{dataRootDir}/config.json`. If missing, returns defaults with `agent: null`.
+1. **Config Loading**: `Config.load()` reads `{dataRootDir}/config.json`. If missing, returns defaults with `agent: null`.
 
 2. **Agent Selection**: When `agent` is null, UI shows `AgentSelectionDialog`. User selects Claude or OpenCode, which calls `lifecycle.setAgent()` to save the choice.
 
@@ -858,12 +858,12 @@ The logging system provides comprehensive logging across both main and renderer 
 │                                                                              │
 │  MAIN PROCESS                                                                │
 │  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                     LoggingService (interface)                           ││
+│  │                     Logging (interface)                           ││
 │  │  - createLogger(name: LoggerName): Logger                               ││
 │  │  - initialize(): void  (enables renderer logging via IPC)               ││
 │  │                              │                                           ││
 │  │                              ▼                                           ││
-│  │              ElectronLogService (boundary impl)                          ││
+│  │              ElectronLog (boundary impl)                          ││
 │  │  - Wraps electron-log/main                                              ││
 │  │  - Configures file path: <app-data>/logs/<datetime>-<uuid>.log          ││
 │  └─────────────────────────────────────────────────────────────────────────┘│
@@ -874,7 +874,7 @@ The logging system provides comprehensive logging across both main and renderer 
 │  │                              │                                           ││
 │  │                              │ IPC to main                               ││
 │  │                              ▼                                           ││
-│  │              LoggingService.createLogger(name).method(msg, context)     ││
+│  │              Logging.createLogger(name).method(msg, context)     ││
 │  └─────────────────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -894,23 +894,23 @@ The logging system provides comprehensive logging across both main and renderer 
 
 ### Logger Names/Scopes
 
-| Logger          | Module                 | Description                           |
-| --------------- | ---------------------- | ------------------------------------- |
-| `[badge]`       | BadgeManager           | App icon badge updates                |
-| `[process]`     | LoggingProcessRunner   | Spawned processes, stdout/stderr      |
-| `[network]`     | DefaultNetworkLayer    | HTTP fetch, port operations           |
-| `[fs]`          | DefaultFileSystemLayer | File read/write operations            |
-| `[git]`         | SimpleGitClient        | Git commands                          |
-| `[opencode]`    | OpenCodeClient         | OpenCode SSE connections              |
-| `[code-server]` | CodeServerManager      | code-server lifecycle                 |
-| `[pidtree]`     | PidtreeProvider        | Process tree lookups                  |
-| `[keepfiles]`   | KeepFilesService       | .keepfiles copy operations            |
-| `[api]`         | IPC Handlers           | API request/response timing           |
-| `[window]`      | WindowManager          | Window create/resize/close            |
-| `[view]`        | ViewManager            | View lifecycle, mode changes          |
-| `[app]`         | Application Lifecycle  | Bootstrap, startup, shutdown          |
-| `[ui]`          | Renderer Components    | Dialog events, user actions           |
-| `[extension]`   | PluginServer           | Extension-side logs forwarded to main |
+| Logger          | Module                    | Description                           |
+| --------------- | ------------------------- | ------------------------------------- |
+| `[badge]`       | BadgeManager              | App icon badge updates                |
+| `[process]`     | LoggingProcessRunner      | Spawned processes, stdout/stderr      |
+| `[network]`     | DefaultNetworkLayer       | HTTP fetch, port operations           |
+| `[fs]`          | DefaultFileSystemBoundary | File read/write operations            |
+| `[git]`         | SimpleGitClient           | Git commands                          |
+| `[opencode]`    | OpenCodeClient            | OpenCode SSE connections              |
+| `[code-server]` | CodeServerManager         | code-server lifecycle                 |
+| `[pidtree]`     | PidtreeProvider           | Process tree lookups                  |
+| `[keepfiles]`   | KeepFilesService          | .keepfiles copy operations            |
+| `[api]`         | IPC Handlers              | API request/response timing           |
+| `[window]`      | WindowManager             | Window create/resize/close            |
+| `[view]`        | ViewManager               | View lifecycle, mode changes          |
+| `[app]`         | Application Lifecycle     | Bootstrap, startup, shutdown          |
+| `[ui]`          | Renderer Components       | Dialog events, user actions           |
+| `[extension]`   | PluginServer              | Extension-side logs forwarded to main |
 
 ### Log File Location
 

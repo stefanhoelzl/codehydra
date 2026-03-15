@@ -7,8 +7,8 @@
  */
 
 import type { PlatformInfo } from "../../boundaries/platform/env/platform-info";
-import type { AppLayer } from "../../boundaries/shell/app/app";
-import type { ImageLayer } from "../../boundaries/shell/image/image";
+import type { AppBoundary } from "../../boundaries/shell/app/app";
+import type { ImageBoundary } from "../../boundaries/shell/image/image";
 import type { ImageHandle } from "../../services/platform/types";
 import type { WindowManager } from "../../boundaries/shell/window/window-manager";
 import type { Logger } from "../../boundaries/platform/logging";
@@ -31,8 +31,8 @@ export type BadgeState = "none" | "all-working" | "mixed";
  */
 export class BadgeManager {
   private readonly platformInfo: PlatformInfo;
-  private readonly appLayer: AppLayer;
-  private readonly imageLayer: ImageLayer;
+  private readonly appLayer: AppBoundary;
+  private readonly imageLayer: ImageBoundary;
   private readonly windowManager: WindowManager;
   private readonly logger: Logger;
 
@@ -44,8 +44,8 @@ export class BadgeManager {
 
   constructor(
     platformInfo: PlatformInfo,
-    appLayer: AppLayer,
-    imageLayer: ImageLayer,
+    appLayer: AppBoundary,
+    imageLayer: ImageBoundary,
     windowManager: WindowManager,
     logger: Logger
   ) {

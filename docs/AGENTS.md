@@ -540,7 +540,7 @@ export class MyAgentSetupInfo implements AgentSetupInfo {
   readonly wrapperEntryPoint = "agents/my-agent-wrapper.cjs";
   readonly extensionId = "publisher.my-agent-extension";
 
-  constructor(private deps: { fileSystem: FileSystemLayer; platform: string }) {}
+  constructor(private deps: { fileSystem: FileSystemBoundary; platform: string }) {}
 
   getBinaryUrl(): string {
     // Return platform-specific download URL
@@ -650,7 +650,7 @@ Providers receive dependencies through factory functions:
 ```typescript
 /** Dependencies for AgentSetupInfo */
 interface SetupInfoDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly platform: "darwin" | "linux" | "win32";
   readonly arch: SupportedArch;
 }
@@ -661,7 +661,7 @@ interface ServerManagerDeps {
   readonly portManager: PortManager;
   readonly httpClient: HttpClient;
   readonly pathProvider: PathProvider;
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
 }
 

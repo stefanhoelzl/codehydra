@@ -7,7 +7,7 @@
 
 /**
  * Opaque handle to a native image.
- * Used by ImageLayer to reference NativeImage instances without exposing Electron types.
+ * Used by ImageBoundary to reference NativeImage instances without exposing Electron types.
  */
 export interface ImageHandle {
   readonly id: string;

@@ -16,7 +16,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { IGitClient } from "../boundaries/platform/git/git-client";
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { Logger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId } from "../shared/api/types";
@@ -54,7 +54,7 @@ function generateProjectIdFromUrl(url: string): ProjectId {
 // =============================================================================
 
 export function createRemoteProjectModule(deps: {
-  readonly fs: Pick<FileSystemLayer, "readdir" | "rm">;
+  readonly fs: Pick<FileSystemBoundary, "readdir" | "rm">;
   readonly gitClient: Pick<IGitClient, "clone">;
   readonly pathProvider: Pick<PathProvider, "dataPath">;
   readonly logger: Logger;

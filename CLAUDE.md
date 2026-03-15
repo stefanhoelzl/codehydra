@@ -41,21 +41,21 @@ All external access MUST use abstraction interfaces:
 
 | External System  | Required Interface                    | Forbidden Direct Access |
 | ---------------- | ------------------------------------- | ----------------------- |
-| Filesystem       | `FileSystemLayer`                     | `node:fs/promises`      |
+| Filesystem       | `FileSystemBoundary`                  | `node:fs/promises`      |
 | HTTP requests    | `HttpClient`                          | `fetch()`               |
 | Port operations  | `PortManager`                         | `net` module            |
 | Process spawning | `ProcessRunner`                       | `execa`                 |
 | Agent operations | `AgentProvider`, `AgentServerManager` | Direct OpenCode SDK     |
 | OpenCode API     | `SdkClientFactory`                    | Direct HTTP/SSE         |
 | Git operations   | `IGitClient`                          | `simple-git`            |
-| Electron Window  | `WindowLayer`                         | `BaseWindow`            |
-| Electron View    | `ViewLayer`                           | `WebContentsView`       |
-| Electron Session | `SessionLayer`                        | `session`               |
-| Electron IPC     | `IpcLayer`                            | `ipcMain`               |
-| Electron Dialog  | `DialogLayer`                         | `dialog`                |
-| Electron Image   | `ImageLayer`                          | `nativeImage`           |
-| Electron App     | `AppLayer`                            | `app`                   |
-| Electron Menu    | `MenuLayer`                           | `Menu`                  |
+| Electron Window  | `WindowBoundary`                      | `BaseWindow`            |
+| Electron View    | `ViewBoundary`                        | `WebContentsView`       |
+| Electron Session | `SessionBoundary`                     | `session`               |
+| Electron IPC     | `IpcBoundary`                         | `ipcMain`               |
+| Electron Dialog  | `DialogBoundary`                      | `dialog`                |
+| Electron Image   | `ImageBoundary`                       | `nativeImage`           |
+| Electron App     | `AppBoundary`                         | `app`                   |
+| Electron Menu    | `MenuBoundary`                        | `Menu`                  |
 
 **Acceptable exceptions**: Third-party libraries that encapsulate their own I/O (like `ignore`, `posthog-node`) do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
 
@@ -86,10 +86,10 @@ path1.equals(path2); // equals() for comparison
 
 Some components use external libraries directly without abstraction layers. These are approved exceptions where abstraction provides no benefit.
 
-| Component              | Direct Dependency  | Reason                                                                                            |
-| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
-| `AutoUpdater`          | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit |
-| `ConfigService.load()` | `node:fs`          | Config must load synchronously before Electron app.ready; FileSystemLayer is async-only           |
+| Component       | Direct Dependency  | Reason                                                                                            |
+| --------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `AutoUpdater`   | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit |
+| `Config.load()` | `node:fs`          | Config must load synchronously before Electron app.ready; FileSystemBoundary is async-only        |
 
 ---
 
@@ -144,7 +144,7 @@ All operations use an intent-based dispatcher with operations, hook modules, and
 
 Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
 
-The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Configuration is loaded via `ConfigService.load()` (sync) before `app:start` is dispatched. `app:start` runs five hook points in sequence: `before-ready` (script declarations, electron flags, data paths), `init` (logging, shell, scripts; electron-lifecycle module provides `"app-ready"` capability after `whenReady()`, handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`), `show-ui` (starting screen), `check-deps` (binary/extension checks), and `start` (servers, wiring). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`). See `docs/INTENTS.md` for the complete reference.
+The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Configuration is loaded via `Config.load()` (sync) before `app:start` is dispatched. `app:start` runs five hook points in sequence: `before-ready` (script declarations, electron flags, data paths), `init` (logging, shell, scripts; electron-lifecycle module provides `"app-ready"` capability after `whenReady()`, handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`), `show-ui` (starting screen), `check-deps` (binary/extension checks), and `start` (servers, wiring). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`). See `docs/INTENTS.md` for the complete reference.
 
 ---
 
@@ -322,7 +322,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 
 Any key can appear in config.json, env vars, or CLI flags.
 
-Source of truth: Config definitions are registered by modules via `ConfigService.register()` in their factory functions. The service lives at `src/services/config/config-service.ts`. Type aliases live in `src/services/config/config-values.ts`.
+Source of truth: Config definitions are registered by modules via `Config.register()` in their factory functions. The service lives at `src/services/config/config-service.ts`. Type aliases live in `src/services/config/config-values.ts`.
 
 ### Log Files
 

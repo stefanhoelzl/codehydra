@@ -18,16 +18,16 @@
  * Internal state: cachedActiveRef, loadingChangeCleanupFn.
  */
 
-import type { DialogLayer } from "../boundaries/shell/dialog/dialog";
+import type { DialogBoundary } from "../boundaries/shell/dialog/dialog";
 import type { IntentModule } from "../intents/lib/module";
 import { ANY_VALUE, type HookContext } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
-import type { ViewLayer } from "../boundaries/shell/view/view";
-import type { WindowLayerInternal } from "../boundaries/shell/window/window";
-import type { SessionLayer } from "../boundaries/shell/session/session";
-import type { IpcEventHandler, IpcLayer } from "../boundaries/shell/ipc/ipc";
+import type { ViewBoundary } from "../boundaries/shell/view/view";
+import type { WindowBoundaryInternal } from "../boundaries/shell/window/window";
+import type { SessionBoundary } from "../boundaries/shell/session/session";
+import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceRef } from "../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../shared/ipc";
@@ -68,7 +68,7 @@ import { EVENT_WORKSPACE_CREATED } from "../intents/operations/open-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/operations/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../intents/operations/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/operations/update-agent-status";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import { configBoolean } from "../boundaries/platform/config/config-definition";
 import {
   ApiIpcChannels,
@@ -98,11 +98,11 @@ import { getErrorMessage } from "../shared/error-utils";
 export interface ViewModuleDeps {
   readonly viewManager: IViewManager & { create(): void };
   readonly logger: Logger;
-  readonly viewLayer: ViewLayer | null;
-  readonly windowLayer: WindowLayerInternal | null;
-  readonly sessionLayer: SessionLayer | null;
-  readonly dialogLayer?: Pick<DialogLayer, "showOpenDialog"> | null;
-  readonly ipcLayer?: Pick<IpcLayer, "on" | "removeListener"> | null;
+  readonly viewLayer: ViewBoundary | null;
+  readonly windowLayer: WindowBoundaryInternal | null;
+  readonly sessionLayer: SessionBoundary | null;
+  readonly dialogLayer?: Pick<DialogBoundary, "showOpenDialog"> | null;
+  readonly ipcLayer?: Pick<IpcBoundary, "on" | "removeListener"> | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
   readonly windowManager?: {
     create(): void;
@@ -114,7 +114,7 @@ export interface ViewModuleDeps {
     gitBranch?: string;
   } | null;
   readonly uiHtmlPath?: string | null;
-  readonly configService: ConfigService;
+  readonly configService: Config;
 }
 
 // =============================================================================

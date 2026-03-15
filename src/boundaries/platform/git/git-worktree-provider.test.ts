@@ -10,7 +10,7 @@ import { GitWorktreeProvider } from "./git-worktree-provider";
 import { WorkspaceError } from "../../../services/errors";
 import {
   createFileSystemMock,
-  createSpyFileSystemLayer,
+  createSpyFileSystemBoundary,
   directory,
 } from "../filesystem/filesystem.state-mock";
 import { FileSystemError } from "../../../services/errors";
@@ -315,7 +315,7 @@ describe("GitWorktreeProvider error injection", () => {
         repo?.branches.delete("feature-x");
       });
 
-      const spyFs = createSpyFileSystemLayer();
+      const spyFs = createSpyFileSystemBoundary();
       const provider = await GitWorktreeProvider.create(
         PROJECT_ROOT,
         mockClient,
@@ -352,7 +352,7 @@ describe("GitWorktreeProvider error injection", () => {
       mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("Worktree error"));
       mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch error"));
 
-      const spyFs = createSpyFileSystemLayer();
+      const spyFs = createSpyFileSystemBoundary();
       spyFs.rm = vi.fn().mockRejectedValue(new Error("rm failed"));
 
       const provider = await GitWorktreeProvider.create(
@@ -410,8 +410,8 @@ describe("GitWorktreeProvider error injection", () => {
       });
       mockClient.removeWorktree = vi.fn().mockRejectedValue(new Error("git worktree error"));
 
-      const spyFs = createSpyFileSystemLayer();
-      // Simulate rm rejecting with ETIMEDOUT (as DefaultFileSystemLayer.rm would on timeout)
+      const spyFs = createSpyFileSystemBoundary();
+      // Simulate rm rejecting with ETIMEDOUT (as DefaultFileSystemBoundary.rm would on timeout)
       spyFs.rm = vi
         .fn()
         .mockRejectedValue(
@@ -497,7 +497,7 @@ describe("GitWorktreeProvider error injection", () => {
         return originalListWorktrees(repoPath);
       });
 
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "orphan-workspace").toString()]: directory(),
@@ -528,7 +528,7 @@ describe("GitWorktreeProvider error injection", () => {
         },
       });
       const orphanPath = new Path(WORKSPACES_DIR, "orphan-workspace");
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [orphanPath.toString()]: directory({ error: "EACCES" }),
@@ -613,7 +613,7 @@ describe("GitWorktreeProvider error injection", () => {
         ];
       });
 
-      const mockFsWithOrphan = createSpyFileSystemLayer({
+      const mockFsWithOrphan = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "orphan").toString()]: directory(),

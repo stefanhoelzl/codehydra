@@ -5,10 +5,13 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { BadgeManager } from "./badge-manager";
 import { createMockPlatformInfo } from "../../boundaries/platform/env/platform-info.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
-import { createAppLayerMock, type MockAppLayer } from "../../boundaries/shell/app/app.state-mock";
 import {
-  createImageLayerMock,
-  type MockImageLayer,
+  createAppBoundaryMock,
+  type MockAppBoundary,
+} from "../../boundaries/shell/app/app.state-mock";
+import {
+  createImageBoundaryMock,
+  type MockImageBoundary,
 } from "../../boundaries/shell/image/image.state-mock";
 import type { WindowManager } from "../../boundaries/shell/window/window-manager";
 import {
@@ -17,20 +20,20 @@ import {
 } from "../../boundaries/shell/window/window-manager.test-utils";
 
 describe("BadgeManager", () => {
-  let appLayer: MockAppLayer;
-  let imageLayer: MockImageLayer;
+  let appLayer: MockAppBoundary;
+  let imageLayer: MockImageBoundary;
   let windowManager: MockWindowManager;
 
   beforeEach(() => {
-    appLayer = createAppLayerMock();
-    imageLayer = createImageLayerMock();
+    appLayer = createAppBoundaryMock();
+    imageLayer = createImageBoundaryMock();
     windowManager = createMockWindowManager();
   });
 
   describe("updateBadge (darwin)", () => {
     it("shows filled circle for all-working state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      appLayer = createAppLayerMock({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
 
       const manager = new BadgeManager(
         platformInfo,
@@ -47,7 +50,7 @@ describe("BadgeManager", () => {
 
     it("shows half circle for mixed state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      appLayer = createAppLayerMock({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
 
       const manager = new BadgeManager(
         platformInfo,
@@ -64,7 +67,7 @@ describe("BadgeManager", () => {
 
     it("clears badge for none state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      appLayer = createAppLayerMock({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
 
       const manager = new BadgeManager(
         platformInfo,
@@ -136,16 +139,16 @@ describe("BadgeManager", () => {
       expect(windowManager.getOverlayIconCalls()[0]?.description).toBe("");
     });
 
-    it("creates image in shared ImageLayer that WindowLayer would use for lookup", () => {
+    it("creates image in shared ImageBoundary that WindowBoundary would use for lookup", () => {
       const platformInfo = createMockPlatformInfo({ platform: "win32" });
-      appLayer = createAppLayerMock({ platform: "win32" });
-      const sharedImageLayer = createImageLayerMock();
+      appLayer = createAppBoundaryMock({ platform: "win32" });
+      const sharedImageBoundary = createImageBoundaryMock();
       const mockWm = createMockWindowManager();
 
       const manager = new BadgeManager(
         platformInfo,
         appLayer,
-        sharedImageLayer,
+        sharedImageBoundary,
         mockWm as unknown as WindowManager,
         SILENT_LOGGER
       );
@@ -154,7 +157,7 @@ describe("BadgeManager", () => {
 
       const capturedImageHandle = mockWm.getOverlayIconCalls()[0]?.image ?? null;
       expect(capturedImageHandle).not.toBeNull();
-      expect(sharedImageLayer).toHaveImage(capturedImageHandle!.id, {
+      expect(sharedImageBoundary).toHaveImage(capturedImageHandle!.id, {
         isEmpty: false,
         size: { width: 16, height: 16 },
       });
@@ -164,7 +167,7 @@ describe("BadgeManager", () => {
   describe("updateBadge (linux)", () => {
     it("sets badge count to 1 for all-working state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      appLayer = createAppLayerMock({ platform: "linux" });
+      appLayer = createAppBoundaryMock({ platform: "linux" });
 
       const manager = new BadgeManager(
         platformInfo,
@@ -181,7 +184,7 @@ describe("BadgeManager", () => {
 
     it("sets badge count to 1 for mixed state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      appLayer = createAppLayerMock({ platform: "linux" });
+      appLayer = createAppBoundaryMock({ platform: "linux" });
 
       const manager = new BadgeManager(
         platformInfo,
@@ -198,7 +201,7 @@ describe("BadgeManager", () => {
 
     it("clears badge for none state", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      appLayer = createAppLayerMock({ platform: "linux" });
+      appLayer = createAppBoundaryMock({ platform: "linux" });
 
       const manager = new BadgeManager(
         platformInfo,
@@ -364,7 +367,7 @@ describe("BadgeManager", () => {
 
     it("clears badge on dispose (darwin)", () => {
       const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      appLayer = createAppLayerMock({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
 
       const manager = new BadgeManager(
         platformInfo,

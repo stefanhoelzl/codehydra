@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Unit tests for FileSystemLayer copyTree method.
+ * Unit tests for FileSystemBoundary copyTree method.
  *
  * These tests validate the copyTree contract. Most tests run against
  * real filesystem with temp directories since copyTree needs actual I/O.
@@ -15,17 +15,17 @@ import {
   readFile as nodeReadFile,
   stat,
 } from "node:fs/promises";
-import { DefaultFileSystemLayer } from "./filesystem";
+import { DefaultFileSystemBoundary } from "./filesystem";
 import { SILENT_LOGGER } from "../logging";
 import { FileSystemError } from "../../../services/errors";
 import { createTempDir } from "../../../services/test-utils";
 
-describe("DefaultFileSystemLayer.copyTree", () => {
-  let fs: DefaultFileSystemLayer;
+describe("DefaultFileSystemBoundary.copyTree", () => {
+  let fs: DefaultFileSystemBoundary;
   let tempDir: { path: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
-    fs = new DefaultFileSystemLayer(SILENT_LOGGER);
+    fs = new DefaultFileSystemBoundary(SILENT_LOGGER);
     tempDir = await createTempDir();
   });
 
@@ -110,12 +110,12 @@ describe("DefaultFileSystemLayer.copyTree", () => {
   });
 });
 
-describe("DefaultFileSystemLayer.makeExecutable", () => {
-  let fs: DefaultFileSystemLayer;
+describe("DefaultFileSystemBoundary.makeExecutable", () => {
+  let fs: DefaultFileSystemBoundary;
   let tempDir: { path: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
-    fs = new DefaultFileSystemLayer(SILENT_LOGGER);
+    fs = new DefaultFileSystemBoundary(SILENT_LOGGER);
     tempDir = await createTempDir();
   });
 

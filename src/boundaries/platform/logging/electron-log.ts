@@ -1,5 +1,5 @@
 /**
- * ElectronLogService - Main process logging implementation using electron-log.
+ * ElectronLog - Main process logging implementation using electron-log.
  *
  * Features:
  * - Session-based log files: `<datetime>-<uuid>.log`
@@ -18,7 +18,7 @@ import type {
   LoggerName,
   LogFormat,
   LoggingConfigureOptions,
-  LoggingService,
+  Logging,
   LogContext,
   LogLevel,
   LogOutput,
@@ -454,7 +454,7 @@ class QueuedLogger implements Logger {
  *
  * @example
  * ```typescript
- * const loggingService = new ElectronLogService(pathProvider);
+ * const loggingService = new ElectronLog(pathProvider);
  * loggingService.configure({ logLevel: 'debug', logFile: true, logConsole: false, allowedLoggers: undefined });
  * loggingService.initialize();
  *
@@ -464,7 +464,7 @@ class QueuedLogger implements Logger {
  * ```
  */
 
-export class ElectronLogService implements LoggingService {
+export class ElectronLog implements Logging {
   private readonly loggers = new Map<LoggerName, QueuedLogger>();
   private configured = false;
   private logLevel: LogLevel = "warn";

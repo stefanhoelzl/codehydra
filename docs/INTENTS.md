@@ -14,10 +14,10 @@ Concrete reference for the intent-based architecture. For conceptual overview an
 | [Domain Events](#domain-events)                                             | Event types, payloads, and flow                              |
 | [Composition Root](#composition-root)                                       | Bootstrap pattern in src/main/index.ts                       |
 | [External System Access Rules](#external-system-access-rules)               | Required abstraction interfaces                              |
-| [Platform Abstractions](#platform-abstractions)                             | FileSystemLayer, NetworkLayer, ProcessRunner, Path, etc.     |
+| [Platform Abstractions](#platform-abstractions)                             | FileSystemBoundary, NetworkLayer, ProcessRunner, Path, etc.  |
 | [Shell and Platform Layers](#shell-and-platform-layers)                     | Electron abstraction architecture                            |
 | [Service Patterns](#service-patterns)                                       | DI, WorkspaceLockHandler, PowerShell assets                  |
-| [Configuration and Binary Resolution](#configuration-and-binary-resolution) | ConfigService and BinaryResolutionService                    |
+| [Configuration and Binary Resolution](#configuration-and-binary-resolution) | Config and BinaryResolutionService                           |
 | [Mock Factories Reference](#mock-factories-reference)                       | All mock factories by interface                              |
 
 **Related Documentation:**
@@ -529,7 +529,7 @@ index.ts (composition root)
 
 | External System    | Interface              | Implementation                | Forbidden Direct Access     |
 | ------------------ | ---------------------- | ----------------------------- | --------------------------- |
-| Filesystem         | `FileSystemLayer`      | `DefaultFileSystemLayer`      | `node:fs/promises` directly |
+| Filesystem         | `FileSystemBoundary`   | `DefaultFileSystemBoundary`   | `node:fs/promises` directly |
 | HTTP requests      | `HttpClient`           | `DefaultNetworkLayer`         | `fetch()` directly          |
 | Port operations    | `PortManager`          | `DefaultNetworkLayer`         | `net` module directly       |
 | Process spawning   | `ProcessRunner`        | `ExecaProcessRunner`          | `execa` directly            |
@@ -556,7 +556,7 @@ The `ignore` package (used by KeepFilesService) is acceptable for direct usage b
 // CORRECT: Inject interface via constructor
 class MyService {
   constructor(
-    private readonly fs: FileSystemLayer,
+    private readonly fs: FileSystemBoundary,
     private readonly http: HttpClient
   ) {}
 
@@ -579,12 +579,12 @@ class MyService {
 
 ## Platform Abstractions
 
-### FileSystemLayer
+### FileSystemBoundary
 
-`FileSystemLayer` provides a testable abstraction over `node:fs/promises`. Services that need filesystem access receive `FileSystemLayer` via constructor injection.
+`FileSystemBoundary` provides a testable abstraction over `node:fs/promises`. Services that need filesystem access receive `FileSystemBoundary` via constructor injection.
 
 ```typescript
-interface FileSystemLayer {
+interface FileSystemBoundary {
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;
   mkdir(path: string, options?: MkdirOptions): Promise<void>;
@@ -851,12 +851,12 @@ p.equals("C:/users/name"); // true (case-insensitive on Windows)
 
 **When to Use Each Method:**
 
-| Method        | Use Case                                         |
-| ------------- | ------------------------------------------------ |
-| `toString()`  | Map keys, comparisons, JSON serialization        |
-| `toNative()`  | (Internal use by FileSystemLayer, ProcessRunner) |
-| `equals()`    | Path comparison (handles different formats)      |
-| `isChildOf()` | Containment checks (not `startsWith()`)          |
+| Method        | Use Case                                            |
+| ------------- | --------------------------------------------------- |
+| `toString()`  | Map keys, comparisons, JSON serialization           |
+| `toNative()`  | (Internal use by FileSystemBoundary, ProcessRunner) |
+| `equals()`    | Path comparison (handles different formats)         |
+| `isChildOf()` | Containment checks (not `startsWith()`)             |
 
 **IPC Boundary Handling:**
 
@@ -913,26 +913,26 @@ The application uses dependency injection to abstract build mode detection and p
 
 **Interfaces (defined in `src/services/platform/`):**
 
-| Interface         | Purpose                                    |
-| ----------------- | ------------------------------------------ |
-| `BuildInfo`       | Build mode detection (`isDevelopment`)     |
-| `PlatformInfo`    | Platform detection (`platform`, `homeDir`) |
-| `PathProvider`    | Application path resolution                |
-| `FileSystemLayer` | Filesystem operations (read, write, mkdir) |
+| Interface            | Purpose                                    |
+| -------------------- | ------------------------------------------ |
+| `BuildInfo`          | Build mode detection (`isDevelopment`)     |
+| `PlatformInfo`       | Platform detection (`platform`, `homeDir`) |
+| `PathProvider`       | Application path resolution                |
+| `FileSystemBoundary` | Filesystem operations (read, write, mkdir) |
 
 **Implementations:**
 
-| Class                    | Location        | Description                                  |
-| ------------------------ | --------------- | -------------------------------------------- |
-| `ElectronBuildInfo`      | `src/main/`     | Uses `app.isPackaged`                        |
-| `NodePlatformInfo`       | `src/main/`     | Uses `process.platform`, `os.homedir()`      |
-| `DefaultPathProvider`    | `src/services/` | Computes paths from BuildInfo + PlatformInfo |
-| `DefaultFileSystemLayer` | `src/services/` | Wraps `node:fs/promises` with error mapping  |
+| Class                       | Location        | Description                                  |
+| --------------------------- | --------------- | -------------------------------------------- |
+| `ElectronBuildInfo`         | `src/main/`     | Uses `app.isPackaged`                        |
+| `NodePlatformInfo`          | `src/main/`     | Uses `process.platform`, `os.homedir()`      |
+| `DefaultPathProvider`       | `src/services/` | Computes paths from BuildInfo + PlatformInfo |
+| `DefaultFileSystemBoundary` | `src/services/` | Wraps `node:fs/promises` with error mapping  |
 
 **Instantiation Order (in `src/main/index.ts`):**
 
 1. Module level (before `app.whenReady()`):
-   - Create `ElectronBuildInfo`, `NodePlatformInfo`, `DefaultPathProvider`, `DefaultFileSystemLayer`
+   - Create `ElectronBuildInfo`, `NodePlatformInfo`, `DefaultPathProvider`, `DefaultFileSystemBoundary`
    - Call `redirectElectronDataPaths(pathProvider)` - requires paths early
 2. In `bootstrap()`:
    - Pass `pathProvider` and `fileSystemLayer` to services via constructor DI
@@ -958,10 +958,10 @@ const service = new VscodeSetupService(mockRunner, mockPathProvider, mockFs);
 
 Electron APIs are abstracted behind testable interfaces in two domains:
 
-| Domain   | Location             | Purpose                       | Examples                                   |
-| -------- | -------------------- | ----------------------------- | ------------------------------------------ |
-| Platform | `services/platform/` | OS/runtime abstractions       | `IpcLayer`, `DialogLayer`, `ImageLayer`    |
-| Shell    | `services/shell/`    | Visual container abstractions | `WindowLayer`, `ViewLayer`, `SessionLayer` |
+| Domain   | Location             | Purpose                       | Examples                                            |
+| -------- | -------------------- | ----------------------------- | --------------------------------------------------- |
+| Platform | `services/platform/` | OS/runtime abstractions       | `IpcBoundary`, `DialogBoundary`, `ImageBoundary`    |
+| Shell    | `services/shell/`    | Visual container abstractions | `WindowBoundary`, `ViewBoundary`, `SessionBoundary` |
 
 **Dependency Rule**: Shell layers may depend on Platform layers, but not vice versa.
 
@@ -982,11 +982,11 @@ Electron APIs are abstracted behind testable interfaces in two domains:
 |  +---------------------------------+  +-----------------------------------+ |
 |  |          Shell Layers           |  |         Platform Layers           | |
 |  |         (services/shell/)       |  |       (services/platform/)        | |
-|  |  WindowLayer ---> ImageLayer ---+--+-> ImageLayer                      | |
-|  |       |                         |  |   IpcLayer                        | |
-|  |       v                         |  |   DialogLayer                     | |
-|  |  ViewLayer ---> SessionLayer    |  |   AppLayer                        | |
-|  |                                 |  |   MenuLayer                       | |
+|  |  WindowBoundary ---> ImageBoundary ---+--+-> ImageBoundary                      | |
+|  |       |                         |  |   IpcBoundary                        | |
+|  |       v                         |  |   DialogBoundary                     | |
+|  |  ViewBoundary ---> SessionBoundary    |  |   AppBoundary                        | |
+|  |                                 |  |   MenuBoundary                       | |
 |  +---------------------------------+  +-----------------------------------+ |
 +-----------------------------------------------------------------------------+
             |                    |                         |
@@ -999,23 +999,23 @@ Electron APIs are abstracted behind testable interfaces in two domains:
 
 **Layer Dependency Rules:**
 
-| Rule                 | Description                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| Shell -> Platform    | Shell layers may depend on Platform layers (e.g., WindowLayer uses ImageLayer for overlay icons) |
-| Platform -> Platform | Platform layers are independent (no dependencies on each other)                                  |
-| Shell -> Shell       | Shell layers may depend on each other (e.g., ViewLayer uses SessionLayer)                        |
-| Platform -/> Shell   | Platform layers may NOT depend on Shell layers                                                   |
+| Rule                 | Description                                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| Shell -> Platform    | Shell layers may depend on Platform layers (e.g., WindowBoundary uses ImageBoundary for overlay icons) |
+| Platform -> Platform | Platform layers are independent (no dependencies on each other)                                        |
+| Shell -> Shell       | Shell layers may depend on each other (e.g., ViewBoundary uses SessionBoundary)                        |
+| Platform -/> Shell   | Platform layers may NOT depend on Shell layers                                                         |
 
 **Handle-Based Design:**
 
 Layers return opaque handles instead of raw Electron objects:
 
-| Layer          | Returns         | Instead of        |
-| -------------- | --------------- | ----------------- |
-| `WindowLayer`  | `WindowHandle`  | `BaseWindow`      |
-| `ViewLayer`    | `ViewHandle`    | `WebContentsView` |
-| `SessionLayer` | `SessionHandle` | `Session`         |
-| `ImageLayer`   | `ImageHandle`   | `NativeImage`     |
+| Layer             | Returns         | Instead of        |
+| ----------------- | --------------- | ----------------- |
+| `WindowBoundary`  | `WindowHandle`  | `BaseWindow`      |
+| `ViewBoundary`    | `ViewHandle`    | `WebContentsView` |
+| `SessionBoundary` | `SessionHandle` | `Session`         |
+| `ImageBoundary`   | `ImageHandle`   | `NativeImage`     |
 
 This pattern:
 
@@ -1027,7 +1027,7 @@ This pattern:
 
 ```typescript
 // Interface returns handles, not Electron objects
-interface ViewLayer {
+interface ViewBoundary {
   createView(options: ViewOptions): ViewHandle; // Returns handle
   loadURL(handle: ViewHandle, url: string): Promise<void>;
   destroy(handle: ViewHandle): void;
@@ -1043,12 +1043,12 @@ interface ViewHandle {
 **Behavioral Mocks for Layers:**
 
 ```typescript
-import { createViewLayerMock } from "../shell/view.state-mock";
+import { createViewBoundaryMock } from "../shell/view.state-mock";
 
 // Create mock with state access via $ property
-const mock = createViewLayerMock();
+const mock = createViewBoundaryMock();
 
-// All ViewLayer methods work with in-memory state
+// All ViewBoundary methods work with in-memory state
 const handle = mock.createView({ backgroundColor: "#1e1e1e" });
 await mock.loadURL(handle, "http://127.0.0.1:8080");
 
@@ -1091,16 +1091,16 @@ throw new ShellError("VIEW_NOT_FOUND", `View ${handle.id} not found`, handle.id)
 
 Each layer has boundary tests that verify behavior against real Electron APIs:
 
-| Layer          | Boundary Test              |
-| -------------- | -------------------------- |
-| `IpcLayer`     | `ipc.boundary.test.ts`     |
-| `DialogLayer`  | `dialog.boundary.test.ts`  |
-| `ImageLayer`   | `image.boundary.test.ts`   |
-| `AppLayer`     | `app.boundary.test.ts`     |
-| `MenuLayer`    | `menu.boundary.test.ts`    |
-| `WindowLayer`  | `window.boundary.test.ts`  |
-| `ViewLayer`    | `view.boundary.test.ts`    |
-| `SessionLayer` | `session.boundary.test.ts` |
+| Layer             | Boundary Test              |
+| ----------------- | -------------------------- |
+| `IpcBoundary`     | `ipc.boundary.test.ts`     |
+| `DialogBoundary`  | `dialog.boundary.test.ts`  |
+| `ImageBoundary`   | `image.boundary.test.ts`   |
+| `AppBoundary`     | `app.boundary.test.ts`     |
+| `MenuBoundary`    | `menu.boundary.test.ts`    |
+| `WindowBoundary`  | `window.boundary.test.ts`  |
+| `ViewBoundary`    | `view.boundary.test.ts`    |
+| `SessionBoundary` | `session.boundary.test.ts` |
 
 ---
 
@@ -1314,9 +1314,9 @@ Scripts should return structured JSON for parsing:
 
 ## Configuration and Binary Resolution
 
-### ConfigService
+### Config
 
-`ConfigService` manages user preferences and version configuration stored in `config.json`:
+`Config` manages user preferences and version configuration stored in `config.json`:
 
 ```typescript
 // Load config (creates defaults if missing)
@@ -1334,7 +1334,7 @@ await configService.update({ agent: "claude" });
 - `load()` creates file with defaults if missing
 - `update()` merges changes with existing config
 - Invalid JSON is handled gracefully (returns defaults, logs warning)
-- Uses `FileSystemLayer` for I/O (per External System Access Rules)
+- Uses `FileSystemBoundary` for I/O (per External System Access Rules)
 
 **Config file location:** `{dataRootDir}/config.json`
 
@@ -1346,7 +1346,7 @@ const mock = createFileSystemMock({
     "/data/config.json": file('{"agent": "claude"}'),
   },
 });
-const service = new ConfigService(new Path("/data/config.json"), mock, logger);
+const service = new Config(new Path("/data/config.json"), mock, logger);
 const config = await service.load();
 expect(config.agent).toBe("claude");
 ```
@@ -1406,7 +1406,7 @@ All paths below are relative to `src/services/`.
 | Interface              | Mock Factory                       | Location                                          |
 | ---------------------- | ---------------------------------- | ------------------------------------------------- |
 | `ArchiveExtractor`     | `createArchiveExtractorMock()`     | `binary-download/archive-extractor.state-mock.ts` |
-| `FileSystemLayer`      | `createFileSystemMock()`           | `platform/filesystem.state-mock.ts`               |
+| `FileSystemBoundary`   | `createFileSystemMock()`           | `platform/filesystem.state-mock.ts`               |
 | `HttpClient`           | `createMockHttpClient()`           | `platform/network.test-utils.ts`                  |
 | `PortManager`          | `createPortManagerMock()`          | `platform/port-manager.state-mock.ts`             |
 | `ProcessRunner`        | `createMockProcessRunner()`        | `platform/process.state-mock.ts`                  |
@@ -1415,17 +1415,17 @@ All paths below are relative to `src/services/`.
 
 ### Shell Layer Mocks
 
-| Interface             | Mock Factory                      | Location                        |
-| --------------------- | --------------------------------- | ------------------------------- |
-| `IpcLayer`            | `createBehavioralIpcLayer()`      | `platform/ipc.test-utils.ts`    |
-| `DialogLayer`         | `createBehavioralDialogLayer()`   | `platform/dialog.test-utils.ts` |
-| `ImageLayer`          | `createImageLayerMock()`          | `platform/image.state-mock.ts`  |
-| `AppLayer`            | `createAppLayerMock()`            | `platform/app.state-mock.ts`    |
-| `MenuLayer`           | `createBehavioralMenuLayer()`     | `platform/menu.test-utils.ts`   |
-| `WindowLayer`         | `createWindowLayerMock()`         | `shell/window.state-mock.ts`    |
-| `WindowLayerInternal` | `createWindowLayerInternalMock()` | `shell/window.state-mock.ts`    |
-| `ViewLayer`           | `createViewLayerMock()`           | `shell/view.state-mock.ts`      |
-| `SessionLayer`        | `createSessionLayerMock()`        | `shell/session.state-mock.ts`   |
+| Interface                | Mock Factory                         | Location                        |
+| ------------------------ | ------------------------------------ | ------------------------------- |
+| `IpcBoundary`            | `createBehavioralIpcBoundary()`      | `platform/ipc.test-utils.ts`    |
+| `DialogBoundary`         | `createBehavioralDialogBoundary()`   | `platform/dialog.test-utils.ts` |
+| `ImageBoundary`          | `createImageBoundaryMock()`          | `platform/image.state-mock.ts`  |
+| `AppBoundary`            | `createAppBoundaryMock()`            | `platform/app.state-mock.ts`    |
+| `MenuBoundary`           | `createBehavioralMenuBoundary()`     | `platform/menu.test-utils.ts`   |
+| `WindowBoundary`         | `createWindowBoundaryMock()`         | `shell/window.state-mock.ts`    |
+| `WindowBoundaryInternal` | `createWindowBoundaryInternalMock()` | `shell/window.state-mock.ts`    |
+| `ViewBoundary`           | `createViewBoundaryMock()`           | `shell/view.state-mock.ts`      |
+| `SessionBoundary`        | `createSessionBoundaryMock()`        | `shell/session.state-mock.ts`   |
 
 ### Domain Mocks
 

@@ -1,13 +1,13 @@
 // @vitest-environment node
 /**
- * Integration tests for ConfigService.
+ * Integration tests for Config.
  *
  * Covers:
  * - register() / load() / get() / set() lifecycle
  * - Precedence: CLI > env > file > computed defaults > static defaults
  * - Validation errors for unknown keys and invalid values
  * - Sync load from config.json via readFileSync
- * - Async set() persistence via FileSystemLayer
+ * - Async set() persistence via FileSystemBoundary
  * - parseEnvVars / parseCliArgs standalone
  */
 
@@ -15,8 +15,8 @@ import { describe, it, expect, vi } from "vitest";
 import { Path } from "../../../utils/path/path";
 import { SILENT_LOGGER } from "../logging";
 import { createFileSystemMock, file, directory } from "../filesystem/filesystem.state-mock";
-import { DefaultConfigService, parseEnvVars, parseCliArgs } from "./config-service";
-import type { ConfigService, ConfigServiceDeps } from "./config-service";
+import { DefaultConfig, parseEnvVars, parseCliArgs } from "./config";
+import type { Config, ConfigDeps } from "./config";
 import type { ConfigKeyDefinition } from "./config-definition";
 import { parseBool, ConfigValidationError } from "./config-definition";
 
@@ -64,7 +64,7 @@ function enumDef(
 const CONFIG_PATH = new Path("/app/config.json");
 
 /**
- * Create a sync readFileSync from a mock FileSystemLayer.
+ * Create a sync readFileSync from a mock FileSystemBoundary.
  * Uses the mock's async readFile but wraps it for sync test usage.
  * In practice, the mock's entries are in-memory so we read them directly.
  */
@@ -83,7 +83,7 @@ function createSyncReader(
   };
 }
 
-function createDeps(overrides?: Partial<ConfigServiceDeps>): ConfigServiceDeps {
+function createDeps(overrides?: Partial<ConfigDeps>): ConfigDeps {
   return {
     configPath: CONFIG_PATH,
     fileSystem: createFileSystemMock({
@@ -105,17 +105,17 @@ function createDeps(overrides?: Partial<ConfigServiceDeps>): ConfigServiceDeps {
   };
 }
 
-interface CreateServiceOptions extends Partial<ConfigServiceDeps> {
+interface CreateServiceOptions extends Partial<ConfigDeps> {
   fileEntries?: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>>;
 }
 
-function createService(overrides?: CreateServiceOptions): ConfigService {
+function createService(overrides?: CreateServiceOptions): Config {
   if (overrides?.fileEntries) {
     const entries = overrides.fileEntries;
     const fs = createFileSystemMock({ entries });
     const { fileEntries: _unused, ...rest } = overrides;
     void _unused;
-    return new DefaultConfigService(
+    return new DefaultConfig(
       createDeps({
         fileSystem: fs,
         readFileSync: createSyncReader(entries),
@@ -123,14 +123,14 @@ function createService(overrides?: CreateServiceOptions): ConfigService {
       })
     );
   }
-  return new DefaultConfigService(createDeps(overrides));
+  return new DefaultConfig(createDeps(overrides));
 }
 
 // =============================================================================
 // Tests
 // =============================================================================
 
-describe("ConfigService", () => {
+describe("Config", () => {
   describe("register + load + get", () => {
     it("returns static defaults when no other sources exist", () => {
       const svc = createService();
@@ -311,7 +311,7 @@ describe("ConfigService", () => {
       const svc = createService();
       svc.load();
 
-      expect(() => svc.load()).toThrow("ConfigService.load() has already been called");
+      expect(() => svc.load()).toThrow("Config.load() has already been called");
     });
   });
 
@@ -360,7 +360,7 @@ describe("ConfigService", () => {
         "/app/config.json": file(JSON.stringify({ "test.a": "existing" })),
       };
       const fs = createFileSystemMock({ entries });
-      const svc = new DefaultConfigService(
+      const svc = new DefaultConfig(
         createDeps({
           fileSystem: fs,
           readFileSync: createSyncReader(entries),
@@ -382,7 +382,7 @@ describe("ConfigService", () => {
         "/app/config.json": file(JSON.stringify({ "test.key": "value" })),
       };
       const fs = createFileSystemMock({ entries });
-      const svc = new DefaultConfigService(
+      const svc = new DefaultConfig(
         createDeps({
           fileSystem: fs,
           readFileSync: createSyncReader(entries),

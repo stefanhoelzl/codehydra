@@ -1,5 +1,5 @@
 /**
- * ConfigService - Plain service for application configuration.
+ * Config - Plain service for application configuration.
  *
  * Replaces the intent-based config module with a simple register/get/set API.
  * Config is fully resolved before any hooks run:
@@ -10,15 +10,15 @@
  * Precedence (highest wins): CLI flags > env vars > config.json > computed defaults > static defaults
  *
  * load() uses node:fs (readFileSync) directly because it must run before Electron app.ready,
- * and the FileSystemLayer interface is async-only. This is a documented exception.
- * set() uses the async FileSystemLayer for writes (all callers are post-ready).
+ * and the FileSystemBoundary interface is async-only. This is a documented exception.
+ * set() uses the async FileSystemBoundary for writes (all callers are post-ready).
  */
 
 import { readFileSync } from "node:fs";
 import type { ConfigKeyDefinition, ComputedDefaultContext } from "./config-definition";
 import { ConfigValidationError } from "./config-definition";
 import { envVarToConfigKey } from "./config-values";
-import type { FileSystemLayer } from "../filesystem/filesystem";
+import type { FileSystemBoundary } from "../filesystem/filesystem";
 import type { Path } from "../../../utils/path/path";
 import type { Logger } from "../logging/types";
 
@@ -26,7 +26,7 @@ import type { Logger } from "../logging/types";
 // Interface
 // =============================================================================
 
-export interface ConfigService {
+export interface Config {
   /** Register a config key definition. Must be called before load(). */
   register(key: string, definition: ConfigKeyDefinition<unknown>): void;
 
@@ -44,7 +44,7 @@ export interface ConfigService {
 
   /**
    * Set a value at runtime. Validates against the registered definition.
-   * When persist is true (default), writes to config.json via FileSystemLayer.
+   * When persist is true (default), writes to config.json via FileSystemBoundary.
    */
   set(key: string, value: unknown, options?: { persist?: boolean }): Promise<void>;
 
@@ -59,9 +59,9 @@ export interface ConfigService {
 // Dependency Interface
 // =============================================================================
 
-export interface ConfigServiceDeps {
+export interface ConfigDeps {
   readonly configPath: Path;
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
   readonly isDevelopment: boolean;
   readonly isPackaged: boolean;
@@ -268,12 +268,12 @@ export function buildDefaults(
 // Implementation
 // =============================================================================
 
-export class DefaultConfigService implements ConfigService {
+export class DefaultConfig implements Config {
   private readonly definitions = new Map<string, ConfigKeyDefinition<unknown>>();
   private readonly effective: Record<string, unknown> = {};
   private loaded = false;
 
-  constructor(private readonly deps: ConfigServiceDeps) {}
+  constructor(private readonly deps: ConfigDeps) {}
 
   register(key: string, definition: ConfigKeyDefinition<unknown>): void {
     if (this.loaded) {
@@ -287,7 +287,7 @@ export class DefaultConfigService implements ConfigService {
 
   load(): void {
     if (this.loaded) {
-      throw new Error("ConfigService.load() has already been called");
+      throw new Error("Config.load() has already been called");
     }
     this.loaded = true;
 

@@ -1,5 +1,5 @@
 /**
- * Behavioral state mock for AppLayer.
+ * Behavioral state mock for AppBoundary.
  *
  * Provides a mock for testing app operations without Electron, following the
  * `MockWithState<T>` pattern from `src/test/state-mock.ts`.
@@ -11,7 +11,7 @@
  */
 
 import { expect } from "vitest";
-import type { AppLayer, AppPathName, AppDock } from "./app";
+import type { AppBoundary, AppPathName, AppDock } from "./app";
 import type {
   MockState,
   MockWithState,
@@ -32,10 +32,10 @@ interface CommandLineSwitch {
 }
 
 /**
- * Internal state for the AppLayer mock.
+ * Internal state for the AppBoundary mock.
  * State is not directly exposed - use matchers for assertions.
  */
-class AppLayerMockStateImpl implements MockState {
+class AppBoundaryMockStateImpl implements MockState {
   badgeCount = 0;
   dockBadge = "";
   readonly commandLineSwitches: CommandLineSwitch[] = [];
@@ -51,15 +51,15 @@ class AppLayerMockStateImpl implements MockState {
     const switches = this.commandLineSwitches
       .map((s) => (s.value !== undefined ? `${s.key}=${s.value}` : s.key))
       .join(", ");
-    return `AppLayerMockState { badgeCount: ${this.badgeCount}, dockBadge: "${this.dockBadge}", switches: [${switches}] }`;
+    return `AppBoundaryMockState { badgeCount: ${this.badgeCount}, dockBadge: "${this.dockBadge}", switches: [${switches}] }`;
   }
 }
 
 /**
- * Public state interface for AppLayer mock.
+ * Public state interface for AppBoundary mock.
  * Provides snapshot/toString only - use matchers for assertions.
  */
-export interface AppLayerMockState extends MockState {
+export interface AppBoundaryMockState extends MockState {
   snapshot(): Snapshot;
   toString(): string;
 }
@@ -69,14 +69,14 @@ export interface AppLayerMockState extends MockState {
 // =============================================================================
 
 /**
- * Mock AppLayer with inspectable state via `$` property.
+ * Mock AppBoundary with inspectable state via `$` property.
  */
-export type MockAppLayer = AppLayer & MockWithState<AppLayerMockState>;
+export type MockAppBoundary = AppBoundary & MockWithState<AppBoundaryMockState>;
 
 /**
- * Options for creating an AppLayer mock.
+ * Options for creating an AppBoundary mock.
  */
-export interface MockAppLayerOptions {
+export interface MockAppBoundaryOptions {
   /**
    * Simulated platform. Affects dock availability.
    * - "darwin": dock is defined
@@ -93,7 +93,7 @@ export interface MockAppLayerOptions {
 }
 
 /**
- * Creates a behavioral mock of AppLayer for testing.
+ * Creates a behavioral mock of AppBoundary for testing.
  *
  * The mock maintains in-memory state and provides the same
  * platform-specific behavior as the real implementation:
@@ -107,37 +107,37 @@ export interface MockAppLayerOptions {
  *
  * @example Basic usage
  * ```ts
- * const appLayer = createAppLayerMock();
+ * const appLayer = createAppBoundaryMock();
  * appLayer.dock?.setBadge("test");
  * expect(appLayer).toHaveDockBadge("test");
  * ```
  *
  * @example Windows platform (no dock)
  * ```ts
- * const appLayer = createAppLayerMock({ platform: "win32" });
+ * const appLayer = createAppBoundaryMock({ platform: "win32" });
  * expect(appLayer.dock).toBeUndefined();
  * ```
  *
  * @example Badge count
  * ```ts
- * const appLayer = createAppLayerMock();
+ * const appLayer = createAppBoundaryMock();
  * appLayer.setBadgeCount(5);
  * expect(appLayer).toHaveBadgeCount(5);
  * ```
  *
  * @example Command line switches
  * ```ts
- * const appLayer = createAppLayerMock();
+ * const appLayer = createAppBoundaryMock();
  * appLayer.commandLineAppendSwitch("disable-gpu");
  * appLayer.commandLineAppendSwitch("use-gl", "swiftshader");
  * expect(appLayer).toHaveCommandLineSwitch("disable-gpu");
  * expect(appLayer).toHaveCommandLineSwitch("use-gl", "swiftshader");
  * ```
  */
-export function createAppLayerMock(options: MockAppLayerOptions = {}): MockAppLayer {
+export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): MockAppBoundary {
   const { platform = "darwin", paths = {} } = options;
 
-  const state = new AppLayerMockStateImpl();
+  const state = new AppBoundaryMockStateImpl();
 
   // Create dock only for macOS
   const dock: AppDock | undefined =
@@ -190,9 +190,9 @@ export function createAppLayerMock(options: MockAppLayerOptions = {}): MockAppLa
 // =============================================================================
 
 /**
- * Custom matchers for MockAppLayer assertions.
+ * Custom matchers for MockAppBoundary assertions.
  */
-export interface AppLayerMatchers {
+export interface AppBoundaryMatchers {
   /**
    * Assert current dock badge text.
    * @param text - Expected badge text
@@ -218,15 +218,15 @@ export interface AppLayerMatchers {
 
 // Extend vitest's assertion interface
 declare module "vitest" {
-  interface Assertion<T> extends AppLayerMatchers {}
+  interface Assertion<T> extends AppBoundaryMatchers {}
 }
 
 /**
- * Matcher implementations for MockAppLayer.
+ * Matcher implementations for MockAppBoundary.
  */
-const appLayerMatchers: MatcherImplementationsFor<
-  MockAppLayer & { $: AppLayerMockStateImpl },
-  AppLayerMatchers
+const appBoundaryMatchers: MatcherImplementationsFor<
+  MockAppBoundary & { $: AppBoundaryMockStateImpl },
+  AppBoundaryMatchers
 > = {
   toHaveDockBadge(received, text) {
     const actual = received.$.dockBadge;
@@ -297,4 +297,4 @@ const appLayerMatchers: MatcherImplementationsFor<
 };
 
 // Register matchers with vitest
-expect.extend(appLayerMatchers as Parameters<typeof expect.extend>[0]);
+expect.extend(appBoundaryMatchers as Parameters<typeof expect.extend>[0]);

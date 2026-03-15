@@ -22,7 +22,7 @@ Documentation for the CodeHydra project.
 
 - **ARCHITECTURE.md** - Start here for system overview. Contains intent-based architecture concepts and rules, layer architecture, component relationships, startup flows, and key diagrams.
 
-- **INTENTS.md** - Complete intent system reference. Covers infrastructure types, operations, hook points, domain events, platform abstractions (FileSystemLayer, NetworkLayer, ProcessRunner), and mock factories.
+- **INTENTS.md** - Complete intent system reference. Covers infrastructure types, operations, hook points, domain events, platform abstractions (FileSystemBoundary, NetworkLayer, ProcessRunner), and mock factories.
 
 - **AGENTS.md** - Agent integration system. How to implement new agents, status tracking, MCP integration, and OpenCode/Claude Code specifics.
 

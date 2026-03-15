@@ -18,7 +18,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { IntentInterceptor } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
-import type { IpcEventHandler, IpcLayer } from "../boundaries/shell/ipc/ipc";
+import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/operations/app-start";
 import {
   APP_SHUTDOWN_OPERATION_ID,
@@ -37,7 +37,7 @@ import {
 import { INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
 import { configEnum } from "../boundaries/platform/config/config-definition";
 import type { AutoUpdatePreference } from "../boundaries/platform/config/config-values";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import type { AutoUpdater } from "../services/auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { ApiIpcChannels } from "../shared/ipc";
@@ -48,8 +48,8 @@ const UPDATE_CHECK_TIMEOUT_MS = 15_000;
 interface AutoUpdaterModuleDeps {
   readonly autoUpdater: AutoUpdater;
   readonly dispatcher: Dispatcher;
-  readonly ipcLayer: Pick<IpcLayer, "on" | "removeListener">;
-  readonly configService: ConfigService;
+  readonly ipcLayer: Pick<IpcBoundary, "on" | "removeListener">;
+  readonly configService: Config;
 }
 
 export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModule {

@@ -16,7 +16,7 @@ import { createTempDirModule, type TempDirModuleDeps } from "./temp-dir-module";
 import { createMockPathProvider } from "../boundaries/platform/env/path-provider.test-utils";
 
 // =============================================================================
-// Mock FileSystemLayer
+// Mock FileSystemBoundary
 // =============================================================================
 
 function createMockFileSystem() {

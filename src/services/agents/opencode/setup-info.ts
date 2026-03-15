@@ -4,7 +4,7 @@
  */
 
 import type { Path } from "../../../utils/path/path";
-import type { FileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem";
 import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
 
 /**
@@ -79,7 +79,7 @@ function getBinaryFilename(platform: SupportedPlatform): string {
  * Dependencies for creating OpenCodeSetupInfo.
  */
 export interface OpenCodeSetupInfoDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
 }

@@ -1,16 +1,16 @@
 /**
- * Integration tests for SessionLayer using behavioral mock.
+ * Integration tests for SessionBoundary using behavioral mock.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { createSessionLayerMock, type MockSessionLayer } from "./session.state-mock";
+import { createSessionBoundaryMock, type MockSessionBoundary } from "./session.state-mock";
 import { ShellError } from "../../../services/shell/errors";
 
-describe("SessionLayer (integration)", () => {
-  let sessionLayer: MockSessionLayer;
+describe("SessionBoundary (integration)", () => {
+  let sessionLayer: MockSessionBoundary;
 
   beforeEach(() => {
-    sessionLayer = createSessionLayerMock();
+    sessionLayer = createSessionBoundaryMock();
   });
 
   describe("fromPartition", () => {

@@ -4,7 +4,7 @@
 
 export type {
   Logger,
-  LoggingService,
+  Logging,
   LoggingConfigureOptions,
   LogContext,
   LogFormat,
@@ -13,11 +13,6 @@ export type {
   LogOutput,
 } from "./types";
 export { LogLevel as LogLevelValues, logAtLevel } from "./types";
-export {
-  ElectronLogService,
-  parseLogLevel,
-  parseLogLevelSpec,
-  splitLogLevelSpec,
-} from "./electron-log-service";
-export { createMockLogger, createMockLoggingService, SILENT_LOGGER } from "./logging.test-utils";
-export type { MockLogger, MockLoggingService } from "./logging.test-utils";
+export { ElectronLog, parseLogLevel, parseLogLevelSpec, splitLogLevelSpec } from "./electron-log";
+export { createMockLogger, createMockLogging, SILENT_LOGGER } from "./logging.test-utils";
+export type { MockLogger, MockLogging } from "./logging.test-utils";

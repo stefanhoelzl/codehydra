@@ -1,32 +1,32 @@
 /**
- * Test utilities for IpcLayer mocking.
+ * Test utilities for IpcBoundary mocking.
  *
- * Provides a behavioral mock for IpcLayer that tracks handler registrations
+ * Provides a behavioral mock for IpcBoundary that tracks handler registrations
  * and allows state inspection for testing.
  */
 
-import type { IpcLayer, IpcHandler, IpcEventHandler } from "./ipc";
+import type { IpcBoundary, IpcHandler, IpcEventHandler } from "./ipc";
 import { PlatformError } from "../../../services/platform/errors";
 
 /**
  * State exposed by the behavioral mock for test inspection.
  */
-export interface IpcLayerState {
+export interface IpcBoundaryState {
   /** Map of channel names to registered handlers */
   readonly handlers: Map<string, IpcHandler>;
 }
 
 /**
- * Behavioral mock for IpcLayer.
- * Extends IpcLayer with a _getState() method for test inspection.
+ * Behavioral mock for IpcBoundary.
+ * Extends IpcBoundary with a _getState() method for test inspection.
  */
-export interface BehavioralIpcLayer extends IpcLayer {
+export interface BehavioralIpcBoundary extends IpcBoundary {
   /** Get the current state for test assertions */
-  _getState(): IpcLayerState;
+  _getState(): IpcBoundaryState;
 
   /**
    * Simulate invoking a handler (for testing handler behavior).
-   * This is NOT part of the real IpcLayer interface - it's a test helper.
+   * This is NOT part of the real IpcBoundary interface - it's a test helper.
    *
    * @param channel - The IPC channel name
    * @param args - Arguments to pass to the handler
@@ -37,7 +37,7 @@ export interface BehavioralIpcLayer extends IpcLayer {
 
   /**
    * Simulate sending a fire-and-forget event (for testing event listeners).
-   * This is NOT part of the real IpcLayer interface - it's a test helper.
+   * This is NOT part of the real IpcBoundary interface - it's a test helper.
    *
    * @param channel - The IPC channel name
    * @param args - Arguments to pass to the listeners
@@ -54,7 +54,7 @@ export interface BehavioralIpcLayer extends IpcLayer {
 }
 
 /**
- * Create a behavioral mock for IpcLayer.
+ * Create a behavioral mock for IpcBoundary.
  *
  * This mock tracks handler registrations in memory and provides:
  * - Error behavior matching the real implementation (duplicate throws)
@@ -63,7 +63,7 @@ export interface BehavioralIpcLayer extends IpcLayer {
  *
  * @example Basic usage
  * ```typescript
- * const ipcLayer = createBehavioralIpcLayer();
+ * const ipcLayer = createBehavioralIpcBoundary();
  * ipcLayer.handle("api:test", async () => "result");
  *
  * const state = ipcLayer._getState();
@@ -72,14 +72,14 @@ export interface BehavioralIpcLayer extends IpcLayer {
  *
  * @example Testing duplicate registration error
  * ```typescript
- * const ipcLayer = createBehavioralIpcLayer();
+ * const ipcLayer = createBehavioralIpcBoundary();
  * ipcLayer.handle("api:test", async () => "result");
  *
  * expect(() => ipcLayer.handle("api:test", async () => "other"))
  *   .toThrow(PlatformError);
  * ```
  */
-export function createBehavioralIpcLayer(): BehavioralIpcLayer {
+export function createBehavioralIpcBoundary(): BehavioralIpcBoundary {
   const handlers = new Map<string, IpcHandler>();
   const eventListeners = new Map<string, IpcEventHandler[]>();
 
@@ -127,7 +127,7 @@ export function createBehavioralIpcLayer(): BehavioralIpcLayer {
       }
     },
 
-    _getState(): IpcLayerState {
+    _getState(): IpcBoundaryState {
       return {
         handlers: new Map(handlers),
       };

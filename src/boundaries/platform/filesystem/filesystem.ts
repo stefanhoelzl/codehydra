@@ -1,9 +1,9 @@
 /**
- * FileSystemLayer - Abstraction over filesystem operations.
+ * FileSystemBoundary - Abstraction over filesystem operations.
  *
  * Provides an injectable interface for filesystem access, enabling:
- * - Unit testing of services with mock FileSystemLayer
- * - Boundary testing of DefaultFileSystemLayer against real filesystem
+ * - Unit testing of services with mock FileSystemBoundary
+ * - Boundary testing of DefaultFileSystemBoundary against real filesystem
  * - Consistent error handling via FileSystemError
  *
  * Path handling:
@@ -15,7 +15,7 @@
 import { tmpdir } from "node:os";
 import { Path } from "../../../utils/path/path";
 
-/** Type for paths accepted by FileSystemLayer (Path object or string) */
+/** Type for paths accepted by FileSystemBoundary (Path object or string) */
 export type PathLike = Path | string;
 
 /**
@@ -89,7 +89,7 @@ export type FileSystemErrorCode =
  *
  * NOTE: No exists() method - use try/catch on actual operations to avoid TOCTOU races.
  */
-export interface FileSystemLayer {
+export interface FileSystemBoundary {
   /**
    * Read entire file as UTF-8 string.
    *
@@ -346,15 +346,15 @@ function mapError(error: unknown, path: string): FileSystemError {
 }
 
 // ============================================================================
-// DefaultFileSystemLayer Implementation
+// DefaultFileSystemBoundary Implementation
 // ============================================================================
 
 /**
- * Default implementation of FileSystemLayer using node:fs/promises.
+ * Default implementation of FileSystemBoundary using node:fs/promises.
  * Maps Node.js errors to FileSystemError for consistent error handling.
  * Accepts both Path objects and strings, converting to native format internally.
  */
-export class DefaultFileSystemLayer implements FileSystemLayer {
+export class DefaultFileSystemBoundary implements FileSystemBoundary {
   constructor(private readonly logger: Logger) {}
 
   async readFile(filePath: PathLike): Promise<string> {

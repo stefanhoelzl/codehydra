@@ -14,7 +14,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
 import type { PortManager } from "../../../boundaries/platform/network/network";
 import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
-import type { FileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type {
   AgentServerManager,
@@ -98,7 +98,7 @@ export interface McpConfig {
 export interface ClaudeCodeServerManagerDeps {
   readonly portManager: PortManager;
   readonly pathProvider: PathProvider;
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
   readonly config?: ClaudeCodeServerManagerConfig;
 }
@@ -114,7 +114,7 @@ export interface ClaudeCodeServerManagerDeps {
 export class ClaudeCodeServerManager implements AgentServerManager {
   private readonly portManager: PortManager;
   private readonly pathProvider: PathProvider;
-  private readonly fileSystem: FileSystemLayer;
+  private readonly fileSystem: FileSystemBoundary;
   private readonly logger: Logger;
   private readonly hookHandlerPath: string;
 

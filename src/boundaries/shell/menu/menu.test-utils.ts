@@ -1,9 +1,9 @@
 /**
- * Test utilities for MenuLayer.
+ * Test utilities for MenuBoundary.
  * Provides behavioral mock for testing menu operations without Electron.
  */
 
-import type { MenuLayer, MenuTemplate, MenuHandle } from "./menu";
+import type { MenuBoundary, MenuTemplate, MenuHandle } from "./menu";
 import { createMenuHandle } from "./menu";
 
 // ============================================================================
@@ -19,9 +19,9 @@ export interface BuiltMenuInfo {
 }
 
 /**
- * State of the MenuLayer behavioral mock.
+ * State of the MenuBoundary behavioral mock.
  */
-export interface MenuLayerState {
+export interface MenuBoundaryState {
   /** All built menus */
   readonly menus: Map<string, BuiltMenuInfo>;
   /** Current application menu ID (null if no menu set) */
@@ -33,13 +33,13 @@ export interface MenuLayerState {
 }
 
 /**
- * Extended MenuLayer interface with state inspection for testing.
+ * Extended MenuBoundary interface with state inspection for testing.
  */
-export interface BehavioralMenuLayer extends MenuLayer {
+export interface BehavioralMenuBoundary extends MenuBoundary {
   /**
    * Get internal state for test assertions.
    */
-  _getState(): MenuLayerState;
+  _getState(): MenuBoundaryState;
 
   /**
    * Reset all state.
@@ -52,14 +52,14 @@ export interface BehavioralMenuLayer extends MenuLayer {
 // ============================================================================
 
 /**
- * Creates a behavioral mock of MenuLayer for testing.
+ * Creates a behavioral mock of MenuBoundary for testing.
  *
  * The mock tracks all menu operations and provides state inspection
  * for testing menu management without Electron.
  *
  * @example Basic usage - set null menu
  * ```typescript
- * const menuLayer = createBehavioralMenuLayer();
+ * const menuLayer = createBehavioralMenuBoundary();
  * menuLayer.setApplicationMenu(null);
  *
  * const state = menuLayer._getState();
@@ -69,7 +69,7 @@ export interface BehavioralMenuLayer extends MenuLayer {
  *
  * @example Build and set menu
  * ```typescript
- * const menuLayer = createBehavioralMenuLayer();
+ * const menuLayer = createBehavioralMenuBoundary();
  * const menu = menuLayer.buildFromTemplate([
  *   { label: "File", submenu: [{ label: "Quit", role: "quit" }] },
  * ]);
@@ -78,7 +78,7 @@ export interface BehavioralMenuLayer extends MenuLayer {
  * expect(menuLayer.getApplicationMenu()?.id).toBe(menu.id);
  * ```
  */
-export function createBehavioralMenuLayer(): BehavioralMenuLayer {
+export function createBehavioralMenuBoundary(): BehavioralMenuBoundary {
   // State tracking
   const menus = new Map<string, BuiltMenuInfo>();
   let applicationMenuId: string | null = null;
@@ -115,7 +115,7 @@ export function createBehavioralMenuLayer(): BehavioralMenuLayer {
       return createMenuHandle(applicationMenuId);
     },
 
-    _getState(): MenuLayerState {
+    _getState(): MenuBoundaryState {
       return {
         menus: new Map(menus),
         applicationMenuId,

@@ -1,5 +1,5 @@
 /**
- * ViewLayer - Abstraction over Electron's WebContentsView.
+ * ViewBoundary - Abstraction over Electron's WebContentsView.
  *
  * Provides an injectable interface for view management, enabling:
  * - Unit testing with behavioral mocks
@@ -16,7 +16,7 @@ import type {
 import { createViewHandle } from "../../../services/shell/types";
 import { ShellError } from "../../../services/shell/errors";
 import type { Logger } from "../../../boundaries/platform/logging";
-import type { WindowLayer } from "../window/window";
+import type { WindowBoundary } from "../window/window";
 
 // ============================================================================
 // Types
@@ -84,7 +84,7 @@ export interface KeyboardInput {
  * This allows testing without Electron dependencies and ensures all view
  * access goes through this abstraction.
  */
-export interface ViewLayer {
+export interface ViewBoundary {
   // Lifecycle
   /**
    * Create a new view.
@@ -330,14 +330,14 @@ interface ViewState {
 }
 
 /**
- * Default implementation of ViewLayer using Electron's WebContentsView.
+ * Default implementation of ViewBoundary using Electron's WebContentsView.
  */
-export class DefaultViewLayer implements ViewLayer {
+export class DefaultViewBoundary implements ViewBoundary {
   private readonly views = new Map<string, ViewState>();
   private nextId = 1;
 
   constructor(
-    private readonly windowLayer: WindowLayer,
+    private readonly windowLayer: WindowBoundary,
     private readonly logger: Logger
   ) {}
 

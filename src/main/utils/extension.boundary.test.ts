@@ -11,7 +11,7 @@ import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { parseExtensionDir, listInstalledExtensions, removeFromExtensionsJson } from "./extension";
-import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 
 describe("parseExtensionDir", () => {
@@ -151,12 +151,12 @@ describe("parseExtensionDir", () => {
 
 describe("extension-utils boundary", () => {
   let testDir: string;
-  let fs: DefaultFileSystemLayer;
+  let fs: DefaultFileSystemBoundary;
 
   beforeEach(async () => {
     testDir = join(tmpdir(), `extension-utils-test-${Date.now()}-${Math.random().toString(36)}`);
     await mkdir(testDir, { recursive: true });
-    fs = new DefaultFileSystemLayer(createMockLogger());
+    fs = new DefaultFileSystemBoundary(createMockLogger());
   });
 
   afterEach(async () => {

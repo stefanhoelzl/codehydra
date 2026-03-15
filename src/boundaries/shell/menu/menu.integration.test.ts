@@ -1,19 +1,19 @@
 /**
- * Integration tests for MenuLayer behavioral mock.
+ * Integration tests for MenuBoundary behavioral mock.
  *
  * Tests verify the behavioral mock provides correct contract behavior
- * that matches the real DefaultMenuLayer implementation.
+ * that matches the real DefaultMenuBoundary implementation.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { createBehavioralMenuLayer, type BehavioralMenuLayer } from "./menu.test-utils";
+import { createBehavioralMenuBoundary, type BehavioralMenuBoundary } from "./menu.test-utils";
 import type { MenuTemplate } from "./menu";
 
-describe("MenuLayer (behavioral mock)", () => {
-  let menuLayer: BehavioralMenuLayer;
+describe("MenuBoundary (behavioral mock)", () => {
+  let menuLayer: BehavioralMenuBoundary;
 
   beforeEach(() => {
-    menuLayer = createBehavioralMenuLayer();
+    menuLayer = createBehavioralMenuBoundary();
   });
 
   describe("buildFromTemplate", () => {

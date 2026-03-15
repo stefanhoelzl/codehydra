@@ -5,7 +5,7 @@
  * Tests verify the full pipeline:
  * dispatcher -> Operation -> hook point -> PosthogModule handler
  *
- * The posthog module now reads configuration from ConfigService
+ * The posthog module now reads configuration from Config
  * during the app:start hook. Tests set config values in the mock
  * before dispatching.
  */
@@ -38,14 +38,14 @@ import {
   createMockPostHogClientFactory,
   type MockPostHogClient,
 } from "./posthog-client.state-mock";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 
 // =============================================================================
-// Mock ConfigService
+// Mock Config
 // =============================================================================
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: () => {},
@@ -94,7 +94,7 @@ const REOPENED_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  mockConfigService: ConfigService;
+  mockConfig: Config;
   getMock(): MockPostHogClient | null;
 }
 
@@ -107,7 +107,7 @@ function createTestSetup(overrides?: {
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
   const logger = createBehavioralLogger();
   const { factory, getMock } = createMockPostHogClientFactory();
-  const mockConfigService = createMockConfigService({
+  const mockConfig = createMockConfig({
     "telemetry.enabled": false,
     "telemetry.distinct-id": null,
     ...overrides?.configValues,
@@ -118,7 +118,7 @@ function createTestSetup(overrides?: {
   const posthogModule = createPosthogModule({
     platformInfo,
     buildInfo,
-    configService: mockConfigService,
+    configService: mockConfig,
     logger,
     apiKey: overrides && "apiKey" in overrides ? overrides.apiKey : "test-api-key",
     host: "https://test.posthog.com",
@@ -138,7 +138,7 @@ function createTestSetup(overrides?: {
 
   dispatcher.registerModule(posthogModule);
 
-  return { dispatcher, mockConfigService, getMock };
+  return { dispatcher, mockConfig, getMock };
 }
 
 function startIntent(): AppStartIntent {

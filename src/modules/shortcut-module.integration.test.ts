@@ -72,7 +72,7 @@ interface MockCallbacks {
   blurUnsubscribe: ReturnType<typeof vi.fn<() => void>>;
 }
 
-function createMockViewLayer() {
+function createMockViewBoundary() {
   const callbacks: MockCallbacks = {
     inputCallbacks: new Map(),
     destroyedCallbacks: new Map(),
@@ -120,7 +120,7 @@ function createMockViewManager(uiHandle: ViewHandle, initialMode: UIMode = "shor
   };
 }
 
-function createMockWindowLayer(callbacks: MockCallbacks) {
+function createMockWindowBoundary(callbacks: MockCallbacks) {
   return {
     onBlur: vi.fn((_handle: WindowHandle, callback: () => void): Unsubscribe => {
       callbacks.blurCallback = callback;
@@ -156,9 +156,9 @@ interface TestHarness {
 async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarness> {
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const uiHandle = createViewHandle("ui-view");
-  const { viewLayer, callbacks } = createMockViewLayer();
+  const { viewLayer, callbacks } = createMockViewBoundary();
   const viewManager = createMockViewManager(uiHandle, initialMode);
-  const windowLayer = createMockWindowLayer(callbacks);
+  const windowLayer = createMockWindowBoundary(callbacks);
 
   dispatcher.registerOperation(
     INTENT_APP_START,

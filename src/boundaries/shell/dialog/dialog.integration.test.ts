@@ -1,18 +1,18 @@
 /**
- * Integration tests for DialogLayer behavioral mock.
+ * Integration tests for DialogBoundary behavioral mock.
  *
  * Tests verify the behavioral mock provides correct contract behavior
- * that matches the real DefaultDialogLayer implementation.
+ * that matches the real DefaultDialogBoundary implementation.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { createBehavioralDialogLayer, type BehavioralDialogLayer } from "./dialog.test-utils";
+import { createBehavioralDialogBoundary, type BehavioralDialogBoundary } from "./dialog.test-utils";
 
-describe("DialogLayer (behavioral mock)", () => {
-  let dialogLayer: BehavioralDialogLayer;
+describe("DialogBoundary (behavioral mock)", () => {
+  let dialogLayer: BehavioralDialogBoundary;
 
   beforeEach(() => {
-    dialogLayer = createBehavioralDialogLayer();
+    dialogLayer = createBehavioralDialogBoundary();
   });
 
   describe("showOpenDialog", () => {

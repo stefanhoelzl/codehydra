@@ -1,13 +1,13 @@
 /**
- * Behavioral mock for ImageLayer with stateful testing support.
+ * Behavioral mock for ImageBoundary with stateful testing support.
  *
- * Provides a stateful mock that simulates real ImageLayer behavior:
+ * Provides a stateful mock that simulates real ImageBoundary behavior:
  * - In-memory image storage with handle management
  * - Proper error handling for invalid handles
  * - Custom matchers for behavioral assertions
  *
  * @example
- * const imageLayer = createImageLayerMock();
+ * const imageLayer = createImageBoundaryMock();
  *
  * // Create images via the mock interface
  * const handle = imageLayer.createFromPath("/icons/app.png");
@@ -19,7 +19,7 @@
 
 import { expect } from "vitest";
 import type { NativeImage } from "electron";
-import type { ImageLayer } from "./image";
+import type { ImageBoundary } from "./image";
 import type { ImageHandle, ImageSize } from "../../../services/platform/types";
 import { createImageHandle } from "../../../services/platform/types";
 import { PlatformError } from "../../../services/platform/errors";
@@ -49,10 +49,10 @@ export interface ImageState {
 // =============================================================================
 
 /**
- * Mock state for ImageLayer.
+ * Mock state for ImageBoundary.
  * Implements MockState for snapshot/toString support.
  */
-export class ImageLayerMockState implements MockState {
+export class ImageBoundaryMockState implements MockState {
   private readonly _images: Map<string, ImageState>;
 
   constructor(initialImages?: Map<string, ImageState>) {
@@ -105,16 +105,16 @@ export class ImageLayerMockState implements MockState {
 // =============================================================================
 
 /**
- * ImageLayer with behavioral mock state access via `$` property.
+ * ImageBoundary with behavioral mock state access via `$` property.
  */
-export type MockImageLayer = ImageLayer & MockWithState<ImageLayerMockState>;
+export type MockImageBoundary = ImageBoundary & MockWithState<ImageBoundaryMockState>;
 
 // =============================================================================
 // Factory Implementation
 // =============================================================================
 
 /**
- * Create a behavioral mock for ImageLayer.
+ * Create a behavioral mock for ImageBoundary.
  *
  * The mock maintains in-memory image state and provides the same
  * error behaviors as the real implementation:
@@ -125,7 +125,7 @@ export type MockImageLayer = ImageLayer & MockWithState<ImageLayerMockState>;
  *
  * @example Basic usage
  * ```typescript
- * const imageLayer = createImageLayerMock();
+ * const imageLayer = createImageBoundaryMock();
  * const handle = imageLayer.createFromPath("/icons/app.png");
  *
  * expect(imageLayer).toHaveImage("image-1", { fromPath: "/icons/app.png" });
@@ -134,7 +134,7 @@ export type MockImageLayer = ImageLayer & MockWithState<ImageLayerMockState>;
  *
  * @example Checking image count
  * ```typescript
- * const imageLayer = createImageLayerMock();
+ * const imageLayer = createImageBoundaryMock();
  * imageLayer.createFromPath("/a.png");
  * imageLayer.createFromPath("/b.png");
  *
@@ -143,15 +143,15 @@ export type MockImageLayer = ImageLayer & MockWithState<ImageLayerMockState>;
  *
  * @example Verifying release behavior
  * ```typescript
- * const imageLayer = createImageLayerMock();
+ * const imageLayer = createImageBoundaryMock();
  * const handle = imageLayer.createFromPath("/icon.png");
  * imageLayer.release(handle);
  *
  * expect(imageLayer).toHaveImages([]);
  * ```
  */
-export function createImageLayerMock(): MockImageLayer {
-  const state = new ImageLayerMockState();
+export function createImageBoundaryMock(): MockImageBoundary {
+  const state = new ImageBoundaryMockState();
   let nextId = 1;
 
   function getImage(handle: ImageHandle): ImageState {
@@ -162,7 +162,7 @@ export function createImageLayerMock(): MockImageLayer {
     return image;
   }
 
-  const layer: ImageLayer = {
+  const layer: ImageBoundary = {
     createFromPath(path: string): ImageHandle {
       const id = `image-${nextId++}`;
       state._setImage(id, {
@@ -249,9 +249,9 @@ export interface ImageExpectation {
 }
 
 /**
- * Custom matchers for ImageLayer mock assertions.
+ * Custom matchers for ImageBoundary mock assertions.
  */
-interface ImageLayerMatchers {
+interface ImageBoundaryMatchers {
   /**
    * Assert that a specific image exists with optional property checks.
    * Does NOT verify total count - use toHaveImages for exact set matching.
@@ -280,10 +280,13 @@ interface ImageLayerMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends ImageLayerMatchers {}
+  interface Assertion<T> extends ImageBoundaryMatchers {}
 }
 
-export const imageLayerMatchers: MatcherImplementationsFor<MockImageLayer, ImageLayerMatchers> = {
+export const imageBoundaryMatchers: MatcherImplementationsFor<
+  MockImageBoundary,
+  ImageBoundaryMatchers
+> = {
   toHaveImage(received, id, properties?) {
     const image = received.$.images.get(id);
     const allImageIds = [...received.$.images.keys()];
@@ -399,4 +402,4 @@ export const imageLayerMatchers: MatcherImplementationsFor<MockImageLayer, Image
 };
 
 // Register matchers with expect
-expect.extend(imageLayerMatchers);
+expect.extend(imageBoundaryMatchers);

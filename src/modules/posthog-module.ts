@@ -22,7 +22,7 @@ import {
 } from "../intents/operations/open-workspace";
 import { EVENT_APP_RESUMED } from "../intents/operations/app-resume";
 import { configBoolean, configString } from "../boundaries/platform/config/config-definition";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import type { PlatformInfo } from "../boundaries/platform/env/platform-info";
 import type { BuildInfo } from "../boundaries/platform/env/build-info";
 import type { ConfigAgentType } from "../boundaries/platform/config/config-values";
@@ -78,7 +78,7 @@ function createDefaultPostHogClient(apiKey: string, options: { host: string }): 
 interface PosthogModuleDeps {
   readonly platformInfo: PlatformInfo;
   readonly buildInfo: BuildInfo;
-  readonly configService: ConfigService;
+  readonly configService: Config;
   readonly logger: Logger;
   /** PostHog API key. If undefined/empty, telemetry is disabled. */
   readonly apiKey?: string | undefined;

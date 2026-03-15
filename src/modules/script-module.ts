@@ -9,7 +9,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { InitHookContext } from "../intents/operations/app-start";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
 import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
 import { Path } from "../utils/path/path";
@@ -19,7 +19,7 @@ import { Path } from "../utils/path/path";
 // =============================================================================
 
 export interface ScriptModuleDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly pathProvider: PathProvider;
 }
 

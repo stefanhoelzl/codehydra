@@ -1,8 +1,8 @@
 /**
  * Platform layer error definitions.
  *
- * These errors are thrown by platform layer implementations (IpcLayer, DialogLayer,
- * ImageLayer, AppLayer, MenuLayer) to provide consistent error handling.
+ * These errors are thrown by platform layer implementations (IpcBoundary, DialogBoundary,
+ * ImageBoundary, AppBoundary, MenuBoundary) to provide consistent error handling.
  */
 
 /**
@@ -23,7 +23,7 @@ export type PlatformErrorCode =
 /**
  * Error from platform layer operations.
  *
- * Used by IpcLayer, DialogLayer, ImageLayer, AppLayer, and MenuLayer
+ * Used by IpcBoundary, DialogBoundary, ImageBoundary, AppBoundary, and MenuBoundary
  * to report errors with consistent typing.
  *
  * @example

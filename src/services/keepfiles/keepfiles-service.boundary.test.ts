@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
 import { writeFile as nodeWriteFile, mkdir as nodeMkdir } from "node:fs/promises";
 import { KeepFilesService } from "./keepfiles-service";
-import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { createTempDir } from "../test-utils";
 import { Path } from "../../utils/path/path";
@@ -17,7 +17,7 @@ describe("KeepFilesService", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
   let projectRoot: string;
   let targetPath: string;
-  let fs: DefaultFileSystemLayer;
+  let fs: DefaultFileSystemBoundary;
   let service: KeepFilesService;
 
   beforeEach(async () => {
@@ -26,7 +26,7 @@ describe("KeepFilesService", () => {
     targetPath = join(tempDir.path, "workspace");
     await nodeMkdir(projectRoot);
     await nodeMkdir(targetPath);
-    fs = new DefaultFileSystemLayer(SILENT_LOGGER);
+    fs = new DefaultFileSystemBoundary(SILENT_LOGGER);
     service = new KeepFilesService(fs, SILENT_LOGGER);
   });
 
