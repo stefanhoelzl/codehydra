@@ -8,7 +8,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -46,7 +45,7 @@ import type {
   AgentModuleProvider,
   WorkspaceStartResult,
 } from "../../services/agents/agent-module-provider";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { SetupError } from "../../services/errors";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import { configString } from "../../services/config/config-definition";
@@ -327,13 +326,12 @@ function createTestSetup(
     configService: mockConfigService,
   };
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const agentModule = createAgentModule(mockProvider, moduleDeps);
 
   dispatcher.registerModule(agentModule);
 
-  return { mockProvider, mockConfigService, moduleDeps, dispatcher, hookRegistry, agentModule };
+  return { mockProvider, mockConfigService, moduleDeps, dispatcher, agentModule };
 }
 
 /**

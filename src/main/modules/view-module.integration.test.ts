@@ -18,7 +18,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -75,7 +74,7 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { EVENT_APP_RESUMED } from "../operations/app-resume";
 import type { AppResumedEvent } from "../operations/app-resume";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import type { ConfigService } from "../../services/config/config-service";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
@@ -365,7 +364,6 @@ class MinimalSelectFolderOperation implements Operation<Intent, SelectFolderHook
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  hookRegistry: HookRegistry;
   viewManager: ReturnType<typeof createMockViewManager>;
   layers: ReturnType<typeof createMockShellLayers>;
   module: IntentModule;
@@ -379,8 +377,7 @@ function createTestSetup(
     configValues?: Record<string, unknown>;
   }
 ): TestSetup {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const viewManager = createMockViewManager();
   const layers = createMockShellLayers();
@@ -413,7 +410,7 @@ function createTestSetup(
 
   dispatcher.registerModule(module);
 
-  return { dispatcher, hookRegistry, viewManager, layers, module };
+  return { dispatcher, viewManager, layers, module };
 }
 
 // =============================================================================
@@ -518,8 +515,7 @@ describe("ViewModule Integration", () => {
         removeListener: vi.fn(),
       };
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(
@@ -939,8 +935,7 @@ describe("ViewModule Integration", () => {
         },
       };
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
@@ -985,8 +980,7 @@ describe("ViewModule Integration", () => {
         },
       };
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
@@ -1038,8 +1032,7 @@ describe("ViewModule Integration", () => {
         },
       };
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
@@ -1070,8 +1063,7 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("app-start/init", () => {
     it("calls menuLayer, windowManager, viewManager, and viewLayer in order", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
@@ -1121,8 +1113,7 @@ describe("ViewModule Integration", () => {
     });
 
     it("skips optional deps when not provided", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(
@@ -1231,8 +1222,7 @@ describe("ViewModule Integration", () => {
       ipcLayer: BehavioralIpcLayer;
     } {
       const ipcLayer = createBehavioralIpcLayer();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalShowUIOperation());

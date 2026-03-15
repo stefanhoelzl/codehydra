@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import {
   ResolveProjectOperation,
@@ -40,8 +40,7 @@ const PROJECT_NAME = "my-app";
 function createTestSetup(resolveHandler?: (ctx: HookContext) => Promise<ResolveHookResult>): {
   dispatcher: Dispatcher;
 } {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 

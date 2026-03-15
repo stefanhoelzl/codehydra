@@ -20,8 +20,7 @@ import {
   type PluginServerOptions,
 } from "./plugin-server-module";
 import { DefaultNetworkLayer } from "../../services/platform/network";
-import { SILENT_LOGGER } from "../../services/logging/logging.test-utils";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging/logging.test-utils";
 import { Dispatcher, IntentHandle } from "../intents/infrastructure/dispatcher";
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
@@ -298,8 +297,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
   const module = createPluginServerModule(moduleDeps);
 
   // Wire up a real dispatcher to drive the module through hooks
-  const hookRegistry = new HookRegistry();
-  const testDispatcher = new Dispatcher(hookRegistry);
+  const testDispatcher = new Dispatcher({ logger: createMockLogger() });
   testDispatcher.registerModule(module);
   testDispatcher.registerOperation(INTENT_APP_START, new MinimalStartOperation());
   testDispatcher.registerOperation(

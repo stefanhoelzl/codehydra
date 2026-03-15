@@ -11,9 +11,9 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import {
   SetModeOperation,
@@ -61,8 +61,7 @@ interface TestSetup {
 function createTestSetup(opts?: { initialMode?: UIMode }): TestSetup {
   const viewManager = createMockViewManager(opts?.initialMode ?? "workspace");
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
 

@@ -1,33 +1,38 @@
 /**
  * Integration tests for RemoteProjectModule.
  *
- * Tests hook handlers through HookRegistry.resolve().collect() -- the same
- * infrastructure used by operations -- with frozen contexts and result/error
- * collection.
+ * Tests hook handlers through Dispatcher operations that collect individual
+ * hook points, with frozen contexts and result/error collection.
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { createMockGitClient, gitClientMatchers } from "../../services/git/git-client.state-mock";
 import { createMockPathProvider } from "../../services/platform/path-provider.test-utils";
 import { createFileSystemMock } from "../../services/platform/filesystem.state-mock";
 import { createRemoteProjectModule } from "./remote-project-module";
-import { OPEN_PROJECT_OPERATION_ID } from "../operations/open-project";
+import { OPEN_PROJECT_OPERATION_ID, INTENT_OPEN_PROJECT } from "../operations/open-project";
 import type {
   ResolveHookResult,
   ResolveHookInput,
   OpenProjectIntent,
   CloneProgressReporter,
 } from "../operations/open-project";
-import { CLOSE_PROJECT_OPERATION_ID } from "../operations/close-project";
+import { CLOSE_PROJECT_OPERATION_ID, INTENT_CLOSE_PROJECT } from "../operations/close-project";
 import type {
   CloseHookInput,
   CloseHookResult,
   CloseProjectIntent,
 } from "../operations/close-project";
+import type {
+  HookContext,
+  HookResult,
+  Operation,
+  OperationContext,
+} from "../intents/infrastructure/operation";
+import type { Intent } from "../intents/infrastructure/types";
 import { Path } from "../../services/platform/path";
 import { extractRepoName } from "../../services/project/url-utils";
 import type { ProjectId } from "../../shared/api/types";
@@ -40,16 +45,69 @@ expect.extend(gitClientMatchers);
 const noopReport: CloneProgressReporter = () => {};
 
 // =============================================================================
+// Collect Operation
+// =============================================================================
+
+/**
+ * A test operation that collects a specified hook point and returns the full
+ * HookResult. The hook point and context are set via mutable fields before
+ * dispatching.
+ */
+class CollectOperation<TIntent extends Intent> implements Operation<TIntent, HookResult> {
+  readonly id: string;
+  hookPoint = "";
+  hookContext: HookContext = { intent: { type: "", payload: {} } };
+
+  constructor(id: string) {
+    this.id = id;
+  }
+
+  async execute(ctx: OperationContext<TIntent>): Promise<HookResult> {
+    return ctx.hooks.collect(this.hookPoint, this.hookContext);
+  }
+}
+
+/**
+ * A wrapper around a CollectOperation + Dispatcher that provides the same
+ * collect() API as ResolvedHooks, for minimal test disruption.
+ */
+interface TestHooks {
+  collect<T>(hookPoint: string, ctx: HookContext): Promise<HookResult<T>>;
+}
+
+function createTestHooks<TIntent extends Intent>(
+  dispatcher: Dispatcher,
+  intentType: string,
+  collectOp: CollectOperation<TIntent>
+): TestHooks {
+  return {
+    async collect<T>(hookPoint: string, ctx: HookContext): Promise<HookResult<T>> {
+      collectOp.hookPoint = hookPoint;
+      collectOp.hookContext = ctx;
+      return (await dispatcher.dispatch({
+        type: intentType,
+        payload: (ctx.intent as Intent).payload,
+      } as TIntent)) as HookResult<T>;
+    },
+  };
+}
+
+// =============================================================================
 // Test Setup
 // =============================================================================
 
 function createTestSetup() {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const fs = createFileSystemMock();
   const gitClient = createMockGitClient();
   const pathProvider = createMockPathProvider();
+
+  const openOp = new CollectOperation<OpenProjectIntent>(OPEN_PROJECT_OPERATION_ID);
+  const closeOp = new CollectOperation<CloseProjectIntent>(CLOSE_PROJECT_OPERATION_ID);
+
+  dispatcher.registerOperation(INTENT_OPEN_PROJECT, openOp);
+  dispatcher.registerOperation(INTENT_CLOSE_PROJECT, closeOp);
 
   const module = createRemoteProjectModule({
     fs,
@@ -60,7 +118,10 @@ function createTestSetup() {
 
   dispatcher.registerModule(module);
 
-  return { hookRegistry, fs, gitClient, pathProvider };
+  const openHooks = createTestHooks(dispatcher, INTENT_OPEN_PROJECT, openOp);
+  const closeHooks = createTestHooks(dispatcher, INTENT_CLOSE_PROJECT, closeOp);
+
+  return { openHooks, closeHooks, fs, gitClient, pathProvider };
 }
 
 // =============================================================================
@@ -102,12 +163,11 @@ describe("RemoteProjectModule Integration", () => {
 
   describe("open-project / resolve", () => {
     it("clones new repo when URL provided and no existing clone", async () => {
-      const { hookRegistry, gitClient } = createTestSetup();
+      const { openHooks, gitClient } = createTestSetup();
 
-      const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+      const { results, errors } = await openHooks.collect<ResolveHookResult | undefined>(
         "resolve",
         resolveContext(intent)
       );
@@ -126,7 +186,7 @@ describe("RemoteProjectModule Integration", () => {
     });
 
     it("returns existing path when clone directory exists (readdir succeeds)", async () => {
-      const { hookRegistry, fs, gitClient, pathProvider } = createTestSetup();
+      const { openHooks, fs, gitClient, pathProvider } = createTestSetup();
 
       const url = "https://github.com/org/repo.git";
       const repoName = extractRepoName(url);
@@ -136,10 +196,9 @@ describe("RemoteProjectModule Integration", () => {
       // Pre-populate filesystem so readdir succeeds
       fs.$.setEntry(gitPath.toString(), { type: "directory" });
 
-      const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: url });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+      const { results, errors } = await openHooks.collect<ResolveHookResult | undefined>(
         "resolve",
         resolveContext(intent)
       );
@@ -157,12 +216,11 @@ describe("RemoteProjectModule Integration", () => {
     });
 
     it("returns undefined for local path (no git URL)", async () => {
-      const { hookRegistry } = createTestSetup();
+      const { openHooks } = createTestSetup();
 
-      const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ path: new Path("/local/project") });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+      const { results, errors } = await openHooks.collect<ResolveHookResult | undefined>(
         "resolve",
         resolveContext(intent)
       );
@@ -172,17 +230,16 @@ describe("RemoteProjectModule Integration", () => {
     });
 
     it("propagates clone error", async () => {
-      const { hookRegistry, gitClient } = createTestSetup();
+      const { openHooks, gitClient } = createTestSetup();
 
       const originalClone = gitClient.clone.bind(gitClient);
       (gitClient as { clone: typeof gitClient.clone }).clone = async () => {
         throw new Error("Network error: connection refused");
       };
 
-      const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
 
-      const { results, errors } = await hooks.collect<ResolveHookResult | undefined>(
+      const { results, errors } = await openHooks.collect<ResolveHookResult | undefined>(
         "resolve",
         resolveContext(intent)
       );
@@ -196,7 +253,7 @@ describe("RemoteProjectModule Integration", () => {
     });
 
     it("reports clone progress via report callback", async () => {
-      const { hookRegistry, gitClient } = createTestSetup();
+      const { openHooks, gitClient } = createTestSetup();
 
       const progressEvents: Array<{ stage: string; progress: number; name: string }> = [];
       const report: CloneProgressReporter = (stage, progress, name) => {
@@ -215,10 +272,12 @@ describe("RemoteProjectModule Integration", () => {
         return originalClone(url, targetPath);
       };
 
-      const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
 
-      await hooks.collect<ResolveHookResult | undefined>("resolve", resolveContext(intent, report));
+      await openHooks.collect<ResolveHookResult | undefined>(
+        "resolve",
+        resolveContext(intent, report)
+      );
 
       expect(progressEvents).toEqual([
         { stage: "receiving", progress: 0.5, name: "repo" },
@@ -236,7 +295,7 @@ describe("RemoteProjectModule Integration", () => {
 
   describe("close-project / close", () => {
     it("deletes clone directory when removeLocalRepo=true and remoteUrl in context", async () => {
-      const { hookRegistry, fs } = createTestSetup();
+      const { closeHooks, fs } = createTestSetup();
 
       const projectPath = "/test/app-data/remotes/abc12345/repo";
 
@@ -244,7 +303,6 @@ describe("RemoteProjectModule Integration", () => {
       fs.$.setEntry("/test/app-data/remotes/abc12345", { type: "directory" });
       fs.$.setEntry(projectPath, { type: "directory" });
 
-      const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
       const closeIntnt = closeProjectIntent({
         projectPath: "/test/project",
         removeLocalRepo: true,
@@ -266,13 +324,12 @@ describe("RemoteProjectModule Integration", () => {
     });
 
     it("no-op when removeLocalRepo=false", async () => {
-      const { hookRegistry, fs } = createTestSetup();
+      const { closeHooks, fs } = createTestSetup();
 
       const projectPath = "/test/app-data/remotes/abc12345/repo";
       fs.$.setEntry("/test/app-data/remotes/abc12345", { type: "directory" });
       fs.$.setEntry(projectPath, { type: "directory" });
 
-      const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
       const closeIntnt = closeProjectIntent({
         projectPath: "/test/project",
         removeLocalRepo: false,
@@ -295,11 +352,10 @@ describe("RemoteProjectModule Integration", () => {
     });
 
     it("no-op when no remoteUrl in context (local project)", async () => {
-      const { hookRegistry } = createTestSetup();
+      const { closeHooks } = createTestSetup();
 
       const projectPath = "/home/user/projects/local";
 
-      const closeHooks = hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID);
       const closeIntnt = closeProjectIntent({
         projectPath: "/test/project",
         removeLocalRepo: true,

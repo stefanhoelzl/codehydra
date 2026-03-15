@@ -7,11 +7,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "./hook-registry";
 import { Dispatcher } from "./dispatcher";
 import type { HookContext } from "./operation";
 import type { Intent } from "./types";
 import { createMinimalOperation } from "./operation.test-utils";
+import { createMockLogger } from "../../../services/logging/logging.test-utils";
 
 // =============================================================================
 // Test Constants
@@ -26,9 +26,8 @@ function testIntent(): Intent {
 }
 
 function createTestSetup() {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
-  return { hookRegistry, dispatcher };
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  return { dispatcher };
 }
 
 // =============================================================================
@@ -37,9 +36,14 @@ function createTestSetup() {
 
 describe("createMinimalOperation", () => {
   it("returns first result by default", async () => {
-    const { hookRegistry, dispatcher } = createTestSetup();
-    hookRegistry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-      handler: async () => ({ value: 42 }),
+    const { dispatcher } = createTestSetup();
+    dispatcher.registerModule({
+      name: "test-handler",
+      hooks: {
+        [TEST_OPERATION_ID]: {
+          [TEST_HOOK_POINT]: { handler: async () => ({ value: 42 }) },
+        },
+      },
     });
 
     const op = createMinimalOperation<Intent, { value: number }>(
@@ -65,10 +69,17 @@ describe("createMinimalOperation", () => {
   });
 
   it("throws first error when throwOnError is true (default)", async () => {
-    const { hookRegistry, dispatcher } = createTestSetup();
-    hookRegistry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-      handler: async () => {
-        throw new Error("hook failed");
+    const { dispatcher } = createTestSetup();
+    dispatcher.registerModule({
+      name: "test-handler",
+      hooks: {
+        [TEST_OPERATION_ID]: {
+          [TEST_HOOK_POINT]: {
+            handler: async () => {
+              throw new Error("hook failed");
+            },
+          },
+        },
       },
     });
 
@@ -79,10 +90,17 @@ describe("createMinimalOperation", () => {
   });
 
   it("does not throw when throwOnError is false", async () => {
-    const { hookRegistry, dispatcher } = createTestSetup();
-    hookRegistry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-      handler: async () => {
-        throw new Error("hook failed");
+    const { dispatcher } = createTestSetup();
+    dispatcher.registerModule({
+      name: "test-handler",
+      hooks: {
+        [TEST_OPERATION_ID]: {
+          [TEST_HOOK_POINT]: {
+            handler: async () => {
+              throw new Error("hook failed");
+            },
+          },
+        },
       },
     });
 
@@ -95,13 +113,20 @@ describe("createMinimalOperation", () => {
   });
 
   it("uses custom hookContext when provided", async () => {
-    const { hookRegistry, dispatcher } = createTestSetup();
+    const { dispatcher } = createTestSetup();
 
     let receivedContext: HookContext | undefined;
-    hookRegistry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-      handler: async (ctx: HookContext) => {
-        receivedContext = ctx;
-        return "ok";
+    dispatcher.registerModule({
+      name: "test-handler",
+      hooks: {
+        [TEST_OPERATION_ID]: {
+          [TEST_HOOK_POINT]: {
+            handler: async (ctx: HookContext) => {
+              receivedContext = ctx;
+              return "ok";
+            },
+          },
+        },
       },
     });
 
@@ -123,12 +148,19 @@ describe("createMinimalOperation", () => {
   });
 
   it("uses default { intent } context when no hookContext provided", async () => {
-    const { hookRegistry, dispatcher } = createTestSetup();
+    const { dispatcher } = createTestSetup();
 
     let receivedContext: HookContext | undefined;
-    hookRegistry.register(TEST_OPERATION_ID, TEST_HOOK_POINT, {
-      handler: async (ctx: HookContext) => {
-        receivedContext = ctx;
+    dispatcher.registerModule({
+      name: "test-handler",
+      hooks: {
+        [TEST_OPERATION_ID]: {
+          [TEST_HOOK_POINT]: {
+            handler: async (ctx: HookContext) => {
+              receivedContext = ctx;
+            },
+          },
+        },
       },
     });
 

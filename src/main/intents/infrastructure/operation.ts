@@ -45,6 +45,8 @@ export interface HookContext {
  * so that `HookDeclarations` (which uses `HookHandler`) accepts handlers with any return type.
  */
 export interface HookHandler<T = unknown> {
+  /** Module name — set by the Dispatcher during registerModule(). */
+  readonly name?: string;
   readonly handler: (ctx: HookContext) => Promise<T>;
   /** Capabilities this handler requires before it can execute.
    *  Key = capability name. Value = required value, or ANY_VALUE for "must exist, any value". */

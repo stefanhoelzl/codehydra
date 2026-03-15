@@ -10,7 +10,6 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import { SetMetadataOperation, INTENT_SET_METADATA } from "../operations/set-metadata";
@@ -36,7 +35,7 @@ import { createMetadataModule } from "./metadata-module";
 import { createMockGitClient } from "../../services/git/git-client.state-mock";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
 import { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
@@ -94,8 +93,7 @@ function createTestSetup(): TestSetup {
   const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());

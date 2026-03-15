@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 import type { Intent } from "../intents/infrastructure/types";
 import type { OperationContext, Operation } from "../intents/infrastructure/operation";
 
@@ -64,8 +64,7 @@ function createCapturingOperation<TIntent extends Intent = Intent, TResult = voi
 // =============================================================================
 
 function createTestSetup() {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const capturedIntents: Intent[] = [];
 
   dispatcher.registerOperation(
@@ -150,7 +149,7 @@ function createTestSetup() {
     )
   );
 
-  return { dispatcher, hookRegistry, capturedIntents, mockProjects };
+  return { dispatcher, capturedIntents, mockProjects };
 }
 
 // =============================================================================
@@ -328,8 +327,7 @@ describe("createMcpHandlers", () => {
     });
 
     it("awaits full result and propagates thrown errors", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       // Register an operation that throws (simulates preflight failure)
       dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, {
@@ -347,8 +345,7 @@ describe("createMcpHandlers", () => {
     });
 
     it("returns started: false when interceptor rejects", async () => {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(
         INTENT_DELETE_WORKSPACE,

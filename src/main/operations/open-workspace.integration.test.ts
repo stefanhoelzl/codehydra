@@ -34,9 +34,9 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import {
   OpenWorkspaceOperation,
@@ -210,8 +210,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const keepFilesService = opts?.keepFilesService ?? createMockKeepFilesService();
   const workspaceUrl = opts?.workspaceUrl ?? WORKSPACE_URL;
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
@@ -853,8 +852,7 @@ describe("OpenWorkspace Operation", () => {
       };
 
       // Re-create setup with the extra module
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
       dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());

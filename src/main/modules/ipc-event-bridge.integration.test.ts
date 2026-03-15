@@ -15,7 +15,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import {
@@ -67,7 +66,7 @@ import {
   type ShortcutKeyPressedEvent,
 } from "../operations/shortcut-key";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import {
   createBehavioralIpcLayer,
   type BehavioralIpcLayer,
@@ -166,8 +165,7 @@ interface StatusTestSetup {
 }
 
 function createStatusTestSetup(): StatusTestSetup {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
@@ -290,8 +288,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
 
 describe("IpcEventBridge - workspace:deleted", () => {
   it("sends workspace:removed to UI on workspace:deleted event", async () => {
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(
       INTENT_DELETE_WORKSPACE,
@@ -467,8 +464,7 @@ describe("IpcEventBridge - IPC handlers", () => {
 
 describe("IpcEventBridge - shutdown", () => {
   it("removes all IPC handlers on app:shutdown", async () => {
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const ipcLayer = createBehavioralIpcLayer();
@@ -506,8 +502,7 @@ describe("IpcEventBridge - shutdown", () => {
   });
 
   it("shutdown with already-removed handler does not throw", async () => {
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const ipcLayer = createBehavioralIpcLayer();
@@ -551,8 +546,7 @@ describe("IpcEventBridge - setup:error", () => {
     dispatcher: Dispatcher;
     sendToUI: SendToUIMock;
   } {
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 
@@ -596,8 +590,7 @@ describe("IpcEventBridge - setup:error", () => {
   });
 
   it("includes error code when present", async () => {
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 

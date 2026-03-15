@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
@@ -59,8 +59,7 @@ describe("ScriptModule Integration", () => {
       assetsRootDir: "/assets",
     });
 
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     const scripts = ["ch-claude", "ch-claude.cjs", "ch-claude.cmd", "code"];
     dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation(scripts));
@@ -121,8 +120,7 @@ describe("ScriptModule Integration", () => {
       assetsRootDir: "/assets",
     });
 
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation([]));
 

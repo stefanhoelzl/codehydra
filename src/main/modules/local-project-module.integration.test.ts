@@ -2,8 +2,9 @@
 /**
  * Integration tests for LocalProjectModule.
  *
- * Tests verify hook handlers through HookRegistry.resolve().collect(),
- * validating the full hook pipeline including self-selection behavior.
+ * Tests verify hook handlers through Dispatcher operations that collect
+ * individual hook points, validating the full hook pipeline including
+ * self-selection behavior.
  *
  * Test plan items covered:
  * #1: resolve validates local path and returns projectPath
@@ -26,8 +27,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import { createLocalProjectModule, type LocalProjectModuleDeps } from "./local-project-module";
 import {
@@ -46,11 +47,21 @@ import {
   type CloseHookInput,
 } from "../operations/close-project";
 import type { CloseProjectIntent } from "../operations/close-project";
-import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../operations/app-ready";
+import {
+  APP_READY_OPERATION_ID,
+  INTENT_APP_READY,
+  type LoadProjectsResult,
+} from "../operations/app-ready";
 import type { AppReadyIntent } from "../operations/app-ready";
 import { Path } from "../../services/platform/path";
 import type { ProjectId } from "../../shared/api/types";
-import type { ResolvedHooks } from "../intents/infrastructure/operation";
+import type {
+  HookContext,
+  HookResult,
+  Operation,
+  OperationContext,
+} from "../intents/infrastructure/operation";
+import type { Intent } from "../intents/infrastructure/types";
 import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
 import { CURRENT_PROJECT_VERSION } from "../../services/project/types";
 import { projectDirName } from "../../services/platform/paths";
@@ -96,29 +107,84 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
 }
 
 // =============================================================================
+// Collect Operation
+// =============================================================================
+
+/**
+ * A test operation that collects a specified hook point and returns the full
+ * HookResult. The hook point and context are set via mutable fields before
+ * dispatching.
+ */
+class CollectOperation<TIntent extends Intent> implements Operation<TIntent, HookResult> {
+  readonly id: string;
+  hookPoint = "";
+  hookContext: HookContext = { intent: { type: "", payload: {} } };
+
+  constructor(id: string) {
+    this.id = id;
+  }
+
+  async execute(ctx: OperationContext<TIntent>): Promise<HookResult> {
+    return ctx.hooks.collect(this.hookPoint, this.hookContext);
+  }
+}
+
+/**
+ * A wrapper around a CollectOperation + Dispatcher that provides the same
+ * collect() API as ResolvedHooks, for minimal test disruption.
+ */
+interface TestHooks {
+  collect<T>(hookPoint: string, ctx: HookContext): Promise<HookResult<T>>;
+}
+
+function createTestHooks<TIntent extends Intent>(
+  dispatcher: Dispatcher,
+  intentType: string,
+  collectOp: CollectOperation<TIntent>
+): TestHooks {
+  return {
+    async collect<T>(hookPoint: string, ctx: HookContext): Promise<HookResult<T>> {
+      collectOp.hookPoint = hookPoint;
+      collectOp.hookContext = ctx;
+      return (await dispatcher.dispatch({
+        type: intentType,
+        payload: (ctx.intent as Intent).payload,
+      } as TIntent)) as HookResult<T>;
+    },
+  };
+}
+
+// =============================================================================
 // Test Setup
 // =============================================================================
 
 interface TestSetup {
-  openHooks: ResolvedHooks;
-  closeHooks: ResolvedHooks;
-  readyHooks: ResolvedHooks;
+  openHooks: TestHooks;
+  closeHooks: TestHooks;
+  readyHooks: TestHooks;
   fs: ReturnType<typeof createFileSystemMock>;
   gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
 }
 
 function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): TestSetup {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const { deps, fs, gitWorktreeProvider } = createMockDeps(fsOverrides);
+
+  const openOp = new CollectOperation<OpenProjectIntent>(OPEN_PROJECT_OPERATION_ID);
+  const closeOp = new CollectOperation<CloseProjectIntent>(CLOSE_PROJECT_OPERATION_ID);
+  const readyOp = new CollectOperation<AppReadyIntent>(APP_READY_OPERATION_ID);
+
+  dispatcher.registerOperation(INTENT_OPEN_PROJECT, openOp);
+  dispatcher.registerOperation(INTENT_CLOSE_PROJECT, closeOp);
+  dispatcher.registerOperation(INTENT_APP_READY, readyOp);
 
   const module = createLocalProjectModule(deps);
   dispatcher.registerModule(module);
 
   return {
-    openHooks: hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID),
-    closeHooks: hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID),
-    readyHooks: hookRegistry.resolve(APP_READY_OPERATION_ID),
+    openHooks: createTestHooks(dispatcher, INTENT_OPEN_PROJECT, openOp),
+    closeHooks: createTestHooks(dispatcher, INTENT_CLOSE_PROJECT, closeOp),
+    readyHooks: createTestHooks(dispatcher, INTENT_APP_READY, readyOp),
     fs,
     gitWorktreeProvider,
   };

@@ -15,8 +15,8 @@
  * ```
  */
 
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "../../shared/api/types";
@@ -190,16 +190,14 @@ export function registerTestInfrastructure(
 }
 
 /**
- * Creates a fresh Dispatcher + HookRegistry and registers infrastructure.
+ * Creates a fresh Dispatcher and registers infrastructure.
  * Convenience for tests that don't need custom dispatcher setup.
  */
 export function createTestDispatcher(config: TestMockConfig): {
   dispatcher: Dispatcher;
-  hookRegistry: HookRegistry;
   mockModule: IntentModule;
 } {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const { mockModule } = registerTestInfrastructure(dispatcher, config);
-  return { dispatcher, hookRegistry, mockModule };
+  return { dispatcher, mockModule };
 }

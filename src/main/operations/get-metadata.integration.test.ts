@@ -11,8 +11,8 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import {
   SetMetadataOperation,
@@ -62,8 +62,7 @@ function createTestSetup(): TestSetup {
   const metadataStore = new Map<string, Record<string, string>>();
 
   // Build dispatcher with hook registry
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   // Register set-metadata and get-metadata operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());

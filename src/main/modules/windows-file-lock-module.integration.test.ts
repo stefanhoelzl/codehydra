@@ -6,7 +6,6 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
@@ -22,7 +21,10 @@ import {
 } from "../operations/delete-workspace";
 import { createWindowsFileLockModule } from "./windows-file-lock-module";
 import { SILENT_LOGGER } from "../../services/logging";
-import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
+import {
+  createBehavioralLogger,
+  createMockLogger,
+} from "../../services/logging/logging.test-utils";
 import { createMockProcessRunner } from "../../services/platform/process.state-mock";
 import type { MockProcessRunner } from "../../services/platform/process.state-mock";
 
@@ -126,8 +128,10 @@ class FlushOperation implements Operation<Intent, FlushHookResult> {
 const SCRIPT_PATH = "/scripts/blocking-processes.ps1";
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
-  const hookRegistry = new HookRegistry({ platform: "win32" });
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    initialCapabilities: { platform: "win32" },
+  });
   dispatcher.registerOperation("workspace:delete", releaseOperation);
 
   const module = createWindowsFileLockModule({
@@ -141,8 +145,10 @@ function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
 }
 
 function createDetectSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
-  const hookRegistry = new HookRegistry({ platform: "win32" });
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    initialCapabilities: { platform: "win32" },
+  });
   dispatcher.registerOperation("workspace:delete", detectOperation);
 
   const module = createWindowsFileLockModule({
@@ -160,8 +166,10 @@ function createFlushSetup(
   blockingPids: readonly number[],
   logger = SILENT_LOGGER
 ) {
-  const hookRegistry = new HookRegistry({ platform: "win32" });
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    initialCapabilities: { platform: "win32" },
+  });
   dispatcher.registerOperation("workspace:delete", new FlushOperation(blockingPids));
 
   const module = createWindowsFileLockModule({

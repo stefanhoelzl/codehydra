@@ -10,7 +10,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
@@ -27,7 +26,7 @@ import type {
   DeleteHookResult,
 } from "../operations/delete-workspace";
 import { createPluginServerModule, type PluginServerModuleDeps } from "./plugin-server-module";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { COMMAND_TIMEOUT_MS, SHUTDOWN_DISCONNECT_TIMEOUT_MS } from "../../shared/plugin-protocol";
 
@@ -104,13 +103,12 @@ function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServ
 
 function createTestSetup(mockDeps?: PluginServerModuleDeps) {
   const deps = mockDeps ?? createMockDeps();
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const module = createPluginServerModule(deps);
 
   dispatcher.registerModule(module);
 
-  return { deps, dispatcher, hookRegistry };
+  return { deps, dispatcher };
 }
 
 // =============================================================================

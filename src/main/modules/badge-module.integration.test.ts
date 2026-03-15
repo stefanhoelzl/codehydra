@@ -13,7 +13,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import {
@@ -46,7 +45,7 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import { createBadgeModule } from "./badge-module";
 import { BadgeManager } from "../managers/badge-manager";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { createAppLayerMock, type MockAppLayer } from "../../services/platform/app.state-mock";
 import { createImageLayerMock } from "../../services/platform/image.state-mock";
 import type { WindowManager } from "../managers/window-manager";
@@ -144,8 +143,7 @@ function createTestSetup(): TestSetup {
     SILENT_LOGGER
   );
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());

@@ -10,8 +10,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "../operations/update-available";
 import type { UpdateAvailableIntent } from "../operations/update-available";
@@ -80,8 +80,7 @@ interface TestSetup {
 function createTestSetup(titleVersion?: string): TestSetup {
   const setTitle = vi.fn();
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_MINIMAL_SWITCH, new MinimalSwitchOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
@@ -232,8 +231,7 @@ describe("WindowTitleModule Integration", () => {
 
   it("sets initial title without version when titleVersion is undefined", async () => {
     const setTitle = vi.fn();
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(
       INTENT_APP_START,

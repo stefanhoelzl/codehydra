@@ -10,7 +10,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 
@@ -47,7 +46,7 @@ import {
 import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../operations/set-metadata";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 
 // =============================================================================
@@ -348,8 +347,7 @@ function createTestSetup(): TestSetup {
   const provider = createMockGitWorktreeProvider();
   const pathProvider = createMockPathProvider();
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   // Register operations
   dispatcher.registerOperation("project:open", openProjectOperation);
@@ -378,8 +376,7 @@ function createPreflightTestSetup(): TestSetup {
   const provider = createMockGitWorktreeProvider();
   const pathProvider = createMockPathProvider();
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation("project:open", openProjectOperation);
   dispatcher.registerOperation("workspace:delete", new MinimalPreflightOperation());

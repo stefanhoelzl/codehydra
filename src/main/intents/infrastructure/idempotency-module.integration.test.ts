@@ -6,11 +6,11 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "./hook-registry";
 import { Dispatcher } from "./dispatcher";
 import { createIdempotencyModule } from "./idempotency-module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext } from "./operation";
+import { createMockLogger } from "../../../services/logging/logging.test-utils";
 
 // =============================================================================
 // Test Helpers
@@ -24,8 +24,7 @@ function noopOperation(id: string): Operation<Intent, void> {
 }
 
 function setup(...args: Parameters<typeof createIdempotencyModule>): { dispatcher: Dispatcher } {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const mod = createIdempotencyModule(...args);
   dispatcher.registerModule(mod);
   return { dispatcher };

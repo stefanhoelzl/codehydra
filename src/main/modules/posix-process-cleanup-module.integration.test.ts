@@ -7,7 +7,6 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
@@ -22,7 +21,10 @@ import {
   killPosixProcesses,
 } from "./posix-process-cleanup-module";
 import { SILENT_LOGGER } from "../../services/logging";
-import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
+import {
+  createBehavioralLogger,
+  createMockLogger,
+} from "../../services/logging/logging.test-utils";
 import { createMockProcessRunner } from "../../services/platform/process.state-mock";
 import type { MockProcessRunner } from "../../services/platform/process.state-mock";
 
@@ -61,8 +63,10 @@ const releaseOperation = createMinimalOperation<Intent, ReleaseHookResult>(
 );
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
-  const hookRegistry = new HookRegistry({ posix: true });
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    initialCapabilities: { posix: true },
+  });
   dispatcher.registerOperation("workspace:delete", releaseOperation);
 
   const module = createPosixProcessCleanupModule({
