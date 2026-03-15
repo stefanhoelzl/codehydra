@@ -918,7 +918,7 @@ describe("Dispatcher", () => {
       await dispatcher.dispatch(createActionIntent());
 
       const hookErrorLog = logger.calls.find(
-        (c) => c.level === "debug" && c.message === "hook error"
+        (c) => c.level === "warn" && c.message === "hook error"
       );
       expect(hookErrorLog).toBeDefined();
       expect(hookErrorLog!.context).toEqual(
