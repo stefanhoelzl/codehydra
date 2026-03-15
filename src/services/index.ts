@@ -113,16 +113,6 @@ export { validateExtensionsManifest } from "./vscode-setup";
 export { KeepFilesService } from "./keepfiles";
 export type { IKeepFilesService, CopyResult, CopyError } from "./keepfiles";
 
-// VS Code workspace file service
-export { WorkspaceFileService, createWorkspaceFileConfig } from "./vscode-workspace";
-export type {
-  IWorkspaceFileService,
-  WorkspaceFileConfig,
-  CodeWorkspaceFile,
-  WorkspaceFolder,
-  WorkspaceExtensions,
-} from "./vscode-workspace";
-
 // Logging service
 export {
   ElectronLogService,

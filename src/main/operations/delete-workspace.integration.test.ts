@@ -46,7 +46,6 @@ import type {
 import type { HookContext, OperationContext } from "../intents/infrastructure/operation";
 import type { IViewManager } from "../managers/view-manager.interface";
 
-import type { IWorkspaceFileService } from "../../services";
 import type {
   BlockingProcess,
   DeletionProgress,
@@ -294,10 +293,10 @@ function createTestSendToUI(): {
   return { sendToUI, emittedEvents };
 }
 
-function createTestWorkspaceFileService(): IWorkspaceFileService {
+function createTestWorkspaceFileService() {
   return {
     deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
-  } as unknown as IWorkspaceFileService;
+  };
 }
 
 // =============================================================================

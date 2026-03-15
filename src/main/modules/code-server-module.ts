@@ -26,7 +26,6 @@ import {
 } from "../../services/platform/process";
 import type { HttpClient, PortManager } from "../../services/platform/network";
 import type { PathProvider } from "../../services/platform/path-provider";
-import type { IWorkspaceFileService } from "../../services/vscode-workspace/types";
 import type { Logger } from "../../services/logging/types";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { SupportedPlatform, SupportedArch } from "../../services/agents/types";
@@ -171,7 +170,6 @@ export interface CodeServerModuleDeps {
     FileSystemLayer,
     "mkdir" | "readdir" | "rm" | "readFile" | "writeFile"
   >;
-  readonly workspaceFileService: IWorkspaceFileService;
   readonly pathProvider: Pick<PathProvider, "bundlePath" | "dataPath">;
   readonly buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">;
   readonly platform: SupportedPlatform;
@@ -212,6 +210,39 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     codeServerDir: deps.pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
     opencodeDir: deps.pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
   };
+
+  // -------------------------------------------------------------------------
+  // Workspace file helpers (inline — only used by this module)
+  // -------------------------------------------------------------------------
+
+  function workspaceFilePath(workspaceName: string, projectWorkspacesDir: Path): Path {
+    return new Path(projectWorkspacesDir, `${workspaceName}.code-workspace`);
+  }
+
+  async function writeWorkspaceFile(
+    workspacePath: Path,
+    agentSettings?: Readonly<Record<string, unknown>>
+  ): Promise<Path> {
+    const workspaceName = workspacePath.basename;
+    const projectWorkspacesDir = workspacePath.dirname;
+    const filePath = workspaceFilePath(workspaceName, projectWorkspacesDir);
+    const content = {
+      folders: [{ path: workspacePath.toString() }],
+      settings: { ...agentSettings },
+    };
+    await fileSystemLayer.writeFile(filePath, JSON.stringify(content, null, 2));
+    logger.debug("Created workspace file", { workspaceName, path: filePath.toString() });
+    return filePath;
+  }
+
+  async function removeWorkspaceFile(
+    workspaceName: string,
+    projectWorkspacesDir: Path
+  ): Promise<void> {
+    const filePath = workspaceFilePath(workspaceName, projectWorkspacesDir);
+    await fileSystemLayer.rm(filePath, { force: true });
+    logger.debug("Deleted workspace file", { workspaceName, path: filePath.toString() });
+  }
 
   // -------------------------------------------------------------------------
   // Binary download state
@@ -739,7 +770,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
             try {
               const workspacePathObj = new Path(finalizeCtx.workspacePath);
-              const projectWorkspacesDir = workspacePathObj.dirname;
               const envVarsArray = Object.entries(finalizeCtx.envVars).map(([name, value]) => ({
                 name,
                 value,
@@ -749,12 +779,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 "claudeCode.claudeProcessWrapper": deps.wrapperPath,
                 "claudeCode.environmentVariables": envVarsArray,
               };
-              const workspaceFilePath = await deps.workspaceFileService.ensureWorkspaceFile(
-                workspacePathObj,
-                projectWorkspacesDir,
-                agentSettings
-              );
-              capWorkspaceUrl = urlForWorkspace(codeServerPort, workspaceFilePath.toString());
+              const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
+              capWorkspaceUrl = urlForWorkspace(codeServerPort, wsFilePath.toString());
             } catch (error) {
               logger.warn("Failed to ensure workspace file, using folder URL", {
                 workspacePath: finalizeCtx.workspacePath,
@@ -779,10 +805,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               const workspacePath = new Path(wsPath);
               const workspaceName = workspacePath.basename;
               const projectWorkspacesDir = workspacePath.dirname;
-              await deps.workspaceFileService.deleteWorkspaceFile(
-                workspaceName,
-                projectWorkspacesDir
-              );
+              await removeWorkspaceFile(workspaceName, projectWorkspacesDir);
               return {};
             } catch (error) {
               if (payload.force) {

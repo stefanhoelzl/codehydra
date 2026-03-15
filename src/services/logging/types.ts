@@ -50,7 +50,6 @@ export type LoggerName =
   | "ext-manager" // ExtensionModule - extension manifest loading
   | "dialog" // DialogLayer - system dialogs
   | "menu" // MenuLayer - application menu
-  | "workspace-file" // WorkspaceFileService - .code-workspace file management
   | "config" // ConfigService - application config
   | "telemetry" // PosthogModule - PostHog analytics
   | "updater" // AutoUpdater - auto-update service
