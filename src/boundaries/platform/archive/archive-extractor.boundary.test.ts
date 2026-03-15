@@ -11,8 +11,8 @@ import * as os from "node:os";
 import * as tar from "tar";
 import yazl from "yazl";
 import { TarExtractor, ZipExtractor, DefaultArchiveExtractor } from "./archive-extractor";
-import { ArchiveError } from "./errors";
-import { Path } from "../../utils/path/path";
+import { ArchiveError } from "../../../services/errors";
+import { Path } from "../../../utils/path/path";
 
 /**
  * Creates a zip archive from a source directory using yazl.

@@ -17,17 +17,19 @@ import type {
 } from "../agent-module-provider";
 import type { AgentProvider, AgentSessionInfo, AgentStatus, McpConfig } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
-import type { AgentBinaryConfig, DownloadProgressCallback } from "../../binary-download";
-import type { BinaryDownloadService } from "../../binary-download";
+import type {
+  ArchiveExtension,
+  DownloadDeps,
+  DownloadProgressCallback,
+  DownloadRequest,
+} from "../../../utils/binary-download";
+import { downloadBinary, isBinaryInstalled } from "../../../utils/binary-download";
 import type { BinaryType } from "../../binary-resolution/types";
+import { AgentBinaryError, getErrorMessage } from "../../errors";
 import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
 import type { StopServerResult, RestartServerResult } from "../types";
 import type { Logger } from "../../../boundaries/platform/logging";
-import type { PortManager } from "../../../boundaries/platform/network/network";
-import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
-import type { FileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem";
-import { AgentBinaryManager } from "../../binary-download/agent-binary-manager";
-import { ClaudeCodeServerManager } from "./server-manager";
+import type { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
 import { configString } from "../../../boundaries/platform/config/config-definition";
 
@@ -39,11 +41,17 @@ import { configString } from "../../../boundaries/platform/config/config-definit
  * Dependencies for creating a Claude module provider.
  */
 export interface ClaudeModuleProviderDeps {
-  readonly binaryDownloadService: BinaryDownloadService;
-  readonly binaryConfig: AgentBinaryConfig;
-  readonly portManager: PortManager;
-  readonly pathProvider: PathProvider;
-  readonly fileSystem: FileSystemLayer;
+  readonly serverManager: ClaudeCodeServerManager;
+  readonly downloadDeps: DownloadDeps;
+  readonly binaryConfig: {
+    readonly name: string;
+    readonly version: string | null;
+    readonly destDir: string;
+    readonly url: string;
+    readonly executablePath: string;
+    readonly subPath?: string;
+    readonly archiveExtension: ArchiveExtension;
+  };
   readonly logger: Logger;
 }
 
@@ -58,19 +66,7 @@ export interface ClaudeModuleProviderDeps {
  * consistent with the existing module pattern.
  */
 export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): AgentModuleProvider {
-  const { logger } = deps;
-
-  const binaryManager = new AgentBinaryManager(
-    deps.binaryConfig,
-    deps.binaryDownloadService,
-    deps.logger
-  );
-  const serverManager = new ClaudeCodeServerManager({
-    portManager: deps.portManager,
-    pathProvider: deps.pathProvider,
-    fileSystem: deps.fileSystem,
-    logger: deps.logger,
-  });
+  const { serverManager, downloadDeps, binaryConfig, logger } = deps;
 
   // ===========================================================================
   // Internal closure state
@@ -275,19 +271,38 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     // --- Binary ---
 
     get binaryType(): BinaryType {
-      return binaryManager.getBinaryType();
+      return binaryConfig.name as BinaryType;
     },
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
-      const result = await binaryManager.preflight();
-      if (!result.success) {
+      if (binaryConfig.version === null) {
+        return { success: true, needsDownload: false };
+      }
+      try {
+        const installed = await isBinaryInstalled(binaryConfig.destDir, downloadDeps);
+        return { success: true, needsDownload: !installed };
+      } catch {
         return { success: false, needsDownload: false };
       }
-      return { success: true, needsDownload: result.needsDownload };
     },
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-      await binaryManager.downloadBinary(onProgress);
+      if (binaryConfig.version === null) return;
+      const request: DownloadRequest = {
+        name: binaryConfig.name,
+        url: binaryConfig.url,
+        destDir: binaryConfig.destDir,
+        archiveExtension: binaryConfig.archiveExtension,
+        executablePath: binaryConfig.executablePath,
+        ...(binaryConfig.subPath ? { subPath: binaryConfig.subPath } : {}),
+      };
+      try {
+        await downloadBinary(request, downloadDeps, onProgress);
+      } catch (error) {
+        throw new AgentBinaryError(
+          `Failed to download ${binaryConfig.name}: ${getErrorMessage(error)}`
+        );
+      }
     },
 
     // --- Config ---

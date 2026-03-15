@@ -21,18 +21,19 @@ import type {
 } from "../types";
 import type { AgentSessionInfo } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
-import type { AgentBinaryConfig, DownloadProgressCallback } from "../../binary-download";
-import type { BinaryDownloadService } from "../../binary-download";
+import type {
+  ArchiveExtension,
+  DownloadProgressCallback,
+  DownloadRequest,
+} from "../../../utils/binary-download";
+import { downloadBinary, isBinaryInstalled } from "../../../utils/binary-download";
+import type { DownloadDeps } from "../../../utils/binary-download";
 import type { BinaryType } from "../../binary-resolution/types";
+import { AgentBinaryError, getErrorMessage } from "../../errors";
 import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { Unsubscribe } from "../../../shared/api/interfaces";
-import type { ProcessRunner } from "../../../boundaries/platform/process/process";
-import type { PortManager, HttpClient } from "../../../boundaries/platform/network/network";
-import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
-import type { PendingPrompt } from "./server-manager";
-import { AgentBinaryManager } from "../../binary-download/agent-binary-manager";
-import { OpenCodeServerManager } from "./server-manager";
+import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
 import { configString } from "../../../boundaries/platform/config/config-definition";
 import { OpenCodeProvider } from "./provider";
 
@@ -44,12 +45,17 @@ import { OpenCodeProvider } from "./provider";
  * Dependencies for the OpenCode module provider.
  */
 export interface OpenCodeModuleProviderDeps {
-  readonly binaryDownloadService: BinaryDownloadService;
-  readonly binaryConfig: AgentBinaryConfig;
-  readonly processRunner: ProcessRunner;
-  readonly portManager: PortManager;
-  readonly httpClient: HttpClient;
-  readonly pathProvider: PathProvider;
+  readonly serverManager: OpenCodeServerManager;
+  readonly downloadDeps: DownloadDeps;
+  readonly binaryConfig: {
+    readonly name: string;
+    readonly version: string | null;
+    readonly destDir: string;
+    readonly url: string;
+    readonly executablePath: string;
+    readonly subPath?: string;
+    readonly archiveExtension: ArchiveExtension;
+  };
   readonly logger: Logger;
 }
 
@@ -64,20 +70,7 @@ export interface OpenCodeModuleProviderDeps {
 export function createOpenCodeModuleProvider(
   deps: OpenCodeModuleProviderDeps
 ): AgentModuleProvider {
-  const { logger } = deps;
-
-  const binaryManager = new AgentBinaryManager(
-    deps.binaryConfig,
-    deps.binaryDownloadService,
-    deps.logger
-  );
-  const serverManager = new OpenCodeServerManager(
-    deps.processRunner,
-    deps.portManager,
-    deps.httpClient,
-    deps.pathProvider,
-    deps.logger
-  );
+  const { serverManager, downloadDeps, binaryConfig, logger } = deps;
 
   // ===========================================================================
   // Internal closure state
@@ -331,18 +324,37 @@ export function createOpenCodeModuleProvider(
     scripts: ["ch-opencode", "ch-opencode.cjs", "ch-opencode.cmd"],
 
     // --- Binary ---
-    binaryType: binaryManager.getBinaryType() as BinaryType,
+    binaryType: binaryConfig.name as BinaryType,
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
-      const result = await binaryManager.preflight();
-      if (result.success) {
-        return { success: true, needsDownload: result.needsDownload };
+      if (binaryConfig.version === null) {
+        return { success: true, needsDownload: false };
       }
-      return { success: false, needsDownload: false };
+      try {
+        const installed = await isBinaryInstalled(binaryConfig.destDir, downloadDeps);
+        return { success: true, needsDownload: !installed };
+      } catch {
+        return { success: false, needsDownload: false };
+      }
     },
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-      await binaryManager.downloadBinary(onProgress);
+      if (binaryConfig.version === null) return;
+      const request: DownloadRequest = {
+        name: binaryConfig.name,
+        url: binaryConfig.url,
+        destDir: binaryConfig.destDir,
+        archiveExtension: binaryConfig.archiveExtension,
+        executablePath: binaryConfig.executablePath,
+        ...(binaryConfig.subPath ? { subPath: binaryConfig.subPath } : {}),
+      };
+      try {
+        await downloadBinary(request, downloadDeps, onProgress);
+      } catch (error) {
+        throw new AgentBinaryError(
+          `Failed to download ${binaryConfig.name}: ${getErrorMessage(error)}`
+        );
+      }
     },
 
     // --- Config ---

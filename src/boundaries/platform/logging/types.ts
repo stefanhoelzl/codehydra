@@ -40,8 +40,7 @@ export type LoggerName =
   | "view" // ViewManager
   | "app" // Application lifecycle
   | "ui" // Renderer UI components
-  | "binary-download" // BinaryDownloadService - binary downloads
-  | "agent-binary" // AgentBinaryManager - agent binary management
+  | "binary-download" // Binary download operations
   | "lifecycle" // LifecycleApi - app lifecycle
   | "plugin" // PluginServer - VS Code extension communication
   | "badge" // BadgeManager - app icon badge

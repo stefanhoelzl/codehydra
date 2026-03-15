@@ -8,88 +8,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createOpenCodeModuleProvider } from "./module-provider";
+import { createOpenCodeModuleProvider, type OpenCodeModuleProviderDeps } from "./module-provider";
 import type { AgentModuleProvider } from "../agent-module-provider";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
-import type { AgentBinaryManager } from "../../binary-download";
 import type { OpenCodeServerManager } from "./server-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-
-// =============================================================================
-// Mock server manager and binary manager classes
-// =============================================================================
-
-type ServerStartedHandler = (workspacePath: string, port: number, pendingPrompt: unknown) => void;
-type ServerStoppedHandler = (workspacePath: string, isRestart: boolean) => void;
-
-/** Latest mock server manager instance created by the mocked constructor. */
-let latestMockServerManager: OpenCodeServerManager & {
-  _triggerStarted: ServerStartedHandler;
-  _triggerStopped: ServerStoppedHandler;
-};
-
-/** Latest mock binary manager instance created by the mocked constructor. */
-let latestMockBinaryManager: AgentBinaryManager;
-
-function createMockServerManager(): OpenCodeServerManager & {
-  _triggerStarted: ServerStartedHandler;
-  _triggerStopped: ServerStoppedHandler;
-} {
-  let startedHandler: ServerStartedHandler | null = null;
-  let stoppedHandler: ServerStoppedHandler | null = null;
-
-  return {
-    startServer: vi.fn().mockResolvedValue(8080),
-    stopServer: vi.fn().mockResolvedValue({ success: true }),
-    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
-    dispose: vi.fn().mockResolvedValue(undefined),
-    setMcpConfig: vi.fn(),
-    setMarkActiveHandler: vi.fn(),
-    getBridgePort: vi.fn().mockReturnValue(9090),
-    onServerStarted: vi.fn((cb: ServerStartedHandler) => {
-      startedHandler = cb;
-      return vi.fn();
-    }),
-    onServerStopped: vi.fn((cb: ServerStoppedHandler) => {
-      stoppedHandler = cb;
-      return vi.fn();
-    }),
-    _triggerStarted(workspacePath: string, port: number, pendingPrompt: unknown) {
-      startedHandler?.(workspacePath, port, pendingPrompt);
-    },
-    _triggerStopped(workspacePath: string, isRestart: boolean) {
-      stoppedHandler?.(workspacePath, isRestart);
-    },
-  } as unknown as OpenCodeServerManager & {
-    _triggerStarted: ServerStartedHandler;
-    _triggerStopped: ServerStoppedHandler;
-  };
-}
-
-function createMockBinaryManager(): AgentBinaryManager {
-  return {
-    getBinaryType: vi.fn().mockReturnValue("opencode"),
-    preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
-    downloadBinary: vi.fn().mockResolvedValue(undefined),
-  } as unknown as AgentBinaryManager;
-}
-
-vi.mock("./server-manager", () => ({
-  OpenCodeServerManager: class {
-    constructor() {
-      Object.assign(this, createMockServerManager());
-      latestMockServerManager = this as unknown as typeof latestMockServerManager;
-    }
-  },
-}));
-vi.mock("../../binary-download/agent-binary-manager", () => ({
-  AgentBinaryManager: class {
-    constructor() {
-      Object.assign(this, createMockBinaryManager());
-      latestMockBinaryManager = this as unknown as AgentBinaryManager;
-    }
-  },
-}));
+import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-download";
+import { createFileSystemMock } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
+import { createMockHttpClient } from "../../../boundaries/platform/network/http-client.state-mock";
+import { createArchiveExtractorMock } from "../../../boundaries/platform/archive/archive-extractor.state-mock";
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted
@@ -174,6 +101,72 @@ vi.mock("./provider", () => ({
 const WS_PATH = "/workspace/feature-a" as WorkspacePath;
 const WS_PATH_B = "/workspace/feature-b" as WorkspacePath;
 
+type ServerStartedHandler = (workspacePath: string, port: number, pendingPrompt: unknown) => void;
+type ServerStoppedHandler = (workspacePath: string, isRestart: boolean) => void;
+
+/**
+ * Create a mock OpenCodeServerManager with vi.fn() stubs.
+ */
+function createMockServerManager(): OpenCodeServerManager & {
+  _triggerStarted: ServerStartedHandler;
+  _triggerStopped: ServerStoppedHandler;
+} {
+  let startedHandler: ServerStartedHandler | null = null;
+  let stoppedHandler: ServerStoppedHandler | null = null;
+
+  return {
+    startServer: vi.fn().mockResolvedValue(8080),
+    stopServer: vi.fn().mockResolvedValue({ success: true }),
+    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    setMcpConfig: vi.fn(),
+    setMarkActiveHandler: vi.fn(),
+    getBridgePort: vi.fn().mockReturnValue(9090),
+    onServerStarted: vi.fn((cb: ServerStartedHandler) => {
+      startedHandler = cb;
+      return vi.fn();
+    }),
+    onServerStopped: vi.fn((cb: ServerStoppedHandler) => {
+      stoppedHandler = cb;
+      return vi.fn();
+    }),
+    _triggerStarted(workspacePath: string, port: number, pendingPrompt: unknown) {
+      startedHandler?.(workspacePath, port, pendingPrompt);
+    },
+    _triggerStopped(workspacePath: string, isRestart: boolean) {
+      stoppedHandler?.(workspacePath, isRestart);
+    },
+  } as unknown as OpenCodeServerManager & {
+    _triggerStarted: ServerStartedHandler;
+    _triggerStopped: ServerStoppedHandler;
+  };
+}
+
+/**
+ * Create mock download dependencies.
+ */
+function createDownloadDeps(): DownloadDeps {
+  return {
+    httpClient: createMockHttpClient(),
+    fileSystemLayer: createFileSystemMock(),
+    archiveExtractor: createArchiveExtractorMock(),
+  };
+}
+
+/**
+ * Create a binary config for OpenCode.
+ */
+function createBinaryConfig() {
+  return {
+    name: "opencode" as const,
+    version: "1.0.223" as string | null,
+    destDir: "/test/opencode",
+    url: "",
+    executablePath: "opencode",
+    archiveExtension: ".tar.gz" as ArchiveExtension,
+  };
+}
+
 /**
  * Initialize the provider and trigger a server-started event so a mock
  * provider is created and registered. Returns the mock provider instance.
@@ -203,31 +196,25 @@ async function initializeAndStart(
 
 describe("OpenCode module provider", () => {
   let serverManager: ReturnType<typeof createMockServerManager>;
-  let binaryManager: AgentBinaryManager;
+  let downloadDeps: DownloadDeps;
+  let binaryConfig: ReturnType<typeof createBinaryConfig>;
   let provider: AgentModuleProvider;
 
   beforeEach(() => {
     vi.clearAllMocks();
     resetMockState();
 
-    provider = createOpenCodeModuleProvider({
-      binaryDownloadService: {} as never,
-      binaryConfig: {
-        name: "opencode",
-        version: "1.0.0",
-        destDir: "/tmp/opencode",
-        url: "https://example.com/opencode",
-        executablePath: "opencode",
-      },
-      processRunner: {} as never,
-      portManager: {} as never,
-      httpClient: {} as never,
-      pathProvider: {} as never,
+    serverManager = createMockServerManager();
+    downloadDeps = createDownloadDeps();
+    binaryConfig = createBinaryConfig();
+
+    const deps: OpenCodeModuleProviderDeps = {
+      serverManager: serverManager as unknown as OpenCodeServerManager,
+      downloadDeps,
+      binaryConfig,
       logger: SILENT_LOGGER,
-    });
-    // Capture the mock instances created during factory execution
-    serverManager = latestMockServerManager;
-    binaryManager = latestMockBinaryManager;
+    };
+    provider = createOpenCodeModuleProvider(deps);
   });
 
   // ---------------------------------------------------------------------------
@@ -282,18 +269,23 @@ describe("OpenCode module provider", () => {
   // ---------------------------------------------------------------------------
 
   describe("preflight", () => {
-    it("returns success and needsDownload from binary manager", async () => {
+    it("returns needsDownload true when binary is not installed", async () => {
       const result = await provider.preflight();
-      expect(result).toEqual({ success: true, needsDownload: false });
+      expect(result).toEqual({ success: true, needsDownload: true });
     });
 
-    it("returns success false when binary manager fails", async () => {
-      vi.mocked(binaryManager.preflight).mockResolvedValueOnce({
-        success: false,
-        error: { type: "not-found", message: "Binary not found" },
-      });
-      const result = await provider.preflight();
-      expect(result).toEqual({ success: false, needsDownload: false });
+    it("returns needsDownload false when version is null", async () => {
+      binaryConfig.version = null;
+      // Re-create provider with null version
+      const deps: OpenCodeModuleProviderDeps = {
+        serverManager: serverManager as unknown as OpenCodeServerManager,
+        downloadDeps,
+        binaryConfig,
+        logger: SILENT_LOGGER,
+      };
+      const nullVersionProvider = createOpenCodeModuleProvider(deps);
+      const result = await nullVersionProvider.preflight();
+      expect(result).toEqual({ success: true, needsDownload: false });
     });
   });
 
@@ -882,10 +874,20 @@ describe("OpenCode module provider", () => {
   // ---------------------------------------------------------------------------
 
   describe("downloadBinary", () => {
-    it("delegates to binaryManager.downloadBinary", async () => {
+    it("is a no-op when version is null", async () => {
+      binaryConfig.version = null;
+      const deps: OpenCodeModuleProviderDeps = {
+        serverManager: serverManager as unknown as OpenCodeServerManager,
+        downloadDeps,
+        binaryConfig,
+        logger: SILENT_LOGGER,
+      };
+      const nullVersionProvider = createOpenCodeModuleProvider(deps);
       const onProgress = vi.fn();
-      await provider.downloadBinary(onProgress);
-      expect(binaryManager.downloadBinary).toHaveBeenCalledWith(onProgress);
+      await nullVersionProvider.downloadBinary(onProgress);
+
+      // No HTTP requests should have been made since version is null
+      expect(onProgress).not.toHaveBeenCalled();
     });
   });
 });

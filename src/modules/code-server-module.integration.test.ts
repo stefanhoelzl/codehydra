@@ -33,14 +33,14 @@ import type {
   DeleteHookResult,
 } from "../intents/operations/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config/config-service";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/operations/app-start";
 import type { DirEntry } from "../boundaries/platform/filesystem/filesystem";
 import type { SpawnedProcess } from "../boundaries/platform/process/process";
-import type { BinaryDownloadService } from "../services/binary-download";
+import { createArchiveExtractorMock } from "../boundaries/platform/archive/archive-extractor.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-import { SetupError } from "../services/errors";
+import { FileSystemError, SetupError } from "../services/errors";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
@@ -216,16 +216,6 @@ function createMockSpawnedProcess(pid = 12345): SpawnedProcess {
   };
 }
 
-function createMockBinaryDownloadService(
-  overrides?: Partial<BinaryDownloadService>
-): BinaryDownloadService {
-  return {
-    isInstalled: vi.fn().mockResolvedValue(true),
-    download: vi.fn().mockResolvedValue(undefined),
-    ...overrides,
-  };
-}
-
 function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
   return {
     processRunner: {
@@ -243,6 +233,10 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       rm: vi.fn().mockResolvedValue(undefined),
       readFile: vi.fn().mockResolvedValue("[]"),
       writeFile: vi.fn().mockResolvedValue(undefined),
+      writeFileBuffer: vi.fn().mockResolvedValue(undefined),
+      unlink: vi.fn().mockResolvedValue(undefined),
+      rename: vi.fn().mockResolvedValue(undefined),
+      makeExecutable: vi.fn().mockResolvedValue(undefined),
     },
     pathProvider: {
       bundlePath: vi.fn().mockImplementation((subpath: string) => {
@@ -257,7 +251,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
     arch: "x64",
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
-    binaryDownloadService: createMockBinaryDownloadService(),
+    archiveExtractor: createArchiveExtractorMock(),
     configService: createMockConfig(),
     ...overrides,
   };
@@ -330,11 +324,11 @@ describe("CodeServerModule", () => {
 
   describe("check-deps", () => {
     it("returns code-server in missingBinaries when download needed", async () => {
-      const deps = createMockDeps({
-        binaryDownloadService: createMockBinaryDownloadService({
-          isInstalled: vi.fn().mockResolvedValue(false),
-        }),
-      });
+      const deps = createMockDeps();
+      // isBinaryInstalled calls readdir(destDir) - throw ENOENT to simulate not installed
+      (deps.fileSystemLayer.readdir as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new FileSystemError("ENOENT", "/bundles/code-server", "not found")
+      );
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
 
@@ -359,9 +353,9 @@ describe("CodeServerModule", () => {
       expect(result.missingBinaries ?? []).not.toContain("code-server");
     });
 
-    it("returns needsDownload false when no BinaryDownloadService available", async () => {
+    it("returns needsDownload false when no ArchiveExtractor available", async () => {
       const allDeps = createMockDeps();
-      delete (allDeps as unknown as Record<string, unknown>).binaryDownloadService;
+      delete (allDeps as unknown as Record<string, unknown>).archiveExtractor;
       const deps = allDeps;
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalCheckDepsOperation());
@@ -585,47 +579,85 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("binary download", () => {
+    /** Create a mock Response suitable for downloadBinary's streaming read. */
+    function createMockFetchResponse(
+      data: Uint8Array = new Uint8Array([1, 2, 3]),
+      contentLength?: number
+    ): Response {
+      let read = false;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(
+          contentLength !== undefined ? { "content-length": String(contentLength) } : {}
+        ),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (!read) {
+                read = true;
+                return { done: false, value: data };
+              }
+              return { done: true, value: undefined };
+            },
+          }),
+        },
+      } as unknown as Response;
+    }
+
+    /** Create deps with additional fileSystemLayer methods needed by downloadBinary. */
+    function createDownloadDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
+      const base = createMockDeps(overrides);
+      // Add methods that downloadBinary needs but createMockDeps doesn't provide
+      const fs = base.fileSystemLayer as Record<string, unknown>;
+      if (!fs.writeFileBuffer) fs.writeFileBuffer = vi.fn().mockResolvedValue(undefined);
+      if (!fs.unlink) fs.unlink = vi.fn().mockResolvedValue(undefined);
+      if (!fs.rename) fs.rename = vi.fn().mockResolvedValue(undefined);
+      if (!fs.makeExecutable) fs.makeExecutable = vi.fn().mockResolvedValue(undefined);
+      // httpClient.fetch must return a proper Response for downloadBinary
+      if (!overrides?.httpClient) {
+        (base.httpClient.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+          createMockFetchResponse()
+        );
+      }
+      return base;
+    }
+
     it("downloads code-server when missing", async () => {
-      const binaryDownloadService = createMockBinaryDownloadService();
-      const deps = createMockDeps({ binaryDownloadService });
+      const archiveExtractor = createArchiveExtractorMock();
+      const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
       dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(binaryDownloadService.download).toHaveBeenCalled();
+      expect(archiveExtractor.$.extractions.length).toBeGreaterThan(0);
       expect(op.report).toHaveBeenCalledWith("vscode", "done");
     });
 
     it("skips download when not missing", async () => {
-      const binaryDownloadService = createMockBinaryDownloadService();
-      const deps = createMockDeps({ binaryDownloadService });
+      const archiveExtractor = createArchiveExtractorMock();
+      const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: [] });
       dispatcher.registerOperation("setup", op);
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(binaryDownloadService.download).not.toHaveBeenCalled();
+      expect(archiveExtractor).toHaveNoExtractions();
       expect(op.report).toHaveBeenCalledWith("vscode", "done");
     });
 
     it("reports progress during download", async () => {
-      const binaryDownloadService = createMockBinaryDownloadService({
-        download: vi
-          .fn()
-          .mockImplementation(
-            async (
-              _req: unknown,
-              cb: (p: { phase: string; bytesDownloaded: number; totalBytes: number }) => void
-            ) => {
-              cb({ phase: "downloading", bytesDownloaded: 50, totalBytes: 100 });
-              cb({ phase: "extracting", bytesDownloaded: 100, totalBytes: 100 });
-            }
-          ),
+      const archiveExtractor = createArchiveExtractorMock();
+      const data = new Uint8Array(50);
+      const deps = createDownloadDeps({
+        archiveExtractor,
+        httpClient: {
+          fetch: vi.fn().mockResolvedValue(createMockFetchResponse(data, 100)),
+        },
       });
-      const deps = createMockDeps({ binaryDownloadService });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
       dispatcher.registerOperation("setup", op);
@@ -637,10 +669,10 @@ describe("CodeServerModule", () => {
     });
 
     it("throws SetupError on download failure", async () => {
-      const binaryDownloadService = createMockBinaryDownloadService({
-        download: vi.fn().mockRejectedValue(new Error("network error")),
+      const archiveExtractor = createArchiveExtractorMock({
+        defaultResult: { error: { message: "corrupt archive", code: "INVALID_ARCHIVE" } },
       });
-      const deps = createMockDeps({ binaryDownloadService });
+      const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
       const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
       dispatcher.registerOperation("setup", op);
@@ -797,6 +829,10 @@ describe("CodeServerModule", () => {
           rm: vi.fn().mockResolvedValue(undefined),
           readFile: vi.fn().mockResolvedValue("[]"),
           writeFile: vi.fn().mockRejectedValue(new Error("disk full")),
+          writeFileBuffer: vi.fn().mockResolvedValue(undefined),
+          unlink: vi.fn().mockResolvedValue(undefined),
+          rename: vi.fn().mockResolvedValue(undefined),
+          makeExecutable: vi.fn().mockResolvedValue(undefined),
         },
       });
 
@@ -869,6 +905,10 @@ describe("CodeServerModule", () => {
           rm: vi.fn().mockRejectedValue(new Error("permission denied")),
           readFile: vi.fn().mockResolvedValue("[]"),
           writeFile: vi.fn().mockResolvedValue(undefined),
+          writeFileBuffer: vi.fn().mockResolvedValue(undefined),
+          unlink: vi.fn().mockResolvedValue(undefined),
+          rename: vi.fn().mockResolvedValue(undefined),
+          makeExecutable: vi.fn().mockResolvedValue(undefined),
         },
       });
       const { dispatcher } = createTestSetup(deps);
@@ -899,6 +939,10 @@ describe("CodeServerModule", () => {
           rm: vi.fn().mockRejectedValue(new Error("permission denied")),
           readFile: vi.fn().mockResolvedValue("[]"),
           writeFile: vi.fn().mockResolvedValue(undefined),
+          writeFileBuffer: vi.fn().mockResolvedValue(undefined),
+          unlink: vi.fn().mockResolvedValue(undefined),
+          rename: vi.fn().mockResolvedValue(undefined),
+          makeExecutable: vi.fn().mockResolvedValue(undefined),
         },
       });
       const { dispatcher } = createTestSetup(deps);

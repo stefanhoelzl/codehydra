@@ -11,16 +11,16 @@
 
 import { expect } from "vitest";
 import type { ArchiveExtractor } from "./archive-extractor";
-import type { ArchiveErrorCode } from "./errors";
-import { ArchiveError } from "./errors";
-import { Path } from "../../utils/path/path";
+import type { ArchiveErrorCode } from "../../../services/errors";
+import { ArchiveError } from "../../../services/errors";
+import { Path } from "../../../utils/path/path";
 import type {
   MockState,
   MockWithState,
   Snapshot,
   MatcherResult,
   MatcherImplementationsFor,
-} from "../../test/state-mock";
+} from "../../../test/state-mock";
 
 // =============================================================================
 // Type Definitions

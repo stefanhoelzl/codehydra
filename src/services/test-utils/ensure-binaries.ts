@@ -11,8 +11,7 @@ import { join } from "node:path";
 import { DefaultPathProvider } from "../../boundaries/platform/env/path-provider";
 import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { DefaultNetworkLayer } from "../../boundaries/platform/network/network";
-import { DefaultBinaryDownloadService } from "../binary-download/binary-download-service";
-import { DefaultArchiveExtractor } from "../binary-download/archive-extractor";
+import { DefaultArchiveExtractor } from "../../boundaries/platform/archive/archive-extractor";
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
@@ -27,7 +26,9 @@ import {
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { createMockBuildInfo } from "../../boundaries/platform/env/build-info.test-utils";
 import { NodePlatformInfo } from "../../main/platform-info";
-import type { DownloadRequest } from "../binary-download/types";
+import { downloadBinary } from "../../utils/binary-download";
+import type { DownloadRequest } from "../../utils/binary-download";
+import type { DownloadDeps } from "../../utils/binary-download";
 import type { PlatformInfo } from "../../boundaries/platform/env/platform-info";
 import type { SupportedPlatform, SupportedArch } from "../agents/types";
 
@@ -80,6 +81,7 @@ function buildDownloadRequest(
         name: "code-server",
         url: getCodeServerUrl(platform, arch),
         destDir,
+        archiveExtension: ".tar.gz",
         executablePath,
         subPath: getCodeServerSubPath(platform, arch),
       },
@@ -94,6 +96,7 @@ function buildDownloadRequest(
       name: "opencode",
       url: getOpencodeUrl(platform, arch),
       destDir,
+      archiveExtension: platform === "darwin" || platform === "win32" ? ".zip" : ".tar.gz",
       executablePath,
     },
     binaryPath: join(destDir, executablePath),
@@ -158,18 +161,14 @@ export async function ensureBinaryForTests(
   const version = binary === "code-server" ? CODE_SERVER_VERSION : OPENCODE_VERSION;
   console.log(`Downloading ${binary} v${version} for tests...`);
 
-  const httpClient = new DefaultNetworkLayer(SILENT_LOGGER);
-  const fileSystem = new DefaultFileSystemBoundary(SILENT_LOGGER);
-  const archiveExtractor = new DefaultArchiveExtractor();
+  const deps: DownloadDeps = {
+    httpClient: new DefaultNetworkLayer(SILENT_LOGGER),
+    fileSystemLayer: new DefaultFileSystemBoundary(SILENT_LOGGER),
+    archiveExtractor: new DefaultArchiveExtractor(),
+    logger: SILENT_LOGGER,
+  };
 
-  const downloadService = new DefaultBinaryDownloadService(
-    httpClient,
-    fileSystem,
-    archiveExtractor,
-    SILENT_LOGGER
-  );
-
-  await downloadService.download(request, (progress) => {
+  await downloadBinary(request, deps, (progress) => {
     if (progress.totalBytes) {
       const percent = Math.round((progress.bytesDownloaded / progress.totalBytes) * 100);
       process.stdout.write(`\r  Downloading ${binary}: ${percent}%`);
