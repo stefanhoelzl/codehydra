@@ -16,6 +16,10 @@
     "services/**/*",
     "shared/**/*",
     "test/**/*",
-    "services/agents/**/*.json"
+    "services/agents/**/*.json",
+    "intents/**/*",
+    "modules/**/*",
+    "utils/**/*",
+    "boundaries/**/*"
   ]
 }

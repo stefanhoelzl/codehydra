@@ -12,7 +12,7 @@ import {
 } from "./mcp-server";
 import type { McpApiHandlers } from "./types";
 import { type ProjectId, initialPromptSchema } from "../../shared/api/types";
-import { createMockLogger } from "../logging";
+import { createMockLogger } from "../../boundaries/platform/logging";
 
 /**
  * Find a free port for testing.

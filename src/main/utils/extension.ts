@@ -7,8 +7,8 @@
  * - Build metadata: `publisher.name-1.0.0+build123`
  */
 
-import type { FileSystemLayer, PathLike } from "../../services/platform/filesystem";
-import { Path } from "../../services/platform/path";
+import type { FileSystemLayer, PathLike } from "../../boundaries/platform/filesystem/filesystem";
+import { Path } from "../../utils/path/path";
 
 /**
  * Parsed extension info from a directory name.

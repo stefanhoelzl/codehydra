@@ -8,11 +8,11 @@
 
 import * as path from "node:path";
 import ignore, { type Ignore } from "ignore";
-import type { FileSystemLayer } from "../platform/filesystem";
+import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
 import type { IKeepFilesService, CopyResult, CopyError } from "./types";
-import type { Logger } from "../logging";
+import type { Logger } from "../../boundaries/platform/logging";
 import { getErrorMessage } from "../errors";
-import type { Path } from "../platform/path";
+import type { Path } from "../../utils/path/path";
 
 /**
  * Configuration file name for keep files patterns.

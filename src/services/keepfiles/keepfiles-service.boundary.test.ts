@@ -8,10 +8,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
 import { writeFile as nodeWriteFile, mkdir as nodeMkdir } from "node:fs/promises";
 import { KeepFilesService } from "./keepfiles-service";
-import { DefaultFileSystemLayer } from "../platform/filesystem";
-import { SILENT_LOGGER } from "../logging";
+import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { createTempDir } from "../test-utils";
-import { Path } from "../platform/path";
+import { Path } from "../../utils/path/path";
 
 describe("KeepFilesService", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };

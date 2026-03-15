@@ -1,0 +1,145 @@
+// @vitest-environment node
+/**
+ * Integration tests for ScriptModule through the Dispatcher.
+ *
+ * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
+ */
+
+import { describe, it, expect, vi } from "vitest";
+import { Dispatcher } from "../intents/lib/dispatcher";
+
+import type { Operation, OperationContext } from "../intents/lib/operation";
+import type { Intent } from "../intents/lib/types";
+import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/operations/app-start";
+import type { AppStartIntent, InitHookContext } from "../intents/operations/app-start";
+import { createScriptModule } from "./script-module";
+import { createMockPathProvider } from "../boundaries/platform/env/path-provider.test-utils";
+import { Path } from "../utils/path/path";
+
+// =============================================================================
+// Minimal Test Operation
+// =============================================================================
+
+/** Runs "init" hook point with InitHookContext. */
+class MinimalInitOperation implements Operation<Intent, void> {
+  readonly id = APP_START_OPERATION_ID;
+  private readonly scripts: readonly string[];
+
+  constructor(scripts: readonly string[] = ["ch-claude", "code"]) {
+    this.scripts = scripts;
+  }
+
+  async execute(ctx: OperationContext<Intent>): Promise<void> {
+    const initCtx: InitHookContext = {
+      intent: ctx.intent,
+      requiredScripts: this.scripts,
+      capabilities: { "app-ready": true },
+    };
+    const { errors } = await ctx.hooks.collect<void>("init", initCtx);
+    if (errors.length > 0) throw errors[0]!;
+  }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+describe("ScriptModule Integration", () => {
+  it("copies only declared scripts from requiredScripts", async () => {
+    const fileSystem = {
+      rm: vi.fn().mockResolvedValue(undefined),
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      copyTree: vi.fn().mockResolvedValue(undefined),
+      makeExecutable: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const pathProvider = createMockPathProvider({
+      dataRootDir: "/app-data",
+      assetsRootDir: "/assets",
+    });
+
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+    const scripts = ["ch-claude", "ch-claude.cjs", "ch-claude.cmd", "code"];
+    dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation(scripts));
+
+    const module = createScriptModule({
+      fileSystem: fileSystem as never,
+      pathProvider: pathProvider as never,
+    });
+    dispatcher.registerModule(module);
+
+    await dispatcher.dispatch({
+      type: INTENT_APP_START,
+      payload: {},
+    } as AppStartIntent);
+
+    // Should clean and recreate bin dir
+    expect(fileSystem.rm).toHaveBeenCalledWith(
+      new Path("/app-data/bin"),
+      expect.objectContaining({ recursive: true, force: true })
+    );
+    expect(fileSystem.mkdir).toHaveBeenCalledWith(new Path("/app-data/bin"));
+
+    // Should copy each declared script
+    expect(fileSystem.copyTree).toHaveBeenCalledTimes(4);
+    expect(fileSystem.copyTree).toHaveBeenCalledWith(
+      new Path("/assets/bin/ch-claude"),
+      new Path("/app-data/bin/ch-claude")
+    );
+    expect(fileSystem.copyTree).toHaveBeenCalledWith(
+      new Path("/assets/bin/ch-claude.cjs"),
+      new Path("/app-data/bin/ch-claude.cjs")
+    );
+    expect(fileSystem.copyTree).toHaveBeenCalledWith(
+      new Path("/assets/bin/ch-claude.cmd"),
+      new Path("/app-data/bin/ch-claude.cmd")
+    );
+    expect(fileSystem.copyTree).toHaveBeenCalledWith(
+      new Path("/assets/bin/code"),
+      new Path("/app-data/bin/code")
+    );
+
+    // Should make non-.cmd, non-.cjs files executable
+    expect(fileSystem.makeExecutable).toHaveBeenCalledTimes(2);
+    expect(fileSystem.makeExecutable).toHaveBeenCalledWith(new Path("/app-data/bin/ch-claude"));
+    expect(fileSystem.makeExecutable).toHaveBeenCalledWith(new Path("/app-data/bin/code"));
+  });
+
+  it("handles empty requiredScripts list", async () => {
+    const fileSystem = {
+      rm: vi.fn().mockResolvedValue(undefined),
+      mkdir: vi.fn().mockResolvedValue(undefined),
+      copyTree: vi.fn().mockResolvedValue(undefined),
+      makeExecutable: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const pathProvider = createMockPathProvider({
+      dataRootDir: "/app-data",
+      assetsRootDir: "/assets",
+    });
+
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+    dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation([]));
+
+    const module = createScriptModule({
+      fileSystem: fileSystem as never,
+      pathProvider: pathProvider as never,
+    });
+    dispatcher.registerModule(module);
+
+    await dispatcher.dispatch({
+      type: INTENT_APP_START,
+      payload: {},
+    } as AppStartIntent);
+
+    // Should still clean and recreate bin dir
+    expect(fileSystem.rm).toHaveBeenCalled();
+    expect(fileSystem.mkdir).toHaveBeenCalled();
+
+    // Should not copy anything
+    expect(fileSystem.copyTree).not.toHaveBeenCalled();
+    expect(fileSystem.makeExecutable).not.toHaveBeenCalled();
+  });
+});

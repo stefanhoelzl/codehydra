@@ -13,7 +13,7 @@ import { expect } from "vitest";
 import type { ArchiveExtractor } from "./archive-extractor";
 import type { ArchiveErrorCode } from "./errors";
 import { ArchiveError } from "./errors";
-import { Path } from "../platform/path";
+import { Path } from "../../utils/path/path";
 import type {
   MockState,
   MockWithState,

@@ -5,7 +5,7 @@
  * project root to new workspaces.
  */
 
-import type { Path } from "../platform/path";
+import type { Path } from "../../utils/path/path";
 
 /**
  * Interface for the KeepFiles service.

@@ -2,7 +2,7 @@
  * Types for binary download operations.
  */
 
-import type { SupportedArch } from "../platform/platform-info.js";
+import type { SupportedArch } from "../../boundaries/platform/env/platform-info.js";
 
 // Re-export SupportedArch from platform-info to avoid duplication
 export type { SupportedArch };

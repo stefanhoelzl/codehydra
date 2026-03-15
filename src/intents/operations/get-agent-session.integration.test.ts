@@ -1,0 +1,192 @@
+// @vitest-environment node
+/**
+ * Integration tests for get-agent-session operation through the Dispatcher.
+ *
+ * Tests verify the full dispatch pipeline: intent -> operation -> hook -> result.
+ *
+ * Test plan items covered:
+ * #3: get-agent-session returns session info
+ * #4: get-agent-session returns null when no session
+ */
+
+import { describe, it, expect, beforeEach } from "vitest";
+import { Dispatcher } from "../lib/dispatcher";
+import type { IntentInterceptor } from "../lib/dispatcher";
+
+import {
+  GetAgentSessionOperation,
+  GET_AGENT_SESSION_OPERATION_ID,
+  INTENT_GET_AGENT_SESSION,
+} from "./get-agent-session";
+import type { GetAgentSessionIntent, GetAgentSessionHookResult } from "./get-agent-session";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult } from "./resolve-workspace";
+import type { IntentModule } from "../lib/module";
+import type { HookContext } from "../lib/operation";
+import type { Intent } from "../lib/types";
+import type { WorkspaceName, AgentSession } from "../../shared/api/types";
+import { extractWorkspaceName } from "../../shared/api/id-utils";
+
+// =============================================================================
+// Test Constants
+// =============================================================================
+
+const PROJECT_ROOT = "/project";
+const WORKSPACE_PATH = "/workspaces/feature-x";
+
+// =============================================================================
+// Behavioral Mocks
+// =============================================================================
+
+interface AgentSessionInfo {
+  readonly port: number;
+  readonly sessionId: string;
+}
+
+// =============================================================================
+// Test Setup
+// =============================================================================
+
+interface TestSetup {
+  dispatcher: Dispatcher;
+  workspaceName: WorkspaceName;
+}
+
+function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup {
+  const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+  dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+
+  // Resolve module: validates workspacePath → returns projectPath + workspaceName
+  const resolveModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const intent = ctx.intent as { payload: { workspacePath: string } };
+            if (intent.payload.workspacePath === WORKSPACE_PATH) {
+              return { projectPath: PROJECT_ROOT, workspaceName };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // Agent session hook handler module (returns session from test data)
+  const agentSessionModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [GET_AGENT_SESSION_OPERATION_ID]: {
+        get: {
+          handler: async (): Promise<GetAgentSessionHookResult> => {
+            return { session: opts.session ?? null };
+          },
+        },
+      },
+    },
+  };
+
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(agentSessionModule);
+
+  return { dispatcher, workspaceName };
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+function sessionIntent(workspacePath: string): GetAgentSessionIntent {
+  return {
+    type: INTENT_GET_AGENT_SESSION,
+    payload: { workspacePath },
+  };
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+describe("GetAgentSession Operation", () => {
+  describe("returns session info (#3)", () => {
+    let setup: TestSetup;
+
+    beforeEach(() => {
+      setup = createTestSetup({
+        session: { port: 8080, sessionId: "ses-001" },
+      });
+    });
+
+    it("returns session with port and sessionId", async () => {
+      const { dispatcher } = setup;
+
+      const result = (await dispatcher.dispatch(
+        sessionIntent(WORKSPACE_PATH)
+      )) as AgentSession | null;
+
+      expect(result).toEqual({ port: 8080, sessionId: "ses-001" });
+    });
+  });
+
+  describe("returns null when no session (#4)", () => {
+    it("returns null when no session exists for workspace", async () => {
+      const setup = createTestSetup({
+        session: null,
+      });
+
+      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
+
+      expect(result).toBeNull();
+    });
+
+    it("returns null when no agent status manager", async () => {
+      const setup = createTestSetup({
+        session: null,
+      });
+
+      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("error cases", () => {
+    it("unknown workspace path throws", async () => {
+      const setup = createTestSetup({ session: null });
+
+      await expect(setup.dispatcher.dispatch(sessionIntent("/nonexistent/path"))).rejects.toThrow(
+        "Workspace not found: /nonexistent/path"
+      );
+    });
+  });
+
+  describe("interceptor", () => {
+    it("cancellation prevents operation execution (#14)", async () => {
+      const setup = createTestSetup({
+        session: { port: 8080, sessionId: "ses-001" },
+      });
+
+      const cancelInterceptor: IntentInterceptor = {
+        id: "cancel-all",
+        async before(): Promise<Intent | null> {
+          return null;
+        },
+      };
+      setup.dispatcher.addInterceptor(cancelInterceptor);
+
+      const result = await setup.dispatcher.dispatch(sessionIntent(WORKSPACE_PATH));
+
+      expect(result).toBeUndefined();
+    });
+  });
+});

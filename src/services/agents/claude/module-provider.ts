@@ -19,12 +19,12 @@ import type { AgentProvider, AgentSessionInfo, AgentStatus, McpConfig } from "..
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { AgentBinaryManager, DownloadProgressCallback } from "../../binary-download";
 import type { BinaryType } from "../../binary-resolution/types";
-import type { ConfigKeyDefinition } from "../../config/config-definition";
+import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
 import type { StopServerResult, RestartServerResult } from "../types";
-import type { Logger } from "../../logging";
+import type { Logger } from "../../../boundaries/platform/logging";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
-import { configString } from "../../config/config-definition";
+import { configString } from "../../../boundaries/platform/config/config-definition";
 
 // =============================================================================
 // Dependency Interface

@@ -18,20 +18,20 @@ export {
 export type { SerializedError } from "./errors";
 
 // Types used by createGitWorktreeProvider
-import type { Path } from "./platform/path";
-import type { FileSystemLayer } from "./platform/filesystem";
-import type { Logger } from "./logging";
+import type { Path } from "../utils/path/path";
+import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { Logger } from "../boundaries/platform/logging";
 
 // Git types
-export type { Workspace, BaseInfo } from "./git/types";
+export type { Workspace, BaseInfo } from "../boundaries/platform/git/types";
 
 // Git client
-export type { IGitClient } from "./git/git-client";
-import { SimpleGitClient } from "./git/simple-git-client";
+export type { IGitClient } from "../boundaries/platform/git/git-client";
+import { SimpleGitClient } from "../boundaries/platform/git/simple-git-client";
 export { SimpleGitClient };
 
 // Workspace provider
-import { GitWorktreeProvider } from "./git/git-worktree-provider";
+import { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
 export { GitWorktreeProvider };
 
 // Project types
@@ -39,49 +39,53 @@ export type { ProjectConfig } from "./project/types";
 export { CURRENT_PROJECT_VERSION } from "./project/types";
 
 // Platform utilities (pure functions - no build-mode dependencies)
-export { sanitizeWorkspaceName, encodePathForUrl, projectDirName } from "./platform/paths";
+export {
+  sanitizeWorkspaceName,
+  encodePathForUrl,
+  projectDirName,
+} from "../boundaries/platform/env/paths";
 
 // Path class for normalized cross-platform path handling
-export { Path } from "./platform/path";
+export { Path } from "../utils/path/path";
 
 // Build info abstraction
-export type { BuildInfo } from "./platform/build-info";
-export { createMockBuildInfo } from "./platform/build-info.test-utils";
+export type { BuildInfo } from "../boundaries/platform/env/build-info";
+export { createMockBuildInfo } from "../boundaries/platform/env/build-info.test-utils";
 
 // Platform info abstraction
-export type { PlatformInfo } from "./platform/platform-info";
-export { createMockPlatformInfo } from "./platform/platform-info.test-utils";
+export type { PlatformInfo } from "../boundaries/platform/env/platform-info";
+export { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
 
 // Path provider abstraction
-export type { PathProvider, PathOptions } from "./platform/path-provider";
-export { DefaultPathProvider } from "./platform/path-provider";
-export { createMockPathProvider } from "./platform/path-provider.test-utils";
+export type { PathProvider, PathOptions } from "../boundaries/platform/env/path-provider";
+export { DefaultPathProvider } from "../boundaries/platform/env/path-provider";
+export { createMockPathProvider } from "../boundaries/platform/env/path-provider.test-utils";
 
 // Process utilities
 export {
   ExecaProcessRunner,
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
   PROCESS_KILL_FORCE_TIMEOUT_MS,
-} from "./platform/process";
+} from "../boundaries/platform/process/process";
 export type {
   ProcessRunner,
   ProcessResult,
   ProcessOptions,
   SpawnedProcess,
   KillResult,
-} from "./platform/process";
+} from "../boundaries/platform/process/process";
 
 // Network layer
-export { DefaultNetworkLayer } from "./platform/network";
+export { DefaultNetworkLayer } from "../boundaries/platform/network/network";
 export type {
   HttpClient,
   HttpRequestOptions,
   PortManager,
   NetworkLayerConfig,
-} from "./platform/network";
+} from "../boundaries/platform/network/network";
 
 // Filesystem layer
-export { DefaultFileSystemLayer } from "./platform/filesystem";
+export { DefaultFileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
 export type {
   FileSystemLayer,
   DirEntry,
@@ -89,7 +93,7 @@ export type {
   RmOptions,
   FileSystemErrorCode,
   PathLike,
-} from "./platform/filesystem";
+} from "../boundaries/platform/filesystem/filesystem";
 export {
   createFileSystemMock,
   createSpyFileSystemLayer,
@@ -103,7 +107,7 @@ export {
   type FileEntry,
   type DirectoryEntry,
   type SymlinkEntry,
-} from "./platform/filesystem.state-mock";
+} from "../boundaries/platform/filesystem/filesystem.state-mock";
 
 // KeepFiles service
 export { KeepFilesService } from "./keepfiles";
@@ -118,7 +122,7 @@ export {
   createMockLogger,
   createMockLoggingService,
   SILENT_LOGGER,
-} from "./logging";
+} from "../boundaries/platform/logging";
 export type {
   Logger,
   LoggingService,
@@ -129,7 +133,7 @@ export type {
   LogOutput,
   MockLogger,
   MockLoggingService,
-} from "./logging";
+} from "../boundaries/platform/logging";
 
 /**
  * Factory function to create a GitWorktreeProvider with a SimpleGitClient.

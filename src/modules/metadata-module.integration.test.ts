@@ -1,0 +1,204 @@
+// @vitest-environment node
+/**
+ * Integration tests for MetadataModule through the Dispatcher.
+ *
+ * Tests verify the full dispatch pipeline: intent -> operation -> hook -> provider,
+ * using real GitWorktreeProvider with behavioral mocks for git client and filesystem.
+ *
+ * The module under test is createMetadataModule (the extracted hook handler).
+ * Resolve-project and resolve-workspace are inline stubs.
+ */
+
+import { describe, it, expect } from "vitest";
+import { Dispatcher } from "../intents/lib/dispatcher";
+
+import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/operations/set-metadata";
+import type { SetMetadataIntent } from "../intents/operations/set-metadata";
+import { GetMetadataOperation, INTENT_GET_METADATA } from "../intents/operations/get-metadata";
+import type { GetMetadataIntent } from "../intents/operations/get-metadata";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "../intents/operations/resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../intents/operations/resolve-workspace";
+import {
+  ResolveProjectOperation,
+  RESOLVE_PROJECT_OPERATION_ID,
+  INTENT_RESOLVE_PROJECT,
+} from "../intents/operations/resolve-project";
+import type {
+  ResolveHookResult as ResolveProjectHookResult,
+  ResolveHookInput as ResolveProjectHookInput,
+} from "../intents/operations/resolve-project";
+import { createMetadataModule } from "./metadata-module";
+import { createMockGitClient } from "../boundaries/platform/git/git-client.state-mock";
+import {
+  createFileSystemMock,
+  directory,
+} from "../boundaries/platform/filesystem/filesystem.state-mock";
+import { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import { Path } from "../utils/path/path";
+import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { extractWorkspaceName } from "../shared/api/id-utils";
+import type { IntentModule } from "../intents/lib/module";
+import type { HookContext } from "../intents/lib/operation";
+
+// =============================================================================
+// Test Constants
+// =============================================================================
+
+const PROJECT_ROOT = new Path("/project");
+const WORKSPACES_DIR = new Path("/workspaces");
+
+// =============================================================================
+// Test Setup
+// =============================================================================
+
+interface TestSetup {
+  dispatcher: Dispatcher;
+  mockClient: ReturnType<typeof createMockGitClient>;
+  projectId: ProjectId;
+  workspaceName: WorkspaceName;
+  workspacePath: string;
+}
+
+function createTestSetup(): TestSetup {
+  const mockClient = createMockGitClient({
+    repositories: {
+      [PROJECT_ROOT.toString()]: {
+        branches: ["main", "feature-x"],
+        currentBranch: "main",
+        worktrees: [
+          {
+            name: "feature-x",
+            path: new Path(WORKSPACES_DIR, "feature-x").toString(),
+            branch: "feature-x",
+          },
+        ],
+      },
+    },
+  });
+
+  const mockFs = createFileSystemMock({
+    entries: {
+      [WORKSPACES_DIR.toString()]: directory(),
+    },
+  });
+
+  const gitWorktreeProvider = new GitWorktreeProvider(mockClient, mockFs, SILENT_LOGGER);
+  gitWorktreeProvider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
+
+  const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
+  gitWorktreeProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
+
+  const projectId = "project-ea0135bc" as ProjectId;
+  const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
+
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+  dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
+  dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
+
+  // resolve stub: validates workspacePath → returns projectPath + workspaceName
+  const resolveModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
+            if (wsPath === workspacePath.toString()) {
+              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // resolve-project stub: resolves projectPath → projectId (for set-metadata commands)
+  const resolveProjectModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [RESOLVE_PROJECT_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+            const { projectPath } = ctx as ResolveProjectHookInput;
+            if (projectPath === PROJECT_ROOT.toString()) {
+              return { projectId };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // Module under test
+  const metadataModule = createMetadataModule({ gitWorktreeProvider });
+
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(resolveProjectModule);
+  dispatcher.registerModule(metadataModule);
+
+  return {
+    dispatcher,
+    mockClient,
+    projectId,
+    workspaceName,
+    workspacePath: workspacePath.toString(),
+  };
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+describe("MetadataModule Integration", () => {
+  it("set then get returns correct metadata (round-trip)", async () => {
+    const { dispatcher, workspacePath } = createTestSetup();
+
+    const setIntent: SetMetadataIntent = {
+      type: INTENT_SET_METADATA,
+      payload: { workspacePath, key: "description", value: "my workspace" },
+    };
+    await dispatcher.dispatch(setIntent);
+
+    const getIntent: GetMetadataIntent = {
+      type: INTENT_GET_METADATA,
+      payload: { workspacePath },
+    };
+    const metadata = await dispatcher.dispatch(getIntent);
+
+    expect(metadata).toMatchObject({ description: "my workspace" });
+  });
+
+  it("set with null value deletes key", async () => {
+    const { dispatcher, workspacePath } = createTestSetup();
+
+    // Set a value first
+    await dispatcher.dispatch({
+      type: INTENT_SET_METADATA,
+      payload: { workspacePath, key: "description", value: "to be deleted" },
+    } satisfies SetMetadataIntent);
+
+    // Delete it
+    await dispatcher.dispatch({
+      type: INTENT_SET_METADATA,
+      payload: { workspacePath, key: "description", value: null },
+    } satisfies SetMetadataIntent);
+
+    // Get should not contain the deleted key
+    const metadata = await dispatcher.dispatch({
+      type: INTENT_GET_METADATA,
+      payload: { workspacePath },
+    } satisfies GetMetadataIntent);
+
+    expect(metadata).not.toHaveProperty("description");
+  });
+});

@@ -10,7 +10,7 @@ import type { AgentType } from "../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import type { AgentSessionInfo, McpConfig, StopServerResult, RestartServerResult } from "./types";
 import type { BinaryType } from "../binary-resolution/types";
-import type { ConfigKeyDefinition } from "../config/config-definition";
+import type { ConfigKeyDefinition } from "../../boundaries/platform/config/config-definition";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 import type { DownloadProgressCallback } from "../binary-download";
 

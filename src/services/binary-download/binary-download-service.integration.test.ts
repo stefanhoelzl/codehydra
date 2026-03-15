@@ -11,10 +11,10 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { DefaultArchiveExtractor } from "./archive-extractor";
-import { DefaultFileSystemLayer } from "../platform/filesystem";
-import { createMockHttpClient } from "../platform/http-client.state-mock";
+import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
-import { createMockLogger } from "../logging/logging.test-utils";
+import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 import type { DownloadRequest } from "./types";
 
 describe("BinaryDownloadService (integration)", () => {

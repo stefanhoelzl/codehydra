@@ -11,8 +11,8 @@ import { mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { parseExtensionDir, listInstalledExtensions, removeFromExtensionsJson } from "./extension";
-import { DefaultFileSystemLayer } from "../../services/platform/filesystem";
-import { createMockLogger } from "../../services/logging/logging.test-utils";
+import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 
 describe("parseExtensionDir", () => {
   describe("standard versions", () => {

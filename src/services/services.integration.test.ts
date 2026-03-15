@@ -6,15 +6,18 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createTestGitRepo, createTempDir } from "./test-utils";
-import { SimpleGitClient } from "./git/simple-git-client";
-import { GitWorktreeProvider } from "./git/git-worktree-provider";
-import { DefaultFileSystemLayer } from "./platform/filesystem";
-import { SILENT_LOGGER } from "./logging";
-import { createFileSystemMock, directory } from "./platform/filesystem.state-mock";
-import { createMockGitClient } from "./git/git-client.state-mock";
+import { SimpleGitClient } from "../boundaries/platform/git/simple-git-client";
+import { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
+import { DefaultFileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import {
+  createFileSystemMock,
+  directory,
+} from "../boundaries/platform/filesystem/filesystem.state-mock";
+import { createMockGitClient } from "../boundaries/platform/git/git-client.state-mock";
 import { createGitWorktreeProvider } from "./index";
-import { projectDirName } from "./platform/paths";
-import { Path } from "./platform/path";
+import { projectDirName } from "../boundaries/platform/env/paths";
+import { Path } from "../utils/path/path";
 import path from "path";
 
 describe("Services Integration", () => {

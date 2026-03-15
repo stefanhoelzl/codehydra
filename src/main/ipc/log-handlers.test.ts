@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ipcMain } from "electron";
 import { ApiIpcChannels } from "../../shared/ipc";
-import { createMockLoggingService } from "../../services/logging";
+import { createMockLoggingService } from "../../boundaries/platform/logging";
 import { registerLogHandlers } from "./log-handlers";
 
 // Mock Electron ipcMain

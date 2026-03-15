@@ -23,11 +23,11 @@ import type { AgentSessionInfo } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { AgentBinaryManager, DownloadProgressCallback } from "../../binary-download";
 import type { BinaryType } from "../../binary-resolution/types";
-import type { ConfigKeyDefinition } from "../../config/config-definition";
-import type { Logger } from "../../logging";
+import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
+import type { Logger } from "../../../boundaries/platform/logging";
 import type { Unsubscribe } from "../../../shared/api/interfaces";
 import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
-import { configString } from "../../config/config-definition";
+import { configString } from "../../../boundaries/platform/config/config-definition";
 import { OpenCodeProvider } from "./provider";
 
 // =============================================================================

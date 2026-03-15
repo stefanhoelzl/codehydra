@@ -6,12 +6,12 @@
  * - Half red/half green: Mixed state (some ready, some working)
  */
 
-import type { PlatformInfo } from "../../services/platform/platform-info";
-import type { AppLayer } from "../../services/platform/app";
-import type { ImageLayer } from "../../services/platform/image";
+import type { PlatformInfo } from "../../boundaries/platform/env/platform-info";
+import type { AppLayer } from "../../boundaries/shell/app/app";
+import type { ImageLayer } from "../../boundaries/shell/image/image";
 import type { ImageHandle } from "../../services/platform/types";
-import type { WindowManager } from "./window-manager";
-import type { Logger } from "../../services/logging";
+import type { WindowManager } from "../../boundaries/shell/window/window-manager";
+import type { Logger } from "../../boundaries/platform/logging";
 
 /**
  * Badge state representing overall workspace status.

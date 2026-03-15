@@ -1,4 +1,4 @@
 /**
  * Intent infrastructure barrel export.
  */
-export * from "./infrastructure";
+export * from "../../intents/lib";

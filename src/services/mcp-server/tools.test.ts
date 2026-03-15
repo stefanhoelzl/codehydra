@@ -8,9 +8,9 @@
 import { describe, it, expect, vi } from "vitest";
 import type { WorkspaceStatus } from "../../shared/api/types";
 import type { McpApiHandlers, McpError } from "./types";
-import type { Logger, LogContext } from "../logging";
-import type { LogLevel } from "../logging/types";
-import { createBehavioralLogger } from "../logging/logging.test-utils";
+import type { Logger, LogContext } from "../../boundaries/platform/logging";
+import type { LogLevel } from "../../boundaries/platform/logging/types";
+import { createBehavioralLogger } from "../../boundaries/platform/logging/logging.test-utils";
 
 /**
  * Tool result type from MCP SDK.

@@ -8,7 +8,7 @@ import { createServer } from "node:net";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { McpServer, createDefaultMcpServer } from "./mcp-server";
 import type { McpApiHandlers } from "./types";
-import { createMockLogger } from "../logging";
+import { createMockLogger } from "../../boundaries/platform/logging";
 import { delay } from "@shared/test-fixtures";
 
 /**

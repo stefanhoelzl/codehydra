@@ -9,11 +9,11 @@
  *    c. Return not-found if neither available
  */
 
-import type { FileSystemLayer } from "../platform/filesystem";
-import type { ProcessRunner } from "../platform/process";
-import type { PathProvider } from "../platform/path-provider";
-import type { Logger } from "../logging";
-import { Path } from "../platform/path";
+import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { ProcessRunner } from "../../boundaries/platform/process/process";
+import type { PathProvider } from "../../boundaries/platform/env/path-provider";
+import type { Logger } from "../../boundaries/platform/logging";
+import { Path } from "../../utils/path/path";
 import type { BinaryResolution, ResolutionOptions, BinaryType } from "./types";
 
 /**

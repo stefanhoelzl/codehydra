@@ -6,7 +6,7 @@
 
 import { execSync } from "node:child_process";
 import { app } from "electron";
-import type { BuildInfo } from "../services/platform/build-info";
+import type { BuildInfo } from "../boundaries/platform/env/build-info";
 
 /**
  * Get the current git branch name synchronously.

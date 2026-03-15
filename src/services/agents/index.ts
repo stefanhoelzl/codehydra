@@ -12,12 +12,12 @@
  * ```
  */
 
-import type { ProcessRunner } from "../platform/process";
-import type { PortManager, HttpClient } from "../platform/network";
-import type { PathProvider } from "../platform/path-provider";
-import type { FileSystemLayer } from "../platform/filesystem";
-import type { Logger } from "../logging";
-import type { SupportedArch } from "../platform/platform-info";
+import type { ProcessRunner } from "../../boundaries/platform/process/process";
+import type { PortManager, HttpClient } from "../../boundaries/platform/network/network";
+import type { PathProvider } from "../../boundaries/platform/env/path-provider";
+import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { Logger } from "../../boundaries/platform/logging";
+import type { SupportedArch } from "../../boundaries/platform/env/platform-info";
 import type { SdkClientFactory } from "./opencode/client";
 
 import type { AgentType, AgentSetupInfo, AgentServerManager, AgentProvider } from "./types";

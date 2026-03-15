@@ -8,17 +8,17 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
-import type { ProcessRunner, SpawnedProcess } from "../../platform/process";
+import type { ProcessRunner, SpawnedProcess } from "../../../boundaries/platform/process/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
   PROCESS_KILL_FORCE_TIMEOUT_MS,
-} from "../../platform/process";
-import type { PortManager, HttpClient } from "../../platform/network";
-import type { PathProvider } from "../../platform/path-provider";
-import type { Logger } from "../../logging";
+} from "../../../boundaries/platform/process/process";
+import type { PortManager, HttpClient } from "../../../boundaries/platform/network/network";
+import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
+import type { Logger } from "../../../boundaries/platform/logging";
 import type { IDisposable, Unsubscribe } from "./types";
 import { waitForHealthy } from "../../platform/health-check";
-import { Path } from "../../platform/path";
+import { Path } from "../../../utils/path/path";
 import type { PromptModel } from "../../../shared/api/types";
 import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
 import { OPENCODE_VERSION, getOpencodeExecutablePath } from "./setup-info";

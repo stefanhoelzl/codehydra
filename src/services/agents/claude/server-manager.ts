@@ -12,17 +12,17 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
-import type { PortManager } from "../../platform/network";
-import type { PathProvider } from "../../platform/path-provider";
-import type { FileSystemLayer } from "../../platform/filesystem";
-import type { Logger } from "../../logging";
+import type { PortManager } from "../../../boundaries/platform/network/network";
+import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
+import type { FileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem";
+import type { Logger } from "../../../boundaries/platform/logging";
 import type {
   AgentServerManager,
   StopServerResult,
   RestartServerResult,
   AgentStatus,
 } from "../types";
-import { Path } from "../../platform/path";
+import { Path } from "../../../utils/path/path";
 import {
   type ClaudeCodeHookName,
   type ClaudeCodeBridgePayload,

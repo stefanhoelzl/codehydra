@@ -4,7 +4,7 @@
  */
 
 import os from "node:os";
-import type { PlatformInfo, SupportedArch } from "../services/platform/platform-info";
+import type { PlatformInfo, SupportedArch } from "../boundaries/platform/env/platform-info";
 
 /**
  * Map Node.js arch to supported arch, throwing for unsupported architectures.
