@@ -10,7 +10,7 @@ export interface BuildInfo {
 
   /**
    * Whether this is a development (non-release) build.
-   * Set at build time via __IS_DEV_BUILD__ (sourced from _CH_RELEASE env var).
+   * Set at build time via __IS_DEV_BUILD__ (sourced from _CH_BUILD_RELEASE env var).
    * - true: Local dev and CI dev builds
    * - false: Release builds
    */
