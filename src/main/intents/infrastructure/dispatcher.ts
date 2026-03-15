@@ -339,8 +339,11 @@ export class Dispatcher implements IDispatcher {
           return { results: [], errors: [], capabilities: initCaps };
         }
         const start = performance.now();
-        const { ran, skipped, ...hookResult } =
-          await this.collectHookResults<T>(hookHandlers, ctx, initCaps);
+        const { ran, skipped, ...hookResult } = await this.collectHookResults<T>(
+          hookHandlers,
+          ctx,
+          initCaps
+        );
         const duration = Math.round(performance.now() - start);
 
         logger.debug("hook", {
@@ -356,9 +359,7 @@ export class Dispatcher implements IDispatcher {
           logger.debug("hook skipped", {
             op: operationId,
             hook: hookPointId,
-            modules: skipped
-              .map((s) => `${s.name}(${s.unsatisfied.join(",")})`)
-              .join(","),
+            modules: skipped.map((s) => `${s.name}(${s.unsatisfied.join(",")})`).join(","),
           });
         }
 
