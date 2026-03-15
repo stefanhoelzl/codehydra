@@ -1,9 +1,9 @@
 // @vitest-environment node
 /**
- * Integration tests for IpcEventBridge.
+ * Integration tests for UiIpcModule.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> domain event -> sendToUI.
- * Also covers IPC handler registration and shutdown cleanup.
+ * Also covers IPC handler registration, log listeners, and shutdown cleanup.
  *
  * Test plan items covered:
  * #2a: Renderer receives workspace status (idle)
@@ -11,7 +11,8 @@
  * #2c: Renderer receives workspace status (mixed)
  * #2d: Renderer receives workspace status (none)
  * workspace:deleted sends workspace:removed to UI
- * app:shutdown removes IPC handlers
+ * app:shutdown removes IPC handlers and log listeners
+ * log listeners delegate to LoggingService
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -57,7 +58,8 @@ import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import { SetupOperation, INTENT_SETUP } from "../intents/operations/setup";
 import type { SetupIntent } from "../intents/operations/setup";
-import { createIpcEventBridge, type IpcEventBridgeDeps } from "./ipc-event-bridge";
+import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
+import { createMockLogging } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../shared/ipc";
@@ -139,17 +141,18 @@ function createMockResolveModule(): IntentModule {
 type SendToUIMock = ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
 
 function createBridgeDeps(
-  overrides?: Partial<IpcEventBridgeDeps>
-): IpcEventBridgeDeps & { ipcLayer: BehavioralIpcBoundary; sendToUI: SendToUIMock } {
+  overrides?: Partial<UiIpcModuleDeps>
+): UiIpcModuleDeps & { ipcLayer: BehavioralIpcBoundary; sendToUI: SendToUIMock } {
   const ipcLayer = (overrides?.ipcLayer as BehavioralIpcBoundary) ?? createBehavioralIpcBoundary();
   const sendToUI: SendToUIMock =
     (overrides?.viewManager?.sendToUI as SendToUIMock) ??
     vi.fn<(channel: string, ...args: unknown[]) => void>();
-  const base: IpcEventBridgeDeps = {
+  const base: UiIpcModuleDeps = {
     ipcLayer,
     viewManager: { sendToUI },
     logger: SILENT_LOGGER,
-    dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
+    dispatcher: {} as unknown as UiIpcModuleDeps["dispatcher"],
+    loggingService: overrides?.loggingService ?? createMockLogging(),
     ...overrides,
   };
   return { ...base, ipcLayer, sendToUI };
@@ -172,12 +175,12 @@ function createStatusTestSetup(): StatusTestSetup {
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
   const deps = createBridgeDeps({
-    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+    dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
   });
-  const ipcEventBridge = createIpcEventBridge(deps);
+  const uiIpcModule = createUiIpcModule(deps);
   const resolveModule = createMockResolveModule();
 
-  dispatcher.registerModule(ipcEventBridge);
+  dispatcher.registerModule(uiIpcModule);
   dispatcher.registerModule(resolveModule);
 
   return { dispatcher, sendToUI: deps.sendToUI };
@@ -200,7 +203,7 @@ function updateStatusIntent(
 // Tests - agent:status-updated
 // =============================================================================
 
-describe("IpcEventBridge - agent:status-updated", () => {
+describe("UiIpcModule - agent:status-updated", () => {
   describe("renderer receives workspace status (idle) (#2a)", () => {
     it("sends workspace:status-changed with idle agent status via sendToUI", async () => {
       const { dispatcher, sendToUI } = createStatusTestSetup();
@@ -286,7 +289,7 @@ describe("IpcEventBridge - agent:status-updated", () => {
 // Tests - workspace:deleted event
 // =============================================================================
 
-describe("IpcEventBridge - workspace:deleted", () => {
+describe("UiIpcModule - workspace:deleted", () => {
   it("sends workspace:removed to UI on workspace:deleted event", async () => {
     const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
@@ -297,9 +300,9 @@ describe("IpcEventBridge - workspace:deleted", () => {
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const deps = createBridgeDeps({
-      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
     });
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const quitModule: IntentModule = {
       name: "test-quit",
@@ -310,7 +313,7 @@ describe("IpcEventBridge - workspace:deleted", () => {
       },
     };
 
-    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(uiIpcModule);
     dispatcher.registerModule(quitModule);
 
     await dispatcher.dispatch({
@@ -335,10 +338,10 @@ describe("IpcEventBridge - workspace:deleted", () => {
 // Tests - bases:updated event
 // =============================================================================
 
-describe("IpcEventBridge - bases:updated", () => {
+describe("UiIpcModule - bases:updated", () => {
   it("sends project:bases-updated to UI on bases:updated domain event", async () => {
     const deps = createBridgeDeps();
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const bases = [
       { name: "main", isRemote: false },
@@ -346,7 +349,7 @@ describe("IpcEventBridge - bases:updated", () => {
     ];
 
     // Call the event handler directly
-    await ipcEventBridge.events!["bases:updated"]!.handler({
+    await uiIpcModule.events!["bases:updated"]!.handler({
       type: "bases:updated",
       payload: {
         projectId: TEST_PROJECT_ID,
@@ -367,10 +370,10 @@ describe("IpcEventBridge - bases:updated", () => {
 // Tests - workspace:deletion-progress event
 // =============================================================================
 
-describe("IpcEventBridge - workspace:deletion-progress", () => {
+describe("UiIpcModule - workspace:deletion-progress", () => {
   it("sends deletion progress to UI via sendToUI", async () => {
     const deps = createBridgeDeps();
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const progressPayload = {
       workspacePath: TEST_WORKSPACE_PATH as WorkspacePath,
@@ -392,7 +395,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       payload: progressPayload,
     };
 
-    await ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event);
+    await uiIpcModule.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event);
 
     expect(deps.sendToUI).toHaveBeenCalledWith(
       ApiIpcChannels.WORKSPACE_DELETION_PROGRESS,
@@ -402,7 +405,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
 
   it("ignores when sendToUI is a no-op", async () => {
     const deps = createBridgeDeps();
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const event: WorkspaceDeletionProgressEvent = {
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
@@ -417,7 +420,7 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
       },
     };
     await expect(
-      ipcEventBridge.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event)
+      uiIpcModule.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event)
     ).resolves.not.toThrow();
   });
 });
@@ -426,11 +429,11 @@ describe("IpcEventBridge - workspace:deletion-progress", () => {
 // Tests - IPC handler registration
 // =============================================================================
 
-describe("IpcEventBridge - IPC handlers", () => {
+describe("UiIpcModule - IPC handlers", () => {
   it("registers IPC handlers on ipcLayer", () => {
     const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({ ipcLayer });
-    createIpcEventBridge(deps);
+    createUiIpcModule(deps);
 
     const state = ipcLayer._getState();
     expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_READY)).toBe(true);
@@ -445,9 +448,9 @@ describe("IpcEventBridge - IPC handlers", () => {
     const ipcLayer = createBehavioralIpcBoundary();
     const dispatcher = {
       dispatch: vi.fn().mockResolvedValue(undefined),
-    } as unknown as IpcEventBridgeDeps["dispatcher"];
+    } as unknown as UiIpcModuleDeps["dispatcher"];
     const deps = createBridgeDeps({ ipcLayer, dispatcher });
-    createIpcEventBridge(deps);
+    createUiIpcModule(deps);
 
     await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, undefined);
 
@@ -462,7 +465,7 @@ describe("IpcEventBridge - IPC handlers", () => {
 // Tests - shutdown cleanup
 // =============================================================================
 
-describe("IpcEventBridge - shutdown", () => {
+describe("UiIpcModule - shutdown", () => {
   it("removes all IPC handlers on app:shutdown", async () => {
     const dispatcher = new Dispatcher({ logger: createMockLogger() });
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
@@ -470,9 +473,9 @@ describe("IpcEventBridge - shutdown", () => {
     const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({
       ipcLayer,
-      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
     });
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const quitModule: IntentModule = {
       name: "test-quit",
@@ -483,7 +486,7 @@ describe("IpcEventBridge - shutdown", () => {
       },
     };
 
-    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(uiIpcModule);
     dispatcher.registerModule(quitModule);
 
     // Verify handlers are registered
@@ -508,9 +511,9 @@ describe("IpcEventBridge - shutdown", () => {
     const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({
       ipcLayer,
-      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
     });
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const quitModule: IntentModule = {
       name: "test-quit",
@@ -521,7 +524,7 @@ describe("IpcEventBridge - shutdown", () => {
       },
     };
 
-    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(uiIpcModule);
     dispatcher.registerModule(quitModule);
 
     // Remove a handler manually before shutdown
@@ -541,7 +544,7 @@ describe("IpcEventBridge - shutdown", () => {
 // setup:error -> lifecycle:setup-error bridge tests
 // =============================================================================
 
-describe("IpcEventBridge - setup:error", () => {
+describe("UiIpcModule - setup:error", () => {
   function createSetupErrorTestSetup(): {
     dispatcher: Dispatcher;
     sendToUI: SendToUIMock;
@@ -551,9 +554,9 @@ describe("IpcEventBridge - setup:error", () => {
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 
     const deps = createBridgeDeps({
-      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
     });
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const failingSetupHook: IntentModule = {
       name: "test-failing-setup",
@@ -568,7 +571,7 @@ describe("IpcEventBridge - setup:error", () => {
       },
     };
 
-    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(uiIpcModule);
     dispatcher.registerModule(failingSetupHook);
 
     return { dispatcher, sendToUI: deps.sendToUI };
@@ -595,9 +598,9 @@ describe("IpcEventBridge - setup:error", () => {
     dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
 
     const deps = createBridgeDeps({
-      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
+      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
     });
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
     const failingHook: IntentModule = {
@@ -613,7 +616,7 @@ describe("IpcEventBridge - setup:error", () => {
       },
     };
 
-    dispatcher.registerModule(ipcEventBridge);
+    dispatcher.registerModule(uiIpcModule);
     dispatcher.registerModule(failingHook);
 
     const intent: SetupIntent = { type: INTENT_SETUP, payload: {} };
@@ -630,55 +633,55 @@ describe("IpcEventBridge - setup:error", () => {
 // Tests - shortcut:key-pressed event
 // =============================================================================
 
-describe("IpcEventBridge - shortcut:key-pressed", () => {
+describe("UiIpcModule - shortcut:key-pressed", () => {
   it("forwards recognized shortcut keys to renderer via sendToUI", async () => {
     const deps = createBridgeDeps();
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const event: ShortcutKeyPressedEvent = {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "up" },
     };
-    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
+    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "up");
   });
 
   it("forwards digit keys to renderer via sendToUI", async () => {
     const deps = createBridgeDeps();
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const event: ShortcutKeyPressedEvent = {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "5" },
     };
-    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
+    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "5");
   });
 
   it("does not forward unrecognized keys to renderer", async () => {
     const deps = createBridgeDeps();
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const event: ShortcutKeyPressedEvent = {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "d" },
     };
-    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
+    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).not.toHaveBeenCalled();
   });
 
   it("does not forward escape to renderer", async () => {
     const deps = createBridgeDeps();
-    const ipcEventBridge = createIpcEventBridge(deps);
+    const uiIpcModule = createUiIpcModule(deps);
 
     const event: ShortcutKeyPressedEvent = {
       type: EVENT_SHORTCUT_KEY_PRESSED,
       payload: { key: "escape" },
     };
-    await ipcEventBridge.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
+    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
 
     expect(deps.sendToUI).not.toHaveBeenCalled();
   });
@@ -688,18 +691,140 @@ describe("IpcEventBridge - shortcut:key-pressed", () => {
 // executeCommand tests (via IPC handler)
 // =============================================================================
 
-describe("IpcEventBridge - executeCommand", () => {
+describe("UiIpcModule - executeCommand", () => {
   it("is not exposed via IPC (only used by MCP/Plugin)", () => {
     // executeCommand is registered as an apiRegistry method in the old code
     // but was not exposed via IPC. Now it's gone entirely from the bridge.
     // MCP/Plugin handlers dispatch intents directly.
     const ipcLayer = createBehavioralIpcBoundary();
     const deps = createBridgeDeps({ ipcLayer });
-    createIpcEventBridge(deps);
+    createUiIpcModule(deps);
 
     // No IPC channel for executeCommand
     const state = ipcLayer._getState();
     const channels = [...state.handlers.keys()];
     expect(channels.every((ch) => !ch.includes("execute-command"))).toBe(true);
+  });
+});
+
+// =============================================================================
+// Tests - log listeners
+// =============================================================================
+
+describe("UiIpcModule - log listeners", () => {
+  it("registers listeners on all four log channels", () => {
+    const ipcLayer = createBehavioralIpcBoundary();
+    const deps = createBridgeDeps({ ipcLayer });
+    createUiIpcModule(deps);
+
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_DEBUG)).toHaveLength(1);
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_INFO)).toHaveLength(1);
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_WARN)).toHaveLength(1);
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_ERROR)).toHaveLength(1);
+  });
+
+  it("delegates log messages to the correct logger method", () => {
+    const ipcLayer = createBehavioralIpcBoundary();
+    const loggingService = createMockLogging();
+    const deps = createBridgeDeps({ ipcLayer, loggingService });
+    createUiIpcModule(deps);
+
+    ipcLayer._emit(ApiIpcChannels.LOG_INFO, {
+      logger: "ui",
+      message: "test message",
+      context: { key: "value" },
+    });
+
+    expect(loggingService.createLogger).toHaveBeenCalledWith("ui");
+    const logger = loggingService.getLogger("ui");
+    expect(logger?.info).toHaveBeenCalledWith("test message", { key: "value" });
+  });
+
+  it("falls back to 'ui' logger for invalid logger names", () => {
+    const ipcLayer = createBehavioralIpcBoundary();
+    const loggingService = createMockLogging();
+    const deps = createBridgeDeps({ ipcLayer, loggingService });
+    createUiIpcModule(deps);
+
+    ipcLayer._emit(ApiIpcChannels.LOG_WARN, {
+      logger: "invalid-name",
+      message: "fallback test",
+    });
+
+    expect(loggingService.createLogger).toHaveBeenCalledWith("ui");
+    const logger = loggingService.getLogger("ui");
+    expect(logger?.warn).toHaveBeenCalledWith("fallback test", undefined);
+  });
+
+  it("accepts 'api' as a valid renderer logger name", () => {
+    const ipcLayer = createBehavioralIpcBoundary();
+    const loggingService = createMockLogging();
+    const deps = createBridgeDeps({ ipcLayer, loggingService });
+    createUiIpcModule(deps);
+
+    ipcLayer._emit(ApiIpcChannels.LOG_DEBUG, {
+      logger: "api",
+      message: "api log",
+    });
+
+    expect(loggingService.createLogger).toHaveBeenCalledWith("api");
+  });
+
+  it("swallows errors from logging service", () => {
+    const ipcLayer = createBehavioralIpcBoundary();
+    const loggingService = createMockLogging();
+    loggingService.createLogger = vi.fn(() => {
+      throw new Error("logging broke");
+    });
+    const deps = createBridgeDeps({ ipcLayer, loggingService });
+    createUiIpcModule(deps);
+
+    // Should not throw
+    expect(() => {
+      ipcLayer._emit(ApiIpcChannels.LOG_ERROR, {
+        logger: "ui",
+        message: "should not crash",
+      });
+    }).not.toThrow();
+  });
+
+  it("removes log listeners on app:shutdown", async () => {
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
+    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+
+    const ipcLayer = createBehavioralIpcBoundary();
+    const deps = createBridgeDeps({
+      ipcLayer,
+      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
+    });
+    const uiIpcModule = createUiIpcModule(deps);
+
+    const quitModule: IntentModule = {
+      name: "test-quit",
+      hooks: {
+        [APP_SHUTDOWN_OPERATION_ID]: {
+          quit: { handler: async () => {} },
+        },
+      },
+    };
+
+    dispatcher.registerModule(uiIpcModule);
+    dispatcher.registerModule(quitModule);
+
+    // Verify listeners are registered
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_DEBUG)).toHaveLength(1);
+
+    // Shutdown
+    await dispatcher.dispatch({
+      type: INTENT_APP_SHUTDOWN,
+      payload: {},
+    } as AppShutdownIntent);
+
+    // All log listeners should be removed
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_DEBUG)).toHaveLength(0);
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_INFO)).toHaveLength(0);
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_WARN)).toHaveLength(0);
+    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_ERROR)).toHaveLength(0);
   });
 });

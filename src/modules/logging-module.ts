@@ -3,7 +3,7 @@
  *
  * Hooks:
  * - app:start → "before-ready": configures logging from Config, logs build info
- * - app:start → "init": initializes logging service, registers IPC log handlers
+ * - app:start → "init": initializes logging service
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -26,8 +26,6 @@ import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
 
 export interface LoggingModuleDeps {
   readonly loggingService: Pick<Logging, "initialize" | "configure">;
-  /** Called after initialize() to register IPC log handlers. */
-  readonly registerLogHandlers: () => void;
   readonly buildInfo: Pick<BuildInfo, "version" | "isDevelopment" | "isPackaged">;
   readonly platformInfo: Pick<PlatformInfo, "platform" | "arch">;
   readonly logger: Logger;
@@ -99,7 +97,6 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
           requires: { "app-ready": true },
           handler: async (): Promise<void> => {
             deps.loggingService.initialize();
-            deps.registerLogHandlers();
           },
         },
       },

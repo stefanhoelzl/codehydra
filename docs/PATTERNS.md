@@ -32,12 +32,12 @@ This pattern is used when:
 
 ### IPC-to-Intent Pattern
 
-All IPC handlers are registered in `IpcEventBridge`, which is an `IntentModule`. IPC handlers create typed intents and dispatch them through the intent dispatcher. Domain events emitted by operations are forwarded to the renderer via `sendToUI`.
+All IPC handlers are registered in `UiIpcModule`, which is an `IntentModule`. IPC handlers create typed intents and dispatch them through the intent dispatcher. Domain events emitted by operations are forwarded to the renderer via `sendToUI`.
 
 **Architecture:**
 
 ```
-IpcEventBridge (IntentModule)
+UiIpcModule (IntentModule)
     │
     ├── IPC Handlers (renderer → main)
     │   registerIpc(channel, handler)

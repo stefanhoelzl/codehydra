@@ -91,7 +91,7 @@ export class SetMetadataOperation implements Operation<SetMetadataIntent, void> 
       throw errors[0]!;
     }
 
-    // Emit domain event for subscribers (e.g., IpcEventBridge)
+    // Emit domain event for subscribers (e.g., UiIpcModule)
     const event: MetadataChangedEvent = {
       type: EVENT_METADATA_CHANGED,
       payload: {

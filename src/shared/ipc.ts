@@ -70,7 +70,7 @@ export interface UIModeChangedEvent {
 }
 
 // ============ IPC Handler Payload Types ============
-// Payload types for IPC handlers registered in the IpcEventBridge module.
+// Payload types for IPC handlers registered in the UiIpc module.
 
 /** Methods with no input - use empty object {} */
 export type EmptyPayload = object;
@@ -155,7 +155,7 @@ export interface UiSetModePayload {
 
 // ============ API Layer IPC Channels ============
 // All IPC channels use the api: prefix.
-// Domain events are mapped to IPC channels by the IpcEventBridge module.
+// Domain events are mapped to IPC channels by the UiIpc module.
 
 /**
  * IPC channel names for main↔renderer communication.

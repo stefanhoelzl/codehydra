@@ -9,8 +9,8 @@
  * and IPC string-based types at the boundary.
  */
 
-import type { Workspace as InternalWorkspace } from "../../boundaries/platform/git/types";
-import type { Workspace as IpcWorkspace, ProjectId, WorkspaceName } from "../../shared/api/types";
+import type { Workspace as InternalWorkspace } from "../boundaries/platform/git/types";
+import type { Workspace as IpcWorkspace, ProjectId, WorkspaceName } from "../shared/api/types";
 
 /**
  * Convert internal Workspace to IPC Workspace for sending to renderer.

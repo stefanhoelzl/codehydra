@@ -1,11 +1,11 @@
 /**
- * IpcEventBridge - Bridges domain events to the renderer via sendToUI,
- * and registers all IPC handlers directly on the IpcBoundary.
+ * UiIpcModule - Handles all bidirectional IPC between main process and renderer.
  *
  * This is an IntentModule that:
  * 1. Subscribes to domain events and forwards them to sendToUI for IPC
  * 2. Registers IPC handlers (intent dispatch bridges) directly on ipcLayer
- * 3. On app:shutdown, removes all registered IPC handlers
+ * 3. Registers fire-and-forget log listeners for renderer logging
+ * 4. On app:shutdown, removes all registered handlers and listeners
  */
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
@@ -24,8 +24,14 @@ import type {
   SetupErrorPayload,
 } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
-import type { Logger } from "../boundaries/platform/logging";
-import type { IpcBoundary } from "../boundaries/shell/ipc/ipc";
+import type {
+  Logger,
+  Logging,
+  LoggerName,
+  LogContext,
+} from "../boundaries/platform/logging";
+import type { ApiLogPayload } from "../shared/ipc";
+import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc/ipc";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
 import type {
@@ -108,23 +114,34 @@ import type { Dispatcher } from "../intents/lib/dispatcher";
 import { Path } from "../utils/path/path";
 
 /**
- * Dependencies for the IpcEventBridge module.
+ * Dependencies for the UiIpc module.
  */
-export interface IpcEventBridgeDeps {
+export interface UiIpcModuleDeps {
   readonly ipcLayer: IpcBoundary;
   readonly viewManager: Pick<IViewManager, "sendToUI">;
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
+  readonly loggingService: Pick<Logging, "createLogger">;
 }
 
 /**
- * Create an IpcEventBridge module that forwards domain events to the renderer
- * via sendToUI and registers all IPC handlers directly on the ipcLayer.
+ * Validate and convert logger name from renderer to LoggerName type.
+ * Returns "ui" if the provided name is not a valid LoggerName.
+ */
+const VALID_RENDERER_LOGGER_NAMES = new Set<string>(["ui", "api"]);
+function toLoggerName(name: string): LoggerName {
+  return VALID_RENDERER_LOGGER_NAMES.has(name) ? (name as LoggerName) : "ui";
+}
+
+/**
+ * Create a UiIpc module that handles all bidirectional IPC between main
+ * process and renderer: domain event forwarding, request-response handlers,
+ * and fire-and-forget log listeners.
  *
  * @param deps - Module dependencies
  * @returns IntentModule with event subscriptions and lifecycle hooks
  */
-export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
+export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
   const { dispatcher, logger } = deps;
 
   // Track registered IPC channels for cleanup
@@ -526,8 +543,36 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     return { bases: result.bases };
   });
 
+  // ---------------------------------------------------------------------------
+  // Fire-and-forget log listeners
+  // ---------------------------------------------------------------------------
+
+  const LOG_LEVEL_CHANNELS = [
+    { level: "debug", channel: ApiIpcChannels.LOG_DEBUG },
+    { level: "info", channel: ApiIpcChannels.LOG_INFO },
+    { level: "warn", channel: ApiIpcChannels.LOG_WARN },
+    { level: "error", channel: ApiIpcChannels.LOG_ERROR },
+  ] as const;
+
+  const logListeners: Array<{ channel: string; listener: IpcEventHandler }> = [];
+
+  for (const { level, channel } of LOG_LEVEL_CHANNELS) {
+    const listener: IpcEventHandler = (_event: unknown, payload: unknown) => {
+      try {
+        const p = payload as ApiLogPayload;
+        const loggerName = toLoggerName(p.logger);
+        const loggerInstance = deps.loggingService.createLogger(loggerName);
+        loggerInstance[level](p.message, p.context as LogContext | undefined);
+      } catch {
+        // Swallow errors - logging should never crash the app
+      }
+    };
+    deps.ipcLayer.on(channel, listener);
+    logListeners.push({ channel, listener });
+  }
+
   return {
-    name: "ipc-event-bridge",
+    name: "ui-ipc",
     events,
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
@@ -538,6 +583,13 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
                 deps.ipcLayer.removeHandler(channel);
               } catch {
                 // Continue cleanup even if a handler was already removed
+              }
+            }
+            for (const { channel, listener } of logListeners) {
+              try {
+                deps.ipcLayer.removeListener(channel, listener);
+              } catch {
+                // Continue cleanup even if a listener was already removed
               }
             }
           },

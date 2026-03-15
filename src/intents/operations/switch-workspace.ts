@@ -267,7 +267,7 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       return;
     }
 
-    // Emit domain event for subscribers (e.g., IpcEventBridge, SwitchTitleModule)
+    // Emit domain event for subscribers (e.g., UiIpcModule, SwitchTitleModule)
     const event: WorkspaceSwitchedEvent = {
       type: EVENT_WORKSPACE_SWITCHED,
       payload: {
