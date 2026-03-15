@@ -18,7 +18,7 @@ import type {
 import type { AgentProvider, AgentSessionInfo, AgentStatus, McpConfig } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { AgentBinaryManager, DownloadProgressCallback } from "../../binary-download";
-import type { BinaryType } from "../../vscode-setup/types";
+import type { BinaryType } from "../../binary-resolution/types";
 import type { ConfigKeyDefinition } from "../../config/config-definition";
 import type { StopServerResult, RestartServerResult } from "../types";
 import type { Logger } from "../../logging";

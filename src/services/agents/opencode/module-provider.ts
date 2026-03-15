@@ -22,7 +22,7 @@ import type {
 import type { AgentSessionInfo } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { AgentBinaryManager, DownloadProgressCallback } from "../../binary-download";
-import type { BinaryType } from "../../vscode-setup/types";
+import type { BinaryType } from "../../binary-resolution/types";
 import type { ConfigKeyDefinition } from "../../config/config-definition";
 import type { Logger } from "../../logging";
 import type { Unsubscribe } from "../../../shared/api/interfaces";

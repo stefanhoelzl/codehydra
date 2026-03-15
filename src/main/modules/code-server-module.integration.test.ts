@@ -44,10 +44,7 @@ import type {
   ConfigSetHookResult,
 } from "../operations/config-set-values";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type {
-  ExtensionRequirement,
-  ExtensionInstallEntry,
-} from "../../services/vscode-setup/types";
+import type { ExtensionRequirement, ExtensionInstallEntry } from "../operations/app-start";
 import type { DirEntry } from "../../services/platform/filesystem";
 import type { SpawnedProcess } from "../../services/platform/process";
 import type { BinaryDownloadService } from "../../services/binary-download";

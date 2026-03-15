@@ -35,7 +35,7 @@ import type {
   DownloadProgressCallback,
   DownloadRequest,
 } from "../../services/binary-download";
-import type { BinaryType } from "../../services/vscode-setup/types";
+import type { BinaryType } from "../../services/binary-resolution/types";
 import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type {
   CheckDepsHookContext,

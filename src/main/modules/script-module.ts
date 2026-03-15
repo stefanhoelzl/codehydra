@@ -12,7 +12,7 @@ import type { InitHookContext } from "../operations/app-start";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 import type { PathProvider } from "../../services/platform/path-provider";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import { setupBinDirectory } from "../../services/vscode-setup/bin-setup";
+import { Path } from "../../services/platform/path";
 
 // =============================================================================
 // Dependency Interface
@@ -38,7 +38,25 @@ export function createScriptModule(deps: ScriptModuleDeps): IntentModule {
         init: {
           handler: async (ctx: HookContext): Promise<void> => {
             const { requiredScripts } = ctx as InitHookContext;
-            await setupBinDirectory(deps.fileSystem, deps.pathProvider, requiredScripts);
+
+            const binDir = deps.pathProvider.dataPath("bin");
+            const binAssetsDir = deps.pathProvider.assetPath("bin");
+
+            // Clean bin directory to remove stale scripts before copying new ones
+            await deps.fileSystem.rm(binDir, { recursive: true, force: true });
+            await deps.fileSystem.mkdir(binDir);
+
+            // Copy declared scripts
+            for (const name of requiredScripts) {
+              const srcPath = new Path(binAssetsDir, name);
+              const destPath = new Path(binDir, name);
+
+              await deps.fileSystem.copyTree(srcPath, destPath);
+
+              if (!name.endsWith(".cmd") && !name.endsWith(".cjs")) {
+                await deps.fileSystem.makeExecutable(destPath);
+              }
+            }
           },
         },
       },

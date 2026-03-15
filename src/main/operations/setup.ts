@@ -19,7 +19,8 @@
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType, SetupRowId, SetupRowStatus } from "../../shared/api/types";
-import type { BinaryType, ExtensionInstallEntry } from "../../services/vscode-setup/types";
+import type { BinaryType } from "../../services/binary-resolution/types";
+import type { ExtensionInstallEntry } from "./app-start";
 import type { LifecycleAgentType } from "../../shared/ipc";
 
 // =============================================================================
