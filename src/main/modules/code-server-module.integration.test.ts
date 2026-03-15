@@ -259,14 +259,6 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
       readFile: vi.fn().mockResolvedValue("[]"),
       writeFile: vi.fn().mockResolvedValue(undefined),
     },
-    workspaceFileService: {
-      ensureWorkspaceFile: vi
-        .fn()
-        .mockResolvedValue(new Path("/test/project/.worktrees/feature-1.code-workspace")),
-      deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
-      createWorkspaceFile: vi.fn(),
-      getWorkspaceFilePath: vi.fn(),
-    } as unknown as CodeServerModuleDeps["workspaceFileService"],
     pathProvider: {
       bundlePath: vi.fn().mockImplementation((subpath: string) => {
         return new Path(`/bundles/${subpath}`);
@@ -807,24 +799,21 @@ describe("CodeServerModule", () => {
 
       expect(workspaceUrl).toContain("25448");
       expect(workspaceUrl).toContain("workspace=");
-      expect(deps.workspaceFileService.ensureWorkspaceFile).toHaveBeenCalledWith(
-        new Path("/test/project/.worktrees/feature-1"),
-        new Path("/test/project/.worktrees"),
-        expect.objectContaining({
-          "claudeCode.useTerminal": true,
-          "claudeCode.claudeProcessWrapper": "/path/to/wrapper",
-        })
+      expect(deps.fileSystemLayer.writeFile).toHaveBeenCalledWith(
+        new Path("/test/project/.worktrees/feature-1.code-workspace"),
+        expect.stringContaining('"claudeCode.useTerminal":')
       );
     });
 
     it("falls back to folder URL on workspace file error", async () => {
       const deps = createMockDeps({
-        workspaceFileService: {
-          ensureWorkspaceFile: vi.fn().mockRejectedValue(new Error("disk full")),
-          deleteWorkspaceFile: vi.fn().mockResolvedValue(undefined),
-          createWorkspaceFile: vi.fn(),
-          getWorkspaceFilePath: vi.fn(),
-        } as unknown as CodeServerModuleDeps["workspaceFileService"],
+        fileSystemLayer: {
+          mkdir: vi.fn().mockResolvedValue(undefined),
+          readdir: vi.fn().mockResolvedValue([]),
+          rm: vi.fn().mockResolvedValue(undefined),
+          readFile: vi.fn().mockResolvedValue("[]"),
+          writeFile: vi.fn().mockRejectedValue(new Error("disk full")),
+        },
       });
 
       const hookRegistry = new HookRegistry();
@@ -883,20 +872,21 @@ describe("CodeServerModule", () => {
         },
       } as DeleteWorkspaceIntent);
 
-      expect(deps.workspaceFileService.deleteWorkspaceFile).toHaveBeenCalledWith(
-        "feature-1",
-        new Path("/test/project/.worktrees")
+      expect(deps.fileSystemLayer.rm).toHaveBeenCalledWith(
+        new Path("/test/project/.worktrees/feature-1.code-workspace"),
+        { force: true }
       );
     });
 
     it("suppresses errors in force mode", async () => {
       const deps = createMockDeps({
-        workspaceFileService: {
-          ensureWorkspaceFile: vi.fn(),
-          deleteWorkspaceFile: vi.fn().mockRejectedValue(new Error("permission denied")),
-          createWorkspaceFile: vi.fn(),
-          getWorkspaceFilePath: vi.fn(),
-        } as unknown as CodeServerModuleDeps["workspaceFileService"],
+        fileSystemLayer: {
+          mkdir: vi.fn().mockResolvedValue(undefined),
+          readdir: vi.fn().mockResolvedValue([]),
+          rm: vi.fn().mockRejectedValue(new Error("permission denied")),
+          readFile: vi.fn().mockResolvedValue("[]"),
+          writeFile: vi.fn().mockResolvedValue(undefined),
+        },
       });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
@@ -920,12 +910,13 @@ describe("CodeServerModule", () => {
 
     it("throws on non-force error", async () => {
       const deps = createMockDeps({
-        workspaceFileService: {
-          ensureWorkspaceFile: vi.fn(),
-          deleteWorkspaceFile: vi.fn().mockRejectedValue(new Error("permission denied")),
-          createWorkspaceFile: vi.fn(),
-          getWorkspaceFilePath: vi.fn(),
-        } as unknown as CodeServerModuleDeps["workspaceFileService"],
+        fileSystemLayer: {
+          mkdir: vi.fn().mockResolvedValue(undefined),
+          readdir: vi.fn().mockResolvedValue([]),
+          rm: vi.fn().mockRejectedValue(new Error("permission denied")),
+          readFile: vi.fn().mockResolvedValue("[]"),
+          writeFile: vi.fn().mockResolvedValue(undefined),
+        },
       });
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());

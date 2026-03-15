@@ -24,8 +24,6 @@ import {
   DefaultNetworkLayer,
   DefaultFileSystemLayer,
   ElectronLogService,
-  WorkspaceFileService,
-  createWorkspaceFileConfig,
   GitWorktreeProvider,
   SimpleGitClient,
   KeepFilesService,
@@ -256,13 +254,6 @@ const gitWorktreeProvider = new GitWorktreeProvider(
   fileSystemLayer,
   loggingService.createLogger("worktree")
 );
-const workspaceFileConfig = createWorkspaceFileConfig();
-const workspaceFileService = new WorkspaceFileService(
-  fileSystemLayer,
-  workspaceFileConfig,
-  loggingService.createLogger("workspace-file")
-);
-
 const autoUpdater = new AutoUpdater({
   logger: loggingService.createLogger("updater"),
   isDevelopment: buildInfo.isDevelopment,
@@ -381,7 +372,6 @@ const codeServerModule = createCodeServerModule({
   httpClient: networkLayer,
   portManager: networkLayer,
   fileSystemLayer,
-  workspaceFileService,
   pathProvider,
   buildInfo,
   platform,
