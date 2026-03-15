@@ -73,7 +73,6 @@ function createDeps(configValues?: Record<string, unknown>) {
     initialize: vi.fn(),
     configure: vi.fn(),
   };
-  const registerLogHandlers = vi.fn();
   const buildInfo = {
     version: "2026.2.0-test",
     isDevelopment: true,
@@ -91,7 +90,7 @@ function createDeps(configValues?: Record<string, unknown>) {
     ...configValues,
   });
 
-  return { loggingService, registerLogHandlers, buildInfo, platformInfo, logger, configService };
+  return { loggingService, buildInfo, platformInfo, logger, configService };
 }
 
 // =============================================================================
@@ -120,7 +119,7 @@ describe("LoggingModule Integration", () => {
     });
   });
 
-  it("initializes logging service and registers log handlers during init hook", async () => {
+  it("initializes logging service during init hook", async () => {
     const deps = createDeps();
     const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
@@ -133,7 +132,6 @@ describe("LoggingModule Integration", () => {
     } as AppStartIntent);
 
     expect(deps.loggingService.initialize).toHaveBeenCalledOnce();
-    expect(deps.registerLogHandlers).toHaveBeenCalledOnce();
   });
 
   it("logs startup info before initializing logging service", async () => {

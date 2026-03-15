@@ -57,7 +57,7 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. The ar
 │         ▼                                                        │
 │  agent:status-updated domain event                               │
 │         │                                                        │
-│         ├──► IpcEventBridge subscriber                            │
+│         ├──► UiIpcModule subscriber                            │
 │         │      converts AggregatedAgentStatus → WorkspaceStatus  │
 │         │      emits workspace:status-changed via registry        │
 │         │                                                        │

@@ -25,7 +25,7 @@ import {
 } from "./open-workspace";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
-import { toIpcWorkspaces } from "../../main/api/workspace-conversion";
+import { toIpcWorkspaces } from "../../utils/workspace-conversion";
 import { Path } from "../../utils/path/path";
 
 // =============================================================================

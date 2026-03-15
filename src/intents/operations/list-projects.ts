@@ -13,7 +13,7 @@ import type { Intent } from "../lib/types";
 import type { Operation, OperationContext, HookContext } from "../lib/operation";
 import type { Project, ProjectId } from "../../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../../boundaries/platform/git/types";
-import { toIpcWorkspaces } from "../../main/api/workspace-conversion";
+import { toIpcWorkspaces } from "../../utils/workspace-conversion";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
 export type { Workspace as InternalWorkspace } from "../../boundaries/platform/git/types";

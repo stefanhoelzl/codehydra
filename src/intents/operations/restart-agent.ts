@@ -117,7 +117,7 @@ export class RestartAgentOperation implements Operation<RestartAgentIntent, numb
       throw new Error("Restart agent hook did not provide port result");
     }
 
-    // Emit domain event for subscribers (e.g., IpcEventBridge)
+    // Emit domain event for subscribers (e.g., UiIpcModule)
     const event: AgentRestartedEvent = {
       type: EVENT_AGENT_RESTARTED,
       payload: {

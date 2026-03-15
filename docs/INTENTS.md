@@ -364,7 +364,7 @@ const idempotencyModule = createIdempotencyModule([
 
 ## IPC-to-Intent Mapping
 
-IPC channels map directly to intents through `IpcEventBridge`. There are no separate API interfaces -- each IPC handler creates a typed intent and dispatches it:
+IPC channels map directly to intents through `UiIpcModule`. There are no separate API interfaces -- each IPC handler creates a typed intent and dispatches it:
 
 | IPC Channel            | Intent Type        | Operation                |
 | ---------------------- | ------------------ | ------------------------ |
@@ -402,7 +402,7 @@ All operations use the intent dispatcher (`Dispatcher` + `HookRegistry`). Intent
 | `app-setup`            | `app:setup`              | `setup`                                                  | --                  |
 | `app-resume`           | `app:resume`             | `resume`                                                 | --                  |
 
-IPC handlers in `IpcEventBridge` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (IpcEventBridge, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
+IPC handlers in `UiIpcModule` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (UiIpcModule, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
 
 The `create-workspace` operation uses these hook modules:
 
@@ -416,7 +416,7 @@ The `delete-workspace` operation uses these hook modules:
 - **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode. Skipped when `removeWorktree` is false.
 - **delete**: WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
 
-The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), IpcEventBridge (emits `workspace:removed` IPC event), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
+The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), UiIpcModule (emits `workspace:removed` IPC event), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
 
 The `open-project` operation uses these hook modules:
 
@@ -448,7 +448,7 @@ The `app-shutdown` operation uses a single hook point:
 
 ## Domain Events
 
-Operations emit domain events via `ctx.emit()`. The dispatcher delivers these to all module event subscribers. `IpcEventBridge` forwards relevant events to the renderer via `sendToUI()`:
+Operations emit domain events via `ctx.emit()`. The dispatcher delivers these to all module event subscribers. `UiIpcModule` forwards relevant events to the renderer via `sendToUI()`:
 
 ```
 Operation
@@ -458,7 +458,7 @@ Operation
     v
 Dispatcher delivers to subscribers
     |
-    +-- IpcEventBridge  ->  sendToUI("api:workspace:switched", payload)  ->  Renderer
+    +-- UiIpcModule  ->  sendToUI("api:workspace:switched", payload)  ->  Renderer
     +-- BadgeModule     ->  updates dock badge
     +-- WindowTitleModule -> updates window title
 ```
@@ -470,7 +470,7 @@ The `workspace:switched` event is emitted through the intent dispatcher via `Swi
 - `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace, calls `ViewManager.setActiveWorkspace`) then emits `workspace:switched` via `ctx.emit()`
 - Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `OpenWorkspaceOperation` dispatches after creating a workspace)
 - Null deactivation (delete last workspace, close last project) emits `workspace:switched(null)` directly via `ctx.emit()` without going through the intent
-- `IpcEventBridge` subscribes to `workspace:switched` and forwards to the renderer via `deps.sendToUI()`
+- `UiIpcModule` subscribes to `workspace:switched` and forwards to the renderer via `deps.sendToUI()`
 - `WindowTitleModule` subscribes to `workspace:switched` and updates the window title
 
 ### Domain Events Table
@@ -501,7 +501,7 @@ index.ts (composition root)
     +-- Construct all services (no I/O)
     +-- Create Dispatcher + HookRegistry
     +-- Register all operations (25+)
-    +-- Create IpcEventBridge (registers IPC handlers)
+    +-- Create UiIpcModule (registers IPC handlers)
     +-- Register all modules (30+)
     +-- Dispatch app:start intent
               |

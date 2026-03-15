@@ -77,7 +77,6 @@ import { AsyncWatcher } from "../services/platform/async-watcher";
 // Managers (stayed)
 import { BadgeManager } from "./managers/badge-manager";
 // Main
-import { registerLogHandlers } from "./ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
 // Intents
@@ -190,7 +189,7 @@ import { createTempDirModule } from "../modules/temp-dir-module";
 import { createErrorHandlerModule } from "../modules/error-handler-module";
 import { createShortcutModule } from "../modules/shortcut-module";
 import { createDevtoolsModule } from "../modules/devtools-module";
-import { createIpcEventBridge } from "../modules/ipc-event-bridge";
+import { createUiIpcModule } from "../modules/ui-ipc-module";
 import { createWorkspaceSelectionModule } from "../modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "../modules/auto-workspace/module";
 import { createGitHubSource } from "../modules/auto-workspace/github-source";
@@ -564,7 +563,6 @@ const electronLifecycleModule = createElectronLifecycleModule({
 
 const loggingModule = createLoggingModule({
   loggingService,
-  registerLogHandlers: () => registerLogHandlers(loggingService),
   buildInfo,
   platformInfo,
   logger: appLogger,
@@ -633,12 +631,13 @@ dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(confi
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
 dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
 
-// Create IPC event bridge (registers all IPC handlers directly on ipcLayer)
-const ipcEventBridge = createIpcEventBridge({
+// Create UI IPC module (registers all IPC handlers and log listeners on ipcLayer)
+const uiIpcModule = createUiIpcModule({
   ipcLayer,
   viewManager,
   logger: apiLogger,
   dispatcher,
+  loggingService,
 });
 
 // 9. Register all modules
@@ -671,7 +670,7 @@ dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(autoWorkspaceModule);
-dispatcher.registerModule(ipcEventBridge);
+dispatcher.registerModule(uiIpcModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)
 configService.load();

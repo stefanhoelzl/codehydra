@@ -564,12 +564,12 @@ External Trigger (IPC / MCP / Electron lifecycle)
 
 ### Layer Ownership
 
-| Component        | Owns                                                  | Does NOT Own                           |
-| ---------------- | ----------------------------------------------------- | -------------------------------------- |
-| `Dispatcher`     | Intent routing, interceptor pipeline, event delivery  | Business logic (in modules)            |
-| `Operations`     | Workflow orchestration, control flow decisions        | Side effects (delegated to hooks)      |
-| `Modules`        | Hook handlers, event subscriptions, domain logic      | Workflow orchestration (in operations) |
-| `IpcEventBridge` | IPC-to-intent mapping, domain-event-to-IPC forwarding | Business logic or workflow control     |
+| Component     | Owns                                                  | Does NOT Own                           |
+| ------------- | ----------------------------------------------------- | -------------------------------------- |
+| `Dispatcher`  | Intent routing, interceptor pipeline, event delivery  | Business logic (in modules)            |
+| `Operations`  | Workflow orchestration, control flow decisions        | Side effects (delegated to hooks)      |
+| `Modules`     | Hook handlers, event subscriptions, domain logic      | Workflow orchestration (in operations) |
+| `UiIpcModule` | IPC-to-intent mapping, domain-event-to-IPC forwarding | Business logic or workflow control     |
 
 ### Core Principles
 
@@ -587,7 +587,7 @@ External Trigger (IPC / MCP / Electron lifecycle)
 - **Hook execution**: Operations call `hooks.collect(hookPointId, ctx)` which runs all registered handlers. All handlers always run regardless of earlier errors. The operation inspects `HookResult.errors` and decides whether to continue, abort, or compensate.
 - **Control flow**: Hooks do not decide control flow. Operations always decide. Examples: fail-fast (stop on first error), best-effort (collect errors, continue), compensate (run cleanup hooks).
 - **Child intents**: Only operations dispatch child intents (via `ctx.dispatch()`). Hooks return data; operations decide whether to dispatch further.
-- **Events**: Domain events are fire-and-forget signals emitted via `ctx.emit()`. They cannot affect control flow. Subscribers (IpcEventBridge, BadgeModule, WindowTitleModule) react independently.
+- **Events**: Domain events are fire-and-forget signals emitted via `ctx.emit()`. They cannot affect control flow. Subscribers (UiIpcModule, BadgeModule, WindowTitleModule) react independently.
 
 For concrete operations, hook points, domain events, IPC mappings, capability ordering, platform abstractions, and mock factories, see [INTENTS.md](INTENTS.md).
 
@@ -1552,7 +1552,7 @@ User: Click "Open Project"
       → (or RemoteProjectModule: clone from URL)
   → Operation dispatches workspace:open per discovered worktree
   → Sets first workspace as active
-  → Emits project:opened domain event → IpcEventBridge → sendToUI → Renderer
+  → Emits project:opened domain event → UiIpcModule → sendToUI → Renderer
   → If 0 worktrees: auto-open create dialog
   → If 1+ worktrees: activate first workspace
 ```
@@ -1564,7 +1564,7 @@ User: Click workspace (or keyboard shortcut)
   → IPC: api:workspace:switch → workspace:switch intent dispatched
   → SwitchWorkspaceOperation runs "activate" hook:
       → ViewModule: attach target view, set bounds, detach previous view
-  → Emits workspace:switched domain event → IpcEventBridge → sendToUI → Renderer
+  → Emits workspace:switched domain event → UiIpcModule → sendToUI → Renderer
 ```
 
 ### Creating a Workspace
@@ -1580,7 +1580,7 @@ User: Click [+], fill dialog, click OK
       → "setup": KeepFilesModule copies .keepfiles, AgentModule starts agent server
       → "finalize": CodeServerModule creates .code-workspace file
   → Operation dispatches workspace:switch to activate the new workspace
-  → Emits workspace:created domain event → IpcEventBridge → sendToUI → Renderer
+  → Emits workspace:created domain event → UiIpcModule → sendToUI → Renderer
 ```
 
 ### Closing a Project
@@ -1593,7 +1593,7 @@ User: Click [x] on project row
       → Runs "close" hook point:
           → LocalProjectModule: dispose provider
           → (or RemoteProjectModule: delete cloned dir if removeLocalRepo)
-      → Emits project:closed domain event → IpcEventBridge → sendToUI → Renderer
+      → Emits project:closed domain event → UiIpcModule → sendToUI → Renderer
   (NO files or git data deleted unless removeLocalRepo is true for remote projects)
 ```
 
@@ -1601,7 +1601,7 @@ User: Click [x] on project row
 
 All IPC channels are defined in `src/shared/ipc.ts` with TypeScript types for compile-time safety.
 
-**Architecture Note**: IPC handlers in `IpcEventBridge` create typed intents and dispatch them through the Dispatcher. They only perform input validation and intent construction -- all business logic lives in operations and hook modules. See [Intent-Based Architecture](#intent-based-architecture) for details.
+**Architecture Note**: IPC handlers in `UiIpcModule` create typed intents and dispatch them through the Dispatcher. They only perform input validation and intent construction -- all business logic lives in operations and hook modules. See [Intent-Based Architecture](#intent-based-architecture) for details.
 
 ### Commands (renderer → main)
 
@@ -1640,7 +1640,7 @@ All IPC channels are defined in `src/shared/ipc.ts` with TypeScript types for co
 
 ```
 ┌─────────────┐  IPC invoke   ┌────────────────┐  dispatch   ┌────────────┐  hooks   ┌──────────┐
-│  Renderer   │ ────────────► │ IpcEventBridge │ ─────────► │ Dispatcher │ ───────► │ Modules  │
+│  Renderer   │ ────────────► │ UiIpcModule │ ─────────► │ Dispatcher │ ───────► │ Modules  │
 │  (Svelte)   │               │ (intent+IPC)   │            │ +Operation │          │(services)│
 │             │ ◄──────────── │                │ ◄────────── │            │ ◄─────── │          │
 └─────────────┘  IPC events/   └────────────────┘  domain     └────────────┘  results └──────────┘
