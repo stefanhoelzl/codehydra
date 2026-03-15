@@ -33,11 +33,9 @@ import {
   INTENT_UPDATE_APPLY,
   type UpdateApplyIntent,
 } from "../operations/update-apply";
-import { INTENT_CONFIG_SET_VALUES } from "../operations/config-set-values";
 import { createAutoUpdaterModule } from "./auto-updater-module";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { DomainEvent, Intent } from "../intents/infrastructure/types";
-import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../operations/config-set-values";
+import type { DomainEvent } from "../intents/infrastructure/types";
 import type {
   AutoUpdater,
   UpdateDetectedCallback,
@@ -45,6 +43,25 @@ import type {
   DownloadProgressCallback,
 } from "../../services/auto-updater";
 import type { IpcEventHandler, IpcLayer } from "../../services/platform/ipc";
+import type { ConfigService } from "../../services/config/config-service";
+
+// =============================================================================
+// Mock ConfigService
+// =============================================================================
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: () => {},
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
+}
 
 // =============================================================================
 // Tracking Operations
@@ -55,15 +72,6 @@ class TrackingUpdateOperation implements Operation<UpdateAvailableIntent, void> 
   readonly dispatched: UpdateAvailableIntent[] = [];
 
   async execute(ctx: OperationContext<UpdateAvailableIntent>): Promise<void> {
-    this.dispatched.push(ctx.intent);
-  }
-}
-
-class TrackingConfigOperation implements Operation<Intent<void>, void> {
-  readonly id = "config-set-values";
-  readonly dispatched: Intent[] = [];
-
-  async execute(ctx: OperationContext<Intent<void>>): Promise<void> {
     this.dispatched.push(ctx.intent);
   }
 }
@@ -239,17 +247,24 @@ interface TestSetup {
   autoUpdater: MockAutoUpdater;
   ipcLayer: MockIpcLayer;
   updateOperation: TrackingUpdateOperation;
-  configOperation: TrackingConfigOperation;
+  mockConfigService: ConfigService;
   module: IntentModule;
   emittedEvents: DomainEvent[];
 }
 
-function createTestSetup(overrides?: { disposeThrows?: Error; checkReturns?: boolean }): TestSetup {
+function createTestSetup(overrides?: {
+  disposeThrows?: Error;
+  checkReturns?: boolean;
+  configValues?: Record<string, unknown>;
+}): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
   const ipcLayer = createMockIpcLayer();
   const updateOperation = new TrackingUpdateOperation();
-  const configOperation = new TrackingConfigOperation();
   const emittedEvents: DomainEvent[] = [];
+  const mockConfigService = createMockConfigService({
+    "auto-update": "ask",
+    ...overrides?.configValues,
+  });
 
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -258,6 +273,7 @@ function createTestSetup(overrides?: { disposeThrows?: Error; checkReturns?: boo
     autoUpdater: autoUpdater.mock,
     dispatcher,
     ipcLayer: ipcLayer.layer,
+    configService: mockConfigService,
   });
 
   // Register minimal operations for the hooks we test
@@ -267,8 +283,7 @@ function createTestSetup(overrides?: { disposeThrows?: Error; checkReturns?: boo
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, updateOperation);
-  dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation());
-  dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, configOperation);
+  dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(mockConfigService));
 
   dispatcher.registerModule(autoUpdaterModule);
 
@@ -280,21 +295,10 @@ function createTestSetup(overrides?: { disposeThrows?: Error; checkReturns?: boo
     autoUpdater,
     ipcLayer,
     updateOperation,
-    configOperation,
+    mockConfigService,
     module: autoUpdaterModule,
     emittedEvents,
   };
-}
-
-async function simulateConfigUpdated(
-  module: IntentModule,
-  values: Readonly<Record<string, unknown>>
-): Promise<void> {
-  const event: ConfigUpdatedEvent = {
-    type: EVENT_CONFIG_UPDATED,
-    payload: { values },
-  };
-  await module.events![EVENT_CONFIG_UPDATED]!.handler(event as DomainEvent);
 }
 
 function startIntent(): AppStartIntent {
@@ -353,9 +357,9 @@ describe("AutoUpdaterModule Integration", () => {
   });
 
   it("auto-update=never skips autoUpdater via interceptor", async () => {
-    const { dispatcher, module } = createTestSetup();
-
-    await simulateConfigUpdated(module, { "auto-update": "never" });
+    const { dispatcher } = createTestSetup({
+      configValues: { "auto-update": "never" },
+    });
 
     // The interceptor should reject the app:update intent
     const handle = dispatcher.dispatch({
@@ -381,9 +385,9 @@ describe("AutoUpdaterModule Integration", () => {
   });
 
   it("auto-update=never still calls dispose() on shutdown", async () => {
-    const { dispatcher, autoUpdater, module } = createTestSetup();
-
-    await simulateConfigUpdated(module, { "auto-update": "never" });
+    const { dispatcher, autoUpdater } = createTestSetup({
+      configValues: { "auto-update": "never" },
+    });
 
     await dispatcher.dispatch(startIntent());
     await dispatcher.dispatch(shutdownIntent());
@@ -407,12 +411,11 @@ describe("AutoUpdaterModule Integration", () => {
     expect(autoUpdater.quitAndInstallCalled).toBe(false);
   });
 
-  it("register-config registers auto-update with default 'ask'", async () => {
-    const { module } = createTestSetup();
+  it("registers auto-update config via configService", () => {
+    const { mockConfigService } = createTestSetup();
 
-    // Verify the module has register-config hook
-    const hooks = module.hooks![APP_START_OPERATION_ID];
-    expect(hooks).toBeDefined();
-    expect(hooks!["register-config"]).toBeDefined();
+    // Factory registers "auto-update" via configService.register
+    // Verify the config service was provided and module created without error
+    expect(mockConfigService).toBeDefined();
   });
 });

@@ -18,12 +18,29 @@ import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-star
 import type { AppStartIntent, ConfigureResult } from "../operations/app-start";
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
 import type { AppShutdownIntent } from "../operations/app-shutdown";
-import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import {
   createElectronLifecycleModule,
   type ElectronLifecycleModuleDeps,
 } from "./electron-lifecycle-module";
+import type { ConfigService } from "../../services/config/config-service";
+
+// =============================================================================
+// Mock ConfigService
+// =============================================================================
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: () => {},
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
+}
 
 // =============================================================================
 // Minimal Test Operations
@@ -79,7 +96,11 @@ describe("ElectronLifecycleModule Integration", () => {
       createMinimalOperation(APP_START_OPERATION_ID, "await-ready")
     );
 
-    const module = createElectronLifecycleModule({ app: mockApp, logger: SILENT_LOGGER });
+    const module = createElectronLifecycleModule({
+      app: mockApp,
+      logger: SILENT_LOGGER,
+      configService: createMockConfigService(),
+    });
     dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
@@ -102,7 +123,11 @@ describe("ElectronLifecycleModule Integration", () => {
       createMinimalOperation(APP_START_OPERATION_ID, "await-ready")
     );
 
-    const module = createElectronLifecycleModule({ app: mockApp, logger: SILENT_LOGGER });
+    const module = createElectronLifecycleModule({
+      app: mockApp,
+      logger: SILENT_LOGGER,
+      configService: createMockConfigService(),
+    });
     dispatcher.registerModule(module);
 
     await expect(
@@ -121,7 +146,11 @@ describe("ElectronLifecycleModule Integration", () => {
 
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-    const module = createElectronLifecycleModule({ app: mockApp, logger: SILENT_LOGGER });
+    const module = createElectronLifecycleModule({
+      app: mockApp,
+      logger: SILENT_LOGGER,
+      configService: createMockConfigService(),
+    });
     dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
@@ -147,6 +176,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         buildInfo: { isPackaged: false },
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -179,6 +209,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         pathProvider: mockPathProvider,
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -217,6 +248,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         buildInfo: { isPackaged: true },
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -245,6 +277,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -256,6 +289,55 @@ describe("ElectronLifecycleModule Integration", () => {
           payload: {},
         } as AppStartIntent)
       ).resolves.not.toThrow();
+    });
+
+    it("applies electron flags from configService", async () => {
+      const mockApp = createMockApp();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        configService: createMockConfigService({
+          "electron.flags": "--disable-gpu --use-gl=swiftshader",
+        }),
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
+    });
+
+    it("does not apply flags when electron.flags is null", async () => {
+      const mockApp = createMockApp();
+      const hookRegistry = new HookRegistry();
+      const dispatcher = new Dispatcher(hookRegistry);
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        configService: createMockConfigService({ "electron.flags": null }),
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
     });
   });
 
@@ -286,6 +368,7 @@ describe("ElectronLifecycleModule Integration", () => {
         logger: SILENT_LOGGER,
         powerMonitor: mockPowerMonitor,
         dispatcher: mockDispatcher,
+        configService: createMockConfigService(),
       });
       dispatcher.registerModule(module);
 
@@ -317,6 +400,7 @@ describe("ElectronLifecycleModule Integration", () => {
         logger: SILENT_LOGGER,
         powerMonitor: null,
         dispatcher: { dispatch: vi.fn() },
+        configService: createMockConfigService(),
       });
       dispatcher.registerModule(module);
 
@@ -345,6 +429,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         powerMonitor: mockPowerMonitor,
+        configService: createMockConfigService(),
       });
       dispatcher.registerModule(module);
 
@@ -354,66 +439,6 @@ describe("ElectronLifecycleModule Integration", () => {
       } as AppStartIntent);
 
       expect(mockPowerMonitor.on).not.toHaveBeenCalled();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // config:updated event
-  // ---------------------------------------------------------------------------
-  describe("config:updated event", () => {
-    it("applies electron flags from config:updated event", async () => {
-      const mockApp = createMockApp();
-
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-      });
-
-      const event: ConfigUpdatedEvent = {
-        type: EVENT_CONFIG_UPDATED,
-        payload: { values: { "electron.flags": "--disable-gpu --use-gl=swiftshader" } },
-      };
-
-      await module.events![EVENT_CONFIG_UPDATED]!.handler(event);
-
-      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-gpu");
-      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
-    });
-
-    it("does not apply flags when electron.flags is not in payload", async () => {
-      const mockApp = createMockApp();
-
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-      });
-
-      const event: ConfigUpdatedEvent = {
-        type: EVENT_CONFIG_UPDATED,
-        payload: { values: { "log.level": "debug" } },
-      };
-
-      await module.events![EVENT_CONFIG_UPDATED]!.handler(event);
-
-      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
-    });
-
-    it("handles empty electron.flags value", async () => {
-      const mockApp = createMockApp();
-
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-      });
-
-      const event: ConfigUpdatedEvent = {
-        type: EVENT_CONFIG_UPDATED,
-        payload: { values: { "electron.flags": "" } },
-      };
-
-      await module.events![EVENT_CONFIG_UPDATED]!.handler(event);
-
-      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
     });
   });
 });

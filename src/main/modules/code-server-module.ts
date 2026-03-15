@@ -27,7 +27,6 @@ import {
 import type { HttpClient, PortManager } from "../../services/platform/network";
 import type { PathProvider } from "../../services/platform/path-provider";
 import type { Logger } from "../../services/logging/types";
-import type { DomainEvent } from "../intents/infrastructure/types";
 import type { SupportedPlatform, SupportedArch } from "../../services/agents/types";
 import type { BuildInfo } from "../../services/platform/build-info";
 import type {
@@ -36,12 +35,10 @@ import type {
   DownloadRequest,
 } from "../../services/binary-download";
 import type { BinaryType } from "../../services/binary-resolution/types";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-  RegisterConfigResult,
 } from "../operations/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../operations/setup";
 import type { FinalizeHookInput } from "../operations/open-workspace";
@@ -49,7 +46,6 @@ import type { DeleteWorkspaceIntent } from "../operations/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../operations/delete-workspace";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
-import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { SETUP_OPERATION_ID } from "../operations/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../operations/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../operations/delete-workspace";
@@ -64,6 +60,7 @@ import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/exte
 import { Path } from "../../services/platform/path";
 import { encodePathForUrl } from "../../services/platform/paths";
 import { configString, configCustom } from "../../services/config/config-definition";
+import type { ConfigService } from "../../services/config/config-service";
 import { CodeServerError, SetupError, getErrorMessage } from "../../services/errors";
 import { waitForHealthy } from "../../services/platform/health-check";
 
@@ -177,6 +174,7 @@ export interface CodeServerModuleDeps {
   readonly wrapperPath: string;
   readonly logger: Logger;
   readonly binaryDownloadService?: BinaryDownloadService;
+  readonly configService: ConfigService;
 }
 
 // =============================================================================
@@ -191,6 +189,28 @@ export interface CodeServerModuleDeps {
  */
 export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule {
   const { processRunner, fileSystemLayer, logger } = deps;
+
+  // Register config keys
+  deps.configService.register("version.code-server", {
+    name: "version.code-server",
+    default: null,
+    description: "Code-server version override (null = built-in)",
+    ...configString({ nullable: true }),
+  });
+  deps.configService.register("code-server.port", {
+    name: "code-server.port",
+    default: getCodeServerPort(deps.buildInfo),
+    description: "Code-server port",
+    ...configCustom<number>({
+      parse: (raw) => {
+        const n = Number(raw);
+        return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : undefined;
+      },
+      validate: (v) =>
+        typeof v === "number" && Number.isInteger(v) && v >= 1024 && v <= 65535 ? v : undefined,
+      validValues: "1024-65535",
+    }),
+  });
 
   // -------------------------------------------------------------------------
   // Compute config from deps
@@ -248,7 +268,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // Binary download state
   // -------------------------------------------------------------------------
 
-  let binaryDownload: { service: BinaryDownloadService; request: DownloadRequest } | null =
+  const binaryDownload: { service: BinaryDownloadService; request: DownloadRequest } | null =
     deps.binaryDownloadService
       ? {
           service: deps.binaryDownloadService,
@@ -275,7 +295,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // Internal state: port set by start hook, read by finalize hook
   let codeServerPort = 0;
   // Binary path tracked in closure -- updated by config:updated events
-  let codeServerBinaryPath = config.binaryPath;
+  const codeServerBinaryPath = config.binaryPath;
 
   // -------------------------------------------------------------------------
   // Process lifecycle functions
@@ -529,38 +549,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     name: "code-server",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        // -------------------------------------------------------------------
-        // app-start -> register-config: declare version.code-server key
-        // -------------------------------------------------------------------
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => ({
-            definitions: [
-              {
-                name: "version.code-server",
-                default: null,
-                description: "Code-server version override (null = built-in)",
-                ...configString({ nullable: true }),
-              },
-              {
-                name: "code-server.port",
-                default: config.port,
-                description: "Code-server port",
-                ...configCustom<number>({
-                  parse: (raw) => {
-                    const n = Number(raw);
-                    return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : undefined;
-                  },
-                  validate: (v) =>
-                    typeof v === "number" && Number.isInteger(v) && v >= 1024 && v <= 65535
-                      ? v
-                      : undefined,
-                  validValues: "1024-65535",
-                }),
-              },
-            ],
-          }),
-        },
-
         // -------------------------------------------------------------------
         // app-start -> before-ready: declare required scripts
         // -------------------------------------------------------------------
@@ -817,35 +805,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               throw error;
             }
           },
-        },
-      },
-    },
-    events: {
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { values } = (event as ConfigUpdatedEvent).payload;
-          if (values["code-server.port"] !== undefined) {
-            config.port = values["code-server.port"] as number;
-          }
-          if (values["version.code-server"] !== undefined) {
-            const version = (values["version.code-server"] as string | null) ?? CODE_SERVER_VERSION;
-            const codeServerDir = deps.pathProvider.bundlePath(`code-server/${version}`);
-            const execPath = getCodeServerExecutablePath(deps.platform);
-            const binaryPath = new Path(codeServerDir, execPath).toNative();
-            const downloadRequest: DownloadRequest = {
-              name: "code-server",
-              url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
-              destDir: codeServerDir.toNative(),
-              executablePath: execPath,
-              subPath: getCodeServerSubPathForVersion(version, deps.platform, deps.arch),
-            };
-            config.binaryPath = binaryPath;
-            config.codeServerDir = codeServerDir.toNative();
-            if (binaryDownload) {
-              binaryDownload = { ...binaryDownload, request: downloadRequest };
-            }
-            codeServerBinaryPath = binaryPath;
-          }
         },
       },
     },

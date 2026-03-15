@@ -18,7 +18,7 @@
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { UpdateProgressAction, UpdateChoice } from "../../shared/ipc";
-import { INTENT_CONFIG_SET_VALUES } from "./config-set-values";
+import type { ConfigService } from "../../services/config/config-service";
 
 // =============================================================================
 // Intent Types
@@ -98,6 +98,8 @@ export interface UpdateDownloadResult {
 export class UpdateApplyOperation implements Operation<UpdateApplyIntent, void> {
   readonly id = UPDATE_APPLY_OPERATION_ID;
 
+  constructor(private readonly configService: ConfigService) {}
+
   async execute(ctx: OperationContext<UpdateApplyIntent>): Promise<void> {
     const { needsChoice } = ctx.intent.payload;
 
@@ -128,16 +130,10 @@ export class UpdateApplyOperation implements Operation<UpdateApplyIntent, void> 
 
       switch (choice) {
         case "always":
-          await ctx.dispatch({
-            type: INTENT_CONFIG_SET_VALUES,
-            payload: { values: { "auto-update": "always" } },
-          });
+          await this.configService.set("auto-update", "always");
           break;
         case "never":
-          await ctx.dispatch({
-            type: INTENT_CONFIG_SET_VALUES,
-            payload: { values: { "auto-update": "never" } },
-          });
+          await this.configService.set("auto-update", "never");
           report("show-choice", 0, "", true);
           return;
         case "skip":

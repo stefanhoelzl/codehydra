@@ -21,7 +21,7 @@
 import type { IntentModule } from "../../intents/infrastructure/module";
 import type { Dispatcher } from "../../intents/infrastructure/dispatcher";
 import type { DomainEvent } from "../../intents/infrastructure/types";
-import { APP_START_OPERATION_ID, type RegisterConfigResult } from "../../operations/app-start";
+import { APP_START_OPERATION_ID } from "../../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../operations/app-shutdown";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../operations/open-workspace";
 import {
@@ -42,10 +42,9 @@ import {
 } from "../../operations/get-project-bases";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../operations/open-project";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../operations/list-projects";
-import { EVENT_CONFIG_UPDATED, type ConfigUpdatedEvent } from "../../operations/config-set-values";
+import type { ConfigService } from "../../../services/config/config-service";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../operations/set-metadata";
 import { configPath } from "../../../services/config/config-definition";
-import type { ConfigKeyDefinition } from "../../../services/config/config-definition";
 import type { FileSystemLayer } from "../../../services/platform/filesystem";
 import type { Logger } from "../../../services/logging/types";
 import type { NormalizedInitialPrompt } from "../../../shared/api/types";
@@ -91,6 +90,7 @@ export interface AutoWorkspaceModuleDeps {
   readonly stateFilePath: string;
   readonly dispatcher: Dispatcher;
   readonly sources: readonly AutoWorkspaceSource[];
+  readonly configService: ConfigService;
 }
 
 // =============================================================================
@@ -114,10 +114,21 @@ function templatePathConfigKey(sourceName: string): string {
 // =============================================================================
 
 export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): IntentModule {
+  // Register config keys for each source
+  for (const source of deps.sources) {
+    deps.configService.register(templatePathConfigKey(source.name), {
+      name: templatePathConfigKey(source.name),
+      default: null,
+      description: `Path to Liquid template for ${source.name} auto-workspaces`,
+      ...configPath({ nullable: true }),
+    });
+    for (const def of source.configDefinitions()) {
+      deps.configService.register(def.name, def);
+    }
+  }
+
   let state: AutoWorkspaceState = emptyState();
   let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let initialActivationDone = false;
-
   // Per-source activation state
   const templatePaths = new Map<string, string | null>(); // sourceName → template path
   const activeSources = new Set<string>(); // currently polling source names
@@ -494,30 +505,23 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     name: "auto-workspace",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => {
-            const definitions: ConfigKeyDefinition<unknown>[] = [];
-
-            for (const source of deps.sources) {
-              // Template-path key per source
-              definitions.push({
-                name: templatePathConfigKey(source.name),
-                default: null,
-                description: `Path to Liquid template for ${source.name} auto-workspaces`,
-                ...configPath({ nullable: true }),
-              });
-
-              // Source-specific config keys
-              definitions.push(...source.configDefinitions());
-            }
-
-            return { definitions };
-          },
-        },
         start: {
           handler: async (): Promise<void> => {
+            // Read config values into local state
+            for (const source of deps.sources) {
+              const tplKey = templatePathConfigKey(source.name);
+              const tplValue = deps.configService.get(tplKey) as string | null;
+              templatePaths.set(source.name, tplValue);
+
+              // Build initial config values for source
+              const configValues: Record<string, unknown> = {};
+              for (const def of source.configDefinitions()) {
+                configValues[def.name] = deps.configService.get(def.name);
+              }
+              source.onConfigUpdated(configValues);
+            }
+
             await activateAll();
-            initialActivationDone = true;
           },
         },
       },
@@ -530,40 +534,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       },
     },
     events: {
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { values } = (event as ConfigUpdatedEvent).payload;
-
-          for (const source of deps.sources) {
-            const tplKey = templatePathConfigKey(source.name);
-            if (tplKey in values) {
-              templatePaths.set(source.name, (values[tplKey] as string | null) ?? null);
-            }
-
-            source.onConfigUpdated(values);
-
-            if (!initialActivationDone) continue;
-
-            const wasActive = activeSources.has(source.name);
-            const shouldBeActive = isSourceActive(source);
-
-            if (!wasActive && shouldBeActive) {
-              void activateSource(source).then(() => {
-                if (activeSources.size > 0) {
-                  void poll().then(() => {
-                    startPolling();
-                  });
-                }
-              });
-            } else if (wasActive && !shouldBeActive) {
-              deactivateSource(source);
-              if (activeSources.size === 0) {
-                stopPolling();
-              }
-            }
-          }
-        },
-      },
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const { workspacePath } = (event as WorkspaceDeletedEvent).payload;

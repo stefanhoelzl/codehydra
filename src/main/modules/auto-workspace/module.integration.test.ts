@@ -49,12 +49,6 @@ import {
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../operations/set-metadata";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../operations/list-projects";
 import {
-  EVENT_CONFIG_UPDATED,
-  INTENT_CONFIG_SET_VALUES,
-  type ConfigUpdatedEvent,
-  type ConfigSetValuesIntent,
-} from "../../operations/config-set-values";
-import {
   createFileSystemMock,
   file,
   directory,
@@ -62,28 +56,34 @@ import {
 import { createAutoWorkspaceModule } from "./module";
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
 import type { ConfigKeyDefinition } from "../../../services/config/config-definition";
+import type { ConfigService } from "../../../services/config/config-service";
 
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
 
+// =============================================================================
+// Mock ConfigService
+// =============================================================================
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: () => {},
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
+}
+
 class MinimalActivateOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
-  configValues: Record<string, unknown>;
-
-  constructor(configValues?: Record<string, unknown>) {
-    this.configValues = configValues ?? {};
-  }
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
-    if (Object.keys(this.configValues).length > 0) {
-      const configEvent: ConfigUpdatedEvent = {
-        type: EVENT_CONFIG_UPDATED,
-        payload: { values: this.configValues },
-      };
-      ctx.emit(configEvent);
-    }
-
     const hookCtx: HookContext = { intent: ctx.intent };
     const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
@@ -229,18 +229,6 @@ class TrackingGetProjectBasesOperation implements Operation<
   }
 }
 
-class MinimalConfigSetOperation implements Operation<ConfigSetValuesIntent, void> {
-  readonly id = "config-set-values";
-
-  async execute(ctx: OperationContext<ConfigSetValuesIntent>): Promise<void> {
-    const event: ConfigUpdatedEvent = {
-      type: EVENT_CONFIG_UPDATED,
-      payload: { values: ctx.intent.payload.values },
-    };
-    ctx.emit(event);
-  }
-}
-
 // =============================================================================
 // Mock Source
 // =============================================================================
@@ -329,6 +317,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
   fs: ReturnType<typeof createFileSystemMock>;
   source: ReturnType<typeof createMockSource>;
+  mockConfigService: ConfigService;
   openProjectOp: TrackingOpenProjectOperation;
   openWorkspaceOp: TrackingOpenWorkspaceOperation;
   deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
@@ -388,9 +377,10 @@ function createTestSetup(options?: {
     configValues[`experimental.${sourceName}.template-path`] = tplPath;
   }
 
-  dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation(configValues));
+  const mockConfigService = createMockConfigService(configValues);
+
+  dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation());
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-  dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new MinimalConfigSetOperation());
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, openProjectOp);
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
@@ -405,6 +395,7 @@ function createTestSetup(options?: {
     stateFilePath: "/data/auto-workspaces.json",
     dispatcher,
     sources: [source],
+    configService: mockConfigService,
   });
 
   dispatcher.registerModule(module);
@@ -413,6 +404,7 @@ function createTestSetup(options?: {
     dispatcher,
     fs,
     source,
+    mockConfigService,
     openProjectOp,
     openWorkspaceOp,
     deleteWorkspaceOp,
@@ -1106,44 +1098,19 @@ describe("AutoWorkspaceModule Integration", () => {
   });
 
   describe("config toggling", () => {
-    it("activates source when template path becomes non-null at runtime", async () => {
-      const { dispatcher, source, fs } = createTestSetup({ disabled: true });
-
-      await dispatcher.dispatch(startIntent());
-      expect(source.initializeCalled).toBe(false);
-
-      // Make template file available
-      fs.$.setEntry(DEFAULT_TEMPLATE_PATH, file(DEFAULT_TEMPLATE));
-
-      source.pollResult = { activeKeys: new Set(), newItems: [] };
-
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: {
-          values: { "experimental.test-source.template-path": DEFAULT_TEMPLATE_PATH },
-        },
-      } as ConfigSetValuesIntent);
-
-      await vi.waitFor(() => {
-        expect(source.initializeCalled).toBe(true);
-      });
-    });
-
-    it("deactivates source when template path becomes null at runtime", async () => {
+    it("activates source when template path is configured", async () => {
       const { dispatcher, source } = createTestSetup();
       source.pollResult = { activeKeys: new Set(), newItems: [] };
 
       await dispatcher.dispatch(startIntent());
       expect(source.initializeCalled).toBe(true);
+    });
 
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: {
-          values: { "experimental.test-source.template-path": null },
-        },
-      } as ConfigSetValuesIntent);
+    it("does not activate source when template path is null (disabled)", async () => {
+      const { dispatcher, source } = createTestSetup({ disabled: true });
 
-      expect(source.disposeCalled).toBe(true);
+      await dispatcher.dispatch(startIntent());
+      expect(source.initializeCalled).toBe(false);
     });
   });
 
