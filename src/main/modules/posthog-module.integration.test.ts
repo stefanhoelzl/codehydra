@@ -285,8 +285,8 @@ describe("PosthogModule Integration", () => {
         await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
         await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
 
-        // Should have exactly 1 handler (uncaughtExceptionMonitor)
-        expect(registeredHandlers).toHaveLength(1);
+        // Should have exactly 2 handlers (uncaughtExceptionMonitor + unhandledRejection)
+        expect(registeredHandlers).toHaveLength(2);
       } finally {
         process.on = originalOn;
       }
@@ -317,6 +317,80 @@ describe("PosthogModule Integration", () => {
         const mock = getMock()!;
         expect(mock).toHaveCapturedError();
         expect(mock).toHaveCaptured("error", { message: "test uncaught" });
+      } finally {
+        process.on = originalOn;
+      }
+    });
+
+    it("registers unhandledRejection handler when telemetry is enabled", async () => {
+      type Handler = (...args: unknown[]) => void;
+      const registeredHandlers: { event: string; handler: Handler }[] = [];
+      const originalOn = process.on;
+      process.on = ((event: string, handler: Handler) => {
+        registeredHandlers.push({ event, handler });
+        return process;
+      }) as typeof process.on;
+
+      try {
+        const { dispatcher } = createTestSetup();
+
+        await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
+
+        const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
+        expect(rejectionHandler).toBeDefined();
+      } finally {
+        process.on = originalOn;
+      }
+    });
+
+    it("unhandledRejection handler captures error to PostHog", async () => {
+      type Handler = (...args: unknown[]) => void;
+      const registeredHandlers: { event: string; handler: Handler }[] = [];
+      const originalOn = process.on;
+      process.on = ((event: string, handler: Handler) => {
+        registeredHandlers.push({ event, handler });
+        return process;
+      }) as typeof process.on;
+
+      try {
+        const { dispatcher, getMock } = createTestSetup();
+
+        await enableTelemetry(dispatcher);
+
+        const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
+
+        const testError = new Error("test rejection");
+        rejectionHandler!.handler(testError);
+
+        const mock = getMock()!;
+        expect(mock).toHaveCapturedError();
+        expect(mock).toHaveCaptured("error", { message: "test rejection" });
+      } finally {
+        process.on = originalOn;
+      }
+    });
+
+    it("unhandledRejection handler wraps non-Error reasons", async () => {
+      type Handler = (...args: unknown[]) => void;
+      const registeredHandlers: { event: string; handler: Handler }[] = [];
+      const originalOn = process.on;
+      process.on = ((event: string, handler: Handler) => {
+        registeredHandlers.push({ event, handler });
+        return process;
+      }) as typeof process.on;
+
+      try {
+        const { dispatcher, getMock } = createTestSetup();
+
+        await enableTelemetry(dispatcher);
+
+        const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
+
+        rejectionHandler!.handler("string rejection reason");
+
+        const mock = getMock()!;
+        expect(mock).toHaveCapturedError();
+        expect(mock).toHaveCaptured("error", { message: "string rejection reason" });
       } finally {
         process.on = originalOn;
       }
