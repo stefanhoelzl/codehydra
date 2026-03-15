@@ -384,23 +384,23 @@ Non-IPC consumers (MCP Server, Plugin API) dispatch intents directly through the
 
 All operations use the intent dispatcher (`Dispatcher` + `HookRegistry`). Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
 
-| Operation              | Intent Type              | Hook Points                                                                                            | Domain Event        |
-| ---------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------- |
-| `set-metadata`         | `workspace:setMetadata`  | `set`                                                                                                  | --                  |
-| `get-metadata`         | `workspace:getMetadata`  | `get`                                                                                                  | --                  |
-| `get-workspace-status` | `workspace:getStatus`    | `get`                                                                                                  | --                  |
-| `get-agent-session`    | `workspace:getSession`   | `get`                                                                                                  | --                  |
-| `restart-agent`        | `workspace:restartAgent` | `restart`                                                                                              | --                  |
-| `set-mode`             | `ui:setMode`             | `set`                                                                                                  | --                  |
-| `get-active-workspace` | `ui:getActiveWorkspace`  | `get`                                                                                                  | --                  |
-| `create-workspace`     | `workspace:create`       | `create`, `setup`, `finalize`                                                                          | `workspace:created` |
-| `delete-workspace`     | `workspace:delete`       | `shutdown`, `release`, `delete`                                                                        | `workspace:deleted` |
-| `open-project`         | `project:open`           | `open`                                                                                                 | `project:opened`    |
-| `close-project`        | `project:close`          | `close`                                                                                                | `project:closed`    |
-| `app-start`            | `app:start`              | `register-config`, `before-ready`, `await-ready`, `init`, `show-ui`, `check-deps`, `start`, `activate` | --                  |
-| `app-shutdown`         | `app:shutdown`           | `stop`                                                                                                 | --                  |
-| `app-setup`            | `app:setup`              | `setup`                                                                                                | --                  |
-| `app-resume`           | `app:resume`             | `resume`                                                                                               | --                  |
+| Operation              | Intent Type              | Hook Points                                              | Domain Event        |
+| ---------------------- | ------------------------ | -------------------------------------------------------- | ------------------- |
+| `set-metadata`         | `workspace:setMetadata`  | `set`                                                    | --                  |
+| `get-metadata`         | `workspace:getMetadata`  | `get`                                                    | --                  |
+| `get-workspace-status` | `workspace:getStatus`    | `get`                                                    | --                  |
+| `get-agent-session`    | `workspace:getSession`   | `get`                                                    | --                  |
+| `restart-agent`        | `workspace:restartAgent` | `restart`                                                | --                  |
+| `set-mode`             | `ui:setMode`             | `set`                                                    | --                  |
+| `get-active-workspace` | `ui:getActiveWorkspace`  | `get`                                                    | --                  |
+| `create-workspace`     | `workspace:create`       | `create`, `setup`, `finalize`                            | `workspace:created` |
+| `delete-workspace`     | `workspace:delete`       | `shutdown`, `release`, `delete`                          | `workspace:deleted` |
+| `open-project`         | `project:open`           | `open`                                                   | `project:opened`    |
+| `close-project`        | `project:close`          | `close`                                                  | `project:closed`    |
+| `app-start`            | `app:start`              | `before-ready`, `init`, `show-ui`, `check-deps`, `start` | --                  |
+| `app-shutdown`         | `app:shutdown`           | `stop`                                                   | --                  |
+| `app-setup`            | `app:setup`              | `setup`                                                  | --                  |
+| `app-resume`           | `app:resume`             | `resume`                                                 | --                  |
 
 IPC handlers in `IpcEventBridge` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (IpcEventBridge, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
 
@@ -430,18 +430,15 @@ The `close-project` operation uses these hook modules:
 
 Before the close hook, the operation resolves projectId to path, gets the workspace list, then dispatches `workspace:delete { removeWorktree: false, skipSwitch: true }` per workspace for runtime-only teardown. After all workspaces are torn down, it sets active workspace to null if no other projects are open, runs the close hook, then emits `project:closed`.
 
-The `app-start` operation runs eight hook points in sequence:
+The `app-start` operation runs five hook points in sequence:
 
-- **register-config**: All modules return their config key definitions
 - **before-ready**: Env config + script declarations (no I/O, pre-Electron ready)
-- **await-ready**: Wait for Electron `app.whenReady()`
-- **init**: Post-ready initialization (config file, logging, shell, scripts)
+- **init**: Initialization (logging, shell, scripts). ElectronLifecycleModule provides `"app-ready"` capability after `app.whenReady()`; handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`.
 - **show-ui**: Show starting screen, capture waitForRetry callback
 - **check-deps**: Binary + extension checks (collect, isolated contexts). Dispatches `app:setup` if needed.
-- **start**: CodeServerLifecycleModule (start PluginServer with graceful degradation, ensure dirs, start code-server, update ports), AgentLifecycleModule (wire status changes to dispatcher), McpLifecycleModule (start MCP server, wire callbacks, configure agent server manager), TelemetryLifecycleModule (capture app_launched), AutoUpdaterLifecycleModule (start auto-updater, wire title updates), IpcBridgeLifecycleModule (wire API events to IPC, wire Plugin API)
-- **activate**: DataLifecycleModule (load persisted projects), ViewLifecycleModule (wire loading-state IPC, set first workspace active + title)
+- **start**: Start servers with capability-based ordering (`pluginPort` → `codeServerPort` → downstream handlers).
 
-The multi-phase design ensures config is loaded before Electron ready, servers are running before data is loaded (activate hook modules can read ports from the shared hook context). Errors in early hooks abort startup; errors in the activate hook propagate to the renderer error screen.
+The multi-phase design ensures config is loaded before Electron ready, servers are running before data is loaded (start hook modules read ports from capabilities). Errors in early hooks abort startup.
 
 The `app-shutdown` operation uses a single hook point:
 
@@ -511,20 +508,15 @@ index.ts (composition root)
               v
         AppStartOperation
               |
-              +-- "register-config" (collect config definitions from all modules)
               +-- "before-ready" (env config, script declarations)
-              +-- "await-ready" (Electron app.whenReady())
-              +-- "init" (config file, logging, shell, scripts)
+              +-- "init" (app.whenReady() provides "app-ready" capability,
+              |           logging, shell, scripts)
               +-- "show-ui" (starting screen)
               +-- "check-deps" (binary/extension checks -> app:setup if needed)
               |
               +-- "start" hook point (servers, wiring)
-              |     CodeServerModule, PluginServerModule, AgentModules,
+              |     PluginServerModule -> CodeServerModule -> AgentModules,
               |     TelemetryModule, AutoUpdaterModule, McpModule, etc.
-              |
-              +-- "activate" hook point (load data, set active workspace)
-              |     DataModule (load persisted projects),
-              |     ViewModule (wire loading-state IPC, set first workspace active)
               |
               +-- Renderer notified -> ready
 ```

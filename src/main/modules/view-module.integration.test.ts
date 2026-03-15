@@ -1077,7 +1077,9 @@ describe("ViewModule Integration", () => {
 
       dispatcher.registerOperation(
         INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "init")
+        createMinimalOperation(APP_START_OPERATION_ID, "init", {
+          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
+        })
       );
 
       const menuLayer = { setApplicationMenu: vi.fn() };
@@ -1125,7 +1127,9 @@ describe("ViewModule Integration", () => {
 
       dispatcher.registerOperation(
         INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "init")
+        createMinimalOperation(APP_START_OPERATION_ID, "init", {
+          hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
+        })
       );
 
       const module = createViewModule({

@@ -21,11 +21,10 @@
  * #12: configuredAgent flows from init results to check-deps
  * #13: before-ready hook collects scripts from multiple modules
  * #14: before-ready hook error aborts startup
- * #15: await-ready hook error aborts startup
- * #16: init hook receives requiredScripts from before-ready results
- * #17: init hook error aborts startup
- * #18: full sequence: before-ready -> await-ready -> init -> show-ui -> start
- * #19: ports available via capabilities in start hook
+ * #15: init hook receives requiredScripts from before-ready results
+ * #16: init hook error aborts startup
+ * #17: full sequence: before-ready -> init -> show-ui -> start
+ * #18: ports available via capabilities in start hook
  */
 
 import { describe, it, expect } from "vitest";
@@ -646,7 +645,7 @@ describe("AppStart Operation", () => {
   // Capabilities (ports available via ctx.capabilities in start hook)
   // ===========================================================================
 
-  describe("ports available via capabilities in start hook (#19)", () => {
+  describe("ports available via capabilities in start hook (#18)", () => {
     it.each([
       {
         portName: "mcpPort" as const,
@@ -702,10 +701,10 @@ describe("AppStart Operation", () => {
   });
 
   // ===========================================================================
-  // Pre-ready Hooks: before-ready, await-ready, init
+  // Pre-ready Hooks: before-ready, init
   // ===========================================================================
 
-  describe("pre-ready hooks (before-ready, await-ready, init)", () => {
+  describe("pre-ready hooks (before-ready, init)", () => {
     function createConfigureModule(scripts: string[]): IntentModule {
       return {
         name: "test",
@@ -729,23 +728,6 @@ describe("AppStart Operation", () => {
             "before-ready": {
               handler: async (): Promise<ConfigureResult> => {
                 throw new Error(message);
-              },
-            },
-          },
-        },
-      };
-    }
-
-    function createAwaitReadyModule(options?: { fail?: boolean }): IntentModule {
-      return {
-        name: "test",
-        hooks: {
-          [APP_START_OPERATION_ID]: {
-            "await-ready": {
-              handler: async (): Promise<void> => {
-                if (options?.fail) {
-                  throw new Error("Electron ready failed");
-                }
               },
             },
           },
@@ -817,22 +799,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("await-ready hook error aborts startup (#15)", async () => {
-      const state = createTestState();
-      const { dispatcher } = createTestSetup([
-        createAwaitReadyModule({ fail: true }),
-        createCodeServerModule(state),
-        createMcpModule(state),
-        createDataModule(state),
-      ]);
-
-      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Electron ready failed");
-
-      expect(state.codeServerStarted).toBe(false);
-      expect(state.dataLoaded).toBe(false);
-    });
-
-    it("init hook receives requiredScripts from before-ready results (#16)", async () => {
+    it("init hook receives requiredScripts from before-ready results (#15)", async () => {
       const state = createTestState();
       let capturedScripts: readonly string[] = [];
 
@@ -854,7 +821,7 @@ describe("AppStart Operation", () => {
       expect(capturedScripts).toEqual(["bin/agent-wrapper"]);
     });
 
-    it("init hook error aborts startup (#17)", async () => {
+    it("init hook error aborts startup (#16)", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createInitModule(state, { fail: true }),
@@ -869,7 +836,7 @@ describe("AppStart Operation", () => {
       expect(state.dataLoaded).toBe(false);
     });
 
-    it("full sequence: before-ready -> await-ready -> init -> show-ui -> start (#18)", async () => {
+    it("full sequence: before-ready -> init -> show-ui -> start (#17)", async () => {
       const state = createTestState();
 
       const configureTracker: IntentModule = {
@@ -886,22 +853,8 @@ describe("AppStart Operation", () => {
         },
       };
 
-      const awaitReadyTracker: IntentModule = {
-        name: "test",
-        hooks: {
-          [APP_START_OPERATION_ID]: {
-            "await-ready": {
-              handler: async (): Promise<void> => {
-                state.executionOrder.push("await-ready");
-              },
-            },
-          },
-        },
-      };
-
       const { dispatcher } = createTestSetup([
         configureTracker,
-        awaitReadyTracker,
         createInitModule(state),
         createCodeServerModule(state),
         createMcpModule(state),
@@ -913,7 +866,6 @@ describe("AppStart Operation", () => {
 
       expect(state.executionOrder).toEqual([
         "before-ready",
-        "await-ready",
         "init",
         "codeserver-start",
         "mcp-start",

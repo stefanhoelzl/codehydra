@@ -85,7 +85,7 @@ function createMockApp(): ElectronLifecycleModuleDeps["app"] {
 // =============================================================================
 
 describe("ElectronLifecycleModule Integration", () => {
-  it("calls whenReady during await-ready hook", async () => {
+  it("calls whenReady during init hook and provides app-ready capability", async () => {
     const mockApp = createMockApp();
 
     const hookRegistry = new HookRegistry();
@@ -93,7 +93,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     dispatcher.registerOperation(
       INTENT_APP_START,
-      createMinimalOperation(APP_START_OPERATION_ID, "await-ready")
+      createMinimalOperation(APP_START_OPERATION_ID, "init")
     );
 
     const module = createElectronLifecycleModule({
@@ -120,7 +120,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     dispatcher.registerOperation(
       INTENT_APP_START,
-      createMinimalOperation(APP_START_OPERATION_ID, "await-ready")
+      createMinimalOperation(APP_START_OPERATION_ID, "init")
     );
 
     const module = createElectronLifecycleModule({

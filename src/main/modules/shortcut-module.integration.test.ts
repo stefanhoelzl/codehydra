@@ -161,7 +161,9 @@ async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarn
 
   dispatcher.registerOperation(
     INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, "init")
+    createMinimalOperation(APP_START_OPERATION_ID, "init", {
+      hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "ui-ready": true } }),
+    })
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());

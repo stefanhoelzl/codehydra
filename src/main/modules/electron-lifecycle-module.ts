@@ -3,7 +3,7 @@
  *
  * Provides:
  * - "before-ready" hook on app:start (noAsar, data paths, electron flags)
- * - "await-ready" hook on app:start (waits for Electron app ready)
+ * - "init" hook on app:start (waits for Electron app ready, provides "app-ready" capability)
  * - "start" hook on app:start (power monitor resume handler)
  * - "quit" hook on app:shutdown (calls app.quit())
  */
@@ -126,7 +126,8 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             return {};
           },
         },
-        "await-ready": {
+        init: {
+          provides: () => ({ "app-ready": true }),
           handler: async (): Promise<void> => {
             deps.asyncWatcher?.check();
             await deps.app.whenReady();

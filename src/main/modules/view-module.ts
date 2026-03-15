@@ -161,6 +161,8 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
         init: {
+          requires: { "app-ready": true },
+          provides: () => ({ "ui-ready": true }),
           handler: async (): Promise<void> => {
             // Disable application menu
             if (deps.menuLayer) {

@@ -45,7 +45,10 @@ function createTestSetup(): TestSetup {
 
   dispatcher.registerOperation(
     INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, "init", { throwOnError: false })
+    createMinimalOperation(APP_START_OPERATION_ID, "init", {
+      throwOnError: false,
+      hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
+    })
   );
 
   const tempDirModule = createTempDirModule({

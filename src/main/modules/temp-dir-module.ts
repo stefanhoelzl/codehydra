@@ -31,6 +31,7 @@ export function createTempDirModule(deps: TempDirModuleDeps): IntentModule {
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {
+          requires: { "app-ready": true },
           handler: async (): Promise<void> => {
             await deps.fileSystem.rm(tempRoot, { recursive: true, force: true });
             await deps.fileSystem.mkdir(tempRoot);
