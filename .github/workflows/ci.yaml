@@ -14,7 +14,7 @@ jobs:
         os: [ubuntu-24.04, windows-2025]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
 
       - run: pnpm exec tsx scripts/download-binaries.ts
@@ -29,11 +29,11 @@ jobs:
     name: Build Packages
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version-file: package.json
 
@@ -41,7 +41,7 @@ jobs:
         working-directory: packages/npm
         run: pnpm pack
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
 
       - name: Build PyPI package
         working-directory: packages/pypi
