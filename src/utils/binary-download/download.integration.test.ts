@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
- * Integration tests for BinaryDownloadService.
- * Tests multi-component flows: BinaryDownloadService + ArchiveExtractor + FileSystemBoundary.
+ * Integration tests for binary download utility.
+ * Tests multi-component flows: downloadBinary + ArchiveExtractor + FileSystemBoundary.
  * Uses real FileSystemBoundary but mocked HttpClient.
  */
 
@@ -9,15 +9,16 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
-import { DefaultBinaryDownloadService } from "./binary-download-service";
-import { DefaultArchiveExtractor } from "./archive-extractor";
+import { downloadBinary, isBinaryInstalled } from "./download";
+import { DefaultArchiveExtractor } from "../../boundaries/platform/archive/archive-extractor";
 import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
 import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 import type { DownloadRequest } from "./types";
+import type { DownloadDeps } from "./download";
 
-describe("BinaryDownloadService (integration)", () => {
+describe("downloadBinary (integration)", () => {
   let tempDir: string;
 
   beforeEach(async () => {
@@ -29,6 +30,14 @@ describe("BinaryDownloadService (integration)", () => {
     // Clean up temp directory
     await fs.rm(tempDir, { recursive: true, force: true });
   });
+
+  function createDeps(httpClient: ReturnType<typeof createMockHttpClient>): DownloadDeps {
+    return {
+      httpClient,
+      fileSystemLayer: new DefaultFileSystemBoundary(createMockLogger()),
+      archiveExtractor: new DefaultArchiveExtractor(),
+    };
+  }
 
   describe("download and extract flow", () => {
     it("downloads, extracts, and flattens nested directory structure", async () => {
@@ -54,29 +63,19 @@ describe("BinaryDownloadService (integration)", () => {
           },
         });
 
-        // Create real FileSystemBoundary and ArchiveExtractor
-        const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
-        const archiveExtractor = new DefaultArchiveExtractor();
-
         const destDir = path.join(tempDir, "code-server", "4.109.2");
-
-        // Create service
-        const service = new DefaultBinaryDownloadService(
-          mockHttpClient,
-          fileSystemLayer,
-          archiveExtractor
-        );
 
         const request: DownloadRequest = {
           name: "code-server",
           url: "https://example.com/code-server-4.109.2-linux-amd64.tar.gz",
           destDir,
+          archiveExtension: ".tar.gz",
           executablePath: "bin/code-server",
           subPath: "code-server-4.109.2-linux-amd64",
         };
 
         // Download code-server
-        await service.download(request);
+        await downloadBinary(request, createDeps(mockHttpClient));
 
         // Verify binary was extracted and subPath promoted
         const binaryPath = path.join(destDir, "bin", "code-server");
@@ -115,26 +114,18 @@ describe("BinaryDownloadService (integration)", () => {
             },
           });
 
-          const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
-          const archiveExtractor = new DefaultArchiveExtractor();
-
           const destDir = path.join(tempDir, "opencode", "0.1.47");
-
-          const service = new DefaultBinaryDownloadService(
-            mockHttpClient,
-            fileSystemLayer,
-            archiveExtractor
-          );
 
           const request: DownloadRequest = {
             name: "opencode",
             url: "https://example.com/opencode-0.1.47-linux-x64.tar.gz",
             destDir,
+            archiveExtension: ".tar.gz",
             executablePath: "opencode",
             subPath: "opencode-0.1.47-linux-x64",
           };
 
-          await service.download(request);
+          await downloadBinary(request, createDeps(mockHttpClient));
 
           // Verify binary has executable permissions
           const binaryPath = path.join(destDir, "opencode");
@@ -147,7 +138,7 @@ describe("BinaryDownloadService (integration)", () => {
       }
     );
 
-    it("isInstalled returns true after download", async () => {
+    it("isBinaryInstalled returns true after download", async () => {
       const archivePath = await createTestTarGzWithRoot(
         {
           opencode: "#!/bin/sh\necho opencode",
@@ -166,30 +157,29 @@ describe("BinaryDownloadService (integration)", () => {
         });
 
         const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
-        const archiveExtractor = new DefaultArchiveExtractor();
-
         const destDir = path.join(tempDir, "opencode", "0.1.47");
 
-        const service = new DefaultBinaryDownloadService(
-          mockHttpClient,
+        const deps: DownloadDeps = {
+          httpClient: mockHttpClient,
           fileSystemLayer,
-          archiveExtractor
-        );
+          archiveExtractor: new DefaultArchiveExtractor(),
+        };
 
         const request: DownloadRequest = {
           name: "opencode",
           url: "https://example.com/opencode-0.1.47-linux-x64.tar.gz",
           destDir,
+          archiveExtension: ".tar.gz",
           executablePath: "opencode",
           subPath: "opencode-0.1.47-linux-x64",
         };
 
         // Before download
-        expect(await service.isInstalled(destDir)).toBe(false);
+        expect(await isBinaryInstalled(destDir, deps)).toBe(false);
 
         // After download
-        await service.download(request);
-        expect(await service.isInstalled(destDir)).toBe(true);
+        await downloadBinary(request, deps);
+        expect(await isBinaryInstalled(destDir, deps)).toBe(true);
       } finally {
         await cleanupTestArchive(archivePath);
       }
@@ -216,21 +206,13 @@ describe("BinaryDownloadService (integration)", () => {
           },
         });
 
-        const fileSystemLayer = new DefaultFileSystemBoundary(createMockLogger());
-        const archiveExtractor = new DefaultArchiveExtractor();
-
         const destDir = path.join(tempDir, "opencode", "0.1.47");
-
-        const service = new DefaultBinaryDownloadService(
-          mockHttpClient,
-          fileSystemLayer,
-          archiveExtractor
-        );
 
         const request: DownloadRequest = {
           name: "opencode",
           url: "https://example.com/opencode-0.1.47-linux-x64.tar.gz",
           destDir,
+          archiveExtension: ".tar.gz",
           executablePath: "opencode",
           subPath: "opencode-0.1.47-linux-x64",
         };
@@ -240,7 +222,7 @@ describe("BinaryDownloadService (integration)", () => {
           bytesDownloaded: number;
           totalBytes: number | null;
         }[] = [];
-        await service.download(request, (progress) => {
+        await downloadBinary(request, createDeps(mockHttpClient), (progress) => {
           progressUpdates.push(progress);
         });
 

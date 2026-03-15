@@ -35,23 +35,21 @@ import {
   generateHelpText,
 } from "../boundaries/platform/config";
 // Boundaries - Shell
-import { DefaultIpcBoundary } from "../boundaries/shell/ipc/ipc";
-import { DefaultAppBoundary } from "../boundaries/shell/app/app";
-import { DefaultImageBoundary } from "../boundaries/shell/image/image";
-import { DefaultDialogBoundary } from "../boundaries/shell/dialog/dialog";
-import { DefaultMenuBoundary } from "../boundaries/shell/menu/menu";
-import { DefaultWindowBoundary } from "../boundaries/shell/window/window";
-import { DefaultViewBoundary } from "../boundaries/shell/view/view";
-import { DefaultSessionBoundary } from "../boundaries/shell/session/session";
+import { DefaultIpcLayer } from "../boundaries/shell/ipc/ipc";
+import { DefaultAppLayer } from "../boundaries/shell/app/app";
+import { DefaultImageLayer } from "../boundaries/shell/image/image";
+import { DefaultDialogLayer } from "../boundaries/shell/dialog/dialog";
+import { DefaultMenuLayer } from "../boundaries/shell/menu/menu";
+import { DefaultWindowLayer } from "../boundaries/shell/window/window";
+import { DefaultViewLayer } from "../boundaries/shell/view/view";
+import { DefaultSessionLayer } from "../boundaries/shell/session/session";
 import { WindowManager } from "../boundaries/shell/window/window-manager";
 import { ViewManager } from "../boundaries/shell/view/view-manager";
 // Services (stayed)
+import { KeepFilesService } from "../services/keepfiles";
 import { AutoUpdater } from "../services/auto-updater";
-import {
-  DefaultBinaryDownloadService,
-  DefaultArchiveExtractor,
-  type BinaryDownloadService,
-} from "../services/binary-download";
+import { DefaultArchiveExtractor } from "../boundaries/platform/archive";
+import type { DownloadDeps } from "../utils/binary-download";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
@@ -64,11 +62,16 @@ import {
   getClaudeExecutablePath,
 } from "../services/agents/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "../services/agents/types";
+import { createAgentServerManager } from "../services/agents";
+import type { ClaudeCodeServerManager } from "../services/agents/claude/server-manager";
+import type { OpenCodeServerManager } from "../services/agents/opencode/server-manager";
 import { createClaudeModuleProvider } from "../services/agents/claude/module-provider";
 import { createOpenCodeModuleProvider } from "../services/agents/opencode/module-provider";
+import { McpServerManager } from "../services/mcp-server";
 import { expandGitUrl } from "../services/project/url-utils";
 import { AsyncWatcher } from "../services/platform/async-watcher";
 // Managers (stayed)
+import { BadgeManager } from "./managers/badge-manager";
 // Main
 import { registerLogHandlers } from "./ipc";
 import { ElectronBuildInfo } from "./build-info";
@@ -233,18 +236,18 @@ configService.register("help", {
 
 // 3. Electron layers (all constructors are pure — just store deps)
 
-const dialogLayer = new DefaultDialogBoundary(loggingService.createLogger("dialog"));
-const menuLayer = new DefaultMenuBoundary(loggingService.createLogger("menu"));
-const imageLayer = new DefaultImageBoundary(loggingService.createLogger("window"));
-const windowLayer = new DefaultWindowBoundary(
+const dialogLayer = new DefaultDialogLayer(loggingService.createLogger("dialog"));
+const menuLayer = new DefaultMenuLayer(loggingService.createLogger("menu"));
+const imageLayer = new DefaultImageLayer(loggingService.createLogger("window"));
+const windowLayer = new DefaultWindowLayer(
   imageLayer,
   platformInfo,
   loggingService.createLogger("window")
 );
-const viewLayer = new DefaultViewBoundary(windowLayer, loggingService.createLogger("view"));
-const sessionLayer = new DefaultSessionBoundary(loggingService.createLogger("view"));
-const appLayer = new DefaultAppBoundary(loggingService.createLogger("badge"));
-const ipcLayer = new DefaultIpcBoundary();
+const viewLayer = new DefaultViewLayer(windowLayer, loggingService.createLogger("view"));
+const sessionLayer = new DefaultSessionLayer(loggingService.createLogger("view"));
+const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
+const ipcLayer = new DefaultIpcLayer();
 
 // 4. Service construction
 
@@ -252,16 +255,39 @@ const ipcLayer = new DefaultIpcBoundary();
 const processRunner = new ExecaProcessRunner(loggingService.createLogger("process"));
 const networkLayer = new DefaultNetworkLayer(loggingService.createLogger("network"));
 
-const binaryDownloadService: BinaryDownloadService = new DefaultBinaryDownloadService(
-  networkLayer,
-  fileSystemLayer,
-  new DefaultArchiveExtractor(),
-  loggingService.createLogger("binary-download")
-);
-
 // Compute platform-specific executable paths and download URLs
 const platform = platformInfo.platform as SupportedPlatform;
 const arch = platformInfo.arch as SupportedArch;
+
+// Shared download dependencies for binary downloads
+const archiveExtractor = new DefaultArchiveExtractor();
+const downloadDeps: DownloadDeps = {
+  httpClient: networkLayer,
+  fileSystemLayer,
+  archiveExtractor,
+  logger: loggingService.createLogger("binary-download"),
+};
+
+// Per-agent binary configs
+const claudeBinaryConfig = {
+  name: "claude" as const,
+  version: CLAUDE_VERSION,
+  destDir: CLAUDE_VERSION ? pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative() : "",
+  url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
+  executablePath: getClaudeExecutablePath(platform),
+  archiveExtension: ".tar.gz" as const,
+  ...(CLAUDE_VERSION ? { subPath: getClaudeSubPath(platform, arch) } : {}),
+};
+const opencodeBinaryConfig = {
+  name: "opencode" as const,
+  version: OPENCODE_VERSION,
+  destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
+  url: getOpencodeUrl(platform, arch),
+  executablePath: getOpencodeExecutablePath(platform),
+  archiveExtension: (platform === "darwin" ? ".zip" : platform === "win32" ? ".zip" : ".tar.gz") as
+    | ".tar.gz"
+    | ".zip",
+};
 
 const dispatcher = new Dispatcher({
   logger: loggingService.createLogger("dispatcher"),
@@ -284,9 +310,26 @@ const autoUpdater = new AutoUpdater({
   isDevelopment: buildInfo.isDevelopment,
 });
 
+// Agent services (both server managers + status manager)
+// Both constructors are pure field assignment (no I/O)
+const serverManagerDeps = {
+  processRunner,
+  portManager: networkLayer,
+  httpClient: networkLayer,
+  pathProvider,
+  fileSystem: fileSystemLayer,
+  logger: loggingService.createLogger("agent"),
+};
+const agentServerManagers = {
+  claude: createAgentServerManager("claude", serverManagerDeps),
+  opencode: createAgentServerManager("opencode", serverManagerDeps),
+};
 const providerLogger = loggingService.createLogger("agent");
 
-// KeepFilesService is now constructed internally by createKeepFilesModule
+const keepFilesService = new KeepFilesService(
+  fileSystemLayer,
+  loggingService.createLogger("keepfiles")
+);
 
 const apiLogger = loggingService.createLogger("api");
 const lifecycleLogger = loggingService.createLogger("lifecycle");
@@ -317,9 +360,20 @@ const viewManager = new ViewManager({
   logger: loggingService.createLogger("view"),
 });
 
-// BadgeManager is now constructed internally by createBadgeModule
+const badgeManager = new BadgeManager(
+  platformInfo,
+  appLayer,
+  imageLayer,
+  windowManager,
+  loggingService.createLogger("badge")
+);
 
-// McpServerManager is now constructed internally by createMcpModule
+// McpServerManager with handlers factory that dispatches intents directly
+const mcpServerManager = new McpServerManager(
+  networkLayer,
+  () => createMcpHandlers(dispatcher),
+  loggingService.createLogger("mcp")
+);
 
 // 6. Intent modules (all at module level)
 
@@ -376,7 +430,7 @@ const codeServerModule = createCodeServerModule({
   arch,
   wrapperPath: pathProvider.dataPath("bin/ch-claude", { cmd: true }).toString(),
   logger: apiLogger,
-  binaryDownloadService,
+  archiveExtractor,
   configService,
 });
 
@@ -398,18 +452,9 @@ const extensionModule = createExtensionModule({
 
 const claudeAgentModule = createAgentModule(
   createClaudeModuleProvider({
-    binaryDownloadService,
-    binaryConfig: {
-      name: "claude",
-      version: CLAUDE_VERSION,
-      destDir: CLAUDE_VERSION ? pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative() : "",
-      url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
-      executablePath: getClaudeExecutablePath(platform),
-      ...(CLAUDE_VERSION ? { subPath: getClaudeSubPath(platform, arch) } : {}),
-    },
-    portManager: networkLayer,
-    pathProvider,
-    fileSystem: fileSystemLayer,
+    serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
+    downloadDeps,
+    binaryConfig: claudeBinaryConfig,
     logger: providerLogger,
   }),
   { dispatcher, logger: apiLogger, configService }
@@ -417,18 +462,9 @@ const claudeAgentModule = createAgentModule(
 
 const opencodeAgentModule = createAgentModule(
   createOpenCodeModuleProvider({
-    binaryDownloadService,
-    binaryConfig: {
-      name: "opencode",
-      version: OPENCODE_VERSION,
-      destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
-      url: getOpencodeUrl(platform, arch),
-      executablePath: getOpencodeExecutablePath(platform),
-    },
-    processRunner,
-    portManager: networkLayer,
-    httpClient: networkLayer,
-    pathProvider,
+    serverManager: agentServerManagers.opencode as OpenCodeServerManager,
+    downloadDeps,
+    binaryConfig: opencodeBinaryConfig,
     logger: providerLogger,
   }),
   { dispatcher, logger: apiLogger, configService }
@@ -438,8 +474,8 @@ const metadataModule = createMetadataModule({
   gitWorktreeProvider,
 });
 const keepFilesModule = createKeepFilesModule({
-  fileSystem: fileSystemLayer,
-  logger: loggingService.createLogger("keepfiles"),
+  keepFilesService,
+  logger: apiLogger,
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
@@ -484,18 +520,10 @@ const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   pathProvider,
   apiLogger
 );
-const badgeModule = createBadgeModule({
-  platformInfo,
-  appLayer,
-  imageLayer,
-  windowManager,
-  logger: loggingService.createLogger("badge"),
-});
+const badgeModule = createBadgeModule(badgeManager);
 const workspaceSelectionModule = createWorkspaceSelectionModule();
 const mcpModule = createMcpModule({
-  portManager: networkLayer,
-  handlersFactory: () => createMcpHandlers(dispatcher),
-  logger: loggingService.createLogger("mcp"),
+  mcpServerManager,
 });
 const githubSource = createGitHubSource({
   processRunner,

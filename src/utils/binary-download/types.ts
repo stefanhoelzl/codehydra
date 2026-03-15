@@ -2,15 +2,10 @@
  * Types for binary download operations.
  */
 
-import type { SupportedArch } from "../../boundaries/platform/env/platform-info.js";
-
-// Re-export SupportedArch from platform-info to avoid duplication
-export type { SupportedArch };
-
 /**
- * Supported operating system platforms.
+ * Supported archive extensions for binary downloads.
  */
-export type SupportedPlatform = "darwin" | "linux" | "win32";
+export type ArchiveExtension = ".tar.gz" | ".tgz" | ".zip";
 
 /**
  * Phase of the download/extract operation.
@@ -44,6 +39,8 @@ export interface DownloadRequest {
   readonly url: string;
   /** Extraction destination directory */
   readonly destDir: string;
+  /** Archive extension for temp file naming (e.g., ".tar.gz", ".zip") */
+  readonly archiveExtension: ArchiveExtension;
   /** Relative path to chmod +x on Unix (optional) */
   readonly executablePath?: string;
   /** Subpath within the extracted archive to promote to destDir root. */

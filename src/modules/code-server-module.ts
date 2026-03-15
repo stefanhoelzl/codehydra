@@ -29,11 +29,9 @@ import type { PathProvider } from "../boundaries/platform/env/path-provider";
 import type { Logger } from "../boundaries/platform/logging/types";
 import type { SupportedPlatform, SupportedArch } from "../services/agents/types";
 import type { BuildInfo } from "../boundaries/platform/env/build-info";
-import type {
-  BinaryDownloadService,
-  DownloadProgressCallback,
-  DownloadRequest,
-} from "../services/binary-download";
+import type { DownloadProgressCallback, DownloadRequest } from "../utils/binary-download";
+import { downloadBinary, isBinaryInstalled } from "../utils/binary-download";
+import type { ArchiveExtractor } from "../boundaries/platform/archive/archive-extractor";
 import type { BinaryType } from "../services/binary-resolution/types";
 import type {
   CheckDepsHookContext,
@@ -63,7 +61,7 @@ import { listInstalledExtensions, removeFromExtensionsJson } from "../main/utils
 import { Path } from "../utils/path/path";
 import { encodePathForUrl } from "../boundaries/platform/env/paths";
 import { configString, configCustom } from "../boundaries/platform/config/config-definition";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config/config-service";
 import { CodeServerError, SetupError, getErrorMessage } from "../services/errors";
 import { waitForHealthy } from "../services/platform/health-check";
 
@@ -168,7 +166,15 @@ export interface CodeServerModuleDeps {
   readonly portManager: Pick<PortManager, "isPortAvailable">;
   readonly fileSystemLayer: Pick<
     FileSystemBoundary,
-    "mkdir" | "readdir" | "rm" | "readFile" | "writeFile"
+    | "mkdir"
+    | "readdir"
+    | "rm"
+    | "readFile"
+    | "writeFile"
+    | "unlink"
+    | "rename"
+    | "writeFileBuffer"
+    | "makeExecutable"
   >;
   readonly pathProvider: Pick<PathProvider, "bundlePath" | "dataPath">;
   readonly buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">;
@@ -176,7 +182,7 @@ export interface CodeServerModuleDeps {
   readonly arch: SupportedArch;
   readonly wrapperPath: string;
   readonly logger: Logger;
-  readonly binaryDownloadService?: BinaryDownloadService;
+  readonly archiveExtractor?: ArchiveExtractor;
   readonly configService: Config;
 }
 
@@ -271,19 +277,16 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // Binary download state
   // -------------------------------------------------------------------------
 
-  const binaryDownload: { service: BinaryDownloadService; request: DownloadRequest } | null =
-    deps.binaryDownloadService
-      ? {
-          service: deps.binaryDownloadService,
-          request: {
-            name: "code-server" as const,
-            url: getCodeServerUrlForVersion(CODE_SERVER_VERSION, deps.platform, deps.arch),
-            destDir: deps.pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
-            executablePath: getCodeServerExecutablePath(deps.platform),
-            subPath: getCodeServerSubPathForVersion(CODE_SERVER_VERSION, deps.platform, deps.arch),
-          },
-        }
-      : null;
+  const downloadRequest: DownloadRequest | null = deps.archiveExtractor
+    ? {
+        name: "code-server" as const,
+        url: getCodeServerUrlForVersion(CODE_SERVER_VERSION, deps.platform, deps.arch),
+        destDir: deps.pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
+        archiveExtension: ".tar.gz" as const,
+        executablePath: getCodeServerExecutablePath(deps.platform),
+        subPath: getCodeServerSubPathForVersion(CODE_SERVER_VERSION, deps.platform, deps.arch),
+      }
+    : null;
 
   // -------------------------------------------------------------------------
   // Process lifecycle closure state
@@ -500,12 +503,14 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         readonly error: { readonly type: string; readonly message: string };
       }
   > {
-    if (!binaryDownload) {
+    if (!downloadRequest) {
       return { success: true, needsDownload: false };
     }
 
     try {
-      const isInstalled = await binaryDownload.service.isInstalled(binaryDownload.request.destDir);
+      const isInstalled = await isBinaryInstalled(downloadRequest.destDir, {
+        fileSystemLayer: deps.fileSystemLayer,
+      });
 
       logger.debug("Code-server binary preflight", {
         isInstalled,
@@ -523,17 +528,26 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     }
   }
 
-  async function downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-    if (!binaryDownload) {
+  async function downloadCodeServer(onProgress?: DownloadProgressCallback): Promise<void> {
+    if (!downloadRequest || !deps.archiveExtractor) {
       throw new CodeServerError(
-        "Cannot download code-server binary: BinaryDownloadService not available"
+        "Cannot download code-server binary: ArchiveExtractor not available"
       );
     }
 
     logger.info("Downloading code-server binary");
 
     try {
-      await binaryDownload.service.download(binaryDownload.request, onProgress);
+      await downloadBinary(
+        downloadRequest,
+        {
+          httpClient: deps.httpClient,
+          fileSystemLayer: deps.fileSystemLayer,
+          archiveExtractor: deps.archiveExtractor,
+          logger,
+        },
+        onProgress
+      );
       logger.info("Code-server binary download complete");
     } catch (error) {
       const message = getErrorMessage(error);
@@ -656,7 +670,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             if (missingBinaries.includes("code-server")) {
               report("vscode", "running", "Downloading...");
               try {
-                await downloadBinary((p) => {
+                await downloadCodeServer((p) => {
                   if (p.phase === "downloading" && p.totalBytes) {
                     const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
                     report("vscode", "running", "Downloading...", undefined, pct);

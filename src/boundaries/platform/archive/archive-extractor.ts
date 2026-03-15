@@ -7,8 +7,8 @@ import yauzl from "yauzl";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { ArchiveError, getErrorMessage } from "./errors.js";
-import { Path } from "../../utils/path/path.js";
+import { ArchiveError, getErrorMessage } from "../../../services/errors.js";
+import { Path } from "../../../utils/path/path.js";
 
 /**
  * Interface for extracting archives.

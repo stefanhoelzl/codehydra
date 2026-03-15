@@ -12,7 +12,7 @@ import type { AgentSessionInfo, McpConfig, StopServerResult, RestartServerResult
 import type { BinaryType } from "../binary-resolution/types";
 import type { ConfigKeyDefinition } from "../../boundaries/platform/config/config-definition";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
-import type { DownloadProgressCallback } from "../binary-download";
+import type { DownloadProgressCallback } from "../../utils/binary-download";
 
 /**
  * Options for starting a workspace.

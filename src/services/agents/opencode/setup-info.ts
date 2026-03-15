@@ -113,7 +113,7 @@ export class OpenCodeSetupInfo implements AgentSetupInfo {
 
   /**
    * Get download URL for a specific version and platform/arch.
-   * Used by BinaryDownloadService for downloading specific versions.
+   * Used by downloadBinary for downloading specific versions.
    *
    * @param version - Version string (e.g., "1.0.223")
    * @param platform - Operating system platform

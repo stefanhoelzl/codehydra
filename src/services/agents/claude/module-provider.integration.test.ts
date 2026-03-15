@@ -14,60 +14,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createClaudeModuleProvider } from "./module-provider";
 import type { ClaudeCodeServerManager } from "./server-manager";
-import type { AgentBinaryManager } from "../../binary-download";
 import type { AgentProvider, AgentStatus } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-
-// =============================================================================
-// Mock server manager and binary manager classes
-// =============================================================================
-
-/** Latest mock server manager instance created by the mocked constructor. */
-let latestMockServerManager: ClaudeCodeServerManager;
-
-/** Latest mock binary manager instance created by the mocked constructor. */
-let latestMockBinaryManager: AgentBinaryManager;
-
-function createMockServerManager(): ClaudeCodeServerManager {
-  return {
-    startServer: vi.fn().mockResolvedValue(8080),
-    stopServer: vi.fn().mockResolvedValue({ success: true }),
-    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
-    dispose: vi.fn().mockResolvedValue(undefined),
-    setMcpConfig: vi.fn(),
-    setMarkActiveHandler: vi.fn(),
-    setInitialPrompt: vi.fn().mockResolvedValue(undefined),
-    setNoSessionMarker: vi.fn().mockResolvedValue(undefined),
-    onServerStarted: vi.fn().mockReturnValue(vi.fn()),
-    onServerStopped: vi.fn().mockReturnValue(vi.fn()),
-  } as unknown as ClaudeCodeServerManager;
-}
-
-function createMockBinaryManager(): AgentBinaryManager {
-  return {
-    preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
-    downloadBinary: vi.fn().mockResolvedValue(undefined),
-    getBinaryType: vi.fn().mockReturnValue("claude"),
-  } as unknown as AgentBinaryManager;
-}
-
-vi.mock("./server-manager", () => ({
-  ClaudeCodeServerManager: class {
-    constructor() {
-      Object.assign(this, createMockServerManager());
-      latestMockServerManager = this as unknown as ClaudeCodeServerManager;
-    }
-  },
-}));
-vi.mock("../../binary-download/agent-binary-manager", () => ({
-  AgentBinaryManager: class {
-    constructor() {
-      Object.assign(this, createMockBinaryManager());
-      latestMockBinaryManager = this as unknown as AgentBinaryManager;
-    }
-  },
-}));
+import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-download";
+import { createFileSystemMock } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
+import { createMockHttpClient } from "../../../boundaries/platform/network/http-client.state-mock";
+import { createArchiveExtractorMock } from "../../../boundaries/platform/archive/archive-extractor.state-mock";
 
 // =============================================================================
 // Mock ClaudeCodeProvider via vi.mock
@@ -100,8 +53,42 @@ vi.mock("./provider", () => ({
 }));
 
 // =============================================================================
-// Helpers
+// Mock factories
 // =============================================================================
+
+function createMockServerManager(): ClaudeCodeServerManager {
+  return {
+    startServer: vi.fn().mockResolvedValue(8080),
+    stopServer: vi.fn().mockResolvedValue({ success: true }),
+    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    setMcpConfig: vi.fn(),
+    setMarkActiveHandler: vi.fn(),
+    setInitialPrompt: vi.fn().mockResolvedValue(undefined),
+    setNoSessionMarker: vi.fn().mockResolvedValue(undefined),
+    onServerStarted: vi.fn().mockReturnValue(vi.fn()),
+    onServerStopped: vi.fn().mockReturnValue(vi.fn()),
+  } as unknown as ClaudeCodeServerManager;
+}
+
+function createDownloadDeps(): DownloadDeps {
+  return {
+    httpClient: createMockHttpClient(),
+    fileSystemLayer: createFileSystemMock(),
+    archiveExtractor: createArchiveExtractorMock(),
+  };
+}
+
+function createBinaryConfig() {
+  return {
+    name: "claude" as const,
+    version: null as string | null,
+    destDir: "/test/claude",
+    url: "",
+    executablePath: "claude",
+    archiveExtension: ".tar.gz" as ArchiveExtension,
+  };
+}
 
 const WS_PATH = "/workspace/feature-a" as WorkspacePath;
 const WS_PATH_B = "/workspace/feature-b" as WorkspacePath;
@@ -111,35 +98,25 @@ const WS_PATH_B = "/workspace/feature-b" as WorkspacePath;
 // =============================================================================
 
 describe("createClaudeModuleProvider", () => {
-  /** Reference to the mock server manager created by the provider factory. */
   let mockServerManager: ClaudeCodeServerManager;
-  /** Reference to the mock binary manager created by the provider factory. */
-  let mockBinaryManager: AgentBinaryManager;
+  let downloadDeps: DownloadDeps;
+  let binaryConfig: ReturnType<typeof createBinaryConfig>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     capturedStatusCallback = null;
+    mockServerManager = createMockServerManager();
+    downloadDeps = createDownloadDeps();
+    binaryConfig = createBinaryConfig();
   });
 
   function createProvider() {
-    const provider = createClaudeModuleProvider({
-      binaryDownloadService: {} as never,
-      binaryConfig: {
-        name: "claude",
-        version: null,
-        destDir: "",
-        url: "",
-        executablePath: "",
-      },
-      portManager: {} as never,
-      pathProvider: {} as never,
-      fileSystem: {} as never,
+    return createClaudeModuleProvider({
+      serverManager: mockServerManager,
+      downloadDeps,
+      binaryConfig,
       logger: SILENT_LOGGER,
     });
-    // Capture the mock instances created during factory execution
-    mockServerManager = latestMockServerManager;
-    mockBinaryManager = latestMockBinaryManager;
-    return provider;
   }
 
   // ---------------------------------------------------------------------------
@@ -174,39 +151,26 @@ describe("createClaudeModuleProvider", () => {
   // ---------------------------------------------------------------------------
 
   describe("binary management", () => {
-    it("binaryType delegates to binaryManager.getBinaryType()", () => {
+    it("binaryType returns the name from binaryConfig", () => {
       const provider = createProvider();
 
       expect(provider.binaryType).toBe("claude");
-      expect(
-        (mockBinaryManager as unknown as { getBinaryType: ReturnType<typeof vi.fn> }).getBinaryType
-      ).toHaveBeenCalled();
     });
 
-    it("preflight delegates to binaryManager", async () => {
+    it("preflight returns success with no download needed when version is null", async () => {
       const provider = createProvider();
       const result = await provider.preflight();
 
       expect(result).toEqual({ success: true, needsDownload: false });
-      expect(mockBinaryManager.preflight).toHaveBeenCalled();
     });
 
-    it("preflight returns needsDownload: false on failure", async () => {
-      const provider = createProvider();
-      (mockBinaryManager.preflight as ReturnType<typeof vi.fn>).mockResolvedValue({
-        success: false,
-      });
-      const result = await provider.preflight();
-
-      expect(result).toEqual({ success: false, needsDownload: false });
-    });
-
-    it("downloadBinary delegates to binaryManager", async () => {
+    it("downloadBinary is a no-op when version is null", async () => {
       const provider = createProvider();
       const onProgress = vi.fn();
       await provider.downloadBinary(onProgress);
 
-      expect(mockBinaryManager.downloadBinary).toHaveBeenCalledWith(onProgress);
+      // No HTTP requests should have been made since version is null
+      expect(onProgress).not.toHaveBeenCalled();
     });
   });
 
