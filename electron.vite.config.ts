@@ -5,13 +5,13 @@ import { resolve } from "path";
 import { codehydraDefaults } from "./vite.defaults";
 
 const appVersion =
-  process.env._CH_VERSION ??
+  process.env._CH_BUILD_VERSION ??
   (() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
     return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}-dev`;
   })();
-const isDevBuild = process.env._CH_RELEASE !== "true";
+const isDevBuild = process.env._CH_BUILD_RELEASE !== "true";
 
 // PostHog configuration - injected at build time from environment variables
 // API key is stored in GitHub secrets and passed via CI, or in .env.local for local dev
