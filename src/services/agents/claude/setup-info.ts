@@ -4,7 +4,7 @@
  */
 
 import { Path } from "../../../utils/path/path";
-import type { FileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem";
 import type { HttpClient } from "../../../boundaries/platform/network/network";
 import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
 
@@ -104,7 +104,7 @@ function getBinaryFilename(platform: SupportedPlatform): string {
  * Dependencies for creating ClaudeSetupInfo.
  */
 export interface ClaudeSetupInfoDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly httpClient: HttpClient;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
@@ -132,7 +132,7 @@ export class ClaudeSetupInfo implements AgentSetupInfo {
    */
   readonly wrapperEntryPoint = "agents/claude-wrapper.cjs";
 
-  private readonly fileSystem: FileSystemLayer;
+  private readonly fileSystem: FileSystemBoundary;
   private readonly httpClient: HttpClient;
   private readonly platform: SupportedPlatform;
   private readonly arch: SupportedArch;

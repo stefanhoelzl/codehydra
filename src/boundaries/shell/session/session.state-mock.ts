@@ -1,21 +1,21 @@
 /**
- * Behavioral state mock for SessionLayer.
+ * Behavioral state mock for SessionBoundary.
  *
- * Provides a stateful mock that simulates real SessionLayer behavior:
+ * Provides a stateful mock that simulates real SessionBoundary behavior:
  * - In-memory session storage
  * - Partition-based session lookup
  * - Permission handler tracking
  * - Custom matchers for behavioral assertions
  *
  * @example
- * const mock = createSessionLayerMock();
+ * const mock = createSessionBoundaryMock();
  * const handle = mock.fromPartition("persist:test");
  * mock.setPermissionRequestHandler(handle, () => true);
  * expect(mock).toHaveSession(handle.id, { requestHandler: true });
  */
 
 import { expect } from "vitest";
-import type { SessionLayer, PermissionRequestHandler, PermissionCheckHandler } from "./session";
+import type { SessionBoundary, PermissionRequestHandler, PermissionCheckHandler } from "./session";
 import type { SessionHandle } from "../../../services/shell/types";
 import { ShellError } from "../../../services/shell/errors";
 import type {
@@ -43,7 +43,7 @@ export interface MockSessionState {
  * State interface for the session layer mock.
  * Provides read access to sessions and test helper methods.
  */
-export interface SessionLayerMockState extends MockState {
+export interface SessionBoundaryMockState extends MockState {
   /**
    * Read-only access to all sessions.
    * Keys are session handle IDs.
@@ -75,7 +75,7 @@ interface MutableSessionState {
   hasHeadersReceivedHandler: boolean;
 }
 
-class SessionLayerMockStateImpl implements SessionLayerMockState {
+class SessionBoundaryMockStateImpl implements SessionBoundaryMockState {
   private readonly _sessions = new Map<string, MutableSessionState>();
 
   get sessions(): ReadonlyMap<string, MockSessionState> {
@@ -120,7 +120,7 @@ class SessionLayerMockStateImpl implements SessionLayerMockState {
     const entries = [...this._sessions.entries()]
       .map(([id, s]) => `${id}: ${s.partition}`)
       .join(", ");
-    return `SessionLayerMockState { ${entries} }`;
+    return `SessionBoundaryMockState { ${entries} }`;
   }
 }
 
@@ -129,15 +129,15 @@ class SessionLayerMockStateImpl implements SessionLayerMockState {
 // =============================================================================
 
 /**
- * SessionLayer mock with state access via `$` property.
- * Use `createSessionLayerMock()` to create instances.
+ * SessionBoundary mock with state access via `$` property.
+ * Use `createSessionBoundaryMock()` to create instances.
  */
-export type MockSessionLayer = SessionLayer & MockWithState<SessionLayerMockState>;
+export type MockSessionBoundary = SessionBoundary & MockWithState<SessionBoundaryMockState>;
 
 /**
  * Options for creating a session layer mock.
  */
-export interface SessionLayerMockOptions {
+export interface SessionBoundaryMockOptions {
   /**
    * Pre-existing sessions to initialize.
    * Keys are partition names; sessions will be assigned sequential handle IDs.
@@ -157,31 +157,33 @@ export interface SessionLayerMockOptions {
 // =============================================================================
 
 /**
- * Create a behavioral mock for SessionLayer.
+ * Create a behavioral mock for SessionBoundary.
  *
  * The mock maintains state and validates operations just like the real
  * implementation, making it suitable for integration tests.
  *
  * @example Basic usage
- * const mock = createSessionLayerMock();
+ * const mock = createSessionBoundaryMock();
  * const handle = mock.fromPartition("persist:test");
  * expect(mock).toHaveSession(handle.id);
  *
  * @example With initial sessions
- * const mock = createSessionLayerMock({
+ * const mock = createSessionBoundaryMock({
  *   sessions: {
  *     "persist:workspace1": { cleared: true },
  *   },
  * });
  *
  * @example Verify permission handlers
- * const mock = createSessionLayerMock();
+ * const mock = createSessionBoundaryMock();
  * const handle = mock.fromPartition("persist:test");
  * mock.setPermissionRequestHandler(handle, () => true);
  * expect(mock).toHaveSession(handle.id, { requestHandler: true });
  */
-export function createSessionLayerMock(options?: SessionLayerMockOptions): MockSessionLayer {
-  const state = new SessionLayerMockStateImpl();
+export function createSessionBoundaryMock(
+  options?: SessionBoundaryMockOptions
+): MockSessionBoundary {
+  const state = new SessionBoundaryMockStateImpl();
   // Map partition name to handle ID for quick lookup
   const partitionToId = new Map<string, string>();
   let nextId = 1;
@@ -208,7 +210,7 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
     return session;
   }
 
-  const layer: SessionLayer = {
+  const layer: SessionBoundary = {
     fromPartition(partition: string): SessionHandle {
       // Check if we already have a handle for this partition
       const existingId = partitionToId.get(partition);
@@ -256,7 +258,7 @@ export function createSessionLayerMock(options?: SessionLayerMockOptions): MockS
     },
   };
 
-  return Object.assign(layer, { $: state as SessionLayerMockState });
+  return Object.assign(layer, { $: state as SessionBoundaryMockState });
 }
 
 // =============================================================================
@@ -278,7 +280,7 @@ interface SessionExpected {
 /**
  * Custom matchers for session layer mock assertions.
  */
-interface SessionLayerMatchers {
+interface SessionBoundaryMatchers {
   /**
    * Assert that a session exists with optional state verification.
    *
@@ -306,12 +308,12 @@ interface SessionLayerMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends SessionLayerMatchers {}
+  interface Assertion<T> extends SessionBoundaryMatchers {}
 }
 
-export const sessionLayerMatchers: MatcherImplementationsFor<
-  MockSessionLayer,
-  SessionLayerMatchers
+export const sessionBoundaryMatchers: MatcherImplementationsFor<
+  MockSessionBoundary,
+  SessionBoundaryMatchers
 > = {
   toHaveSession(received, handleId, expected?) {
     const session = received.$.sessions.get(handleId);
@@ -390,4 +392,4 @@ export const sessionLayerMatchers: MatcherImplementationsFor<
 };
 
 // Register matchers with expect
-expect.extend(sessionLayerMatchers);
+expect.extend(sessionBoundaryMatchers);

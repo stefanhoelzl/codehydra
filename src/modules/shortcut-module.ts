@@ -17,8 +17,8 @@ import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
-import type { KeyboardInput, Unsubscribe, ViewLayer } from "../boundaries/shell/view/view";
-import type { WindowLayer } from "../boundaries/shell/window/window";
+import type { KeyboardInput, Unsubscribe, ViewBoundary } from "../boundaries/shell/view/view";
+import type { WindowBoundary } from "../boundaries/shell/window/window";
 import type { ViewHandle } from "../services/shell/types";
 import type { WindowManager } from "../boundaries/shell/window/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
@@ -64,8 +64,8 @@ export function normalizeKey(key: string): string {
 
 export interface ShortcutModuleDeps {
   readonly viewManager: Pick<IViewManager, "getUIViewHandle" | "getMode" | "getWorkspaceView">;
-  readonly viewLayer: Pick<ViewLayer, "onBeforeInputEvent" | "onDestroyed">;
-  readonly windowLayer: Pick<WindowLayer, "onBlur">;
+  readonly viewLayer: Pick<ViewBoundary, "onBeforeInputEvent" | "onDestroyed">;
+  readonly windowLayer: Pick<WindowBoundary, "onBlur">;
   readonly windowManager: Pick<WindowManager, "getWindowHandle">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
   readonly logger: Logger;

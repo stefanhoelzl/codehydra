@@ -9,7 +9,7 @@
  */
 
 import type { Path } from "../../utils/path/path";
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import type { ProcessRunner } from "../../boundaries/platform/process/process";
 import type { PortManager, HttpClient } from "../../boundaries/platform/network/network";
 import type { PathProvider } from "../../boundaries/platform/env/path-provider";
@@ -221,6 +221,6 @@ export interface ProviderDeps {
 
 /** Dependencies for AgentSetupInfo implementations */
 export interface SetupInfoDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly pathProvider: PathProvider;
 }

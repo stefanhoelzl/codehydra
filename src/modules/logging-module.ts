@@ -2,20 +2,17 @@
  * LoggingModule - Initializes the logging service and logs startup info.
  *
  * Hooks:
- * - app:start → "before-ready": configures logging from ConfigService, logs build info
+ * - app:start → "before-ready": configures logging from Config, logs build info
  * - app:start → "init": initializes logging service, registers IPC log handlers
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { LoggingService } from "../boundaries/platform/logging";
+import type { Logging } from "../boundaries/platform/logging";
 import type { Logger, LogFormat } from "../boundaries/platform/logging/types";
 import type { BuildInfo } from "../boundaries/platform/env/build-info";
 import type { PlatformInfo } from "../boundaries/platform/env/platform-info";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
-import {
-  parseLogLevelSpec,
-  splitLogLevelSpec,
-} from "../boundaries/platform/logging/electron-log-service";
+import type { Config } from "../boundaries/platform/config/config";
+import { parseLogLevelSpec, splitLogLevelSpec } from "../boundaries/platform/logging/electron-log";
 import {
   configCustom,
   configEnum,
@@ -28,13 +25,13 @@ import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
 // =============================================================================
 
 export interface LoggingModuleDeps {
-  readonly loggingService: Pick<LoggingService, "initialize" | "configure">;
+  readonly loggingService: Pick<Logging, "initialize" | "configure">;
   /** Called after initialize() to register IPC log handlers. */
   readonly registerLogHandlers: () => void;
   readonly buildInfo: Pick<BuildInfo, "version" | "isDevelopment" | "isPackaged">;
   readonly platformInfo: Pick<PlatformInfo, "platform" | "arch">;
   readonly logger: Logger;
-  readonly configService: ConfigService;
+  readonly configService: Config;
 }
 
 // =============================================================================

@@ -1,16 +1,16 @@
 /**
- * Integration tests for WindowLayer using behavioral mock.
+ * Integration tests for WindowBoundary using behavioral mock.
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createWindowLayerMock, type MockWindowLayer } from "./window.state-mock";
+import { createWindowBoundaryMock, type MockWindowBoundary } from "./window.state-mock";
 import { ShellError, isShellErrorWithCode } from "../../../services/shell/errors";
 
-describe("WindowLayer (integration)", () => {
-  let windowLayer: MockWindowLayer;
+describe("WindowBoundary (integration)", () => {
+  let windowLayer: MockWindowBoundary;
 
   beforeEach(() => {
-    windowLayer = createWindowLayerMock();
+    windowLayer = createWindowBoundaryMock();
   });
 
   describe("createWindow", () => {

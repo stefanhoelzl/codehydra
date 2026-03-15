@@ -6,7 +6,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
 import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
 
@@ -15,7 +15,7 @@ import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
 // =============================================================================
 
 export interface TempDirModuleDeps {
-  readonly fileSystem: Pick<FileSystemLayer, "rm" | "mkdir">;
+  readonly fileSystem: Pick<FileSystemBoundary, "rm" | "mkdir">;
   readonly pathProvider: Pick<PathProvider, "dataPath">;
 }
 

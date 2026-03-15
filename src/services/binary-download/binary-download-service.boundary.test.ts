@@ -15,7 +15,7 @@ import * as os from "node:os";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { DefaultArchiveExtractor } from "./archive-extractor";
 import { DefaultNetworkLayer } from "../../boundaries/platform/network/network";
-import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
 import { getCodeServerUrl } from "../code-server/setup-info";
@@ -145,7 +145,7 @@ describe("BinaryDownloadService (boundary)", () => {
 
       const service = new DefaultBinaryDownloadService(
         mockHttpClient,
-        new DefaultFileSystemLayer(SILENT_LOGGER),
+        new DefaultFileSystemBoundary(SILENT_LOGGER),
         new DefaultArchiveExtractor()
       );
 
@@ -205,7 +205,7 @@ describe("BinaryDownloadService (boundary)", () => {
 
       const service = new DefaultBinaryDownloadService(
         mockHttpClient,
-        new DefaultFileSystemLayer(SILENT_LOGGER),
+        new DefaultFileSystemBoundary(SILENT_LOGGER),
         new DefaultArchiveExtractor()
       );
 

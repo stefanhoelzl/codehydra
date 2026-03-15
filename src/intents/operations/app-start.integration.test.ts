@@ -50,10 +50,10 @@ import {
 } from "../lib/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "./app-start";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
+import type { Config } from "../../boundaries/platform/config/config";
 
-/** Minimal ConfigService mock for tests. Returns configuredAgent value from get(). */
-function createMockConfigService(agent: ConfigAgentType | null = "opencode"): ConfigService {
+/** Minimal Config mock for tests. Returns configuredAgent value from get(). */
+function createMockConfig(agent: ConfigAgentType | null = "opencode"): Config {
   return {
     register: () => {},
     load: () => {},
@@ -230,7 +230,7 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
-  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockConfigService()));
+  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockConfig()));
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -373,9 +373,9 @@ describe("AppStart Operation", () => {
   describe("check hooks", () => {
     // -- Helpers for check hook modules --
 
-    /** Creates a no-op init module. configuredAgent now comes from ConfigService mock. */
+    /** Creates a no-op init module. configuredAgent now comes from Config mock. */
     function createConfigCheckModule(_agent: ConfigAgentType | null): IntentModule {
-      void _agent; // configuredAgent is now read from ConfigService, not init results
+      void _agent; // configuredAgent is now read from Config, not init results
       return {
         name: "test",
         hooks: {
@@ -447,7 +447,7 @@ describe("AppStart Operation", () => {
       const agent = options?.configuredAgent !== undefined ? options.configuredAgent : "opencode";
       dispatcher.registerOperation(
         INTENT_APP_START,
-        new AppStartOperation(createMockConfigService(agent))
+        new AppStartOperation(createMockConfig(agent))
       );
       if (options?.setupStub) {
         dispatcher.registerOperation(INTENT_SETUP, options.setupStub);

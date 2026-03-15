@@ -6,8 +6,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WindowManager, type WindowManagerDeps } from "./window-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import { createMockPlatformInfo } from "../../../boundaries/platform/env/platform-info.test-utils";
-import { createImageLayerMock } from "../image/image.state-mock";
-import { createWindowLayerInternalMock, type MockWindowLayerInternal } from "./window.state-mock";
+import { createImageBoundaryMock } from "../image/image.state-mock";
+import {
+  createWindowBoundaryInternalMock,
+  type MockWindowBoundaryInternal,
+} from "./window.state-mock";
 import type { ImageHandle } from "../../../services/platform/types";
 
 /**
@@ -16,11 +19,11 @@ import type { ImageHandle } from "../../../services/platform/types";
 function createWindowManagerDeps(
   overrides: {
     platformInfo?: ReturnType<typeof createMockPlatformInfo>;
-    imageLayer?: ReturnType<typeof createImageLayerMock>;
+    imageLayer?: ReturnType<typeof createImageBoundaryMock>;
   } = {}
-): WindowManagerDeps & { windowLayer: MockWindowLayerInternal } {
-  const windowLayer = createWindowLayerInternalMock();
-  const imageLayer = overrides.imageLayer ?? createImageLayerMock();
+): WindowManagerDeps & { windowLayer: MockWindowBoundaryInternal } {
+  const windowLayer = createWindowBoundaryInternalMock();
+  const imageLayer = overrides.imageLayer ?? createImageBoundaryMock();
   const platformInfo = overrides.platformInfo ?? createMockPlatformInfo();
 
   return {
@@ -88,29 +91,29 @@ describe("WindowManager", () => {
     it("sets window icon from provided icon path", () => {
       const deps = createWindowManagerDeps();
       // Mock the imageLayer to return a non-empty image
-      const mockImageLayer = {
+      const mockImageBoundary = {
         ...deps.imageLayer,
         createFromPath: vi.fn().mockReturnValue({ id: "icon-1", __brand: "ImageHandle" }),
         isEmpty: vi.fn().mockReturnValue(false),
         release: vi.fn(),
       };
-      const depsWithMockImage = { ...deps, imageLayer: mockImageLayer };
+      const depsWithMockImage = { ...deps, imageLayer: mockImageBoundary };
 
       createWindowManager(depsWithMockImage, "CodeHydra", "/app/resources/icon.png");
 
-      expect(mockImageLayer.createFromPath).toHaveBeenCalledWith("/app/resources/icon.png");
-      expect(mockImageLayer.release).toHaveBeenCalled();
+      expect(mockImageBoundary.createFromPath).toHaveBeenCalledWith("/app/resources/icon.png");
+      expect(mockImageBoundary.release).toHaveBeenCalled();
     });
 
     it("does not set icon when image is empty", () => {
       const deps = createWindowManagerDeps();
-      const mockImageLayer = {
+      const mockImageBoundary = {
         ...deps.imageLayer,
         createFromPath: vi.fn().mockReturnValue({ id: "icon-1", __brand: "ImageHandle" }),
         isEmpty: vi.fn().mockReturnValue(true), // Empty image
         release: vi.fn(),
       };
-      const depsWithMockImage = { ...deps, imageLayer: mockImageLayer };
+      const depsWithMockImage = { ...deps, imageLayer: mockImageBoundary };
 
       // Should not throw
       expect(() =>
@@ -120,13 +123,13 @@ describe("WindowManager", () => {
 
     it("handles icon loading errors gracefully", () => {
       const deps = createWindowManagerDeps();
-      const mockImageLayer = {
+      const mockImageBoundary = {
         ...deps.imageLayer,
         createFromPath: vi.fn().mockImplementation(() => {
           throw new Error("Failed to load icon");
         }),
       };
-      const depsWithMockImage = { ...deps, imageLayer: mockImageLayer };
+      const depsWithMockImage = { ...deps, imageLayer: mockImageBoundary };
 
       // Should not throw
       expect(() =>
@@ -136,15 +139,15 @@ describe("WindowManager", () => {
 
     it("does not attempt to load icon when iconPath is not provided", () => {
       const deps = createWindowManagerDeps();
-      const mockImageLayer = {
+      const mockImageBoundary = {
         ...deps.imageLayer,
         createFromPath: vi.fn(),
       };
-      const depsWithMockImage = { ...deps, imageLayer: mockImageLayer };
+      const depsWithMockImage = { ...deps, imageLayer: mockImageBoundary };
 
       createWindowManager(depsWithMockImage, "CodeHydra");
 
-      expect(mockImageLayer.createFromPath).not.toHaveBeenCalled();
+      expect(mockImageBoundary.createFromPath).not.toHaveBeenCalled();
     });
   });
 
@@ -255,7 +258,7 @@ describe("WindowManager", () => {
       const manager = createWindowManager(deps);
       const imageHandle: ImageHandle = { id: "image-1", __brand: "ImageHandle" };
 
-      // Should not throw - overlay icon is handled by WindowLayer
+      // Should not throw - overlay icon is handled by WindowBoundary
       expect(() => manager.setOverlayIcon(imageHandle, "3 idle agents")).not.toThrow();
     });
 

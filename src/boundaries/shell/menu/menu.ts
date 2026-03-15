@@ -1,5 +1,5 @@
 /**
- * MenuLayer - Abstraction over Electron's Menu module.
+ * MenuBoundary - Abstraction over Electron's Menu module.
  *
  * Provides an injectable interface for menu management, enabling:
  * - Unit testing with behavioral mocks
@@ -108,7 +108,7 @@ export interface MenuHandle {
  *
  * Provides application menu management without exposing Electron Menu objects directly.
  */
-export interface MenuLayer {
+export interface MenuBoundary {
   /**
    * Build a menu from a template.
    *
@@ -152,9 +152,9 @@ export function createMenuHandle(id: string): MenuHandle {
 import { Menu } from "electron";
 
 /**
- * Default implementation of MenuLayer using Electron's Menu module.
+ * Default implementation of MenuBoundary using Electron's Menu module.
  */
-export class DefaultMenuLayer implements MenuLayer {
+export class DefaultMenuBoundary implements MenuBoundary {
   private readonly menus = new Map<string, Menu>();
   private currentApplicationMenuId: string | null = null;
 

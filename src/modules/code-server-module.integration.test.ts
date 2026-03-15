@@ -33,7 +33,7 @@ import type {
   DeleteHookResult,
 } from "../intents/operations/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/operations/app-start";
 import type { DirEntry } from "../boundaries/platform/filesystem/filesystem";
 import type { SpawnedProcess } from "../boundaries/platform/process/process";
@@ -184,10 +184,10 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
 }
 
 // =============================================================================
-// Mock ConfigService
+// Mock Config
 // =============================================================================
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: () => {},
@@ -258,7 +258,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     binaryDownloadService: createMockBinaryDownloadService(),
-    configService: createMockConfigService(),
+    configService: createMockConfig(),
     ...overrides,
   };
 }

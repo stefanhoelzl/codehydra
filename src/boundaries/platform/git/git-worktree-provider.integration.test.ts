@@ -9,7 +9,7 @@ import { GitWorktreeProvider } from "./git-worktree-provider";
 import { createMockGitClient } from "./git-client.state-mock";
 import {
   createFileSystemMock,
-  createSpyFileSystemLayer,
+  createSpyFileSystemBoundary,
   directory,
   symlink,
   file,
@@ -1904,7 +1904,7 @@ describe("GitWorktreeProvider", () => {
         },
       });
       // Mock fs with registered worktree and an orphan
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "feature-x").toString()]: directory(),
@@ -1945,7 +1945,7 @@ describe("GitWorktreeProvider", () => {
           },
         },
       });
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "feature-x").toString()]: directory(),
@@ -1974,7 +1974,7 @@ describe("GitWorktreeProvider", () => {
           },
         },
       });
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "symlink-entry").toString()]: symlink("/target"),
@@ -2003,7 +2003,7 @@ describe("GitWorktreeProvider", () => {
           },
         },
       });
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "some-file.txt").toString()]: file(""),
@@ -2032,7 +2032,7 @@ describe("GitWorktreeProvider", () => {
           },
         },
       });
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
         },
@@ -2063,7 +2063,7 @@ describe("GitWorktreeProvider", () => {
           },
         },
       });
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "orphan-1").toString()]: directory(),
@@ -2155,7 +2155,7 @@ describe("GitWorktreeProvider", () => {
           },
         },
       });
-      const spyFs = createSpyFileSystemLayer({
+      const spyFs = createSpyFileSystemBoundary({
         entries: {
           [WORKSPACES_DIR.toString()]: directory(),
           [new Path(WORKSPACES_DIR, "feature-x").toString()]: directory(),

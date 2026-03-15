@@ -1,5 +1,5 @@
 /**
- * DialogLayer - Abstraction over Electron's dialog module.
+ * DialogBoundary - Abstraction over Electron's dialog module.
  *
  * Provides an injectable interface for dialog operations, enabling:
  * - Unit testing with behavioral mocks
@@ -147,7 +147,7 @@ export interface MessageBoxResult {
  *
  * Returns Path objects for file paths to ensure consistent normalized path handling.
  */
-export interface DialogLayer {
+export interface DialogBoundary {
   /**
    * Show an open file/directory dialog.
    *
@@ -248,9 +248,9 @@ function buildMessageBoxOptions(options: DialogMessageBoxOptions): Electron.Mess
 }
 
 /**
- * Default implementation of DialogLayer using Electron's dialog module.
+ * Default implementation of DialogBoundary using Electron's dialog module.
  */
-export class DefaultDialogLayer implements DialogLayer {
+export class DefaultDialogBoundary implements DialogBoundary {
   constructor(private readonly logger: Logger) {}
 
   async showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogResult> {

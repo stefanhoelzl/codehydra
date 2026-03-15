@@ -9,7 +9,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
-import type { ViewLayer } from "../boundaries/shell/view/view";
+import type { ViewBoundary } from "../boundaries/shell/view/view";
 import type { ViewHandle } from "../services/shell/types";
 import {
   EVENT_SHORTCUT_KEY_PRESSED,
@@ -21,11 +21,11 @@ export interface DevtoolsModuleDeps {
     IViewManager,
     "getUIViewHandle" | "getWorkspaceView" | "getActiveWorkspacePath"
   >;
-  readonly viewLayer: Pick<ViewLayer, "openDevTools" | "closeDevTools" | "isDevToolsOpened">;
+  readonly viewLayer: Pick<ViewBoundary, "openDevTools" | "closeDevTools" | "isDevToolsOpened">;
 }
 
 function toggleDevTools(
-  viewLayer: Pick<ViewLayer, "openDevTools" | "closeDevTools" | "isDevToolsOpened">,
+  viewLayer: Pick<ViewBoundary, "openDevTools" | "closeDevTools" | "isDevToolsOpened">,
   handle: ViewHandle
 ): void {
   if (viewLayer.isDevToolsOpened(handle)) {

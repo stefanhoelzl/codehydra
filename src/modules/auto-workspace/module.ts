@@ -46,10 +46,10 @@ import {
   INTENT_LIST_PROJECTS,
   type ListProjectsIntent,
 } from "../../intents/operations/list-projects";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
+import type { Config } from "../../boundaries/platform/config/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/operations/set-metadata";
 import { configPath } from "../../boundaries/platform/config/config-definition";
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import type { Logger } from "../../boundaries/platform/logging/types";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
@@ -89,12 +89,12 @@ const TAG_DELETION_FAILED_VALUE = JSON.stringify({ color: "#e74c3c" });
 // =============================================================================
 
 export interface AutoWorkspaceModuleDeps {
-  readonly fs: Pick<FileSystemLayer, "readFile" | "writeFile">;
+  readonly fs: Pick<FileSystemBoundary, "readFile" | "writeFile">;
   readonly logger: Logger;
   readonly stateFilePath: string;
   readonly dispatcher: Dispatcher;
   readonly sources: readonly AutoWorkspaceSource[];
-  readonly configService: ConfigService;
+  readonly configService: Config;
 }
 
 // =============================================================================

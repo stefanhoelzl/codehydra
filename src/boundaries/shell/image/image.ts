@@ -1,5 +1,5 @@
 /**
- * ImageLayer - Abstraction over Electron's nativeImage.
+ * ImageBoundary - Abstraction over Electron's nativeImage.
  *
  * Provides an injectable interface for image management, enabling:
  * - Unit testing with behavioral mocks
@@ -24,7 +24,7 @@ import type { Logger } from "../../../boundaries/platform/logging";
  * This allows testing without Electron dependencies and ensures all image
  * access goes through this abstraction.
  */
-export interface ImageLayer {
+export interface ImageBoundary {
   /**
    * Create an image from a file path.
    *
@@ -112,9 +112,9 @@ export interface ImageLayer {
 import { nativeImage } from "electron";
 
 /**
- * Default implementation of ImageLayer using Electron's nativeImage.
+ * Default implementation of ImageBoundary using Electron's nativeImage.
  */
-export class DefaultImageLayer implements ImageLayer {
+export class DefaultImageBoundary implements ImageBoundary {
   private readonly images = new Map<string, NativeImage>();
   private nextId = 1;
 

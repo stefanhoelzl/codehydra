@@ -8,7 +8,7 @@ import { BinaryDownloadError, getErrorMessage } from "./errors.js";
 import type { DownloadRequest, DownloadProgressCallback } from "./types.js";
 import type { ArchiveExtractor } from "./archive-extractor.js";
 import type { HttpClient } from "../../boundaries/platform/network/network.js";
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem.js";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem.js";
 import type { Logger } from "../../boundaries/platform/logging/index.js";
 import { FileSystemError } from "../errors.js";
 import { Path } from "../../utils/path/path.js";
@@ -41,7 +41,7 @@ export interface BinaryDownloadService {
 export class DefaultBinaryDownloadService implements BinaryDownloadService {
   constructor(
     private readonly httpClient: HttpClient,
-    private readonly fileSystemLayer: FileSystemLayer,
+    private readonly fileSystemLayer: FileSystemBoundary,
     private readonly archiveExtractor: ArchiveExtractor,
     private readonly logger?: Logger
   ) {}
@@ -113,7 +113,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
 
   /**
    * Download a file from URL to local path with progress reporting.
-   * Buffers the download in memory and writes using FileSystemLayer.
+   * Buffers the download in memory and writes using FileSystemBoundary.
    */
   private async downloadToFile(
     url: string,
@@ -172,7 +172,7 @@ export class DefaultBinaryDownloadService implements BinaryDownloadService {
     // Concatenate chunks into a single buffer
     const buffer = Buffer.concat(chunks);
 
-    // Write to file using FileSystemLayer
+    // Write to file using FileSystemBoundary
     try {
       await this.fileSystemLayer.writeFileBuffer(destPath, buffer);
     } catch (error) {

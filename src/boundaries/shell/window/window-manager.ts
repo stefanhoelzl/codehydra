@@ -2,7 +2,7 @@
  * Window manager for the main application window.
  * Handles BaseWindow creation, resize events, and lifecycle management.
  *
- * This is a facade over WindowLayer that provides a higher-level API
+ * This is a facade over WindowBoundary that provides a higher-level API
  * for the main application window.
  *
  * Uses two-phase initialization:
@@ -12,9 +12,9 @@
 
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { PlatformInfo } from "../../../boundaries/platform/env/platform-info";
-import type { ImageLayer } from "../image/image";
+import type { ImageBoundary } from "../image/image";
 import type { ImageHandle } from "../../../services/platform/types";
-import type { WindowLayerInternal } from "./window";
+import type { WindowBoundaryInternal } from "./window";
 import type { WindowHandle } from "../../../services/shell/types";
 import { getErrorMessage } from "../../../shared/error-utils";
 
@@ -35,8 +35,8 @@ export interface ContentBounds {
  * Dependencies for creating a WindowManager.
  */
 export interface WindowManagerDeps {
-  readonly windowLayer: WindowLayerInternal;
-  readonly imageLayer: ImageLayer;
+  readonly windowLayer: WindowBoundaryInternal;
+  readonly imageLayer: ImageBoundary;
   readonly logger: Logger;
   readonly platformInfo: PlatformInfo;
 }
@@ -45,8 +45,8 @@ export interface WindowManagerDeps {
  * Manages the main application window.
  */
 export class WindowManager {
-  private readonly windowLayer: WindowLayerInternal;
-  private readonly imageLayer: ImageLayer;
+  private readonly windowLayer: WindowBoundaryInternal;
+  private readonly imageLayer: ImageBoundary;
   private readonly logger: Logger;
   private readonly platformInfo: PlatformInfo;
   private readonly title: string;

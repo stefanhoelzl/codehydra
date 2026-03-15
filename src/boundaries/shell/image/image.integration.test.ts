@@ -1,20 +1,20 @@
 /**
- * Integration tests for ImageLayer behavioral mock.
+ * Integration tests for ImageBoundary behavioral mock.
  *
  * Tests verify the behavioral mock provides correct contract behavior
- * that matches the real DefaultImageLayer implementation.
+ * that matches the real DefaultImageBoundary implementation.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { createImageLayerMock, type MockImageLayer } from "./image.state-mock";
+import { createImageBoundaryMock, type MockImageBoundary } from "./image.state-mock";
 import { createImageHandle } from "../../../services/platform/types";
 import { PlatformError } from "../../../services/platform/errors";
 
-describe("ImageLayer (behavioral mock)", () => {
-  let imageLayer: MockImageLayer;
+describe("ImageBoundary (behavioral mock)", () => {
+  let imageLayer: MockImageBoundary;
 
   beforeEach(() => {
-    imageLayer = createImageLayerMock();
+    imageLayer = createImageBoundaryMock();
   });
 
   describe("createFromPath", () => {

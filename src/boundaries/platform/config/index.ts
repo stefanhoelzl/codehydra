@@ -17,4 +17,4 @@ export {
   generateHelpText,
 } from "./config-values";
 
-export { type ConfigService, type ConfigServiceDeps, DefaultConfigService } from "./config-service";
+export { type Config, type ConfigDeps, DefaultConfig } from "./config";

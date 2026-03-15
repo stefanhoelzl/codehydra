@@ -14,8 +14,8 @@
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
  *
- * Configuration is loaded before this operation runs (via ConfigService.load()).
- * configuredAgent is read from ConfigService, not from hook results.
+ * Configuration is loaded before this operation runs (via Config.load()).
+ * configuredAgent is read from Config, not from hook results.
  *
  * After "start", the renderer signals ready via lifecycle.ready IPC,
  * which dispatches app:ready to load initial projects (see app-ready.ts).
@@ -36,7 +36,7 @@ import type { Intent } from "../lib/types";
 import type { Operation, OperationContext, HookContext } from "../lib/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/binary-resolution/types";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
+import type { Config } from "../../boundaries/platform/config/config";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
 export type { BinaryType } from "../../services/binary-resolution/types";
@@ -147,7 +147,7 @@ interface CheckResult {
 export class AppStartOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: Config) {}
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     const hookCtx: HookContext = {
@@ -178,7 +178,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       if (result.extensionRequirements) extensionRequirements.push(...result.extensionRequirements);
     }
 
-    // configuredAgent comes from ConfigService (loaded before app:start)
+    // configuredAgent comes from Config (loaded before app:start)
     const configuredAgent = this.configService.get("agent") as ConfigAgentType;
 
     // Hook 3: "show-ui" -- Show starting screen, capture waitForRetry

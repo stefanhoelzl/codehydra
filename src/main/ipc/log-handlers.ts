@@ -2,7 +2,7 @@
  * Log IPC handlers.
  *
  * These handlers receive log messages from the renderer process
- * and delegate to the LoggingService for writing to log files.
+ * and delegate to the Logging for writing to log files.
  *
  * IMPORTANT: These handlers are registered early in bootstrap() to ensure
  * logging is available immediately when the renderer loads.
@@ -11,7 +11,7 @@
 import { ipcMain } from "electron";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { ApiLogPayload } from "../../shared/ipc";
-import type { LoggingService, LoggerName, LogContext } from "../../boundaries/platform/logging";
+import type { Logging, LoggerName, LogContext } from "../../boundaries/platform/logging";
 
 /**
  * Validate and convert logger name from renderer to LoggerName type.
@@ -39,13 +39,13 @@ const LOG_LEVEL_CHANNELS: ReadonlyArray<{
 /**
  * Register log IPC handlers.
  *
- * These handlers delegate to the provided LoggingService.
+ * These handlers delegate to the provided Logging.
  * They are fire-and-forget (use ipcMain.on instead of handle)
  * since logging should never block the renderer.
  *
- * @param loggingService - The LoggingService instance to delegate to
+ * @param loggingService - The Logging instance to delegate to
  */
-export function registerLogHandlers(loggingService: LoggingService): void {
+export function registerLogHandlers(loggingService: Logging): void {
   for (const { level, channel } of LOG_LEVEL_CHANNELS) {
     ipcMain.on(channel, (_event, payload: ApiLogPayload) => {
       try {

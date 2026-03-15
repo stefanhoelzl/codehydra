@@ -21,13 +21,13 @@ import {
   createElectronLifecycleModule,
   type ElectronLifecycleModuleDeps,
 } from "./electron-lifecycle-module";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 
 // =============================================================================
-// Mock ConfigService
+// Mock Config
 // =============================================================================
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: () => {},
@@ -97,7 +97,7 @@ describe("ElectronLifecycleModule Integration", () => {
     const module = createElectronLifecycleModule({
       app: mockApp,
       logger: SILENT_LOGGER,
-      configService: createMockConfigService(),
+      configService: createMockConfig(),
     });
     dispatcher.registerModule(module);
 
@@ -123,7 +123,7 @@ describe("ElectronLifecycleModule Integration", () => {
     const module = createElectronLifecycleModule({
       app: mockApp,
       logger: SILENT_LOGGER,
-      configService: createMockConfigService(),
+      configService: createMockConfig(),
     });
     dispatcher.registerModule(module);
 
@@ -145,7 +145,7 @@ describe("ElectronLifecycleModule Integration", () => {
     const module = createElectronLifecycleModule({
       app: mockApp,
       logger: SILENT_LOGGER,
-      configService: createMockConfigService(),
+      configService: createMockConfig(),
     });
     dispatcher.registerModule(module);
 
@@ -171,7 +171,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         buildInfo: { isPackaged: false },
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -203,7 +203,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         pathProvider: mockPathProvider,
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -241,7 +241,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         buildInfo: { isPackaged: true },
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -269,7 +269,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -292,7 +292,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
-        configService: createMockConfigService({
+        configService: createMockConfig({
           "electron.flags": "--disable-gpu --use-gl=swiftshader",
         }),
       });
@@ -317,7 +317,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
-        configService: createMockConfigService({ "electron.flags": null }),
+        configService: createMockConfig({ "electron.flags": null }),
       });
 
       dispatcher.registerModule(module);
@@ -357,7 +357,7 @@ describe("ElectronLifecycleModule Integration", () => {
         logger: SILENT_LOGGER,
         powerMonitor: mockPowerMonitor,
         dispatcher: mockDispatcher,
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
       dispatcher.registerModule(module);
 
@@ -388,7 +388,7 @@ describe("ElectronLifecycleModule Integration", () => {
         logger: SILENT_LOGGER,
         powerMonitor: null,
         dispatcher: { dispatch: vi.fn() },
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
       dispatcher.registerModule(module);
 
@@ -416,7 +416,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         powerMonitor: mockPowerMonitor,
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
       dispatcher.registerModule(module);
 

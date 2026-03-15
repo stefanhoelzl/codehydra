@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { DefaultPathProvider } from "../../boundaries/platform/env/path-provider";
-import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { DefaultNetworkLayer } from "../../boundaries/platform/network/network";
 import { DefaultBinaryDownloadService } from "../binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../binary-download/archive-extractor";
@@ -159,7 +159,7 @@ export async function ensureBinaryForTests(
   console.log(`Downloading ${binary} v${version} for tests...`);
 
   const httpClient = new DefaultNetworkLayer(SILENT_LOGGER);
-  const fileSystem = new DefaultFileSystemLayer(SILENT_LOGGER);
+  const fileSystem = new DefaultFileSystemBoundary(SILENT_LOGGER);
   const archiveExtractor = new DefaultArchiveExtractor();
 
   const downloadService = new DefaultBinaryDownloadService(

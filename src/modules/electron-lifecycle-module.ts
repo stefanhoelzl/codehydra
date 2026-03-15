@@ -13,7 +13,7 @@ import type { AsyncWatcher } from "../services/platform/async-watcher";
 import type { Logger } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
 import type { ConfigureResult } from "../intents/operations/app-start";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { configString } from "../boundaries/platform/config/config-definition";
 import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
@@ -78,7 +78,7 @@ export interface ElectronLifecycleModuleDeps {
   readonly powerMonitor?: { on(event: string, callback: () => void): void } | null;
   readonly dispatcher?: Pick<Dispatcher, "dispatch"> | null;
   readonly logger: Logger;
-  readonly configService: ConfigService;
+  readonly configService: Config;
 }
 
 // =============================================================================

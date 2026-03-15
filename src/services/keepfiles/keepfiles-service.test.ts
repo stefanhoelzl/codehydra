@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
  * Unit tests for KeepFilesService.
- * Uses mocked FileSystemLayer to test the service logic.
+ * Uses mocked FileSystemBoundary to test the service logic.
  */
 
 import { join } from "path";
@@ -15,7 +15,7 @@ import {
   createDirEntry,
 } from "../../boundaries/platform/filesystem/filesystem.state-mock";
 import { FileSystemError } from "../errors";
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { Path } from "../../utils/path/path";
 
@@ -146,7 +146,7 @@ describe("KeepFilesService", () => {
         });
         const copyTreeFn = vi.fn().mockResolvedValue({ copiedCount: 1, skippedSymlinks: [] });
 
-        const mockFs: FileSystemLayer = {
+        const mockFs: FileSystemBoundary = {
           readFile: readFileFn,
           readdir: readdirFn,
           copyTree: copyTreeFn,
@@ -216,7 +216,7 @@ describe("KeepFilesService", () => {
         });
         const copyTreeFn = vi.fn().mockResolvedValue({ copiedCount: 1, skippedSymlinks: [] });
 
-        const mockFs: FileSystemLayer = {
+        const mockFs: FileSystemBoundary = {
           // Use secrets/* to match files inside secrets/, allowing negation to work
           readFile: vi.fn().mockResolvedValue("secrets/*\n!secrets/README.md"),
           readdir: readdirFn,
@@ -257,7 +257,7 @@ describe("KeepFilesService", () => {
           )
           .mockResolvedValueOnce({ copiedCount: 1, skippedSymlinks: [] });
 
-        const mockFs: FileSystemLayer = {
+        const mockFs: FileSystemBoundary = {
           readFile: readFileFn,
           readdir: readdirFn,
           copyTree: copyTreeFn,
@@ -292,7 +292,7 @@ describe("KeepFilesService", () => {
           { name: "../escape.txt", isFile: true, isDirectory: false, isSymbolicLink: false },
         ]);
 
-        const mockFs: FileSystemLayer = {
+        const mockFs: FileSystemBoundary = {
           readFile: readFileFn,
           readdir: readdirFn,
           copyTree: vi.fn().mockResolvedValue(undefined),

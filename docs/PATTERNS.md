@@ -611,7 +611,7 @@ it("cleanup stops updates", () => {
 
 ## Service Layer Patterns
 
-Service layer patterns including platform abstractions (FileSystemLayer, NetworkLayer, ProcessRunner), external system access rules, mock factories, and shell/platform layers are documented in [INTENTS.md](INTENTS.md).
+Service layer patterns including platform abstractions (FileSystemBoundary, NetworkLayer, ProcessRunner), external system access rules, mock factories, and shell/platform layers are documented in [INTENTS.md](INTENTS.md).
 
 ---
 
@@ -650,12 +650,12 @@ const abs = new Path(Path.cwd(), "./relative/path");
 
 ### When to Use Each Method
 
-| Method        | Use Case                                         |
-| ------------- | ------------------------------------------------ |
-| `toString()`  | Map keys, comparisons, JSON serialization        |
-| `toNative()`  | (Internal use by FileSystemLayer, ProcessRunner) |
-| `equals()`    | Path comparison (handles different formats)      |
-| `isChildOf()` | Containment checks (not `startsWith()`)          |
+| Method        | Use Case                                            |
+| ------------- | --------------------------------------------------- |
+| `toString()`  | Map keys, comparisons, JSON serialization           |
+| `toNative()`  | (Internal use by FileSystemBoundary, ProcessRunner) |
+| `equals()`    | Path comparison (handles different formats)         |
+| `isChildOf()` | Containment checks (not `startsWith()`)             |
 
 ### IPC Boundary Handling
 

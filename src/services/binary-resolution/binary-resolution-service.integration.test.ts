@@ -8,7 +8,7 @@ import {
   createFileSystemMock,
   file,
   directory,
-  type MockFileSystemLayer,
+  type MockFileSystemBoundary,
 } from "../../boundaries/platform/filesystem/filesystem.state-mock";
 import {
   createMockProcessRunner,
@@ -26,7 +26,7 @@ const TEST_EXECUTABLE_PATHS: Record<BinaryType, string> = {
 };
 
 describe("BinaryResolutionService", () => {
-  let fileSystem: MockFileSystemLayer;
+  let fileSystem: MockFileSystemBoundary;
   let processRunner: MockProcessRunner;
   let pathProvider: PathProvider;
   let logger: Logger;

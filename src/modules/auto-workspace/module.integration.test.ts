@@ -57,17 +57,17 @@ import {
 import { createAutoWorkspaceModule } from "./module";
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
 import type { ConfigKeyDefinition } from "../../boundaries/platform/config/config-definition";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
+import type { Config } from "../../boundaries/platform/config/config";
 
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
 
 // =============================================================================
-// Mock ConfigService
+// Mock Config
 // =============================================================================
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
@@ -309,7 +309,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
   fs: ReturnType<typeof createFileSystemMock>;
   source: ReturnType<typeof createMockSource>;
-  mockConfigService: ConfigService;
+  mockConfig: Config;
   openProjectOp: TrackingOpenProjectOperation;
   openWorkspaceOp: TrackingOpenWorkspaceOperation;
   deleteWorkspaceOp: TrackingDeleteWorkspaceOperation;
@@ -368,7 +368,7 @@ function createTestSetup(options?: {
     configValues[`experimental.${sourceName}.template-path`] = tplPath;
   }
 
-  const mockConfigService = createMockConfigService(configValues);
+  const mockConfig = createMockConfig(configValues);
 
   dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation());
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
@@ -386,7 +386,7 @@ function createTestSetup(options?: {
     stateFilePath: "/data/auto-workspaces.json",
     dispatcher,
     sources: [source],
-    configService: mockConfigService,
+    configService: mockConfig,
   });
 
   dispatcher.registerModule(module);
@@ -395,7 +395,7 @@ function createTestSetup(options?: {
     dispatcher,
     fs,
     source,
-    mockConfigService,
+    mockConfig,
     openProjectOp,
     openWorkspaceOp,
     deleteWorkspaceOp,

@@ -1,14 +1,14 @@
 /**
- * Behavioral mock for ViewLayer with state inspection.
+ * Behavioral mock for ViewBoundary with state inspection.
  *
- * Provides a stateful mock that simulates real ViewLayer behavior:
+ * Provides a stateful mock that simulates real ViewBoundary behavior:
  * - In-memory view state tracking
  * - Window attachment/detachment
  * - Event callback management
  * - Custom matchers for behavioral assertions
  *
  * @example Basic usage
- * const mock = createViewLayerMock();
+ * const mock = createViewBoundaryMock();
  * const handle = mock.createView({ backgroundColor: "#1e1e1e" });
  * expect(mock).toHaveView(handle.id, { backgroundColor: "#1e1e1e" });
  *
@@ -18,7 +18,13 @@
  */
 
 import { expect } from "vitest";
-import type { ViewLayer, ViewOptions, WindowOpenHandler, Unsubscribe, KeyboardInput } from "./view";
+import type {
+  ViewBoundary,
+  ViewOptions,
+  WindowOpenHandler,
+  Unsubscribe,
+  KeyboardInput,
+} from "./view";
 import type { ViewHandle, Rectangle, WindowHandle } from "../../../services/shell/types";
 import { ShellError } from "../../../services/shell/errors";
 import type {
@@ -67,7 +73,7 @@ export interface ViewExpectation {
 /**
  * State interface with triggers and MockState methods.
  */
-export interface ViewLayerMockState extends MockState {
+export interface ViewBoundaryMockState extends MockState {
   /**
    * Window children z-order for assertions.
    * Maps window ID to ordered array of view IDs (index 0 = bottom).
@@ -126,9 +132,9 @@ export interface ViewLayerMockState extends MockState {
 }
 
 /**
- * Mock ViewLayer with state access via $ property.
+ * Mock ViewBoundary with state access via $ property.
  */
-export type MockViewLayer = ViewLayer & MockWithState<ViewLayerMockState>;
+export type MockViewBoundary = ViewBoundary & MockWithState<ViewBoundaryMockState>;
 
 // =============================================================================
 // Internal Types
@@ -151,7 +157,7 @@ interface ViewState {
 // State Implementation
 // =============================================================================
 
-class ViewLayerMockStateImpl implements ViewLayerMockState {
+class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   private readonly _views: Map<string, ViewState>;
   private readonly _windowChildren: Map<string, string[]>;
   private readonly _didFinishLoadCallbacks: Map<string, Set<() => void>>;
@@ -343,10 +349,10 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
 // =============================================================================
 
 /**
- * Create a behavioral mock for ViewLayer.
+ * Create a behavioral mock for ViewBoundary.
  *
  * @example Basic usage
- * const mock = createViewLayerMock();
+ * const mock = createViewBoundaryMock();
  * const handle = mock.createView({});
  * expect(mock).toHaveView(handle.id);
  *
@@ -359,8 +365,8 @@ class ViewLayerMockStateImpl implements ViewLayerMockState {
  * mock.createView({});
  * expect(mock).not.toBeUnchanged(before);
  */
-export function createViewLayerMock(): MockViewLayer {
-  const state = new ViewLayerMockStateImpl();
+export function createViewBoundaryMock(): MockViewBoundary {
+  const state = new ViewBoundaryMockStateImpl();
   let nextId = 1;
 
   function getView(handle: ViewHandle): ViewState {
@@ -380,7 +386,7 @@ export function createViewLayerMock(): MockViewLayer {
     return children;
   }
 
-  const layer: ViewLayer = {
+  const layer: ViewBoundary = {
     createView(options: ViewOptions): ViewHandle {
       const id = `view-${nextId++}`;
       state.views.set(id, {
@@ -612,7 +618,7 @@ export function createViewLayerMock(): MockViewLayer {
     },
   };
 
-  return Object.assign(layer, { $: state as ViewLayerMockState });
+  return Object.assign(layer, { $: state as ViewBoundaryMockState });
 }
 
 // =============================================================================
@@ -620,9 +626,9 @@ export function createViewLayerMock(): MockViewLayer {
 // =============================================================================
 
 /**
- * Custom matchers for ViewLayer mock assertions.
+ * Custom matchers for ViewBoundary mock assertions.
  */
-interface ViewLayerMatchers {
+interface ViewBoundaryMatchers {
   /**
    * Assert view exists with optional property checks.
    *
@@ -659,12 +665,15 @@ interface ViewLayerMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends ViewLayerMatchers {}
+  interface Assertion<T> extends ViewBoundaryMatchers {}
 }
 
-export const viewLayerMatchers: MatcherImplementationsFor<MockViewLayer, ViewLayerMatchers> = {
+export const viewBoundaryMatchers: MatcherImplementationsFor<
+  MockViewBoundary,
+  ViewBoundaryMatchers
+> = {
   toHaveView(received, id, expected?) {
-    const state = received.$ as ViewLayerMockStateImpl;
+    const state = received.$ as ViewBoundaryMockStateImpl;
     const view = state.getViewSnapshot(id);
 
     // Check existence
@@ -760,7 +769,7 @@ export const viewLayerMatchers: MatcherImplementationsFor<MockViewLayer, ViewLay
   },
 
   toHaveViews(received, ids) {
-    const state = received.$ as ViewLayerMockStateImpl;
+    const state = received.$ as ViewBoundaryMockStateImpl;
     const actualIds = state.getViewIds().sort();
     const expectedIds = [...ids].sort();
 
@@ -797,4 +806,4 @@ export const viewLayerMatchers: MatcherImplementationsFor<MockViewLayer, ViewLay
 };
 
 // Register matchers with expect
-expect.extend(viewLayerMatchers);
+expect.extend(viewBoundaryMatchers);

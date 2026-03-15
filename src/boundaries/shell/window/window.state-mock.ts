@@ -1,13 +1,13 @@
 /**
- * Behavioral mock for WindowLayer with in-memory state.
+ * Behavioral mock for WindowBoundary with in-memory state.
  *
- * Provides a stateful mock that simulates real WindowLayer behavior:
+ * Provides a stateful mock that simulates real WindowBoundary behavior:
  * - In-memory window storage with state tracking
  * - Event simulation via trigger methods
  * - Custom matchers for behavioral assertions
  *
  * @example
- * const mock = createWindowLayerMock();
+ * const mock = createWindowBoundaryMock();
  * const handle = mock.createWindow({ title: "Test" });
  *
  * // Use custom matchers (no direct state access)
@@ -20,11 +20,11 @@
 
 import { expect } from "vitest";
 import type {
-  WindowLayer,
+  WindowBoundary,
   WindowOptions,
   ContentView,
   Unsubscribe,
-  WindowLayerInternal,
+  WindowBoundaryInternal,
 } from "./window";
 import type { WindowHandle, Rectangle, ViewHandle } from "../../../services/shell/types";
 import type { ImageHandle } from "../../../services/platform/types";
@@ -57,7 +57,7 @@ export interface WindowMockState {
  * State interface for the window layer mock.
  * Provides read access to windows and trigger methods for event simulation.
  */
-export interface WindowLayerMockState extends MockState {
+export interface WindowBoundaryMockState extends MockState {
   /**
    * Read-only access to all windows.
    * Keys are window handle IDs.
@@ -124,15 +124,16 @@ export interface WindowLayerMockState extends MockState {
 // =============================================================================
 
 /**
- * WindowLayer with behavioral mock state access via `$` property.
+ * WindowBoundary with behavioral mock state access via `$` property.
  */
-export type MockWindowLayer = WindowLayer & MockWithState<WindowLayerMockState>;
+export type MockWindowBoundary = WindowBoundary & MockWithState<WindowBoundaryMockState>;
 
 /**
- * WindowLayerInternal with behavioral mock state access via `$` property.
- * Used for manager tests that need WindowLayerInternal._getRawWindow.
+ * WindowBoundaryInternal with behavioral mock state access via `$` property.
+ * Used for manager tests that need WindowBoundaryInternal._getRawWindow.
  */
-export type MockWindowLayerInternal = WindowLayerInternal & MockWithState<WindowLayerMockState>;
+export type MockWindowBoundaryInternal = WindowBoundaryInternal &
+  MockWithState<WindowBoundaryMockState>;
 
 // =============================================================================
 // Internal State Implementation
@@ -152,9 +153,9 @@ interface WindowStateInternal {
 }
 
 /**
- * Implementation of WindowLayerMockState.
+ * Implementation of WindowBoundaryMockState.
  */
-class WindowLayerMockStateImpl implements WindowLayerMockState {
+class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
   constructor(
     private readonly _windows: Map<string, WindowStateInternal>,
     private readonly _resizeCallbacks: Map<string, Set<() => void>>,
@@ -259,13 +260,13 @@ class WindowLayerMockStateImpl implements WindowLayerMockState {
 // =============================================================================
 
 /**
- * Create a behavioral mock for WindowLayer.
+ * Create a behavioral mock for WindowBoundary.
  *
  * The mock maintains state and validates operations just like the real
  * implementation, making it suitable for integration tests.
  *
  * @example Basic usage
- * const mock = createWindowLayerMock();
+ * const mock = createWindowBoundaryMock();
  * const handle = mock.createWindow({ title: "Test" });
  *
  * // Custom matchers (no direct state access)
@@ -275,7 +276,7 @@ class WindowLayerMockStateImpl implements WindowLayerMockState {
  * // Event simulation via $.triggerX()
  * mock.$.triggerResize(handle);
  */
-export function createWindowLayerMock(): MockWindowLayer {
+export function createWindowBoundaryMock(): MockWindowBoundary {
   const windows = new Map<string, WindowStateInternal>();
   const resizeCallbacks = new Map<string, Set<() => void>>();
   const maximizeCallbacks = new Map<string, Set<() => void>>();
@@ -324,7 +325,7 @@ export function createWindowLayerMock(): MockWindowLayer {
     };
   }
 
-  const state = new WindowLayerMockStateImpl(
+  const state = new WindowBoundaryMockStateImpl(
     windows,
     resizeCallbacks,
     maximizeCallbacks,
@@ -333,7 +334,7 @@ export function createWindowLayerMock(): MockWindowLayer {
     blurCallbacks
   );
 
-  const layer: WindowLayer = {
+  const layer: WindowBoundary = {
     createWindow(options: WindowOptions): WindowHandle {
       const id = `window-${nextId++}`;
       const bounds: Rectangle = {
@@ -557,26 +558,26 @@ export function createWindowLayerMock(): MockWindowLayer {
 }
 
 /**
- * Create a behavioral mock for WindowLayerInternal.
+ * Create a behavioral mock for WindowBoundaryInternal.
  *
- * Extends createWindowLayerMock() with _getRawWindow that throws by default.
- * Used in manager tests where WindowLayerInternal is needed for ShortcutController.
+ * Extends createWindowBoundaryMock() with _getRawWindow that throws by default.
+ * Used in manager tests where WindowBoundaryInternal is needed for ShortcutController.
  *
  * @example
- * const mock = createWindowLayerInternalMock();
+ * const mock = createWindowBoundaryInternalMock();
  * const handle = mock.createWindow({ title: "Test" });
  *
  * // _getRawWindow throws in behavioral mock
  * expect(() => mock._getRawWindow(handle)).toThrow();
  */
-export function createWindowLayerInternalMock(): MockWindowLayerInternal {
-  const layer = createWindowLayerMock();
+export function createWindowBoundaryInternalMock(): MockWindowBoundaryInternal {
+  const layer = createWindowBoundaryMock();
 
   return Object.assign(layer, {
     _getRawWindow: (): never => {
       throw new Error("_getRawWindow not available in behavioral mock");
     },
-  }) as MockWindowLayerInternal;
+  }) as MockWindowBoundaryInternal;
 }
 
 // =============================================================================
@@ -584,9 +585,9 @@ export function createWindowLayerInternalMock(): MockWindowLayerInternal {
 // =============================================================================
 
 /**
- * Custom matchers for WindowLayer mock assertions.
+ * Custom matchers for WindowBoundary mock assertions.
  */
-interface WindowLayerMatchers {
+interface WindowBoundaryMatchers {
   /**
    * Assert that a window exists.
    *
@@ -649,161 +650,163 @@ interface WindowLayerMatchers {
 }
 
 declare module "vitest" {
-  interface Assertion<T> extends WindowLayerMatchers {}
+  interface Assertion<T> extends WindowBoundaryMatchers {}
 }
 
-export const windowLayerMatchers: MatcherImplementationsFor<MockWindowLayer, WindowLayerMatchers> =
-  {
-    toHaveWindow(received, id) {
-      const window = received.$.windows.get(id);
-      if (!window) {
-        return {
-          pass: false,
-          message: () => `Expected window ${id} to exist but it does not`,
-        };
-      }
+export const windowBoundaryMatchers: MatcherImplementationsFor<
+  MockWindowBoundary,
+  WindowBoundaryMatchers
+> = {
+  toHaveWindow(received, id) {
+    const window = received.$.windows.get(id);
+    if (!window) {
       return {
-        pass: true,
-        message: () => `Expected window ${id} not to exist`,
+        pass: false,
+        message: () => `Expected window ${id} to exist but it does not`,
       };
-    },
+    }
+    return {
+      pass: true,
+      message: () => `Expected window ${id} not to exist`,
+    };
+  },
 
-    toHaveWindowCount(received, count) {
-      const actualCount = received.$.windows.size;
-      if (actualCount !== count) {
-        return {
-          pass: false,
-          message: () => `Expected ${count} windows but found ${actualCount}`,
-        };
-      }
+  toHaveWindowCount(received, count) {
+    const actualCount = received.$.windows.size;
+    if (actualCount !== count) {
       return {
-        pass: true,
-        message: () => `Expected not to have ${count} windows`,
+        pass: false,
+        message: () => `Expected ${count} windows but found ${actualCount}`,
       };
-    },
+    }
+    return {
+      pass: true,
+      message: () => `Expected not to have ${count} windows`,
+    };
+  },
 
-    toHaveWindowTitle(received, id, title) {
-      const window = received.$.windows.get(id);
-      if (!window) {
-        return {
-          pass: false,
-          message: () => `Expected window ${id} to exist with title "${title}" but it does not`,
-        };
-      }
-      if (window.title !== title) {
-        return {
-          pass: false,
-          message: () => `Expected window ${id} to have title "${title}" but got "${window.title}"`,
-        };
-      }
+  toHaveWindowTitle(received, id, title) {
+    const window = received.$.windows.get(id);
+    if (!window) {
       return {
-        pass: true,
-        message: () => `Expected window ${id} not to have title "${title}"`,
+        pass: false,
+        message: () => `Expected window ${id} to exist with title "${title}" but it does not`,
       };
-    },
-
-    toBeWindowMaximized(received, id) {
-      const window = received.$.windows.get(id);
-      if (!window) {
-        return {
-          pass: false,
-          message: () => `Expected window ${id} to be maximized but it does not exist`,
-        };
-      }
-      if (!window.isMaximized) {
-        return {
-          pass: false,
-          message: () => `Expected window ${id} to be maximized but it is not`,
-        };
-      }
+    }
+    if (window.title !== title) {
       return {
-        pass: true,
-        message: () => `Expected window ${id} not to be maximized`,
+        pass: false,
+        message: () => `Expected window ${id} to have title "${title}" but got "${window.title}"`,
       };
-    },
+    }
+    return {
+      pass: true,
+      message: () => `Expected window ${id} not to have title "${title}"`,
+    };
+  },
 
-    toHaveWindowBounds(received, id, bounds) {
-      const window = received.$.windows.get(id);
-      if (!window) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected window ${id} to have bounds ${JSON.stringify(bounds)} but it does not exist`,
-        };
-      }
-
-      const mismatches: string[] = [];
-      if (bounds.x !== undefined && window.bounds.x !== bounds.x) {
-        mismatches.push(`x: expected ${bounds.x}, got ${window.bounds.x}`);
-      }
-      if (bounds.y !== undefined && window.bounds.y !== bounds.y) {
-        mismatches.push(`y: expected ${bounds.y}, got ${window.bounds.y}`);
-      }
-      if (bounds.width !== undefined && window.bounds.width !== bounds.width) {
-        mismatches.push(`width: expected ${bounds.width}, got ${window.bounds.width}`);
-      }
-      if (bounds.height !== undefined && window.bounds.height !== bounds.height) {
-        mismatches.push(`height: expected ${bounds.height}, got ${window.bounds.height}`);
-      }
-
-      if (mismatches.length > 0) {
-        return {
-          pass: false,
-          message: () => `Window ${id} bounds mismatch: ${mismatches.join(", ")}`,
-        };
-      }
-
+  toBeWindowMaximized(received, id) {
+    const window = received.$.windows.get(id);
+    if (!window) {
       return {
-        pass: true,
-        message: () => `Expected window ${id} not to have bounds ${JSON.stringify(bounds)}`,
+        pass: false,
+        message: () => `Expected window ${id} to be maximized but it does not exist`,
       };
-    },
-
-    toHaveAttachedView(received, windowId, viewId) {
-      const window = received.$.windows.get(windowId);
-      if (!window) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected window ${windowId} to have attached view ${viewId} but window does not exist`,
-        };
-      }
-      if (!window.attachedViews.has(viewId)) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected window ${windowId} to have attached view ${viewId} but it does not`,
-        };
-      }
+    }
+    if (!window.isMaximized) {
       return {
-        pass: true,
-        message: () => `Expected window ${windowId} not to have attached view ${viewId}`,
+        pass: false,
+        message: () => `Expected window ${id} to be maximized but it is not`,
       };
-    },
+    }
+    return {
+      pass: true,
+      message: () => `Expected window ${id} not to be maximized`,
+    };
+  },
 
-    toHaveAttachedViewCount(received, windowId, count) {
-      const window = received.$.windows.get(windowId);
-      if (!window) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected window ${windowId} to have ${count} attached views but window does not exist`,
-        };
-      }
-      const actualCount = window.attachedViews.size;
-      if (actualCount !== count) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected window ${windowId} to have ${count} attached views but has ${actualCount}`,
-        };
-      }
+  toHaveWindowBounds(received, id, bounds) {
+    const window = received.$.windows.get(id);
+    if (!window) {
       return {
-        pass: true,
-        message: () => `Expected window ${windowId} not to have ${count} attached views`,
+        pass: false,
+        message: () =>
+          `Expected window ${id} to have bounds ${JSON.stringify(bounds)} but it does not exist`,
       };
-    },
-  };
+    }
+
+    const mismatches: string[] = [];
+    if (bounds.x !== undefined && window.bounds.x !== bounds.x) {
+      mismatches.push(`x: expected ${bounds.x}, got ${window.bounds.x}`);
+    }
+    if (bounds.y !== undefined && window.bounds.y !== bounds.y) {
+      mismatches.push(`y: expected ${bounds.y}, got ${window.bounds.y}`);
+    }
+    if (bounds.width !== undefined && window.bounds.width !== bounds.width) {
+      mismatches.push(`width: expected ${bounds.width}, got ${window.bounds.width}`);
+    }
+    if (bounds.height !== undefined && window.bounds.height !== bounds.height) {
+      mismatches.push(`height: expected ${bounds.height}, got ${window.bounds.height}`);
+    }
+
+    if (mismatches.length > 0) {
+      return {
+        pass: false,
+        message: () => `Window ${id} bounds mismatch: ${mismatches.join(", ")}`,
+      };
+    }
+
+    return {
+      pass: true,
+      message: () => `Expected window ${id} not to have bounds ${JSON.stringify(bounds)}`,
+    };
+  },
+
+  toHaveAttachedView(received, windowId, viewId) {
+    const window = received.$.windows.get(windowId);
+    if (!window) {
+      return {
+        pass: false,
+        message: () =>
+          `Expected window ${windowId} to have attached view ${viewId} but window does not exist`,
+      };
+    }
+    if (!window.attachedViews.has(viewId)) {
+      return {
+        pass: false,
+        message: () =>
+          `Expected window ${windowId} to have attached view ${viewId} but it does not`,
+      };
+    }
+    return {
+      pass: true,
+      message: () => `Expected window ${windowId} not to have attached view ${viewId}`,
+    };
+  },
+
+  toHaveAttachedViewCount(received, windowId, count) {
+    const window = received.$.windows.get(windowId);
+    if (!window) {
+      return {
+        pass: false,
+        message: () =>
+          `Expected window ${windowId} to have ${count} attached views but window does not exist`,
+      };
+    }
+    const actualCount = window.attachedViews.size;
+    if (actualCount !== count) {
+      return {
+        pass: false,
+        message: () =>
+          `Expected window ${windowId} to have ${count} attached views but has ${actualCount}`,
+      };
+    }
+    return {
+      pass: true,
+      message: () => `Expected window ${windowId} not to have ${count} attached views`,
+    };
+  },
+};
 
 // Register matchers with expect
-expect.extend(windowLayerMatchers);
+expect.extend(windowBoundaryMatchers);

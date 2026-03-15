@@ -1,16 +1,16 @@
 /**
- * IpcLayer - Abstraction over Electron IPC handler registration.
+ * IpcBoundary - Abstraction over Electron IPC handler registration.
  *
  * Provides an injectable interface for IPC handler management, enabling:
  * - Unit testing of API registries with behavioral mocks
- * - Boundary testing of DefaultIpcLayer against real ipcMain
+ * - Boundary testing of DefaultIpcBoundary against real ipcMain
  * - Consistent error handling via PlatformError
  *
  * Supports two patterns:
  * - handle()/removeHandler(): Request-response (ipcMain.handle)
  * - on()/removeListener(): Fire-and-forget events (ipcMain.on)
  *
- * Sending messages to renderer is done via ViewLayer's webContents access.
+ * Sending messages to renderer is done via ViewBoundary's webContents access.
  */
 
 import type { IpcMainInvokeEvent, IpcMainEvent } from "electron";
@@ -33,7 +33,7 @@ export type IpcEventHandler = (event: IpcMainEvent, ...args: unknown[]) => void;
  * - `IPC_HANDLER_EXISTS` when registering a handler for an already-registered channel
  * - `IPC_HANDLER_NOT_FOUND` when removing a handler that doesn't exist
  */
-export interface IpcLayer {
+export interface IpcBoundary {
   /**
    * Register a handler for an IPC invoke channel (request-response).
    *
@@ -82,12 +82,12 @@ export interface IpcLayer {
 import { ipcMain } from "electron";
 
 /**
- * Default implementation of IpcLayer using Electron's ipcMain.
+ * Default implementation of IpcBoundary using Electron's ipcMain.
  *
  * Tracks registered channels to detect duplicate registrations
  * (which ipcMain silently ignores) and provide better error messages.
  */
-export class DefaultIpcLayer implements IpcLayer {
+export class DefaultIpcBoundary implements IpcBoundary {
   private readonly registeredChannels = new Set<string>();
 
   handle(channel: string, handler: IpcHandler): void {

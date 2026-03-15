@@ -18,13 +18,13 @@ import type {
 } from "../intents/operations/app-start";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { createLoggingModule } from "./logging-module";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 
 // =============================================================================
-// Mock ConfigService
+// Mock Config
 // =============================================================================
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: () => {},
@@ -84,7 +84,7 @@ function createDeps(configValues?: Record<string, unknown>) {
     arch: "x64" as const,
   };
   const logger = createMockLogger();
-  const configService = createMockConfigService({
+  const configService = createMockConfig({
     "log.level": "warn",
     "log.output": "file",
     "log.format": "text",

@@ -20,7 +20,7 @@ import type { HookContext } from "../intents/lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { Path } from "../utils/path/path";
 import { projectDirName } from "../boundaries/platform/env/paths";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { ProjectConfig } from "../services/project/types";
 import { CURRENT_PROJECT_VERSION } from "../services/project/types";
 import { ProjectStoreError, getErrorMessage } from "../services/errors";
@@ -71,7 +71,7 @@ export interface LocalProject {
 export interface LocalProjectModuleDeps {
   readonly projectsDir: string;
   readonly fs: Pick<
-    FileSystemLayer,
+    FileSystemBoundary,
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm" | "rename"
   >;
   readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
@@ -286,7 +286,7 @@ async function removeProject(
 /**
  * Create a LocalProjectModule that owns project state and persistence for ALL projects.
  *
- * @param deps - FileSystemLayer for persistence, GitWorktreeProvider for .git validation
+ * @param deps - FileSystemBoundary for persistence, GitWorktreeProvider for .git validation
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {

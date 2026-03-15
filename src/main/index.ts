@@ -22,27 +22,27 @@ import nodePath from "node:path";
 // Boundaries - Platform
 import { DefaultPathProvider, type PathProvider } from "../boundaries/platform/env/path-provider";
 import type { BuildInfo } from "../boundaries/platform/env/build-info";
-import { ElectronLogService, type LoggingService } from "../boundaries/platform/logging";
-import { DefaultFileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import { ElectronLog, type Logging } from "../boundaries/platform/logging";
+import { DefaultFileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import { DefaultNetworkLayer } from "../boundaries/platform/network/network";
 import { ExecaProcessRunner } from "../boundaries/platform/process/process";
 import { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
 import { SimpleGitClient } from "../boundaries/platform/git/simple-git-client";
 import {
-  DefaultConfigService,
+  DefaultConfig,
   configBoolean,
   configEnum,
   generateHelpText,
 } from "../boundaries/platform/config";
 // Boundaries - Shell
-import { DefaultIpcLayer } from "../boundaries/shell/ipc/ipc";
-import { DefaultAppLayer } from "../boundaries/shell/app/app";
-import { DefaultImageLayer } from "../boundaries/shell/image/image";
-import { DefaultDialogLayer } from "../boundaries/shell/dialog/dialog";
-import { DefaultMenuLayer } from "../boundaries/shell/menu/menu";
-import { DefaultWindowLayer } from "../boundaries/shell/window/window";
-import { DefaultViewLayer } from "../boundaries/shell/view/view";
-import { DefaultSessionLayer } from "../boundaries/shell/session/session";
+import { DefaultIpcBoundary } from "../boundaries/shell/ipc/ipc";
+import { DefaultAppBoundary } from "../boundaries/shell/app/app";
+import { DefaultImageBoundary } from "../boundaries/shell/image/image";
+import { DefaultDialogBoundary } from "../boundaries/shell/dialog/dialog";
+import { DefaultMenuBoundary } from "../boundaries/shell/menu/menu";
+import { DefaultWindowBoundary } from "../boundaries/shell/window/window";
+import { DefaultViewBoundary } from "../boundaries/shell/view/view";
+import { DefaultSessionBoundary } from "../boundaries/shell/session/session";
 import { WindowManager } from "../boundaries/shell/window/window-manager";
 import { ViewManager } from "../boundaries/shell/view/view-manager";
 // Services (stayed)
@@ -208,13 +208,13 @@ const buildInfo: BuildInfo = new ElectronBuildInfo();
 
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
-const loggingService: LoggingService = new ElectronLogService(pathProvider);
+const loggingService: Logging = new ElectronLog(pathProvider);
 const appLogger = loggingService.createLogger("app");
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
-const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));
+const fileSystemLayer = new DefaultFileSystemBoundary(loggingService.createLogger("fs"));
 
-// ConfigService — constructed before modules so they can register keys
-const configService = new DefaultConfigService({
+// Config — constructed before modules so they can register keys
+const configService = new DefaultConfig({
   configPath: pathProvider.dataPath("config.json"),
   fileSystem: fileSystemLayer,
   logger: loggingService.createLogger("config"),
@@ -240,18 +240,18 @@ configService.register("help", {
 
 // 3. Electron layers (all constructors are pure — just store deps)
 
-const dialogLayer = new DefaultDialogLayer(loggingService.createLogger("dialog"));
-const menuLayer = new DefaultMenuLayer(loggingService.createLogger("menu"));
-const imageLayer = new DefaultImageLayer(loggingService.createLogger("window"));
-const windowLayer = new DefaultWindowLayer(
+const dialogLayer = new DefaultDialogBoundary(loggingService.createLogger("dialog"));
+const menuLayer = new DefaultMenuBoundary(loggingService.createLogger("menu"));
+const imageLayer = new DefaultImageBoundary(loggingService.createLogger("window"));
+const windowLayer = new DefaultWindowBoundary(
   imageLayer,
   platformInfo,
   loggingService.createLogger("window")
 );
-const viewLayer = new DefaultViewLayer(windowLayer, loggingService.createLogger("view"));
-const sessionLayer = new DefaultSessionLayer(loggingService.createLogger("view"));
-const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
-const ipcLayer = new DefaultIpcLayer();
+const viewLayer = new DefaultViewBoundary(windowLayer, loggingService.createLogger("view"));
+const sessionLayer = new DefaultSessionBoundary(loggingService.createLogger("view"));
+const appLayer = new DefaultAppBoundary(loggingService.createLogger("badge"));
+const ipcLayer = new DefaultIpcBoundary();
 
 // 4. Service construction
 

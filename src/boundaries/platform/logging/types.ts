@@ -27,7 +27,7 @@ export type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
 export type LoggerName =
   | "process" // LoggingProcessRunner - process spawning
   | "network" // DefaultNetworkLayer - HTTP, ports
-  | "fs" // DefaultFileSystemLayer - filesystem operations
+  | "fs" // DefaultFileSystemBoundary - filesystem operations
   | "git" // SimpleGitClient - git operations
   | "worktree" // GitWorktreeProvider - worktree operations
   | "opencode" // OpenCodeClient - OpenCode SDK
@@ -48,9 +48,9 @@ export type LoggerName =
   | "mcp" // McpServerManager - MCP server
   | "extension" // PluginServer - extension-side logs forwarded to main
   | "ext-manager" // ExtensionModule - extension manifest loading
-  | "dialog" // DialogLayer - system dialogs
-  | "menu" // MenuLayer - application menu
-  | "config" // ConfigService - application config
+  | "dialog" // DialogBoundary - system dialogs
+  | "menu" // MenuBoundary - application menu
+  | "config" // Config - application config
   | "telemetry" // PosthogModule - PostHog analytics
   | "updater" // AutoUpdater - auto-update service
   | "agent" // AgentServerManager - agent lifecycle
@@ -157,7 +157,7 @@ export interface Logger {
  * @example
  * ```typescript
  * // In main process startup
- * const loggingService = new ElectronLogService(pathProvider);
+ * const loggingService = new ElectronLog(pathProvider);
  * loggingService.configure({ logLevel: 'debug', logFile: true, logConsole: false, allowedLoggers: undefined });
  * loggingService.initialize(); // Enable renderer logging
  *
@@ -166,7 +166,7 @@ export interface Logger {
  * const gitClient = new SimpleGitClient(logger);
  * ```
  */
-export interface LoggingService {
+export interface Logging {
   /**
    * Create a logger with the specified name (scope).
    * The name appears in log output to identify the source.

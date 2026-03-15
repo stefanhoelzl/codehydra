@@ -7,7 +7,7 @@
 
 /**
  * Opaque handle to a window.
- * Used by WindowLayer to reference BaseWindow instances without exposing Electron types.
+ * Used by WindowBoundary to reference BaseWindow instances without exposing Electron types.
  */
 export interface WindowHandle {
   readonly id: string;
@@ -16,7 +16,7 @@ export interface WindowHandle {
 
 /**
  * Opaque handle to a view.
- * Used by ViewLayer to reference WebContentsView instances without exposing Electron types.
+ * Used by ViewBoundary to reference WebContentsView instances without exposing Electron types.
  */
 export interface ViewHandle {
   readonly id: string;
@@ -25,7 +25,7 @@ export interface ViewHandle {
 
 /**
  * Opaque handle to a session.
- * Used by SessionLayer to reference Session instances without exposing Electron types.
+ * Used by SessionBoundary to reference Session instances without exposing Electron types.
  */
 export interface SessionHandle {
   readonly id: string;

@@ -15,9 +15,9 @@ import type { WindowManager } from "../window/window-manager";
 import { openExternal } from "../../../main/utils/external-url";
 import type { Logger } from "../../../boundaries/platform/logging";
 import { getErrorMessage } from "../../../shared/error-utils";
-import type { ViewLayer, WindowOpenDetails } from "./view";
-import type { SessionLayer } from "../session/session";
-import type { WindowLayerInternal } from "../window/window";
+import type { ViewBoundary, WindowOpenDetails } from "./view";
+import type { SessionBoundary } from "../session/session";
+import type { WindowBoundaryInternal } from "../window/window";
 import type { ViewHandle, SessionHandle, WindowHandle } from "../../../services/shell/types";
 
 /**
@@ -79,11 +79,11 @@ export interface ViewManagerDeps {
   /** Window manager for the main window */
   readonly windowManager: WindowManager;
   /** Window layer for accessing raw window */
-  readonly windowLayer: WindowLayerInternal;
+  readonly windowLayer: WindowBoundaryInternal;
   /** View layer for view operations */
-  readonly viewLayer: ViewLayer;
+  readonly viewLayer: ViewBoundary;
   /** Session layer for session operations */
-  readonly sessionLayer: SessionLayer;
+  readonly sessionLayer: SessionBoundary;
   /** Configuration */
   readonly config: ViewManagerConfig;
   /** Logger */
@@ -112,9 +112,9 @@ interface WorkspaceState {
  */
 export class ViewManager implements IViewManager {
   private readonly windowManager: WindowManager;
-  private readonly windowLayer: WindowLayerInternal;
-  private readonly viewLayer: ViewLayer;
-  private readonly sessionLayer: SessionLayer;
+  private readonly windowLayer: WindowBoundaryInternal;
+  private readonly viewLayer: ViewBoundary;
+  private readonly sessionLayer: SessionBoundary;
   private readonly config: ViewManagerConfig;
   private uiViewHandle!: ViewHandle;
   private backgroundViewHandle!: ViewHandle;

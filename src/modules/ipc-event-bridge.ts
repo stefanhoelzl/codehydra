@@ -1,6 +1,6 @@
 /**
  * IpcEventBridge - Bridges domain events to the renderer via sendToUI,
- * and registers all IPC handlers directly on the IpcLayer.
+ * and registers all IPC handlers directly on the IpcBoundary.
  *
  * This is an IntentModule that:
  * 1. Subscribes to domain events and forwards them to sendToUI for IPC
@@ -25,7 +25,7 @@ import type {
 } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { Logger } from "../boundaries/platform/logging";
-import type { IpcLayer } from "../boundaries/shell/ipc/ipc";
+import type { IpcBoundary } from "../boundaries/shell/ipc/ipc";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
 import type {
@@ -111,7 +111,7 @@ import { Path } from "../utils/path/path";
  * Dependencies for the IpcEventBridge module.
  */
 export interface IpcEventBridgeDeps {
-  readonly ipcLayer: IpcLayer;
+  readonly ipcLayer: IpcBoundary;
   readonly viewManager: Pick<IViewManager, "sendToUI">;
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;

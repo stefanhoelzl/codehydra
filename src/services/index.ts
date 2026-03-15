@@ -19,7 +19,7 @@ export type { SerializedError } from "./errors";
 
 // Types used by createGitWorktreeProvider
 import type { Path } from "../utils/path/path";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { Logger } from "../boundaries/platform/logging";
 
 // Git types
@@ -85,9 +85,9 @@ export type {
 } from "../boundaries/platform/network/network";
 
 // Filesystem layer
-export { DefaultFileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+export { DefaultFileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 export type {
-  FileSystemLayer,
+  FileSystemBoundary,
   DirEntry,
   MkdirOptions,
   RmOptions,
@@ -96,13 +96,13 @@ export type {
 } from "../boundaries/platform/filesystem/filesystem";
 export {
   createFileSystemMock,
-  createSpyFileSystemLayer,
+  createSpyFileSystemBoundary,
   createDirEntry,
   file,
   directory,
   symlink,
-  type MockFileSystemLayer,
-  type SpyFileSystemLayer,
+  type MockFileSystemBoundary,
+  type SpyFileSystemBoundary,
   type Entry,
   type FileEntry,
   type DirectoryEntry,
@@ -115,24 +115,24 @@ export type { IKeepFilesService, CopyResult, CopyError } from "./keepfiles";
 
 // Logging service
 export {
-  ElectronLogService,
+  ElectronLog,
   parseLogLevel,
   parseLogLevelSpec,
   splitLogLevelSpec,
   createMockLogger,
-  createMockLoggingService,
+  createMockLogging,
   SILENT_LOGGER,
 } from "../boundaries/platform/logging";
 export type {
   Logger,
-  LoggingService,
+  Logging,
   LoggingConfigureOptions,
   LogContext,
   LoggerName,
   LogLevel,
   LogOutput,
   MockLogger,
-  MockLoggingService,
+  MockLogging,
 } from "../boundaries/platform/logging";
 
 /**
@@ -142,7 +142,7 @@ export type {
  * @param projectRoot Absolute path to the git repository (Path)
  * @param workspacesDir Directory where worktrees will be created. Callers must obtain this
  *   from `PathProvider.getProjectWorkspacesDir(projectRoot)` to ensure consistent worktree placement.
- * @param fileSystemLayer FileSystemLayer for cleanup operations
+ * @param fileSystemLayer FileSystemBoundary for cleanup operations
  * @param gitLogger Logger for git client operations (typically "git")
  * @param worktreeLogger Logger for worktree provider operations (typically "worktree")
  * @returns Promise resolving to a GitWorktreeProvider with the project registered
@@ -151,7 +151,7 @@ export type {
 export async function createGitWorktreeProvider(
   projectRoot: Path,
   workspacesDir: Path,
-  fileSystemLayer: FileSystemLayer,
+  fileSystemLayer: FileSystemBoundary,
   gitLogger: Logger,
   worktreeLogger: Logger
 ): Promise<GitWorktreeProvider> {

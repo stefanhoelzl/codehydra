@@ -22,7 +22,7 @@ import {
 } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
-import type { MockFileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
+import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
 import type { AgentStatus } from "../types";
 
 /**
@@ -47,7 +47,7 @@ describe("ClaudeCodeServerManager integration", () => {
   let serverManager: ClaudeCodeServerManager;
   let mockPortManager: MockPortManager;
   let mockPathProvider: PathProvider;
-  let mockFileSystem: MockFileSystemLayer;
+  let mockFileSystem: MockFileSystemBoundary;
 
   beforeEach(() => {
     vi.clearAllMocks();

@@ -41,14 +41,14 @@ import type {
   UpdateDownloadedCallback,
   DownloadProgressCallback,
 } from "../services/auto-updater";
-import type { IpcEventHandler, IpcLayer } from "../boundaries/shell/ipc/ipc";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
+import type { Config } from "../boundaries/platform/config/config";
 
 // =============================================================================
-// Mock ConfigService
+// Mock Config
 // =============================================================================
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: () => {},
@@ -204,16 +204,16 @@ function createMockAutoUpdater(overrides?: {
   };
 }
 
-interface MockIpcLayer {
-  layer: Pick<IpcLayer, "on" | "removeListener">;
+interface MockIpcBoundary {
+  layer: Pick<IpcBoundary, "on" | "removeListener">;
   handlers: Map<string, IpcEventHandler[]>;
   emit: (channel: string, ...args: unknown[]) => void;
 }
 
-function createMockIpcLayer(): MockIpcLayer {
+function createMockIpcBoundary(): MockIpcBoundary {
   const handlers = new Map<string, IpcEventHandler[]>();
 
-  const layer: Pick<IpcLayer, "on" | "removeListener"> = {
+  const layer: Pick<IpcBoundary, "on" | "removeListener"> = {
     on(channel: string, handler: IpcEventHandler) {
       if (!handlers.has(channel)) handlers.set(channel, []);
       handlers.get(channel)!.push(handler);
@@ -244,9 +244,9 @@ function createMockIpcLayer(): MockIpcLayer {
 interface TestSetup {
   dispatcher: Dispatcher;
   autoUpdater: MockAutoUpdater;
-  ipcLayer: MockIpcLayer;
+  ipcLayer: MockIpcBoundary;
   updateOperation: TrackingUpdateOperation;
-  mockConfigService: ConfigService;
+  mockConfig: Config;
   module: IntentModule;
   emittedEvents: DomainEvent[];
 }
@@ -257,10 +257,10 @@ function createTestSetup(overrides?: {
   configValues?: Record<string, unknown>;
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
-  const ipcLayer = createMockIpcLayer();
+  const ipcLayer = createMockIpcBoundary();
   const updateOperation = new TrackingUpdateOperation();
   const emittedEvents: DomainEvent[] = [];
-  const mockConfigService = createMockConfigService({
+  const mockConfig = createMockConfig({
     "auto-update": "ask",
     ...overrides?.configValues,
   });
@@ -271,7 +271,7 @@ function createTestSetup(overrides?: {
     autoUpdater: autoUpdater.mock,
     dispatcher,
     ipcLayer: ipcLayer.layer,
-    configService: mockConfigService,
+    configService: mockConfig,
   });
 
   // Register minimal operations for the hooks we test
@@ -281,7 +281,7 @@ function createTestSetup(overrides?: {
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, updateOperation);
-  dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(mockConfigService));
+  dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(mockConfig));
 
   dispatcher.registerModule(autoUpdaterModule);
 
@@ -293,7 +293,7 @@ function createTestSetup(overrides?: {
     autoUpdater,
     ipcLayer,
     updateOperation,
-    mockConfigService,
+    mockConfig,
     module: autoUpdaterModule,
     emittedEvents,
   };
@@ -410,10 +410,10 @@ describe("AutoUpdaterModule Integration", () => {
   });
 
   it("registers auto-update config via configService", () => {
-    const { mockConfigService } = createTestSetup();
+    const { mockConfig } = createTestSetup();
 
     // Factory registers "auto-update" via configService.register
     // Verify the config service was provided and module created without error
-    expect(mockConfigService).toBeDefined();
+    expect(mockConfig).toBeDefined();
   });
 });

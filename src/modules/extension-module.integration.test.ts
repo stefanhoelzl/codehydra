@@ -14,7 +14,7 @@ import type { InitResult } from "../intents/operations/app-start";
 import { createExtensionModule, type ExtensionModuleDeps } from "./extension-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 
 // =============================================================================
 // Test Setup
@@ -34,7 +34,7 @@ function createMockDeps(overrides?: Partial<ExtensionModuleDeps>): ExtensionModu
     },
     fileSystemLayer: {
       readFile: vi.fn().mockResolvedValue(TEST_MANIFEST),
-    } as unknown as Pick<FileSystemLayer, "readFile">,
+    } as unknown as Pick<FileSystemBoundary, "readFile">,
     logger: SILENT_LOGGER,
     ...overrides,
   };
@@ -87,7 +87,7 @@ describe("ExtensionModule", () => {
       const deps = createMockDeps({
         fileSystemLayer: {
           readFile: vi.fn().mockResolvedValue("not valid json"),
-        } as unknown as Pick<FileSystemLayer, "readFile">,
+        } as unknown as Pick<FileSystemBoundary, "readFile">,
       });
       const { dispatcher } = createTestSetup(deps);
 
@@ -103,7 +103,7 @@ describe("ExtensionModule", () => {
       const deps = createMockDeps({
         fileSystemLayer: {
           readFile: vi.fn().mockRejectedValue(new Error("ENOENT: file not found")),
-        } as unknown as Pick<FileSystemLayer, "readFile">,
+        } as unknown as Pick<FileSystemBoundary, "readFile">,
       });
       const { dispatcher } = createTestSetup(deps);
 
@@ -120,7 +120,7 @@ describe("ExtensionModule", () => {
       const deps = createMockDeps({
         fileSystemLayer: {
           readFile: vi.fn().mockResolvedValue(invalidManifest),
-        } as unknown as Pick<FileSystemLayer, "readFile">,
+        } as unknown as Pick<FileSystemBoundary, "readFile">,
       });
       const { dispatcher } = createTestSetup(deps);
 
@@ -136,7 +136,7 @@ describe("ExtensionModule", () => {
       const deps = createMockDeps({
         fileSystemLayer: {
           readFile: vi.fn().mockResolvedValue(JSON.stringify({ marketplace: [], bundled: [] })),
-        } as unknown as Pick<FileSystemLayer, "readFile">,
+        } as unknown as Pick<FileSystemBoundary, "readFile">,
       });
       const { dispatcher } = createTestSetup(deps);
 
@@ -152,7 +152,7 @@ describe("ExtensionModule", () => {
       const deps = createMockDeps({
         fileSystemLayer: {
           readFile: vi.fn().mockResolvedValue(JSON.stringify(["codehydra.sidekick-0.0.3.vsix"])),
-        } as unknown as Pick<FileSystemLayer, "readFile">,
+        } as unknown as Pick<FileSystemBoundary, "readFile">,
       });
       const { dispatcher } = createTestSetup(deps);
 
@@ -170,7 +170,7 @@ describe("ExtensionModule", () => {
           readFile: vi
             .fn()
             .mockResolvedValue(JSON.stringify([{ id: "test.ext", version: "0.0.1" }])),
-        } as unknown as Pick<FileSystemLayer, "readFile">,
+        } as unknown as Pick<FileSystemBoundary, "readFile">,
       });
       const { dispatcher } = createTestSetup(deps);
 
@@ -186,7 +186,7 @@ describe("ExtensionModule", () => {
       const deps = createMockDeps({
         fileSystemLayer: {
           readFile: vi.fn().mockResolvedValue(JSON.stringify([])),
-        } as unknown as Pick<FileSystemLayer, "readFile">,
+        } as unknown as Pick<FileSystemBoundary, "readFile">,
       });
       const { dispatcher } = createTestSetup(deps);
 

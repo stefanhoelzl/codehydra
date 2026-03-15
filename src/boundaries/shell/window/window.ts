@@ -1,5 +1,5 @@
 /**
- * WindowLayer - Abstraction over Electron's BaseWindow.
+ * WindowBoundary - Abstraction over Electron's BaseWindow.
  *
  * Provides an injectable interface for window management, enabling:
  * - Unit testing with behavioral mocks
@@ -12,7 +12,7 @@ import type { WindowHandle, Rectangle, ViewHandle } from "../../../services/shel
 import { createWindowHandle } from "../../../services/shell/types";
 import { ShellError } from "../../../services/shell/errors";
 import type { Logger } from "../../../boundaries/platform/logging";
-import type { ImageLayer } from "../image/image";
+import type { ImageBoundary } from "../image/image";
 import type { ImageHandle } from "../../../services/platform/types";
 import type { PlatformInfo } from "../../../boundaries/platform/env/platform-info";
 
@@ -58,7 +58,7 @@ export interface ContentView {
  * This allows testing without Electron dependencies and ensures all window
  * access goes through this abstraction.
  */
-export interface WindowLayer {
+export interface WindowBoundary {
   /**
    * Create a new window.
    *
@@ -267,10 +267,10 @@ export interface WindowLayer {
 }
 
 /**
- * Extended WindowLayer interface with internal methods.
+ * Extended WindowBoundary interface with internal methods.
  * Used only by code that needs direct access to the underlying BaseWindow.
  */
-export interface WindowLayerInternal extends WindowLayer {
+export interface WindowBoundaryInternal extends WindowBoundary {
   /**
    * Get the raw BaseWindow for a handle.
    * This is an internal method for construction-time access only.
@@ -295,14 +295,14 @@ interface WindowState {
 }
 
 /**
- * Default implementation of WindowLayer using Electron's BaseWindow.
+ * Default implementation of WindowBoundary using Electron's BaseWindow.
  */
-export class DefaultWindowLayer implements WindowLayerInternal {
+export class DefaultWindowBoundary implements WindowBoundaryInternal {
   private readonly windows = new Map<string, WindowState>();
   private nextId = 1;
 
   constructor(
-    private readonly imageLayer: ImageLayer,
+    private readonly imageLayer: ImageBoundary,
     private readonly platformInfo: PlatformInfo,
     private readonly logger: Logger
   ) {}

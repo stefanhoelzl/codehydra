@@ -1,8 +1,8 @@
 /**
  * Shell layer error definitions.
  *
- * These errors are thrown by shell layer implementations (WindowLayer, ViewLayer,
- * SessionLayer) to provide consistent error handling for window/view management.
+ * These errors are thrown by shell layer implementations (WindowBoundary, ViewBoundary,
+ * SessionBoundary) to provide consistent error handling for window/view management.
  */
 
 /**
@@ -24,7 +24,7 @@ export type ShellErrorCode =
 /**
  * Error from shell layer operations.
  *
- * Used by WindowLayer, ViewLayer, and SessionLayer to report errors with
+ * Used by WindowBoundary, ViewBoundary, and SessionBoundary to report errors with
  * consistent typing. Includes a `handle` property for error context.
  *
  * @example

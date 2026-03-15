@@ -23,7 +23,7 @@ import { execSync } from "node:child_process";
 import { DefaultBinaryDownloadService } from "../src/services/binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../src/services/binary-download/archive-extractor";
 import { DefaultNetworkLayer } from "../src/boundaries/platform/network/network";
-import { DefaultFileSystemLayer } from "../src/boundaries/platform/filesystem/filesystem";
+import { DefaultFileSystemBoundary } from "../src/boundaries/platform/filesystem/filesystem";
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
@@ -161,7 +161,7 @@ async function main(): Promise<void> {
   // Create service with real implementations
   const service = new DefaultBinaryDownloadService(
     new DefaultNetworkLayer(logger),
-    new DefaultFileSystemLayer(logger),
+    new DefaultFileSystemBoundary(logger),
     new DefaultArchiveExtractor(),
     logger
   );

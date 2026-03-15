@@ -7,7 +7,7 @@
  * - Build metadata: `publisher.name-1.0.0+build123`
  */
 
-import type { FileSystemLayer, PathLike } from "../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary, PathLike } from "../../boundaries/platform/filesystem/filesystem";
 import { Path } from "../../utils/path/path";
 
 /**
@@ -82,7 +82,7 @@ export function parseExtensionDir(dirName: string): ParsedExtension | null {
 /**
  * List all installed extensions in a directory.
  *
- * @param fs FileSystemLayer instance
+ * @param fs FileSystemBoundary instance
  * @param extensionsDir Path to the extensions directory (Path object or string)
  * @returns Map of extension ID to installed version
  *
@@ -91,7 +91,7 @@ export function parseExtensionDir(dirName: string): ParsedExtension | null {
  * // Returns: Map { "codehydra.codehydra" => "0.0.1", "sst-dev.opencode" => "1.2.3" }
  */
 export async function listInstalledExtensions(
-  fs: Pick<FileSystemLayer, "readdir">,
+  fs: Pick<FileSystemBoundary, "readdir">,
   extensionsDir: PathLike
 ): Promise<Map<string, string>> {
   const result = new Map<string, string>();
@@ -136,7 +136,7 @@ interface ExtensionsJsonEntry {
  * VS Code may reject installing an extension if it's still registered
  * in extensions.json even though the extension folder is missing.
  *
- * @param fs FileSystemLayer instance
+ * @param fs FileSystemBoundary instance
  * @param extensionsDir Path to the extensions directory containing extensions.json
  * @param extensionIds Extension IDs to remove from the registry
  *
@@ -144,7 +144,7 @@ interface ExtensionsJsonEntry {
  * await removeFromExtensionsJson(fs, "/app/vscode/extensions", ["sst-dev.opencode"]);
  */
 export async function removeFromExtensionsJson(
-  fs: Pick<FileSystemLayer, "readFile" | "writeFile">,
+  fs: Pick<FileSystemBoundary, "readFile" | "writeFile">,
   extensionsDir: PathLike,
   extensionIds: readonly string[]
 ): Promise<void> {

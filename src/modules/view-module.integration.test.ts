@@ -84,21 +84,21 @@ import type { AgentStatusUpdatedEvent } from "../intents/operations/update-agent
 import { EVENT_APP_RESUMED } from "../intents/operations/app-resume";
 import type { AppResumedEvent } from "../intents/operations/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import {
-  createBehavioralIpcLayer,
-  type BehavioralIpcLayer,
+  createBehavioralIpcBoundary,
+  type BehavioralIpcBoundary,
 } from "../boundaries/shell/ipc/ipc.test-utils";
 
 // =============================================================================
-// Mock ConfigService
+// Mock Config
 // =============================================================================
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: () => {},
@@ -390,7 +390,7 @@ function createTestSetup(
 
   const viewManager = createMockViewManager();
   const layers = createMockShellLayers();
-  const mockConfigService = createMockConfigService({
+  const mockConfig = createMockConfig({
     "experimental.load-on-resume": false,
     ...options?.configValues,
   });
@@ -408,7 +408,7 @@ function createTestSetup(
       ? null
       : (layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"]),
     ...(options?.dialogLayer !== undefined && { dialogLayer: options.dialogLayer }),
-    configService: mockConfigService,
+    configService: mockConfig,
   };
 
   const module = createViewModule(deps);
@@ -516,7 +516,7 @@ describe("ViewModule Integration", () => {
         { agent: "opencode", label: "OpenCode", icon: "terminal" },
       ];
 
-      const mockIpcLayer = {
+      const mockIpcBoundary = {
         on: vi.fn((_channel: string, handler: (...args: unknown[]) => void) => {
           // Simulate agent selection response immediately
           setTimeout(() => handler(null, { agent: "claude" }), 0);
@@ -538,8 +538,8 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        ipcLayer: mockIpcLayer,
-        configService: createMockConfigService(),
+        ipcLayer: mockIpcBoundary,
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -956,7 +956,7 @@ describe("ViewModule Integration", () => {
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
         windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1005,7 +1005,7 @@ describe("ViewModule Integration", () => {
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
         windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1052,7 +1052,7 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1098,7 +1098,7 @@ describe("ViewModule Integration", () => {
         menuLayer,
         windowManager,
         uiHtmlPath: "file:///app/ui.html",
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1138,7 +1138,7 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1162,7 +1162,7 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("open-project/select-folder", () => {
     it("returns selected folder path from dialog", async () => {
-      const mockDialogLayer = {
+      const mockDialogBoundary = {
         showOpenDialog: vi.fn().mockResolvedValue({
           canceled: false,
           filePaths: [{ toString: () => "/selected/project" }],
@@ -1171,7 +1171,7 @@ describe("ViewModule Integration", () => {
 
       const { dispatcher } = createTestSetup(
         { intentType: INTENT_OPEN_PROJECT, operation: new MinimalSelectFolderOperation() },
-        { dialogLayer: mockDialogLayer }
+        { dialogLayer: mockDialogBoundary }
       );
 
       const result = (await dispatcher.dispatch({
@@ -1180,13 +1180,13 @@ describe("ViewModule Integration", () => {
       })) as SelectFolderHookResult;
 
       expect(result.folderPath).toBe("/selected/project");
-      expect(mockDialogLayer.showOpenDialog).toHaveBeenCalledWith({
+      expect(mockDialogBoundary.showOpenDialog).toHaveBeenCalledWith({
         properties: ["openDirectory"],
       });
     });
 
     it("returns null when dialog canceled", async () => {
-      const mockDialogLayer = {
+      const mockDialogBoundary = {
         showOpenDialog: vi.fn().mockResolvedValue({
           canceled: true,
           filePaths: [],
@@ -1195,7 +1195,7 @@ describe("ViewModule Integration", () => {
 
       const { dispatcher } = createTestSetup(
         { intentType: INTENT_OPEN_PROJECT, operation: new MinimalSelectFolderOperation() },
-        { dialogLayer: mockDialogLayer }
+        { dialogLayer: mockDialogBoundary }
       );
 
       const result = (await dispatcher.dispatch({
@@ -1228,9 +1228,9 @@ describe("ViewModule Integration", () => {
     function createRetrySetup(): {
       dispatcher: Dispatcher;
       viewManager: ReturnType<typeof createMockViewManager>;
-      ipcLayer: BehavioralIpcLayer;
+      ipcLayer: BehavioralIpcBoundary;
     } {
-      const ipcLayer = createBehavioralIpcLayer();
+      const ipcLayer = createBehavioralIpcBoundary();
       const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
 
@@ -1243,7 +1243,7 @@ describe("ViewModule Integration", () => {
         windowLayer: null,
         sessionLayer: null,
         ipcLayer,
-        configService: createMockConfigService(),
+        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);

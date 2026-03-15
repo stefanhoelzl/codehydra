@@ -18,7 +18,7 @@ import { join, delimiter } from "node:path";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import { ANY_VALUE } from "../intents/lib/operation";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { ProcessRunner, SpawnedProcess } from "../boundaries/platform/process/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
@@ -63,7 +63,7 @@ import { listInstalledExtensions, removeFromExtensionsJson } from "../main/utils
 import { Path } from "../utils/path/path";
 import { encodePathForUrl } from "../boundaries/platform/env/paths";
 import { configString, configCustom } from "../boundaries/platform/config/config-definition";
-import type { ConfigService } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import { CodeServerError, SetupError, getErrorMessage } from "../services/errors";
 import { waitForHealthy } from "../services/platform/health-check";
 
@@ -167,7 +167,7 @@ export interface CodeServerModuleDeps {
   readonly httpClient: Pick<HttpClient, "fetch">;
   readonly portManager: Pick<PortManager, "isPortAvailable">;
   readonly fileSystemLayer: Pick<
-    FileSystemLayer,
+    FileSystemBoundary,
     "mkdir" | "readdir" | "rm" | "readFile" | "writeFile"
   >;
   readonly pathProvider: Pick<PathProvider, "bundlePath" | "dataPath">;
@@ -177,7 +177,7 @@ export interface CodeServerModuleDeps {
   readonly wrapperPath: string;
   readonly logger: Logger;
   readonly binaryDownloadService?: BinaryDownloadService;
-  readonly configService: ConfigService;
+  readonly configService: Config;
 }
 
 // =============================================================================

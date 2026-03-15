@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * Boundary tests for DefaultFileSystemLayer.
+ * Boundary tests for DefaultFileSystemBoundary.
  * Tests filesystem operations against real filesystem with temp directories.
  */
 
@@ -38,17 +38,17 @@ import {
   stat,
   lstat,
 } from "node:fs/promises";
-import { DefaultFileSystemLayer } from "./filesystem";
+import { DefaultFileSystemBoundary } from "./filesystem";
 import { SILENT_LOGGER } from "../logging";
 import { FileSystemError } from "../../../services/errors";
 import { createTempDir } from "../../../services/test-utils";
 
-describe("DefaultFileSystemLayer", () => {
-  let fs: DefaultFileSystemLayer;
+describe("DefaultFileSystemBoundary", () => {
+  let fs: DefaultFileSystemBoundary;
   let tempDir: { path: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
-    fs = new DefaultFileSystemLayer(SILENT_LOGGER);
+    fs = new DefaultFileSystemBoundary(SILENT_LOGGER);
     tempDir = await createTempDir();
   });
 

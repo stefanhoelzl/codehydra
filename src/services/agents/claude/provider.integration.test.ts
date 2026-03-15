@@ -23,7 +23,7 @@ import {
 } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
-import type { MockFileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
+import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
 import type { AgentStatus } from "../types";
 
 /**
@@ -49,7 +49,7 @@ describe("ClaudeCodeProvider integration", () => {
   let provider: ClaudeCodeProvider;
   let mockPortManager: MockPortManager;
   let mockPathProvider: PathProvider;
-  let mockFileSystem: MockFileSystemLayer;
+  let mockFileSystem: MockFileSystemBoundary;
 
   const workspacePath = "/workspace/feature-a";
 

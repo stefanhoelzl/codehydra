@@ -18,7 +18,7 @@
 import type { Intent, DomainEvent } from "../lib/types";
 import type { Operation, OperationContext, HookContext } from "../lib/operation";
 import type { UpdateProgressAction, UpdateChoice } from "../../shared/ipc";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
+import type { Config } from "../../boundaries/platform/config/config";
 
 // =============================================================================
 // Intent Types
@@ -98,7 +98,7 @@ export interface UpdateDownloadResult {
 export class UpdateApplyOperation implements Operation<UpdateApplyIntent, void> {
   readonly id = UPDATE_APPLY_OPERATION_ID;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: Config) {}
 
   async execute(ctx: OperationContext<UpdateApplyIntent>): Promise<void> {
     const { needsChoice } = ctx.intent.payload;

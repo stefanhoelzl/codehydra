@@ -1,5 +1,5 @@
 /**
- * AppLayer - Abstraction over Electron's app module.
+ * AppBoundary - Abstraction over Electron's app module.
  *
  * Provides an injectable interface for app-level operations, enabling:
  * - Unit testing with behavioral mocks
@@ -54,7 +54,7 @@ export type AppPathName =
  * - `dock` is only available on macOS (undefined on other platforms)
  * - `setBadgeCount` works on Linux Unity launcher only
  */
-export interface AppLayer {
+export interface AppBoundary {
   /**
    * macOS-specific dock API.
    * Returns undefined on non-macOS platforms.
@@ -94,9 +94,9 @@ export interface AppLayer {
 import { app } from "electron";
 
 /**
- * Default implementation of AppLayer using Electron's app module.
+ * Default implementation of AppBoundary using Electron's app module.
  */
-export class DefaultAppLayer implements AppLayer {
+export class DefaultAppBoundary implements AppBoundary {
   readonly dock: AppDock | undefined;
 
   constructor(private readonly logger: Logger) {

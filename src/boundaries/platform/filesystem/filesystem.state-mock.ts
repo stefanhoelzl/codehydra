@@ -1,5 +1,5 @@
 /**
- * Behavioral mock for FileSystemLayer with in-memory state.
+ * Behavioral mock for FileSystemBoundary with in-memory state.
  *
  * Provides a stateful mock that simulates real filesystem behavior:
  * - In-memory file/directory/symlink storage
@@ -19,7 +19,7 @@
  */
 
 import { expect } from "vitest";
-import type { FileSystemErrorCode, FileSystemLayer, PathLike, DirEntry } from "./filesystem";
+import type { FileSystemErrorCode, FileSystemBoundary, PathLike, DirEntry } from "./filesystem";
 import { FileSystemError } from "../../../services/errors";
 import { Path } from "../../../utils/path/path";
 import type {
@@ -119,9 +119,9 @@ export interface FileSystemMockState extends MockState {
 }
 
 /**
- * FileSystemLayer with behavioral mock state access via `$` property.
+ * FileSystemBoundary with behavioral mock state access via `$` property.
  */
-export type MockFileSystemLayer = FileSystemLayer & MockWithState<FileSystemMockState>;
+export type MockFileSystemBoundary = FileSystemBoundary & MockWithState<FileSystemMockState>;
 
 // =============================================================================
 // Entry Helper Functions
@@ -181,12 +181,12 @@ export function symlink(target: string, options?: { error?: FileSystemErrorCode 
 }
 
 // =============================================================================
-// DirEntry Helper (for tests using manual FileSystemLayer mocks)
+// DirEntry Helper (for tests using manual FileSystemBoundary mocks)
 // =============================================================================
 
 /**
  * Create a DirEntry for readdir results.
- * Useful when building manual FileSystemLayer mocks with vi.fn().
+ * Useful when building manual FileSystemBoundary mocks with vi.fn().
  *
  * @example File entry
  * createDirEntry('config.json', { isFile: true })
@@ -329,7 +329,7 @@ export interface MockFileSystemOptions {
 // =============================================================================
 
 /**
- * Create a behavioral mock for FileSystemLayer.
+ * Create a behavioral mock for FileSystemBoundary.
  *
  * @example Basic setup
  * const mock = createFileSystemMock({
@@ -346,7 +346,7 @@ export interface MockFileSystemOptions {
  *   },
  * });
  */
-export function createFileSystemMock(options?: MockFileSystemOptions): MockFileSystemLayer {
+export function createFileSystemMock(options?: MockFileSystemOptions): MockFileSystemBoundary {
   // Normalize all entry keys
   const normalizedEntries = new Map<string, Entry>();
   if (options?.entries) {
@@ -366,7 +366,7 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
     }
   };
 
-  const layer: FileSystemLayer = {
+  const layer: FileSystemBoundary = {
     async readFile(pathLike: PathLike): Promise<string> {
       const path = normalizePath(pathLike);
       const entry = state.entries.get(path);
@@ -773,7 +773,7 @@ declare module "vitest" {
 }
 
 export const fileSystemMatchers: MatcherImplementationsFor<
-  MockFileSystemLayer,
+  MockFileSystemBoundary,
   FileSystemMatchers
 > = {
   toHaveFile(received, path, content?) {
@@ -961,52 +961,54 @@ export const fileSystemMatchers: MatcherImplementationsFor<
 expect.extend(fileSystemMatchers);
 
 // =============================================================================
-// Spy FileSystemLayer Factory
+// Spy FileSystemBoundary Factory
 // =============================================================================
 
 import { vi, type Mock } from "vitest";
 
 /**
- * FileSystemLayer with vi.fn() spies for asserting on method calls.
+ * FileSystemBoundary with vi.fn() spies for asserting on method calls.
  * Each method is a Vitest Mock that wraps the mock implementation.
  * Includes $ property for state access.
  */
-export interface SpyFileSystemLayer extends FileSystemLayer {
-  readFile: Mock<FileSystemLayer["readFile"]>;
-  writeFile: Mock<FileSystemLayer["writeFile"]>;
-  mkdir: Mock<FileSystemLayer["mkdir"]>;
-  readdir: Mock<FileSystemLayer["readdir"]>;
-  unlink: Mock<FileSystemLayer["unlink"]>;
-  rm: Mock<FileSystemLayer["rm"]>;
-  copyTree: Mock<FileSystemLayer["copyTree"]>;
-  makeExecutable: Mock<FileSystemLayer["makeExecutable"]>;
-  writeFileBuffer: Mock<FileSystemLayer["writeFileBuffer"]>;
-  symlink: Mock<FileSystemLayer["symlink"]>;
-  rename: Mock<FileSystemLayer["rename"]>;
-  mkdtemp: Mock<FileSystemLayer["mkdtemp"]>;
+export interface SpyFileSystemBoundary extends FileSystemBoundary {
+  readFile: Mock<FileSystemBoundary["readFile"]>;
+  writeFile: Mock<FileSystemBoundary["writeFile"]>;
+  mkdir: Mock<FileSystemBoundary["mkdir"]>;
+  readdir: Mock<FileSystemBoundary["readdir"]>;
+  unlink: Mock<FileSystemBoundary["unlink"]>;
+  rm: Mock<FileSystemBoundary["rm"]>;
+  copyTree: Mock<FileSystemBoundary["copyTree"]>;
+  makeExecutable: Mock<FileSystemBoundary["makeExecutable"]>;
+  writeFileBuffer: Mock<FileSystemBoundary["writeFileBuffer"]>;
+  symlink: Mock<FileSystemBoundary["symlink"]>;
+  rename: Mock<FileSystemBoundary["rename"]>;
+  mkdtemp: Mock<FileSystemBoundary["mkdtemp"]>;
   /** State access for behavioral mock */
   $: FileSystemMockState;
 }
 
 /**
- * Create a FileSystemLayer with vi.fn() spies for testing.
+ * Create a FileSystemBoundary with vi.fn() spies for testing.
  * Use when you need to assert on method calls.
  *
  * @example Basic usage - assert on calls
  * ```typescript
- * const fs = createSpyFileSystemLayer();
+ * const fs = createSpyFileSystemBoundary();
  * await service.doSomething(fs);
  * expect(fs.writeFile).toHaveBeenCalledWith('/path', 'content');
  * ```
  *
  * @example With initial state
  * ```typescript
- * const fs = createSpyFileSystemLayer({
+ * const fs = createSpyFileSystemBoundary({
  *   entries: { "/data": directory() }
  * });
  * ```
  */
-export function createSpyFileSystemLayer(options?: MockFileSystemOptions): SpyFileSystemLayer {
+export function createSpyFileSystemBoundary(
+  options?: MockFileSystemOptions
+): SpyFileSystemBoundary {
   const mock = createFileSystemMock(options);
   return {
     readFile: vi.fn(mock.readFile.bind(mock)),
@@ -1022,5 +1024,5 @@ export function createSpyFileSystemLayer(options?: MockFileSystemOptions): SpyFi
     rename: vi.fn(mock.rename.bind(mock)),
     mkdtemp: vi.fn(mock.mkdtemp.bind(mock)),
     $: mock.$,
-  } as SpyFileSystemLayer;
+  } as SpyFileSystemBoundary;
 }

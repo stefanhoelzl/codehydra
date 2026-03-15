@@ -7,7 +7,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
 import type { Logger } from "../boundaries/platform/logging/types";
 import type { InitResult, ExtensionRequirement } from "../intents/operations/app-start";
@@ -86,7 +86,7 @@ function validateExtensionsManifest(value: unknown): ExtensionsManifestValidatio
 
 export interface ExtensionModuleDeps {
   readonly pathProvider: Pick<PathProvider, "runtimePath">;
-  readonly fileSystemLayer: Pick<FileSystemLayer, "readFile">;
+  readonly fileSystemLayer: Pick<FileSystemBoundary, "readFile">;
   readonly logger: Logger;
 }
 

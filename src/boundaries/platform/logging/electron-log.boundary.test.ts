@@ -1,5 +1,5 @@
 /**
- * Boundary tests for ElectronLogService.
+ * Boundary tests for ElectronLog.
  *
  * These tests verify actual file writing behavior with electron-log.
  * They create real log files in a temporary directory.
@@ -41,7 +41,7 @@ async function waitForWrite(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, WRITE_DELAY_MS));
 }
 
-describe("ElectronLogService boundary tests", () => {
+describe("ElectronLog boundary tests", () => {
   let tempDir: string;
   let logsDir: string;
 
@@ -57,17 +57,17 @@ describe("ElectronLogService boundary tests", () => {
 
     // Reset module cache to get fresh electron-log instance
     // This is important because electron-log maintains global state
-    const moduleId = Object.keys(require.cache).find((key) => key.includes("electron-log-service"));
+    const moduleId = Object.keys(require.cache).find((key) => key.includes("electron-log"));
     if (moduleId) {
       delete require.cache[moduleId];
     }
   });
 
   it("creates log directory if not exists", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
@@ -79,10 +79,10 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("writes to log file with session-based filename", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
@@ -98,10 +98,10 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("log format matches specification", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("git");
 
@@ -120,10 +120,10 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("filters by level - DEBUG not written when level is WARN", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     service.configure({ ...DEFAULT_OPTIONS, logLevel: "warn" });
     const logger = service.createLogger("app");
 
@@ -142,10 +142,10 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("writes all levels when level is DEBUG", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
@@ -166,10 +166,10 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("includes Error stack in error logs", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
@@ -186,10 +186,10 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("uses configured path for log files", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     service.configure(DEFAULT_OPTIONS);
     const logger = service.createLogger("app");
 
@@ -203,10 +203,10 @@ describe("ElectronLogService boundary tests", () => {
   });
 
   it("flushes buffered entries to file after configure()", async () => {
-    const { ElectronLogService } = await import("./electron-log-service");
+    const { ElectronLog } = await import("./electron-log");
     const pathProvider = createTestPathProvider(tempDir);
 
-    const service = new ElectronLogService(pathProvider);
+    const service = new ElectronLog(pathProvider);
     const logger = service.createLogger("app");
 
     // Log before configure — entries are buffered

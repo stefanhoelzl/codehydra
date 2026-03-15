@@ -9,7 +9,7 @@
  *    c. Return not-found if neither available
  */
 
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import type { ProcessRunner } from "../../boundaries/platform/process/process";
 import type { PathProvider } from "../../boundaries/platform/env/path-provider";
 import type { Logger } from "../../boundaries/platform/logging";
@@ -20,7 +20,7 @@ import type { BinaryResolution, ResolutionOptions, BinaryType } from "./types";
  * Dependencies for BinaryResolutionService.
  */
 export interface BinaryResolutionServiceDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly processRunner: ProcessRunner;
   readonly pathProvider: PathProvider;
   readonly executablePaths: Record<BinaryType, string>;
@@ -31,7 +31,7 @@ export interface BinaryResolutionServiceDeps {
  * Service for resolving binary paths.
  */
 export class BinaryResolutionService {
-  private readonly fileSystem: FileSystemLayer;
+  private readonly fileSystem: FileSystemBoundary;
   private readonly processRunner: ProcessRunner;
   private readonly pathProvider: PathProvider;
   private readonly executablePaths: Record<BinaryType, string>;

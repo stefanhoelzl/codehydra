@@ -35,11 +35,11 @@ CodeHydra uses behavior-driven testing with vitest. Tests verify **behavior** th
 
 **Boundaries**:
 
-- Node.js: `FileSystemLayer`, `ProcessRunner`, `HttpClient`, `PortManager`, `ArchiveExtractor`
+- Node.js: `FileSystemBoundary`, `ProcessRunner`, `HttpClient`, `PortManager`, `ArchiveExtractor`
 - Git: `IGitClient`
 - OpenCode: `SdkClientFactory`
-- Electron Shell: `WindowLayer`, `ViewLayer`, `SessionLayer`
-- Electron Platform: `IpcLayer`, `DialogLayer`, `ImageLayer`, `AppLayer`, `MenuLayer`
+- Electron Shell: `WindowBoundary`, `ViewBoundary`, `SessionBoundary`
+- Electron Platform: `IpcBoundary`, `DialogBoundary`, `ImageBoundary`, `AppBoundary`, `MenuBoundary`
 
 **Key characteristics**:
 
@@ -511,7 +511,7 @@ Behavioral mocks return the mock interface directly with a `$` accessor for stat
 
 ```typescript
 // Factory returns mock with $ accessor
-export type FileSystemMock = FileSystemLayer & { readonly $: FileSystemState };
+export type FileSystemMock = FileSystemBoundary & { readonly $: FileSystemState };
 
 // Usage
 const mock = createFileSystemMock();
@@ -827,7 +827,7 @@ export interface FileSystemMockState extends MockState {
 }
 
 // 2. Mock type (Layer & MockWithState<State>)
-export type MockFileSystemLayer = FileSystemLayer & MockWithState<FileSystemMockState>;
+export type MockFileSystemBoundary = FileSystemBoundary & MockWithState<FileSystemMockState>;
 
 // 3. Matchers interface
 interface FileSystemMatchers {
@@ -837,12 +837,12 @@ interface FileSystemMatchers {
 
 // 4. Vitest augmentation
 declare module "vitest" {
-  interface Assertion<T> extends MatchersFor<T, MockFileSystemLayer, FileSystemMatchers> {}
+  interface Assertion<T> extends MatchersFor<T, MockFileSystemBoundary, FileSystemMatchers> {}
 }
 
 // 5. Matcher implementations (type-safe via MatcherImplementationsFor)
 export const fileSystemMatchers: MatcherImplementationsFor<
-  MockFileSystemLayer,
+  MockFileSystemBoundary,
   FileSystemMatchers
 > = {
   toHaveFile(received, path) {
@@ -860,19 +860,19 @@ export const fileSystemMatchers: MatcherImplementationsFor<
 };
 
 // 6. Factory function
-export function createMockFileSystem(options?: MockFileSystemOptions): MockFileSystemLayer {
+export function createMockFileSystem(options?: MockFileSystemOptions): MockFileSystemBoundary {
   // ... implementation
 }
 ```
 
-### ViewLayer State Mock Example
+### ViewBoundary State Mock Example
 
-The ViewLayer mock demonstrates the same pattern with custom matchers for view-specific assertions:
+The ViewBoundary mock demonstrates the same pattern with custom matchers for view-specific assertions:
 
 ```typescript
-import { createViewLayerMock } from "../shell/view.state-mock";
+import { createViewBoundaryMock } from "../shell/view.state-mock";
 
-const mock = createViewLayerMock();
+const mock = createViewBoundaryMock();
 
 // Create views and interact with them
 const handle = mock.createView({ backgroundColor: "#1e1e1e" });
@@ -913,7 +913,7 @@ import "../services/platform/filesystem.state-mock";
 // ProcessRunner matchers (auto-registered via import side effect)
 import "../services/platform/process.state-mock";
 
-// ViewLayer matchers (auto-registered via import side effect)
+// ViewBoundary matchers (auto-registered via import side effect)
 import "../services/shell/view.state-mock";
 ```
 
@@ -1581,10 +1581,10 @@ Each module migration from unit tests to integration tests requires a **separate
 
 ## Boundary Mock Requirements
 
-| Interface       | Exists? | Changes Needed               |
-| --------------- | ------- | ---------------------------- |
-| IGitClient      | Yes     | Add `setDirtyState()` method |
-| FileSystemLayer | Yes     | None                         |
+| Interface          | Exists? | Changes Needed               |
+| ------------------ | ------- | ---------------------------- |
+| IGitClient         | Yes     | Add `setDirtyState()` method |
+| FileSystemBoundary | Yes     | None                         |
 
 ## Unit Tests to Delete
 
