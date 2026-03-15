@@ -789,8 +789,7 @@ describe("UiIpcModule - log listeners", () => {
   });
 
   it("removes log listeners on app:shutdown", async () => {
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const ipcLayer = createBehavioralIpcBoundary();

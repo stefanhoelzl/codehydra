@@ -1,18 +1,16 @@
 // @vitest-environment node
 /**
- * Integration tests for BadgeModule through the Dispatcher.
+ * Integration tests for BadgeModule and its internal BadgeManager.
  *
- * Tests verify the full pipeline:
- * dispatcher -> UpdateAgentStatusOperation -> domain event -> BadgeModule -> BadgeManager.updateBadge()
- *
- * Test plan items covered:
- * #4: App icon shows busy indicator when agent becomes busy
- * #5: Mixed workspaces show mixed badge
- * #6: Deleting workspace clears stale badge entry
- * #7: Badge disposed on app shutdown
+ * Tests verify:
+ * - BadgeManager platform-specific badge rendering (darwin, win32, linux)
+ * - BadgeManager image caching and disposal
+ * - Full dispatcher pipeline: UpdateAgentStatusOperation -> domain event -> BadgeModule
+ * - Workspace deletion clears stale badge entries
+ * - Badge disposed on app shutdown
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import {
@@ -48,25 +46,423 @@ import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
 import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
-import { createBadgeModule } from "./badge-module";
-import { BadgeManager } from "../main/managers/badge-manager";
+import { BadgeManager, createBadgeModule } from "./badge-module";
 import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
-import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
+import { createAppBoundaryMock, type MockAppBoundary } from "../boundaries/shell/app/app.state-mock";
 import {
-  createAppBoundaryMock,
-  type MockAppBoundary,
-} from "../boundaries/shell/app/app.state-mock";
-import { createImageBoundaryMock } from "../boundaries/shell/image/image.state-mock";
+  createImageBoundaryMock,
+  type MockImageBoundary,
+} from "../boundaries/shell/image/image.state-mock";
 import type { WindowManager } from "../boundaries/shell/window/window-manager";
+import {
+  createMockWindowManager,
+  type MockWindowManager,
+} from "../boundaries/shell/window/window-manager.test-utils";
 import type { ImageHandle } from "../services/platform/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
-// Mock WindowManager
+// BadgeManager Direct Tests
 // =============================================================================
 
-function createMockWindowManager(): {
+describe("BadgeManager", () => {
+  let appLayer: MockAppBoundary;
+  let imageLayer: MockImageBoundary;
+  let windowManager: MockWindowManager;
+
+  beforeEach(() => {
+    appLayer = createAppBoundaryMock();
+    imageLayer = createImageBoundaryMock();
+    windowManager = createMockWindowManager();
+  });
+
+  describe("updateBadge (darwin)", () => {
+    it("shows filled circle for all-working state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+
+      expect(appLayer).toHaveDockBadge("●");
+    });
+
+    it("shows half circle for mixed state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("mixed");
+
+      expect(appLayer).toHaveDockBadge("◐");
+    });
+
+    it("clears badge for none state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("none");
+
+      expect(appLayer).toHaveDockBadge("");
+    });
+  });
+
+  describe("updateBadge (win32)", () => {
+    it("generates image for all-working state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(1);
+      expect(windowManager.getOverlayIconCalls()[0]?.description).toBe("All workspaces working");
+    });
+
+    it("generates image for mixed state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("mixed");
+
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(1);
+      expect(windowManager.getOverlayIconCalls()[0]?.description).toBe("Some workspaces ready");
+    });
+
+    it("clears overlay for none state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("none");
+
+      expect(imageLayer).toHaveImages([]);
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(1);
+      expect(windowManager.getOverlayIconCalls()[0]?.image).toBeNull();
+      expect(windowManager.getOverlayIconCalls()[0]?.description).toBe("");
+    });
+
+    it("creates image in shared ImageBoundary that WindowBoundary would use for lookup", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+      appLayer = createAppBoundaryMock({ platform: "win32" });
+      const sharedImageBoundary = createImageBoundaryMock();
+      const mockWm = createMockWindowManager();
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        sharedImageBoundary,
+        mockWm as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+
+      const capturedImageHandle = mockWm.getOverlayIconCalls()[0]?.image ?? null;
+      expect(capturedImageHandle).not.toBeNull();
+      expect(sharedImageBoundary).toHaveImage(capturedImageHandle!.id, {
+        isEmpty: false,
+        size: { width: 16, height: 16 },
+      });
+    });
+  });
+
+  describe("updateBadge (linux)", () => {
+    it("sets badge count to 1 for all-working state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      appLayer = createAppBoundaryMock({ platform: "linux" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+
+      expect(appLayer).toHaveBadgeCount(1);
+    });
+
+    it("sets badge count to 1 for mixed state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      appLayer = createAppBoundaryMock({ platform: "linux" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("mixed");
+
+      expect(appLayer).toHaveBadgeCount(1);
+    });
+
+    it("clears badge for none state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "linux" });
+      appLayer = createAppBoundaryMock({ platform: "linux" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("none");
+
+      expect(appLayer).toHaveBadgeCount(0);
+    });
+  });
+
+  describe("generateBadgeImage", () => {
+    it("creates a 16x16 bitmap image for all-working", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+
+      expect(imageLayer).toHaveImage("image-1", { size: { width: 16, height: 16 } });
+    });
+
+    it("creates different images for different states", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+      manager.updateBadge("mixed");
+
+      expect(imageLayer).toHaveImages([{ id: "image-1" }, { id: "image-2" }]);
+    });
+
+    it("creates non-empty image for mixed state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("mixed");
+
+      expect(imageLayer).toHaveImage("image-1", { isEmpty: false });
+    });
+
+    it("creates non-empty image for all-working state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+
+      expect(imageLayer).toHaveImage("image-1", { isEmpty: false });
+    });
+  });
+
+  describe("image caching", () => {
+    it("reuses cached images for same state", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+      manager.updateBadge("all-working");
+      manager.updateBadge("all-working");
+
+      expect(imageLayer).toHaveImages([{ id: "image-1" }]);
+      expect(windowManager.getOverlayIconCalls()).toHaveLength(3);
+    });
+
+    it("creates new images for different states", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+      manager.updateBadge("mixed");
+
+      expect(imageLayer).toHaveImages([{ id: "image-1" }, { id: "image-2" }]);
+    });
+  });
+
+  describe("dispose", () => {
+    it("releases all cached images", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+      manager.updateBadge("mixed");
+
+      expect(imageLayer).toHaveImages([{ id: "image-1" }, { id: "image-2" }]);
+
+      manager.dispose();
+
+      expect(imageLayer).toHaveImages([]);
+    });
+
+    it("clears overlay on dispose (win32)", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+      const callsAfterUpdate = windowManager.getOverlayIconCalls().length;
+      expect(callsAfterUpdate).toBeGreaterThan(0);
+
+      manager.dispose();
+
+      const lastCall = windowManager.getOverlayIconCalls().at(-1);
+      expect(lastCall?.image).toBeNull();
+    });
+
+    it("clears badge on dispose (darwin)", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
+      appLayer = createAppBoundaryMock({ platform: "darwin" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+      expect(appLayer).toHaveDockBadge("●");
+
+      manager.dispose();
+
+      expect(appLayer).toHaveDockBadge("");
+    });
+
+    it("is idempotent - can be called multiple times safely", () => {
+      const platformInfo = createMockPlatformInfo({ platform: "win32" });
+
+      const manager = new BadgeManager(
+        platformInfo,
+        appLayer,
+        imageLayer,
+        windowManager as unknown as WindowManager,
+        SILENT_LOGGER
+      );
+
+      manager.updateBadge("all-working");
+
+      manager.dispose();
+      manager.dispose();
+      manager.dispose();
+
+      expect(imageLayer).toHaveImages([]);
+    });
+  });
+});
+
+// =============================================================================
+// Module Integration Tests (through Dispatcher)
+// =============================================================================
+
+/**
+ * Mock WindowManager for module integration tests.
+ */
+function createSimpleMockWindowManager(): {
   setOverlayIcon: (image: ImageHandle | null, description: string) => void;
 } {
   return {
@@ -101,10 +497,9 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
 // Test Setup
 // =============================================================================
 
-interface TestSetup {
+interface ModuleTestSetup {
   dispatcher: Dispatcher;
   appLayer: MockAppBoundary;
-  badgeManager: BadgeManager;
 }
 
 /**
@@ -138,19 +533,11 @@ function createMockResolveModule(): IntentModule {
   };
 }
 
-function createTestSetup(): TestSetup {
+function createModuleTestSetup(): ModuleTestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin" });
   const appLayer = createAppBoundaryMock({ platform: "darwin" });
   const imageLayer = createImageBoundaryMock();
-  const windowManager = createMockWindowManager();
-
-  const badgeManager = new BadgeManager(
-    platformInfo,
-    appLayer,
-    imageLayer,
-    windowManager as unknown as WindowManager,
-    SILENT_LOGGER
-  );
+  const windowManager = createSimpleMockWindowManager();
 
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
@@ -159,13 +546,19 @@ function createTestSetup(): TestSetup {
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  const badgeModule = createBadgeModule(badgeManager);
+  const badgeModule = createBadgeModule({
+    platformInfo,
+    appLayer,
+    imageLayer,
+    windowManager: windowManager as unknown as WindowManager,
+    logger: SILENT_LOGGER,
+  });
   const resolveModule = createMockResolveModule();
 
   dispatcher.registerModule(badgeModule);
   dispatcher.registerModule(resolveModule);
 
-  return { dispatcher, appLayer, badgeManager };
+  return { dispatcher, appLayer };
 }
 
 function updateStatusIntent(
@@ -182,13 +575,13 @@ function updateStatusIntent(
 }
 
 // =============================================================================
-// Tests
+// Module Tests
 // =============================================================================
 
 describe("BadgeModule Integration", () => {
   describe("app icon shows busy indicator when agent becomes busy (#4)", () => {
     it("shows all-working badge when single workspace becomes busy", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       await dispatcher.dispatch(
         updateStatusIntent("/workspace/1", { status: "busy", counts: { idle: 0, busy: 2 } })
@@ -198,7 +591,7 @@ describe("BadgeModule Integration", () => {
     });
 
     it("clears badge when workspace becomes idle", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       // First make busy
       await dispatcher.dispatch(
@@ -216,7 +609,7 @@ describe("BadgeModule Integration", () => {
 
   describe("mixed workspaces show mixed badge (#5)", () => {
     it("shows mixed badge when some workspaces idle, some busy", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       await dispatcher.dispatch(
         updateStatusIntent("/workspace/1", { status: "idle", counts: { idle: 2, busy: 0 } })
@@ -229,7 +622,7 @@ describe("BadgeModule Integration", () => {
     });
 
     it("transitions from mixed to all-working when idle workspace becomes busy", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       // Mixed state
       await dispatcher.dispatch(
@@ -248,7 +641,7 @@ describe("BadgeModule Integration", () => {
     });
 
     it("transitions from all-working to mixed when workspace becomes idle", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       // All working
       await dispatcher.dispatch(
@@ -269,7 +662,7 @@ describe("BadgeModule Integration", () => {
 
   describe("deleting workspace clears stale badge entry (#6)", () => {
     it("clears badge when the only busy workspace is deleted", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       // One busy workspace
       await dispatcher.dispatch(
@@ -293,7 +686,7 @@ describe("BadgeModule Integration", () => {
     });
 
     it("shows correct badge after busy workspace is deleted and idle workspace remains", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       // Mixed state: one idle, one busy
       await dispatcher.dispatch(
@@ -323,7 +716,7 @@ describe("BadgeModule Integration", () => {
 
   describe("badge disposed on app shutdown (#7)", () => {
     it("clears badge when app shuts down", async () => {
-      const { dispatcher, appLayer } = createTestSetup();
+      const { dispatcher, appLayer } = createModuleTestSetup();
 
       // Set a busy badge first
       await dispatcher.dispatch(
@@ -343,11 +736,13 @@ describe("BadgeModule Integration", () => {
     });
 
     it("collect catches dispose error, dispatch still resolves", async () => {
-      const { dispatcher, badgeManager } = createTestSetup();
+      const { dispatcher } = createModuleTestSetup();
 
-      // Make dispose() throw - handler throws directly (no internal try/catch),
-      // but AppShutdownOperation uses collect() which catches errors
-      vi.spyOn(badgeManager, "dispose").mockImplementation(() => {
+      // Spy on the prototype's dispose to make it throw for this test.
+      // The module constructs its own BadgeManager internally, so we spy on the prototype.
+      const disposeSpy = vi.spyOn(BadgeManager.prototype, "dispose").mockImplementation(function (
+        this: BadgeManager
+      ) {
         throw new Error("dispose failed");
       });
 
@@ -360,6 +755,8 @@ describe("BadgeModule Integration", () => {
       await expect(
         dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent)
       ).resolves.not.toThrow();
+
+      disposeSpy.mockRestore();
     });
   });
 });

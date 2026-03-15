@@ -29,8 +29,8 @@ export type {
   AgentBinaryPreflightResult,
   AgentBinaryPreflightError,
   AgentBinaryType,
+  AgentBinaryManager,
 } from "./agent-binary-manager.js";
-export { AgentBinaryManager } from "./agent-binary-manager.js";
 
 // Test utilities
 export { createArchiveExtractorMock } from "./archive-extractor.state-mock.js";

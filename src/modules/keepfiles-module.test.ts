@@ -1,23 +1,23 @@
 // @vitest-environment node
 /**
- * Unit tests for KeepFilesService.
+ * Unit tests for KeepFilesService (inlined into keepfiles module).
  * Uses mocked FileSystemBoundary to test the service logic.
  */
 
 import { join } from "path";
 import { describe, it, expect, vi } from "vitest";
-import { KeepFilesService } from "./keepfiles-service";
+import { KeepFilesService } from "./keepfiles-module";
 import {
   createFileSystemMock,
   file,
   directory,
   symlink,
   createDirEntry,
-} from "../../boundaries/platform/filesystem/filesystem.state-mock";
-import { FileSystemError } from "../errors";
-import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
-import { SILENT_LOGGER } from "../../boundaries/platform/logging";
-import { Path } from "../../utils/path/path";
+} from "../boundaries/platform/filesystem/filesystem.state-mock";
+import { FileSystemError } from "../services/errors";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import { Path } from "../utils/path/path";
 
 /** Normalize path separators for cross-platform mock comparisons */
 const normalizePath = (p: string) => p.replace(/\\/g, "/");
@@ -196,9 +196,6 @@ describe("KeepFilesService", () => {
 
     describe("negation", () => {
       it("excludes files with negation pattern", async () => {
-        // Note: For negation to work with files inside a directory, use "dir/*" or "dir/**"
-        // pattern instead of "dir/". This is a gitignore limitation - you can't re-include
-        // a file if a parent directory is excluded.
         const projectRoot = "/project";
         const secretsDir = join(projectRoot, "secrets");
         const readdirFn = vi.fn().mockImplementation((pathArg: string) => {
@@ -217,7 +214,6 @@ describe("KeepFilesService", () => {
         const copyTreeFn = vi.fn().mockResolvedValue({ copiedCount: 1, skippedSymlinks: [] });
 
         const mockFs: FileSystemBoundary = {
-          // Use secrets/* to match files inside secrets/, allowing negation to work
           readFile: vi.fn().mockResolvedValue("secrets/*\n!secrets/README.md"),
           readdir: readdirFn,
           copyTree: copyTreeFn,
@@ -235,9 +231,8 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path(projectRoot), new Path("/workspace"));
 
-        // Should copy secrets/api-key.txt but NOT secrets/README.md
         expect(result.copiedCount).toBe(1);
-        expect(result.skippedCount).toBe(1); // README.md was skipped due to negation
+        expect(result.skippedCount).toBe(1);
       });
     });
 
@@ -275,7 +270,7 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        expect(result.copiedCount).toBe(1); // .env.local succeeded
+        expect(result.copiedCount).toBe(1);
         expect(result.errors).toHaveLength(1);
         expect(result.errors[0]?.path).toBe(".env");
         expect(result.errors[0]?.message).toContain("Permission denied");
@@ -284,13 +279,12 @@ describe("KeepFilesService", () => {
 
     describe("security - path traversal", () => {
       it("detects path traversal in destination and adds to errors", async () => {
-        // Simulate a file that when joined with destination would escape
-        // This is a contrived test - in practice path.join normalizes
         const readFileFn = vi.fn().mockResolvedValue("normal.txt");
-        const readdirFn = vi.fn().mockResolvedValue([
-          // Entry name with embedded path traversal (shouldn't happen from real fs)
-          { name: "../escape.txt", isFile: true, isDirectory: false, isSymbolicLink: false },
-        ]);
+        const readdirFn = vi
+          .fn()
+          .mockResolvedValue([
+            { name: "../escape.txt", isFile: true, isDirectory: false, isSymbolicLink: false },
+          ]);
 
         const mockFs: FileSystemBoundary = {
           readFile: readFileFn,
@@ -310,7 +304,6 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        // Path traversal should be detected and rejected
         expect(
           result.errors.some((e: { message: string }) => e.message.includes("traversal"))
         ).toBe(true);
@@ -332,15 +325,14 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        expect(result.copiedCount).toBe(1); // Only file.txt
-        expect(result.skippedCount).toBe(1); // link.txt was skipped
+        expect(result.copiedCount).toBe(1);
+        expect(result.skippedCount).toBe(1);
         expect(mockFs).toHaveFile("/workspace/file.txt", "content");
       });
     });
 
     describe("UTF-8 BOM handling", () => {
       it("handles .keepfiles with UTF-8 BOM correctly", async () => {
-        // UTF-8 BOM: \ufeff
         const mockFs = createFileSystemMock({
           entries: {
             "/project": directory(),

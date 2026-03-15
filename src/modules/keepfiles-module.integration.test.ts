@@ -2,7 +2,7 @@
 /**
  * Integration tests for KeepFilesModule through the Dispatcher.
  *
- * Tests verify: dispatcher -> operation -> setup hook -> keepFilesService call,
+ * Tests verify: dispatcher -> operation -> setup hook -> KeepFilesService behavior,
  * including best-effort error handling (errors are logged, not re-thrown).
  */
 
@@ -18,23 +18,11 @@ import {
 import { createKeepFilesModule } from "./keepfiles-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";
-import { Path } from "../utils/path/path";
-import type { IKeepFilesService } from "../services/keepfiles/types";
-
-// =============================================================================
-// Mock Dependencies
-// =============================================================================
-
-function createMockKeepFilesService() {
-  return {
-    copyToWorkspace: vi.fn().mockResolvedValue({
-      configExists: true,
-      copiedCount: 0,
-      skippedCount: 0,
-      errors: [],
-    }),
-  };
-}
+import {
+  createFileSystemMock,
+  file,
+  directory,
+} from "../boundaries/platform/filesystem/filesystem.state-mock";
 
 // =============================================================================
 // Test Setup
@@ -42,11 +30,17 @@ function createMockKeepFilesService() {
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  keepFilesService: ReturnType<typeof createMockKeepFilesService>;
+  mockFs: ReturnType<typeof createFileSystemMock>;
 }
 
-function createTestSetup(logger = SILENT_LOGGER): TestSetup {
-  const keepFilesService = createMockKeepFilesService();
+function createTestSetup(
+  logger = SILENT_LOGGER,
+  fsEntries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>> = {
+    "/projects/my-app": directory(),
+    "/workspaces/feature-1": directory(),
+  }
+): TestSetup {
+  const mockFs = createFileSystemMock({ entries: fsEntries });
 
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
@@ -65,12 +59,12 @@ function createTestSetup(logger = SILENT_LOGGER): TestSetup {
   );
 
   const module = createKeepFilesModule({
-    keepFilesService: keepFilesService as unknown as IKeepFilesService,
+    fileSystem: mockFs,
     logger,
   });
   dispatcher.registerModule(module);
 
-  return { dispatcher, keepFilesService };
+  return { dispatcher, mockFs };
 }
 
 // =============================================================================
@@ -85,25 +79,56 @@ describe("KeepFilesModule Integration", () => {
   });
 
   describe("open-workspace -> setup", () => {
-    it("calls copyToWorkspace with Path arguments", async () => {
-      const { dispatcher, keepFilesService } = setup;
+    it("copies matching files when .keepfiles exists", async () => {
+      const { dispatcher, mockFs } = createTestSetup(SILENT_LOGGER, {
+        "/projects/my-app": directory(),
+        "/projects/my-app/.keepfiles": file(".env"),
+        "/projects/my-app/.env": file("SECRET=value"),
+        "/workspaces/feature-1": directory(),
+      });
 
       await dispatcher.dispatch({
         type: "workspace:open",
         payload: { projectPath: "/projects/my-app", workspacePath: "/workspaces/feature-1" },
       } as Intent);
 
-      expect(keepFilesService.copyToWorkspace).toHaveBeenCalledWith(
-        new Path("/projects/my-app"),
-        new Path("/workspaces/feature-1")
-      );
+      expect(mockFs).toHaveFile("/workspaces/feature-1/.env", "SECRET=value");
     });
 
-    it("logs error and succeeds when copyToWorkspace throws", async () => {
+    it("logs error and succeeds when filesystem throws", async () => {
       const logger = createBehavioralLogger();
-      const { dispatcher, keepFilesService } = createTestSetup(logger);
 
-      keepFilesService.copyToWorkspace.mockRejectedValue(new Error("disk full"));
+      // Use a mock FS where readFile throws a non-ENOENT error
+      const failingFs = createFileSystemMock({
+        entries: {
+          "/projects/my-app": directory(),
+          "/workspaces/feature-1": directory(),
+        },
+      });
+      // Override readFile to throw a generic error (not ENOENT)
+      vi.spyOn(failingFs, "readFile").mockRejectedValue(new Error("disk full"));
+
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        createMinimalOperation<Intent, SetupHookResult>(OPEN_WORKSPACE_OPERATION_ID, "setup", {
+          hookContext: (ctx) => {
+            const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
+            return {
+              intent: ctx.intent,
+              projectPath: payload.projectPath,
+              workspacePath: payload.workspacePath,
+            };
+          },
+        })
+      );
+
+      const module = createKeepFilesModule({
+        fileSystem: failingFs,
+        logger,
+      });
+      dispatcher.registerModule(module);
 
       const result = await dispatcher.dispatch({
         type: "workspace:open",
@@ -132,7 +157,14 @@ describe("KeepFilesModule Integration", () => {
     });
 
     it("skips copyToWorkspace when existingWorkspace is set", async () => {
-      const { dispatcher, keepFilesService } = setup;
+      const { dispatcher, mockFs } = createTestSetup(SILENT_LOGGER, {
+        "/projects/my-app": directory(),
+        "/projects/my-app/.keepfiles": file(".env"),
+        "/projects/my-app/.env": file("SECRET=value"),
+        "/workspaces/feature-1": directory(),
+      });
+
+      const readFileSpy = vi.spyOn(mockFs, "readFile");
 
       await dispatcher.dispatch({
         type: "workspace:open",
@@ -147,7 +179,8 @@ describe("KeepFilesModule Integration", () => {
         },
       } as Intent);
 
-      expect(keepFilesService.copyToWorkspace).not.toHaveBeenCalled();
+      // readFile should not have been called (skipped entirely)
+      expect(readFileSpy).not.toHaveBeenCalled();
     });
   });
 });

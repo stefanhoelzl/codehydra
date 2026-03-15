@@ -10,6 +10,4 @@ export type { IDisposable } from "../../shared/types";
 export { McpServer, createDefaultMcpServer } from "./mcp-server";
 export type { McpServerFactory } from "./mcp-server";
 
-// MCP Server Manager
-export { McpServerManager } from "./mcp-server-manager";
-export type { McpServerManagerConfig } from "./mcp-server-manager";
+// McpServerManager is now inlined into src/modules/mcp-module.ts

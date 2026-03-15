@@ -46,12 +46,10 @@ import { DefaultSessionBoundary } from "../boundaries/shell/session/session";
 import { WindowManager } from "../boundaries/shell/window/window-manager";
 import { ViewManager } from "../boundaries/shell/view/view-manager";
 // Services (stayed)
-import { KeepFilesService } from "../services/keepfiles";
 import { AutoUpdater } from "../services/auto-updater";
 import {
   DefaultBinaryDownloadService,
   DefaultArchiveExtractor,
-  AgentBinaryManager,
   type BinaryDownloadService,
 } from "../services/binary-download";
 import {
@@ -66,17 +64,13 @@ import {
   getClaudeExecutablePath,
 } from "../services/agents/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "../services/agents/types";
-import { createAgentServerManager } from "../services/agents";
-import type { ClaudeCodeServerManager } from "../services/agents/claude/server-manager";
-import type { OpenCodeServerManager } from "../services/agents/opencode/server-manager";
 import { createClaudeModuleProvider } from "../services/agents/claude/module-provider";
 import { createOpenCodeModuleProvider } from "../services/agents/opencode/module-provider";
-import { McpServerManager } from "../services/mcp-server";
 import { expandGitUrl } from "../services/project/url-utils";
 import { AsyncWatcher } from "../services/platform/async-watcher";
 // Managers (stayed)
-import { BadgeManager } from "./managers/badge-manager";
 // Main
+import { registerLogHandlers } from "./ipc";
 import { ElectronBuildInfo } from "./build-info";
 import { NodePlatformInfo } from "./platform-info";
 // Intents
@@ -189,7 +183,7 @@ import { createTempDirModule } from "../modules/temp-dir-module";
 import { createErrorHandlerModule } from "../modules/error-handler-module";
 import { createShortcutModule } from "../modules/shortcut-module";
 import { createDevtoolsModule } from "../modules/devtools-module";
-import { createUiIpcModule } from "../modules/ui-ipc-module";
+import { createIpcEventBridge } from "../modules/ipc-event-bridge";
 import { createWorkspaceSelectionModule } from "../modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "../modules/auto-workspace/module";
 import { createGitHubSource } from "../modules/auto-workspace/github-source";
@@ -269,31 +263,6 @@ const binaryDownloadService: BinaryDownloadService = new DefaultBinaryDownloadSe
 const platform = platformInfo.platform as SupportedPlatform;
 const arch = platformInfo.arch as SupportedArch;
 
-// Per-agent binary managers (one per agent type, created upfront)
-const claudeBinaryManager = new AgentBinaryManager(
-  {
-    name: "claude",
-    version: CLAUDE_VERSION,
-    destDir: CLAUDE_VERSION ? pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative() : "",
-    url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
-    executablePath: getClaudeExecutablePath(platform),
-    ...(CLAUDE_VERSION ? { subPath: getClaudeSubPath(platform, arch) } : {}),
-  },
-  binaryDownloadService,
-  loggingService.createLogger("agent-binary")
-);
-const opencodeBinaryManager = new AgentBinaryManager(
-  {
-    name: "opencode",
-    version: OPENCODE_VERSION,
-    destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
-    url: getOpencodeUrl(platform, arch),
-    executablePath: getOpencodeExecutablePath(platform),
-  },
-  binaryDownloadService,
-  loggingService.createLogger("agent-binary")
-);
-
 const dispatcher = new Dispatcher({
   logger: loggingService.createLogger("dispatcher"),
   initialCapabilities: {
@@ -315,26 +284,9 @@ const autoUpdater = new AutoUpdater({
   isDevelopment: buildInfo.isDevelopment,
 });
 
-// Agent services (both server managers + status manager)
-// Both constructors are pure field assignment (no I/O)
-const serverManagerDeps = {
-  processRunner,
-  portManager: networkLayer,
-  httpClient: networkLayer,
-  pathProvider,
-  fileSystem: fileSystemLayer,
-  logger: loggingService.createLogger("agent"),
-};
-const agentServerManagers = {
-  claude: createAgentServerManager("claude", serverManagerDeps),
-  opencode: createAgentServerManager("opencode", serverManagerDeps),
-};
 const providerLogger = loggingService.createLogger("agent");
 
-const keepFilesService = new KeepFilesService(
-  fileSystemLayer,
-  loggingService.createLogger("keepfiles")
-);
+// KeepFilesService is now constructed internally by createKeepFilesModule
 
 const apiLogger = loggingService.createLogger("api");
 const lifecycleLogger = loggingService.createLogger("lifecycle");
@@ -365,20 +317,9 @@ const viewManager = new ViewManager({
   logger: loggingService.createLogger("view"),
 });
 
-const badgeManager = new BadgeManager(
-  platformInfo,
-  appLayer,
-  imageLayer,
-  windowManager,
-  loggingService.createLogger("badge")
-);
+// BadgeManager is now constructed internally by createBadgeModule
 
-// McpServerManager with handlers factory that dispatches intents directly
-const mcpServerManager = new McpServerManager(
-  networkLayer,
-  () => createMcpHandlers(dispatcher),
-  loggingService.createLogger("mcp")
-);
+// McpServerManager is now constructed internally by createMcpModule
 
 // 6. Intent modules (all at module level)
 
@@ -457,8 +398,18 @@ const extensionModule = createExtensionModule({
 
 const claudeAgentModule = createAgentModule(
   createClaudeModuleProvider({
-    serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
-    binaryManager: claudeBinaryManager,
+    binaryDownloadService,
+    binaryConfig: {
+      name: "claude",
+      version: CLAUDE_VERSION,
+      destDir: CLAUDE_VERSION ? pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative() : "",
+      url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
+      executablePath: getClaudeExecutablePath(platform),
+      ...(CLAUDE_VERSION ? { subPath: getClaudeSubPath(platform, arch) } : {}),
+    },
+    portManager: networkLayer,
+    pathProvider,
+    fileSystem: fileSystemLayer,
     logger: providerLogger,
   }),
   { dispatcher, logger: apiLogger, configService }
@@ -466,8 +417,18 @@ const claudeAgentModule = createAgentModule(
 
 const opencodeAgentModule = createAgentModule(
   createOpenCodeModuleProvider({
-    serverManager: agentServerManagers.opencode as OpenCodeServerManager,
-    binaryManager: opencodeBinaryManager,
+    binaryDownloadService,
+    binaryConfig: {
+      name: "opencode",
+      version: OPENCODE_VERSION,
+      destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
+      url: getOpencodeUrl(platform, arch),
+      executablePath: getOpencodeExecutablePath(platform),
+    },
+    processRunner,
+    portManager: networkLayer,
+    httpClient: networkLayer,
+    pathProvider,
     logger: providerLogger,
   }),
   { dispatcher, logger: apiLogger, configService }
@@ -477,8 +438,8 @@ const metadataModule = createMetadataModule({
   gitWorktreeProvider,
 });
 const keepFilesModule = createKeepFilesModule({
-  keepFilesService,
-  logger: apiLogger,
+  fileSystem: fileSystemLayer,
+  logger: loggingService.createLogger("keepfiles"),
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
@@ -523,10 +484,18 @@ const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   pathProvider,
   apiLogger
 );
-const badgeModule = createBadgeModule(badgeManager);
+const badgeModule = createBadgeModule({
+  platformInfo,
+  appLayer,
+  imageLayer,
+  windowManager,
+  logger: loggingService.createLogger("badge"),
+});
 const workspaceSelectionModule = createWorkspaceSelectionModule();
 const mcpModule = createMcpModule({
-  mcpServerManager,
+  portManager: networkLayer,
+  handlersFactory: () => createMcpHandlers(dispatcher),
+  logger: loggingService.createLogger("mcp"),
 });
 const githubSource = createGitHubSource({
   processRunner,
@@ -563,6 +532,7 @@ const electronLifecycleModule = createElectronLifecycleModule({
 
 const loggingModule = createLoggingModule({
   loggingService,
+  registerLogHandlers: () => registerLogHandlers(loggingService),
   buildInfo,
   platformInfo,
   logger: appLogger,
@@ -631,13 +601,12 @@ dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(confi
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
 dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
 
-// Create UI IPC module (registers all IPC handlers and log listeners on ipcLayer)
-const uiIpcModule = createUiIpcModule({
+// Create IPC event bridge (registers all IPC handlers directly on ipcLayer)
+const ipcEventBridge = createIpcEventBridge({
   ipcLayer,
   viewManager,
   logger: apiLogger,
   dispatcher,
-  loggingService,
 });
 
 // 9. Register all modules
@@ -670,7 +639,7 @@ dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(autoWorkspaceModule);
-dispatcher.registerModule(uiIpcModule);
+dispatcher.registerModule(ipcEventBridge);
 
 // Load config (sync — reads config.json, env vars, CLI args)
 configService.load();

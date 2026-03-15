@@ -17,12 +17,17 @@ import type {
 } from "../agent-module-provider";
 import type { AgentProvider, AgentSessionInfo, AgentStatus, McpConfig } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
-import type { AgentBinaryManager, DownloadProgressCallback } from "../../binary-download";
+import type { AgentBinaryConfig, DownloadProgressCallback } from "../../binary-download";
+import type { BinaryDownloadService } from "../../binary-download";
 import type { BinaryType } from "../../binary-resolution/types";
 import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
 import type { StopServerResult, RestartServerResult } from "../types";
 import type { Logger } from "../../../boundaries/platform/logging";
-import type { ClaudeCodeServerManager } from "./server-manager";
+import type { PortManager } from "../../../boundaries/platform/network/network";
+import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
+import type { FileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem";
+import { AgentBinaryManager } from "../../binary-download/agent-binary-manager";
+import { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
 import { configString } from "../../../boundaries/platform/config/config-definition";
 
@@ -34,8 +39,11 @@ import { configString } from "../../../boundaries/platform/config/config-definit
  * Dependencies for creating a Claude module provider.
  */
 export interface ClaudeModuleProviderDeps {
-  readonly serverManager: ClaudeCodeServerManager;
-  readonly binaryManager: AgentBinaryManager;
+  readonly binaryDownloadService: BinaryDownloadService;
+  readonly binaryConfig: AgentBinaryConfig;
+  readonly portManager: PortManager;
+  readonly pathProvider: PathProvider;
+  readonly fileSystem: FileSystemLayer;
   readonly logger: Logger;
 }
 
@@ -50,7 +58,19 @@ export interface ClaudeModuleProviderDeps {
  * consistent with the existing module pattern.
  */
 export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): AgentModuleProvider {
-  const { serverManager, binaryManager, logger } = deps;
+  const { logger } = deps;
+
+  const binaryManager = new AgentBinaryManager(
+    deps.binaryConfig,
+    deps.binaryDownloadService,
+    deps.logger
+  );
+  const serverManager = new ClaudeCodeServerManager({
+    portManager: deps.portManager,
+    pathProvider: deps.pathProvider,
+    fileSystem: deps.fileSystem,
+    logger: deps.logger,
+  });
 
   // ===========================================================================
   // Internal closure state

@@ -109,9 +109,7 @@ export {
   type SymlinkEntry,
 } from "../boundaries/platform/filesystem/filesystem.state-mock";
 
-// KeepFiles service
-export { KeepFilesService } from "./keepfiles";
-export type { IKeepFilesService, CopyResult, CopyError } from "./keepfiles";
+// KeepFilesService is now inlined into src/modules/keepfiles-module.ts
 
 // Logging service
 export {
