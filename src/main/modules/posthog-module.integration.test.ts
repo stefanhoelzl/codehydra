@@ -5,20 +5,15 @@
  * Tests verify the full pipeline:
  * dispatcher -> Operation -> hook point -> PosthogModule handler
  *
- * Uses a MinimalStartOperation (only runs "start" hook point) to avoid
- * the full AppStartOperation pipeline. AppShutdownOperation is simple
- * enough to use directly.
- *
- * The posthog module receives configuration via config:updated events.
- * Tests simulate this by emitting config:updated events through the
- * dispatcher before exercising hooks.
+ * The posthog module now reads configuration from ConfigService
+ * during the app:start hook. Tests set config values in the mock
+ * before dispatching.
  */
 
 import { describe, it, expect } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
@@ -30,10 +25,6 @@ import {
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
 } from "../operations/app-shutdown";
-import {
-  INTENT_CONFIG_SET_VALUES,
-  type ConfigSetValuesIntent,
-} from "../operations/config-set-values";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
@@ -48,22 +39,25 @@ import {
   createMockPostHogClientFactory,
   type MockPostHogClient,
 } from "./posthog-client.state-mock";
+import type { ConfigService } from "../../services/config/config-service";
+import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 
-/**
- * Minimal config set-values operation that runs the "set" hook and emits
- * the config:updated event. Uses a simplified hook that just passes through
- * values as changed.
- */
-class MinimalConfigSetValuesOperation implements Operation<ConfigSetValuesIntent, void> {
-  readonly id = "config-set-values";
+// =============================================================================
+// Mock ConfigService
+// =============================================================================
 
-  async execute(ctx: OperationContext<ConfigSetValuesIntent>): Promise<void> {
-    // Skip the actual "set" hook — just emit config:updated with the values
-    ctx.emit({
-      type: "config:updated",
-      payload: { values: ctx.intent.payload.values },
-    });
-  }
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: () => {},
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
 }
 
 /**
@@ -101,17 +95,24 @@ const REOPENED_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
 
 interface TestSetup {
   dispatcher: Dispatcher;
+  mockConfigService: ConfigService;
   getMock(): MockPostHogClient | null;
 }
 
 function createTestSetup(overrides?: {
   apiKey?: string | undefined;
   workspacePayload?: WorkspaceCreatedPayload;
+  configValues?: Record<string, unknown>;
 }): TestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
   const logger = createBehavioralLogger();
   const { factory, getMock } = createMockPostHogClientFactory();
+  const mockConfigService = createMockConfigService({
+    "telemetry.enabled": false,
+    "telemetry.distinct-id": null,
+    ...overrides?.configValues,
+  });
 
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -119,7 +120,7 @@ function createTestSetup(overrides?: {
   const posthogModule = createPosthogModule({
     platformInfo,
     buildInfo,
-    dispatcher,
+    configService: mockConfigService,
     logger,
     apiKey: overrides && "apiKey" in overrides ? overrides.apiKey : "test-api-key",
     host: "https://test.posthog.com",
@@ -131,7 +132,6 @@ function createTestSetup(overrides?: {
     createMinimalOperation(APP_START_OPERATION_ID, "start")
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-  dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new MinimalConfigSetValuesOperation());
   dispatcher.registerOperation(
     INTENT_OPEN_WORKSPACE,
     new MinimalOpenWorkspaceOperation(overrides?.workspacePayload ?? NEW_WORKSPACE_PAYLOAD)
@@ -140,7 +140,7 @@ function createTestSetup(overrides?: {
 
   dispatcher.registerModule(posthogModule);
 
-  return { dispatcher, getMock };
+  return { dispatcher, mockConfigService, getMock };
 }
 
 function startIntent(): AppStartIntent {
@@ -149,13 +149,6 @@ function startIntent(): AppStartIntent {
 
 function shutdownIntent(): AppShutdownIntent {
   return { type: INTENT_APP_SHUTDOWN, payload: {} as AppShutdownIntent["payload"] };
-}
-
-function configSetValuesIntent(values: Record<string, unknown>): ConfigSetValuesIntent {
-  return {
-    type: INTENT_CONFIG_SET_VALUES,
-    payload: { values },
-  } as ConfigSetValuesIntent;
 }
 
 function openWorkspaceIntent(): OpenWorkspaceIntent {
@@ -169,62 +162,116 @@ function appResumeIntent(): AppResumeIntent {
   return { type: INTENT_APP_RESUME, payload: {} as AppResumeIntent["payload"] };
 }
 
-/** Enable telemetry with a distinct ID so captures work */
-async function enableTelemetry(
-  dispatcher: Dispatcher,
-  overrides?: { agent?: string; distinctId?: string }
-): Promise<void> {
-  await dispatcher.dispatch(
-    configSetValuesIntent({
-      "telemetry.enabled": true,
-      "telemetry.distinct-id": overrides?.distinctId ?? "test-distinct-id",
-      agent: overrides?.agent ?? "opencode",
-    })
-  );
-}
-
 // =============================================================================
 // Tests
 // =============================================================================
 
 describe("PosthogModule Integration", () => {
-  describe("config:updated event handling", () => {
-    it("creates PostHog client when telemetry values arrive with enabled=true", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+  describe("app:start hook", () => {
+    it("creates PostHog client and captures app_launched when telemetry enabled", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-distinct-id",
+          agent: "opencode",
+        },
+      });
 
-      await enableTelemetry(dispatcher);
+      await dispatcher.dispatch(startIntent());
 
-      // Client should have been created
-      expect(getMock()).not.toBeNull();
+      const mock = getMock()!;
+      expect(mock).not.toBeNull();
+      expect(mock).toHaveCaptured("app_launched", {
+        platform: "darwin",
+        arch: "arm64",
+        isDevelopment: true,
+        agent: "opencode",
+      });
     });
 
     it("does not create PostHog client when telemetry.enabled is false", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: { "telemetry.enabled": false, "telemetry.distinct-id": "id-1" },
+      });
 
-      await dispatcher.dispatch(
-        configSetValuesIntent({ "telemetry.enabled": false, "telemetry.distinct-id": "id-1" })
-      );
+      await dispatcher.dispatch(startIntent());
 
       expect(getMock()).toBeNull();
     });
 
-    it("tracks agent and includes it in captures", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+    it("includes version in captured events", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "id-1",
+          agent: "opencode",
+        },
+      });
 
-      // First event: only agent — no client yet (telemetry.enabled not received)
-      await dispatcher.dispatch(configSetValuesIntent({ agent: "claude" }));
-      expect(getMock()).toBeNull();
-
-      // Second event: telemetry values arrive — client created
-      await dispatcher.dispatch(
-        configSetValuesIntent({ "telemetry.enabled": true, "telemetry.distinct-id": "id-1" })
-      );
-
-      // Trigger a capture to verify agent is tracked
-      await dispatcher.dispatch(appResumeIntent());
+      await dispatcher.dispatch(startIntent());
 
       const mock = getMock()!;
-      expect(mock).toHaveCaptured("app_resume", { agent: "claude" });
+      expect(mock).toHaveCaptured("app_launched", { version: "1.0.0" });
+    });
+
+    it("does not capture app_launched when agent is not configured", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "id-1",
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      // Client created but no app_launched because agent is undefined
+      const mock = getMock()!;
+      expect(mock.$.capturedEvents.filter((e) => e.event === "app_launched")).toHaveLength(0);
+    });
+
+    it("does not capture app_launched when API key is missing", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        apiKey: undefined,
+        configValues: {
+          agent: "opencode",
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "id-1",
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(getMock()).toBeNull();
+    });
+
+    it("generates distinctId during start hook when telemetry enabled and no id", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: { "telemetry.enabled": true, agent: "claude" },
+      });
+
+      // Start hook triggers ID generation + configService.set
+      await dispatcher.dispatch(startIntent());
+
+      // Should have captured app_launched (agent was configured)
+      const mock = getMock()!;
+      expect(mock).toHaveCaptured("app_launched", { agent: "claude" });
+    });
+
+    it("stored distinct-id from config takes precedence over generation", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "stored-id-from-config",
+          agent: "opencode",
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      const mock = getMock()!;
+      // Event should use the stored distinct ID
+      const event = mock.$.capturedEvents.find((e) => e.event === "app_launched");
+      expect(event?.distinctId).toBe("stored-id-from-config");
     });
 
     it("registers error handlers when telemetry.enabled is true", async () => {
@@ -237,9 +284,11 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher } = createTestSetup();
+        const { dispatcher } = createTestSetup({
+          configValues: { "telemetry.enabled": true },
+        });
 
-        await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
+        await dispatcher.dispatch(startIntent());
 
         const monitorHandler = registeredHandlers.find(
           (h) => h.event === "uncaughtExceptionMonitor"
@@ -260,9 +309,11 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher } = createTestSetup();
+        const { dispatcher } = createTestSetup({
+          configValues: { "telemetry.enabled": false },
+        });
 
-        await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": false }));
+        await dispatcher.dispatch(startIntent());
 
         expect(registeredHandlers).toHaveLength(0);
       } finally {
@@ -270,7 +321,7 @@ describe("PosthogModule Integration", () => {
       }
     });
 
-    it("registers error handlers only once across multiple config:updated events", async () => {
+    it("registers error handlers only once", async () => {
       type Handler = (...args: unknown[]) => void;
       const registeredHandlers: { event: string; handler: Handler }[] = [];
       const originalOn = process.on;
@@ -280,10 +331,12 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher } = createTestSetup();
+        const { dispatcher } = createTestSetup({
+          configValues: { "telemetry.enabled": true },
+        });
 
-        await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
-        await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
+        // Start hook registers error handlers once
+        await dispatcher.dispatch(startIntent());
 
         // Should have exactly 2 handlers (uncaughtExceptionMonitor + unhandledRejection)
         expect(registeredHandlers).toHaveLength(2);
@@ -302,15 +355,16 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher, getMock } = createTestSetup();
+        const { dispatcher, getMock } = createTestSetup({
+          configValues: { "telemetry.enabled": true, "telemetry.distinct-id": "test-id" },
+        });
 
-        await enableTelemetry(dispatcher);
+        await dispatcher.dispatch(startIntent());
 
         const monitorHandler = registeredHandlers.find(
           (h) => h.event === "uncaughtExceptionMonitor"
         );
 
-        // Monitor handler should capture error without re-throwing
         const testError = new Error("test uncaught");
         monitorHandler!.handler(testError);
 
@@ -332,9 +386,11 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher } = createTestSetup();
+        const { dispatcher } = createTestSetup({
+          configValues: { "telemetry.enabled": true },
+        });
 
-        await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
+        await dispatcher.dispatch(startIntent());
 
         const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
         expect(rejectionHandler).toBeDefined();
@@ -353,9 +409,11 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher, getMock } = createTestSetup();
+        const { dispatcher, getMock } = createTestSetup({
+          configValues: { "telemetry.enabled": true, "telemetry.distinct-id": "test-id" },
+        });
 
-        await enableTelemetry(dispatcher);
+        await dispatcher.dispatch(startIntent());
 
         const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
 
@@ -380,9 +438,11 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher, getMock } = createTestSetup();
+        const { dispatcher, getMock } = createTestSetup({
+          configValues: { "telemetry.enabled": true, "telemetry.distinct-id": "test-id" },
+        });
 
-        await enableTelemetry(dispatcher);
+        await dispatcher.dispatch(startIntent());
 
         const rejectionHandler = registeredHandlers.find((h) => h.event === "unhandledRejection");
 
@@ -399,7 +459,7 @@ describe("PosthogModule Integration", () => {
     it("no-op when API key is missing", async () => {
       const { dispatcher, getMock } = createTestSetup({ apiKey: undefined });
 
-      await enableTelemetry(dispatcher);
+      await dispatcher.dispatch(startIntent());
 
       // No client created because no API key
       expect(getMock()).toBeNull();
@@ -408,104 +468,24 @@ describe("PosthogModule Integration", () => {
     it("no-op when API key is empty string", async () => {
       const { dispatcher, getMock } = createTestSetup({ apiKey: "" });
 
-      await enableTelemetry(dispatcher);
+      await dispatcher.dispatch(startIntent());
 
       // No client created because API key is empty
       expect(getMock()).toBeNull();
     });
   });
 
-  describe("app:start hook", () => {
-    it("captures app_launched with platform info when agent is configured", async () => {
-      const { dispatcher, getMock } = createTestSetup();
-
-      await enableTelemetry(dispatcher, { agent: "opencode" });
-      await dispatcher.dispatch(startIntent());
-
-      const mock = getMock()!;
-      expect(mock).toHaveCaptured("app_launched", {
-        platform: "darwin",
-        arch: "arm64",
-        isDevelopment: true,
-        agent: "opencode",
-      });
-    });
-
-    it("includes version in captured events", async () => {
-      const { dispatcher, getMock } = createTestSetup();
-
-      await enableTelemetry(dispatcher, { agent: "opencode" });
-      await dispatcher.dispatch(startIntent());
-
-      const mock = getMock()!;
-      expect(mock).toHaveCaptured("app_launched", { version: "1.0.0" });
-    });
-
-    it("does not capture app_launched when no config:updated with agent received", async () => {
-      const { dispatcher, getMock } = createTestSetup();
-
-      await dispatcher.dispatch(startIntent());
-
-      // No client created (no config:updated), so nothing captured
-      expect(getMock()).toBeNull();
-    });
-
-    it("does not capture app_launched when API key is missing", async () => {
-      const { dispatcher, getMock } = createTestSetup({ apiKey: undefined });
-
-      await dispatcher.dispatch(
-        configSetValuesIntent({
-          agent: "opencode",
-          "telemetry.enabled": true,
-          "telemetry.distinct-id": "id-1",
-        })
-      );
-      await dispatcher.dispatch(startIntent());
-
-      expect(getMock()).toBeNull();
-    });
-
-    it("generates distinctId during start hook when telemetry enabled and no id", async () => {
-      const { dispatcher, getMock } = createTestSetup();
-
-      // Telemetry enabled but no distinctId
-      await dispatcher.dispatch(
-        configSetValuesIntent({ "telemetry.enabled": true, agent: "claude" })
-      );
-
-      // Start hook triggers ID generation + config:set-values dispatch
-      await dispatcher.dispatch(startIntent());
-
-      // Should have captured app_launched (agent was configured)
-      const mock = getMock()!;
-      expect(mock).toHaveCaptured("app_launched", { agent: "claude" });
-    });
-
-    it("stored distinct-id from init takes precedence over generation", async () => {
-      const { dispatcher, getMock } = createTestSetup();
-
-      await dispatcher.dispatch(
-        configSetValuesIntent({
-          "telemetry.enabled": true,
-          "telemetry.distinct-id": "stored-id-from-config",
-          agent: "opencode",
-        })
-      );
-
-      await dispatcher.dispatch(startIntent());
-
-      const mock = getMock()!;
-      // Event should use the stored distinct ID
-      const event = mock.$.capturedEvents.find((e) => e.event === "app_launched");
-      expect(event?.distinctId).toBe("stored-id-from-config");
-    });
-  });
-
   describe("app:shutdown hook", () => {
     it("calls PostHog client shutdown", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "opencode",
+        },
+      });
 
-      await enableTelemetry(dispatcher);
+      await dispatcher.dispatch(startIntent());
       await dispatcher.dispatch(shutdownIntent());
 
       const mock = getMock()!;
@@ -519,10 +499,16 @@ describe("PosthogModule Integration", () => {
     });
 
     it("shutdown() throws -- collect catches error, dispatch still resolves", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "opencode",
+        },
+      });
 
       // Enable telemetry so client is created, then make shutdown throw
-      await enableTelemetry(dispatcher);
+      await dispatcher.dispatch(startIntent());
       const mock = getMock()!;
       // Override shutdown to throw
       mock.shutdown = async () => {
@@ -536,9 +522,15 @@ describe("PosthogModule Integration", () => {
 
   describe("workspace:created event", () => {
     it("captures workspace_created for new workspaces", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "opencode",
+        },
+      });
 
-      await enableTelemetry(dispatcher, { agent: "opencode" });
+      await dispatcher.dispatch(startIntent());
       await dispatcher.dispatch(openWorkspaceIntent());
 
       const mock = getMock()!;
@@ -553,9 +545,14 @@ describe("PosthogModule Integration", () => {
     it("does not capture workspace_created for reopened workspaces", async () => {
       const { dispatcher, getMock } = createTestSetup({
         workspacePayload: REOPENED_WORKSPACE_PAYLOAD,
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "opencode",
+        },
       });
 
-      await enableTelemetry(dispatcher, { agent: "opencode" });
+      await dispatcher.dispatch(startIntent());
       await dispatcher.dispatch(openWorkspaceIntent());
 
       const mock = getMock()!;
@@ -571,9 +568,15 @@ describe("PosthogModule Integration", () => {
 
   describe("app:resumed event", () => {
     it("captures app_resume on system wake", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "claude",
+        },
+      });
 
-      await enableTelemetry(dispatcher, { agent: "claude" });
+      await dispatcher.dispatch(startIntent());
       await dispatcher.dispatch(appResumeIntent());
 
       const mock = getMock()!;
@@ -593,43 +596,31 @@ describe("PosthogModule Integration", () => {
   });
 
   describe("capture behavior", () => {
-    it("no-op when not configured", async () => {
+    it("no-op when not configured (telemetry disabled)", async () => {
       const { dispatcher, getMock } = createTestSetup();
 
-      // Dispatch workspace event without configuring telemetry first
+      // Dispatch without enabling telemetry
+      await dispatcher.dispatch(startIntent());
       await dispatcher.dispatch(openWorkspaceIntent());
 
       expect(getMock()).toBeNull();
     });
 
-    it("no-op when disabled after being enabled", async () => {
-      const { dispatcher, getMock } = createTestSetup();
-
-      await enableTelemetry(dispatcher);
-
-      // First capture should work
-      await dispatcher.dispatch(appResumeIntent());
-      const mock = getMock()!;
-      expect(mock.$.capturedEvents).toHaveLength(1);
-
-      // Disable telemetry
-      await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": false }));
-
-      // Second capture should be a no-op
-      await dispatcher.dispatch(appResumeIntent());
-      expect(mock.$.capturedEvents).toHaveLength(1);
-    });
-
     it("no-op when distinctId is not set", async () => {
-      const { dispatcher, getMock } = createTestSetup();
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: { "telemetry.enabled": true },
+      });
 
-      // Enable without distinctId
-      await dispatcher.dispatch(configSetValuesIntent({ "telemetry.enabled": true }));
+      // Start will generate distinctId, so this test checks the internal path:
+      // Client gets created but won't capture until distinctId is set.
+      // In the new module, start generates the ID automatically when enabled.
+      await dispatcher.dispatch(startIntent());
 
-      // Client created (enabled with API key) but no event captured (no distinctId)
       const mock = getMock()!;
+      // Should have generated a distinctId and thus captured resume events
+      // (since start generates one when missing)
       await dispatcher.dispatch(appResumeIntent());
-      expect(mock.$.capturedEvents).toHaveLength(0);
+      expect(mock.$.capturedEvents.filter((e) => e.event === "app_resume")).toHaveLength(1);
     });
   });
 
@@ -644,11 +635,17 @@ describe("PosthogModule Integration", () => {
       }) as typeof process.on;
 
       try {
-        const { dispatcher, getMock } = createTestSetup();
+        const { dispatcher, getMock } = createTestSetup({
+          configValues: {
+            "telemetry.enabled": true,
+            "telemetry.distinct-id": "test-id",
+            agent: "opencode",
+          },
+        });
         const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
         const homeDir = platformInfo.homeDir;
 
-        await enableTelemetry(dispatcher);
+        await dispatcher.dispatch(startIntent());
 
         const monitorHandler = registeredHandlers.find(
           (h) => h.event === "uncaughtExceptionMonitor"

@@ -90,7 +90,12 @@ import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createBadgeModule } from "./modules/badge-module";
 import { createMcpModule } from "./modules/mcp-module";
-import { createConfigModule } from "./modules/config-module";
+import {
+  DefaultConfigService,
+  configBoolean,
+  configEnum,
+  generateHelpText,
+} from "../services/config";
 import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
@@ -106,7 +111,7 @@ import { createYouTrackSource } from "./modules/auto-workspace/youtrack-source";
 import { AppStartOperation, INTENT_APP_START } from "./operations/app-start";
 import type { AppStartIntent } from "./operations/app-start";
 import { AppReadyOperation, INTENT_APP_READY } from "./operations/app-ready";
-import { ConfigSetValuesOperation, INTENT_CONFIG_SET_VALUES } from "./operations/config-set-values";
+// ConfigSetValuesOperation removed — config is now a plain service
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./operations/app-shutdown";
 import { AppResumeOperation, INTENT_APP_RESUME } from "./operations/app-resume";
 import type { AppShutdownIntent } from "./operations/app-shutdown";
@@ -177,11 +182,34 @@ const buildInfo: BuildInfo = new ElectronBuildInfo();
 const platformInfo = new NodePlatformInfo();
 const pathProvider: PathProvider = new DefaultPathProvider(buildInfo, platformInfo);
 const loggingService: LoggingService = new ElectronLogService(pathProvider);
-// Logging is configured via config module's before-ready hook (env vars)
-// and config:updated events. No direct env var parsing here.
 const appLogger = loggingService.createLogger("app");
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const fileSystemLayer = new DefaultFileSystemLayer(loggingService.createLogger("fs"));
+
+// ConfigService — constructed before modules so they can register keys
+const configService = new DefaultConfigService({
+  configPath: pathProvider.dataPath("config.json"),
+  fileSystem: fileSystemLayer,
+  logger: loggingService.createLogger("config"),
+  isDevelopment: buildInfo.isDevelopment,
+  isPackaged: buildInfo.isPackaged,
+  env: process.env as Record<string, string | undefined>,
+  argv: process.argv,
+});
+
+// Register core config keys (not owned by any module)
+configService.register("agent", {
+  name: "agent",
+  default: null,
+  description: "Agent selection",
+  ...configEnum(["claude", "opencode"], { nullable: true }),
+});
+configService.register("help", {
+  name: "help",
+  default: false,
+  description: "Print config help and exit",
+  ...configBoolean(),
+});
 
 // 3. Electron layers (all constructors are pure — just store deps)
 
@@ -365,6 +393,7 @@ const viewModule = createViewModule({
   windowManager,
   buildInfo,
   uiHtmlPath,
+  configService,
 });
 
 const codeServerModule = createCodeServerModule({
@@ -379,6 +408,7 @@ const codeServerModule = createCodeServerModule({
   wrapperPath: pathProvider.dataPath("bin/ch-claude", { cmd: true }).toString(),
   logger: apiLogger,
   binaryDownloadService,
+  configService,
 });
 
 const pluginServerModule = createPluginServerModule({
@@ -403,7 +433,7 @@ const claudeAgentModule = createAgentModule(
     binaryManager: claudeBinaryManager,
     logger: providerLogger,
   }),
-  { dispatcher, logger: apiLogger }
+  { dispatcher, logger: apiLogger, configService }
 );
 
 const opencodeAgentModule = createAgentModule(
@@ -412,7 +442,7 @@ const opencodeAgentModule = createAgentModule(
     binaryManager: opencodeBinaryManager,
     logger: providerLogger,
   }),
-  { dispatcher, logger: apiLogger }
+  { dispatcher, logger: apiLogger, configService }
 );
 
 const metadataModule = createMetadataModule({
@@ -438,7 +468,7 @@ const windowTitleModule = createWindowTitleModule({
 const posthogModule = createPosthogModule({
   platformInfo,
   buildInfo,
-  dispatcher,
+  configService,
   logger: loggingService.createLogger("telemetry"),
   apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
   host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
@@ -447,6 +477,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
   dispatcher,
   ipcLayer,
+  configService,
 });
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
@@ -484,21 +515,10 @@ const autoWorkspaceModule = createAutoWorkspaceModule({
   stateFilePath: pathProvider.dataPath("auto-workspaces.json").toString(),
   dispatcher,
   sources: [githubSource, youtrackSource],
+  configService,
 });
 
 // 7. New modules
-
-const configModule = createConfigModule({
-  fileSystem: fileSystemLayer,
-  configPath: pathProvider.dataPath("config.json"),
-  dispatcher,
-  logger: loggingService.createLogger("config"),
-  isDevelopment: buildInfo.isDevelopment,
-  isPackaged: buildInfo.isPackaged,
-  env: process.env as Record<string, string | undefined>,
-  argv: process.argv,
-  stdout: process.stdout,
-});
 
 const electronLifecycleModule = createElectronLifecycleModule({
   app,
@@ -508,6 +528,7 @@ const electronLifecycleModule = createElectronLifecycleModule({
   powerMonitor,
   dispatcher,
   logger: lifecycleLogger,
+  configService,
 });
 
 const loggingModule = createLoggingModule({
@@ -516,6 +537,7 @@ const loggingModule = createLoggingModule({
   buildInfo,
   platformInfo,
   logger: appLogger,
+  configService,
 });
 
 const scriptModule = createScriptModule({
@@ -550,9 +572,9 @@ const devtoolsModule = createDevtoolsModule({
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
-dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(configService));
 dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation());
-dispatcher.registerOperation(INTENT_CONFIG_SET_VALUES, new ConfigSetValuesOperation());
+// config:set-values operation removed — config is now a plain service
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
@@ -576,7 +598,7 @@ dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperati
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
-dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation());
+dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(configService));
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
 dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
 
@@ -591,7 +613,6 @@ const ipcEventBridge = createIpcEventBridge({
 // 9. Register all modules
 
 dispatcher.registerModule(idempotencyModule);
-dispatcher.registerModule(configModule);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(pluginServerModule);
 dispatcher.registerModule(extensionModule);
@@ -620,6 +641,21 @@ dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(ipcEventBridge);
+
+// Load config (sync — reads config.json, env vars, CLI args)
+configService.load();
+
+// Handle --help
+if (configService.get("help") === true) {
+  process.stdout.write(
+    generateHelpText(
+      pathProvider.dataPath("config.json").toString(),
+      configService.getDefinitions(),
+      configService.getEffective()
+    )
+  );
+  app.quit();
+}
 
 // 10. Dispatch app:start
 

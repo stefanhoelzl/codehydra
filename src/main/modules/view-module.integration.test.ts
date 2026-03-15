@@ -75,9 +75,8 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../operations/update-agent-status";
 import { EVENT_APP_RESUMED } from "../operations/app-resume";
 import type { AppResumedEvent } from "../operations/app-resume";
-import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
 import { SILENT_LOGGER } from "../../services/logging";
+import type { ConfigService } from "../../services/config/config-service";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { ApiIpcChannels } from "../../shared/ipc";
@@ -86,6 +85,24 @@ import {
   createBehavioralIpcLayer,
   type BehavioralIpcLayer,
 } from "../../services/platform/ipc.test-utils";
+
+// =============================================================================
+// Mock ConfigService
+// =============================================================================
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: () => {},
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
+}
 
 // =============================================================================
 // Mock IViewManager
@@ -356,13 +373,21 @@ interface TestSetup {
 
 function createTestSetup(
   operationOverride?: { intentType: string; operation: Operation<Intent, unknown> },
-  options?: { nullLayers?: boolean; dialogLayer?: ViewModuleDeps["dialogLayer"] }
+  options?: {
+    nullLayers?: boolean;
+    dialogLayer?: ViewModuleDeps["dialogLayer"];
+    configValues?: Record<string, unknown>;
+  }
 ): TestSetup {
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
   const viewManager = createMockViewManager();
   const layers = createMockShellLayers();
+  const mockConfigService = createMockConfigService({
+    "experimental.load-on-resume": false,
+    ...options?.configValues,
+  });
 
   const deps: ViewModuleDeps = {
     viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
@@ -377,6 +402,7 @@ function createTestSetup(
       ? null
       : (layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"]),
     ...(options?.dialogLayer !== undefined && { dialogLayer: options.dialogLayer }),
+    configService: mockConfigService,
   };
 
   const module = createViewModule(deps);
@@ -508,6 +534,7 @@ describe("ViewModule Integration", () => {
         windowLayer: null,
         sessionLayer: null,
         ipcLayer: mockIpcLayer,
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -925,6 +952,7 @@ describe("ViewModule Integration", () => {
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
         windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -974,6 +1002,7 @@ describe("ViewModule Integration", () => {
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
         windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -1021,6 +1050,7 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -1065,6 +1095,7 @@ describe("ViewModule Integration", () => {
         menuLayer,
         windowManager,
         uiHtmlPath: "file:///app/ui.html",
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -1103,6 +1134,7 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -1208,6 +1240,7 @@ describe("ViewModule Integration", () => {
         windowLayer: null,
         sessionLayer: null,
         ipcLayer,
+        configService: createMockConfigService(),
       });
 
       dispatcher.registerModule(module);
@@ -1287,13 +1320,9 @@ describe("ViewModule Integration", () => {
     const resumedEvent: AppResumedEvent = { type: EVENT_APP_RESUMED, payload: {} };
 
     it("calls reloadAllViews when experimental.load-on-resume is true", async () => {
-      const { viewManager, module } = createTestSetup();
-
-      // Enable the config via config:updated event
-      await module.events![EVENT_CONFIG_UPDATED]!.handler({
-        type: EVENT_CONFIG_UPDATED,
-        payload: { values: { "experimental.load-on-resume": true } },
-      } as ConfigUpdatedEvent);
+      const { viewManager, module } = createTestSetup(undefined, {
+        configValues: { "experimental.load-on-resume": true },
+      });
 
       await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
 
@@ -1308,18 +1337,10 @@ describe("ViewModule Integration", () => {
       expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
     });
 
-    it("does NOT call reloadAllViews after config is set back to false", async () => {
-      const { viewManager, module } = createTestSetup();
-
-      // Enable then disable
-      await module.events![EVENT_CONFIG_UPDATED]!.handler({
-        type: EVENT_CONFIG_UPDATED,
-        payload: { values: { "experimental.load-on-resume": true } },
-      } as ConfigUpdatedEvent);
-      await module.events![EVENT_CONFIG_UPDATED]!.handler({
-        type: EVENT_CONFIG_UPDATED,
-        payload: { values: { "experimental.load-on-resume": false } },
-      } as ConfigUpdatedEvent);
+    it("does NOT call reloadAllViews when config is explicitly false", async () => {
+      const { viewManager, module } = createTestSetup(undefined, {
+        configValues: { "experimental.load-on-resume": false },
+      });
 
       await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
 

@@ -52,6 +52,19 @@ import {
 } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/binary-resolution/types";
+import type { ConfigService } from "../../services/config/config-service";
+
+/** Minimal ConfigService mock for tests. Returns configuredAgent value from get(). */
+function createMockConfigService(agent: ConfigAgentType | null = "opencode"): ConfigService {
+  return {
+    register: () => {},
+    load: () => {},
+    get: (key: string) => (key === "agent" ? agent : undefined),
+    set: async () => {},
+    getDefinitions: () => new Map(),
+    getEffective: () => ({}),
+  };
+}
 
 // =============================================================================
 // Test Setup
@@ -202,9 +215,7 @@ function defaultCheckModules(): IntentModule[] {
       hooks: {
         [APP_START_OPERATION_ID]: {
           init: {
-            handler: async (): Promise<InitResult> => ({
-              configuredAgent: "claude",
-            }),
+            handler: async (): Promise<InitResult> => ({}),
           },
         },
       },
@@ -222,7 +233,7 @@ function createTestSetup(
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockConfigService()));
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -365,15 +376,15 @@ describe("AppStart Operation", () => {
   describe("check hooks", () => {
     // -- Helpers for check hook modules --
 
-    function createConfigCheckModule(agent: ConfigAgentType | null): IntentModule {
+    /** Creates a no-op init module. configuredAgent now comes from ConfigService mock. */
+    function createConfigCheckModule(_agent: ConfigAgentType | null): IntentModule {
+      void _agent; // configuredAgent is now read from ConfigService, not init results
       return {
         name: "test",
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
-              handler: async (): Promise<InitResult> => {
-                return { configuredAgent: agent };
-              },
+              handler: async (): Promise<InitResult> => ({}),
             },
           },
         },
@@ -429,12 +440,19 @@ describe("AppStart Operation", () => {
 
     function createCheckTestSetup(
       modules: IntentModule[],
-      options?: { setupStub?: Operation<SetupIntent, void> }
+      options?: {
+        setupStub?: Operation<SetupIntent, void>;
+        configuredAgent?: ConfigAgentType | null;
+      }
     ): { dispatcher: Dispatcher } {
       const hookRegistry = new HookRegistry();
       const dispatcher = new Dispatcher(hookRegistry);
 
-      dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation());
+      const agent = options?.configuredAgent !== undefined ? options.configuredAgent : "opencode";
+      dispatcher.registerOperation(
+        INTENT_APP_START,
+        new AppStartOperation(createMockConfigService(agent))
+      );
       if (options?.setupStub) {
         dispatcher.registerOperation(INTENT_SETUP, options.setupStub);
       }
@@ -481,7 +499,7 @@ describe("AppStart Operation", () => {
           createDataModule(state),
           createViewModule(state),
         ],
-        { setupStub }
+        { setupStub, configuredAgent: null }
       );
 
       await dispatcher.dispatch(appStartIntent());

@@ -6,25 +6,23 @@
  * implementation parameterized by the AgentModuleProvider interface.
  *
  * Closure state:
- * - active: boolean - set by config:updated event, guards per-agent hooks
  * - capAgentType: AgentType | undefined - capability for open-workspace
  * - statusChangeCleanup: (() => void) | null - cleanup for onStatusChange subscription
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import { ANY_VALUE, type HookContext } from "../intents/infrastructure/operation";
-import type { DomainEvent } from "../intents/infrastructure/types";
 import type { Logger } from "../../services/logging/types";
 import type { BinaryType } from "../../services/binary-resolution/types";
 import type { AgentType } from "../../shared/plugin-protocol";
 import type { WorkspacePath } from "../../shared/ipc";
+import type { ConfigService } from "../../services/config/config-service";
 
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-  RegisterConfigResult,
 } from "../operations/app-start";
 import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../operations/setup";
 import type {
@@ -53,9 +51,6 @@ import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../operations/get-workspace-s
 import { GET_AGENT_SESSION_OPERATION_ID } from "../operations/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../operations/restart-agent";
 import { INTENT_UPDATE_AGENT_STATUS } from "../operations/update-agent-status";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
-import type { ConfigSetValuesIntent } from "../operations/config-set-values";
-import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { SetupError, getErrorMessage } from "../../services/errors";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import type { AgentModuleProvider } from "../../services/agents/agent-module-provider";
@@ -70,6 +65,7 @@ import type { AgentModuleProvider } from "../../services/agents/agent-module-pro
 export interface AgentModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
+  readonly configService: ConfigService;
 }
 
 // =============================================================================
@@ -79,10 +75,6 @@ export interface AgentModuleDeps {
 /**
  * Create a generic agent module that manages agent lifecycle by delegating
  * to the provided AgentModuleProvider.
- *
- * This factory produces an IntentModule with identical hook structure to
- * the former claude-agent-module and opencode-agent-module, but parameterized
- * by the provider interface rather than hardcoding agent-specific logic.
  */
 export function createAgentModule(
   provider: AgentModuleProvider,
@@ -90,12 +82,19 @@ export function createAgentModule(
 ): IntentModule {
   const { logger } = deps;
 
+  // Register provider's config key (e.g. version.claude, version.opencode)
+  const configDef = provider.getConfigDefinition();
+  deps.configService.register(configDef.name, configDef);
+
   // =========================================================================
   // Internal closure state
   // =========================================================================
 
-  /** Whether this module is the active agent (set by config:updated event). */
-  let active = false;
+  /** Check if this module is the active agent by reading config. */
+  function isActive(): boolean {
+    const agentType = (deps.configService.get("agent") as string | null) ?? "opencode";
+    return agentType === provider.type;
+  }
 
   /** Capability: agentType provided by setup handler. */
   let capAgentType: AgentType | undefined;
@@ -111,12 +110,6 @@ export function createAgentModule(
     name: `${provider.type}-agent`,
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => ({
-            definitions: [provider.getConfigDefinition()],
-          }),
-        },
-
         "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
             return {
@@ -142,7 +135,7 @@ export function createAgentModule(
         start: {
           requires: { mcpPort: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<void> => {
-            if (!active) return;
+            if (!isActive()) return;
 
             const mcpPort = ctx.capabilities?.mcpPort as number | null;
             provider.initialize(
@@ -189,10 +182,7 @@ export function createAgentModule(
             if (selectedAgent !== provider.type) return;
 
             try {
-              await deps.dispatcher.dispatch({
-                type: INTENT_CONFIG_SET_VALUES,
-                payload: { values: { agent: selectedAgent } },
-              } as ConfigSetValuesIntent);
+              await deps.configService.set("agent", selectedAgent);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               throw new SetupError(
@@ -245,7 +235,7 @@ export function createAgentModule(
           }),
           handler: async (ctx: HookContext): Promise<SetupHookResult | undefined> => {
             capAgentType = undefined;
-            if (!active) return undefined;
+            if (!isActive()) return undefined;
 
             const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as OpenWorkspaceIntent;
@@ -270,7 +260,7 @@ export function createAgentModule(
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult | undefined> => {
-            if (!active) return undefined;
+            if (!isActive()) return undefined;
 
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
@@ -306,7 +296,7 @@ export function createAgentModule(
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
           handler: async (ctx: HookContext): Promise<GetStatusHookResult | undefined> => {
-            if (!active) return undefined;
+            if (!isActive()) return undefined;
             const { workspacePath } = ctx as GetStatusHookInput;
             return {
               agentStatus: provider.getStatus(workspacePath as WorkspacePath),
@@ -318,7 +308,7 @@ export function createAgentModule(
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult | undefined> => {
-            if (!active) return undefined;
+            if (!isActive()) return undefined;
             const { workspacePath } = ctx as GetAgentSessionHookInput;
             return {
               session: provider.getSession(workspacePath as WorkspacePath),
@@ -330,7 +320,7 @@ export function createAgentModule(
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
           handler: async (ctx: HookContext): Promise<RestartAgentHookResult | undefined> => {
-            if (!active) return undefined;
+            if (!isActive()) return undefined;
             const { workspacePath } = ctx as RestartAgentHookInput;
             const result = await provider.restartWorkspace(workspacePath);
             if (result.success) {
@@ -339,18 +329,6 @@ export function createAgentModule(
               throw new Error(result.error);
             }
           },
-        },
-      },
-    },
-    events: {
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent) => {
-          const { values } = (event as ConfigUpdatedEvent).payload;
-          if (values.agent !== undefined) {
-            // Agent value received -- check if this module should be active
-            const agentType = (values.agent as string | null) ?? "opencode";
-            active = agentType === provider.type;
-          }
         },
       },
     },

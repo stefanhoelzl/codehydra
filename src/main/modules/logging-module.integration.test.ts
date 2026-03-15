@@ -13,10 +13,27 @@ import type { Operation, OperationContext, HookContext } from "../intents/infras
 import type { Intent } from "../intents/infrastructure/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent, InitHookContext, ConfigureResult } from "../operations/app-start";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
-import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { createMockLogger } from "../../services/logging";
 import { createLoggingModule } from "./logging-module";
+import type { ConfigService } from "../../services/config/config-service";
+
+// =============================================================================
+// Mock ConfigService
+// =============================================================================
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: () => {},
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
+}
 
 // =============================================================================
 // Minimal Test Operation
@@ -47,7 +64,7 @@ class MinimalAppStartOperation implements Operation<Intent, void> {
 // Helpers
 // =============================================================================
 
-function createDeps() {
+function createDeps(configValues?: Record<string, unknown>) {
   const loggingService = {
     initialize: vi.fn(),
     configure: vi.fn(),
@@ -63,8 +80,14 @@ function createDeps() {
     arch: "x64" as const,
   };
   const logger = createMockLogger();
+  const configService = createMockConfigService({
+    "log.level": "warn",
+    "log.output": "file",
+    "log.format": "text",
+    ...configValues,
+  });
 
-  return { loggingService, registerLogHandlers, buildInfo, platformInfo, logger };
+  return { loggingService, registerLogHandlers, buildInfo, platformInfo, logger, configService };
 }
 
 // =============================================================================
@@ -129,83 +152,55 @@ describe("LoggingModule Integration", () => {
     expect(logOrder).toBeLessThan(initOrder);
   });
 
-  it("logs all changed config values on config:updated event", async () => {
-    const deps = createDeps();
-    const module = createLoggingModule(deps);
-
-    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
-    await handler({
-      type: EVENT_CONFIG_UPDATED,
-      payload: { values: { agent: "claude", "log.level": "debug" } },
-    } as ConfigUpdatedEvent);
-
-    expect(deps.logger.info).toHaveBeenCalledWith("Config updated", {
-      agent: "claude",
+  it("configures logging from configService during before-ready hook", async () => {
+    const deps = createDeps({
       "log.level": "debug",
+      "log.output": "file,console",
+      "log.format": "json",
     });
-  });
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
 
-  it("converts undefined config values to null when logging", async () => {
-    const deps = createDeps();
-    const module = createLoggingModule(deps);
+    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerModule(createLoggingModule(deps));
 
-    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
-    await handler({
-      type: EVENT_CONFIG_UPDATED,
-      payload: { values: { "telemetry.distinct-id": undefined } },
-    } as unknown as ConfigUpdatedEvent);
-
-    expect(deps.logger.info).toHaveBeenCalledWith("Config updated", {
-      "telemetry.distinct-id": null,
-    });
-  });
-
-  it("reconfigures logging when log.format changes", async () => {
-    const deps = createDeps();
-    const module = createLoggingModule(deps);
-
-    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
-    await handler({
-      type: EVENT_CONFIG_UPDATED,
-      payload: { values: { "log.level": "debug", "log.output": "file", "log.format": "json" } },
-    } as ConfigUpdatedEvent);
+    await dispatcher.dispatch({
+      type: INTENT_APP_START,
+      payload: {},
+    } as AppStartIntent);
 
     expect(deps.loggingService.configure).toHaveBeenCalledWith({
       logLevel: "debug",
       logFile: true,
-      logConsole: false,
+      logConsole: true,
       allowedLoggers: undefined,
       logFormat: "json",
     });
   });
 
-  it("reconfigures with logFormat when only log.format changes", async () => {
-    const deps = createDeps();
-    const module = createLoggingModule(deps);
+  it("configures with file-only output by default", async () => {
+    const deps = createDeps({
+      "log.level": "warn",
+      "log.output": "file",
+      "log.format": "text",
+    });
+    const hookRegistry = new HookRegistry();
+    const dispatcher = new Dispatcher(hookRegistry);
 
-    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
-    await handler({
-      type: EVENT_CONFIG_UPDATED,
-      payload: { values: { "log.format": "json" } },
-    } as ConfigUpdatedEvent);
+    dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
+    dispatcher.registerModule(createLoggingModule(deps));
 
-    expect(deps.loggingService.configure).toHaveBeenCalledWith(
-      expect.objectContaining({ logFormat: "json" })
-    );
-  });
+    await dispatcher.dispatch({
+      type: INTENT_APP_START,
+      payload: {},
+    } as AppStartIntent);
 
-  it("includes logFormat in reconfigure when log.level changes", async () => {
-    const deps = createDeps();
-    const module = createLoggingModule(deps);
-
-    const handler = module.events![EVENT_CONFIG_UPDATED]!.handler;
-    await handler({
-      type: EVENT_CONFIG_UPDATED,
-      payload: { values: { "log.level": "info" } },
-    } as ConfigUpdatedEvent);
-
-    expect(deps.loggingService.configure).toHaveBeenCalledWith(
-      expect.objectContaining({ logFormat: "text" })
-    );
+    expect(deps.loggingService.configure).toHaveBeenCalledWith({
+      logLevel: "warn",
+      logFile: true,
+      logConsole: false,
+      allowedLoggers: undefined,
+      logFormat: "text",
+    });
   });
 });

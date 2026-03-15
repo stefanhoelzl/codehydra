@@ -2,27 +2,23 @@
  * ElectronLifecycleModule - Electron app lifecycle hooks.
  *
  * Provides:
- * - "before-ready" hook on app:start (noAsar, data paths)
+ * - "before-ready" hook on app:start (noAsar, data paths, electron flags)
  * - "await-ready" hook on app:start (waits for Electron app ready)
+ * - "start" hook on app:start (power monitor resume handler)
  * - "quit" hook on app:shutdown (calls app.quit())
- *
- * Electron flags are applied via config:updated event subscription
- * when the config module dispatches env-layer values.
  */
 
 import type { PathProvider } from "../../services/platform/path-provider";
 import type { AsyncWatcher } from "../../services/platform/async-watcher";
 import type { Logger } from "../../services/logging";
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { DomainEvent } from "../intents/infrastructure/types";
-import type { ConfigureResult, RegisterConfigResult } from "../operations/app-start";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import type { ConfigureResult } from "../operations/app-start";
+import type { ConfigService } from "../../services/config/config-service";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { configString } from "../../services/config/config-definition";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { INTENT_APP_RESUME } from "../operations/app-resume";
-import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 
 // =============================================================================
 // Helpers
@@ -82,6 +78,7 @@ export interface ElectronLifecycleModuleDeps {
   readonly powerMonitor?: { on(event: string, callback: () => void): void } | null;
   readonly dispatcher?: Pick<Dispatcher, "dispatch"> | null;
   readonly logger: Logger;
+  readonly configService: ConfigService;
 }
 
 // =============================================================================
@@ -89,22 +86,18 @@ export interface ElectronLifecycleModuleDeps {
 // =============================================================================
 
 export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps): IntentModule {
+  // Register config key
+  deps.configService.register("electron.flags", {
+    name: "electron.flags",
+    default: null,
+    description: "Electron switches (e.g., --disable-gpu)",
+    ...configString({ nullable: true }),
+  });
+
   return {
     name: "electron-lifecycle",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => ({
-            definitions: [
-              {
-                name: "electron.flags",
-                default: null,
-                description: "Electron switches (e.g., --disable-gpu)",
-                ...configString({ nullable: true }),
-              },
-            ],
-          }),
-        },
         "before-ready": {
           handler: async (): Promise<ConfigureResult> => {
             // Disable ASAR when not packaged
@@ -117,7 +110,19 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
                 deps.app.setPath(name, deps.pathProvider.dataPath(`electron/${name}`).toNative());
               }
             }
-            // Electron flags are applied via config:updated event handler
+            // Apply electron flags from config
+            const flagsValue = deps.configService.get("electron.flags") as string | null;
+            const flags = parseElectronFlags(flagsValue ?? undefined);
+            for (const flag of flags) {
+              deps.app.commandLine.appendSwitch(
+                flag.name,
+                ...(flag.value !== undefined ? [flag.value] : [])
+              );
+              deps.logger.info("Applied Electron flag", {
+                flag: flag.name,
+                ...(flag.value !== undefined && { value: flag.value }),
+              });
+            }
             return {};
           },
         },
@@ -143,26 +148,6 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
           handler: async () => {
             deps.app.quit();
           },
-        },
-      },
-    },
-    events: {
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { values } = (event as ConfigUpdatedEvent).payload;
-          if (values["electron.flags"] !== undefined) {
-            const flags = parseElectronFlags(values["electron.flags"] as string | undefined);
-            for (const flag of flags) {
-              deps.app.commandLine.appendSwitch(
-                flag.name,
-                ...(flag.value !== undefined ? [flag.value] : [])
-              );
-              deps.logger.info("Applied Electron flag", {
-                flag: flag.name,
-                ...(flag.value !== undefined && { value: flag.value }),
-              });
-            }
-          }
         },
       },
     },

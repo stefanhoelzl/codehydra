@@ -86,9 +86,10 @@ path1.equals(path2); // equals() for comparison
 
 Some components use external libraries directly without abstraction layers. These are approved exceptions where abstraction provides no benefit.
 
-| Component     | Direct Dependency  | Reason                                                                                            |
-| ------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
-| `AutoUpdater` | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit |
+| Component              | Direct Dependency  | Reason                                                                                            |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `AutoUpdater`          | `electron-updater` | Singleton with Electron lifecycle integration; no meaningful abstraction or isolated test benefit |
+| `ConfigService.load()` | `node:fs`          | Config must load synchronously before Electron app.ready; FileSystemLayer is async-only           |
 
 ---
 
@@ -143,7 +144,7 @@ All operations use an intent-based dispatcher with operations, hook modules, and
 
 Operations include workspace create/delete/switch, project open/close, agent:update-status, and app lifecycle (app:start, app:shutdown). Other operations (create, delete, open, close) dispatch `workspace:switch` intents when the active workspace changes. The `workspace:create` intent supports an `existingWorkspace` field for activating discovered workspaces without creating new git worktrees (used by `project:open`). The `workspace:delete` intent has a `removeWorktree` flag: `true` for full deletion, `false` for runtime-only teardown (used by `project:close`). The `agent:update-status` intent is a trivial operation (no hooks) that emits an `agent:status-updated` domain event consumed by the IPC event bridge and badge module. New hook modules registered on `workspace:create` must handle both the new-worktree and existing-workspace paths.
 
-The `app:start` and `app:shutdown` intents orchestrate application lifecycle. `app:start` runs eight hook points in sequence: `register-config` (collect config definitions), `before-ready` (env config, script declarations), `await-ready` (Electron ready), `init` (post-ready config, logging, shell), `show-ui` (starting screen), `check-deps` (binary/extension checks), `start` (servers, wiring), and `activate` (load data, set active workspace). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`). See `docs/INTENTS.md` for the complete reference.
+The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Configuration is loaded via `ConfigService.load()` (sync) before `app:start` is dispatched. `app:start` runs six hook points in sequence: `before-ready` (script declarations, electron flags, data paths), `await-ready` (Electron ready), `init` (post-ready logging, shell, scripts), `show-ui` (starting screen), `check-deps` (binary/extension checks), and `start` (servers, wiring). `app:shutdown` has one hook point: `stop` (best-effort disposal, each module wraps its own try/catch). All modules are constructed and registered in `src/main/index.ts`. A shutdown idempotency interceptor ensures only one shutdown execution proceeds. Hook handlers can declare `requires` and `provides` for capability-based ordering (see `src/main/intents/infrastructure/operation.ts`). See `docs/INTENTS.md` for the complete reference.
 
 ---
 
@@ -320,7 +321,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 
 Any key can appear in config.json, env vars, or CLI flags.
 
-Source of truth: Config definitions are distributed across modules via the `register-config` hook. Type aliases live in `src/services/config/config-values.ts`.
+Source of truth: Config definitions are registered by modules via `ConfigService.register()` in their factory functions. The service lives at `src/services/config/config-service.ts`. Type aliases live in `src/services/config/config-values.ts`.
 
 ### Log Files
 

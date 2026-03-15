@@ -32,11 +32,7 @@ import type { Unsubscribe } from "../../shared/api/interfaces";
 import type { WorkspaceRef } from "../../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../../shared/ipc";
 import type { SetModeIntent, SetModeHookResult } from "../operations/set-mode";
-import {
-  APP_START_OPERATION_ID,
-  type ShowUIHookResult,
-  type RegisterConfigResult,
-} from "../operations/app-start";
+import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../operations/app-start";
 import type { AgentSelectionHookContext } from "../operations/setup";
 import type { GetActiveWorkspaceHookResult } from "../operations/get-active-workspace";
 import type {
@@ -66,8 +62,7 @@ import { EVENT_WORKSPACE_CREATED } from "../operations/open-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../operations/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../operations/update-agent-status";
-import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
+import type { ConfigService } from "../../services/config/config-service";
 import { configBoolean } from "../../services/config/config-definition";
 import {
   ApiIpcChannels,
@@ -113,6 +108,7 @@ export interface ViewModuleDeps {
     gitBranch?: string;
   } | null;
   readonly uiHtmlPath?: string | null;
+  readonly configService: ConfigService;
 }
 
 // =============================================================================
@@ -126,12 +122,20 @@ export interface ViewModuleDeps {
 export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const { viewManager, logger } = deps;
 
+  // Register config key
+  deps.configService.register("experimental.load-on-resume", {
+    name: "experimental.load-on-resume",
+    default: false,
+    description: "Reload workspace views when system resumes from sleep",
+    ...configBoolean(),
+  });
+
   // Internal state
   let cachedActiveRef: WorkspaceRef | null = null;
   /** Capability: agentType provided by agent-selection handler. */
   let capAgentType: LifecycleAgentType | undefined;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
-  let loadOnResume = false;
+  // loadOnResume is read from configService on demand
 
   const module: IntentModule = {
     name: "view",
@@ -151,24 +155,11 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
-      // app-start → register-config: declare experimental.load-on-resume
       // app-start → init: Shell creation + UI loading (post-ready)
       // app-start → show-ui: send LIFECYCLE_SHOW_STARTING to renderer
       // app-start → start: wire loading change callback + mount signal
       // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => ({
-            definitions: [
-              {
-                name: "experimental.load-on-resume",
-                default: false,
-                description: "Reload workspace views when system resumes from sleep",
-                ...configBoolean(),
-              },
-            ],
-          }),
-        },
         init: {
           handler: async (): Promise<void> => {
             // Disable application menu
@@ -505,22 +496,11 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
-      // config:updated → track experimental.load-on-resume
-      // -------------------------------------------------------------------
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { values } = (event as ConfigUpdatedEvent).payload;
-          if (values["experimental.load-on-resume"] !== undefined) {
-            loadOnResume = values["experimental.load-on-resume"] as boolean;
-          }
-        },
-      },
-
-      // -------------------------------------------------------------------
       // app:resumed → reload workspace views (gated by config)
       // -------------------------------------------------------------------
       [EVENT_APP_RESUMED]: {
         handler: async (): Promise<void> => {
+          const loadOnResume = deps.configService.get("experimental.load-on-resume") as boolean;
           if (!loadOnResume) return;
           logger.info("Reloading workspace views after system resume");
           viewManager.reloadAllViews();

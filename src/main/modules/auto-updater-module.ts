@@ -2,7 +2,6 @@
  * AutoUpdaterModule - Lifecycle module for auto-update checking, download, and install.
  *
  * Hooks:
- * - app:start -> "register-config": register auto-update config with default "ask"
  * - app:start -> "check-deps": check for updates, store detectedVersion, return updateNeedsChoice
  * - app:start -> "start": start auto-updater
  * - update-apply -> "show-choice": emit show-choice UI event
@@ -13,21 +12,14 @@
  *
  * Interceptor:
  * - Rejects app:update if config="never" or no update detected
- *
- * Events:
- * - config:updated: tracks auto-update preference
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
-import type { Intent, DomainEvent } from "../intents/infrastructure/types";
+import type { Intent } from "../intents/infrastructure/types";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { IpcEventHandler, IpcLayer } from "../../services/platform/ipc";
-import {
-  APP_START_OPERATION_ID,
-  type RegisterConfigResult,
-  type CheckDepsResult,
-} from "../operations/app-start";
+import { APP_START_OPERATION_ID, type CheckDepsResult } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../operations/app-shutdown";
 import {
   INTENT_UPDATE_AVAILABLE,
@@ -40,9 +32,9 @@ import {
   type UpdateDownloadResult,
 } from "../operations/update-apply";
 import { INTENT_APP_SHUTDOWN } from "../operations/app-shutdown";
-import { EVENT_CONFIG_UPDATED, type ConfigUpdatedPayload } from "../operations/config-set-values";
 import { configEnum } from "../../services/config/config-definition";
 import type { AutoUpdatePreference } from "../../services/config/config-values";
+import type { ConfigService } from "../../services/config/config-service";
 import type { AutoUpdater } from "../../services/auto-updater";
 import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { ApiIpcChannels } from "../../shared/ipc";
@@ -54,17 +46,26 @@ interface AutoUpdaterModuleDeps {
   readonly autoUpdater: AutoUpdater;
   readonly dispatcher: Dispatcher;
   readonly ipcLayer: Pick<IpcLayer, "on" | "removeListener">;
+  readonly configService: ConfigService;
 }
 
 export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModule {
-  let autoUpdate: AutoUpdatePreference = "ask";
   let detectedVersion: string | null = null;
+
+  // Register config key
+  deps.configService.register("auto-update", {
+    name: "auto-update",
+    default: "ask" as AutoUpdatePreference,
+    description: "Auto-update preference",
+    ...configEnum(["always", "ask", "never"]),
+  });
 
   // Interceptor: reject app:update if config="never" or no update detected
   const interceptor: IntentInterceptor = {
     id: "auto-updater-gate",
     async before(intent: Intent): Promise<Intent | null> {
       if (intent.type !== INTENT_UPDATE_APPLY) return intent;
+      const autoUpdate = deps.configService.get("auto-update") as AutoUpdatePreference;
       if (autoUpdate === "never" || detectedVersion === null) return null;
       return intent;
     },
@@ -75,18 +76,6 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     interceptors: [interceptor],
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => ({
-            definitions: [
-              {
-                name: "auto-update",
-                default: "ask" as AutoUpdatePreference,
-                description: "Auto-update preference",
-                ...configEnum(["always", "ask", "never"]),
-              },
-            ],
-          }),
-        },
         "check-deps": {
           handler: async (): Promise<CheckDepsResult> => {
             // Register detected callback BEFORE checking, to avoid race condition
@@ -117,6 +106,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
             });
 
             detectedVersion = await versionPromise;
+            const autoUpdate = deps.configService.get("auto-update") as AutoUpdatePreference;
 
             return {
               updateNeedsChoice: autoUpdate === "ask" && detectedVersion !== null,
@@ -214,16 +204,6 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               deps.autoUpdater.quitAndInstall();
             }
           },
-        },
-      },
-    },
-    events: {
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { values } = event.payload as ConfigUpdatedPayload;
-          if (values["auto-update"] !== undefined) {
-            autoUpdate = values["auto-update"] as AutoUpdatePreference;
-          }
         },
       },
     },

@@ -1,28 +1,20 @@
 /**
- * LoggingModule - Initializes the logging service and logs startup/config info.
+ * LoggingModule - Initializes the logging service and logs startup info.
  *
  * Hooks:
- * - app:start → "before-ready": logs build and platform info
+ * - app:start → "before-ready": configures logging from ConfigService, logs build info
  * - app:start → "init": initializes logging service, registers IPC log handlers
- *
- * Events:
- * - config:updated: logs all changed values, reconfigures logging when
- *   log.level or log.output values change
  */
 
 import type { IntentModule } from "../intents/infrastructure/module";
-import type { DomainEvent } from "../intents/infrastructure/types";
 import type { LoggingService } from "../../services/logging";
-import type { Logger } from "../../services/logging/types";
+import type { Logger, LogFormat } from "../../services/logging/types";
 import type { BuildInfo } from "../../services/platform/build-info";
 import type { PlatformInfo } from "../../services/platform/platform-info";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
-import type { RegisterConfigResult } from "../operations/app-start";
-import type { LogFormat } from "../../services/logging/types";
+import type { ConfigService } from "../../services/config/config-service";
 import { parseLogLevelSpec, splitLogLevelSpec } from "../../services/logging/electron-log-service";
 import { configCustom, configEnum, configEnumList } from "../../services/config/config-definition";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
-import { EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 
 // =============================================================================
 // Dependency Interface
@@ -35,6 +27,7 @@ export interface LoggingModuleDeps {
   readonly buildInfo: Pick<BuildInfo, "version" | "isDevelopment" | "isPackaged">;
   readonly platformInfo: Pick<PlatformInfo, "platform" | "arch">;
   readonly logger: Logger;
+  readonly configService: ConfigService;
 }
 
 // =============================================================================
@@ -42,46 +35,53 @@ export interface LoggingModuleDeps {
 // =============================================================================
 
 /**
- * Create a LoggingModule that initializes logging in the "init" hook
- * and reconfigures it via config:updated events.
+ * Create a LoggingModule that configures and initializes logging during startup.
  */
 export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
+  // Register config keys
+  deps.configService.register("log.level", {
+    name: "log.level",
+    default: "warn",
+    description: "Level spec: <level> or <level>:<filter>",
+    ...configCustom({
+      parse: parseLogLevelSpec,
+      validate: (v: unknown) => (typeof v === "string" ? parseLogLevelSpec(v) : undefined),
+      validValues: "silly|debug|info|warn|error[:filter]",
+    }),
+    computedDefault: (ctx) => (ctx.isDevelopment ? "debug" : undefined),
+  });
+  deps.configService.register("log.output", {
+    name: "log.output",
+    default: "file",
+    description: "Output destinations (comma-separated)",
+    ...configEnumList(["file", "console"]),
+  });
+  deps.configService.register("log.format", {
+    name: "log.format",
+    default: "text",
+    description: "Log output format",
+    ...configEnum(["text", "json"]),
+  });
+
   return {
     name: "logging",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => ({
-            definitions: [
-              {
-                name: "log.level",
-                default: "warn",
-                description: "Level spec: <level> or <level>:<filter>",
-                ...configCustom({
-                  parse: parseLogLevelSpec,
-                  validate: (v: unknown) =>
-                    typeof v === "string" ? parseLogLevelSpec(v) : undefined,
-                  validValues: "silly|debug|info|warn|error[:filter]",
-                }),
-                computedDefault: (ctx) => (ctx.isDevelopment ? "debug" : undefined),
-              },
-              {
-                name: "log.output",
-                default: "file",
-                description: "Output destinations (comma-separated)",
-                ...configEnumList(["file", "console"]),
-              },
-              {
-                name: "log.format",
-                default: "text",
-                description: "Log output format",
-                ...configEnum(["text", "json"]),
-              },
-            ],
-          }),
-        },
         "before-ready": {
           handler: async (): Promise<void> => {
+            // Configure logging from loaded config
+            const levelSpec = deps.configService.get("log.level") as string;
+            const { level, filter } = splitLogLevelSpec(levelSpec);
+            const output = deps.configService.get("log.output") as string;
+            const logFormat = deps.configService.get("log.format") as LogFormat;
+            deps.loggingService.configure({
+              logLevel: level,
+              logFile: output.includes("file"),
+              logConsole: output.includes("console"),
+              allowedLoggers: filter,
+              logFormat,
+            });
+
             deps.logger.info("App starting", {
               version: deps.buildInfo.version,
               isDev: deps.buildInfo.isDevelopment,
@@ -96,39 +96,6 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
             deps.loggingService.initialize();
             deps.registerLogHandlers();
           },
-        },
-      },
-    },
-    events: {
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { values } = (event as ConfigUpdatedEvent).payload;
-
-          // Log all config changes
-          const context: Record<string, string | number | boolean | null> = {};
-          for (const [key, value] of Object.entries(values)) {
-            context[key] = (value ?? null) as string | number | boolean | null;
-          }
-          deps.logger.info("Config updated", context);
-
-          // Reconfigure logging when any log-related value changes
-          if (
-            values["log.level"] !== undefined ||
-            values["log.output"] !== undefined ||
-            values["log.format"] !== undefined
-          ) {
-            const levelSpec = (values["log.level"] as string | undefined) ?? "warn";
-            const { level, filter } = splitLogLevelSpec(levelSpec);
-            const output = (values["log.output"] as string | undefined) ?? "file";
-            const logFormat = ((values["log.format"] as string | undefined) ?? "text") as LogFormat;
-            deps.loggingService.configure({
-              logLevel: level,
-              logFile: output.includes("file"),
-              logConsole: output.includes("console"),
-              allowedLoggers: filter,
-              logFormat,
-            });
-          }
         },
       },
     },

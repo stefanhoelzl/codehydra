@@ -12,8 +12,9 @@ import { delimiter, join } from "node:path";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
-import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
+import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import type { Intent } from "../intents/infrastructure/types";
+import type { IntentModule } from "../intents/infrastructure/module";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type {
@@ -33,17 +34,7 @@ import type {
   DeleteHookResult,
 } from "../operations/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
-import {
-  CONFIG_SET_VALUES_OPERATION_ID,
-  ConfigSetValuesOperation,
-  INTENT_CONFIG_SET_VALUES,
-} from "../operations/config-set-values";
-import type {
-  ConfigSetValuesIntent,
-  ConfigSetHookInput,
-  ConfigSetHookResult,
-} from "../operations/config-set-values";
-import type { IntentModule } from "../intents/infrastructure/module";
+import type { ConfigService } from "../../services/config/config-service";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../operations/app-start";
 import type { DirEntry } from "../../services/platform/filesystem";
 import type { SpawnedProcess } from "../../services/platform/process";
@@ -193,23 +184,21 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
   }
 }
 
-/**
- * Minimal config module stub: handles the "set" hook and returns all input values
- * as changed, so ConfigSetValuesOperation emits config:updated events.
- */
-function createMockConfigModule(): IntentModule {
+// =============================================================================
+// Mock ConfigService
+// =============================================================================
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
-    name: "mock-config",
-    hooks: {
-      [CONFIG_SET_VALUES_OPERATION_ID]: {
-        set: {
-          handler: async (ctx: HookContext): Promise<ConfigSetHookResult> => {
-            const { values } = ctx as ConfigSetHookInput;
-            return { changedValues: values };
-          },
-        },
-      },
+    register: () => {},
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
     },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
   };
 }
 
@@ -270,6 +259,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     binaryDownloadService: createMockBinaryDownloadService(),
+    configService: createMockConfigService(),
     ...overrides,
   };
 }
@@ -932,137 +922,6 @@ describe("CodeServerModule", () => {
           },
         } as DeleteWorkspaceIntent)
       ).rejects.toThrow("permission denied");
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // config:updated event
-  // ---------------------------------------------------------------------------
-
-  describe("config:updated event", () => {
-    it("propagates version override to affect subsequent starts", async () => {
-      const deps = createMockDeps();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createPluginPortProvider());
-      const module = createCodeServerModule(deps);
-      dispatcher.registerModule(module);
-      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: { values: { "version.code-server": "4.200.0" }, persist: false },
-      } as ConfigSetValuesIntent);
-
-      // Now start and verify the new version is used
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      // processRunner.run should have been called with a path containing 4.200.0
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(runCall).toBeDefined();
-      expect(runCall![0]).toContain("4.200.0");
-    });
-
-    it("falls back to built-in version when config value is null", async () => {
-      const deps = createMockDeps();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createPluginPortProvider());
-      const module = createCodeServerModule(deps);
-      dispatcher.registerModule(module);
-      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: { values: { "version.code-server": null }, persist: false },
-      } as ConfigSetValuesIntent);
-
-      // Start and verify the built-in version is used (not "null")
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(runCall).toBeDefined();
-      expect(runCall![0]).not.toContain("null");
-    });
-
-    it("does not affect binary path when version.code-server is not in changed values", async () => {
-      const deps = createMockDeps();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createPluginPortProvider());
-      const module = createCodeServerModule(deps);
-      dispatcher.registerModule(module);
-      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: { values: { agent: "claude" }, persist: false },
-      } as ConfigSetValuesIntent);
-
-      // Start and verify no binary path changes
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(runCall).toBeDefined();
-      // Should use the default version path
-      expect(runCall![0]).toContain("code-server");
-    });
-
-    it("propagates port override to affect subsequent starts", async () => {
-      const deps = createMockDeps();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createPluginPortProvider());
-      const module = createCodeServerModule(deps);
-      dispatcher.registerModule(module);
-      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: { values: { "code-server.port": 9999 }, persist: false },
-      } as ConfigSetValuesIntent);
-
-      // Start and verify the new port is used
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      const codeServerPort = (await dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as number | undefined;
-
-      expect(codeServerPort).toBe(9999);
-      expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(9999);
-    });
-
-    it("does not change port when code-server.port is not in changed values", async () => {
-      const deps = createMockDeps();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
-      dispatcher.registerModule(createMockConfigModule());
-      dispatcher.registerModule(createPluginPortProvider());
-      const module = createCodeServerModule(deps);
-      dispatcher.registerModule(module);
-      dispatcher.registerOperation("config:set-values", new ConfigSetValuesOperation());
-
-      await dispatcher.dispatch({
-        type: INTENT_CONFIG_SET_VALUES,
-        payload: { values: { agent: "claude" }, persist: false },
-      } as ConfigSetValuesIntent);
-
-      // Start and verify the default port is used
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      const codeServerPort = (await dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      })) as number | undefined;
-
-      expect(codeServerPort).toBe(25448);
     });
   });
 

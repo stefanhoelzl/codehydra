@@ -2,15 +2,18 @@
  * AppStartOperation - Orchestrates application startup.
  *
  * Runs hook points in sequence:
- * 1. "before-ready" - Collect script declarations, read env config (no I/O)
+ * 1. "before-ready" - Collect script declarations, apply pre-ready config (no async I/O)
  * 2. "await-ready" - Wait for Electron ready event
- * 3. "init" - Post-ready initialization (config file, logging, shell, scripts)
+ * 3. "init" - Post-ready initialization (logging, shell, scripts, extensions)
  * 4. "show-ui" - Show starting screen
  * 5. "check-deps" - Check binaries and extensions (collect, isolated contexts)
  * 6. "start" - Start servers, wire services, mount renderer.
  *              Handlers that need ports (mcpPort, codeServerPort) declare
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
+ *
+ * Configuration is loaded before this operation runs (via ConfigService.load()).
+ * configuredAgent is read from ConfigService, not from hook results.
  *
  * After "start", the renderer signals ready via lifecycle.ready IPC,
  * which dispatches app:ready to load initial projects (see app-ready.ts).
@@ -19,24 +22,19 @@
  * Each handler returns a typed result; the operation merges results and
  * derives boolean flags (needsSetup, needsBinaryDownload, etc.).
  *
- * `configuredAgent` is obtained from config module's "init" result,
- * eliminating the separate "check-config" hook point.
- *
  * If checks determine setup is needed, dispatches app:setup as a blocking
  * sub-operation. Setup manages its own UI (shows/hides setup screen).
  *
  * Aborts on error in any hook. Services that are optional must handle
  * their own errors internally (e.g., PluginServer graceful degradation in
  * CodeServerModule).
- *
- * No provider dependencies - hook handlers do the actual work.
  */
 
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/binary-resolution/types";
-import type { ConfigKeyDefinition } from "../../services/config/config-definition";
+import type { ConfigService } from "../../services/config/config-service";
 
 // =============================================================================
 // Extension Types (operation contract types for check-deps and setup hooks)
@@ -95,21 +93,6 @@ export interface CheckDepsResult {
 }
 
 /**
- * Per-handler result for "register-config" hook point.
- * Modules return their config key definitions.
- */
-export interface RegisterConfigResult {
-  readonly definitions?: readonly ConfigKeyDefinition<unknown>[];
-}
-
-/**
- * Input context for "before-ready" — carries config definitions collected from register-config.
- */
-export interface BeforeReadyHookContext extends HookContext {
-  readonly configDefinitions: readonly ConfigKeyDefinition<unknown>[];
-}
-
-/**
  * Per-handler result for "before-ready" hook point.
  * Returns optional script declarations to be copied to bin directory.
  */
@@ -124,11 +107,9 @@ export interface InitHookContext extends HookContext {
 
 /**
  * Per-handler result for "init" hook point.
- * Config module returns configuredAgent; extension module returns extensionRequirements.
- * Other init handlers return `{}`.
+ * Extension module returns extensionRequirements. Other init handlers return `{}`.
  */
 export interface InitResult {
-  readonly configuredAgent?: ConfigAgentType | null;
   readonly extensionRequirements?: readonly ExtensionRequirement[];
 }
 
@@ -161,22 +142,17 @@ interface CheckResult {
 export class AppStartOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
 
+  constructor(private readonly configService: ConfigService) {}
+
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     const hookCtx: HookContext = {
       intent: ctx.intent,
     };
 
-    // --- Hook 0: "register-config" — collect config definitions from all modules ---
-    const { results: regResults, errors: regErrors } =
-      await ctx.hooks.collect<RegisterConfigResult>("register-config", hookCtx);
-    if (regErrors.length > 0) throw regErrors[0]!;
-    const configDefinitions = regResults.flatMap((r) => r.definitions ?? []);
-
-    // --- Hook 1: "before-ready" (pre-ready, no I/O) ---
-    // Env config + script declarations. All independent.
-    const beforeReadyCtx: BeforeReadyHookContext = { ...hookCtx, configDefinitions };
+    // --- Hook 1: "before-ready" (pre-ready) ---
+    // Script declarations, noAsar, data paths, electron flags. All independent.
     const { results: configResults, errors: configErrors } =
-      await ctx.hooks.collect<ConfigureResult>("before-ready", beforeReadyCtx);
+      await ctx.hooks.collect<ConfigureResult>("before-ready", hookCtx);
     if (configErrors.length > 0) throw configErrors[0]!;
     const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
 
@@ -187,7 +163,6 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
 
     // --- Hook 3: "init" (post-ready) ---
     // All independent. Receives requiredScripts from before-ready results.
-    // Config module returns configuredAgent in its init result.
     const initCtx: InitHookContext = { ...hookCtx, requiredScripts };
     const { results: initResults, errors: initErrors } = await ctx.hooks.collect<InitResult>(
       "init",
@@ -195,13 +170,14 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     );
     if (initErrors.length > 0) throw initErrors[0]!;
 
-    // Extract configuredAgent and extensionRequirements from init results
-    let configuredAgent: ConfigAgentType | null = null;
+    // Extract extensionRequirements from init results
     const extensionRequirements: ExtensionRequirement[] = [];
     for (const result of initResults) {
-      if (result.configuredAgent !== undefined) configuredAgent = result.configuredAgent;
       if (result.extensionRequirements) extensionRequirements.push(...result.extensionRequirements);
     }
+
+    // configuredAgent comes from ConfigService (loaded before app:start)
+    const configuredAgent = this.configService.get("agent") as ConfigAgentType;
 
     // Hook 4: "show-ui" -- Show starting screen, capture waitForRetry
     const { results: showUiResults, errors: showUiErrors } =
@@ -278,8 +254,6 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
   /**
    * Run check-deps hook point using collect() (isolated contexts).
    * Merges results and derives boolean flags.
-   * configuredAgent and extensionRequirements are provided by the caller
-   * (from init results).
    */
   private async runChecks(
     ctx: OperationContext<AppStartIntent>,

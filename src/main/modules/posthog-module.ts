@@ -2,13 +2,10 @@
  * PosthogModule - Lifecycle module for PostHog analytics capture and shutdown.
  *
  * Hooks:
- * - app:start → "register-config": registers telemetry config definitions
- * - app:start → "start": generates distinct ID if needed, captures "app_launched" event
+ * - app:start → "start": configures PostHog, generates distinct ID if needed, captures "app_launched"
  * - app:shutdown → "stop": flushes and shuts down PostHog client (best-effort)
  *
  * Events:
- * - config:updated: configures PostHog client when telemetry values arrive,
- *   registers error handlers when telemetry.enabled is true
  * - workspace:created: captures "workspace_created" for new workspaces (not reopened)
  * - app:resumed: captures "app_resume" on system wake from sleep/hibernate
  */
@@ -17,18 +14,14 @@ import { randomUUID } from "node:crypto";
 import { PostHog } from "posthog-node";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { DomainEvent } from "../intents/infrastructure/types";
-import type { RegisterConfigResult } from "../operations/app-start";
-import type { ConfigUpdatedEvent } from "../operations/config-set-values";
-import type { ConfigSetValuesIntent } from "../operations/config-set-values";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
-import { INTENT_CONFIG_SET_VALUES, EVENT_CONFIG_UPDATED } from "../operations/config-set-values";
 import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { EVENT_APP_RESUMED } from "../operations/app-resume";
 import { configBoolean, configString } from "../../services/config/config-definition";
+import type { ConfigService } from "../../services/config/config-service";
 import type { PlatformInfo } from "../../services/platform/platform-info";
 import type { BuildInfo } from "../../services/platform/build-info";
-import type { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { ConfigAgentType } from "../../services/config/config-values";
 import type { Logger } from "../../services/logging";
 
@@ -82,7 +75,7 @@ function createDefaultPostHogClient(apiKey: string, options: { host: string }): 
 interface PosthogModuleDeps {
   readonly platformInfo: PlatformInfo;
   readonly buildInfo: BuildInfo;
-  readonly dispatcher: Dispatcher;
+  readonly configService: ConfigService;
   readonly logger: Logger;
   /** PostHog API key. If undefined/empty, telemetry is disabled. */
   readonly apiKey?: string | undefined;
@@ -96,15 +89,26 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
   const host = deps.host ?? DEFAULT_HOST;
   const clientFactory = deps.postHogClientFactory ?? createDefaultPostHogClient;
 
+  // Register config keys
+  deps.configService.register("telemetry.enabled", {
+    name: "telemetry.enabled",
+    default: true,
+    description: "Enable telemetry (false in dev/unpackaged)",
+    ...configBoolean(),
+    computedDefault: (ctx) => (ctx.isDevelopment || !ctx.isPackaged ? false : undefined),
+  });
+  deps.configService.register("telemetry.distinct-id", {
+    name: "telemetry.distinct-id",
+    default: null,
+    description: "Telemetry user ID (auto-generated)",
+    ...configString({ nullable: true }),
+  });
+
   // PostHog client state
   let client: PostHogClient | null = null;
   let distinctId: string | null = null;
   let enabled = false;
   let configured = false;
-
-  // Config tracking state
-  let configuredAgent: ConfigAgentType | undefined;
-  let telemetryEnabled: boolean | undefined;
   let errorHandlersRegistered = false;
 
   // ---------------------------------------------------------------------------
@@ -231,6 +235,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
   // ---------------------------------------------------------------------------
 
   function eventProperties(): Record<string, unknown> {
+    const configuredAgent = deps.configService.get("agent") as ConfigAgentType;
     return {
       platform: deps.platformInfo.platform,
       arch: deps.platformInfo.arch,
@@ -263,29 +268,31 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
     name: "posthog",
     hooks: {
       [APP_START_OPERATION_ID]: {
-        "register-config": {
-          handler: async (): Promise<RegisterConfigResult> => ({
-            definitions: [
-              {
-                name: "telemetry.enabled",
-                default: true,
-                description: "Enable telemetry (false in dev/unpackaged)",
-                ...configBoolean(),
-                computedDefault: (ctx) =>
-                  ctx.isDevelopment || !ctx.isPackaged ? false : undefined,
-              },
-              {
-                name: "telemetry.distinct-id",
-                default: null,
-                description: "Telemetry user ID (auto-generated)",
-                ...configString({ nullable: true }),
-              },
-            ],
-          }),
-        },
         start: {
           handler: async (): Promise<void> => {
-            // Generate distinctId if needed (after init has loaded stored config)
+            // Read config values
+            const telemetryEnabled = deps.configService.get("telemetry.enabled") as boolean;
+            const storedDistinctId = deps.configService.get("telemetry.distinct-id") as
+              | string
+              | null;
+            const configuredAgent = deps.configService.get("agent") as ConfigAgentType;
+
+            if (storedDistinctId) {
+              distinctId = storedDistinctId;
+            }
+
+            // Configure PostHog
+            configure({
+              enabled: telemetryEnabled,
+              distinctId: distinctId ?? undefined,
+              agent: configuredAgent ?? undefined,
+            });
+
+            if (telemetryEnabled) {
+              registerErrorHandlers();
+            }
+
+            // Generate distinctId if needed
             if (telemetryEnabled && !distinctId) {
               const newId = generateDistinctId();
               if (newId) {
@@ -294,10 +301,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
                   distinctId: newId,
                   agent: configuredAgent ?? undefined,
                 });
-                await deps.dispatcher.dispatch({
-                  type: INTENT_CONFIG_SET_VALUES,
-                  payload: { values: { "telemetry.distinct-id": newId } },
-                } as ConfigSetValuesIntent);
+                await deps.configService.set("telemetry.distinct-id", newId);
               }
             }
 
@@ -331,38 +335,6 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
       [EVENT_APP_RESUMED]: {
         handler: async (): Promise<void> => {
           capture("app_resume", eventProperties());
-        },
-      },
-      [EVENT_CONFIG_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { values } = (event as ConfigUpdatedEvent).payload;
-
-          if (values.agent !== undefined) {
-            configuredAgent = values.agent as ConfigAgentType;
-          }
-
-          if (values["telemetry.enabled"] !== undefined) {
-            telemetryEnabled = values["telemetry.enabled"] as boolean;
-          }
-
-          const rawDistinctId = values["telemetry.distinct-id"];
-          if (typeof rawDistinctId === "string") {
-            distinctId = rawDistinctId;
-          }
-
-          // Configure PostHog client when relevant values arrive
-          if (telemetryEnabled !== undefined) {
-            configure({
-              enabled: telemetryEnabled,
-              distinctId: distinctId ?? undefined,
-              agent: configuredAgent ?? undefined,
-            });
-
-            // Register error handlers when telemetry is enabled
-            if (telemetryEnabled) {
-              registerErrorHandlers();
-            }
-          }
         },
       },
     },
