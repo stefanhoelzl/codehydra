@@ -248,7 +248,7 @@ export class Dispatcher implements IDispatcher {
 
         if (result.errors.length > 0) {
           for (const error of result.errors) {
-            this.logger!.debug("hook error", {
+            this.logger!.warn("hook error", {
               op: operationId,
               hook: hookPointId,
               error: error.message,
