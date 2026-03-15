@@ -17,6 +17,7 @@ import type { WorkspaceSwitchedEvent } from "../operations/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../operations/switch-workspace";
 import { EVENT_UPDATE_AVAILABLE } from "../operations/update-available";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
+import type { WindowManager } from "../managers/window-manager";
 /**
  * Formats the window title based on current workspace.
  *
@@ -46,18 +47,24 @@ export function formatWindowTitle(
   return `${base}${versionSuffix}${updateSuffix}`;
 }
 
+// =============================================================================
+// Dependency Interface
+// =============================================================================
+
+export interface WindowTitleModuleDeps {
+  readonly windowManager: Pick<WindowManager, "setTitle">;
+  readonly titleVersion: string | undefined;
+}
+
+// =============================================================================
+// Factory
+// =============================================================================
+
 /**
  * Create a window title module that sets the initial title on startup and
  * subscribes to workspace switch and update-available events.
- *
- * @param setTitle - Callback to set the window title
- * @param titleVersion - Version suffix (branch in dev, version in packaged), or undefined
- * @returns IntentModule with hooks and event subscriptions
  */
-export function createWindowTitleModule(
-  setTitle: (title: string) => void,
-  titleVersion: string | undefined
-): IntentModule {
+export function createWindowTitleModule(deps: WindowTitleModuleDeps): IntentModule {
   let currentProjectName: string | undefined;
   let currentWorkspaceName: string | undefined;
   let hasUpdate = false;
@@ -66,10 +73,10 @@ export function createWindowTitleModule(
     const title = formatWindowTitle(
       currentProjectName,
       currentWorkspaceName,
-      titleVersion,
+      deps.titleVersion,
       hasUpdate
     );
-    setTitle(title);
+    deps.windowManager.setTitle(title);
   }
 
   return {

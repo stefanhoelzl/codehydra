@@ -329,7 +329,7 @@ function createTestSetup(opts?: {
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge({
       ipcLayer: createBehavioralIpcLayer(),
-      sendToUI,
+      viewManager: { sendToUI },
       logger: SILENT_LOGGER,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
     });
@@ -338,7 +338,7 @@ function createTestSetup(opts?: {
 
   if (opts?.withTitleModule) {
     dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
-    modules.push(createWindowTitleModule(setTitle, titleVersion));
+    modules.push(createWindowTitleModule({ windowManager: { setTitle }, titleVersion }));
   }
 
   for (const m of modules) dispatcher.registerModule(m);

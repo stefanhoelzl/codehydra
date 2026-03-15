@@ -431,10 +431,10 @@ const posixProcessCleanupModule = createPosixProcessCleanupModule({
   processRunner,
   logger: apiLogger,
 });
-const windowTitleModule = createWindowTitleModule(
-  (title: string) => windowManager.setTitle(title),
-  buildInfo.gitBranch ?? buildInfo.version
-);
+const windowTitleModule = createWindowTitleModule({
+  windowManager,
+  titleVersion: buildInfo.gitBranch ?? buildInfo.version,
+});
 const posthogModule = createPosthogModule({
   platformInfo,
   buildInfo,
@@ -536,8 +536,8 @@ const shortcutModule = createShortcutModule({
   viewManager,
   viewLayer,
   windowLayer,
-  getWindowHandle: () => windowManager.getWindowHandle(),
-  dispatch: (intent) => dispatcher.dispatch(intent),
+  windowManager,
+  dispatcher,
   logger: loggingService.createLogger("shortcut"),
 });
 
@@ -583,7 +583,7 @@ dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation()
 // Create IPC event bridge (registers all IPC handlers directly on ipcLayer)
 const ipcEventBridge = createIpcEventBridge({
   ipcLayer,
-  sendToUI: (...args) => viewManager.sendToUI(...args),
+  viewManager,
   logger: apiLogger,
   dispatcher,
 });

@@ -90,7 +90,10 @@ function createTestSetup(titleVersion?: string): TestSetup {
     createMinimalOperation(APP_START_OPERATION_ID, "start")
   );
 
-  const windowTitleModule = createWindowTitleModule(setTitle, titleVersion ?? "main");
+  const windowTitleModule = createWindowTitleModule({
+    windowManager: { setTitle },
+    titleVersion: titleVersion ?? "main",
+  });
 
   dispatcher.registerModule(windowTitleModule);
 
@@ -237,7 +240,10 @@ describe("WindowTitleModule Integration", () => {
       createMinimalOperation(APP_START_OPERATION_ID, "start")
     );
 
-    const windowTitleModule = createWindowTitleModule(setTitle, undefined);
+    const windowTitleModule = createWindowTitleModule({
+      windowManager: { setTitle },
+      titleVersion: undefined,
+    });
     dispatcher.registerModule(windowTitleModule);
 
     await dispatcher.dispatch(startIntent());

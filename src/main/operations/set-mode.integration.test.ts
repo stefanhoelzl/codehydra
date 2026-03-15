@@ -97,7 +97,7 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
   if (opts?.withIpcEventBridge) {
     const ipcEventBridge = createIpcEventBridge({
       ipcLayer: createBehavioralIpcLayer(),
-      sendToUI,
+      viewManager: { sendToUI },
       logger: SILENT_LOGGER,
       dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
     });

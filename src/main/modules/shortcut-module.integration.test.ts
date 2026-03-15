@@ -182,8 +182,8 @@ async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarn
     viewManager: viewManager as unknown as ShortcutModuleDeps["viewManager"],
     viewLayer: viewLayer as unknown as ShortcutModuleDeps["viewLayer"],
     windowLayer,
-    getWindowHandle: () => createWindowHandle(),
-    dispatch: dispatchSpy,
+    windowManager: { getWindowHandle: () => createWindowHandle() },
+    dispatcher: { dispatch: dispatchSpy } as unknown as ShortcutModuleDeps["dispatcher"],
     logger: SILENT_LOGGER,
   });
 
