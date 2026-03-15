@@ -4,7 +4,13 @@ import { viteStaticCopy } from "vite-plugin-static-copy";
 import { resolve } from "path";
 import { codehydraDefaults } from "./vite.defaults";
 
-const appVersion = process.env._CH_VERSION ?? "0.0.0-dev";
+const appVersion =
+  process.env._CH_VERSION ??
+  (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}-dev`;
+  })();
 const isDevBuild = process.env._CH_RELEASE !== "true";
 
 // PostHog configuration - injected at build time from environment variables
