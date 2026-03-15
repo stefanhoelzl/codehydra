@@ -4,7 +4,9 @@
  * Hooks:
  * - delete-workspace → release: Use lsof to find CWD matches, kill with SIGTERM (best-effort)
  *
- * Detection uses `lsof -d cwd +c 0 -Fpnc` for machine-parseable output.
+ * Detection uses `lsof -a -d cwd +c 0 -Fpnc +D <path>` for machine-parseable output
+ * scoped to the workspace directory tree. The -a flag ANDs the -d and +D selections
+ * (lsof defaults to OR).
  * lsof exit code 1 means "no files found" and is not treated as an error.
  */
 
@@ -33,10 +35,10 @@ const KILL_TIMEOUT_MS = 5_000;
  * Parse lsof -Fpnc output into DetectedProcess array.
  * Format: lines starting with p=PID, c=command, n=path.
  * Each process entry starts with a 'p' line.
- * Filters by workspace path prefix and excludes current process PID.
+ * Primary path filtering is handled by lsof's -a +D flags.
+ * The workspacePath check here is defense-in-depth.
  */
 function parseLsofOutput(stdout: string, workspacePath: string): DetectedProcess[] {
-  const ownPid = process.pid;
   const results: DetectedProcess[] = [];
   let currentPid: number | undefined;
   let currentName = "unknown";
@@ -59,7 +61,6 @@ function parseLsofOutput(stdout: string, workspacePath: string): DetectedProcess
         if (
           currentPid !== undefined &&
           !Number.isNaN(currentPid) &&
-          currentPid !== ownPid &&
           (value === workspacePath || value.startsWith(workspacePath + "/"))
         ) {
           results.push({ pid: currentPid, name: currentName, cwd: value });
@@ -80,7 +81,16 @@ export async function detectCwdProcesses(
   workspacePath: string,
   logger: Logger
 ): Promise<DetectedProcess[]> {
-  const proc = processRunner.run("lsof", ["-d", "cwd", "+c", "0", "-Fpnc"]);
+  const proc = processRunner.run("lsof", [
+    "-a",
+    "-d",
+    "cwd",
+    "+c",
+    "0",
+    "-Fpnc",
+    "+D",
+    workspacePath,
+  ]);
   const result: ProcessResult = await proc.wait(DETECT_TIMEOUT_MS);
 
   if (result.running) {

@@ -105,7 +105,7 @@ describe("detectCwdProcesses", () => {
     ]);
   });
 
-  it("filters out processes outside workspace path", async () => {
+  it("filters out processes outside workspace path (defense-in-depth)", async () => {
     const lsofOutput = [
       "p1234",
       "cbash",
@@ -128,8 +128,20 @@ describe("detectCwdProcesses", () => {
     expect(result[0]!.pid).toBe(1234);
   });
 
-  it("returns empty array when no matches", async () => {
+  it("returns empty array when no matches (defense-in-depth)", async () => {
     const lsofOutput = ["p1234", "cbash", "n/other/path"].join("\n");
+
+    const runner = createMockProcessRunner({
+      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
+    });
+
+    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
+
+    expect(result).toEqual([]);
+  });
+
+  it("does not match workspace path as substring prefix (defense-in-depth)", async () => {
+    const lsofOutput = ["p1234", "cbash", "n/workspaces/feature-10"].join("\n");
 
     const runner = createMockProcessRunner({
       onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
@@ -178,39 +190,6 @@ describe("detectCwdProcesses", () => {
     expect(warnings[0]!.message).toBe("Process detection timed out");
   });
 
-  it("filters out own process PID", async () => {
-    const ownPid = process.pid;
-    const lsofOutput = [
-      `p${ownPid}`,
-      "cbash",
-      `n/workspaces/feature-1`,
-      "p9999",
-      "cnode",
-      "n/workspaces/feature-1",
-    ].join("\n");
-
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
-    });
-
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
-
-    expect(result).toHaveLength(1);
-    expect(result[0]!.pid).toBe(9999);
-  });
-
-  it("does not match workspace path as substring prefix", async () => {
-    const lsofOutput = ["p1234", "cbash", "n/workspaces/feature-10"].join("\n");
-
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ stdout: lsofOutput, exitCode: 0 }),
-    });
-
-    const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
-
-    expect(result).toEqual([]);
-  });
-
   it("invokes lsof with correct arguments", async () => {
     const runner = createMockProcessRunner({
       onSpawn: () => ({ stdout: "", exitCode: 0 }),
@@ -218,7 +197,12 @@ describe("detectCwdProcesses", () => {
 
     await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
-    expect(runner).toHaveSpawned([{ command: "lsof", args: ["-d", "cwd", "+c", "0", "-Fpnc"] }]);
+    expect(runner).toHaveSpawned([
+      {
+        command: "lsof",
+        args: ["-a", "-d", "cwd", "+c", "0", "-Fpnc", "+D", "/workspaces/feature-1"],
+      },
+    ]);
   });
 });
 
