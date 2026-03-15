@@ -6,7 +6,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
@@ -98,8 +97,7 @@ function createDeps(configValues?: Record<string, unknown>) {
 describe("LoggingModule Integration", () => {
   it("logs build and platform info during before-ready hook", async () => {
     const deps = createDeps();
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -120,8 +118,7 @@ describe("LoggingModule Integration", () => {
 
   it("initializes logging service and registers log handlers during init hook", async () => {
     const deps = createDeps();
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -137,8 +134,7 @@ describe("LoggingModule Integration", () => {
 
   it("logs startup info before initializing logging service", async () => {
     const deps = createDeps();
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -159,8 +155,7 @@ describe("LoggingModule Integration", () => {
       "log.output": "file,console",
       "log.format": "json",
     });
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -185,8 +180,7 @@ describe("LoggingModule Integration", () => {
       "log.output": "file",
       "log.format": "text",
     });
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));

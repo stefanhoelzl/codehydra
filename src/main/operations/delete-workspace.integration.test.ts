@@ -14,8 +14,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { Intent, DomainEvent } from "../intents/infrastructure/types";
@@ -303,7 +303,7 @@ function createTestWorkspaceFileService() {
 }
 
 // =============================================================================
-// Test Harness: Wires all modules with real Dispatcher + HookRegistry
+// Test Harness: Wires all modules with real Dispatcher
 // =============================================================================
 
 interface TestHarness {
@@ -337,8 +337,7 @@ function createTestHarness(options?: {
   isDirty?: boolean;
   unmergedCommits?: number;
 }): TestHarness {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const progressCaptures: DeletionProgress[] = [];
 

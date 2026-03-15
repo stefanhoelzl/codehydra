@@ -7,13 +7,12 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import type { InitResult } from "../operations/app-start";
 import { createExtensionModule, type ExtensionModuleDeps } from "./extension-module";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import type { FileSystemLayer } from "../../services/platform/filesystem";
 
@@ -42,8 +41,7 @@ function createMockDeps(overrides?: Partial<ExtensionModuleDeps>): ExtensionModu
 }
 
 function createTestSetup(deps: ExtensionModuleDeps) {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const module = createExtensionModule(deps);
   dispatcher.registerModule(module);
 

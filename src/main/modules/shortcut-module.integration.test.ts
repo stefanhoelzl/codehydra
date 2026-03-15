@@ -11,7 +11,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import {
@@ -24,7 +23,7 @@ import type { AppShutdownIntent } from "../operations/app-shutdown";
 import { INTENT_SHORTCUT_KEY, ShortcutKeyOperation } from "../operations/shortcut-key";
 import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../operations/open-workspace";
 import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../operations/set-mode";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";
 import type { ViewHandle, WindowHandle } from "../../services/shell/types";
 import type { KeyboardInput, Unsubscribe } from "../../services/shell/view";
@@ -152,8 +151,7 @@ interface TestHarness {
 }
 
 async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarness> {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const uiHandle = createViewHandle("ui-view");
   const { viewLayer, callbacks } = createMockViewLayer();
   const viewManager = createMockViewManager(uiHandle, initialMode);

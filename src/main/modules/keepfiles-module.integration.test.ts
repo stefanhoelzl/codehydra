@@ -7,14 +7,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Intent } from "../intents/infrastructure/types";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
 import { OPEN_WORKSPACE_OPERATION_ID, type SetupHookResult } from "../operations/open-workspace";
 import { createKeepFilesModule } from "./keepfiles-module";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
 import { Path } from "../../services/platform/path";
 import type { IKeepFilesService } from "../../services/keepfiles/types";
@@ -46,8 +45,7 @@ interface TestSetup {
 function createTestSetup(logger = SILENT_LOGGER): TestSetup {
   const keepFilesService = createMockKeepFilesService();
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(
     "workspace:open",

@@ -69,7 +69,6 @@ import { WindowManager } from "./managers/window-manager";
 import { ViewManager } from "./managers/view-manager";
 import { BadgeManager } from "./managers/badge-manager";
 import { registerLogHandlers } from "./ipc";
-import { HookRegistry } from "./intents/infrastructure/hook-registry";
 import { Dispatcher } from "./intents/infrastructure/dispatcher";
 import { createIdempotencyModule } from "./intents/infrastructure/idempotency-module";
 import { createViewModule } from "./modules/view-module";
@@ -268,13 +267,15 @@ const opencodeBinaryManager = new AgentBinaryManager(
   loggingService.createLogger("agent-binary")
 );
 
-const hookRegistry = new HookRegistry({
-  platform: platformInfo.platform,
-  posix: platformInfo.posix,
-  arch: platformInfo.arch,
-  development: buildInfo.isDevelopment,
+const dispatcher = new Dispatcher({
+  logger: loggingService.createLogger("dispatcher"),
+  initialCapabilities: {
+    platform: platformInfo.platform,
+    posix: platformInfo.posix,
+    arch: platformInfo.arch,
+    development: buildInfo.isDevelopment,
+  },
 });
-const dispatcher = new Dispatcher(hookRegistry, loggingService.createLogger("dispatcher"));
 
 const gitClient = new SimpleGitClient(loggingService.createLogger("git"));
 const gitWorktreeProvider = new GitWorktreeProvider(

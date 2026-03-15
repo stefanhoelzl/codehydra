@@ -7,8 +7,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { SILENT_LOGGER } from "../../../services/logging";
-import { HookRegistry } from "../../intents/infrastructure/hook-registry";
+import { SILENT_LOGGER, createMockLogger } from "../../../services/logging";
 import { Dispatcher } from "../../intents/infrastructure/dispatcher";
 
 import type {
@@ -361,8 +360,7 @@ function createTestSetup(options?: {
   }
   const fs = createFileSystemMock({ entries: fsEntries });
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const openProjectOp = new TrackingOpenProjectOperation();
   const openWorkspaceOp = new TrackingOpenWorkspaceOperation();

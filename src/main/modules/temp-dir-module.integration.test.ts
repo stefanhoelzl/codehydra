@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
@@ -37,8 +37,7 @@ interface TestSetup {
 }
 
 function createTestSetup(): TestSetup {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const fileSystem = createMockFileSystem();
   const pathProvider = createMockPathProvider();

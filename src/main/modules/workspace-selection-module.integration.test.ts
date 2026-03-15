@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
@@ -86,8 +86,7 @@ interface TestSetup {
 }
 
 function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());

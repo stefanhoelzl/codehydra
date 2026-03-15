@@ -7,8 +7,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { Path } from "../../services/platform/path";
-import { SILENT_LOGGER } from "../../services/logging";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
@@ -88,8 +87,7 @@ describe("ElectronLifecycleModule Integration", () => {
   it("calls whenReady during init hook and provides app-ready capability", async () => {
     const mockApp = createMockApp();
 
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(
       INTENT_APP_START,
@@ -115,8 +113,7 @@ describe("ElectronLifecycleModule Integration", () => {
     const mockApp = createMockApp();
     mockApp.whenReady = vi.fn().mockRejectedValue(new Error("app failed to initialize"));
 
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(
       INTENT_APP_START,
@@ -141,8 +138,7 @@ describe("ElectronLifecycleModule Integration", () => {
   it("calls app.quit() when dispatching app:shutdown", async () => {
     const mockApp = createMockApp();
 
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
@@ -167,8 +163,7 @@ describe("ElectronLifecycleModule Integration", () => {
   describe("app-start/before-ready", () => {
     it("sets process.noAsar when not packaged", async () => {
       const mockApp = createMockApp();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -196,8 +191,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("redirects electron data paths when pathProvider is available", async () => {
       const mockApp = createMockApp();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -239,8 +233,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("does not set process.noAsar when packaged", async () => {
       const mockApp = createMockApp();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -269,8 +262,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("skips when buildInfo and pathProvider are not provided", async () => {
       const mockApp = createMockApp();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -293,8 +285,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("applies electron flags from configService", async () => {
       const mockApp = createMockApp();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -319,8 +310,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("does not apply flags when electron.flags is null", async () => {
       const mockApp = createMockApp();
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -355,8 +345,7 @@ describe("ElectronLifecycleModule Integration", () => {
       };
       const mockDispatcher = { dispatch: vi.fn().mockResolvedValue(undefined) };
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(
         INTENT_APP_START,
@@ -387,8 +376,7 @@ describe("ElectronLifecycleModule Integration", () => {
     it("does not crash when powerMonitor is null", async () => {
       const mockApp = createMockApp();
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(
         INTENT_APP_START,
@@ -417,8 +405,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const mockPowerMonitor = { on: vi.fn() };
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       dispatcher.registerOperation(
         INTENT_APP_START,

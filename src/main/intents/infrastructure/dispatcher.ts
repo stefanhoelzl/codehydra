@@ -1,14 +1,15 @@
 /**
  * Dispatcher — single entry point for the intent-operation pipeline.
  *
- * Orchestrates: interceptor pipeline → operation resolution → hook injection → execute → emit events.
- * Events are routed through HookRegistry (same as hooks) for unified capability-based gating.
+ * Orchestrates: interceptor pipeline → operation resolution → hook execution → emit events.
+ * Stores hook handlers internally and runs them with capability-based ordering.
  *
- * When a Logger is provided, the dispatcher logs:
+ * Logs:
  * - Intent dispatch start (info)
  * - Interceptor blocks (debug)
- * - Hook point execution with timing, module names, results, errors (debug)
- * - Hook errors (warn)
+ * - Hook point execution with timing, module names in execution order, results, errors (debug)
+ * - Hook modules skipped due to unsatisfied capabilities (debug)
+ * - Hook errors (debug)
  * - Intent completion with timing (info)
  * - Intent failure (error)
  */
@@ -22,11 +23,25 @@ import type {
   ResolvedHooks,
   HookContext,
   HookHandler,
+  HookResult,
 } from "./operation";
-import type { HookResult } from "./operation";
-import type { IHookRegistry } from "./hook-registry";
+import { ANY_VALUE } from "./operation";
 import type { IntentModule } from "./module";
 import type { Logger } from "../../../services/logging/types";
+
+// =============================================================================
+// Internal types (not exposed to operations)
+// =============================================================================
+
+interface SkippedHandler {
+  readonly name: string;
+  readonly unsatisfied: readonly string[];
+}
+
+interface CollectResult<T = unknown> extends HookResult<T> {
+  readonly ran: readonly string[];
+  readonly skipped: readonly SkippedHandler[];
+}
 
 // =============================================================================
 // IntentHandle
@@ -125,14 +140,17 @@ export class Dispatcher implements IDispatcher {
   private readonly operations = new Map<string, Operation<Intent, unknown>>();
   private readonly interceptors: IntentInterceptor[] = [];
   private readonly causationContext = new AsyncLocalStorage<readonly string[]>();
+  private readonly handlers = new Map<string, Map<string, HookHandler[]>>();
+  private readonly initialCapabilities: Readonly<Record<string, unknown>>;
+  private readonly logger: Logger;
 
-  /** operationId → hookPointId → module names[] */
-  private readonly hookModuleNames = new Map<string, Map<string, string[]>>();
-
-  constructor(
-    private readonly hookRegistry: IHookRegistry,
-    private readonly logger?: Logger
-  ) {}
+  constructor(options: {
+    logger: Logger;
+    initialCapabilities?: Readonly<Record<string, unknown>>;
+  }) {
+    this.logger = options.logger;
+    this.initialCapabilities = Object.freeze({ ...options.initialCapabilities });
+  }
 
   /**
    * Register an operation for a specific intent type.
@@ -146,7 +164,7 @@ export class Dispatcher implements IDispatcher {
       throw new Error(`Operation already registered for intent type: ${intentType}`);
     }
     this.operations.set(intentType, operation as unknown as Operation<Intent, unknown>);
-    this.logger?.debug("register operation", { intent: intentType });
+    this.logger.debug("register operation", { intent: intentType });
   }
 
   addInterceptor(interceptor: IntentInterceptor): void {
@@ -155,16 +173,19 @@ export class Dispatcher implements IDispatcher {
   }
 
   registerModule(module: IntentModule): void {
-    this.logger?.debug("register module", { module: module.name });
+    this.logger.debug("register module", { module: module.name });
     if (module.hooks) {
       for (const [operationId, hookPoints] of Object.entries(module.hooks)) {
         for (const [hookPointId, handler] of Object.entries(hookPoints)) {
-          const mergedHandler = module.requires
-            ? { ...handler, requires: { ...module.requires, ...handler.requires } }
-            : handler;
-          this.hookRegistry.register(operationId, hookPointId, mergedHandler);
-          this.trackHookModule(operationId, hookPointId, module.name);
-          this.logger?.silly("  hook", { module: module.name, op: operationId, hook: hookPointId });
+          const mergedHandler: HookHandler = {
+            name: module.name,
+            ...handler,
+            ...(module.requires && {
+              requires: { ...module.requires, ...handler.requires },
+            }),
+          };
+          this.registerHandler(operationId, hookPointId, mergedHandler);
+          this.logger.silly("  hook", { module: module.name, op: operationId, hook: hookPointId });
         }
       }
     }
@@ -175,27 +196,27 @@ export class Dispatcher implements IDispatcher {
             ? { ...module.requires, ...eventHandler.requires }
             : undefined;
         const hookHandler: HookHandler = {
+          name: module.name,
           handler: async (ctx: HookContext): Promise<void> => {
             await eventHandler.handler(ctx.intent as unknown as DomainEvent);
           },
           ...(mergedRequires && { requires: mergedRequires }),
         };
-        this.hookRegistry.register(`event:${eventType}`, "handle", hookHandler);
-        this.trackHookModule(`event:${eventType}`, "handle", module.name);
-        this.logger?.silly("  event", { module: module.name, event: eventType });
+        this.registerHandler(`event:${eventType}`, "handle", hookHandler);
+        this.logger.silly("  event", { module: module.name, event: eventType });
       }
     }
     if (module.interceptors) {
       for (const interceptor of module.interceptors) {
         this.addInterceptor(interceptor);
-        this.logger?.silly("  interceptor", { module: module.name, interceptor: interceptor.id });
+        this.logger.silly("  interceptor", { module: module.name, interceptor: interceptor.id });
       }
     }
   }
 
   subscribe(eventType: string, handler: (event: DomainEvent) => void): () => void {
     let active = true;
-    this.hookRegistry.register(`event:${eventType}`, "handle", {
+    this.registerHandler(`event:${eventType}`, "handle", {
       handler: async (ctx: HookContext): Promise<void> => {
         if (active) handler(ctx.intent as unknown as DomainEvent);
       },
@@ -215,40 +236,135 @@ export class Dispatcher implements IDispatcher {
     return handle;
   }
 
-  private trackHookModule(operationId: string, hookPointId: string, moduleName: string): void {
-    let opMap = this.hookModuleNames.get(operationId);
+  // ===========================================================================
+  // Hook storage
+  // ===========================================================================
+
+  private registerHandler(operationId: string, hookPointId: string, handler: HookHandler): void {
+    let opMap = this.handlers.get(operationId);
     if (!opMap) {
-      opMap = new Map<string, string[]>();
-      this.hookModuleNames.set(operationId, opMap);
+      opMap = new Map<string, HookHandler[]>();
+      this.handlers.set(operationId, opMap);
     }
-    let names = opMap.get(hookPointId);
-    if (!names) {
-      names = [];
-      opMap.set(hookPointId, names);
+    let hookList = opMap.get(hookPointId);
+    if (!hookList) {
+      hookList = [];
+      opMap.set(hookPointId, hookList);
     }
-    names.push(moduleName);
+    hookList.push(handler);
   }
 
-  private createLoggedHooks(hooks: ResolvedHooks, operationId: string): ResolvedHooks {
+  // ===========================================================================
+  // Hook collection (capability-based topological sort)
+  // ===========================================================================
+
+  private async collectHookResults<T>(
+    hookHandlers: HookHandler[],
+    inputCtx: HookContext,
+    initialCaps: Readonly<Record<string, unknown>>
+  ): Promise<CollectResult<T>> {
+    const capabilities: Record<string, unknown> = {
+      ...initialCaps,
+      ...((inputCtx.capabilities as Record<string, unknown> | undefined) ?? {}),
+    };
+    let pending = [...hookHandlers];
+    const results: T[] = [];
+    const errors: Error[] = [];
+    const ran: string[] = [];
+
+    while (pending.length > 0) {
+      let progressMade = false;
+      const nextPending: HookHandler[] = [];
+
+      for (const entry of pending) {
+        const reqs = entry.requires ?? {};
+        if (requirementsSatisfied(reqs, capabilities)) {
+          const frozenCtx = Object.freeze({
+            ...inputCtx,
+            capabilities: Object.freeze({ ...capabilities }),
+          });
+          try {
+            const result = await entry.handler(frozenCtx);
+            if (result !== undefined && result !== null) {
+              results.push(result as T);
+            }
+            if (entry.provides) {
+              Object.assign(capabilities, entry.provides());
+            }
+          } catch (err) {
+            errors.push(err instanceof Error ? err : new Error(String(err)));
+          }
+          if (entry.name) ran.push(entry.name);
+          progressMade = true;
+        } else {
+          nextPending.push(entry);
+        }
+      }
+
+      pending = nextPending;
+      if (!progressMade) break;
+    }
+
+    const skipped: SkippedHandler[] = [];
+    for (const entry of pending) {
+      if (entry.name) {
+        skipped.push({
+          name: entry.name,
+          unsatisfied: unsatisfiedKeys(entry.requires ?? {}, capabilities),
+        });
+      }
+    }
+
+    return {
+      results,
+      errors,
+      capabilities: Object.freeze({ ...capabilities }),
+      ran,
+      skipped,
+    };
+  }
+
+  // ===========================================================================
+  // Hook resolution
+  // ===========================================================================
+
+  private resolveHooks(operationId: string): ResolvedHooks {
+    const opMap = this.handlers.get(operationId);
+    const initCaps = this.initialCapabilities;
+    const logger = this.logger;
     return {
       collect: async <T>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>> => {
-        const modules = this.hookModuleNames.get(operationId)?.get(hookPointId) ?? [];
+        const hookHandlers = opMap?.get(hookPointId);
+        if (!hookHandlers) {
+          return { results: [], errors: [], capabilities: initCaps };
+        }
         const start = performance.now();
-        const result = await hooks.collect<T>(hookPointId, ctx);
+        const { ran, skipped, ...hookResult } =
+          await this.collectHookResults<T>(hookHandlers, ctx, initCaps);
         const duration = Math.round(performance.now() - start);
 
-        this.logger!.debug("hook", {
+        logger.debug("hook", {
           op: operationId,
           hook: hookPointId,
-          modules: modules.join(","),
-          results: result.results.length,
-          errors: result.errors.length,
+          modules: ran.join(","),
+          results: hookResult.results.length,
+          errors: hookResult.errors.length,
           ms: duration,
         });
 
-        if (result.errors.length > 0) {
-          for (const error of result.errors) {
-            this.logger!.warn("hook error", {
+        if (skipped.length > 0) {
+          logger.debug("hook skipped", {
+            op: operationId,
+            hook: hookPointId,
+            modules: skipped
+              .map((s) => `${s.name}(${s.unsatisfied.join(",")})`)
+              .join(","),
+          });
+        }
+
+        if (hookResult.errors.length > 0) {
+          for (const error of hookResult.errors) {
+            logger.debug("hook error", {
               op: operationId,
               hook: hookPointId,
               error: error.message,
@@ -256,16 +372,18 @@ export class Dispatcher implements IDispatcher {
           }
         }
 
-        return result;
+        return hookResult;
       },
     };
   }
 
+  // ===========================================================================
+  // Pipeline
+  // ===========================================================================
+
   private async emitEvent(event: DomainEvent): Promise<void> {
     const eventOpId = `event:${event.type}`;
-    const resolved = this.logger
-      ? this.createLoggedHooks(this.hookRegistry.resolve(eventOpId), eventOpId)
-      : this.hookRegistry.resolve(eventOpId);
+    const resolved = this.resolveHooks(eventOpId);
     await resolved.collect("handle", { intent: event as unknown as Intent });
   }
 
@@ -277,7 +395,7 @@ export class Dispatcher implements IDispatcher {
     const pipelineStart = performance.now();
 
     try {
-      this.logger?.info("dispatch", {
+      this.logger.info("dispatch", {
         intent: intent.type,
         causation: causation?.join(" > ") ?? "",
       });
@@ -287,7 +405,7 @@ export class Dispatcher implements IDispatcher {
       for (const interceptor of this.interceptors) {
         current = await interceptor.before(current);
         if (current === null) {
-          this.logger?.debug("interceptor blocked", {
+          this.logger.debug("interceptor blocked", {
             intent: intent.type,
             interceptor: interceptor.id,
           });
@@ -317,17 +435,14 @@ export class Dispatcher implements IDispatcher {
       };
 
       // Resolve hooks for this operation
-      const hooks = this.hookRegistry.resolve(operation.id);
-      const loggedHooks: ResolvedHooks = this.logger
-        ? this.createLoggedHooks(hooks, operation.id)
-        : hooks;
+      const hooks = this.resolveHooks(operation.id);
 
       // Build operation context
       const ctx: OperationContext<Intent> = {
         intent: current,
         dispatch: nestedDispatch,
         emit: (event: DomainEvent) => this.emitEvent(event),
-        hooks: loggedHooks,
+        hooks,
         causation: causationChain,
       };
 
@@ -336,11 +451,11 @@ export class Dispatcher implements IDispatcher {
       const result = await this.causationContext.run(causationChain, () => operation.execute(ctx));
 
       const duration = Math.round(performance.now() - pipelineStart);
-      this.logger?.info("completed", { intent: current.type, ms: duration });
+      this.logger.info("completed", { intent: current.type, ms: duration });
 
       handle.resolve(result as IntentResult<I>);
     } catch (e) {
-      this.logger?.error("failed", {
+      this.logger.error("failed", {
         intent: intent.type,
         error: e instanceof Error ? e.message : String(e),
       });
@@ -350,4 +465,42 @@ export class Dispatcher implements IDispatcher {
       handle.reject(e);
     }
   }
+}
+
+// =============================================================================
+// Capability helpers
+// =============================================================================
+
+function requirementsSatisfied(
+  requires: Readonly<Record<string, unknown>>,
+  capabilities: Record<string, unknown>
+): boolean {
+  for (const [key, value] of Object.entries(requires)) {
+    if (value === undefined) {
+      if (key in capabilities) return false;
+    } else if (value === ANY_VALUE) {
+      if (!(key in capabilities)) return false;
+    } else {
+      if (!(key in capabilities)) return false;
+      if (capabilities[key] !== value) return false;
+    }
+  }
+  return true;
+}
+
+function unsatisfiedKeys(
+  requires: Readonly<Record<string, unknown>>,
+  capabilities: Record<string, unknown>
+): string[] {
+  const keys: string[] = [];
+  for (const [key, value] of Object.entries(requires)) {
+    if (value === undefined) {
+      if (key in capabilities) keys.push(key);
+    } else if (value === ANY_VALUE) {
+      if (!(key in capabilities)) keys.push(key);
+    } else {
+      if (!(key in capabilities) || capabilities[key] !== value) keys.push(key);
+    }
+  }
+  return keys;
 }

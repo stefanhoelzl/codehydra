@@ -19,10 +19,6 @@ export type {
 } from "./operation";
 export { ANY_VALUE } from "./operation";
 
-// HookRegistry
-export type { IHookRegistry } from "./hook-registry";
-export { HookRegistry } from "./hook-registry";
-
 // Dispatcher
 export type { IDispatcher, IntentInterceptor } from "./dispatcher";
 export { Dispatcher, IntentHandle } from "./dispatcher";

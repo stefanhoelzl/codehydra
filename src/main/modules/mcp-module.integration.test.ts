@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../operations/app-start";
 import type { AppStartIntent } from "../operations/app-start";
@@ -47,13 +47,11 @@ function createMockMcpServerManager(port = 9999): MockMcpServerManager {
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  hookRegistry: HookRegistry;
   mcpServerManager: MockMcpServerManager;
 }
 
 function createTestSetup(): TestSetup {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const mcpServerManager = createMockMcpServerManager();
 
@@ -72,7 +70,6 @@ function createTestSetup(): TestSetup {
 
   return {
     dispatcher,
-    hookRegistry,
     mcpServerManager,
   };
 }
@@ -106,8 +103,7 @@ describe("McpModule Integration", () => {
           },
         },
       };
-      const hookRegistry = new HookRegistry();
-      const shutdownDispatcher = new Dispatcher(hookRegistry);
+      const shutdownDispatcher = new Dispatcher({ logger: createMockLogger() });
       shutdownDispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
       shutdownDispatcher.registerOperation(
         INTENT_APP_START,

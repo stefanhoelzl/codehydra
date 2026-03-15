@@ -28,8 +28,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
 import type {
@@ -229,8 +229,7 @@ function createTestSetup(
     skipDefaultChecks?: boolean;
   }
 ): { dispatcher: Dispatcher } {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockConfigService()));
 
@@ -444,8 +443,7 @@ describe("AppStart Operation", () => {
         configuredAgent?: ConfigAgentType | null;
       }
     ): { dispatcher: Dispatcher } {
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
       const agent = options?.configuredAgent !== undefined ? options.configuredAgent : "opencode";
       dispatcher.registerOperation(

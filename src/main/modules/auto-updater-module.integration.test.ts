@@ -9,8 +9,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
@@ -266,8 +266,7 @@ function createTestSetup(overrides?: {
     ...overrides?.configValues,
   });
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const autoUpdaterModule = createAutoUpdaterModule({
     autoUpdater: autoUpdater.mock,

@@ -9,7 +9,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { delimiter, join } from "node:path";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/infrastructure/operation";
@@ -39,7 +38,7 @@ import type { ExtensionRequirement, ExtensionInstallEntry } from "../operations/
 import type { DirEntry } from "../../services/platform/filesystem";
 import type { SpawnedProcess } from "../../services/platform/process";
 import type { BinaryDownloadService } from "../../services/binary-download";
-import { SILENT_LOGGER } from "../../services/logging";
+import { SILENT_LOGGER, createMockLogger } from "../../services/logging";
 import { Path } from "../../services/platform/path";
 import { SetupError } from "../../services/errors";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
@@ -289,8 +288,7 @@ function createPluginPortProvider(port: number | null = null): IntentModule {
 
 function createTestSetup(mockDeps?: CodeServerModuleDeps, pluginPort: number | null = null) {
   const deps = mockDeps ?? createMockDeps();
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   // Register pluginPort provider before code-server module so the capability is available
   dispatcher.registerModule(createPluginPortProvider(pluginPort));
@@ -298,7 +296,7 @@ function createTestSetup(mockDeps?: CodeServerModuleDeps, pluginPort: number | n
   const module = createCodeServerModule(deps);
   dispatcher.registerModule(module);
 
-  return { deps, dispatcher, hookRegistry };
+  return { deps, dispatcher };
 }
 
 // =============================================================================
@@ -756,8 +754,7 @@ describe("CodeServerModule", () => {
       const deps = createMockDeps();
 
       // Create single setup with both operations
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       dispatcher.registerModule(createPluginPortProvider());
       const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
@@ -803,8 +800,7 @@ describe("CodeServerModule", () => {
         },
       });
 
-      const hookRegistry = new HookRegistry();
-      const dispatcher = new Dispatcher(hookRegistry);
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
       dispatcher.registerModule(createPluginPortProvider());
       const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);

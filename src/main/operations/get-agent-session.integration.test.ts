@@ -10,9 +10,9 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import {
   GetAgentSessionOperation,
@@ -60,8 +60,7 @@ interface TestSetup {
 function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup {
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());

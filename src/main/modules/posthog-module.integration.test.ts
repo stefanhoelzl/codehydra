@@ -11,7 +11,6 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
 import { createMinimalOperation } from "../intents/infrastructure/operation.test-utils";
@@ -34,7 +33,10 @@ import { INTENT_APP_RESUME, type AppResumeIntent } from "../operations/app-resum
 import { AppResumeOperation } from "../operations/app-resume";
 import { createPosthogModule } from "./posthog-module";
 import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
-import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
+import {
+  createBehavioralLogger,
+  createMockLogger,
+} from "../../services/logging/logging.test-utils";
 import {
   createMockPostHogClientFactory,
   type MockPostHogClient,
@@ -114,8 +116,7 @@ function createTestSetup(overrides?: {
     ...overrides?.configValues,
   });
 
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const posthogModule = createPosthogModule({
     platformInfo,

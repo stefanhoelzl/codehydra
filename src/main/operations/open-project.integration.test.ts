@@ -20,8 +20,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
+import { createMockLogger } from "../../services/logging/logging.test-utils";
 
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
@@ -173,7 +173,6 @@ interface TestProjectState {
 
 interface TestHarness {
   dispatcher: Dispatcher;
-  hookRegistry: HookRegistry;
   viewManager: TestViewManager;
   activeWorkspace: { path: string | null };
   createdViews: Array<{ path: string; url: string }>;
@@ -206,8 +205,7 @@ function createTestHarness(options?: {
   existingConfig?: { path: string; remoteUrl?: string };
   workspaceCreateThrowsForPath?: string;
 }): TestHarness {
-  const hookRegistry = new HookRegistry();
-  const dispatcher = new Dispatcher(hookRegistry);
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const { viewManager, activeWorkspace, createdViews, preloadedPaths } = createTestViewManager();
 
   const discoverResult: TestHarness["discoverResult"] = options?.discoverResult ?? [
@@ -689,7 +687,6 @@ function createTestHarness(options?: {
 
   return {
     dispatcher,
-    hookRegistry,
     viewManager,
     activeWorkspace,
     createdViews,
@@ -797,8 +794,7 @@ describe("OpenProjectOperation", () => {
 
   it("test 3b: alreadyOpen skips workspace:open and event emission", async () => {
     // Create harness where the resolve module signals alreadyOpen
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
     const { viewManager, createdViews, preloadedPaths } = createTestViewManager();
 
     const projectState: TestProjectState = {
@@ -1007,8 +1003,7 @@ describe("OpenProjectOperation", () => {
   });
 
   it("test 10: returns null when select-folder hook returns null (canceled)", async () => {
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
 
@@ -1106,8 +1101,7 @@ describe("OpenProjectOperation", () => {
 
   it("emits project:open-failed with already-open reason when project is already open", async () => {
     // Create harness where the resolve module signals alreadyOpen
-    const hookRegistry = new HookRegistry();
-    const dispatcher = new Dispatcher(hookRegistry);
+    const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
     dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
     dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
