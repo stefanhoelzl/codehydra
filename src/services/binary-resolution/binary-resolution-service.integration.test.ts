@@ -3,17 +3,20 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { BinaryResolutionService } from "./binary-resolution-service";
-import { createMockPathProvider } from "../platform/path-provider.test-utils";
+import { createMockPathProvider } from "../../boundaries/platform/env/path-provider.test-utils";
 import {
   createFileSystemMock,
   file,
   directory,
   type MockFileSystemLayer,
-} from "../platform/filesystem.state-mock";
-import { createMockProcessRunner, type MockProcessRunner } from "../platform/process.state-mock";
-import { createMockLogger } from "../logging/logging.test-utils";
-import type { PathProvider } from "../platform/path-provider";
-import type { Logger } from "../logging";
+} from "../../boundaries/platform/filesystem/filesystem.state-mock";
+import {
+  createMockProcessRunner,
+  type MockProcessRunner,
+} from "../../boundaries/platform/process/process.state-mock";
+import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
+import type { PathProvider } from "../../boundaries/platform/env/path-provider";
+import type { Logger } from "../../boundaries/platform/logging";
 import type { BinaryType } from "./types";
 
 const TEST_EXECUTABLE_PATHS: Record<BinaryType, string> = {

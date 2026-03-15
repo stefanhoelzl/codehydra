@@ -1,0 +1,280 @@
+// @vitest-environment node
+/**
+ * Boundary tests for Windows file lock functions.
+ *
+ * These tests verify actual interaction with Windows Restart Manager API,
+ * NtQuerySystemInformation for file enumeration, and taskkill.
+ * They run only on Windows (skipped on other platforms).
+ *
+ * Test strategy:
+ * 1. Create a temp directory
+ * 2. Spawn a helper process that locks a file in that directory
+ * 3. Verify detection finds the blocking process with file paths
+ * 4. Verify killBlockingProcesses terminates the blocking process
+ */
+
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { runDetectAction, killBlockingProcesses } from "./windows-file-lock-module";
+import {
+  ExecaProcessRunner,
+  type ProcessRunner,
+  type SpawnedProcess,
+} from "../boundaries/platform/process/process";
+import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
+import { Path } from "../utils/path/path";
+import { delay } from "@shared/test-fixtures";
+
+const isWindows = process.platform === "win32";
+const TEST_TIMEOUT = 15000;
+
+/**
+ * Check if a process is running using signal 0.
+ */
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ESRCH") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => {
+  let tempDir: string;
+  let lockedFile: string;
+  let lockingProcess: SpawnedProcess | null = null;
+  let lockingPid: number | undefined;
+  let processRunner: ProcessRunner;
+  let scriptPath: string;
+
+  beforeEach(async () => {
+    // Create temp directory with unique name
+    // Use realpath to get long path format (avoid STEFAN~1.HOE short paths)
+    const tempBase = await fs.realpath(os.tmpdir());
+    tempDir = await fs.mkdtemp(path.join(tempBase, "blocking-test-"));
+    lockedFile = path.join(tempDir, "locked-file.txt");
+
+    // Create a file to lock
+    await fs.writeFile(lockedFile, "test content");
+
+    processRunner = new ExecaProcessRunner(SILENT_LOGGER);
+    // Script path for boundary tests - relative to project root
+    scriptPath = path.join(process.cwd(), "resources", "scripts", "blocking-processes.ps1");
+  });
+
+  afterEach(async () => {
+    // Clean up locking process if still running
+    if (lockingProcess && lockingPid !== undefined) {
+      try {
+        await lockingProcess.kill(500, 500);
+      } catch {
+        // Process may already be dead
+      }
+    }
+    lockingProcess = null;
+    lockingPid = undefined;
+
+    // Clean up temp directory
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {
+      // May fail if still locked - acceptable for test cleanup
+    }
+  });
+
+  /**
+   * Spawn a PowerShell process that holds an exclusive file lock.
+   * Returns the process and waits for it to signal it has acquired the lock.
+   *
+   * Uses .NET FileStream with FileShare.None to create an exclusive lock
+   * that Windows Restart Manager API can reliably detect.
+   */
+  async function spawnFileLockingProcess(): Promise<{ proc: SpawnedProcess; pid: number }> {
+    // PowerShell script that opens a file with exclusive lock
+    // Uses FileShare.None to ensure no other process can access the file
+    const escapedPath = lockedFile.replace(/'/g, "''");
+    const script = `
+      $file = [System.IO.File]::Open('${escapedPath}', 'Open', 'ReadWrite', 'None')
+      Write-Host 'LOCKED'
+      while ($true) { Start-Sleep -Seconds 1 }
+    `;
+
+    lockingProcess = processRunner.run("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      script,
+    ]);
+    lockingPid = lockingProcess.pid;
+
+    if (lockingPid === undefined) {
+      throw new Error("Failed to get PID from spawned process");
+    }
+
+    // Wait for "LOCKED" message indicating file is locked
+    // Poll for stdout content with timeout
+    const startTime = Date.now();
+    const maxWait = 5000;
+
+    while (Date.now() - startTime < maxWait) {
+      const result = await lockingProcess.wait(100);
+      if (result.stdout.includes("LOCKED")) {
+        break;
+      }
+      if (!result.running && result.exitCode !== null) {
+        throw new Error(
+          `Locking process exited early with code ${result.exitCode}: ${result.stderr}`
+        );
+      }
+    }
+
+    // Give the OS a moment to fully register the handle
+    await delay(500);
+
+    return { proc: lockingProcess, pid: lockingPid };
+  }
+
+  describe("runDetectAction", () => {
+    it(
+      "detects blocking process with file handle",
+      async () => {
+        // Spawn a process that locks the file
+        const { pid } = await spawnFileLockingProcess();
+
+        // Detect blocking processes
+        const processes = await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
+
+        // Verify the blocking process is detected
+        expect(processes.length).toBeGreaterThan(0);
+        expect(processes.some((p) => p.pid === pid)).toBe(true);
+
+        // Verify structure of detected process
+        const detected = processes.find((p) => p.pid === pid);
+        expect(detected).toBeDefined();
+        expect(detected!.name.toLowerCase()).toContain("powershell");
+        expect(typeof detected!.commandLine).toBe("string");
+        expect(Array.isArray(detected!.files)).toBe(true);
+        expect(detected!.files.length).toBeGreaterThan(0);
+        expect(detected!.files.some((f) => f.includes("locked-file.txt"))).toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "includes cwd field in detection output",
+      async () => {
+        // Spawn a process that locks a file (to be detected by Restart Manager)
+        const { pid } = await spawnFileLockingProcess();
+
+        // Detect blocking processes
+        const processes = await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
+
+        // Find our process
+        const proc = processes.find((p) => p.pid === pid);
+        expect(proc).toBeDefined();
+
+        // Verify cwd field exists in output (may be null or string)
+        expect("cwd" in proc!).toBe(true);
+        expect(proc!.cwd === null || typeof proc!.cwd === "string").toBe(true);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "returns empty array when no processes are blocking",
+      async () => {
+        // No locking process, just query the empty temp dir
+        const processes = await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
+
+        expect(processes).toEqual([]);
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "completes within reasonable time",
+      async () => {
+        const start = Date.now();
+
+        await runDetectAction(
+          processRunner,
+          scriptPath,
+          new Path(tempDir),
+          "Detect",
+          createMockLogger()
+        );
+
+        const elapsed = Date.now() - start;
+
+        // Should complete within 5 seconds (well under the 10s timeout)
+        expect(elapsed).toBeLessThan(5000);
+      },
+      TEST_TIMEOUT
+    );
+  });
+
+  describe("killBlockingProcesses", () => {
+    it(
+      "kills processes via taskkill",
+      async () => {
+        // Spawn a process that locks the file
+        const { pid } = await spawnFileLockingProcess();
+
+        // Verify process is running
+        expect(isProcessRunning(pid)).toBe(true);
+
+        // Kill the process
+        await killBlockingProcesses(processRunner, [pid], createMockLogger());
+
+        // Give taskkill time to complete
+        await delay(500);
+
+        // Process should be dead now
+        expect(isProcessRunning(pid)).toBe(false);
+
+        // Clean up references since process is dead
+        lockingProcess = null;
+        lockingPid = undefined;
+      },
+      TEST_TIMEOUT
+    );
+
+    it(
+      "succeeds when no PIDs are provided",
+      async () => {
+        // Should not throw even with empty array
+        await expect(
+          killBlockingProcesses(processRunner, [], createMockLogger())
+        ).resolves.toBeUndefined();
+      },
+      TEST_TIMEOUT
+    );
+  });
+
+  // Note: closeFileHandles() tests require elevation and are not practical for automated testing
+  // Manual testing is required for the UAC flow
+});

@@ -14,7 +14,7 @@ import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./c
 import { OpenCodeError } from "../../errors";
 import { findMatchingSession } from "./session-utils";
 import { err } from "./types";
-import type { Logger } from "../../logging";
+import type { Logger } from "../../../boundaries/platform/logging";
 
 /**
  * Per-workspace provider that manages a single OpenCode client connection.

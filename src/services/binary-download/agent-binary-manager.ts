@@ -8,7 +8,7 @@
 
 import type { BinaryDownloadService } from "./binary-download-service";
 import type { DownloadProgressCallback, DownloadRequest } from "./types";
-import type { Logger } from "../logging";
+import type { Logger } from "../../boundaries/platform/logging";
 import { AgentBinaryError, getErrorMessage } from "../errors";
 
 /**

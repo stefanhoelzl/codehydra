@@ -13,7 +13,7 @@
 
 import type { AgentProvider, AgentSessionInfo, AgentStatus } from "../types";
 import type { ClaudeCodeServerManager } from "./server-manager";
-import type { Logger } from "../../logging";
+import type { Logger } from "../../../boundaries/platform/logging";
 
 /**
  * Dependencies for ClaudeCodeProvider.

@@ -8,9 +8,9 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { DefaultPathProvider } from "../platform/path-provider";
-import { DefaultFileSystemLayer } from "../platform/filesystem";
-import { DefaultNetworkLayer } from "../platform/network";
+import { DefaultPathProvider } from "../../boundaries/platform/env/path-provider";
+import { DefaultFileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { DefaultNetworkLayer } from "../../boundaries/platform/network/network";
 import { DefaultBinaryDownloadService } from "../binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../binary-download/archive-extractor";
 import {
@@ -24,11 +24,11 @@ import {
   getOpencodeUrl,
   getOpencodeExecutablePath,
 } from "../agents/opencode/setup-info";
-import { SILENT_LOGGER } from "../logging";
-import { createMockBuildInfo } from "../platform/build-info.test-utils";
+import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { createMockBuildInfo } from "../../boundaries/platform/env/build-info.test-utils";
 import { NodePlatformInfo } from "../../main/platform-info";
 import type { DownloadRequest } from "../binary-download/types";
-import type { PlatformInfo } from "../platform/platform-info";
+import type { PlatformInfo } from "../../boundaries/platform/env/platform-info";
 import type { SupportedPlatform, SupportedArch } from "../agents/types";
 
 /**

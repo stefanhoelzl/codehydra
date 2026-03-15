@@ -8,12 +8,12 @@
  * - Factory functions enable dependency injection for testability
  */
 
-import type { Path } from "../platform/path";
-import type { FileSystemLayer } from "../platform/filesystem";
-import type { ProcessRunner } from "../platform/process";
-import type { PortManager, HttpClient } from "../platform/network";
-import type { PathProvider } from "../platform/path-provider";
-import type { Logger } from "../logging";
+import type { Path } from "../../utils/path/path";
+import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import type { ProcessRunner } from "../../boundaries/platform/process/process";
+import type { PortManager, HttpClient } from "../../boundaries/platform/network/network";
+import type { PathProvider } from "../../boundaries/platform/env/path-provider";
+import type { Logger } from "../../boundaries/platform/logging";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 
 /**

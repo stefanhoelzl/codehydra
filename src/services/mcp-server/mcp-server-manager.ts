@@ -4,10 +4,10 @@
  * Manages the lifecycle of the MCP server including port allocation and cleanup.
  */
 
-import type { PortManager } from "../platform/network";
+import type { PortManager } from "../../boundaries/platform/network/network";
 import type { McpApiHandlers } from "./types";
-import type { Logger } from "../logging";
-import { SILENT_LOGGER } from "../logging";
+import type { Logger } from "../../boundaries/platform/logging";
+import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import type { IDisposable } from "../../shared/types";
 import { McpServer, createDefaultMcpServer, type McpServerFactory } from "./mcp-server";
 

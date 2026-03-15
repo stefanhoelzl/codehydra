@@ -1,0 +1,153 @@
+// @vitest-environment node
+/**
+ * Integration tests for KeepFilesModule through the Dispatcher.
+ *
+ * Tests verify: dispatcher -> operation -> setup hook -> keepFilesService call,
+ * including best-effort error handling (errors are logged, not re-thrown).
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Dispatcher } from "../intents/lib/dispatcher";
+
+import type { Intent } from "../intents/lib/types";
+import { createMinimalOperation } from "../intents/lib/operation.test-utils";
+import {
+  OPEN_WORKSPACE_OPERATION_ID,
+  type SetupHookResult,
+} from "../intents/operations/open-workspace";
+import { createKeepFilesModule } from "./keepfiles-module";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { Path } from "../utils/path/path";
+import type { IKeepFilesService } from "../services/keepfiles/types";
+
+// =============================================================================
+// Mock Dependencies
+// =============================================================================
+
+function createMockKeepFilesService() {
+  return {
+    copyToWorkspace: vi.fn().mockResolvedValue({
+      configExists: true,
+      copiedCount: 0,
+      skippedCount: 0,
+      errors: [],
+    }),
+  };
+}
+
+// =============================================================================
+// Test Setup
+// =============================================================================
+
+interface TestSetup {
+  dispatcher: Dispatcher;
+  keepFilesService: ReturnType<typeof createMockKeepFilesService>;
+}
+
+function createTestSetup(logger = SILENT_LOGGER): TestSetup {
+  const keepFilesService = createMockKeepFilesService();
+
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+  dispatcher.registerOperation(
+    "workspace:open",
+    createMinimalOperation<Intent, SetupHookResult>(OPEN_WORKSPACE_OPERATION_ID, "setup", {
+      hookContext: (ctx) => {
+        const payload = ctx.intent.payload as { projectPath: string; workspacePath: string };
+        return {
+          intent: ctx.intent,
+          projectPath: payload.projectPath,
+          workspacePath: payload.workspacePath,
+        };
+      },
+    })
+  );
+
+  const module = createKeepFilesModule({
+    keepFilesService: keepFilesService as unknown as IKeepFilesService,
+    logger,
+  });
+  dispatcher.registerModule(module);
+
+  return { dispatcher, keepFilesService };
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+describe("KeepFilesModule Integration", () => {
+  let setup: TestSetup;
+
+  beforeEach(() => {
+    setup = createTestSetup();
+  });
+
+  describe("open-workspace -> setup", () => {
+    it("calls copyToWorkspace with Path arguments", async () => {
+      const { dispatcher, keepFilesService } = setup;
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectPath: "/projects/my-app", workspacePath: "/workspaces/feature-1" },
+      } as Intent);
+
+      expect(keepFilesService.copyToWorkspace).toHaveBeenCalledWith(
+        new Path("/projects/my-app"),
+        new Path("/workspaces/feature-1")
+      );
+    });
+
+    it("logs error and succeeds when copyToWorkspace throws", async () => {
+      const logger = createBehavioralLogger();
+      const { dispatcher, keepFilesService } = createTestSetup(logger);
+
+      keepFilesService.copyToWorkspace.mockRejectedValue(new Error("disk full"));
+
+      const result = await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectPath: "/projects/my-app", workspacePath: "/workspaces/feature-1" },
+      } as Intent);
+
+      // Operation succeeds despite the error
+      expect(result).toEqual({});
+
+      // Error was logged
+      const errors = logger.getMessagesByLevel("error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]!.message).toBe("Keepfiles copy failed for workspace (non-fatal)");
+      expect(errors[0]!.context).toEqual({ workspacePath: "/workspaces/feature-1" });
+    });
+
+    it("returns empty result on success", async () => {
+      const { dispatcher } = setup;
+
+      const result = await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectPath: "/projects/my-app", workspacePath: "/workspaces/feature-1" },
+      } as Intent);
+
+      expect(result).toEqual({});
+    });
+
+    it("skips copyToWorkspace when existingWorkspace is set", async () => {
+      const { dispatcher, keepFilesService } = setup;
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectPath: "/projects/my-app",
+          workspacePath: "/workspaces/feature-1",
+          existingWorkspace: {
+            path: "/workspaces/feature-1",
+            name: "feature-1",
+            branch: "feature-1",
+          },
+        },
+      } as Intent);
+
+      expect(keepFilesService.copyToWorkspace).not.toHaveBeenCalled();
+    });
+  });
+});

@@ -13,7 +13,7 @@
  */
 
 import { autoUpdater } from "electron-updater";
-import type { Logger } from "./logging";
+import type { Logger } from "../boundaries/platform/logging";
 
 /**
  * Callback type for update detected events (update-available, before download).

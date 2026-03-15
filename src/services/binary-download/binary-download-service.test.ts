@@ -7,13 +7,13 @@ import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DefaultBinaryDownloadService } from "./binary-download-service";
 import { BinaryDownloadError } from "./errors";
-import { createMockHttpClient } from "../platform/http-client.state-mock";
+import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
 import {
   createFileSystemMock,
   createSpyFileSystemLayer,
   directory,
   createDirEntry,
-} from "../platform/filesystem.state-mock";
+} from "../../boundaries/platform/filesystem/filesystem.state-mock";
 import { createArchiveExtractorMock } from "./archive-extractor.state-mock";
 import type { DownloadRequest } from "./types";
 

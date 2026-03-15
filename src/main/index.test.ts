@@ -10,15 +10,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DefaultPathProvider } from "../services";
-import { createMockBuildInfo } from "../services/platform/build-info.test-utils";
-import { createMockPlatformInfo } from "../services/platform/platform-info.test-utils";
+import { createMockBuildInfo } from "../boundaries/platform/env/build-info.test-utils";
+import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
 import {
   CODE_SERVER_VERSION,
   getCodeServerExecutablePath,
 } from "../services/code-server/setup-info";
 import { OPENCODE_VERSION } from "../services/agents/opencode/setup-info";
-import { Path } from "../services/platform/path";
-import type { PathProvider } from "../services/platform/path-provider";
+import { Path } from "../utils/path/path";
+import type { PathProvider } from "../boundaries/platform/env/path-provider";
 import type { SupportedPlatform } from "../services/agents/types";
 
 // Track mock isPackaged value for ElectronBuildInfo tests

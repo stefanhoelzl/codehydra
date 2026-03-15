@@ -11,7 +11,7 @@ import {
   type SessionStatus as SdkSessionStatus,
 } from "@opencode-ai/sdk";
 import { OpenCodeError, getErrorMessage } from "../../errors";
-import type { Logger } from "../../logging";
+import type { Logger } from "../../../boundaries/platform/logging";
 import {
   ok,
   err,

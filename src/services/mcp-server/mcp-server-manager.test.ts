@@ -4,12 +4,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { McpServerManager } from "./mcp-server-manager";
-import type { MockPortManager } from "../platform/network.test-utils";
+import type { MockPortManager } from "../../boundaries/platform/network/network.test-utils";
 import type { McpApiHandlers } from "./types";
 import type { McpServerFactory } from "./mcp-server";
 import type { McpServer as McpServerSdk } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createMockLogger } from "../logging";
-import { createPortManagerMock } from "../platform/network.test-utils";
+import { createMockLogger } from "../../boundaries/platform/logging";
+import { createPortManagerMock } from "../../boundaries/platform/network/network.test-utils";
 
 /**
  * Create a mock McpApiHandlers.

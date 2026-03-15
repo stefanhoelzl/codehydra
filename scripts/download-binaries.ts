@@ -22,8 +22,8 @@
 import { execSync } from "node:child_process";
 import { DefaultBinaryDownloadService } from "../src/services/binary-download/binary-download-service";
 import { DefaultArchiveExtractor } from "../src/services/binary-download/archive-extractor";
-import { DefaultNetworkLayer } from "../src/services/platform/network";
-import { DefaultFileSystemLayer } from "../src/services/platform/filesystem";
+import { DefaultNetworkLayer } from "../src/boundaries/platform/network/network";
+import { DefaultFileSystemLayer } from "../src/boundaries/platform/filesystem/filesystem";
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
@@ -42,12 +42,12 @@ import {
   getClaudeExecutablePath,
   getClaudeLatestVersionUrl,
 } from "../src/services/agents/claude/setup-info";
-import { DefaultPathProvider } from "../src/services/platform/path-provider";
+import { DefaultPathProvider } from "../src/boundaries/platform/env/path-provider";
 import { NodePlatformInfo } from "../src/main/platform-info";
-import type { BuildInfo } from "../src/services/platform/build-info";
+import type { BuildInfo } from "../src/boundaries/platform/env/build-info";
 import type { DownloadRequest, DownloadProgress } from "../src/services/binary-download/types";
 import type { SupportedPlatform, SupportedArch } from "../src/services/agents/types";
-import type { Logger } from "../src/services/logging";
+import type { Logger } from "../src/boundaries/platform/logging";
 
 // Console logger for the script - suppresses warnings to avoid alarming output
 // (e.g., ENOENT from readdir when checking if binary is installed is expected)

@@ -1,0 +1,1425 @@
+/**
+ * Integration tests for ViewManager using behavioral mocks.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ViewManager, SIDEBAR_MINIMIZED_WIDTH, type ViewManagerDeps } from "./view-manager";
+import type { WindowManager } from "../window/window-manager";
+import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
+import { createViewLayerMock, type MockViewLayer } from "./view.state-mock";
+import { createSessionLayerMock, type MockSessionLayer } from "../session/session.state-mock";
+import {
+  createWindowLayerInternalMock,
+  type MockWindowLayerInternal,
+} from "../window/window.state-mock";
+import { createViewHandle, type WindowHandle } from "../../../services/shell/types";
+import { createMockWindowManager } from "../window/window-manager.test-utils";
+
+// Mock external-url
+const mockOpenExternal = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../utils/external-url", () => ({
+  openExternal: mockOpenExternal,
+}));
+
+/**
+ * Creates a test window layer with a pre-created window for ViewManager tests.
+ */
+function createViewManagerWindowLayer(): MockWindowLayerInternal & {
+  _createdWindowHandle: WindowHandle;
+} {
+  const behavioralLayer = createWindowLayerInternalMock();
+
+  // Create a window to get a handle
+  const windowHandle = behavioralLayer.createWindow({
+    width: 1200,
+    height: 800,
+    title: "Test Window",
+    show: false,
+  });
+
+  return Object.assign(behavioralLayer, {
+    _createdWindowHandle: windowHandle,
+  }) as unknown as MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
+}
+
+/**
+ * Creates ViewManager deps with behavioral mocks.
+ */
+function createViewManagerDeps(): ViewManagerDeps & {
+  viewLayer: MockViewLayer;
+  windowLayer: MockWindowLayerInternal & { _createdWindowHandle: WindowHandle };
+  sessionLayer: MockSessionLayer;
+} {
+  const windowLayer = createViewManagerWindowLayer();
+  const viewLayer = createViewLayerMock();
+  const sessionLayer = createSessionLayerMock();
+  const windowManager = createMockWindowManager({
+    windowHandle: windowLayer._createdWindowHandle,
+  }) as unknown as WindowManager;
+
+  return {
+    windowManager,
+    windowLayer,
+    viewLayer,
+    sessionLayer,
+    config: {
+      uiPreloadPath: "/path/to/preload.js",
+      codeServerPort: 8080,
+      backgroundHtmlPath: "/path/to/background.html",
+    },
+    logger: SILENT_LOGGER,
+  };
+}
+
+/**
+ * Creates a ViewManager with two-phase init (constructor + create).
+ */
+function createViewManager(deps: ViewManagerDeps): ViewManager {
+  const manager = new ViewManager(deps);
+  manager.create();
+  return manager;
+}
+
+describe("ViewManager", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe("SIDEBAR_MINIMIZED_WIDTH constant", () => {
+    it("equals 20", () => {
+      expect(SIDEBAR_MINIMIZED_WIDTH).toBe(20);
+    });
+  });
+
+  describe("create", () => {
+    it("creates a ViewManager instance", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      expect(manager).toBeInstanceOf(ViewManager);
+    });
+
+    it("creates UI layer view with security settings", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const uiHandle = manager.getUIViewHandle();
+      expect(uiHandle.id).toMatch(/^view-\d+$/);
+      expect(deps.viewLayer.isAvailable(uiHandle)).toBe(true);
+    });
+
+    it("sets transparent background on UI layer", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { backgroundColor: "#00000000" });
+    });
+
+    it("attaches UI layer to window", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, {
+        attachedTo: deps.windowLayer._createdWindowHandle.id,
+      });
+    });
+
+    it("subscribes to window resize events", () => {
+      const deps = createViewManagerDeps();
+      createViewManager(deps);
+
+      expect(deps.windowManager.onResize).toHaveBeenCalledWith(expect.any(Function));
+    });
+  });
+
+  describe("background view", () => {
+    /**
+     * Helper to get the background view ID (always at index 0 in window children).
+     */
+    function getBackgroundViewId(deps: ReturnType<typeof createViewManagerDeps>): string {
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+      const children = deps.viewLayer.$.windowChildren.get(windowId) ?? [];
+      expect(children.length).toBeGreaterThanOrEqual(2);
+      // Background view is always at index 0 (bottom of z-stack)
+      const id = children[0] as string;
+      return id;
+    }
+
+    it("is created and attached at z-0 during create()", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const uiHandle = manager.getUIViewHandle();
+      const backgroundViewId = getBackgroundViewId(deps);
+
+      // Background view should be at index 0 (bottom), not the UI view
+      expect(backgroundViewId).not.toBe(uiHandle.id);
+
+      // Background view should have transparent Electron bg (CSS handles color)
+      expect(deps.viewLayer).toHaveView(backgroundViewId, {
+        backgroundColor: "#00000000",
+      });
+    });
+
+    it("has its bounds updated on resize", () => {
+      const deps = createViewManagerDeps();
+      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
+      const manager = createViewManager(deps);
+
+      manager.updateBounds();
+
+      const backgroundViewId = getBackgroundViewId(deps);
+
+      expect(deps.viewLayer).toHaveView(backgroundViewId, {
+        bounds: { x: 0, y: 0, width: 1400, height: 900 },
+      });
+    });
+
+    it("is destroyed on destroy()", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const backgroundViewId = getBackgroundViewId(deps);
+
+      manager.destroy();
+
+      // Background view should no longer be available
+      expect(deps.viewLayer.isAvailable(createViewHandle(backgroundViewId))).toBe(false);
+    });
+  });
+
+  describe("getUIViewHandle", () => {
+    it("returns the UI layer ViewHandle", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const handle = manager.getUIViewHandle();
+
+      expect(handle.id).toMatch(/^view-\d+$/);
+      expect(handle.__brand).toBe("ViewHandle");
+    });
+  });
+
+  describe("createWorkspaceView", () => {
+    it("creates a workspace view (not attached)", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Workspace view should exist
+      expect(deps.viewLayer.isAvailable(wsHandle)).toBe(true);
+
+      // Workspace view should NOT be attached
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: null });
+    });
+
+    it("does not load URL on creation (lazy loading)", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // URL should be null (not loaded yet)
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { url: null });
+    });
+
+    it("stores view accessible via getWorkspaceView", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const createdHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const retrievedHandle = manager.getWorkspaceView("/path/to/workspace");
+      expect(retrievedHandle).toBeDefined();
+      expect(retrievedHandle?.id).toBe(createdHandle.id);
+    });
+
+    it("sets dark background color", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { backgroundColor: "#1e1e1e" });
+    });
+
+    it("returns a ViewHandle", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const handle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      expect(handle.id).toMatch(/^view-\d+$/);
+      expect(handle.__brand).toBe("ViewHandle");
+    });
+
+    it("loads URL on first activation", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Activate workspace
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        url: "http://127.0.0.1:8080/?folder=/path",
+      });
+    });
+
+    it("does not reload URL on subsequent activations", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const ws1Handle = manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project"
+      );
+
+      // Activate first workspace
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      // Switch to second
+      manager.setActiveWorkspace("/path/to/workspace2");
+
+      // Switch back to first - URL should still be the same (not reloaded)
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      expect(deps.viewLayer).toHaveView(ws1Handle.id, {
+        url: "http://127.0.0.1:8080/?folder=/path1",
+      });
+    });
+  });
+
+  describe("preloadWorkspaceUrl", () => {
+    it("loads URL but keeps view detached during background preload", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+
+      // URL should be loaded, view stays detached until activated
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        url: "http://127.0.0.1:8080/?folder=/path",
+        attachedTo: null,
+      });
+    });
+
+    it("is idempotent - multiple calls only load URL once", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Call preload multiple times
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+
+      // Should still work (idempotent)
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        url: "http://127.0.0.1:8080/?folder=/path",
+      });
+    });
+
+    it("does nothing for nonexistent workspace", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Should not throw
+      expect(() => manager.preloadWorkspaceUrl("/nonexistent/workspace")).not.toThrow();
+    });
+  });
+
+  describe("shared session model", () => {
+    it("all workspaces share the same session (same SessionHandle.id)", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project1"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project2"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace3",
+        "http://127.0.0.1:8080/?folder=/path3",
+        "/path/to/project1" // Same project as workspace1
+      );
+
+      // All workspaces should share the same session (only one session created)
+      expect(deps.sessionLayer).toHaveSessionCount(1);
+      expect(deps.sessionLayer).toHaveSession("session-1", {
+        partition: "persist:codehydra-global",
+      });
+    });
+
+    it("session data persists after workspace deletion", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Create two workspaces
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project"
+      );
+
+      // Delete workspace1
+      await manager.destroyWorkspaceView("/path/to/workspace1");
+
+      // Session should still exist (workspace2 still needs the shared session)
+      expect(deps.sessionLayer).toHaveSessionCount(1);
+      expect(deps.sessionLayer).toHaveSession("session-1", {
+        partition: "persist:codehydra-global",
+      });
+    });
+
+    it("uses global partition constant for all workspaces", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Create workspaces in different projects
+      manager.createWorkspaceView(
+        "/path/to/project-a/workspace1",
+        "http://127.0.0.1:8080/?folder=/path-a",
+        "/path/to/project-a"
+      );
+      manager.createWorkspaceView(
+        "/path/to/project-b/workspace2",
+        "http://127.0.0.1:8080/?folder=/path-b",
+        "/path/to/project-b"
+      );
+
+      // Verify the partition name is the global constant
+      const session = deps.sessionLayer.$.sessions.get("session-1");
+      expect(session?.partition).toBe("persist:codehydra-global");
+    });
+  });
+
+  describe("destroyWorkspaceView", () => {
+    it("removes view from internal map", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      expect(manager.getWorkspaceView("/path/to/workspace")).toBeUndefined();
+    });
+
+    it("clears active workspace path when destroying active workspace", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/workspace");
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      expect(manager.getActiveWorkspacePath()).toBeNull();
+    });
+
+    it("is idempotent - multiple calls don't throw", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+      await expect(manager.destroyWorkspaceView("/path/to/workspace")).resolves.not.toThrow();
+      await expect(manager.destroyWorkspaceView("/path/to/workspace")).resolves.not.toThrow();
+    });
+
+    it("handles workspace that never existed", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      await expect(manager.destroyWorkspaceView("/nonexistent/workspace")).resolves.not.toThrow();
+    });
+
+    it("returns a Promise", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const result = manager.destroyWorkspaceView("/path/to/workspace");
+
+      expect(result).toBeInstanceOf(Promise);
+      await result;
+    });
+
+    it("does not clear session storage (shared across workspaces)", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Get the session handle id before destroying
+      const sessions = [...deps.sessionLayer.$.sessions.entries()];
+      const globalSessionId = sessions.find(
+        ([, s]) => s.partition === "persist:codehydra-global"
+      )?.[0];
+      expect(globalSessionId).toBeDefined();
+
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // Session should still exist (data preserved for shared session)
+      expect(deps.sessionLayer).toHaveSession(globalSessionId!);
+    });
+  });
+
+  describe("getWorkspaceView", () => {
+    it("returns the view handle for existing workspace", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const createdHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      const retrievedHandle = manager.getWorkspaceView("/path/to/workspace");
+
+      expect(retrievedHandle?.id).toBe(createdHandle.id);
+    });
+
+    it("returns undefined for non-existent workspace", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const view = manager.getWorkspaceView("/path/to/nonexistent");
+
+      expect(view).toBeUndefined();
+    });
+  });
+
+  describe("updateBounds", () => {
+    it("only updates active workspace bounds (O(1) not O(n))", () => {
+      const deps = createViewManagerDeps();
+      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
+      const manager = createViewManager(deps);
+
+      const ws1Handle = manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      const ws2Handle = manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project"
+      );
+
+      // Activate workspace1
+      manager.setActiveWorkspace("/path/to/workspace1");
+      manager.updateBounds();
+
+      // Active workspace should have bounds set
+      expect(deps.viewLayer).toHaveView(ws1Handle.id, {
+        bounds: {
+          x: SIDEBAR_MINIMIZED_WIDTH,
+          y: 0,
+          width: 1400 - SIDEBAR_MINIMIZED_WIDTH,
+          height: 900,
+        },
+      });
+      // Inactive workspace should NOT have bounds set (it's detached)
+      expect(deps.viewLayer).toHaveView(ws2Handle.id, { bounds: null });
+    });
+
+    it("sets UI layer bounds to full window", () => {
+      const deps = createViewManagerDeps();
+      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
+      const manager = createViewManager(deps);
+
+      manager.updateBounds();
+
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, {
+        bounds: { x: 0, y: 0, width: 1400, height: 900 },
+      });
+    });
+
+    it("sets active workspace bounds with sidebar offset", () => {
+      const deps = createViewManagerDeps();
+      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.updateBounds();
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        bounds: {
+          x: SIDEBAR_MINIMIZED_WIDTH,
+          y: 0,
+          width: 1400 - SIDEBAR_MINIMIZED_WIDTH,
+          height: 900,
+        },
+      });
+    });
+
+    it("clamps bounds at minimum window size", () => {
+      const deps = createViewManagerDeps();
+      // Smaller than minimum 800x600
+      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 600, height: 400 });
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.updateBounds();
+
+      // Should use clamped values (min 800x600)
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        bounds: {
+          x: SIDEBAR_MINIMIZED_WIDTH,
+          y: 0,
+          width: 800 - SIDEBAR_MINIMIZED_WIDTH,
+          height: 600,
+        },
+      });
+    });
+  });
+
+  describe("setActiveWorkspace", () => {
+    it("loads URL and attaches view on first activation (when not loading)", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Mark workspace as loaded (not in loading state)
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        url: "http://127.0.0.1:8080/?folder=/path",
+        attachedTo: deps.windowLayer._createdWindowHandle.id,
+      });
+    });
+
+    it("detaches previous workspace when switching", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const ws1Handle = manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      const ws2Handle = manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project"
+      );
+
+      // Mark both as loaded
+      manager.setWorkspaceLoaded("/path/to/workspace1");
+      manager.setWorkspaceLoaded("/path/to/workspace2");
+
+      // Activate first
+      manager.setActiveWorkspace("/path/to/workspace1");
+
+      // Switch to second
+      manager.setActiveWorkspace("/path/to/workspace2");
+
+      // First should be detached, second should be attached
+      expect(deps.viewLayer).toHaveView(ws1Handle.id, { attachedTo: null });
+      expect(deps.viewLayer).toHaveView(ws2Handle.id, {
+        attachedTo: deps.windowLayer._createdWindowHandle.id,
+      });
+    });
+
+    it("is idempotent - same workspace doesn't re-attach", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      // Activate twice
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Should still be attached (no error)
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        attachedTo: deps.windowLayer._createdWindowHandle.id,
+      });
+    });
+
+    it("keeps UI view at index 1 in workspace mode (above background view)", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setWorkspaceLoaded("/path/to/workspace");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // UI view should be at index 1 (above background view at 0)
+      const uiHandle = manager.getUIViewHandle();
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      expect(children?.[1]).toBe(uiHandle.id);
+    });
+
+    it("null workspace detaches current", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setWorkspaceLoaded("/path/to/workspace");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      manager.setActiveWorkspace(null);
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: null });
+      expect(manager.getActiveWorkspacePath()).toBeNull();
+    });
+
+    it("focuses UI when setting active workspace to null", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setWorkspaceLoaded("/path/to/workspace");
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Set active to null (simulates closing last workspace)
+      manager.setActiveWorkspace(null);
+
+      // UI should be focused to receive keyboard events
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
+
+    it("updates active workspace path", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(manager.getActiveWorkspacePath()).toBe("/path/to/workspace");
+    });
+  });
+
+  describe("focus", () => {
+    it("focuses UI when no active workspace", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.focus();
+
+      // UI should be focused as fallback
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
+
+    it("focuses workspace during loading for keyboard input initialization", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew — loading
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Workspace should be focused at 1x1 bounds so
+      // before-input-event fires for Alt+X shortcut detection
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { focused: true });
+    });
+
+    it("focuses UI in shortcut mode even when workspace is attached", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.setMode("shortcut");
+
+      manager.focus();
+
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
+
+    it("is no-op in dialog mode", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.setMode("dialog");
+
+      // Should not throw
+      expect(() => manager.focus()).not.toThrow();
+    });
+  });
+
+  describe("setMode", () => {
+    it("changes mode from workspace to shortcut", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      expect(manager.getMode()).toBe("workspace");
+
+      manager.setMode("shortcut");
+
+      expect(manager.getMode()).toBe("shortcut");
+    });
+
+    it("is idempotent - same mode is no-op", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const callback = vi.fn();
+      manager.onModeChange(callback);
+      callback.mockClear();
+
+      manager.setMode("workspace"); // Same as initial
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("emits mode change event", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const callback = vi.fn();
+      manager.onModeChange(callback);
+
+      manager.setMode("shortcut");
+
+      expect(callback).toHaveBeenCalledWith({
+        mode: "shortcut",
+        previousMode: "workspace",
+      });
+    });
+  });
+
+  describe("getMode", () => {
+    it("returns current mode", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      expect(manager.getMode()).toBe("workspace");
+
+      manager.setMode("dialog");
+      expect(manager.getMode()).toBe("dialog");
+    });
+  });
+
+  describe("onModeChange", () => {
+    it("returns unsubscribe function", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const callback = vi.fn();
+      const unsubscribe = manager.onModeChange(callback);
+
+      unsubscribe();
+
+      manager.setMode("shortcut");
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("onWorkspaceChange", () => {
+    it("is called when active workspace changes", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const callback = vi.fn();
+      manager.onWorkspaceChange(callback);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      expect(callback).toHaveBeenCalledWith("/path/to/workspace");
+    });
+
+    it("is called with null when workspace deactivated", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const callback = vi.fn();
+      manager.onWorkspaceChange(callback);
+
+      manager.setActiveWorkspace(null);
+
+      expect(callback).toHaveBeenCalledWith(null);
+    });
+  });
+
+  describe("isWorkspaceLoading", () => {
+    it("returns true for newly created workspace with isNew=true", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      expect(manager.isWorkspaceLoading("/path/to/workspace")).toBe(true);
+    });
+
+    it("returns false for workspace with isNew=false (default)", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      expect(manager.isWorkspaceLoading("/path/to/workspace")).toBe(false);
+    });
+
+    it("returns false after setWorkspaceLoaded called", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      expect(manager.isWorkspaceLoading("/path/to/workspace")).toBe(false);
+    });
+  });
+
+  describe("setWorkspaceLoaded", () => {
+    it("transitions from 1x1 to full bounds when active workspace finishes loading", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew - starts loading
+      );
+
+      // Activate attaches view at 1x1 bounds
+      manager.setActiveWorkspace("/path/to/workspace");
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        attachedTo: windowId,
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
+      });
+
+      // Mark as loaded — view transitions to full bounds
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        attachedTo: windowId,
+        bounds: { x: 20, y: 0, width: 1180, height: 800 },
+      });
+    });
+
+    it("is idempotent", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true
+      );
+
+      // Call multiple times
+      expect(() => {
+        manager.setWorkspaceLoaded("/path/to/workspace");
+        manager.setWorkspaceLoaded("/path/to/workspace");
+        manager.setWorkspaceLoaded("/path/to/workspace");
+      }).not.toThrow();
+    });
+
+    it("attaches active loading workspace at top z-order with 1x1 bounds", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // View should be attached at top z-order with 1x1 bounds
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      expect(children).toContain(wsHandle.id);
+
+      // 1x1 bounds so loading overlay (UI layer) stays visible
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        bounds: { x: 0, y: 0, width: 1, height: 1 },
+      });
+
+      // Z-order: background(0) < UI(1) < workspace(2) — workspace on top for input events
+      const uiId = manager.getUIViewHandle().id;
+      expect(children).toHaveLength(3);
+      expect(children![0]).not.toBe(wsHandle.id);
+      expect(children![0]).not.toBe(uiId);
+      expect(children![1]).toBe(uiId);
+      expect(children![2]).toBe(wsHandle.id);
+    });
+
+    it("setMode to workspace during loading preserves z-order", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      manager.setMode("dialog");
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.setMode("workspace");
+
+      // Z-order: background(0) < UI(1) < workspace(2)
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      const uiId = manager.getUIViewHandle().id;
+      expect(children).toHaveLength(3);
+      expect(children![0]).not.toBe(wsHandle.id);
+      expect(children![0]).not.toBe(uiId);
+      expect(children![1]).toBe(uiId);
+      expect(children![2]).toBe(wsHandle.id);
+    });
+
+    it("background preload does not disrupt active workspace z-order", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      // Active loaded workspace
+      const activeHandle = manager.createWorkspaceView(
+        "/path/to/active",
+        "http://127.0.0.1:8080/?folder=/active",
+        "/path/to/project",
+        false
+      );
+      manager.setActiveWorkspace("/path/to/active");
+
+      // Background preload
+      const bgHandle = manager.createWorkspaceView(
+        "/path/to/bg",
+        "http://127.0.0.1:8080/?folder=/bg",
+        "/path/to/project",
+        true
+      );
+      manager.preloadWorkspaceUrl("/path/to/bg");
+
+      // Preloaded view stays detached — not in window children
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      expect(children).not.toContain(bgHandle.id);
+
+      // Active workspace still on top
+      const uiId = manager.getUIViewHandle().id;
+      expect(children![children!.length - 1]).toBe(activeHandle.id);
+      expect(children).toContain(uiId);
+    });
+
+    it("keeps inactive view detached when workspace finishes loading", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      // Preload (not activate) — view stays detached
+      manager.preloadWorkspaceUrl("/path/to/workspace");
+
+      // Mark as loaded — view should remain detached
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { attachedTo: null });
+    });
+
+    it("switching workspaces while loading maintains correct z-order", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+      const windowId = deps.windowLayer._createdWindowHandle.id;
+
+      // Create two loading workspaces
+      const ws1Handle = manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project",
+        true
+      );
+      const ws2Handle = manager.createWorkspaceView(
+        "/path/to/ws2",
+        "http://127.0.0.1:8080/?folder=/ws2",
+        "/path/to/project",
+        true
+      );
+
+      // Activate first, then switch to second
+      manager.setActiveWorkspace("/path/to/ws1");
+      manager.setActiveWorkspace("/path/to/ws2");
+
+      const children = deps.viewLayer.$.windowChildren.get(windowId);
+      const uiId = manager.getUIViewHandle().id;
+
+      // ws1 detached, ws2 on top — UI stays below workspace
+      expect(children).not.toContain(ws1Handle.id);
+      expect(children).toHaveLength(3);
+      expect(children![1]).toBe(uiId);
+      expect(children![2]).toBe(ws2Handle.id);
+    });
+  });
+
+  describe("onLoadingChange", () => {
+    it("is called when workspace starts loading", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const callback = vi.fn();
+      manager.onLoadingChange(callback);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      expect(callback).toHaveBeenCalledWith("/path/to/workspace", true);
+    });
+
+    it("is called when workspace finishes loading", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      const callback = vi.fn();
+      manager.onLoadingChange(callback);
+
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      expect(callback).toHaveBeenCalledWith("/path/to/workspace", false);
+    });
+
+    it("emits loading=false for already-loaded workspaces when callback is wired", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Create workspace that finishes loading BEFORE callback is wired
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew - starts in loading state
+      );
+
+      // Simulate workspace finished loading (timeout fires)
+      await vi.advanceTimersByTimeAsync(10001);
+      expect(manager.isWorkspaceLoading("/path/to/workspace")).toBe(false);
+
+      // Wire callback AFTER workspace is already loaded
+      const callback = vi.fn();
+      manager.onLoadingChange(callback);
+
+      // Verify callback receives loading=false for already-loaded workspace
+      expect(callback).toHaveBeenCalledWith("/path/to/workspace", false);
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe("updateCodeServerPort", () => {
+    it("updates the port", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Should not throw
+      expect(() => manager.updateCodeServerPort(9090)).not.toThrow();
+    });
+  });
+
+  describe("destroy", () => {
+    it("destroys all views", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace1",
+        "http://127.0.0.1:8080/?folder=/path1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/workspace2",
+        "http://127.0.0.1:8080/?folder=/path2",
+        "/path/to/project"
+      );
+
+      manager.destroy();
+
+      // Views should be destroyed (this is async internally, but we check state)
+      expect(manager.getWorkspaceView("/path/to/workspace1")).toBeUndefined();
+      expect(manager.getWorkspaceView("/path/to/workspace2")).toBeUndefined();
+    });
+  });
+
+  describe("reloadAllViews", () => {
+    it("reloads views with urlLoaded === true", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project"
+      );
+
+      // Activate to trigger URL load
+      manager.setActiveWorkspace("/path/to/ws1");
+
+      // Spy on loadURL to verify reload is called
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockClear();
+
+      manager.reloadAllViews();
+
+      const ws1Handle = manager.getWorkspaceView("/path/to/ws1")!;
+      expect(loadURLSpy).toHaveBeenCalledWith(ws1Handle, "http://127.0.0.1:8080/?folder=/ws1");
+    });
+
+    it("skips views with urlLoaded === false", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Create but do NOT activate (URL not loaded)
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project"
+      );
+
+      manager.reloadAllViews();
+
+      // URL should still be null (never loaded)
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { url: null });
+    });
+
+    it("skips workspaces in loading state", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Create as new (loading state)
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project",
+        true // isNew = loading state
+      );
+
+      // Activate to trigger URL load, but workspace is still loading
+      manager.setActiveWorkspace("/path/to/ws1");
+      expect(manager.isWorkspaceLoading("/path/to/ws1")).toBe(true);
+
+      // Spy on loadURL to track calls during reloadAllViews
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockClear();
+
+      manager.reloadAllViews();
+
+      // loadURL should not have been called (loading workspace skipped)
+      expect(loadURLSpy).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op when no workspaces exist", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      // Should not throw
+      expect(() => manager.reloadAllViews()).not.toThrow();
+    });
+  });
+
+  describe("loading timeout", () => {
+    it("marks workspace as loaded after timeout", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew
+      );
+
+      expect(manager.isWorkspaceLoading("/path/to/workspace")).toBe(true);
+
+      // Advance past timeout (10 seconds)
+      await vi.advanceTimersByTimeAsync(10001);
+
+      expect(manager.isWorkspaceLoading("/path/to/workspace")).toBe(false);
+
+      vi.useRealTimers();
+    });
+  });
+});

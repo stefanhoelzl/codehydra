@@ -17,7 +17,7 @@ import type { ClaudeCodeServerManager } from "./server-manager";
 import type { AgentBinaryManager } from "../../binary-download";
 import type { AgentProvider, AgentStatus } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
-import { SILENT_LOGGER } from "../../logging";
+import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 
 // =============================================================================
 // Mock ClaudeCodeProvider via vi.mock

@@ -2,7 +2,7 @@
  * Types for binary resolution operations.
  */
 
-import type { Path } from "../platform/path";
+import type { Path } from "../../utils/path/path";
 
 /**
  * Binary types that can be resolved.

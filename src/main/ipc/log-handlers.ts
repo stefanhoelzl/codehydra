@@ -11,7 +11,7 @@
 import { ipcMain } from "electron";
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { ApiLogPayload } from "../../shared/ipc";
-import type { LoggingService, LoggerName, LogContext } from "../../services/logging";
+import type { LoggingService, LoggerName, LogContext } from "../../boundaries/platform/logging";
 
 /**
  * Validate and convert logger name from renderer to LoggerName type.

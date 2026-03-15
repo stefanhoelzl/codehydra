@@ -3,15 +3,18 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 import { BadgeManager } from "./badge-manager";
-import { createMockPlatformInfo } from "../../services/platform/platform-info.test-utils";
-import { SILENT_LOGGER } from "../../services/logging";
-import { createAppLayerMock, type MockAppLayer } from "../../services/platform/app.state-mock";
+import { createMockPlatformInfo } from "../../boundaries/platform/env/platform-info.test-utils";
+import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { createAppLayerMock, type MockAppLayer } from "../../boundaries/shell/app/app.state-mock";
 import {
   createImageLayerMock,
   type MockImageLayer,
-} from "../../services/platform/image.state-mock";
-import type { WindowManager } from "./window-manager";
-import { createMockWindowManager, type MockWindowManager } from "./window-manager.test-utils";
+} from "../../boundaries/shell/image/image.state-mock";
+import type { WindowManager } from "../../boundaries/shell/window/window-manager";
+import {
+  createMockWindowManager,
+  type MockWindowManager,
+} from "../../boundaries/shell/window/window-manager.test-utils";
 
 describe("BadgeManager", () => {
   let appLayer: MockAppLayer;

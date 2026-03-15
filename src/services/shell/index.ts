@@ -1,10 +1,8 @@
 /**
  * Shell layer exports.
  *
- * Provides abstractions over Electron's visual container APIs:
- * - WindowLayer: BaseWindow abstraction
- * - ViewLayer: WebContentsView abstraction
- * - SessionLayer: Session abstraction
+ * This module re-exports shell abstractions that remain in this directory.
+ * Moved items (Window, View, Session layers) are now in src/boundaries/shell/.
  */
 
 // Errors
@@ -21,32 +19,3 @@ export {
   createViewHandle,
   createSessionHandle,
 } from "./types";
-
-// Window layer
-export {
-  type WindowLayer,
-  type WindowLayerInternal,
-  type WindowOptions,
-  type ContentView,
-  type Unsubscribe,
-  DefaultWindowLayer,
-} from "./window";
-
-// Session layer
-export {
-  type SessionLayer,
-  type Permission,
-  type PermissionRequestHandler,
-  type PermissionCheckHandler,
-  DefaultSessionLayer,
-} from "./session";
-
-// View layer
-export {
-  type ViewLayer,
-  type ViewOptions,
-  type WindowOpenDetails,
-  type WindowOpenAction,
-  type WindowOpenHandler,
-  DefaultViewLayer,
-} from "./view";

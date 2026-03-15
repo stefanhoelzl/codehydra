@@ -24,9 +24,9 @@ import { McpServer as McpServerSdk } from "@modelcontextprotocol/sdk/server/mcp.
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import type { IMcpServer, McpError, McpApiHandlers } from "./types";
-import type { Logger, LogContext } from "../logging";
-import { SILENT_LOGGER, logAtLevel } from "../logging";
-import type { LogLevel } from "../logging/types";
+import type { Logger, LogContext } from "../../boundaries/platform/logging";
+import { SILENT_LOGGER, logAtLevel } from "../../boundaries/platform/logging";
+import type { LogLevel } from "../../boundaries/platform/logging/types";
 import { getErrorMessage } from "../errors";
 import {
   initialPromptSchema,

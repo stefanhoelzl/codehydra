@@ -13,7 +13,7 @@ import type { AgentModuleProvider } from "../agent-module-provider";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { AgentBinaryManager } from "../../binary-download";
 import type { OpenCodeServerManager } from "./server-manager";
-import { SILENT_LOGGER } from "../../logging";
+import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted

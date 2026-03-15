@@ -13,11 +13,11 @@ import {
   directory,
   symlink,
   createDirEntry,
-} from "../platform/filesystem.state-mock";
+} from "../../boundaries/platform/filesystem/filesystem.state-mock";
 import { FileSystemError } from "../errors";
-import type { FileSystemLayer } from "../platform/filesystem";
-import { SILENT_LOGGER } from "../logging";
-import { Path } from "../platform/path";
+import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem";
+import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { Path } from "../../utils/path/path";
 
 /** Normalize path separators for cross-platform mock comparisons */
 const normalizePath = (p: string) => p.replace(/\\/g, "/");

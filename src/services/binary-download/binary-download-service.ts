@@ -7,11 +7,11 @@ import * as path from "node:path";
 import { BinaryDownloadError, getErrorMessage } from "./errors.js";
 import type { DownloadRequest, DownloadProgressCallback } from "./types.js";
 import type { ArchiveExtractor } from "./archive-extractor.js";
-import type { HttpClient } from "../platform/network.js";
-import type { FileSystemLayer } from "../platform/filesystem.js";
-import type { Logger } from "../logging/index.js";
+import type { HttpClient } from "../../boundaries/platform/network/network.js";
+import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem.js";
+import type { Logger } from "../../boundaries/platform/logging/index.js";
 import { FileSystemError } from "../errors.js";
-import { Path } from "../platform/path.js";
+import { Path } from "../../utils/path/path.js";
 
 /**
  * Service for downloading and managing binary distributions.

@@ -2,7 +2,7 @@
  * Service error definitions with serialization support for IPC.
  */
 
-import type { FileSystemErrorCode } from "./platform/filesystem";
+import type { FileSystemErrorCode } from "../boundaries/platform/filesystem/filesystem";
 
 // Re-export getErrorMessage for internal services use
 export { getErrorMessage } from "../shared/error-utils";

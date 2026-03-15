@@ -3,9 +3,9 @@
  * Provides version, binary paths, download URLs, and config generation for Claude.
  */
 
-import { Path } from "../../platform/path";
-import type { FileSystemLayer } from "../../platform/filesystem";
-import type { HttpClient } from "../../platform/network";
+import { Path } from "../../../utils/path/path";
+import type { FileSystemLayer } from "../../../boundaries/platform/filesystem/filesystem";
+import type { HttpClient } from "../../../boundaries/platform/network/network";
 import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
 
 // Import config templates as JSON objects

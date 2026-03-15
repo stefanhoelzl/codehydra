@@ -6,7 +6,7 @@
  * - Prompt history recording
  * - Permission response recording
  * - Synchronous event emission for test predictability
- * - Custom matchers (toHaveSentPrompt, toHaveSession)
+ * - Custom matchers (toHaveSentPrompt, toHaveSdkSession)
  *
  * Event emission is SYNCHRONOUS for test predictability. When `$.emitEvent()` is called,
  * it immediately resolves any pending iterator reads. This differs from the real SDK's
@@ -582,7 +582,7 @@ interface SdkClientMatchers {
    * Assert that a session exists in the mock state.
    * @param sessionId - The session ID to check
    */
-  toHaveSession(sessionId: string): void;
+  toHaveSdkSession(sessionId: string): void;
 
   /**
    * Assert that the mock is connected (event stream active).
@@ -629,7 +629,7 @@ export const sdkClientMatchers: MatcherImplementationsFor<MockSdkClient, SdkClie
     } satisfies MatcherResult;
   },
 
-  toHaveSession(received, sessionId) {
+  toHaveSdkSession(received, sessionId) {
     const hasSession = received.$.sessions.has(sessionId);
     const sessionIds = Array.from(received.$.sessions.keys()).join(", ") || "(none)";
 
