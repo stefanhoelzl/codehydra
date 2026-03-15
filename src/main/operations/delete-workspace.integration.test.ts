@@ -44,15 +44,12 @@ import type {
   DeletePipelineHookInput,
 } from "./delete-workspace";
 import type { HookContext, OperationContext } from "../intents/infrastructure/operation";
-import type { IViewManager } from "../managers/view-manager.interface";
-
 import type {
   BlockingProcess,
   DeletionProgress,
   ProjectId,
   WorkspaceName,
 } from "../../shared/api/types";
-import { createBehavioralLogger } from "../../services/logging/logging.test-utils";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { getErrorMessage } from "../../shared/error-utils";
 import { Path } from "../../services/platform/path";
@@ -251,8 +248,14 @@ function createTestAppState(initial?: Partial<TestAppState>): {
   return { appState, state };
 }
 
+interface TestViewManager {
+  getActiveWorkspacePath(): string | null;
+  setActiveWorkspace(path: string | null, focus?: boolean): void;
+  destroyWorkspaceView(path: string): Promise<void>;
+}
+
 function createTestViewManager(activeWorkspacePath: string | null = WORKSPACE_PATH): {
-  viewManager: IViewManager;
+  viewManager: TestViewManager;
   activeWorkspace: { path: string | null };
   destroyedViews: string[];
 } {
@@ -277,7 +280,7 @@ function createTestViewManager(activeWorkspacePath: string | null = WORKSPACE_PA
     onModeChange: vi.fn().mockReturnValue(() => {}),
     onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
-  } as unknown as IViewManager;
+  } as TestViewManager;
 
   return { viewManager, activeWorkspace, destroyedViews };
 }
@@ -308,7 +311,7 @@ interface TestHarness {
   progressCaptures: DeletionProgress[];
   appState: MockAppState;
   testState: TestAppState;
-  viewManager: IViewManager;
+  viewManager: TestViewManager;
   activeWorkspace: { path: string | null };
   destroyedViews: string[];
   emittedEvents: Array<{ event: string; payload: unknown }>;
@@ -362,7 +365,8 @@ function createTestHarness(options?: {
     options?.activeWorkspacePath ?? WORKSPACE_PATH
   );
   const { sendToUI, emittedEvents } = createTestSendToUI();
-  const logger = createBehavioralLogger();
+  const noop: (...args: unknown[]) => void = () => {};
+  const logger = { silly: noop, debug: noop, info: noop, warn: noop, error: noop };
   const workspaceFileService = createTestWorkspaceFileService();
 
   // Register operations

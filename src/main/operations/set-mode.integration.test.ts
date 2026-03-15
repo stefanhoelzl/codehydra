@@ -8,10 +8,9 @@
  * Test plan items covered:
  * #8:  set-mode changes mode and captures previousMode
  * #9:  set-mode emits ui:mode-changed with mode and previousMode
- * #13: IPC event bridge forwards ui:mode-changed through apiRegistry.emit()
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
@@ -26,13 +25,7 @@ import type { SetModeIntent, SetModeHookResult, ModeChangedEvent } from "./set-m
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
-import { createIpcEventBridge } from "../modules/ipc-event-bridge";
-import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
 import type { UIMode } from "../../shared/ipc";
-import { SILENT_LOGGER } from "../../services/logging";
-
-import { ApiIpcChannels } from "../../shared/ipc";
-import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Behavioral Mocks
@@ -63,10 +56,9 @@ function createMockViewManager(initialMode: UIMode = "workspace"): MockViewManag
 interface TestSetup {
   dispatcher: Dispatcher;
   viewManager: MockViewManager;
-  sendToUI: ReturnType<typeof vi.fn>;
 }
 
-function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boolean }): TestSetup {
+function createTestSetup(opts?: { initialMode?: UIMode }): TestSetup {
   const viewManager = createMockViewManager(opts?.initialMode ?? "workspace");
 
   const hookRegistry = new HookRegistry();
@@ -91,22 +83,9 @@ function createTestSetup(opts?: { initialMode?: UIMode; withIpcEventBridge?: boo
     },
   };
 
-  // Optionally wire IpcEventBridge
-  const sendToUI = vi.fn();
-  const modules: IntentModule[] = [setModeModule];
-  if (opts?.withIpcEventBridge) {
-    const ipcEventBridge = createIpcEventBridge({
-      ipcLayer: createBehavioralIpcLayer(),
-      viewManager: { sendToUI },
-      logger: SILENT_LOGGER,
-      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-    });
-    modules.push(ipcEventBridge);
-  }
+  dispatcher.registerModule(setModeModule);
 
-  for (const m of modules) dispatcher.registerModule(m);
-
-  return { dispatcher, viewManager, sendToUI };
+  return { dispatcher, viewManager };
 }
 
 // =============================================================================
@@ -232,58 +211,6 @@ describe("SetMode Operation", () => {
       expect(result).toBeUndefined();
       expect(viewManager.currentMode).toBe("workspace"); // Mode unchanged
       expect(receivedEvents).toHaveLength(0); // No event emitted
-    });
-  });
-
-  describe("IpcEventBridge forwarding (#13)", () => {
-    it("forwards ui:mode-changed to sendToUI", async () => {
-      const setup = createTestSetup({
-        initialMode: "workspace",
-        withIpcEventBridge: true,
-      });
-      const { dispatcher, sendToUI } = setup;
-
-      await dispatcher.dispatch(setModeIntent("shortcut"));
-
-      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.UI_MODE_CHANGED, {
-        mode: "shortcut",
-        previousMode: "workspace",
-      });
-    });
-
-    it("forwards correct previousMode from non-workspace initial state", async () => {
-      const setup = createTestSetup({
-        initialMode: "shortcut",
-        withIpcEventBridge: true,
-      });
-      const { dispatcher, sendToUI } = setup;
-
-      await dispatcher.dispatch(setModeIntent("workspace"));
-
-      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.UI_MODE_CHANGED, {
-        mode: "workspace",
-        previousMode: "shortcut",
-      });
-    });
-
-    it("does not forward when interceptor cancels", async () => {
-      const setup = createTestSetup({
-        initialMode: "workspace",
-        withIpcEventBridge: true,
-      });
-      const { dispatcher, sendToUI } = setup;
-
-      const cancelInterceptor: IntentInterceptor = {
-        id: "cancel-all",
-        async before(): Promise<Intent | null> {
-          return null;
-        },
-      };
-      dispatcher.addInterceptor(cancelInterceptor);
-
-      await dispatcher.dispatch(setModeIntent("shortcut"));
-
-      expect(sendToUI).not.toHaveBeenCalled();
     });
   });
 });

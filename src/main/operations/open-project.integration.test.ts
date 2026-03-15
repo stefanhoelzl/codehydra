@@ -55,10 +55,8 @@ import type {
   OpenWorkspaceIntent,
   WorkspaceCreatedEvent,
 } from "./open-workspace";
-import type { IViewManager } from "../managers/view-manager.interface";
 import type { Project, ProjectId, WorkspaceName } from "../../shared/api/types";
 import { Path } from "../../services/platform/path";
-import { expandGitUrl } from "../../services/project/url-utils";
 import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
@@ -112,8 +110,16 @@ const WORKSPACE_URL = "http://127.0.0.1:8080/?folder=test";
 // Mock Factories
 // =============================================================================
 
+interface TestViewManager {
+  getActiveWorkspacePath(): string | null;
+  setActiveWorkspace(path: string | null, focus?: boolean): void;
+  destroyWorkspaceView(path: string): Promise<void>;
+  createWorkspaceView(path: string, url: string, projectPath: string, visible: boolean): void;
+  preloadWorkspaceUrl(path: string): void;
+}
+
 function createTestViewManager(): {
-  viewManager: IViewManager;
+  viewManager: TestViewManager;
   activeWorkspace: { path: string | null };
   createdViews: Array<{ path: string; url: string }>;
   preloadedPaths: string[];
@@ -143,7 +149,7 @@ function createTestViewManager(): {
     preloadWorkspaceUrl: vi.fn().mockImplementation((path: string) => {
       preloadedPaths.push(path);
     }),
-  } as unknown as IViewManager;
+  } as TestViewManager;
 
   return { viewManager, activeWorkspace, createdViews, preloadedPaths };
 }
@@ -168,7 +174,7 @@ interface TestProjectState {
 interface TestHarness {
   dispatcher: Dispatcher;
   hookRegistry: HookRegistry;
-  viewManager: IViewManager;
+  viewManager: TestViewManager;
   activeWorkspace: { path: string | null };
   createdViews: Array<{ path: string; url: string }>;
   preloadedPaths: string[];
@@ -387,20 +393,21 @@ function createTestHarness(options?: {
               return {};
             }
 
-            const expanded = expandGitUrl(git);
-            const existing = await projectStore.findByRemoteUrl(expanded);
+            // Test URLs are fully-qualified HTTPS URLs; no expansion needed
+            const remoteUrl = git;
+            const existing = await projectStore.findByRemoteUrl(remoteUrl);
             if (existing) {
-              return { projectPath: existing, remoteUrl: expanded };
+              return { projectPath: existing, remoteUrl };
             }
 
             const gitPath = new Path("/test/cloned", "repo");
-            await gitClient.clone(expanded, gitPath);
+            await gitClient.clone(remoteUrl, gitPath);
             await projectStore.saveProject(gitPath.toString(), {
-              remoteUrl: expanded,
+              remoteUrl,
             });
-            projectStoreState.configs.set(gitPath.toString(), { remoteUrl: expanded });
+            projectStoreState.configs.set(gitPath.toString(), { remoteUrl });
 
-            return { projectPath: gitPath.toString(), remoteUrl: expanded };
+            return { projectPath: gitPath.toString(), remoteUrl };
           },
         },
       },

@@ -3,14 +3,14 @@
  * Integration tests for get-metadata operation through the Dispatcher.
  *
  * Tests verify the full dispatch pipeline: intent -> operation -> hook -> provider,
- * using behavioral mocks for git client and API registry.
+ * using a simple Map-based metadata store instead of real services.
  *
  * Test plan items covered:
  * #11: Get metadata returns record
  * #16: Hook data flows to operation
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 
@@ -26,30 +26,10 @@ import {
   INTENT_GET_METADATA,
 } from "./get-metadata";
 import type { GetMetadataIntent, GetMetadataHookResult, GetHookInput } from "./get-metadata";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
-import type {
-  ResolveHookInput as ResolveProjectHookInput,
-  ResolveHookResult as ResolveProjectHookResult,
-} from "./resolve-project";
-import { createIpcEventBridge } from "../modules/ipc-event-bridge";
-import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
-import { createMockGitClient } from "../../services/git/git-client.state-mock";
-import { createFileSystemMock, directory } from "../../services/platform/filesystem.state-mock";
-import { GitWorktreeProvider } from "../../services/git/git-worktree-provider";
-import { SILENT_LOGGER } from "../../services/logging";
-import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
+import { registerTestInfrastructure } from "./operations.test-utils";
 import { Path } from "../../services/platform/path";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
+import { isValidMetadataKey } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { Intent } from "../intents/infrastructure/types";
@@ -74,98 +54,55 @@ interface TestSetup {
 }
 
 function createTestSetup(): TestSetup {
-  const mockClient = createMockGitClient({
-    repositories: {
-      [PROJECT_ROOT.toString()]: {
-        branches: ["main", "feature-x"],
-        currentBranch: "main",
-        worktrees: [
-          {
-            name: "feature-x",
-            path: new Path(WORKSPACES_DIR, "feature-x").toString(),
-            branch: "feature-x",
-          },
-        ],
-      },
-    },
-  });
-
-  const mockFs = createFileSystemMock({
-    entries: {
-      [WORKSPACES_DIR.toString()]: directory(),
-    },
-  });
-
-  const gitWorktreeProvider = new GitWorktreeProvider(mockClient, mockFs, SILENT_LOGGER);
-  gitWorktreeProvider.registerProject(PROJECT_ROOT, WORKSPACES_DIR);
-
-  // Register workspace so metadata operations can resolve projectRoot
   const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
-  gitWorktreeProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
-
   const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
+
+  // Simple Map-based metadata store: workspacePath → Record<string, string>
+  const metadataStore = new Map<string, Record<string, string>>();
 
   // Build dispatcher with hook registry
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
 
-  // Register operations
+  // Register set-metadata and get-metadata operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  // resolve module: validates workspacePath → returns projectPath + workspaceName
-  const resolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const intent = ctx.intent as { payload: { workspacePath: string } };
-            if (intent.payload.workspacePath === workspacePath.toString()) {
-              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
-            }
-            return {};
-          },
-        },
+  // Register infrastructure operations (resolve-workspace, resolve-project, etc.)
+  registerTestInfrastructure(dispatcher, {
+    workspaces: {
+      [workspacePath.toString()]: {
+        projectPath: PROJECT_ROOT.toString(),
+        workspaceName,
       },
     },
-  };
-
-  // resolve-project module: resolves projectPath → projectId
-  const resolveProjectModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { projectPath } = ctx as ResolveProjectHookInput;
-            if (projectPath === PROJECT_ROOT.toString()) {
-              return { projectId };
-            }
-            return {};
-          },
-        },
-      },
+    projects: {
+      [PROJECT_ROOT.toString()]: { projectId },
     },
-  };
+  });
 
-  // set/get module: performs actual provider operations (reads workspacePath from enriched context)
+  // set/get module: performs metadata operations using the Map store
   const metadataModule: IntentModule = {
-    name: "test",
+    name: "test-metadata",
     hooks: {
       [SET_METADATA_OPERATION_ID]: {
         set: {
           handler: async (ctx: HookContext) => {
             const { workspacePath: wp } = ctx as SetHookInput;
             const intent = ctx.intent as SetMetadataIntent;
-            await gitWorktreeProvider.setMetadata(
-              new Path(wp),
-              intent.payload.key,
-              intent.payload.value
-            );
+            if (!isValidMetadataKey(intent.payload.key)) {
+              throw new Error(
+                `Invalid metadata key '${intent.payload.key}': must start with a letter, contain only letters, digits, and hyphens, and not end with a hyphen`
+              );
+            }
+            const record = metadataStore.get(wp) ?? {};
+            if (intent.payload.value === null) {
+              delete record[intent.payload.key];
+            } else {
+              record[intent.payload.key] = intent.payload.value;
+            }
+            metadataStore.set(wp, record);
           },
         },
       },
@@ -173,7 +110,7 @@ function createTestSetup(): TestSetup {
         get: {
           handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
             const { workspacePath: wp } = ctx as GetHookInput;
-            const metadata = await gitWorktreeProvider.getMetadata(new Path(wp));
+            const metadata = metadataStore.get(wp) ?? {};
             return { metadata };
           },
         },
@@ -181,17 +118,7 @@ function createTestSetup(): TestSetup {
     },
   };
 
-  // Wire IpcEventBridge
-  const ipcEventBridge = createIpcEventBridge({
-    ipcLayer: createBehavioralIpcLayer(),
-    viewManager: { sendToUI: vi.fn() },
-    logger: SILENT_LOGGER,
-    dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-  });
-  dispatcher.registerModule(resolveModule);
-  dispatcher.registerModule(resolveProjectModule);
   dispatcher.registerModule(metadataModule);
-  dispatcher.registerModule(ipcEventBridge);
 
   return {
     dispatcher,

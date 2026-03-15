@@ -15,6 +15,9 @@ import type { Project, ProjectId } from "../../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../../services/git/types";
 import { toIpcWorkspaces } from "../api/workspace-conversion";
 
+/** Re-exported for use by operation integration tests (avoids direct service import). */
+export type { Workspace as InternalWorkspace } from "../../services/git/types";
+
 // =============================================================================
 // Intent Types
 // =============================================================================
