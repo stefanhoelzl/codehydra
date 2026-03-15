@@ -9,4 +9,3 @@ export {
   type ViewManagerConfig,
 } from "../../boundaries/shell/view/view-manager";
 export type { IViewManager, Unsubscribe } from "../../boundaries/shell/view/view-manager.interface";
-export { BadgeManager } from "./badge-manager";

@@ -8,12 +8,88 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createOpenCodeModuleProvider, type OpenCodeModuleProviderDeps } from "./module-provider";
+import { createOpenCodeModuleProvider } from "./module-provider";
 import type { AgentModuleProvider } from "../agent-module-provider";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { AgentBinaryManager } from "../../binary-download";
 import type { OpenCodeServerManager } from "./server-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
+
+// =============================================================================
+// Mock server manager and binary manager classes
+// =============================================================================
+
+type ServerStartedHandler = (workspacePath: string, port: number, pendingPrompt: unknown) => void;
+type ServerStoppedHandler = (workspacePath: string, isRestart: boolean) => void;
+
+/** Latest mock server manager instance created by the mocked constructor. */
+let latestMockServerManager: OpenCodeServerManager & {
+  _triggerStarted: ServerStartedHandler;
+  _triggerStopped: ServerStoppedHandler;
+};
+
+/** Latest mock binary manager instance created by the mocked constructor. */
+let latestMockBinaryManager: AgentBinaryManager;
+
+function createMockServerManager(): OpenCodeServerManager & {
+  _triggerStarted: ServerStartedHandler;
+  _triggerStopped: ServerStoppedHandler;
+} {
+  let startedHandler: ServerStartedHandler | null = null;
+  let stoppedHandler: ServerStoppedHandler | null = null;
+
+  return {
+    startServer: vi.fn().mockResolvedValue(8080),
+    stopServer: vi.fn().mockResolvedValue({ success: true }),
+    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    setMcpConfig: vi.fn(),
+    setMarkActiveHandler: vi.fn(),
+    getBridgePort: vi.fn().mockReturnValue(9090),
+    onServerStarted: vi.fn((cb: ServerStartedHandler) => {
+      startedHandler = cb;
+      return vi.fn();
+    }),
+    onServerStopped: vi.fn((cb: ServerStoppedHandler) => {
+      stoppedHandler = cb;
+      return vi.fn();
+    }),
+    _triggerStarted(workspacePath: string, port: number, pendingPrompt: unknown) {
+      startedHandler?.(workspacePath, port, pendingPrompt);
+    },
+    _triggerStopped(workspacePath: string, isRestart: boolean) {
+      stoppedHandler?.(workspacePath, isRestart);
+    },
+  } as unknown as OpenCodeServerManager & {
+    _triggerStarted: ServerStartedHandler;
+    _triggerStopped: ServerStoppedHandler;
+  };
+}
+
+function createMockBinaryManager(): AgentBinaryManager {
+  return {
+    getBinaryType: vi.fn().mockReturnValue("opencode"),
+    preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
+    downloadBinary: vi.fn().mockResolvedValue(undefined),
+  } as unknown as AgentBinaryManager;
+}
+
+vi.mock("./server-manager", () => ({
+  OpenCodeServerManager: class {
+    constructor() {
+      Object.assign(this, createMockServerManager());
+      latestMockServerManager = this as unknown as typeof latestMockServerManager;
+    }
+  },
+}));
+vi.mock("../../binary-download/agent-binary-manager", () => ({
+  AgentBinaryManager: class {
+    constructor() {
+      Object.assign(this, createMockBinaryManager());
+      latestMockBinaryManager = this as unknown as AgentBinaryManager;
+    }
+  },
+}));
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted
@@ -98,58 +174,6 @@ vi.mock("./provider", () => ({
 const WS_PATH = "/workspace/feature-a" as WorkspacePath;
 const WS_PATH_B = "/workspace/feature-b" as WorkspacePath;
 
-type ServerStartedHandler = (workspacePath: string, port: number, pendingPrompt: unknown) => void;
-type ServerStoppedHandler = (workspacePath: string, isRestart: boolean) => void;
-
-/**
- * Create a mock OpenCodeServerManager with vi.fn() stubs.
- */
-function createMockServerManager(): OpenCodeServerManager & {
-  _triggerStarted: ServerStartedHandler;
-  _triggerStopped: ServerStoppedHandler;
-} {
-  let startedHandler: ServerStartedHandler | null = null;
-  let stoppedHandler: ServerStoppedHandler | null = null;
-
-  return {
-    startServer: vi.fn().mockResolvedValue(8080),
-    stopServer: vi.fn().mockResolvedValue({ success: true }),
-    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
-    dispose: vi.fn().mockResolvedValue(undefined),
-    setMcpConfig: vi.fn(),
-    setMarkActiveHandler: vi.fn(),
-    getBridgePort: vi.fn().mockReturnValue(9090),
-    onServerStarted: vi.fn((cb: ServerStartedHandler) => {
-      startedHandler = cb;
-      return vi.fn();
-    }),
-    onServerStopped: vi.fn((cb: ServerStoppedHandler) => {
-      stoppedHandler = cb;
-      return vi.fn();
-    }),
-    _triggerStarted(workspacePath: string, port: number, pendingPrompt: unknown) {
-      startedHandler?.(workspacePath, port, pendingPrompt);
-    },
-    _triggerStopped(workspacePath: string, isRestart: boolean) {
-      stoppedHandler?.(workspacePath, isRestart);
-    },
-  } as unknown as OpenCodeServerManager & {
-    _triggerStarted: ServerStartedHandler;
-    _triggerStopped: ServerStoppedHandler;
-  };
-}
-
-/**
- * Create a mock AgentBinaryManager.
- */
-function createMockBinaryManager(): AgentBinaryManager {
-  return {
-    getBinaryType: vi.fn().mockReturnValue("opencode"),
-    preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
-    downloadBinary: vi.fn().mockResolvedValue(undefined),
-  } as unknown as AgentBinaryManager;
-}
-
 /**
  * Initialize the provider and trigger a server-started event so a mock
  * provider is created and registered. Returns the mock provider instance.
@@ -186,15 +210,24 @@ describe("OpenCode module provider", () => {
     vi.clearAllMocks();
     resetMockState();
 
-    serverManager = createMockServerManager();
-    binaryManager = createMockBinaryManager();
-
-    const deps: OpenCodeModuleProviderDeps = {
-      serverManager: serverManager as unknown as OpenCodeServerManager,
-      binaryManager,
+    provider = createOpenCodeModuleProvider({
+      binaryDownloadService: {} as never,
+      binaryConfig: {
+        name: "opencode",
+        version: "1.0.0",
+        destDir: "/tmp/opencode",
+        url: "https://example.com/opencode",
+        executablePath: "opencode",
+      },
+      processRunner: {} as never,
+      portManager: {} as never,
+      httpClient: {} as never,
+      pathProvider: {} as never,
       logger: SILENT_LOGGER,
-    };
-    provider = createOpenCodeModuleProvider(deps);
+    });
+    // Capture the mock instances created during factory execution
+    serverManager = latestMockServerManager;
+    binaryManager = latestMockBinaryManager;
   });
 
   // ---------------------------------------------------------------------------

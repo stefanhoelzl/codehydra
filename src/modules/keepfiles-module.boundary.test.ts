@@ -1,17 +1,17 @@
 // @vitest-environment node
 /**
- * Boundary tests for KeepFilesService.
+ * Boundary tests for KeepFilesService (inlined into keepfiles module).
  * Tests with real filesystem and real ignore package.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
 import { writeFile as nodeWriteFile, mkdir as nodeMkdir } from "node:fs/promises";
-import { KeepFilesService } from "./keepfiles-service";
-import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
-import { SILENT_LOGGER } from "../../boundaries/platform/logging";
-import { createTempDir } from "../test-utils";
-import { Path } from "../../utils/path/path";
+import { KeepFilesService } from "./keepfiles-module";
+import { DefaultFileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
+import { createTempDir } from "../services/test-utils";
+import { Path } from "../utils/path/path";
 
 describe("KeepFilesService", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };

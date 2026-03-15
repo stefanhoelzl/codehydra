@@ -21,12 +21,18 @@ import type {
 } from "../types";
 import type { AgentSessionInfo } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
-import type { AgentBinaryManager, DownloadProgressCallback } from "../../binary-download";
+import type { AgentBinaryConfig, DownloadProgressCallback } from "../../binary-download";
+import type { BinaryDownloadService } from "../../binary-download";
 import type { BinaryType } from "../../binary-resolution/types";
 import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { Unsubscribe } from "../../../shared/api/interfaces";
-import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
+import type { ProcessRunner } from "../../../boundaries/platform/process/process";
+import type { PortManager, HttpClient } from "../../../boundaries/platform/network/network";
+import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
+import type { PendingPrompt } from "./server-manager";
+import { AgentBinaryManager } from "../../binary-download/agent-binary-manager";
+import { OpenCodeServerManager } from "./server-manager";
 import { configString } from "../../../boundaries/platform/config/config-definition";
 import { OpenCodeProvider } from "./provider";
 
@@ -38,8 +44,12 @@ import { OpenCodeProvider } from "./provider";
  * Dependencies for the OpenCode module provider.
  */
 export interface OpenCodeModuleProviderDeps {
-  readonly serverManager: OpenCodeServerManager;
-  readonly binaryManager: AgentBinaryManager;
+  readonly binaryDownloadService: BinaryDownloadService;
+  readonly binaryConfig: AgentBinaryConfig;
+  readonly processRunner: ProcessRunner;
+  readonly portManager: PortManager;
+  readonly httpClient: HttpClient;
+  readonly pathProvider: PathProvider;
   readonly logger: Logger;
 }
 
@@ -54,7 +64,20 @@ export interface OpenCodeModuleProviderDeps {
 export function createOpenCodeModuleProvider(
   deps: OpenCodeModuleProviderDeps
 ): AgentModuleProvider {
-  const { serverManager, binaryManager, logger } = deps;
+  const { logger } = deps;
+
+  const binaryManager = new AgentBinaryManager(
+    deps.binaryConfig,
+    deps.binaryDownloadService,
+    deps.logger
+  );
+  const serverManager = new OpenCodeServerManager(
+    deps.processRunner,
+    deps.portManager,
+    deps.httpClient,
+    deps.pathProvider,
+    deps.logger
+  );
 
   // ===========================================================================
   // Internal closure state
