@@ -184,7 +184,7 @@ function createTestSetup(): TestSetup {
   // Wire IpcEventBridge
   const ipcEventBridge = createIpcEventBridge({
     ipcLayer: createBehavioralIpcLayer(),
-    sendToUI: vi.fn(),
+    viewManager: { sendToUI: vi.fn() },
     logger: SILENT_LOGGER,
     dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
   });

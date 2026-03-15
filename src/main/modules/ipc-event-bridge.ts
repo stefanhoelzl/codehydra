@@ -26,6 +26,7 @@ import type {
 import { ApiIpcChannels } from "../../shared/ipc";
 import type { Logger } from "../../services/logging";
 import type { IpcLayer } from "../../services/platform/ipc";
+import type { IViewManager } from "../managers/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../operations/set-metadata";
 import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../operations/set-metadata";
@@ -99,7 +100,7 @@ import { Path } from "../../services/platform/path";
  */
 export interface IpcEventBridgeDeps {
   readonly ipcLayer: IpcLayer;
-  readonly sendToUI: (channel: string, ...args: unknown[]) => void;
+  readonly viewManager: Pick<IViewManager, "sendToUI">;
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
 }
@@ -136,7 +137,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     [EVENT_METADATA_CHANGED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as MetadataChangedEvent).payload as MetadataChangedPayload;
-        deps.sendToUI(ApiIpcChannels.WORKSPACE_METADATA_CHANGED, {
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_METADATA_CHANGED, {
           projectId: payload.projectId,
           workspaceName: payload.workspaceName,
           key: payload.key,
@@ -147,7 +148,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     [EVENT_MODE_CHANGED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as ModeChangedEvent).payload as ModeChangedPayload;
-        deps.sendToUI(ApiIpcChannels.UI_MODE_CHANGED, {
+        deps.viewManager.sendToUI(ApiIpcChannels.UI_MODE_CHANGED, {
           mode: payload.mode,
           previousMode: payload.previousMode,
         });
@@ -156,7 +157,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     [EVENT_WORKSPACE_CREATED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as WorkspaceCreatedEvent).payload;
-        deps.sendToUI(ApiIpcChannels.WORKSPACE_CREATED, {
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_CREATED, {
           projectId: p.projectId,
           workspace: {
             projectId: p.projectId,
@@ -173,7 +174,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     [EVENT_WORKSPACE_DELETED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as WorkspaceDeletedEvent).payload;
-        deps.sendToUI(ApiIpcChannels.WORKSPACE_REMOVED, {
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_REMOVED, {
           projectId: payload.projectId,
           workspaceName: payload.workspaceName,
           path: payload.workspacePath,
@@ -183,28 +184,28 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     [EVENT_WORKSPACE_DELETION_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const progress = (event as WorkspaceDeletionProgressEvent).payload;
-        deps.sendToUI(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_DELETION_PROGRESS, progress);
       },
     },
     [EVENT_PROJECT_OPENED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as ProjectOpenedEvent).payload;
-        deps.sendToUI(ApiIpcChannels.PROJECT_OPENED, { project: p.project });
+        deps.viewManager.sendToUI(ApiIpcChannels.PROJECT_OPENED, { project: p.project });
       },
     },
     [EVENT_PROJECT_CLOSED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as ProjectClosedEvent).payload;
-        deps.sendToUI(ApiIpcChannels.PROJECT_CLOSED, { projectId: p.projectId });
+        deps.viewManager.sendToUI(ApiIpcChannels.PROJECT_CLOSED, { projectId: p.projectId });
       },
     },
     [EVENT_WORKSPACE_SWITCHED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as WorkspaceSwitchedEvent).payload;
         if (payload === null) {
-          deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, null);
+          deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, null);
         } else {
-          deps.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, {
+          deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_SWITCHED, {
             projectId: payload.projectId,
             workspaceName: payload.workspaceName,
             path: payload.path,
@@ -215,19 +216,19 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
     [EVENT_SETUP_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as SetupProgressEvent).payload;
-        deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
+        deps.viewManager.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
       },
     },
     [EVENT_CLONE_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as CloneProgressEvent).payload;
-        deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_PROGRESS, payload);
+        deps.viewManager.sendToUI(ApiIpcChannels.PROJECT_CLONE_PROGRESS, payload);
       },
     },
     [EVENT_PROJECT_OPEN_FAILED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as ProjectOpenFailedEvent).payload;
-        deps.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, {
+        deps.viewManager.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, {
           reason: payload.reason,
           url: payload.git,
         });
@@ -240,19 +241,19 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
           message,
           ...(code !== undefined && { code }),
         };
-        deps.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
+        deps.viewManager.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
       },
     },
     [EVENT_UPDATE_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as UpdateProgressEvent).payload;
-        deps.sendToUI(ApiIpcChannels.UPDATE_PROGRESS, payload);
+        deps.viewManager.sendToUI(ApiIpcChannels.UPDATE_PROGRESS, payload);
       },
     },
     [EVENT_BASES_UPDATED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as BasesUpdatedEvent).payload;
-        deps.sendToUI(ApiIpcChannels.PROJECT_BASES_UPDATED, {
+        deps.viewManager.sendToUI(ApiIpcChannels.PROJECT_BASES_UPDATED, {
           projectId: p.projectId,
           projectPath: p.projectPath,
           bases: p.bases,
@@ -263,7 +264,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
       handler: async (event: DomainEvent): Promise<void> => {
         const { key } = (event as ShortcutKeyPressedEvent).payload;
         if (isShortcutKey(key)) {
-          deps.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
+          deps.viewManager.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
         }
       },
     },
@@ -292,7 +293,7 @@ export function createIpcEventBridge(deps: IpcEventBridgeDeps): IntentModule {
                 },
               };
 
-        deps.sendToUI(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_STATUS_CHANGED, {
           projectId,
           workspaceName,
           path: workspacePath,

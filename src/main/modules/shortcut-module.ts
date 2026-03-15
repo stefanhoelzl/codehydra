@@ -19,7 +19,9 @@ import type { IViewManager } from "../managers/view-manager.interface";
 import type { Logger } from "../../services/logging";
 import type { KeyboardInput, Unsubscribe, ViewLayer } from "../../services/shell/view";
 import type { WindowLayer } from "../../services/shell/window";
-import type { ViewHandle, WindowHandle } from "../../services/shell/types";
+import type { ViewHandle } from "../../services/shell/types";
+import type { WindowManager } from "../managers/window-manager";
+import type { IDispatcher } from "../intents/infrastructure/dispatcher";
 import { APP_START_OPERATION_ID } from "../operations/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../operations/app-shutdown";
 import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../operations/open-workspace";
@@ -61,8 +63,8 @@ export interface ShortcutModuleDeps {
   readonly viewManager: Pick<IViewManager, "getUIViewHandle" | "getMode" | "getWorkspaceView">;
   readonly viewLayer: Pick<ViewLayer, "onBeforeInputEvent" | "onDestroyed">;
   readonly windowLayer: Pick<WindowLayer, "onBlur">;
-  readonly getWindowHandle: () => WindowHandle;
-  readonly dispatch: (intent: { type: string; payload: unknown }) => PromiseLike<unknown>;
+  readonly windowManager: Pick<WindowManager, "getWindowHandle">;
+  readonly dispatcher: Pick<IDispatcher, "dispatch">;
   readonly logger: Logger;
 }
 
@@ -72,14 +74,14 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
   let unsubscribeBlur: Unsubscribe | null = null;
 
   function dispatchSetMode(mode: string): void {
-    void deps.dispatch({
+    void deps.dispatcher.dispatch({
       type: INTENT_SET_MODE,
       payload: { mode },
     } as SetModeIntent);
   }
 
   function dispatchShortcutKey(key: string): void {
-    void deps.dispatch({
+    void deps.dispatcher.dispatch({
       type: INTENT_SHORTCUT_KEY,
       payload: { key },
     } as ShortcutKeyIntent);
@@ -219,7 +221,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
       [APP_START_OPERATION_ID]: {
         init: {
           handler: async (): Promise<void> => {
-            unsubscribeBlur = deps.windowLayer.onBlur(deps.getWindowHandle(), () => {
+            unsubscribeBlur = deps.windowLayer.onBlur(deps.windowManager.getWindowHandle(), () => {
               state = "NORMAL";
             });
 

@@ -144,10 +144,11 @@ function createBridgeDeps(
 ): IpcEventBridgeDeps & { ipcLayer: BehavioralIpcLayer; sendToUI: SendToUIMock } {
   const ipcLayer = (overrides?.ipcLayer as BehavioralIpcLayer) ?? createBehavioralIpcLayer();
   const sendToUI: SendToUIMock =
-    (overrides?.sendToUI as SendToUIMock) ?? vi.fn<(channel: string, ...args: unknown[]) => void>();
+    (overrides?.viewManager?.sendToUI as SendToUIMock) ??
+    vi.fn<(channel: string, ...args: unknown[]) => void>();
   const base: IpcEventBridgeDeps = {
     ipcLayer,
-    sendToUI,
+    viewManager: { sendToUI },
     logger: SILENT_LOGGER,
     dispatcher: {} as unknown as IpcEventBridgeDeps["dispatcher"],
     ...overrides,
