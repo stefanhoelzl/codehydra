@@ -14,9 +14,9 @@ import { createMockProcessRunner, type MockProcessRunner } from "../platform/pro
 import { createMockLogger } from "../logging/logging.test-utils";
 import type { PathProvider } from "../platform/path-provider";
 import type { Logger } from "../logging";
-import type { ResolvableBinaryType } from "./types";
+import type { BinaryType } from "./types";
 
-const TEST_EXECUTABLE_PATHS: Record<ResolvableBinaryType, string> = {
+const TEST_EXECUTABLE_PATHS: Record<BinaryType, string> = {
   "code-server": "bin/code-server",
   opencode: "opencode",
   claude: "claude",

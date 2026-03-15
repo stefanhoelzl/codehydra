@@ -14,7 +14,7 @@ import type { ProcessRunner } from "../platform/process";
 import type { PathProvider } from "../platform/path-provider";
 import type { Logger } from "../logging";
 import { Path } from "../platform/path";
-import type { BinaryResolution, ResolutionOptions, ResolvableBinaryType } from "./types";
+import type { BinaryResolution, ResolutionOptions, BinaryType } from "./types";
 
 /**
  * Dependencies for BinaryResolutionService.
@@ -23,7 +23,7 @@ export interface BinaryResolutionServiceDeps {
   readonly fileSystem: FileSystemLayer;
   readonly processRunner: ProcessRunner;
   readonly pathProvider: PathProvider;
-  readonly executablePaths: Record<ResolvableBinaryType, string>;
+  readonly executablePaths: Record<BinaryType, string>;
   readonly logger: Logger;
 }
 
@@ -34,7 +34,7 @@ export class BinaryResolutionService {
   private readonly fileSystem: FileSystemLayer;
   private readonly processRunner: ProcessRunner;
   private readonly pathProvider: PathProvider;
-  private readonly executablePaths: Record<ResolvableBinaryType, string>;
+  private readonly executablePaths: Record<BinaryType, string>;
   private readonly logger: Logger;
 
   constructor(deps: BinaryResolutionServiceDeps) {
@@ -52,10 +52,7 @@ export class BinaryResolutionService {
    * @param options - Resolution options
    * @returns Resolution result
    */
-  async resolve(
-    type: ResolvableBinaryType,
-    options?: ResolutionOptions
-  ): Promise<BinaryResolution> {
+  async resolve(type: BinaryType, options?: ResolutionOptions): Promise<BinaryResolution> {
     const pinnedVersion = options?.pinnedVersion;
 
     if (pinnedVersion) {
@@ -106,7 +103,7 @@ export class BinaryResolutionService {
    * @param type - Binary type to find
    * @returns true if binary is available, false otherwise
    */
-  async findSystemBinary(type: ResolvableBinaryType): Promise<boolean> {
+  async findSystemBinary(type: BinaryType): Promise<boolean> {
     // code-server is never system-installed
     if (type === "code-server") {
       return false;
@@ -127,9 +124,7 @@ export class BinaryResolutionService {
    * @param type - Binary type to find
    * @returns Path and version or null if not found
    */
-  async findLatestDownloaded(
-    type: ResolvableBinaryType
-  ): Promise<{ path: Path; version: string } | null> {
+  async findLatestDownloaded(type: BinaryType): Promise<{ path: Path; version: string } | null> {
     const baseDir = this.getBinaryBaseDir(type);
 
     try {
@@ -169,10 +164,7 @@ export class BinaryResolutionService {
   /**
    * Resolve an exact pinned version.
    */
-  private async resolveExactVersion(
-    type: ResolvableBinaryType,
-    version: string
-  ): Promise<BinaryResolution> {
+  private async resolveExactVersion(type: BinaryType, version: string): Promise<BinaryResolution> {
     const binaryPath = this.getBinaryPath(type, version);
 
     try {
@@ -194,14 +186,14 @@ export class BinaryResolutionService {
   /**
    * Get the base directory for a binary type.
    */
-  private getBinaryBaseDir(type: ResolvableBinaryType): Path {
+  private getBinaryBaseDir(type: BinaryType): Path {
     return this.pathProvider.bundlePath(type);
   }
 
   /**
    * Get the binary path for a specific version.
    */
-  private getBinaryPath(type: ResolvableBinaryType, version: string): Path {
+  private getBinaryPath(type: BinaryType, version: string): Path {
     return new Path(this.pathProvider.bundlePath(`${type}/${version}`), this.executablePaths[type]);
   }
 }

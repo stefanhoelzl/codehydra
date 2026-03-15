@@ -15,7 +15,7 @@ import type { IntentModule } from "../intents/infrastructure/module";
 import { ANY_VALUE, type HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent } from "../intents/infrastructure/types";
 import type { Logger } from "../../services/logging/types";
-import type { BinaryType } from "../../services/vscode-setup/types";
+import type { BinaryType } from "../../services/binary-resolution/types";
 import type { AgentType } from "../../shared/plugin-protocol";
 import type { WorkspacePath } from "../../shared/ipc";
 

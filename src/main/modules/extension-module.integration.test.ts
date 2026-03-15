@@ -131,5 +131,71 @@ describe("ExtensionModule", () => {
 
       expect(result.extensionRequirements).toBeUndefined();
     });
+
+    it("returns empty result when manifest is not an array", async () => {
+      const deps = createMockDeps({
+        fileSystemLayer: {
+          readFile: vi.fn().mockResolvedValue(JSON.stringify({ marketplace: [], bundled: [] })),
+        } as unknown as Pick<FileSystemLayer, "readFile">,
+      });
+      const { dispatcher } = createTestSetup(deps);
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as InitResult;
+
+      expect(result.extensionRequirements).toBeUndefined();
+    });
+
+    it("returns empty result when manifest contains string items", async () => {
+      const deps = createMockDeps({
+        fileSystemLayer: {
+          readFile: vi.fn().mockResolvedValue(JSON.stringify(["codehydra.sidekick-0.0.3.vsix"])),
+        } as unknown as Pick<FileSystemLayer, "readFile">,
+      });
+      const { dispatcher } = createTestSetup(deps);
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as InitResult;
+
+      expect(result.extensionRequirements).toBeUndefined();
+    });
+
+    it("returns empty result when manifest item has missing fields", async () => {
+      const deps = createMockDeps({
+        fileSystemLayer: {
+          readFile: vi
+            .fn()
+            .mockResolvedValue(JSON.stringify([{ id: "test.ext", version: "0.0.1" }])),
+        } as unknown as Pick<FileSystemLayer, "readFile">,
+      });
+      const { dispatcher } = createTestSetup(deps);
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as InitResult;
+
+      expect(result.extensionRequirements).toBeUndefined();
+    });
+
+    it("handles empty array manifest", async () => {
+      const deps = createMockDeps({
+        fileSystemLayer: {
+          readFile: vi.fn().mockResolvedValue(JSON.stringify([])),
+        } as unknown as Pick<FileSystemLayer, "readFile">,
+      });
+      const { dispatcher } = createTestSetup(deps);
+
+      const result = (await dispatcher.dispatch({
+        type: "app:start",
+        payload: {},
+      })) as InitResult;
+
+      expect(result.extensionRequirements).toHaveLength(0);
+    });
   });
 });

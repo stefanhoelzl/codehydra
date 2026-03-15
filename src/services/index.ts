@@ -105,10 +105,6 @@ export {
   type SymlinkEntry,
 } from "./platform/filesystem.state-mock";
 
-// VSCode setup
-export type { BinaryType, ExtensionConfig, ExtensionsManifest } from "./vscode-setup";
-export { validateExtensionsManifest } from "./vscode-setup";
-
 // KeepFiles service
 export { KeepFilesService } from "./keepfiles";
 export type { IKeepFilesService, CopyResult, CopyError } from "./keepfiles";

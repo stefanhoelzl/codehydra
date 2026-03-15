@@ -35,12 +35,26 @@
 import type { Intent } from "../intents/infrastructure/types";
 import type { Operation, OperationContext, HookContext } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
-import type {
-  BinaryType,
-  ExtensionRequirement,
-  ExtensionInstallEntry,
-} from "../../services/vscode-setup/types";
+import type { BinaryType } from "../../services/binary-resolution/types";
 import type { ConfigKeyDefinition } from "../../services/config/config-definition";
+
+// =============================================================================
+// Extension Types (operation contract types for check-deps and setup hooks)
+// =============================================================================
+
+/** What the manifest declares — produced by extension-module, consumed by code-server-module. */
+export interface ExtensionRequirement {
+  readonly id: string;
+  readonly version: string;
+  /** Native path to the .vsix file. */
+  readonly vsixPath: string;
+}
+
+/** What needs to be installed — produced by code-server-module check-deps, consumed by setup. */
+export interface ExtensionInstallEntry {
+  readonly id: string;
+  readonly vsixPath: string;
+}
 import { INTENT_SETUP } from "./setup";
 import { INTENT_UPDATE_APPLY } from "./update-apply";
 

@@ -51,7 +51,7 @@ import {
   type OperationContext,
 } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
-import type { BinaryType } from "../../services/vscode-setup/types";
+import type { BinaryType } from "../../services/binary-resolution/types";
 
 // =============================================================================
 // Test Setup

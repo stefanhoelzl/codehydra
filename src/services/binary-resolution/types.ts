@@ -7,7 +7,7 @@ import type { Path } from "../platform/path";
 /**
  * Binary types that can be resolved.
  */
-export type ResolvableBinaryType = "code-server" | "opencode" | "claude";
+export type BinaryType = "code-server" | "opencode" | "claude";
 
 /**
  * Source of a resolved binary.

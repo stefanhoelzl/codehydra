@@ -11,5 +11,5 @@ export {
   type BinaryResolution,
   type BinarySource,
   type ResolutionOptions,
-  type ResolvableBinaryType,
+  type BinaryType,
 } from "./types";
