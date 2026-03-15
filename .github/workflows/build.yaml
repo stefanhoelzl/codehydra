@@ -23,7 +23,7 @@ jobs:
       is_base_version: ${{ steps.version.outputs.is_base_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -88,7 +88,7 @@ jobs:
         run: pnpm build
 
       - name: Upload build output
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-output
           path: out
@@ -126,13 +126,13 @@ jobs:
             tar: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup
         uses: ./.github/actions/setup
 
       - name: Download build output
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-output
           path: out
@@ -140,7 +140,7 @@ jobs:
       - name: Cache Wine packages
         if: matrix.wine
         id: wine-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /var/cache/apt/archives/*.deb
           key: apt-wine-ubuntu-24.04-v2
@@ -172,7 +172,7 @@ jobs:
           tar czf "dist/${NAME}.tar.gz" -C dist "$NAME"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.rename || matrix.output }}${{ matrix.tar && '.tar.gz' || '' }}
           path: dist/${{ matrix.rename || matrix.output }}${{ matrix.tar && '.tar.gz' || '' }}
@@ -181,7 +181,7 @@ jobs:
 
       - name: Upload update metadata
         if: matrix.artifact == 'win-installer-x64' || matrix.artifact == 'linux-x64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: update-metadata-${{ matrix.artifact }}
           path: dist/latest*.yml
