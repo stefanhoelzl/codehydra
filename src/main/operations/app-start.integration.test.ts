@@ -51,7 +51,7 @@ import {
   type OperationContext,
 } from "../intents/infrastructure/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
-import type { BinaryType } from "../../services/binary-resolution/types";
+import type { BinaryType } from "./app-start";
 import type { ConfigService } from "../../services/config/config-service";
 
 /** Minimal ConfigService mock for tests. Returns configuredAgent value from get(). */

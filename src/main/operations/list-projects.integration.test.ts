@@ -22,7 +22,7 @@ import type {
 } from "./list-projects";
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { Project, ProjectId } from "../../shared/api/types";
-import type { Workspace as InternalWorkspace } from "../../services/git/types";
+import type { InternalWorkspace } from "./list-projects";
 import { Path } from "../../services/platform/path";
 
 // =============================================================================

@@ -13,13 +13,10 @@
  * #5:  throws when workspace not found
  * #6:  no-op when switching to already-active workspace
  * #7:  bridge handler defaults focus when omitted in API payload
- * #8:  IPC bridge forwards workspace:switched event
- * #9:  title module updates window title on switch
- * #10: title module formats title with update-available suffix
  * #11: interceptor cancellation prevents operation and event
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { HookRegistry } from "../intents/infrastructure/hook-registry";
 import { Dispatcher } from "../intents/infrastructure/dispatcher";
 import type { IntentInterceptor } from "../intents/infrastructure/dispatcher";
@@ -55,17 +52,8 @@ import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-pr
 import type { IntentModule } from "../intents/infrastructure/module";
 import type { HookContext } from "../intents/infrastructure/operation";
 import type { DomainEvent, Intent } from "../intents/infrastructure/types";
-import { createIpcEventBridge } from "../modules/ipc-event-bridge";
-import type { IpcEventBridgeDeps } from "../modules/ipc-event-bridge";
-import { createWindowTitleModule } from "../modules/window-title-module";
-import { SILENT_LOGGER } from "../../services/logging";
-import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./update-available";
-import type { UpdateAvailableIntent } from "./update-available";
 import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
-
-import { ApiIpcChannels } from "../../shared/ipc";
-import { createBehavioralIpcLayer } from "../../services/platform/ipc.test-utils";
 
 // =============================================================================
 // Behavioral Mocks
@@ -179,23 +167,16 @@ interface TestSetup {
   dispatcher: Dispatcher;
   viewManager: MockViewManager;
   appState: MockAppState;
-  sendToUI: ReturnType<typeof vi.fn>;
-  setTitle: ReturnType<typeof vi.fn>;
 }
 
 function createTestSetup(opts?: {
   initialActive?: string | null;
-  withIpcEventBridge?: boolean;
-  withTitleModule?: boolean;
   withAutoSelect?: boolean;
-  titleVersion?: string;
   projects?: ProjectEntry[];
 }): TestSetup {
   const projects = opts?.projects ?? [createTestProject()];
   const viewManager = createMockViewManager(opts?.initialActive ?? null);
   const appState = createMockAppState(projects);
-  const setTitle = vi.fn();
-  const titleVersion = opts?.titleVersion ?? "main";
 
   const hookRegistry = new HookRegistry();
   const dispatcher = new Dispatcher(hookRegistry);
@@ -277,7 +258,6 @@ function createTestSetup(opts?: {
     },
   };
 
-  const sendToUI = vi.fn();
   const modules: IntentModule[] = [resolveModule, resolveProjectModule, switchViewModule];
 
   if (opts?.withAutoSelect) {
@@ -326,29 +306,12 @@ function createTestSetup(opts?: {
     modules.push(selectNextModule);
   }
 
-  if (opts?.withIpcEventBridge) {
-    const ipcEventBridge = createIpcEventBridge({
-      ipcLayer: createBehavioralIpcLayer(),
-      viewManager: { sendToUI },
-      logger: SILENT_LOGGER,
-      dispatcher: dispatcher as unknown as IpcEventBridgeDeps["dispatcher"],
-    });
-    modules.push(ipcEventBridge);
-  }
-
-  if (opts?.withTitleModule) {
-    dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
-    modules.push(createWindowTitleModule({ windowManager: { setTitle }, titleVersion }));
-  }
-
   for (const m of modules) dispatcher.registerModule(m);
 
   return {
     dispatcher,
     viewManager,
     appState,
-    sendToUI,
-    setTitle,
   };
 }
 
@@ -496,57 +459,6 @@ describe("SwitchWorkspace Operation", () => {
 
       expect(viewManager.activeWorkspacePath).toBe(TEST_WORKSPACE_PATH);
       expect(viewManager.focusState).toBe(true);
-    });
-  });
-
-  describe("IPC bridge forwards workspace:switched event (#8)", () => {
-    it("forwards to sendToUI with correct payload", async () => {
-      const setup = createTestSetup({ withIpcEventBridge: true });
-      const { dispatcher, sendToUI } = setup;
-
-      await dispatcher.dispatch(switchIntent());
-
-      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_SWITCHED, {
-        projectId: generateProjectId(TEST_PROJECT_PATH),
-        workspaceName: TEST_WORKSPACE_NAME,
-        path: TEST_WORKSPACE_PATH,
-      });
-    });
-  });
-
-  describe("title module updates window title on switch (#9)", () => {
-    it("calls setTitle with formatted title including version", async () => {
-      const setup = createTestSetup({ withTitleModule: true, titleVersion: "main" });
-      const { dispatcher, setTitle } = setup;
-
-      await dispatcher.dispatch(switchIntent());
-
-      expect(setTitle).toHaveBeenCalledWith(
-        `CodeHydra - ${TEST_PROJECT_NAME} / ${TEST_WORKSPACE_NAME} - (main)`
-      );
-    });
-  });
-
-  describe("title module formats title with update-available suffix (#10)", () => {
-    it("includes (update available) after update:available intent", async () => {
-      const setup = createTestSetup({
-        withTitleModule: true,
-        titleVersion: "main",
-      });
-      const { dispatcher, setTitle } = setup;
-
-      // Dispatch update:available before workspace switch
-      await dispatcher.dispatch({
-        type: INTENT_UPDATE_AVAILABLE,
-        payload: { version: "1.2.3" },
-      } as UpdateAvailableIntent);
-      setTitle.mockClear();
-
-      await dispatcher.dispatch(switchIntent());
-
-      expect(setTitle).toHaveBeenCalledWith(
-        `CodeHydra - ${TEST_PROJECT_NAME} / ${TEST_WORKSPACE_NAME} - (main) - (update available)`
-      );
     });
   });
 

@@ -67,7 +67,6 @@ import type {
   ResolveHookInput as ResolveProjectHookInput,
 } from "./resolve-project";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
-import type { IViewManager } from "../managers/view-manager.interface";
 import type { ProjectId, WorkspaceName, Project } from "../../shared/api/types";
 import { extractWorkspaceName } from "../../shared/api/id-utils";
 import { Path } from "../../services/platform/path";
@@ -108,7 +107,11 @@ interface TestState {
 interface TestHarness {
   dispatcher: Dispatcher;
   state: TestState;
-  viewManager: IViewManager;
+  viewManager: {
+    getActiveWorkspacePath(): string;
+    setActiveWorkspace(path: string | null, focus?: boolean): void;
+    destroyWorkspaceView(path: string): Promise<void>;
+  };
 }
 
 function createTestHarness(options?: {
@@ -181,7 +184,7 @@ function createTestHarness(options?: {
     onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
     preloadWorkspaceUrl: vi.fn(),
-  } as unknown as IViewManager;
+  } as TestHarness["viewManager"];
 
   const remoteUrl = options?.withRemoteUrl
     ? "https://github.com/org/repo.git"

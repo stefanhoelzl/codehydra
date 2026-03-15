@@ -36,6 +36,9 @@ import type { ConfigAgentType } from "../../shared/api/types";
 import type { BinaryType } from "../../services/binary-resolution/types";
 import type { ConfigService } from "../../services/config/config-service";
 
+/** Re-exported for use by operation integration tests (avoids direct service import). */
+export type { BinaryType } from "../../services/binary-resolution/types";
+
 // =============================================================================
 // Extension Types (operation contract types for check-deps and setup hooks)
 // =============================================================================
