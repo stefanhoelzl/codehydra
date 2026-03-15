@@ -220,6 +220,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {
+          requires: { "ui-ready": true },
           handler: async (): Promise<void> => {
             unsubscribeBlur = deps.windowLayer.onBlur(deps.windowManager.getWindowHandle(), () => {
               state = "NORMAL";

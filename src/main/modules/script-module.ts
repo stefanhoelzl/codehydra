@@ -36,6 +36,7 @@ export function createScriptModule(deps: ScriptModuleDeps): IntentModule {
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {
+          requires: { "app-ready": true },
           handler: async (ctx: HookContext): Promise<void> => {
             const { requiredScripts } = ctx as InitHookContext;
 

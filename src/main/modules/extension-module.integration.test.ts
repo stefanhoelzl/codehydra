@@ -49,7 +49,9 @@ function createTestSetup(deps: ExtensionModuleDeps) {
 
   dispatcher.registerOperation(
     "app:start",
-    createMinimalOperation<never, InitResult>(APP_START_OPERATION_ID, "init")
+    createMinimalOperation<never, InitResult>(APP_START_OPERATION_ID, "init", {
+      hookContext: (ctx) => ({ intent: ctx.intent, capabilities: { "app-ready": true } }),
+    })
   );
 
   return { dispatcher };

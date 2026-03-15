@@ -3,11 +3,13 @@
  *
  * Runs hook points in sequence:
  * 1. "before-ready" - Collect script declarations, apply pre-ready config (no async I/O)
- * 2. "await-ready" - Wait for Electron ready event
- * 3. "init" - Post-ready initialization (logging, shell, scripts, extensions)
- * 4. "show-ui" - Show starting screen
- * 5. "check-deps" - Check binaries and extensions (collect, isolated contexts)
- * 6. "start" - Start servers, wire services, mount renderer.
+ * 2. "init" - Initialization (logging, shell, scripts, extensions).
+ *             Electron lifecycle module provides "app-ready" capability after
+ *             app.whenReady(). Handlers needing Electron declare
+ *             `requires: { "app-ready": ANY_VALUE }`.
+ * 3. "show-ui" - Show starting screen
+ * 4. "check-deps" - Check binaries and extensions (collect, isolated contexts)
+ * 5. "start" - Start servers, wire services, mount renderer.
  *              Handlers that need ports (mcpPort, codeServerPort) declare
  *              `requires` and read from ctx.capabilities. Capability-based
  *              ordering replaces the former separate "activate" hook point.
@@ -159,13 +161,10 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     if (configErrors.length > 0) throw configErrors[0]!;
     const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
 
-    // --- Hook 2: "await-ready" ---
-    // Module provides app.whenReady(). Decouples operation from Electron.
-    const { errors: readyErrors } = await ctx.hooks.collect<void>("await-ready", hookCtx);
-    if (readyErrors.length > 0) throw readyErrors[0]!;
-
-    // --- Hook 3: "init" (post-ready) ---
-    // All independent. Receives requiredScripts from before-ready results.
+    // --- Hook 2: "init" ---
+    // Electron lifecycle module provides "app-ready" capability after whenReady().
+    // Handlers needing Electron declare requires: { "app-ready": ANY_VALUE }.
+    // Receives requiredScripts from before-ready results.
     const initCtx: InitHookContext = { ...hookCtx, requiredScripts };
     const { results: initResults, errors: initErrors } = await ctx.hooks.collect<InitResult>(
       "init",
@@ -182,7 +181,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // configuredAgent comes from ConfigService (loaded before app:start)
     const configuredAgent = this.configService.get("agent") as ConfigAgentType;
 
-    // Hook 4: "show-ui" -- Show starting screen, capture waitForRetry
+    // Hook 3: "show-ui" -- Show starting screen, capture waitForRetry
     const { results: showUiResults, errors: showUiErrors } =
       await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
     if (showUiErrors.length > 0) {
@@ -193,7 +192,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       if (result.waitForRetry !== undefined) waitForRetry = result.waitForRetry;
     }
 
-    // Hook 5: "check-deps" (collect, isolated contexts)
+    // Hook 4: "check-deps" (collect, isolated contexts)
     let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
 
     // Dispatch app:update before setup (interceptor rejects if config="never" or no update)
@@ -244,7 +243,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       }
     }
 
-    // Hook 6: "start" -- Start servers, wire callbacks, mount renderer
+    // Hook 5: "start" -- Start servers, wire callbacks, mount renderer
     // Handlers that need ports (mcpPort, codeServerPort) declare `requires` and
     // read from ctx.capabilities. Capability-based ordering replaces the former
     // separate "activate" hook point.

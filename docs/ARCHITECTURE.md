@@ -699,7 +699,7 @@ App.svelte (mode router)
 
 1. **App.svelte owns global events**: Shortcut events and setup progress events work across modes
 2. **MainView.svelte owns domain events**: IPC calls only happen when services are started
-3. **Multi-phase startup**: The `app:start` operation runs eight hook points in sequence (`register-config` → `before-ready` → `await-ready` → `init` → `show-ui` → `check-deps` → `start` → `activate`). Errors in early hooks abort startup; errors in `activate` propagate to the renderer error screen.
+3. **Multi-phase startup**: The `app:start` operation runs five hook points in sequence (`before-ready` → `init` → `show-ui` → `check-deps` → `start`). The `init` hook uses capability-based ordering: ElectronLifecycleModule provides `"app-ready"` after `app.whenReady()`, and handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`. Errors in early hooks abort startup.
 4. **Main-process-driven flow**: The main process sends IPC events to tell the renderer which mode to show. The renderer never polls or pulls state.
 5. **Idempotent startup**: The `app:start` intent uses an idempotency interceptor to prevent duplicate execution
 6. **IPC initialization timing**: `listProjects()` and workspace status fetches are called in MainView.onMount, not App.onMount

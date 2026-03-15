@@ -92,6 +92,7 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
           },
         },
         init: {
+          requires: { "app-ready": true },
           handler: async (): Promise<void> => {
             deps.loggingService.initialize();
             deps.registerLogHandlers();

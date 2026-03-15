@@ -106,6 +106,7 @@ export function createExtensionModule(deps: ExtensionModuleDeps): IntentModule {
     hooks: {
       [APP_START_OPERATION_ID]: {
         init: {
+          requires: { "app-ready": true },
           handler: async (): Promise<InitResult> => {
             try {
               const manifestPath = pathProvider.runtimePath("extensions/manifest.json");

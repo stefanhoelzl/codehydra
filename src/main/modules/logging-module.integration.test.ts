@@ -54,6 +54,7 @@ class MinimalAppStartOperation implements Operation<Intent, void> {
     const initCtx: InitHookContext = {
       intent: ctx.intent,
       requiredScripts: [],
+      capabilities: { "app-ready": true },
     };
     const { errors: initErrors } = await ctx.hooks.collect<void>("init", initCtx);
     if (initErrors.length > 0) throw initErrors[0]!;
