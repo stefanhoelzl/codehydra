@@ -92,7 +92,7 @@ export function createAgentModule(
 
   /** Check if this module is the active agent by reading config. */
   function isActive(): boolean {
-    const agentType = (deps.configService.get("agent") as string | null) ?? "opencode";
+    const agentType = deps.configService.get("agent") as string;
     return agentType === provider.type;
   }
 

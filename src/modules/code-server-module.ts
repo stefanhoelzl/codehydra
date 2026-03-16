@@ -43,7 +43,6 @@ import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
-import { OPENCODE_VERSION } from "./agent-module/opencode/setup-info";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
 import { Path } from "../utils/path/path";
 import { encodePathForUrl } from "../boundaries/platform/paths";
@@ -100,14 +99,7 @@ export function getCodeServerUrlForVersion(
   return `https://github.com/coder/code-server/releases/download/v${version}/code-server-${version}-${os}-${archName}.tar.gz`;
 }
 
-/**
- * Get the download URL for code-server using the built-in version.
- *
- * @param platform - Operating system platform
- * @param arch - CPU architecture
- * @returns Download URL for the code-server release
- * @throws Error if platform/arch combination is not supported
- */
+/** Get the download URL using the built-in version (for scripts/tests). */
 export function getCodeServerUrl(platform: SupportedPlatform, arch: SupportedArch): string {
   return getCodeServerUrlForVersion(CODE_SERVER_VERSION, platform, arch);
 }
@@ -133,13 +125,7 @@ export function getCodeServerSubPathForVersion(
   return `code-server-${version}-${os}-${archName}`;
 }
 
-/**
- * Get the subpath within the extracted archive using the built-in version.
- *
- * @param platform - Operating system platform
- * @param arch - CPU architecture
- * @returns Subpath prefix within the archive
- */
+/** Get the subpath using the built-in version (for scripts/tests). */
 export function getCodeServerSubPath(platform: SupportedPlatform, arch: SupportedArch): string {
   return getCodeServerSubPathForVersion(CODE_SERVER_VERSION, platform, arch);
 }
@@ -163,15 +149,11 @@ type InstanceState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
 /** Internal configuration for code-server instance. */
 interface CodeServerConfig {
-  port: number;
-  binaryPath: string;
   readonly runtimeDir: string;
   readonly extensionsDir: string;
   readonly userDataDir: string;
   readonly binDir: string;
   pluginPort: number | undefined;
-  codeServerDir: string;
-  readonly opencodeDir: string;
 }
 
 // =============================================================================
@@ -291,9 +273,9 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // Register config keys
   deps.configService.register("version.code-server", {
     name: "version.code-server",
-    default: null,
-    description: "Code-server version override (null = built-in)",
-    ...configString({ nullable: true }),
+    default: CODE_SERVER_VERSION,
+    description: "Code-server version",
+    ...configString(),
   });
   deps.configService.register("code-server.port", {
     name: "code-server.port",
@@ -302,11 +284,11 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     ...configCustom<number>({
       parse: (raw) => {
         const n = Number(raw);
-        return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : undefined;
+        return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : undefined;
       },
       validate: (v) =>
-        typeof v === "number" && Number.isInteger(v) && v >= 1024 && v <= 65535 ? v : undefined,
-      validValues: "1024-65535",
+        typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 65535 ? v : undefined,
+      validValues: "1-65535",
     }),
   });
 
@@ -315,19 +297,24 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // -------------------------------------------------------------------------
 
   const config: CodeServerConfig = {
-    port: getCodeServerPort(deps.buildInfo),
-    binaryPath: new Path(
-      deps.pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`),
-      getCodeServerExecutablePath(deps.platform)
-    ).toNative(),
     runtimeDir: deps.pathProvider.dataPath("runtime").toNative(),
     extensionsDir: deps.pathProvider.dataPath("vscode/extensions").toNative(),
     userDataDir: deps.pathProvider.dataPath("vscode/user-data").toNative(),
     binDir: deps.pathProvider.dataPath("bin").toNative(),
     pluginPort: undefined,
-    codeServerDir: deps.pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
-    opencodeDir: deps.pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
   };
+
+  /** Resolve version-derived paths from configService (call only after load()). */
+  function resolveCodeServerPaths() {
+    const version = deps.configService.get("version.code-server") as string;
+    return {
+      binaryPath: new Path(
+        deps.pathProvider.bundlePath(`code-server/${version}`),
+        getCodeServerExecutablePath(deps.platform)
+      ).toNative(),
+      codeServerDir: deps.pathProvider.bundlePath(`code-server/${version}`).toNative(),
+    };
+  }
 
   // -------------------------------------------------------------------------
   // Workspace file helpers (inline — only used by this module)
@@ -366,16 +353,19 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // Binary download state
   // -------------------------------------------------------------------------
 
-  const downloadRequest: DownloadRequest | null = deps.archiveExtractor
-    ? {
-        name: "code-server" as const,
-        url: getCodeServerUrlForVersion(CODE_SERVER_VERSION, deps.platform, deps.arch),
-        destDir: deps.pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
-        archiveExtension: ".tar.gz" as const,
-        executablePath: getCodeServerExecutablePath(deps.platform),
-        subPath: getCodeServerSubPathForVersion(CODE_SERVER_VERSION, deps.platform, deps.arch),
-      }
-    : null;
+  /** Build download request from configService (call only after load()). */
+  function getDownloadRequest(): DownloadRequest | null {
+    if (!deps.archiveExtractor) return null;
+    const version = deps.configService.get("version.code-server") as string;
+    return {
+      name: "code-server" as const,
+      url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
+      destDir: deps.pathProvider.bundlePath(`code-server/${version}`).toNative(),
+      archiveExtension: ".tar.gz" as const,
+      executablePath: getCodeServerExecutablePath(deps.platform),
+      subPath: getCodeServerSubPathForVersion(version, deps.platform, deps.arch),
+    };
+  }
 
   // -------------------------------------------------------------------------
   // Process lifecycle closure state
@@ -389,8 +379,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
   // Internal state: port set by start hook, read by finalize hook
   let codeServerPort = 0;
-  // Binary path tracked in closure -- updated by config:updated events
-  const codeServerBinaryPath = config.binaryPath;
 
   // -------------------------------------------------------------------------
   // Process lifecycle functions
@@ -435,7 +423,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   async function doStart(): Promise<number> {
     logger.info("Starting code-server");
 
-    const port = config.port;
+    const port = deps.configService.get("code-server.port") as number;
 
     const portAvailable = await deps.portManager.isPortAvailable(port);
     if (!portAvailable) {
@@ -494,10 +482,14 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       }
 
       // Set code-server and opencode directories for wrapper scripts
-      cleanEnv._CH_CODE_SERVER_DIR = config.codeServerDir;
-      cleanEnv._CH_OPENCODE_DIR = config.opencodeDir;
+      const { binaryPath, codeServerDir } = resolveCodeServerPaths();
+      const opencodeVersion = deps.configService.get("version.opencode") as string;
+      cleanEnv._CH_CODE_SERVER_DIR = codeServerDir;
+      cleanEnv._CH_OPENCODE_DIR = deps.pathProvider
+        .bundlePath(`opencode/${opencodeVersion}`)
+        .toNative();
 
-      serverProcess = processRunner.run(config.binaryPath, args, {
+      serverProcess = processRunner.run(binaryPath, args, {
         cwd: config.runtimeDir,
         env: cleanEnv,
       });
@@ -592,12 +584,13 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         readonly error: { readonly type: string; readonly message: string };
       }
   > {
-    if (!downloadRequest) {
+    const request = getDownloadRequest();
+    if (!request) {
       return { success: true, needsDownload: false };
     }
 
     try {
-      const isInstalled = await isBinaryInstalled(downloadRequest.destDir, {
+      const isInstalled = await isBinaryInstalled(request.destDir, {
         fileSystemLayer: deps.fileSystemLayer,
       });
 
@@ -618,7 +611,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   }
 
   async function downloadCodeServer(onProgress?: DownloadProgressCallback): Promise<void> {
-    if (!downloadRequest || !deps.archiveExtractor) {
+    const request = getDownloadRequest();
+    if (!request || !deps.archiveExtractor) {
       throw new CodeServerError(
         "Cannot download code-server binary: ArchiveExtractor not available"
       );
@@ -628,7 +622,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
     try {
       await downloadBinary(
-        downloadRequest,
+        request,
         {
           httpClient: deps.httpClient,
           fileSystemLayer: deps.fileSystemLayer,
@@ -822,7 +816,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 await removeFromExtensionsJson(fileSystemLayer, extensionsDir, [entry.id]);
 
                 // Install via code-server
-                const proc = processRunner.run(codeServerBinaryPath, [
+                const proc = processRunner.run(resolveCodeServerPaths().binaryPath, [
                   "--install-extension",
                   entry.vsixPath,
                   "--extensions-dir",

@@ -159,11 +159,25 @@ function createDownloadDeps(): DownloadDeps {
 function createBinaryConfig() {
   return {
     name: "opencode" as const,
-    version: "1.0.223" as string | null,
-    destDir: "/test/opencode",
-    url: "",
     executablePath: "opencode",
     archiveExtension: ".tar.gz" as ArchiveExtension,
+  };
+}
+
+function createMockConfigService(version: string | null = "1.0.223") {
+  return {
+    register: vi.fn(),
+    load: vi.fn(),
+    get: vi.fn().mockReturnValue(version),
+    set: vi.fn(),
+    getDefinitions: vi.fn().mockReturnValue(new Map()),
+    getEffective: vi.fn().mockReturnValue({}),
+  };
+}
+
+function createMockPathProvider() {
+  return {
+    bundlePath: vi.fn().mockReturnValue({ toNative: () => "/mock/path" }),
   };
 }
 
@@ -198,6 +212,8 @@ describe("OpenCode module provider", () => {
   let serverManager: ReturnType<typeof createMockServerManager>;
   let downloadDeps: DownloadDeps;
   let binaryConfig: ReturnType<typeof createBinaryConfig>;
+  let configService: ReturnType<typeof createMockConfigService>;
+  let pathProvider: ReturnType<typeof createMockPathProvider>;
   let provider: AgentModuleProvider;
 
   beforeEach(() => {
@@ -207,11 +223,17 @@ describe("OpenCode module provider", () => {
     serverManager = createMockServerManager();
     downloadDeps = createDownloadDeps();
     binaryConfig = createBinaryConfig();
+    configService = createMockConfigService("1.0.223");
+    pathProvider = createMockPathProvider();
 
     const deps: OpenCodeModuleProviderDeps = {
       serverManager: serverManager as unknown as OpenCodeServerManager,
       downloadDeps,
       binaryConfig,
+      configService,
+      pathProvider,
+      platform: "linux",
+      arch: "x64",
       logger: SILENT_LOGGER,
     };
     provider = createOpenCodeModuleProvider(deps);
@@ -259,8 +281,8 @@ describe("OpenCode module provider", () => {
     it("returns config definition for version.opencode", () => {
       const def = provider.getConfigDefinition();
       expect(def.name).toBe("version.opencode");
-      expect(def.default).toBeNull();
-      expect(def.description).toBe("OpenCode agent version override");
+      expect(def.default).toBe("1.0.223");
+      expect(def.description).toBe("OpenCode agent version");
     });
   });
 
@@ -274,18 +296,10 @@ describe("OpenCode module provider", () => {
       expect(result).toEqual({ success: true, needsDownload: true });
     });
 
-    it("returns needsDownload false when version is null", async () => {
-      binaryConfig.version = null;
-      // Re-create provider with null version
-      const deps: OpenCodeModuleProviderDeps = {
-        serverManager: serverManager as unknown as OpenCodeServerManager,
-        downloadDeps,
-        binaryConfig,
-        logger: SILENT_LOGGER,
-      };
-      const nullVersionProvider = createOpenCodeModuleProvider(deps);
-      const result = await nullVersionProvider.preflight();
-      expect(result).toEqual({ success: true, needsDownload: false });
+    it("uses configService.get to resolve version for destDir", async () => {
+      await provider.preflight();
+      expect(configService.get).toHaveBeenCalledWith("version.opencode");
+      expect(pathProvider.bundlePath).toHaveBeenCalledWith("opencode/1.0.223");
     });
   });
 
@@ -874,20 +888,12 @@ describe("OpenCode module provider", () => {
   // ---------------------------------------------------------------------------
 
   describe("downloadBinary", () => {
-    it("is a no-op when version is null", async () => {
-      binaryConfig.version = null;
-      const deps: OpenCodeModuleProviderDeps = {
-        serverManager: serverManager as unknown as OpenCodeServerManager,
-        downloadDeps,
-        binaryConfig,
-        logger: SILENT_LOGGER,
-      };
-      const nullVersionProvider = createOpenCodeModuleProvider(deps);
-      const onProgress = vi.fn();
-      await nullVersionProvider.downloadBinary(onProgress);
-
-      // No HTTP requests should have been made since version is null
-      expect(onProgress).not.toHaveBeenCalled();
+    it("uses configService.get to resolve version for download", async () => {
+      // downloadBinary will throw because mock deps don't support real I/O,
+      // but we can verify the version/path resolution happened first.
+      await provider.downloadBinary().catch(() => {});
+      expect(configService.get).toHaveBeenCalledWith("version.opencode");
+      expect(pathProvider.bundlePath).toHaveBeenCalledWith("opencode/1.0.223");
     });
   });
 });
