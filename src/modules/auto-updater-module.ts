@@ -18,7 +18,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { IntentInterceptor } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
-import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
+import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../intents/app-shutdown";
 import { INTENT_UPDATE_AVAILABLE, type UpdateAvailableIntent } from "../intents/update-available";
@@ -29,9 +29,9 @@ import {
   type UpdateDownloadResult,
 } from "../intents/update-apply";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
-import { configEnum } from "../boundaries/platform/config/config-definition";
-import type { AutoUpdatePreference } from "../boundaries/platform/config/config-values";
-import type { Config } from "../boundaries/platform/config/config";
+import { configEnum } from "../boundaries/platform/config-definition";
+import type { AutoUpdatePreference } from "../boundaries/platform/config-values";
+import type { Config } from "../boundaries/platform/config";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { ApiIpcChannels } from "../shared/ipc";

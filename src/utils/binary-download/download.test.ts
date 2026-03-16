@@ -7,14 +7,14 @@ import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { downloadBinary, isBinaryInstalled } from "./download";
 import { BinaryDownloadError } from "../../shared/errors/service-errors";
-import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
+import { createMockHttpClient } from "../../boundaries/platform/http-client.state-mock";
 import {
   createFileSystemMock,
   createSpyFileSystemBoundary,
   directory,
   createDirEntry,
-} from "../../boundaries/platform/filesystem/filesystem.state-mock";
-import { createArchiveExtractorMock } from "../../boundaries/platform/archive/archive-extractor.state-mock";
+} from "../../boundaries/platform/filesystem.state-mock";
+import { createArchiveExtractorMock } from "../../boundaries/platform/archive-extractor.state-mock";
 import type { DownloadRequest } from "./types";
 import type { DownloadDeps } from "./download";
 

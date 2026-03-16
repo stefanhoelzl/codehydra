@@ -16,7 +16,7 @@
  */
 
 import { Dispatcher } from "./lib/dispatcher";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "../shared/api/types";

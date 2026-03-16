@@ -4,7 +4,7 @@
  */
 
 import type { Path } from "../../../utils/path/path";
-import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem";
 import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
 
 /**

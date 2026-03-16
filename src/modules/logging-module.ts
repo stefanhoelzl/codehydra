@@ -8,16 +8,12 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Logging } from "../boundaries/platform/logging";
-import type { Logger, LogFormat } from "../boundaries/platform/logging/types";
-import type { BuildInfo } from "../boundaries/platform/env/build-info";
-import type { PlatformInfo } from "../boundaries/platform/env/platform-info";
-import type { Config } from "../boundaries/platform/config/config";
-import { parseLogLevelSpec, splitLogLevelSpec } from "../boundaries/platform/logging/electron-log";
-import {
-  configCustom,
-  configEnum,
-  configEnumList,
-} from "../boundaries/platform/config/config-definition";
+import type { Logger, LogFormat } from "../boundaries/platform/logging-types";
+import type { BuildInfo } from "../boundaries/platform/build-info";
+import type { PlatformInfo } from "../boundaries/platform/platform-info";
+import type { Config } from "../boundaries/platform/config";
+import { parseLogLevelSpec, splitLogLevelSpec } from "../boundaries/platform/electron-log";
+import { configCustom, configEnum, configEnumList } from "../boundaries/platform/config-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 
 // =============================================================================

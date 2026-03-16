@@ -8,18 +8,18 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { OpenCodeServerManager } from "./server-manager";
-import { ExecaProcessRunner } from "../../../boundaries/platform/process/process";
-import { DefaultNetworkLayer } from "../../../boundaries/platform/network/network";
+import { ExecaProcessRunner } from "../../../boundaries/platform/process";
+import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import { ensureBinaryForTests, getTestPathProvider } from "../../../utils/testing/ensure-binaries";
 import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network/network.test-utils";
+import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 
-import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
+import type { PathProvider } from "../../../boundaries/platform/path-provider";
 
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;

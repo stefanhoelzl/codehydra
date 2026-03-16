@@ -20,11 +20,11 @@ import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
-import type { PlatformInfo } from "../boundaries/platform/env/platform-info";
-import type { AppBoundary } from "../boundaries/shell/app/app";
-import type { ImageBoundary } from "../boundaries/shell/image/image";
-import type { ImageHandle } from "../boundaries/shell/image/types";
-import type { WindowManager } from "../boundaries/shell/window/window-manager";
+import type { PlatformInfo } from "../boundaries/platform/platform-info";
+import type { AppBoundary } from "../boundaries/shell/app";
+import type { ImageBoundary } from "../boundaries/shell/image";
+import type { ImageHandle } from "../boundaries/shell/image-types";
+import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { Logger } from "../boundaries/platform/logging";
 
 // =============================================================================

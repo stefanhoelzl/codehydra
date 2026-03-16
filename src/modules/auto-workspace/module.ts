@@ -40,11 +40,11 @@ import {
 } from "../../intents/get-project-bases";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
-import type { Config } from "../../boundaries/platform/config/config";
+import type { Config } from "../../boundaries/platform/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import { configPath } from "../../boundaries/platform/config/config-definition";
-import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
-import type { Logger } from "../../boundaries/platform/logging/types";
+import { configPath } from "../../boundaries/platform/config-definition";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
+import type { Logger } from "../../boundaries/platform/logging-types";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../utils/liquid/liquid-renderer";

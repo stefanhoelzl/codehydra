@@ -18,7 +18,7 @@ import {
   type AppStartIntent,
 } from "../intents/app-start";
 import { createErrorHandlerModule } from "./error-handler-module";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 
 // =============================================================================
 // Test Helpers

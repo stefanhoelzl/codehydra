@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -15,7 +15,7 @@ import type { InitResult } from "../intents/app-start";
 import { createExtensionModule, type ExtensionModuleDeps } from "./extension-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 
 // =============================================================================
 // Test Setup

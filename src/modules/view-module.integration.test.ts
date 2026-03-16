@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
@@ -72,7 +72,7 @@ import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
 import type { AppResumedEvent } from "../intents/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
@@ -80,7 +80,7 @@ import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import {
   createBehavioralIpcBoundary,
   type BehavioralIpcBoundary,
-} from "../boundaries/shell/ipc/ipc.test-utils";
+} from "../boundaries/shell/ipc.test-utils";
 
 // =============================================================================
 // Mock Config

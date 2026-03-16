@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "../intents/update-available";

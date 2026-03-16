@@ -15,12 +15,12 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
-import type { KeyboardInput, Unsubscribe, ViewBoundary } from "../boundaries/shell/view/view";
-import type { WindowBoundary } from "../boundaries/shell/window/window";
+import type { KeyboardInput, Unsubscribe, ViewBoundary } from "../boundaries/shell/view";
+import type { WindowBoundary } from "../boundaries/shell/window";
 import type { ViewHandle } from "../boundaries/shell/types";
-import type { WindowManager } from "../boundaries/shell/window/window-manager";
+import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";

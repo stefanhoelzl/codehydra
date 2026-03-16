@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { join } from "node:path";
 import { writeFile as nodeWriteFile, mkdir as nodeMkdir } from "node:fs/promises";
 import { KeepFilesService } from "./keepfiles-module";
-import { DefaultFileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
+import { DefaultFileSystemBoundary } from "../boundaries/platform/filesystem";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createTempDir } from "../utils/testing/test-utils";
 import { Path } from "../utils/path/path";

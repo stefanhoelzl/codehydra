@@ -14,9 +14,9 @@ import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { OpenCodeServerManager } from "./server-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-download";
-import { createFileSystemMock } from "../../../boundaries/platform/filesystem/filesystem.state-mock";
-import { createMockHttpClient } from "../../../boundaries/platform/network/http-client.state-mock";
-import { createArchiveExtractorMock } from "../../../boundaries/platform/archive/archive-extractor.state-mock";
+import { createFileSystemMock } from "../../../boundaries/platform/filesystem.state-mock";
+import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
+import { createArchiveExtractorMock } from "../../../boundaries/platform/archive-extractor.state-mock";
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted

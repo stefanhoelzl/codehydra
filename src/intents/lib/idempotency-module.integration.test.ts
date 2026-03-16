@@ -10,7 +10,7 @@ import { Dispatcher } from "./dispatcher";
 import { createIdempotencyModule } from "./idempotency-module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext } from "./operation";
-import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 
 // =============================================================================
 // Test Helpers

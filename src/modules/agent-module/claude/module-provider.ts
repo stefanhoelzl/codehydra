@@ -26,12 +26,12 @@ import type {
 import { downloadBinary, isBinaryInstalled } from "../../../utils/binary-download";
 import type { BinaryType } from "../../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../../shared/errors/service-errors";
-import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
+import type { ConfigKeyDefinition } from "../../../boundaries/platform/config-definition";
 import type { StopServerResult, RestartServerResult } from "../types";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
-import { configString } from "../../../boundaries/platform/config/config-definition";
+import { configString } from "../../../boundaries/platform/config-definition";
 
 // =============================================================================
 // Dependency Interface

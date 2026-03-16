@@ -27,7 +27,7 @@ import type {
 } from "./operation";
 import { ANY_VALUE } from "./operation";
 import type { IntentModule } from "./module";
-import type { Logger } from "../../boundaries/platform/logging/types";
+import type { Logger } from "../../boundaries/platform/logging-types";
 
 // =============================================================================
 // Internal types (not exposed to operations)

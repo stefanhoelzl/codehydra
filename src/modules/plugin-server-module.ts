@@ -18,10 +18,10 @@ import { createServer, type Server as HttpServer } from "node:http";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { Logger } from "../boundaries/platform/logging/types";
+import type { Logger } from "../boundaries/platform/logging-types";
 import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
-import { LogLevel } from "../boundaries/platform/logging/types";
-import type { PortManager } from "../boundaries/platform/network/network";
+import { LogLevel } from "../boundaries/platform/logging-types";
+import type { PortManager } from "../boundaries/platform/network";
 import type { Workspace } from "../shared/api/types";
 import type {
   ServerToClientEvents,

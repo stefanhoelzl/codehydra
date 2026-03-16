@@ -15,7 +15,7 @@ import {
 } from "./windows-file-lock-module";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-import { createMockProcessRunner } from "../boundaries/platform/process/process.state-mock";
+import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
 
 // =============================================================================
 // Test Helpers

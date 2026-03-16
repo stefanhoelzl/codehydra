@@ -20,9 +20,9 @@
  */
 
 import { execSync } from "node:child_process";
-import { DefaultArchiveExtractor } from "../src/boundaries/platform/archive/archive-extractor";
-import { DefaultNetworkLayer } from "../src/boundaries/platform/network/network";
-import { DefaultFileSystemBoundary } from "../src/boundaries/platform/filesystem/filesystem";
+import { DefaultArchiveExtractor } from "../src/boundaries/platform/archive-extractor";
+import { DefaultNetworkLayer } from "../src/boundaries/platform/network";
+import { DefaultFileSystemBoundary } from "../src/boundaries/platform/filesystem";
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
@@ -41,19 +41,16 @@ import {
   getClaudeExecutablePath,
   getClaudeLatestVersionUrl,
 } from "../src/modules/agent-module/claude/setup-info";
-import { DefaultPathProvider } from "../src/boundaries/platform/env/path-provider";
-import { NodePlatformInfo } from "../src/boundaries/platform/env/node-platform-info";
-import type { BuildInfo } from "../src/boundaries/platform/env/build-info";
+import { DefaultPathProvider } from "../src/boundaries/platform/path-provider";
+import { NodePlatformInfo } from "../src/boundaries/platform/node-platform-info";
+import type { BuildInfo } from "../src/boundaries/platform/build-info";
 import {
   downloadBinary as downloadBinaryUtil,
   isBinaryInstalled,
 } from "../src/utils/binary-download";
 import type { DownloadRequest, DownloadProgress } from "../src/utils/binary-download";
 import type { DownloadDeps } from "../src/utils/binary-download";
-import type {
-  SupportedPlatform,
-  SupportedArch,
-} from "../src/boundaries/platform/env/platform-info";
+import type { SupportedPlatform, SupportedArch } from "../src/boundaries/platform/platform-info";
 import type { Logger } from "../src/boundaries/platform/logging";
 
 // Console logger for the script - suppresses warnings to avoid alarming output

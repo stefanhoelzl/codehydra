@@ -12,11 +12,11 @@
 
 import type { IntentModule } from "../../intents/lib/module";
 import { ANY_VALUE, type HookContext } from "../../intents/lib/operation";
-import type { Logger } from "../../boundaries/platform/logging/types";
+import type { Logger } from "../../boundaries/platform/logging-types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { AgentType } from "../../shared/plugin-protocol";
 import type { WorkspacePath } from "../../shared/ipc";
-import type { Config } from "../../boundaries/platform/config/config";
+import type { Config } from "../../boundaries/platform/config";
 
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type {

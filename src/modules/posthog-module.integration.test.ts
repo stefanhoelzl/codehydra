@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
@@ -33,13 +33,13 @@ import {
 import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
 import { AppResumeOperation } from "../intents/app-resume";
 import { createPosthogModule } from "./posthog-module";
-import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
-import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockPlatformInfo } from "../boundaries/platform/platform-info.test-utils";
+import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
 import {
   createMockPostHogClientFactory,
   type MockPostHogClient,
 } from "./posthog-client.state-mock";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 
 // =============================================================================

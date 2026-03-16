@@ -41,22 +41,19 @@ import type { Operation, OperationContext, HookContext } from "../intents/lib/op
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { BadgeManager, createBadgeModule } from "./badge-module";
-import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
+import { createMockPlatformInfo } from "../boundaries/platform/platform-info.test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
-import {
-  createAppBoundaryMock,
-  type MockAppBoundary,
-} from "../boundaries/shell/app/app.state-mock";
+import { createAppBoundaryMock, type MockAppBoundary } from "../boundaries/shell/app.state-mock";
 import {
   createImageBoundaryMock,
   type MockImageBoundary,
-} from "../boundaries/shell/image/image.state-mock";
-import type { WindowManager } from "../boundaries/shell/window/window-manager";
+} from "../boundaries/shell/image.state-mock";
+import type { WindowManager } from "../boundaries/shell/window-manager";
 import {
   createMockWindowManager,
   type MockWindowManager,
-} from "../boundaries/shell/window/window-manager.test-utils";
-import type { ImageHandle } from "../boundaries/shell/image/types";
+} from "../boundaries/shell/window-manager.test-utils";
+import type { ImageHandle } from "../boundaries/shell/image-types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 

@@ -8,7 +8,7 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
-import type { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
+import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import { Path } from "../utils/path/path";
 import { SET_METADATA_OPERATION_ID } from "../intents/set-metadata";
 import type { SetMetadataIntent, SetHookInput } from "../intents/set-metadata";

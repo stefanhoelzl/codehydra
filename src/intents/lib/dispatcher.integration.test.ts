@@ -19,7 +19,7 @@ import type {
   HookResult,
 } from "./operation";
 import { ANY_VALUE } from "./operation";
-import type { Logger } from "../../boundaries/platform/logging/types";
+import type { Logger } from "../../boundaries/platform/logging-types";
 
 // =============================================================================
 // Test Helpers

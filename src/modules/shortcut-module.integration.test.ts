@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
@@ -27,7 +27,7 @@ import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";
 import type { ViewHandle, WindowHandle } from "../boundaries/shell/types";
-import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view/view";
+import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
 import type { UIMode } from "../shared/ipc";
 
 // =============================================================================

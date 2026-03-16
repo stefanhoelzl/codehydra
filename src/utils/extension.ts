@@ -7,7 +7,7 @@
  * - Build metadata: `publisher.name-1.0.0+build123`
  */
 
-import type { FileSystemBoundary, PathLike } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary, PathLike } from "../boundaries/platform/filesystem";
 import { Path } from "./path/path";
 
 /**

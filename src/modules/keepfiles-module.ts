@@ -16,8 +16,8 @@ import * as path from "node:path";
 import ignore, { type Ignore } from "ignore";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
-import type { Logger } from "../boundaries/platform/logging/types";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
+import type { Logger } from "../boundaries/platform/logging-types";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   type OpenWorkspaceIntent,

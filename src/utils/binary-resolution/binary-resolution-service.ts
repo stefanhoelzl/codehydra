@@ -9,9 +9,9 @@
  *    c. Return not-found if neither available
  */
 
-import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
-import type { ProcessRunner } from "../../boundaries/platform/process/process";
-import type { PathProvider } from "../../boundaries/platform/env/path-provider";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
+import type { ProcessRunner } from "../../boundaries/platform/process";
+import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { Logger } from "../../boundaries/platform/logging";
 import { Path } from "../path/path";
 import type { BinaryResolution, ResolutionOptions, BinaryType } from "./types";

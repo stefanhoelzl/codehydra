@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/set-metadata";
@@ -33,12 +33,9 @@ import type {
   ResolveHookInput as ResolveProjectHookInput,
 } from "../intents/resolve-project";
 import { createMetadataModule } from "./metadata-module";
-import { createMockGitClient } from "../boundaries/platform/git/git-client.state-mock";
-import {
-  createFileSystemMock,
-  directory,
-} from "../boundaries/platform/filesystem/filesystem.state-mock";
-import { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
+import { createMockGitClient } from "../boundaries/platform/git-client.state-mock";
+import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
+import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";

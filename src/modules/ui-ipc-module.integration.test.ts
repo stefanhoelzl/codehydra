@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import {
@@ -70,7 +70,7 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
   createBehavioralIpcBoundary,
   type BehavioralIpcBoundary,
-} from "../boundaries/shell/ipc/ipc.test-utils";
+} from "../boundaries/shell/ipc.test-utils";
 
 // =============================================================================
 // Minimal operations that emit events for testing

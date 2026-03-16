@@ -6,8 +6,8 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
-import type { PathProvider } from "../boundaries/platform/env/path-provider";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
+import type { PathProvider } from "../boundaries/platform/path-provider";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 
 // =============================================================================

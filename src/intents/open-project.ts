@@ -17,7 +17,7 @@
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { ProjectId, Project } from "../shared/api/types";
-import type { Workspace as InternalWorkspace } from "../boundaries/platform/git/types";
+import type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,

@@ -18,7 +18,7 @@
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { UpdateProgressAction, UpdateChoice } from "../shared/ipc";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config";
 
 // =============================================================================
 // Intent Types

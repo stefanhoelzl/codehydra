@@ -20,31 +20,28 @@ import { app, powerMonitor } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 // Boundaries - Platform
-import { DefaultPathProvider, type PathProvider } from "./boundaries/platform/env/path-provider";
-import type { BuildInfo } from "./boundaries/platform/env/build-info";
+import { DefaultPathProvider, type PathProvider } from "./boundaries/platform/path-provider";
+import type { BuildInfo } from "./boundaries/platform/build-info";
 import { ElectronLog, type Logging } from "./boundaries/platform/logging";
-import { DefaultFileSystemBoundary } from "./boundaries/platform/filesystem/filesystem";
-import { DefaultNetworkLayer } from "./boundaries/platform/network/network";
-import { ExecaProcessRunner } from "./boundaries/platform/process/process";
-import { GitWorktreeProvider } from "./boundaries/platform/git/git-worktree-provider";
-import { SimpleGitClient } from "./boundaries/platform/git/simple-git-client";
-import {
-  DefaultConfig,
-  configBoolean,
-  configEnum,
-  generateHelpText,
-} from "./boundaries/platform/config";
+import { DefaultFileSystemBoundary } from "./boundaries/platform/filesystem";
+import { DefaultNetworkLayer } from "./boundaries/platform/network";
+import { ExecaProcessRunner } from "./boundaries/platform/process";
+import { GitWorktreeProvider } from "./boundaries/platform/git-worktree-provider";
+import { SimpleGitClient } from "./boundaries/platform/simple-git-client";
+import { DefaultConfig } from "./boundaries/platform/config";
+import { configBoolean, configEnum } from "./boundaries/platform/config-definition";
+import { generateHelpText } from "./boundaries/platform/config-values";
 // Boundaries - Shell
-import { DefaultIpcBoundary } from "./boundaries/shell/ipc/ipc";
-import { DefaultAppBoundary } from "./boundaries/shell/app/app";
-import { DefaultImageBoundary } from "./boundaries/shell/image/image";
-import { DefaultDialogBoundary } from "./boundaries/shell/dialog/dialog";
-import { DefaultMenuBoundary } from "./boundaries/shell/menu/menu";
-import { DefaultWindowBoundary } from "./boundaries/shell/window/window";
-import { DefaultViewBoundary } from "./boundaries/shell/view/view";
-import { DefaultSessionBoundary } from "./boundaries/shell/session/session";
-import { WindowManager } from "./boundaries/shell/window/window-manager";
-import { ViewManager } from "./boundaries/shell/view/view-manager";
+import { DefaultIpcBoundary } from "./boundaries/shell/ipc";
+import { DefaultAppBoundary } from "./boundaries/shell/app";
+import { DefaultImageBoundary } from "./boundaries/shell/image";
+import { DefaultDialogBoundary } from "./boundaries/shell/dialog";
+import { DefaultMenuBoundary } from "./boundaries/shell/menu";
+import { DefaultWindowBoundary } from "./boundaries/shell/window";
+import { DefaultViewBoundary } from "./boundaries/shell/view";
+import { DefaultSessionBoundary } from "./boundaries/shell/session";
+import { WindowManager } from "./boundaries/shell/window-manager";
+import { ViewManager } from "./boundaries/shell/view-manager";
 // Services (stayed)
 import { AutoUpdater } from "./modules/auto-updater";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
@@ -60,7 +57,7 @@ import {
   getClaudeSubPath,
   getClaudeExecutablePath,
 } from "./modules/agent-module/claude/setup-info";
-import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/env/platform-info";
+import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/platform-info";
 import { ClaudeCodeServerManager } from "./modules/agent-module/claude/server-manager";
 import { OpenCodeServerManager } from "./modules/agent-module/opencode/server-manager";
 import { createClaudeModuleProvider } from "./modules/agent-module/claude/module-provider";
@@ -68,8 +65,8 @@ import { createOpenCodeModuleProvider } from "./modules/agent-module/opencode/mo
 import { expandGitUrl } from "./utils/url-utils";
 import { AsyncWatcher } from "./boundaries/platform/async-watcher";
 // Main
-import { ElectronBuildInfo } from "./boundaries/platform/env/electron-build-info";
-import { NodePlatformInfo } from "./boundaries/platform/env/node-platform-info";
+import { ElectronBuildInfo } from "./boundaries/platform/electron-build-info";
+import { NodePlatformInfo } from "./boundaries/platform/node-platform-info";
 // Intents
 import { Dispatcher } from "./intents/lib/dispatcher";
 import { createIdempotencyModule } from "./intents/lib/idempotency-module";
