@@ -61,8 +61,10 @@ const releaseOperation = createMinimalOperation<Intent, ReleaseHookResult>(
 );
 
 function createReleaseSetup(runner: MockProcessRunner, logger = SILENT_LOGGER) {
-  
-  const dispatcher = new Dispatcher({ logger: createMockLogger(), initialCapabilities: { posix: true } });
+  const dispatcher = new Dispatcher({
+    logger: createMockLogger(),
+    initialCapabilities: { posix: true },
+  });
   dispatcher.registerOperation("workspace:delete", releaseOperation);
 
   const module = createPosixProcessCleanupModule({

@@ -24,12 +24,7 @@ import type {
   SetupErrorPayload,
 } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
-import type {
-  Logger,
-  Logging,
-  LoggerName,
-  LogContext,
-} from "../boundaries/platform/logging";
+import type { Logger, Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
 import type { ApiLogPayload } from "../shared/ipc";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc/ipc";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";

@@ -35,11 +35,11 @@
 import type { Intent } from "../lib/types";
 import type { Operation, OperationContext, HookContext } from "../lib/operation";
 import type { ConfigAgentType } from "../../shared/api/types";
-import type { BinaryType } from "../../services/binary-resolution/types";
+import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { Config } from "../../boundaries/platform/config/config";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
-export type { BinaryType } from "../../services/binary-resolution/types";
+export type { BinaryType } from "../../utils/binary-resolution/types";
 
 // =============================================================================
 // Extension Types (operation contract types for check-deps and setup hooks)

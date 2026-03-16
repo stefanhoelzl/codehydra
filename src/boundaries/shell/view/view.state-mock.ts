@@ -25,8 +25,8 @@ import type {
   Unsubscribe,
   KeyboardInput,
 } from "./view";
-import type { ViewHandle, Rectangle, WindowHandle } from "../../../services/shell/types";
-import { ShellError } from "../../../services/shell/errors";
+import type { ViewHandle, Rectangle, WindowHandle } from "../types";
+import { ShellError } from "../../../shared/errors/shell-errors";
 import type {
   MockState,
   MockWithState,

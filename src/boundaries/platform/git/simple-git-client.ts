@@ -3,7 +3,7 @@
  */
 
 import simpleGit, { type SimpleGit, type SimpleGitOptions } from "simple-git";
-import { GitError, getErrorMessage } from "../../../services/errors";
+import { GitError, getErrorMessage } from "../../../shared/errors/service-errors";
 import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./types";
 import type { Logger } from "../logging";

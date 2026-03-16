@@ -12,7 +12,7 @@ import {
   createWindowBoundaryInternalMock,
   type MockWindowBoundaryInternal,
 } from "../window/window.state-mock";
-import { createViewHandle, type WindowHandle } from "../../../services/shell/types";
+import { createViewHandle, type WindowHandle } from "../types";
 import { createMockWindowManager } from "../window/window-manager.test-utils";
 
 // Mock external-url

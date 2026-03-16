@@ -11,7 +11,7 @@ import {
   EVENT_SHORTCUT_KEY_PRESSED,
   type ShortcutKeyPressedEvent,
 } from "../intents/operations/shortcut-key";
-import type { ViewHandle } from "../services/shell/types";
+import type { ViewHandle } from "../boundaries/shell/types";
 
 // =============================================================================
 // Helpers

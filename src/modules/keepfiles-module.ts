@@ -16,7 +16,7 @@ import * as path from "node:path";
 import ignore, { type Ignore } from "ignore";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
-import type { FileSystemLayer } from "../boundaries/platform/filesystem/filesystem";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { Logger } from "../boundaries/platform/logging/types";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
@@ -25,7 +25,7 @@ import {
   type SetupHookResult,
 } from "../intents/operations/open-workspace";
 import { Path } from "../utils/path/path";
-import { getErrorMessage } from "../services/errors";
+import { getErrorMessage } from "../shared/errors/service-errors";
 
 // =============================================================================
 // Types
@@ -72,7 +72,7 @@ const UTF8_BOM = "\ufeff";
  */
 export class KeepFilesService implements IKeepFilesService {
   constructor(
-    private readonly fileSystem: FileSystemLayer,
+    private readonly fileSystem: FileSystemBoundary,
     private readonly logger: Logger
   ) {}
 
@@ -294,7 +294,7 @@ export class KeepFilesService implements IKeepFilesService {
 // =============================================================================
 
 interface KeepFilesModuleDeps {
-  readonly fileSystem: FileSystemLayer;
+  readonly fileSystem: FileSystemBoundary;
   readonly logger: Logger;
 }
 

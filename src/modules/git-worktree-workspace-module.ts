@@ -65,7 +65,7 @@ import {
 } from "../intents/operations/list-projects";
 import { extractWorkspaceName } from "../shared/api/id-utils";
 import { Path } from "../utils/path/path";
-import { getErrorMessage, WorkspaceError } from "../services/errors";
+import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
 import type { DomainEvent } from "../intents/lib/types";
 import {
   EVENT_METADATA_CHANGED,

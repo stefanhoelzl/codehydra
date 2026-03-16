@@ -8,8 +8,8 @@ import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "../../../utils/path/path";
-import { CODE_SERVER_VERSION } from "../../../services/code-server/setup-info";
-import { OPENCODE_VERSION } from "../../../services/agents/opencode/setup-info";
+import { CODE_SERVER_VERSION } from "../../../modules/code-server-module";
+import { OPENCODE_VERSION } from "../../../modules/agent-module/opencode/setup-info";
 
 describe("createMockPathProvider", () => {
   it("returns sensible default paths", () => {

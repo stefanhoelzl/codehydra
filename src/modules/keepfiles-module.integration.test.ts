@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Intent } from "../intents/lib/types";

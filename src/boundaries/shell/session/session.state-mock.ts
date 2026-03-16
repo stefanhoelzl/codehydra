@@ -16,8 +16,8 @@
 
 import { expect } from "vitest";
 import type { SessionBoundary, PermissionRequestHandler, PermissionCheckHandler } from "./session";
-import type { SessionHandle } from "../../../services/shell/types";
-import { ShellError } from "../../../services/shell/errors";
+import type { SessionHandle } from "../types";
+import { ShellError } from "../../../shared/errors/shell-errors";
 import type {
   MockState,
   MockWithState,

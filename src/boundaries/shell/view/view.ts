@@ -7,14 +7,9 @@
  * - Handle-based access pattern (no direct Electron types exposed)
  */
 
-import type {
-  ViewHandle,
-  Rectangle,
-  WebPreferences,
-  WindowHandle,
-} from "../../../services/shell/types";
-import { createViewHandle } from "../../../services/shell/types";
-import { ShellError } from "../../../services/shell/errors";
+import type { ViewHandle, Rectangle, WebPreferences, WindowHandle } from "../types";
+import { createViewHandle } from "../types";
+import { ShellError } from "../../../shared/errors/shell-errors";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { WindowBoundary } from "../window/window";
 

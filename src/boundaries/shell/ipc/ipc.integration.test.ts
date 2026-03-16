@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createBehavioralIpcBoundary, type BehavioralIpcBoundary } from "./ipc.test-utils";
-import { PlatformError } from "../../../services/platform/errors";
+import { PlatformError } from "../../../shared/errors/platform-errors";
 
 describe("IpcBoundary.handle", () => {
   let ipcLayer: BehavioralIpcBoundary;

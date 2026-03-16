@@ -8,12 +8,12 @@
  */
 
 import type { BaseWindow } from "electron";
-import type { WindowHandle, Rectangle, ViewHandle } from "../../../services/shell/types";
-import { createWindowHandle } from "../../../services/shell/types";
-import { ShellError } from "../../../services/shell/errors";
+import type { WindowHandle, Rectangle, ViewHandle } from "../types";
+import { createWindowHandle } from "../types";
+import { ShellError } from "../../../shared/errors/shell-errors";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { ImageBoundary } from "../image/image";
-import type { ImageHandle } from "../../../services/platform/types";
+import type { ImageHandle } from "../image/types";
 import type { PlatformInfo } from "../../../boundaries/platform/env/platform-info";
 
 // ============================================================================

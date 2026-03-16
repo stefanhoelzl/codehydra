@@ -38,7 +38,7 @@ import { INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
 import { configEnum } from "../boundaries/platform/config/config-definition";
 import type { AutoUpdatePreference } from "../boundaries/platform/config/config-values";
 import type { Config } from "../boundaries/platform/config/config";
-import type { AutoUpdater } from "../services/auto-updater";
+import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { ApiIpcChannels } from "../shared/ipc";
 

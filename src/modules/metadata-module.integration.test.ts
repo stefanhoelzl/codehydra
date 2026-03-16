@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/operations/set-metadata";

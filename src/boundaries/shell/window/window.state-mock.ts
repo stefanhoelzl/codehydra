@@ -26,9 +26,9 @@ import type {
   Unsubscribe,
   WindowBoundaryInternal,
 } from "./window";
-import type { WindowHandle, Rectangle, ViewHandle } from "../../../services/shell/types";
-import type { ImageHandle } from "../../../services/platform/types";
-import { ShellError } from "../../../services/shell/errors";
+import type { WindowHandle, Rectangle, ViewHandle } from "../types";
+import type { ImageHandle } from "../image/types";
+import { ShellError } from "../../../shared/errors/shell-errors";
 import type {
   MockState,
   MockWithState,

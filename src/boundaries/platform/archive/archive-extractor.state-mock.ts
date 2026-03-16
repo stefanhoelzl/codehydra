@@ -11,8 +11,8 @@
 
 import { expect } from "vitest";
 import type { ArchiveExtractor } from "./archive-extractor";
-import type { ArchiveErrorCode } from "../../../services/errors";
-import { ArchiveError } from "../../../services/errors";
+import type { ArchiveErrorCode } from "../../../shared/errors/service-errors";
+import { ArchiveError } from "../../../shared/errors/service-errors";
 import { Path } from "../../../utils/path/path";
 import type {
   MockState,

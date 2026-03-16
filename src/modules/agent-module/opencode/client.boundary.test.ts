@@ -1,0 +1,872 @@
+// @vitest-environment node
+/**
+ * Boundary tests for OpenCodeClient.
+ *
+ * These tests run against a real opencode serve process with a mock LLM server.
+ * They verify the client correctly communicates with real opencode instances.
+ *
+ * Each test gets its own isolated environment:
+ * - Fresh mock LLM server
+ * - Fresh opencode process
+ * - Fresh temp git repo
+ *
+ * @group boundary
+ */
+
+import { describe, it, expect, beforeAll, vi } from "vitest";
+import { OpenCodeClient } from "./client";
+import { withOpencode } from "./boundary-test-utils";
+import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network/network.test-utils";
+import { delay } from "@shared/test-fixtures";
+import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
+import {
+  ensureBinaryForTests,
+  getBinaryPathForTests,
+} from "../../../utils/testing/ensure-binaries";
+import type { ClientStatus } from "./types";
+
+describe("OpenCodeClient boundary tests", () => {
+  let binaryPath: string;
+
+  // Ensure binary is available before running any tests
+  beforeAll(async () => {
+    await ensureBinaryForTests("opencode");
+    binaryPath = getBinaryPathForTests("opencode");
+  });
+
+  // ===========================================================================
+  // Phase 1.3: Mock LLM Integration
+  // ===========================================================================
+
+  it(
+    "mock LLM receives request from opencode",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ sdk }) => {
+        const sessionResult = await sdk.session.create({ body: {} });
+        expect(sessionResult.data).toBeDefined();
+        const sessionId = sessionResult.data!.id;
+
+        // Send prompt - SDK uses 'parts' format
+        await sdk.session.prompt({
+          path: { id: sessionId },
+          body: { parts: [{ type: "text", text: "Say hello" }] },
+        });
+
+        // If we got here without error, the mock LLM received the request
+        expect(true).toBe(true);
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  // ===========================================================================
+  // Phase 2: HTTP API Tests
+  // ===========================================================================
+
+  it(
+    "listSessions returns sessions from real server",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk }) => {
+        // Create a session first via SDK
+        await sdk.session.create({ body: {} });
+
+        const result = await client.listSessions();
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(Array.isArray(result.value)).toBe(true);
+          expect(result.value.length).toBeGreaterThan(0);
+          expect(result.value[0]).toHaveProperty("id");
+          expect(result.value[0]).toHaveProperty("directory");
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "getStatus returns idle when no active sessions",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client }) => {
+        const result = await client.getStatus();
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.value).toBe("idle");
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "getStatus returns busy during active prompt",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "slow-stream" }, async ({ client, sdk }) => {
+        // Create session and start prompt
+        const session = await sdk.session.create({ body: {} });
+        const sessionId = session.data!.id;
+
+        // Send prompt but don't await (it will take time due to slow-stream)
+        const promptPromise = sdk.session.prompt({
+          path: { id: sessionId },
+          body: { parts: [{ type: "text", text: "Stream this slowly" }] },
+        });
+
+        // Give it time to start processing
+        await delay(100);
+
+        // Check status during processing
+        const result = await client.getStatus();
+
+        // Wait for prompt to complete
+        await promptPromise;
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          // Status should be busy during streaming
+          expect(["idle", "busy"]).toContain(result.value);
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "handles empty session list",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client }) => {
+        // Fresh opencode instance has no sessions
+        const result = await client.listSessions();
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(Array.isArray(result.value)).toBe(true);
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  // ===========================================================================
+  // Phase 3: SSE Connection Tests
+  // ===========================================================================
+
+  it(
+    "connect establishes SSE connection",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client }) => {
+        // Should not throw
+        await expect(client.connect()).resolves.toBeUndefined();
+
+        // Verify status listeners work
+        const statuses: ClientStatus[] = [];
+        client.onStatusChanged((status) => statuses.push(status));
+
+        // Connection established, can be disconnected
+        client.disconnect();
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "disconnect cleanly terminates connection",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client }) => {
+        await client.connect();
+
+        // Should not throw
+        expect(() => client.disconnect()).not.toThrow();
+
+        // Reconnection should work
+        await expect(client.connect()).resolves.toBeUndefined();
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "connect times out when server is unresponsive",
+    async () => {
+      // Create client pointing to non-existent port (no withOpencode needed)
+      const badClient = new OpenCodeClient(59998, SILENT_LOGGER);
+
+      // The SDK may either:
+      // 1. Throw immediately if the connection fails fast
+      // 2. Timeout after the specified timeout period
+      // Both are valid behaviors for an unresponsive server
+      try {
+        await badClient.connect(500);
+        // If connect doesn't throw, the SDK silently handles connection failures
+      } catch {
+        // Expected behavior when SDK properly reports connection failures
+      }
+
+      badClient.dispose();
+    },
+    CI_TIMEOUT_MS
+  );
+
+  // ===========================================================================
+  // Phase 4: Session Status Event Tests
+  // ===========================================================================
+
+  it(
+    "receives status events during prompt processing",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk }) => {
+        // Connect first to receive SSE events
+        await client.connect();
+
+        const statuses: ClientStatus[] = [];
+        client.onStatusChanged((status) => {
+          statuses.push(status);
+        });
+
+        // Create session via client (immediately tracked)
+        const sessionResult = await client.createSession();
+        expect(sessionResult.ok).toBe(true);
+        const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+
+        await sdk.session.prompt({
+          path: { id: sessionId },
+          body: { parts: [{ type: "text", text: "Quick test" }] },
+        });
+
+        // Wait for events
+        await vi.waitFor(
+          () => {
+            expect(statuses.length).toBeGreaterThan(0);
+          },
+          { timeout: CI_TIMEOUT_MS }
+        );
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "maps retry status to busy",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "rate-limit" }, async ({ client, sdk }) => {
+        // Connect first to receive SSE events
+        await client.connect();
+
+        const statuses: ClientStatus[] = [];
+        client.onStatusChanged((status) => {
+          statuses.push(status);
+        });
+
+        // Create session via client (immediately tracked)
+        const sessionResult = await client.createSession();
+        expect(sessionResult.ok).toBe(true);
+        const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+
+        // Send prompt - will trigger rate limit
+        try {
+          await sdk.session.prompt({
+            path: { id: sessionId },
+            body: { parts: [{ type: "text", text: "Trigger rate limit" }] },
+          });
+        } catch {
+          // Rate limit may cause errors
+        }
+
+        // Give time for events
+        await delay(500);
+
+        // Statuses should contain only idle or busy (retry mapped to busy)
+        for (const status of statuses) {
+          expect(["idle", "busy"]).toContain(status);
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  // ===========================================================================
+  // Phase 5: Root vs Child Session Filtering
+  // ===========================================================================
+
+  it(
+    "root sessions are tracked correctly",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client }) => {
+        // Create a root session via client (immediately tracked)
+        const result = await client.createSession();
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(client.isRootSession(result.value.id)).toBe(true);
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "non-existent sessions return false for isRootSession",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client }) => {
+        // Non-existent sessions should not be considered root
+        expect(client.isRootSession("nonexistent-session-id")).toBe(false);
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "child sessions created by sub-agent are filtered from root set",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk }) => {
+        // Track status changes - should only reflect root session
+        const statuses: ClientStatus[] = [];
+        client.onStatusChanged((status) => {
+          statuses.push(status);
+        });
+
+        // Connect first to receive SSE events
+        await client.connect();
+
+        // Create root session via client (immediately tracked)
+        const rootResult = await client.createSession();
+        expect(rootResult.ok).toBe(true);
+        const sessionId = rootResult.ok ? rootResult.value.id : "";
+
+        // Create a child session directly via SDK (simulates what task tool would do)
+        const childSession = await sdk.session.create({
+          body: { parentID: sessionId },
+        });
+        expect(childSession.data).toBeDefined();
+        const childSessionId = childSession.data!.id;
+
+        // Wait for SSE event to process child session
+        await delay(100);
+
+        // Verify root session is still tracked
+        expect(client.isRootSession(sessionId)).toBe(true);
+
+        // Verify child session has parentID set
+        const allSessions = await sdk.session.list();
+        const sessions = allSessions.data ?? [];
+        type SessionWithParent = { id: string; parentID?: string | null };
+        const childSessions = sessions.filter(
+          (s: SessionWithParent) => s.parentID !== undefined && s.parentID !== null
+        );
+        expect(childSessions.length).toBeGreaterThan(0);
+        const firstChild = childSessions.find((s: SessionWithParent) => s.id === childSessionId);
+        expect(firstChild).toBeDefined();
+        expect(firstChild!.parentID).toBe(sessionId);
+
+        // Child sessions should NOT be in root set
+        for (const child of childSessions) {
+          expect(client.isRootSession(child.id)).toBe(false);
+        }
+
+        // listSessions returns all sessions (root and child)
+        const allSessionsResult = await client.listSessions();
+        if (allSessionsResult.ok) {
+          expect(allSessionsResult.value.length).toBeGreaterThan(0);
+        }
+
+        // Status changes should only reflect root session state
+        expect(statuses.length).toBeGreaterThanOrEqual(0);
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "session.created event for root session triggers tracking",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk }) => {
+        // Connect first to receive SSE events
+        await client.connect();
+
+        // Get initial session count
+        const initialResult = await client.listSessions();
+        expect(initialResult.ok).toBe(true);
+        const initialCount = initialResult.ok ? initialResult.value.length : 0;
+
+        // Create a new root session - this should trigger session.created event
+        const session = await sdk.session.create({ body: {} });
+        const sessionId = session.data!.id;
+
+        // Give time for SSE event to be processed
+        await delay(200);
+
+        // SSE session.created event should have tracked it
+        expect(client.isRootSession(sessionId)).toBe(true);
+
+        // Verify session exists
+        const updatedResult = await client.listSessions();
+        expect(updatedResult.ok).toBe(true);
+        if (updatedResult.ok) {
+          expect(updatedResult.value.length).toBeGreaterThan(initialCount);
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "session.created event for child session does not trigger root tracking",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client, sdk }) => {
+        // Connect first to receive SSE events
+        await client.connect();
+
+        // Create root session via client (immediately tracked)
+        const rootResult = await client.createSession();
+        expect(rootResult.ok).toBe(true);
+        const rootSessionId = rootResult.ok ? rootResult.value.id : "";
+
+        // Create a child session directly via SDK (simulates what task tool would do)
+        const childSession = await sdk.session.create({
+          body: { parentID: rootSessionId },
+        });
+        expect(childSession.data).toBeDefined();
+        const childSessionId = childSession.data!.id;
+
+        // Give time for SSE event to be processed
+        await delay(200);
+
+        // Verify root session is still tracked
+        expect(client.isRootSession(rootSessionId)).toBe(true);
+
+        // Check that child sessions exist but are NOT in root set
+        const allSessions = await sdk.session.list();
+        type SessionWithParent = { id: string; parentID?: string | null };
+        const childSessions = (allSessions.data ?? []).filter(
+          (s: SessionWithParent) => s.parentID !== undefined && s.parentID !== null
+        );
+
+        expect(childSessions.length).toBeGreaterThan(0);
+        const createdChild = childSessions.find((s: SessionWithParent) => s.id === childSessionId);
+        expect(createdChild).toBeDefined();
+
+        for (const child of childSessions) {
+          // Child sessions should NOT be tracked as root
+          expect(client.isRootSession(child.id)).toBe(false);
+        }
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  // ===========================================================================
+  // Phase 6: Permission Event Tests
+  // ===========================================================================
+
+  it(
+    "detects tool calls complete without permission with bash=allow",
+    async () => {
+      await withOpencode(
+        {
+          binaryPath,
+          mockLlmMode: "tool-call",
+          permission: { bash: "allow", edit: "allow", webfetch: "allow" },
+        },
+        async ({ client, sdk }) => {
+          // Track status changes
+          const statuses: ClientStatus[] = [];
+          client.onStatusChanged((status) => {
+            statuses.push(status);
+          });
+
+          // Connect first to receive SSE events
+          await client.connect();
+
+          // Create session via client (immediately tracked)
+          const sessionResult = await client.createSession();
+          expect(sessionResult.ok).toBe(true);
+          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+
+          // Send prompt - tool call executes without permission (bash="allow")
+          await sdk.session.prompt({
+            path: { id: sessionId },
+            body: { parts: [{ type: "text", text: "Run a command" }] },
+          });
+
+          // Wait for session to return to idle
+          await vi.waitFor(
+            () => {
+              expect(statuses.includes("idle")).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Tool executed without permission request because bash="allow"
+          expect(statuses.length).toBeGreaterThan(0);
+        }
+      );
+    },
+    CI_TIMEOUT_MS
+  );
+
+  // ===========================================================================
+  // Permission Flow Tests (bash="ask" configuration)
+  // ===========================================================================
+
+  it(
+    "permission approval allows tool execution",
+    async () => {
+      await withOpencode(
+        {
+          binaryPath,
+          mockLlmMode: "tool-call",
+          permission: { bash: "ask", edit: "allow", webfetch: "allow" },
+        },
+        async ({ client, sdk }) => {
+          // Track permission events
+          type PermissionEvent =
+            | {
+                type: "permission.updated";
+                event: { id: string; sessionID: string; type: string; title: string };
+              }
+            | {
+                type: "permission.replied";
+                event: { sessionID: string; permissionID: string; response: string };
+              };
+          const permissionEvents: PermissionEvent[] = [];
+
+          client.onPermissionEvent((event) => {
+            permissionEvents.push(event);
+          });
+
+          // Track status changes
+          const statuses: ClientStatus[] = [];
+          client.onStatusChanged((status) => {
+            statuses.push(status);
+          });
+
+          // Connect first to receive SSE events
+          await client.connect();
+
+          // Create session via client (immediately tracked)
+          const sessionResult = await client.createSession();
+          expect(sessionResult.ok).toBe(true);
+          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+
+          // Send prompt - this triggers a tool call that requires permission
+          const promptPromise = sdk.session.prompt({
+            path: { id: sessionId },
+            body: { parts: [{ type: "text", text: "Run a command" }] },
+          });
+
+          // Wait for permission.updated event
+          await vi.waitFor(
+            () => {
+              const hasPermissionUpdated = permissionEvents.some(
+                (e) => e.type === "permission.updated"
+              );
+              expect(hasPermissionUpdated).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Get the permission event details
+          const permissionUpdated = permissionEvents.find((e) => e.type === "permission.updated");
+          expect(permissionUpdated).toBeDefined();
+          expect(permissionUpdated!.type).toBe("permission.updated");
+
+          const permissionId = permissionUpdated!.event.id;
+
+          // Respond with approval using SDK top-level method
+          await sdk.postSessionIdPermissionsPermissionId({
+            path: { id: sessionId, permissionID: permissionId },
+            body: { response: "once" },
+          });
+
+          // Wait for permission.replied event
+          await vi.waitFor(
+            () => {
+              const hasPermissionReplied = permissionEvents.some(
+                (e) => e.type === "permission.replied"
+              );
+              expect(hasPermissionReplied).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Verify permission.replied has approval response
+          const permissionReplied = permissionEvents.find((e) => e.type === "permission.replied");
+          expect(permissionReplied).toBeDefined();
+          expect(permissionReplied!.event.response).toBe("once");
+
+          // Wait for prompt to complete
+          await promptPromise;
+
+          // Session should return to idle after tool executes
+          await vi.waitFor(
+            () => {
+              expect(statuses.includes("idle")).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Verify the tool was executed by checking status sequence
+          expect(statuses.length).toBeGreaterThan(0);
+        }
+      );
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "permission rejection prevents tool execution",
+    async () => {
+      await withOpencode(
+        {
+          binaryPath,
+          mockLlmMode: "tool-call",
+          permission: { bash: "ask", edit: "allow", webfetch: "allow" },
+        },
+        async ({ client, sdk }) => {
+          // Track permission events
+          type PermissionEvent =
+            | {
+                type: "permission.updated";
+                event: { id: string; sessionID: string; type: string; title: string };
+              }
+            | {
+                type: "permission.replied";
+                event: { sessionID: string; permissionID: string; response: string };
+              };
+          const permissionEvents: PermissionEvent[] = [];
+
+          client.onPermissionEvent((event) => {
+            permissionEvents.push(event);
+          });
+
+          // Track status changes
+          const statuses: ClientStatus[] = [];
+          client.onStatusChanged((status) => {
+            statuses.push(status);
+          });
+
+          // Connect first to receive SSE events
+          await client.connect();
+
+          // Create session via client (immediately tracked)
+          const sessionResult = await client.createSession();
+          expect(sessionResult.ok).toBe(true);
+          const sessionId = sessionResult.ok ? sessionResult.value.id : "";
+
+          // Send prompt - this triggers a tool call that requires permission
+          const promptPromise = sdk.session.prompt({
+            path: { id: sessionId },
+            body: { parts: [{ type: "text", text: "Run a command" }] },
+          });
+
+          // Wait for permission.updated event
+          await vi.waitFor(
+            () => {
+              const hasPermissionUpdated = permissionEvents.some(
+                (e) => e.type === "permission.updated"
+              );
+              expect(hasPermissionUpdated).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Get the permission event details
+          const permissionUpdated = permissionEvents.find((e) => e.type === "permission.updated");
+          expect(permissionUpdated).toBeDefined();
+          expect(permissionUpdated!.type).toBe("permission.updated");
+
+          const permissionId = permissionUpdated!.event.id;
+
+          // Respond with rejection using SDK top-level method
+          await sdk.postSessionIdPermissionsPermissionId({
+            path: { id: sessionId, permissionID: permissionId },
+            body: { response: "reject" },
+          });
+
+          // Wait for permission.replied event
+          await vi.waitFor(
+            () => {
+              const hasPermissionReplied = permissionEvents.some(
+                (e) => e.type === "permission.replied"
+              );
+              expect(hasPermissionReplied).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Verify permission.replied has rejection response
+          const permissionReplied = permissionEvents.find((e) => e.type === "permission.replied");
+          expect(permissionReplied).toBeDefined();
+          expect(permissionReplied!.event.response).toBe("reject");
+
+          // Wait for prompt to complete
+          await promptPromise;
+
+          // Session should return to idle (tool was NOT executed due to rejection)
+          await vi.waitFor(
+            () => {
+              expect(statuses.includes("idle")).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+        }
+      );
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "subagent permission request emits permission.updated event",
+    async () => {
+      await withOpencode(
+        {
+          binaryPath,
+          mockLlmMode: "tool-call",
+          permission: { bash: "ask", edit: "allow", webfetch: "allow" },
+        },
+        async ({ client, sdk }) => {
+          // Track permission events
+          type PermissionEvent =
+            | {
+                type: "permission.updated";
+                event: { id: string; sessionID: string; type: string; title: string };
+              }
+            | {
+                type: "permission.replied";
+                event: { sessionID: string; permissionID: string; response: string };
+              };
+          const permissionEvents: PermissionEvent[] = [];
+
+          client.onPermissionEvent((event) => {
+            permissionEvents.push(event);
+          });
+
+          // Connect first to receive SSE events
+          await client.connect();
+
+          // Create root session via client (immediately tracked)
+          const rootResult = await client.createSession();
+          expect(rootResult.ok).toBe(true);
+          const rootSessionId = rootResult.ok ? rootResult.value.id : "";
+
+          // Create child session (subagent)
+          const childSession = await sdk.session.create({
+            body: { parentID: rootSessionId },
+          });
+          const childSessionId = childSession.data!.id;
+
+          // Wait for SSE event to process child session mapping
+          await delay(100);
+
+          // Send prompt to CHILD session - triggers bash tool requiring permission
+          const promptPromise = sdk.session.prompt({
+            path: { id: childSessionId },
+            body: { parts: [{ type: "text", text: "Run a command" }] },
+          });
+
+          // Wait for permission.updated event from child session
+          // BUG: Currently fails because child session permission events are filtered out
+          await vi.waitFor(
+            () => {
+              const hasPermission = permissionEvents.some((e) => e.type === "permission.updated");
+              expect(hasPermission).toBe(true);
+            },
+            { timeout: CI_TIMEOUT_MS }
+          );
+
+          // Verify the event has the child session ID (not remapped to root)
+          const permissionUpdated = permissionEvents.find((e) => e.type === "permission.updated")!;
+          expect(permissionUpdated.event.sessionID).toBe(childSessionId);
+
+          // Approve permission using child session ID
+          await sdk.postSessionIdPermissionsPermissionId({
+            path: { id: childSessionId, permissionID: permissionUpdated.event.id },
+            body: { response: "once" },
+          });
+
+          // Wait for prompt to complete
+          await promptPromise;
+        }
+      );
+    },
+    CI_TIMEOUT_MS
+  );
+
+  // ===========================================================================
+  // Phase 7: Initial Prompt Tests (CREATE_WORKSPACE_TOOL feature)
+  // ===========================================================================
+
+  it(
+    "session.create and session.prompt send prompt successfully",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ sdk }) => {
+        // Step 1: Create a new session
+        const sessionResult = await sdk.session.create({ body: {} });
+        expect(sessionResult.data).toBeDefined();
+        expect(typeof sessionResult.data!.id).toBe("string");
+        const sessionId = sessionResult.data!.id;
+
+        // Step 2: Send a prompt to the session
+        const promptResult = await sdk.session.prompt({
+          path: { id: sessionId },
+          body: { parts: [{ type: "text", text: "Hello, this is a test prompt" }] },
+        });
+
+        // Step 3: Verify the prompt was sent (response exists)
+        expect(promptResult.data).toBeDefined();
+
+        // Step 4: Verify session exists in list
+        const listResult = await sdk.session.list();
+        const sessions = listResult.data ?? [];
+        const ourSession = sessions.find((s) => s.id === sessionId);
+        expect(ourSession).toBeDefined();
+
+        // Step 5: Verify prompt appears in session messages
+        const messagesResult = await sdk.session.messages({ path: { id: sessionId } });
+        const messages = messagesResult.data ?? [];
+        expect(messages.length).toBeGreaterThan(0);
+
+        // Verify at least one message has info.role === "user"
+        const userMessages = messages.filter((m) => m.info.role === "user");
+        expect(userMessages.length).toBeGreaterThan(0);
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+
+  it(
+    "session.prompt with agent parameter stores agent in UserMessage",
+    async () => {
+      await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ sdk }) => {
+        // Step 1: Create a new session
+        const sessionResult = await sdk.session.create({ body: {} });
+        expect(sessionResult.data).toBeDefined();
+        const sessionId = sessionResult.data!.id;
+
+        // Step 2: Send a prompt WITH agent parameter
+        // Using "build" which is a valid default agent in OpenCode
+        const testAgent = "build";
+        await sdk.session.prompt({
+          path: { id: sessionId },
+          body: {
+            agent: testAgent,
+            parts: [{ type: "text", text: "Test prompt with agent" }],
+          },
+        });
+
+        // Step 3: Fetch messages for the session
+        const messagesResult = await sdk.session.messages({ path: { id: sessionId } });
+        const messages = messagesResult.data ?? [];
+
+        // Step 4: Find the UserMessage and verify agent field
+        // Note: SDK types may not include 'agent' property, but OpenCode stores it
+        const userMessage = messages.find((m) => m.info.role === "user");
+        expect(userMessage).toBeDefined();
+        const userInfo = userMessage!.info as { role: string; agent?: string };
+        expect(userInfo.agent).toBe(testAgent);
+      });
+    },
+    CI_TIMEOUT_MS
+  );
+});

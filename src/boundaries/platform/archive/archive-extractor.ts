@@ -7,7 +7,7 @@ import yauzl from "yauzl";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { ArchiveError, getErrorMessage } from "../../../services/errors.js";
+import { ArchiveError, getErrorMessage } from "../../../shared/errors/service-errors.js";
 import { Path } from "../../../utils/path/path.js";
 
 /**

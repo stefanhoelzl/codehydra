@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../lib/dispatcher";
 
 import {

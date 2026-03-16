@@ -7,9 +7,9 @@
  * - Handle-based access pattern (no direct Electron types exposed)
  */
 
-import type { SessionHandle } from "../../../services/shell/types";
-import { createSessionHandle } from "../../../services/shell/types";
-import { ShellError } from "../../../services/shell/errors";
+import type { SessionHandle } from "../types";
+import { createSessionHandle } from "../types";
+import { ShellError } from "../../../shared/errors/shell-errors";
 import type { Logger } from "../../../boundaries/platform/logging";
 
 // ============================================================================

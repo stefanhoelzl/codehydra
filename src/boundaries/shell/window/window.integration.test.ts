@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createWindowBoundaryMock, type MockWindowBoundary } from "./window.state-mock";
-import { ShellError, isShellErrorWithCode } from "../../../services/shell/errors";
+import { ShellError, isShellErrorWithCode } from "../../../shared/errors/shell-errors";
 
 describe("WindowBoundary (integration)", () => {
   let windowLayer: MockWindowBoundary;

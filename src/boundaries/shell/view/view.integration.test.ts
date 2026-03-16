@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
-import { ShellError, isShellErrorWithCode } from "../../../services/shell/errors";
+import { ShellError, isShellErrorWithCode } from "../../../shared/errors/shell-errors";
 
 describe("ViewBoundary (integration)", () => {
   let viewLayer: MockViewBoundary;

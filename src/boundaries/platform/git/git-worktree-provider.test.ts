@@ -7,13 +7,13 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { GitWorktreeProvider } from "./git-worktree-provider";
-import { WorkspaceError } from "../../../services/errors";
+import { WorkspaceError } from "../../../shared/errors/service-errors";
 import {
   createFileSystemMock,
   createSpyFileSystemBoundary,
   directory,
 } from "../filesystem/filesystem.state-mock";
-import { FileSystemError } from "../../../services/errors";
+import { FileSystemError } from "../../../shared/errors/service-errors";
 import { createMockLogger } from "../logging/logging.test-utils";
 import { delay } from "@shared/test-fixtures";
 import { Path } from "../../../utils/path/path";

@@ -7,7 +7,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Dispatcher } from "../intents/lib/dispatcher";
+import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";
+import type { IntentModule } from "../intents/lib/module";
 
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
@@ -31,7 +32,7 @@ import type {
   CloseProjectIntent,
 } from "../intents/operations/close-project";
 import { Path } from "../utils/path/path";
-import { extractRepoName } from "../services/project/url-utils";
+import { extractRepoName } from "../utils/url-utils";
 import type { ProjectId } from "../shared/api/types";
 
 // Pre-computed: generateProjectIdFromUrl("https://github.com/org/repo.git")
@@ -45,9 +46,30 @@ const noopReport: CloneProgressReporter = () => {};
 // Test Setup
 // =============================================================================
 
-function createTestSetup() {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+/**
+ * Build a ResolvedHooks from a module's hook declarations for a given operation.
+ */
+function resolveHooksFromModule(module: IntentModule, operationId: string): ResolvedHooks {
+  const opHooks = module.hooks?.[operationId] ?? {};
+  return {
+    collect: async <T>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>> => {
+      const hookHandler = opHooks[hookPointId];
+      if (!hookHandler) {
+        return { results: [], errors: [], capabilities: {} };
+      }
+      try {
+        const result = await hookHandler.handler(ctx);
+        // Filter out undefined results to match Dispatcher behavior (undefined = "not handled")
+        const results = result !== undefined ? [result as T] : [];
+        return { results, errors: [], capabilities: {} };
+      } catch (error) {
+        return { results: [], errors: [error as Error], capabilities: {} };
+      }
+    },
+  };
+}
 
+function createTestSetup() {
   const fs = createFileSystemMock();
   const gitClient = createMockGitClient();
   const pathProvider = createMockPathProvider();
@@ -59,7 +81,9 @@ function createTestSetup() {
     logger: SILENT_LOGGER,
   });
 
-  dispatcher.registerModule(module);
+  const hookRegistry = {
+    resolve: (operationId: string) => resolveHooksFromModule(module, operationId),
+  };
 
   return { hookRegistry, fs, gitClient, pathProvider };
 }

@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createSessionBoundaryMock, type MockSessionBoundary } from "./session.state-mock";
-import { ShellError } from "../../../services/shell/errors";
+import { ShellError } from "../../../shared/errors/shell-errors";
 
 describe("SessionBoundary (integration)", () => {
   let sessionLayer: MockSessionBoundary;

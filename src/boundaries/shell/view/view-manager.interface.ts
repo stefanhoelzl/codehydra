@@ -4,7 +4,7 @@
  */
 
 import type { UIMode, UIModeChangedEvent } from "../../../shared/ipc";
-import type { ViewHandle } from "../../../services/shell/types";
+import type { ViewHandle } from "../types";
 
 /**
  * Timeout for workspace loading in milliseconds.

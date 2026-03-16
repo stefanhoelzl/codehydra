@@ -15,7 +15,7 @@ import {
   file,
 } from "../filesystem/filesystem.state-mock";
 import { SILENT_LOGGER } from "../logging";
-import { WorkspaceError } from "../../../services/errors";
+import { WorkspaceError } from "../../../shared/errors/service-errors";
 import { Path } from "../../../utils/path/path";
 
 describe("GitWorktreeProvider integration", () => {

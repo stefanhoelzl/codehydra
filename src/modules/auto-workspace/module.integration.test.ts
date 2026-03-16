@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { Dispatcher } from "../../intents/lib/dispatcher";
 

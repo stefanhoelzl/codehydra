@@ -11,7 +11,7 @@ import {
   createWindowBoundaryInternalMock,
   type MockWindowBoundaryInternal,
 } from "./window.state-mock";
-import type { ImageHandle } from "../../../services/platform/types";
+import type { ImageHandle } from "../image/types";
 
 /**
  * Creates WindowManager deps with behavioral mocks.

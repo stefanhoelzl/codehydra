@@ -79,7 +79,7 @@ import {
   type UpdateChoicePayload,
 } from "../shared/ipc";
 import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
-import { SetupError } from "../services/errors";
+import { SetupError } from "../shared/errors/service-errors";
 import { getErrorMessage } from "../shared/error-utils";
 
 // =============================================================================

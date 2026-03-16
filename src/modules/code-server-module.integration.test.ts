@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { delimiter, join } from "node:path";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
@@ -33,14 +34,14 @@ import type {
   DeleteHookResult,
 } from "../intents/operations/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
-import type { Config } from "../boundaries/platform/config/config-service";
+import type { Config } from "../boundaries/platform/config/config";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/operations/app-start";
 import type { DirEntry } from "../boundaries/platform/filesystem/filesystem";
 import type { SpawnedProcess } from "../boundaries/platform/process/process";
 import { createArchiveExtractorMock } from "../boundaries/platform/archive/archive-extractor.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-import { FileSystemError, SetupError } from "../services/errors";
+import { FileSystemError, SetupError } from "../shared/errors/service-errors";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
@@ -290,7 +291,7 @@ function createTestSetup(mockDeps?: CodeServerModuleDeps, pluginPort: number | n
   const module = createCodeServerModule(deps);
   dispatcher.registerModule(module);
 
-  return { deps, dispatcher, hookRegistry };
+  return { deps, dispatcher };
 }
 
 // =============================================================================

@@ -11,7 +11,7 @@
 
 import { createServer } from "net";
 import type { Logger } from "../logging";
-import { getErrorMessage } from "../../../services/errors";
+import { getErrorMessage } from "../../../shared/errors/service-errors";
 
 // ============================================================================
 // HTTP Client Interface

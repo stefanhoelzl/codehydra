@@ -11,7 +11,7 @@ import { Dispatcher } from "./dispatcher";
 import type { HookContext } from "./operation";
 import type { Intent } from "./types";
 import { createMinimalOperation } from "./operation.test-utils";
-import { createMockLogger } from "../../../services/logging/logging.test-utils";
+import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 
 // =============================================================================
 // Test Constants
