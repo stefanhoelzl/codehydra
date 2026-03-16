@@ -13,9 +13,9 @@
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { PlatformInfo } from "../../../boundaries/platform/env/platform-info";
 import type { ImageBoundary } from "../image/image";
-import type { ImageHandle } from "../../../services/platform/types";
+import type { ImageHandle } from "../image/types";
 import type { WindowBoundaryInternal } from "./window";
-import type { WindowHandle } from "../../../services/shell/types";
+import type { WindowHandle } from "../types";
 import { getErrorMessage } from "../../../shared/error-utils";
 
 /**

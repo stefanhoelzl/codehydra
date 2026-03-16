@@ -35,47 +35,41 @@ import {
   generateHelpText,
 } from "../boundaries/platform/config";
 // Boundaries - Shell
-import { DefaultIpcLayer } from "../boundaries/shell/ipc/ipc";
-import { DefaultAppLayer } from "../boundaries/shell/app/app";
-import { DefaultImageLayer } from "../boundaries/shell/image/image";
-import { DefaultDialogLayer } from "../boundaries/shell/dialog/dialog";
-import { DefaultMenuLayer } from "../boundaries/shell/menu/menu";
-import { DefaultWindowLayer } from "../boundaries/shell/window/window";
-import { DefaultViewLayer } from "../boundaries/shell/view/view";
-import { DefaultSessionLayer } from "../boundaries/shell/session/session";
+import { DefaultIpcBoundary } from "../boundaries/shell/ipc/ipc";
+import { DefaultAppBoundary } from "../boundaries/shell/app/app";
+import { DefaultImageBoundary } from "../boundaries/shell/image/image";
+import { DefaultDialogBoundary } from "../boundaries/shell/dialog/dialog";
+import { DefaultMenuBoundary } from "../boundaries/shell/menu/menu";
+import { DefaultWindowBoundary } from "../boundaries/shell/window/window";
+import { DefaultViewBoundary } from "../boundaries/shell/view/view";
+import { DefaultSessionBoundary } from "../boundaries/shell/session/session";
 import { WindowManager } from "../boundaries/shell/window/window-manager";
 import { ViewManager } from "../boundaries/shell/view/view-manager";
 // Services (stayed)
-import { KeepFilesService } from "../services/keepfiles";
-import { AutoUpdater } from "../services/auto-updater";
+import { AutoUpdater } from "../modules/auto-updater";
 import { DefaultArchiveExtractor } from "../boundaries/platform/archive";
 import type { DownloadDeps } from "../utils/binary-download";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
   getOpencodeExecutablePath,
-} from "../services/agents/opencode/setup-info";
+} from "../modules/agent-module/opencode/setup-info";
 import {
   CLAUDE_VERSION,
   getClaudeUrl,
   getClaudeSubPath,
   getClaudeExecutablePath,
-} from "../services/agents/claude/setup-info";
-import type { SupportedPlatform, SupportedArch } from "../services/agents/types";
-import { createAgentServerManager } from "../services/agents";
-import type { ClaudeCodeServerManager } from "../services/agents/claude/server-manager";
-import type { OpenCodeServerManager } from "../services/agents/opencode/server-manager";
-import { createClaudeModuleProvider } from "../services/agents/claude/module-provider";
-import { createOpenCodeModuleProvider } from "../services/agents/opencode/module-provider";
-import { McpServerManager } from "../services/mcp-server";
-import { expandGitUrl } from "../services/project/url-utils";
-import { AsyncWatcher } from "../services/platform/async-watcher";
-// Managers (stayed)
-import { BadgeManager } from "./managers/badge-manager";
+} from "../modules/agent-module/claude/setup-info";
+import type { SupportedPlatform, SupportedArch } from "../boundaries/platform/env/platform-info";
+import { ClaudeCodeServerManager } from "../modules/agent-module/claude/server-manager";
+import { OpenCodeServerManager } from "../modules/agent-module/opencode/server-manager";
+import { createClaudeModuleProvider } from "../modules/agent-module/claude/module-provider";
+import { createOpenCodeModuleProvider } from "../modules/agent-module/opencode/module-provider";
+import { expandGitUrl } from "../utils/url-utils";
+import { AsyncWatcher } from "../boundaries/platform/async-watcher";
 // Main
-import { registerLogHandlers } from "./ipc";
-import { ElectronBuildInfo } from "./build-info";
-import { NodePlatformInfo } from "./platform-info";
+import { ElectronBuildInfo } from "../boundaries/platform/env/electron-build-info";
+import { NodePlatformInfo } from "../boundaries/platform/env/node-platform-info";
 // Intents
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createIdempotencyModule } from "../intents/lib/idempotency-module";
@@ -162,11 +156,10 @@ import {
 } from "../intents/operations/resolve-project";
 // Modules
 import { createExtensionModule } from "../modules/extension-module";
-import { createMcpHandlers } from "../modules/mcp-handlers";
 import { createViewModule } from "../modules/view-module";
 import { createCodeServerModule } from "../modules/code-server-module";
 import { createPluginServerModule } from "../modules/plugin-server-module";
-import { createAgentModule } from "../modules/agent-module";
+import { createAgentModule } from "../modules/agent-module/agent-module";
 import { createMetadataModule } from "../modules/metadata-module";
 import { createKeepFilesModule } from "../modules/keepfiles-module";
 import { createWindowsFileLockModule } from "../modules/windows-file-lock-module";
@@ -186,7 +179,7 @@ import { createTempDirModule } from "../modules/temp-dir-module";
 import { createErrorHandlerModule } from "../modules/error-handler-module";
 import { createShortcutModule } from "../modules/shortcut-module";
 import { createDevtoolsModule } from "../modules/devtools-module";
-import { createIpcEventBridge } from "../modules/ipc-event-bridge";
+import { createUiIpcModule } from "../modules/ui-ipc-module";
 import { createWorkspaceSelectionModule } from "../modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "../modules/auto-workspace/module";
 import { createGitHubSource } from "../modules/auto-workspace/github-source";
@@ -236,18 +229,18 @@ configService.register("help", {
 
 // 3. Electron layers (all constructors are pure — just store deps)
 
-const dialogLayer = new DefaultDialogLayer(loggingService.createLogger("dialog"));
-const menuLayer = new DefaultMenuLayer(loggingService.createLogger("menu"));
-const imageLayer = new DefaultImageLayer(loggingService.createLogger("window"));
-const windowLayer = new DefaultWindowLayer(
+const dialogLayer = new DefaultDialogBoundary(loggingService.createLogger("dialog"));
+const menuLayer = new DefaultMenuBoundary(loggingService.createLogger("menu"));
+const imageLayer = new DefaultImageBoundary(loggingService.createLogger("window"));
+const windowLayer = new DefaultWindowBoundary(
   imageLayer,
   platformInfo,
   loggingService.createLogger("window")
 );
-const viewLayer = new DefaultViewLayer(windowLayer, loggingService.createLogger("view"));
-const sessionLayer = new DefaultSessionLayer(loggingService.createLogger("view"));
-const appLayer = new DefaultAppLayer(loggingService.createLogger("badge"));
-const ipcLayer = new DefaultIpcLayer();
+const viewLayer = new DefaultViewBoundary(windowLayer, loggingService.createLogger("view"));
+const sessionLayer = new DefaultSessionBoundary(loggingService.createLogger("view"));
+const appLayer = new DefaultAppBoundary(loggingService.createLogger("badge"));
+const ipcLayer = new DefaultIpcBoundary();
 
 // 4. Service construction
 
@@ -321,15 +314,21 @@ const serverManagerDeps = {
   logger: loggingService.createLogger("agent"),
 };
 const agentServerManagers = {
-  claude: createAgentServerManager("claude", serverManagerDeps),
-  opencode: createAgentServerManager("opencode", serverManagerDeps),
+  claude: new ClaudeCodeServerManager({
+    portManager: serverManagerDeps.portManager,
+    pathProvider: serverManagerDeps.pathProvider,
+    fileSystem: serverManagerDeps.fileSystem,
+    logger: serverManagerDeps.logger,
+  }),
+  opencode: new OpenCodeServerManager(
+    serverManagerDeps.processRunner,
+    serverManagerDeps.portManager,
+    serverManagerDeps.httpClient,
+    serverManagerDeps.pathProvider,
+    serverManagerDeps.logger
+  ),
 };
 const providerLogger = loggingService.createLogger("agent");
-
-const keepFilesService = new KeepFilesService(
-  fileSystemLayer,
-  loggingService.createLogger("keepfiles")
-);
 
 const apiLogger = loggingService.createLogger("api");
 const lifecycleLogger = loggingService.createLogger("lifecycle");
@@ -359,21 +358,6 @@ const viewManager = new ViewManager({
   },
   logger: loggingService.createLogger("view"),
 });
-
-const badgeManager = new BadgeManager(
-  platformInfo,
-  appLayer,
-  imageLayer,
-  windowManager,
-  loggingService.createLogger("badge")
-);
-
-// McpServerManager with handlers factory that dispatches intents directly
-const mcpServerManager = new McpServerManager(
-  networkLayer,
-  () => createMcpHandlers(dispatcher),
-  loggingService.createLogger("mcp")
-);
 
 // 6. Intent modules (all at module level)
 
@@ -452,7 +436,7 @@ const extensionModule = createExtensionModule({
 
 const claudeAgentModule = createAgentModule(
   createClaudeModuleProvider({
-    serverManager: agentServerManagers.claude as ClaudeCodeServerManager,
+    serverManager: agentServerManagers.claude,
     downloadDeps,
     binaryConfig: claudeBinaryConfig,
     logger: providerLogger,
@@ -462,7 +446,7 @@ const claudeAgentModule = createAgentModule(
 
 const opencodeAgentModule = createAgentModule(
   createOpenCodeModuleProvider({
-    serverManager: agentServerManagers.opencode as OpenCodeServerManager,
+    serverManager: agentServerManagers.opencode,
     downloadDeps,
     binaryConfig: opencodeBinaryConfig,
     logger: providerLogger,
@@ -474,8 +458,8 @@ const metadataModule = createMetadataModule({
   gitWorktreeProvider,
 });
 const keepFilesModule = createKeepFilesModule({
-  keepFilesService,
-  logger: apiLogger,
+  fileSystem: fileSystemLayer,
+  logger: loggingService.createLogger("keepfiles"),
 });
 const deleteWindowsLockModule = createWindowsFileLockModule({
   processRunner,
@@ -520,10 +504,18 @@ const gitWorktreeWorkspaceModule = createGitWorktreeWorkspaceModule(
   pathProvider,
   apiLogger
 );
-const badgeModule = createBadgeModule(badgeManager);
+const badgeModule = createBadgeModule({
+  platformInfo,
+  appLayer,
+  imageLayer,
+  windowManager,
+  logger: loggingService.createLogger("badge"),
+});
 const workspaceSelectionModule = createWorkspaceSelectionModule();
 const mcpModule = createMcpModule({
-  mcpServerManager,
+  portManager: networkLayer,
+  dispatcher,
+  logger: loggingService.createLogger("mcp"),
 });
 const githubSource = createGitHubSource({
   processRunner,
@@ -560,7 +552,6 @@ const electronLifecycleModule = createElectronLifecycleModule({
 
 const loggingModule = createLoggingModule({
   loggingService,
-  registerLogHandlers: () => registerLogHandlers(loggingService),
   buildInfo,
   platformInfo,
   logger: appLogger,
@@ -629,12 +620,13 @@ dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(confi
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
 dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
 
-// Create IPC event bridge (registers all IPC handlers directly on ipcLayer)
-const ipcEventBridge = createIpcEventBridge({
+// Create UI IPC module (handles all bidirectional IPC between main and renderer)
+const uiIpcModule = createUiIpcModule({
   ipcLayer,
   viewManager,
   logger: apiLogger,
   dispatcher,
+  loggingService,
 });
 
 // 9. Register all modules
@@ -667,7 +659,7 @@ dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(autoWorkspaceModule);
-dispatcher.registerModule(ipcEventBridge);
+dispatcher.registerModule(uiIpcModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)
 configService.load();

@@ -4,6 +4,11 @@
  */
 
 /**
+ * Supported operating system platforms for binary downloads.
+ */
+export type SupportedPlatform = "darwin" | "linux" | "win32";
+
+/**
  * Supported CPU architectures.
  */
 export type SupportedArch = "x64" | "arm64";

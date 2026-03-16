@@ -40,8 +40,8 @@ import {
 } from "node:fs/promises";
 import { DefaultFileSystemBoundary } from "./filesystem";
 import { SILENT_LOGGER } from "../logging";
-import { FileSystemError } from "../../../services/errors";
-import { createTempDir } from "../../../services/test-utils";
+import { FileSystemError } from "../../../shared/errors/service-errors";
+import { createTempDir } from "../../../utils/testing/test-utils";
 
 describe("DefaultFileSystemBoundary", () => {
   let fs: DefaultFileSystemBoundary;

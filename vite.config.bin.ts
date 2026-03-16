@@ -2,9 +2,9 @@
  * Vite config for building CLI wrapper scripts.
  *
  * Compiles agent wrapper scripts to out/main/agents/ as self-contained CJS bundles:
- * - src/services/agents/opencode/wrapper.ts -> opencode-wrapper.cjs
- * - src/services/agents/claude/wrapper.ts -> claude-wrapper.cjs
- * - src/services/agents/claude/hook-handler.ts -> hook-handler.cjs
+ * - src/modules/agent-module/opencode/wrapper.ts -> opencode-wrapper.cjs
+ * - src/modules/agent-module/claude/wrapper.ts -> claude-wrapper.cjs
+ * - src/modules/agent-module/claude/hook-handler.ts -> hook-handler.cjs
  *
  * Also copies compiled wrappers to ./dist/bin/ for production packaging.
  * Runtime copying to app-data/bin/ is handled by setupBinDirectory() from bin-setup.ts.
@@ -43,9 +43,9 @@ export default defineConfig({
   build: {
     lib: {
       entry: {
-        "opencode-wrapper": resolve(__dirname, "src/services/agents/opencode/wrapper.ts"),
-        "claude-wrapper": resolve(__dirname, "src/services/agents/claude/wrapper.ts"),
-        "hook-handler": resolve(__dirname, "src/services/agents/claude/hook-handler.ts"),
+        "opencode-wrapper": resolve(__dirname, "src/modules/agent-module/opencode/wrapper.ts"),
+        "claude-wrapper": resolve(__dirname, "src/modules/agent-module/claude/wrapper.ts"),
+        "hook-handler": resolve(__dirname, "src/modules/agent-module/claude/hook-handler.ts"),
       },
       formats: ["cjs"],
       fileName: (_, entryName) => `${entryName}.cjs`,

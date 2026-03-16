@@ -89,7 +89,7 @@ import { INTENT_RESOLVE_WORKSPACE } from "../intents/operations/resolve-workspac
 import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../intents/operations/vscode-show-message";
 import { VSCODE_COMMAND_OPERATION_ID } from "../intents/operations/vscode-command";
 import { INTENT_VSCODE_COMMAND } from "../intents/operations/vscode-command";
-import { getErrorMessage } from "../services/errors";
+import { getErrorMessage } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
 
 // =============================================================================

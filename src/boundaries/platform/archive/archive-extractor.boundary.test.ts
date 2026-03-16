@@ -11,7 +11,7 @@ import * as os from "node:os";
 import * as tar from "tar";
 import yazl from "yazl";
 import { TarExtractor, ZipExtractor, DefaultArchiveExtractor } from "./archive-extractor";
-import { ArchiveError } from "../../../services/errors";
+import { ArchiveError } from "../../../shared/errors/service-errors";
 import { Path } from "../../../utils/path/path";
 
 /**

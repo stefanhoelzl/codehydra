@@ -284,7 +284,7 @@ export interface FileSystemBoundary {
 // ============================================================================
 
 import * as fs from "node:fs/promises";
-import { FileSystemError } from "../../../services/errors";
+import { FileSystemError } from "../../../shared/errors/service-errors";
 import type { Logger } from "../logging";
 
 /**

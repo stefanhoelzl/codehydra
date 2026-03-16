@@ -21,9 +21,9 @@ import type { ProjectId } from "../shared/api/types";
 import { Path } from "../utils/path/path";
 import { projectDirName } from "../boundaries/platform/env/paths";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
-import type { ProjectConfig } from "../services/project/types";
-import { CURRENT_PROJECT_VERSION } from "../services/project/types";
-import { ProjectStoreError, getErrorMessage } from "../services/errors";
+import type { ProjectConfig } from "../shared/types/project";
+import { CURRENT_PROJECT_VERSION } from "../shared/types/project";
+import { ProjectStoreError, getErrorMessage } from "../shared/errors/service-errors";
 import type { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
 import {
   OPEN_PROJECT_OPERATION_ID,

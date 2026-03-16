@@ -50,7 +50,6 @@ export default defineConfig({
           environment: "node",
           include: [
             "src/main/**/*.{test,spec}.{js,ts}",
-            "src/services/**/*.{test,spec}.{js,ts}",
             "src/shared/**/*.{test,spec}.{js,ts}",
             "src/preload/**/*.{test,spec}.{js,ts}",
             "src/bin/**/*.{test,spec}.{js,ts}",
@@ -73,7 +72,6 @@ export default defineConfig({
           environment: "node",
           include: [
             "src/main/**/*.boundary.test.{js,ts}",
-            "src/services/**/*.boundary.test.{js,ts}",
             "src/boundaries/**/*.boundary.test.{js,ts}",
             "src/intents/**/*.boundary.test.{js,ts}",
             "src/modules/**/*.boundary.test.{js,ts}",
@@ -109,7 +107,6 @@ export default defineConfig({
     alias: {
       $lib: resolve("./src/renderer/lib"),
       "@shared": resolve("./src/shared"),
-      "@services": resolve("./src/services"),
     },
   },
 });

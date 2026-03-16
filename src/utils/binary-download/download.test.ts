@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { downloadBinary, isBinaryInstalled } from "./download";
-import { BinaryDownloadError } from "../../services/errors";
+import { BinaryDownloadError } from "../../shared/errors/service-errors";
 import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
 import {
   createFileSystemMock,
-  createSpyFileSystemLayer,
+  createSpyFileSystemBoundary,
   directory,
   createDirEntry,
 } from "../../boundaries/platform/filesystem/filesystem.state-mock";
@@ -114,7 +114,7 @@ describe("downloadBinary", () => {
     });
 
     // Use spy filesystem to track calls - include temp directory for temp file writes
-    const trackingFs = createSpyFileSystemLayer({
+    const trackingFs = createSpyFileSystemBoundary({
       entries: {
         [tmpdir()]: directory(),
       },
@@ -154,7 +154,7 @@ describe("downloadBinary", () => {
 
     // Verify the now-empty nested directory was removed
     const rmCalls = trackingFs.rm.mock.calls;
-    const nestedDirRmCall = rmCalls.find((call) =>
+    const nestedDirRmCall = rmCalls.find((call: unknown[]) =>
       String(call[0]).includes("code-server-4.109.2-linux-amd64")
     );
     expect(nestedDirRmCall).toBeDefined();
@@ -170,7 +170,7 @@ describe("downloadBinary", () => {
       },
     });
 
-    const trackingFs = createSpyFileSystemLayer({
+    const trackingFs = createSpyFileSystemBoundary({
       entries: {
         [tmpdir()]: directory(),
       },
@@ -206,7 +206,7 @@ describe("downloadBinary", () => {
     });
 
     // Use empty filesystem - subPath directory won't exist
-    const emptyFs = createSpyFileSystemLayer({
+    const emptyFs = createSpyFileSystemBoundary({
       entries: {
         [tmpdir()]: directory(),
       },

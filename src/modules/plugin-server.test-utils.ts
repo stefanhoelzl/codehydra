@@ -6,6 +6,7 @@
  */
 
 import { vi, type Mock } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type {
   ServerToClientEvents,

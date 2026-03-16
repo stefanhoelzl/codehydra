@@ -9,8 +9,9 @@
  */
 
 import type { IGitClient } from "./git-client";
+import { SimpleGitClient } from "./simple-git-client";
 import type { BaseInfo, CleanupResult, RemovalResult, UpdateBasesResult, Workspace } from "./types";
-import { WorkspaceError, getErrorMessage } from "../../../services/errors";
+import { WorkspaceError, getErrorMessage } from "../../../shared/errors/service-errors";
 import { sanitizeWorkspaceName, unsanitizeWorkspaceName } from "../env/paths";
 import { isValidMetadataKey } from "../../../shared/api/types";
 import type { FileSystemBoundary } from "../filesystem/filesystem";
@@ -877,4 +878,34 @@ export class GitWorktreeProvider {
 
     return metadata;
   }
+}
+
+/**
+ * Factory function to create a GitWorktreeProvider with a SimpleGitClient.
+ * Validates the repository and registers the project.
+ *
+ * @param projectRoot Absolute path to the git repository (Path)
+ * @param workspacesDir Directory where worktrees will be created. Callers must obtain this
+ *   from `PathProvider.getProjectWorkspacesDir(projectRoot)` to ensure consistent worktree placement.
+ * @param fileSystemLayer FileSystemBoundary for cleanup operations
+ * @param gitLogger Logger for git client operations (typically "git")
+ * @param worktreeLogger Logger for worktree provider operations (typically "worktree")
+ * @returns Promise resolving to a GitWorktreeProvider with the project registered
+ * @throws WorkspaceError if path is invalid or not a git repository
+ */
+export async function createGitWorktreeProvider(
+  projectRoot: Path,
+  workspacesDir: Path,
+  fileSystemLayer: FileSystemBoundary,
+  gitLogger: Logger,
+  worktreeLogger: Logger
+): Promise<GitWorktreeProvider> {
+  const gitClient = new SimpleGitClient(gitLogger);
+  const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, worktreeLogger);
+
+  // Validate it's a git repository root
+  await provider.validateRepository(projectRoot);
+  provider.registerProject(projectRoot, workspacesDir);
+
+  return provider;
 }

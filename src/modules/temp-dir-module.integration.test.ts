@@ -7,6 +7,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/operations/app-start";

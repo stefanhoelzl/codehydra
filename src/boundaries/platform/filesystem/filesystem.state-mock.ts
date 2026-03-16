@@ -20,7 +20,7 @@
 
 import { expect } from "vitest";
 import type { FileSystemErrorCode, FileSystemBoundary, PathLike, DirEntry } from "./filesystem";
-import { FileSystemError } from "../../../services/errors";
+import { FileSystemError } from "../../../shared/errors/service-errors";
 import { Path } from "../../../utils/path/path";
 import type {
   MockState,

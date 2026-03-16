@@ -20,9 +20,9 @@
 import { expect } from "vitest";
 import type { NativeImage } from "electron";
 import type { ImageBoundary } from "./image";
-import type { ImageHandle, ImageSize } from "../../../services/platform/types";
-import { createImageHandle } from "../../../services/platform/types";
-import { PlatformError } from "../../../services/platform/errors";
+import type { ImageHandle, ImageSize } from "./types";
+import { createImageHandle } from "./types";
+import { PlatformError } from "../../../shared/errors/platform-errors";
 import type {
   MockState,
   MockWithState,

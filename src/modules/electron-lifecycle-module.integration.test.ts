@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Path } from "../utils/path/path";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";

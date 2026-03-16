@@ -9,7 +9,7 @@
  */
 
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { AsyncWatcher } from "../services/platform/async-watcher";
+import type { AsyncWatcher } from "../boundaries/platform/async-watcher";
 import type { Logger } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
 import type { ConfigureResult } from "../intents/operations/app-start";

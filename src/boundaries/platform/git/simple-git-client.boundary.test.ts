@@ -6,13 +6,13 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SimpleGitClient } from "./simple-git-client";
-import { GitError } from "../../../services/errors";
+import { GitError } from "../../../shared/errors/service-errors";
 import {
   createTestGitRepo,
   createCommitInRemote,
   createTempDir,
   withTempRepoWithRemote,
-} from "../../../services/test-utils";
+} from "../../../utils/testing/test-utils";
 import { promises as fs } from "fs";
 import nodePath from "path";
 import { simpleGit } from "simple-git";

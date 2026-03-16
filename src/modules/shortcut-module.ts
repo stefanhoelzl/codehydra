@@ -19,7 +19,7 @@ import type { IViewManager } from "../boundaries/shell/view/view-manager.interfa
 import type { Logger } from "../boundaries/platform/logging";
 import type { KeyboardInput, Unsubscribe, ViewBoundary } from "../boundaries/shell/view/view";
 import type { WindowBoundary } from "../boundaries/shell/window/window";
-import type { ViewHandle } from "../services/shell/types";
+import type { ViewHandle } from "../boundaries/shell/types";
 import type { WindowManager } from "../boundaries/shell/window/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
 import { APP_START_OPERATION_ID } from "../intents/operations/app-start";

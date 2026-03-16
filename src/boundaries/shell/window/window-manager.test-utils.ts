@@ -5,9 +5,9 @@
 
 import { vi, type Mock } from "vitest";
 import type { WindowManager, ContentBounds, Unsubscribe } from "./window-manager";
-import type { WindowHandle } from "../../../services/shell/types";
-import { createWindowHandle } from "../../../services/shell/types";
-import type { ImageHandle } from "../../../services/platform/types";
+import type { WindowHandle } from "../types";
+import { createWindowHandle } from "../types";
+import type { ImageHandle } from "../image/types";
 
 /**
  * Mock WindowManager with vitest spy methods.

@@ -12,13 +12,13 @@ import type { IViewManager, Unsubscribe, LoadingChangeCallback } from "./view-ma
 import { WORKSPACE_LOADING_TIMEOUT_MS } from "./view-manager.interface";
 import type { UIMode, UIModeChangedEvent } from "../../../shared/ipc";
 import type { WindowManager } from "../window/window-manager";
-import { openExternal } from "../../../main/utils/external-url";
+import { openExternal } from "../../../utils/external-url";
 import type { Logger } from "../../../boundaries/platform/logging";
 import { getErrorMessage } from "../../../shared/error-utils";
 import type { ViewBoundary, WindowOpenDetails } from "./view";
 import type { SessionBoundary } from "../session/session";
 import type { WindowBoundaryInternal } from "../window/window";
-import type { ViewHandle, SessionHandle, WindowHandle } from "../../../services/shell/types";
+import type { ViewHandle, SessionHandle, WindowHandle } from "../types";
 
 /**
  * Sidebar minimized width in pixels.

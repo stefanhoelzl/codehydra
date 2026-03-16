@@ -6,7 +6,7 @@
  */
 
 import type { IpcBoundary, IpcHandler, IpcEventHandler } from "./ipc";
-import { PlatformError } from "../../../services/platform/errors";
+import { PlatformError } from "../../../shared/errors/platform-errors";
 
 /**
  * State exposed by the behavioral mock for test inspection.

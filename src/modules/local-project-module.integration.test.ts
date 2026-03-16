@@ -26,7 +26,6 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { createLocalProjectModule, type LocalProjectModuleDeps } from "./local-project-module";
 import {
@@ -49,12 +48,13 @@ import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/oper
 import type { AppReadyIntent } from "../intents/operations/app-ready";
 import { Path } from "../utils/path/path";
 import type { ProjectId } from "../shared/api/types";
-import type { ResolvedHooks } from "../intents/lib/operation";
+import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";
+import type { IntentModule } from "../intents/lib/module";
 import {
   createFileSystemMock,
   directory,
 } from "../boundaries/platform/filesystem/filesystem.state-mock";
-import { CURRENT_PROJECT_VERSION } from "../services/project/types";
+import { CURRENT_PROJECT_VERSION } from "../shared/types/project";
 import { projectDirName } from "../boundaries/platform/env/paths";
 import nodePath from "path";
 
@@ -101,6 +101,29 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
 // Test Setup
 // =============================================================================
 
+/**
+ * Build a ResolvedHooks from a module's hook declarations for a given operation.
+ * Calls the single handler registered for the hook point and wraps the result.
+ */
+function resolveHooksFromModule(module: IntentModule, operationId: string): ResolvedHooks {
+  const opHooks = module.hooks?.[operationId] ?? {};
+  return {
+    collect: async <T>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>> => {
+      const hookHandler = opHooks[hookPointId];
+      if (!hookHandler) {
+        return { results: [], errors: [], capabilities: {} };
+      }
+      try {
+        const result = await hookHandler.handler(ctx);
+        const results = result !== undefined ? [result as T] : [];
+        return { results, errors: [], capabilities: {} };
+      } catch (error) {
+        return { results: [], errors: [error as Error], capabilities: {} };
+      }
+    },
+  };
+}
+
 interface TestSetup {
   openHooks: ResolvedHooks;
   closeHooks: ResolvedHooks;
@@ -110,16 +133,14 @@ interface TestSetup {
 }
 
 function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): TestSetup {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const { deps, fs, gitWorktreeProvider } = createMockDeps(fsOverrides);
 
   const module = createLocalProjectModule(deps);
-  dispatcher.registerModule(module);
 
   return {
-    openHooks: hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID),
-    closeHooks: hookRegistry.resolve(CLOSE_PROJECT_OPERATION_ID),
-    readyHooks: hookRegistry.resolve(APP_READY_OPERATION_ID),
+    openHooks: resolveHooksFromModule(module, OPEN_PROJECT_OPERATION_ID),
+    closeHooks: resolveHooksFromModule(module, CLOSE_PROJECT_OPERATION_ID),
+    readyHooks: resolveHooksFromModule(module, APP_READY_OPERATION_ID),
     fs,
     gitWorktreeProvider,
   };

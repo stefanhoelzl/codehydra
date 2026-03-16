@@ -20,7 +20,7 @@ import type { FileSystemBoundary } from "../boundaries/platform/filesystem/files
 import type { Logger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId } from "../shared/api/types";
-import { expandGitUrl, normalizeGitUrl, extractRepoName } from "../services/project/url-utils";
+import { expandGitUrl, normalizeGitUrl, extractRepoName } from "../utils/url-utils";
 import type {
   OpenProjectIntent,
   ResolveHookResult,

@@ -49,7 +49,10 @@ import type { IntentModule } from "../intents/lib/module";
 import { BadgeManager, createBadgeModule } from "./badge-module";
 import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
 import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
-import { createAppBoundaryMock, type MockAppBoundary } from "../boundaries/shell/app/app.state-mock";
+import {
+  createAppBoundaryMock,
+  type MockAppBoundary,
+} from "../boundaries/shell/app/app.state-mock";
 import {
   createImageBoundaryMock,
   type MockImageBoundary,
@@ -59,7 +62,7 @@ import {
   createMockWindowManager,
   type MockWindowManager,
 } from "../boundaries/shell/window/window-manager.test-utils";
-import type { ImageHandle } from "../services/platform/types";
+import type { ImageHandle } from "../boundaries/shell/image/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 

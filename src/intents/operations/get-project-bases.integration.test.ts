@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../lib/dispatcher";
 
 import {

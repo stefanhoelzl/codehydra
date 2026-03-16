@@ -7,8 +7,8 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { createImageBoundaryMock, type MockImageBoundary } from "./image.state-mock";
-import { createImageHandle } from "../../../services/platform/types";
-import { PlatformError } from "../../../services/platform/errors";
+import { createImageHandle } from "./types";
+import { PlatformError } from "../../../shared/errors/platform-errors";
 
 describe("ImageBoundary (behavioral mock)", () => {
   let imageLayer: MockImageBoundary;

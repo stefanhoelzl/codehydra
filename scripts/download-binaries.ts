@@ -28,21 +28,21 @@ import {
   getCodeServerUrl,
   getCodeServerSubPath,
   getCodeServerExecutablePath,
-} from "../src/services/code-server/setup-info";
+} from "../src/modules/code-server-module";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
   getOpencodeExecutablePath,
-} from "../src/services/agents/opencode/setup-info";
+} from "../src/modules/agent-module/opencode/setup-info";
 import {
   CLAUDE_VERSION,
   getClaudeUrl,
   getClaudeSubPath,
   getClaudeExecutablePath,
   getClaudeLatestVersionUrl,
-} from "../src/services/agents/claude/setup-info";
+} from "../src/modules/agent-module/claude/setup-info";
 import { DefaultPathProvider } from "../src/boundaries/platform/env/path-provider";
-import { NodePlatformInfo } from "../src/main/platform-info";
+import { NodePlatformInfo } from "../src/boundaries/platform/env/node-platform-info";
 import type { BuildInfo } from "../src/boundaries/platform/env/build-info";
 import {
   downloadBinary as downloadBinaryUtil,
@@ -50,7 +50,10 @@ import {
 } from "../src/utils/binary-download";
 import type { DownloadRequest, DownloadProgress } from "../src/utils/binary-download";
 import type { DownloadDeps } from "../src/utils/binary-download";
-import type { SupportedPlatform, SupportedArch } from "../src/services/agents/types";
+import type {
+  SupportedPlatform,
+  SupportedArch,
+} from "../src/boundaries/platform/env/platform-info";
 import type { Logger } from "../src/boundaries/platform/logging";
 
 // Console logger for the script - suppresses warnings to avoid alarming output

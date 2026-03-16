@@ -13,7 +13,7 @@ import type { Logger } from "../boundaries/platform/logging/types";
 import type { InitResult, ExtensionRequirement } from "../intents/operations/app-start";
 import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
 import { Path } from "../utils/path/path";
-import { getErrorMessage } from "../services/errors";
+import { getErrorMessage } from "../shared/errors/service-errors";
 
 // =============================================================================
 // Manifest Types (internal to this module)

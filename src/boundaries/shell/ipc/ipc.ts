@@ -14,7 +14,7 @@
  */
 
 import type { IpcMainInvokeEvent, IpcMainEvent } from "electron";
-import { PlatformError } from "../../../services/platform/errors";
+import { PlatformError } from "../../../shared/errors/platform-errors";
 
 /**
  * Handler function type for IPC invoke handlers (request-response).

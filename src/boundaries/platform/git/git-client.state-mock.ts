@@ -28,7 +28,7 @@
 import { expect } from "vitest";
 import type { IGitClient, CloneProgressCallback } from "./git-client";
 import type { BranchInfo, StatusResult, WorktreeInfo } from "./types";
-import { GitError } from "../../../services/errors";
+import { GitError } from "../../../shared/errors/service-errors";
 import { Path } from "../../../utils/path/path";
 import type {
   MockState,

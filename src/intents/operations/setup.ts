@@ -19,7 +19,7 @@
 import type { Intent } from "../lib/types";
 import type { Operation, OperationContext, HookContext } from "../lib/operation";
 import type { ConfigAgentType, SetupRowId, SetupRowStatus } from "../../shared/api/types";
-import type { BinaryType } from "../../services/binary-resolution/types";
+import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { ExtensionInstallEntry } from "./app-start";
 import type { LifecycleAgentType } from "../../shared/ipc";
 

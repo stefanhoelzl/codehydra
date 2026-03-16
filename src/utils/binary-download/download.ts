@@ -6,12 +6,12 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
-import { BinaryDownloadError, getErrorMessage } from "../../services/errors.js";
-import { FileSystemError } from "../../services/errors.js";
+import { BinaryDownloadError, getErrorMessage } from "../../shared/errors/service-errors.js";
+import { FileSystemError } from "../../shared/errors/service-errors.js";
 import type { DownloadRequest, DownloadProgressCallback } from "./types.js";
 import type { ArchiveExtractor } from "../../boundaries/platform/archive/archive-extractor.js";
 import type { HttpClient } from "../../boundaries/platform/network/network.js";
-import type { FileSystemLayer } from "../../boundaries/platform/filesystem/filesystem.js";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem.js";
 import type { Logger } from "../../boundaries/platform/logging/index.js";
 import { Path } from "../path/path.js";
 
@@ -21,7 +21,7 @@ import { Path } from "../path/path.js";
 export interface DownloadDeps {
   readonly httpClient: Pick<HttpClient, "fetch">;
   readonly fileSystemLayer: Pick<
-    FileSystemLayer,
+    FileSystemBoundary,
     "readdir" | "writeFileBuffer" | "unlink" | "rename" | "rm" | "makeExecutable"
   >;
   readonly archiveExtractor: ArchiveExtractor;
@@ -108,7 +108,7 @@ export async function downloadBinary(
 
 /**
  * Download a file from URL to local path with progress reporting.
- * Buffers the download in memory and writes using FileSystemLayer.
+ * Buffers the download in memory and writes using FileSystemBoundary.
  */
 async function downloadToFile(
   url: string,
@@ -168,7 +168,7 @@ async function downloadToFile(
   // Concatenate chunks into a single buffer
   const buffer = Buffer.concat(chunks);
 
-  // Write to file using FileSystemLayer
+  // Write to file using FileSystemBoundary
   try {
     await deps.fileSystemLayer.writeFileBuffer(destPath, buffer);
   } catch (error) {

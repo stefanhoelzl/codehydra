@@ -195,10 +195,10 @@ export function registerTestInfrastructure(
  */
 export function createTestDispatcher(config: TestMockConfig): {
   dispatcher: Dispatcher;
-  
+
   mockModule: IntentModule;
 } {
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const { mockModule } = registerTestInfrastructure(dispatcher, config);
-  return { dispatcher, hookRegistry, mockModule };
+  return { dispatcher, mockModule };
 }

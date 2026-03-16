@@ -9,17 +9,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DefaultPathProvider } from "../services";
+import { DefaultPathProvider } from "../boundaries/platform/env/path-provider";
 import { createMockBuildInfo } from "../boundaries/platform/env/build-info.test-utils";
 import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
-import {
-  CODE_SERVER_VERSION,
-  getCodeServerExecutablePath,
-} from "../services/code-server/setup-info";
-import { OPENCODE_VERSION } from "../services/agents/opencode/setup-info";
+import { CODE_SERVER_VERSION, getCodeServerExecutablePath } from "../modules/code-server-module";
+import { OPENCODE_VERSION } from "../modules/agent-module/opencode/setup-info";
 import { Path } from "../utils/path/path";
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { SupportedPlatform } from "../services/agents/types";
+import type { SupportedPlatform } from "../boundaries/platform/env/platform-info";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
@@ -132,7 +129,7 @@ describe("Main process wiring", () => {
       // if (buildInfo.isDevelopment) { ... register DevTools handler ... }
       // isDevelopment now comes from __IS_DEV_BUILD__, not app.isPackaged
 
-      const { ElectronBuildInfo } = await import("./build-info");
+      const { ElectronBuildInfo } = await import("../boundaries/platform/env/electron-build-info");
 
       // Dev build (default __IS_DEV_BUILD__ = true)
       const devBuildInfo = new ElectronBuildInfo();

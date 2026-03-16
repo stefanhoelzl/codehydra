@@ -14,7 +14,7 @@ import {
   symlink,
   createDirEntry,
 } from "../boundaries/platform/filesystem/filesystem.state-mock";
-import { FileSystemError } from "../services/errors";
+import { FileSystemError } from "../shared/errors/service-errors";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";

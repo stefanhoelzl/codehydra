@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
@@ -40,7 +41,7 @@ import type {
   UpdateDetectedCallback,
   UpdateDownloadedCallback,
   DownloadProgressCallback,
-} from "../services/auto-updater";
+} from "./auto-updater";
 import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
 import type { Config } from "../boundaries/platform/config/config";
 
