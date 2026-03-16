@@ -157,6 +157,30 @@ describe("RemoveWorkspaceDialog component", () => {
       await vi.runAllTimersAsync();
     });
 
+    it("disables Remove button while checking status", async () => {
+      mockGetStatus.mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(
+              () => resolve({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
+              1000
+            )
+          )
+      );
+
+      render(RemoveWorkspaceDialog, { props: defaultProps });
+
+      // vscode-button is a web component — Svelte sets the disabled property
+      const buttons = document.querySelectorAll("vscode-button");
+      const removeButton = buttons[0] as HTMLElement & { disabled?: boolean };
+      expect(removeButton).toHaveTextContent("Remove");
+      expect(removeButton.disabled).toBe(true);
+
+      await vi.runAllTimersAsync();
+
+      expect(removeButton.disabled).toBe(false);
+    });
+
     it("shows warning box when workspace is dirty", async () => {
       mockGetStatus.mockResolvedValue({
         isDirty: true,
