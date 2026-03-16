@@ -129,7 +129,7 @@
 
   {#snippet actions()}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <vscode-button onclick={handleSubmit}>Remove</vscode-button>
+    <vscode-button disabled={isCheckingStatus} onclick={handleSubmit}>Remove</vscode-button>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <vscode-button secondary={true} onclick={handleCancel}>Cancel</vscode-button>
   {/snippet}
