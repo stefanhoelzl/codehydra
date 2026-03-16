@@ -316,6 +316,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | `log.level`                         | `warn`  | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`)               |
 | `log.output`                        | `file`  | Output destinations: `file`, `console`, or `file,console`                             |
 | `electron.flags`                    | —       | Electron switches (e.g., `--disable-gpu`)                                             |
+| `experimental.github.query`         | (below) | GitHub search query; default: `is:open is:pr review-requested:@me`                    |
 | `experimental.github.template-path` | `null`  | Path to Liquid template for GitHub auto-workspaces; set to enable (requires `gh` CLI) |
 | `help`                              | `false` | Print config help and exit                                                            |
 

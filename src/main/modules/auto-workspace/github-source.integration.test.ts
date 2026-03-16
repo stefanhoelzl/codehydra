@@ -49,7 +49,13 @@ function repoDetailResponse(cloneUrl: string): string {
 // Constants
 // =============================================================================
 
-const SEARCH_URL = `https://api.github.com/search/issues?q=${encodeURIComponent("is:open is:pr review-requested:@me")}&sort=created&order=desc&per_page=100`;
+const DEFAULT_QUERY = "is:open is:pr review-requested:@me";
+
+function searchUrl(query: string = DEFAULT_QUERY): string {
+  return `https://api.github.com/search/issues?q=${encodeURIComponent(query)}&sort=created&order=desc&per_page=100`;
+}
+
+const SEARCH_URL = searchUrl();
 const PR_DETAIL_URL = "https://api.github.com/repos/org/repo/pulls/42";
 const REPO_DETAIL_URL = "https://api.github.com/repos/org/repo";
 
@@ -58,7 +64,7 @@ const REPO_DETAIL_URL = "https://api.github.com/repos/org/repo";
 // =============================================================================
 
 describe("GitHubSource", () => {
-  function createSource(options?: { ghAuthFails?: boolean }) {
+  function createSource(options?: { ghAuthFails?: boolean; query?: string }) {
     const processRunner = createMockProcessRunner({
       onSpawn: (command, args) => {
         if (command === "gh" && args[0] === "auth") {
@@ -78,6 +84,11 @@ describe("GitHubSource", () => {
       logger: SILENT_LOGGER,
     });
 
+    // Configure the query (defaults to the standard review-requested query)
+    source.onConfigUpdated({
+      "experimental.github.query": options?.query ?? DEFAULT_QUERY,
+    });
+
     return { source, httpClient, processRunner };
   }
 
@@ -94,14 +105,28 @@ describe("GitHubSource", () => {
   });
 
   describe("configDefinitions", () => {
-    it("returns empty array (no source-specific config)", () => {
+    it("returns query config definition", () => {
       const { source } = createSource();
-      expect(source.configDefinitions()).toEqual([]);
+      const defs = source.configDefinitions();
+      expect(defs).toHaveLength(1);
+      expect(defs[0]!.name).toBe("experimental.github.query");
     });
   });
 
   describe("isConfigured", () => {
-    it("is always true", () => {
+    it("returns false without query", () => {
+      const processRunner = createMockProcessRunner({
+        onSpawn: () => ({ exitCode: 0, stdout: "ghp_test_token_123\n" }),
+      });
+      const source = createGitHubSource({
+        processRunner,
+        httpClient: createMockHttpClient(),
+        logger: SILENT_LOGGER,
+      });
+      expect(source.isConfigured()).toBe(false);
+    });
+
+    it("returns true after query is configured", () => {
       const { source } = createSource();
       expect(source.isConfigured()).toBe(true);
     });
@@ -193,6 +218,21 @@ describe("GitHubSource", () => {
 
       expect(result.activeKeys).toEqual(new Set(["https://github.com/org/repo/pull/42"]));
       expect(result.newItems).toHaveLength(0);
+    });
+
+    it("uses configured query in search URL", async () => {
+      const customQuery = "is:open is:pr reviewed-by:@me";
+      const { source, httpClient } = createSource({ query: customQuery });
+      await source.initialize();
+
+      const customSearchUrl = searchUrl(customQuery);
+      httpClient.setResponse(customSearchUrl, { body: searchResponse([]) });
+
+      const result = await source.poll(new Set());
+
+      expect(result.activeKeys.size).toBe(0);
+      expect(httpClient).toHaveRequested(customSearchUrl);
+      expect(httpClient).not.toHaveRequested(SEARCH_URL);
     });
 
     it("returns empty on search API failure", async () => {
