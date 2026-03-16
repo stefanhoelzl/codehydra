@@ -25,26 +25,14 @@ import {
   INTENT_GET_AGENT_SESSION,
   GET_AGENT_SESSION_OPERATION_ID,
 } from "../intents/get-agent-session";
-import {
-  INTENT_RESTART_AGENT,
-  RESTART_AGENT_OPERATION_ID,
-} from "../intents/restart-agent";
-import {
-  INTENT_LIST_PROJECTS,
-  LIST_PROJECTS_OPERATION_ID,
-} from "../intents/list-projects";
-import {
-  INTENT_OPEN_WORKSPACE,
-  OPEN_WORKSPACE_OPERATION_ID,
-} from "../intents/open-workspace";
+import { INTENT_RESTART_AGENT, RESTART_AGENT_OPERATION_ID } from "../intents/restart-agent";
+import { INTENT_LIST_PROJECTS, LIST_PROJECTS_OPERATION_ID } from "../intents/list-projects";
+import { INTENT_OPEN_WORKSPACE, OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../intents/delete-workspace";
-import {
-  INTENT_VSCODE_COMMAND,
-  VSCODE_COMMAND_OPERATION_ID,
-} from "../intents/vscode-command";
+import { INTENT_VSCODE_COMMAND, VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import {
   INTENT_VSCODE_SHOW_MESSAGE,
   VSCODE_SHOW_MESSAGE_OPERATION_ID,

@@ -11,10 +11,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
-import {
-  SWITCH_WORKSPACE_OPERATION_ID,
-  selectNextWorkspace,
-} from "../intents/switch-workspace";
+import { SWITCH_WORKSPACE_OPERATION_ID, selectNextWorkspace } from "../intents/switch-workspace";
 import type {
   SelectNextHookInput,
   SelectNextHookResult,

@@ -12,10 +12,7 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import {
-  OPEN_WORKSPACE_OPERATION_ID,
-  type SetupHookResult,
-} from "../intents/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID, type SetupHookResult } from "../intents/open-workspace";
 import { createKeepFilesModule } from "./keepfiles-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";

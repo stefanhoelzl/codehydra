@@ -28,16 +28,10 @@ import type { CreateHookResult } from "../intents/open-workspace";
 import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/get-project-bases";
 import type { ListBasesHookResult } from "../intents/get-project-bases";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
-import type {
-  DeleteWorkspaceIntent,
-  DeletePipelineHookInput,
-} from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent, DeletePipelineHookInput } from "../intents/delete-workspace";
 import type { DeleteHookResult, PreflightHookResult } from "../intents/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../intents/get-workspace-status";
-import type {
-  GetStatusHookInput,
-  GetStatusHookResult,
-} from "../intents/get-workspace-status";
+import type { GetStatusHookInput, GetStatusHookResult } from "../intents/get-workspace-status";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../intents/resolve-workspace";
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
@@ -47,10 +41,7 @@ import {
   LIST_PROJECTS_OPERATION_ID,
   type ListWorkspacesHookResult,
 } from "../intents/list-projects";
-import {
-  EVENT_METADATA_CHANGED,
-  type MetadataChangedEvent,
-} from "../intents/set-metadata";
+import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { createGitWorktreeWorkspaceModule } from "./git-worktree-workspace-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";

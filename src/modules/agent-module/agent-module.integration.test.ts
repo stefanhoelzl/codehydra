@@ -21,11 +21,7 @@ import type {
 } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
-import type {
-  RegisterAgentResult,
-  SaveAgentHookInput,
-  BinaryHookInput,
-} from "../../intents/setup";
+import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import type {
   SetupHookResult,

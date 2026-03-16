@@ -7,10 +7,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createDevtoolsModule, type DevtoolsModuleDeps } from "./devtools-module";
-import {
-  EVENT_SHORTCUT_KEY_PRESSED,
-  type ShortcutKeyPressedEvent,
-} from "../intents/shortcut-key";
+import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import type { ViewHandle } from "../boundaries/shell/types";
 
 // =============================================================================

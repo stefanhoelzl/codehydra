@@ -29,20 +29,14 @@ import type { ApiLogPayload } from "../shared/ipc";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc/ipc";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import type {
-  MetadataChangedPayload,
-  MetadataChangedEvent,
-} from "../intents/set-metadata";
+import type { MetadataChangedPayload, MetadataChangedEvent } from "../intents/set-metadata";
 import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../intents/set-metadata";
 import type { SetMetadataIntent } from "../intents/set-metadata";
 import type { ModeChangedPayload, ModeChangedEvent } from "../intents/set-mode";
 import { EVENT_MODE_CHANGED, INTENT_SET_MODE } from "../intents/set-mode";
 import type { SetModeIntent } from "../intents/set-mode";
 import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
-import {
-  EVENT_WORKSPACE_CREATED,
-  INTENT_OPEN_WORKSPACE,
-} from "../intents/open-workspace";
+import { EVENT_WORKSPACE_CREATED, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import type {
   WorkspaceDeletedEvent,
@@ -70,18 +64,12 @@ import type { ProjectClosedEvent } from "../intents/close-project";
 import { EVENT_PROJECT_CLOSED, INTENT_CLOSE_PROJECT } from "../intents/close-project";
 import type { CloseProjectIntent } from "../intents/close-project";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
-import {
-  EVENT_WORKSPACE_SWITCHED,
-  INTENT_SWITCH_WORKSPACE,
-} from "../intents/switch-workspace";
+import { EVENT_WORKSPACE_SWITCHED, INTENT_SWITCH_WORKSPACE } from "../intents/switch-workspace";
 import type { SwitchWorkspaceIntent } from "../intents/switch-workspace";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { BasesUpdatedEvent } from "../intents/get-project-bases";
-import {
-  EVENT_BASES_UPDATED,
-  INTENT_GET_PROJECT_BASES,
-} from "../intents/get-project-bases";
+import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../intents/get-project-bases";
 import type { ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { isShortcutKey } from "../shared/shortcuts";

@@ -13,10 +13,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
-import {
-  UpdateAvailableOperation,
-  INTENT_UPDATE_AVAILABLE,
-} from "../intents/update-available";
+import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "../intents/update-available";
 import type { UpdateAvailableIntent } from "../intents/update-available";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";

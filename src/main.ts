@@ -88,10 +88,7 @@ import {
   GetWorkspaceStatusOperation,
   INTENT_GET_WORKSPACE_STATUS,
 } from "./intents/get-workspace-status";
-import {
-  GetAgentSessionOperation,
-  INTENT_GET_AGENT_SESSION,
-} from "./intents/get-agent-session";
+import { GetAgentSessionOperation, INTENT_GET_AGENT_SESSION } from "./intents/get-agent-session";
 import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./intents/restart-agent";
 import {
   GetActiveWorkspaceOperation,
@@ -99,20 +96,14 @@ import {
 } from "./intents/get-active-workspace";
 import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "./intents/list-projects";
 import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./intents/open-workspace";
-import {
-  GetProjectBasesOperation,
-  INTENT_GET_PROJECT_BASES,
-} from "./intents/get-project-bases";
+import { GetProjectBasesOperation, INTENT_GET_PROJECT_BASES } from "./intents/get-project-bases";
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETE_FAILED,
 } from "./intents/delete-workspace";
-import type {
-  DeleteWorkspaceIntent,
-  DeleteWorkspacePayload,
-} from "./intents/delete-workspace";
+import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./intents/delete-workspace";
 import {
   OpenProjectOperation,
   INTENT_OPEN_PROJECT,
@@ -121,33 +112,21 @@ import {
 } from "./intents/open-project";
 import type { OpenProjectPayload } from "./intents/open-project";
 import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./intents/close-project";
-import {
-  SwitchWorkspaceOperation,
-  INTENT_SWITCH_WORKSPACE,
-} from "./intents/switch-workspace";
+import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./intents/switch-workspace";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
 } from "./intents/update-agent-status";
 import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/shortcut-key";
-import {
-  UpdateAvailableOperation,
-  INTENT_UPDATE_AVAILABLE,
-} from "./intents/update-available";
+import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./intents/update-available";
 import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./intents/update-apply";
 import {
   VscodeShowMessageOperation,
   INTENT_VSCODE_SHOW_MESSAGE,
 } from "./intents/vscode-show-message";
 import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/vscode-command";
-import {
-  ResolveWorkspaceOperation,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./intents/resolve-workspace";
-import {
-  ResolveProjectOperation,
-  INTENT_RESOLVE_PROJECT,
-} from "./intents/resolve-project";
+import { ResolveWorkspaceOperation, INTENT_RESOLVE_WORKSPACE } from "./intents/resolve-workspace";
+import { ResolveProjectOperation, INTENT_RESOLVE_PROJECT } from "./intents/resolve-project";
 // Modules
 import { createExtensionModule } from "./modules/extension-module";
 import { createViewModule } from "./modules/view-module";

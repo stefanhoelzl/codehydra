@@ -67,10 +67,7 @@ import { extractWorkspaceName } from "../shared/api/id-utils";
 import { Path } from "../utils/path/path";
 import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
 import type { DomainEvent } from "../intents/lib/types";
-import {
-  EVENT_METADATA_CHANGED,
-  type MetadataChangedEvent,
-} from "../intents/set-metadata";
+import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
 
 // =============================================================================
 // Hook Result Types

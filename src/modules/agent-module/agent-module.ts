@@ -24,11 +24,7 @@ import type {
   CheckDepsResult,
   ConfigureResult,
 } from "../../intents/app-start";
-import type {
-  RegisterAgentResult,
-  SaveAgentHookInput,
-  BinaryHookInput,
-} from "../../intents/setup";
+import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../../intents/setup";
 import type {
   SetupHookInput,
   SetupHookResult,
@@ -39,18 +35,12 @@ import type {
   ShutdownHookResult,
   DeletePipelineHookInput,
 } from "../../intents/delete-workspace";
-import type {
-  GetStatusHookInput,
-  GetStatusHookResult,
-} from "../../intents/get-workspace-status";
+import type { GetStatusHookInput, GetStatusHookResult } from "../../intents/get-workspace-status";
 import type {
   GetAgentSessionHookInput,
   GetAgentSessionHookResult,
 } from "../../intents/get-agent-session";
-import type {
-  RestartAgentHookInput,
-  RestartAgentHookResult,
-} from "../../intents/restart-agent";
+import type { RestartAgentHookInput, RestartAgentHookResult } from "../../intents/restart-agent";
 import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";

@@ -22,10 +22,7 @@ import {
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { INTENT_SHORTCUT_KEY, ShortcutKeyOperation } from "../intents/shortcut-key";
-import {
-  EVENT_WORKSPACE_CREATED,
-  type WorkspaceCreatedEvent,
-} from "../intents/open-workspace";
+import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
 import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";

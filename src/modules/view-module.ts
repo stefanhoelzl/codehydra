@@ -47,20 +47,14 @@ import type {
   DeletePipelineHookInput,
 } from "../intents/delete-workspace";
 import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
-import type {
-  ProjectOpenedEvent,
-  SelectFolderHookResult,
-} from "../intents/open-project";
+import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../intents/setup";
-import {
-  UPDATE_APPLY_OPERATION_ID,
-  type UpdateChoiceResult,
-} from "../intents/update-apply";
+import { UPDATE_APPLY_OPERATION_ID, type UpdateChoiceResult } from "../intents/update-apply";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/get-active-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
