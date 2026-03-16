@@ -3,7 +3,25 @@
 import { describe, it, expect } from "vitest";
 import { SILENT_LOGGER } from "../../../services/logging";
 import { createMockHttpClient } from "../../../services/platform/http-client.state-mock";
+import type { ConfigService } from "../../../services/config/config-service";
+import type { ConfigKeyDefinition } from "../../../services/config/config-definition";
 import { createYouTrackSource } from "./youtrack-source";
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
+      if (!store.has(def.name)) store.set(def.name, def.default);
+    },
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
+}
 
 // =============================================================================
 // YouTrack API Response Helpers
@@ -49,36 +67,25 @@ const ISSUES_URL = `${BASE_URL}/api/issues?query=${encodeURIComponent(DEFAULT_QU
 // =============================================================================
 
 describe("YouTrackSource", () => {
-  function createSource() {
+  function createSource(config?: Record<string, unknown>) {
     const httpClient = createMockHttpClient();
+    const configService = createMockConfigService(config);
     const source = createYouTrackSource({
       httpClient,
       logger: SILENT_LOGGER,
+      configService,
     });
 
     return { source, httpClient };
   }
 
-  function configureSource(source: ReturnType<typeof createYouTrackSource>) {
-    source.onConfigUpdated({
+  function createConfiguredSource() {
+    return createSource({
       "experimental.youtrack.base-url": BASE_URL,
       "experimental.youtrack.token": "perm:test-token",
       "experimental.youtrack.query": DEFAULT_QUERY,
     });
   }
-
-  describe("configDefinitions", () => {
-    it("returns 3 config keys", () => {
-      const { source } = createSource();
-      const defs = source.configDefinitions();
-      expect(defs).toHaveLength(3);
-      expect(defs.map((d) => d.name)).toEqual([
-        "experimental.youtrack.base-url",
-        "experimental.youtrack.token",
-        "experimental.youtrack.query",
-      ]);
-    });
-  });
 
   describe("isConfigured", () => {
     it("returns false when no config is set", () => {
@@ -87,14 +94,14 @@ describe("YouTrackSource", () => {
     });
 
     it("returns false when only some keys are set", () => {
-      const { source } = createSource();
-      source.onConfigUpdated({ "experimental.youtrack.base-url": BASE_URL });
+      const { source } = createSource({
+        "experimental.youtrack.base-url": BASE_URL,
+      });
       expect(source.isConfigured()).toBe(false);
     });
 
     it("returns true when all 3 keys are set", () => {
-      const { source } = createSource();
-      configureSource(source);
+      const { source } = createConfiguredSource();
       expect(source.isConfigured()).toBe(true);
     });
   });
@@ -108,8 +115,7 @@ describe("YouTrackSource", () => {
 
   describe("poll", () => {
     it("returns empty result when no issues match", async () => {
-      const { source, httpClient } = createSource();
-      configureSource(source);
+      const { source, httpClient } = createConfiguredSource();
 
       httpClient.setResponse(ISSUES_URL, { body: issuesResponse([]) });
 
@@ -120,8 +126,7 @@ describe("YouTrackSource", () => {
     });
 
     it("returns new items for issues not in trackedKeys", async () => {
-      const { source, httpClient } = createSource();
-      configureSource(source);
+      const { source, httpClient } = createConfiguredSource();
 
       httpClient.setResponse(ISSUES_URL, {
         body: issuesResponse([{ id: "2-123", idReadable: "PROJ-123", summary: "Fix the bug" }]),
@@ -138,8 +143,7 @@ describe("YouTrackSource", () => {
     });
 
     it("skips already-tracked issues", async () => {
-      const { source, httpClient } = createSource();
-      configureSource(source);
+      const { source, httpClient } = createConfiguredSource();
 
       httpClient.setResponse(ISSUES_URL, {
         body: issuesResponse([{ id: "2-123", idReadable: "PROJ-123", summary: "Fix the bug" }]),
@@ -153,8 +157,7 @@ describe("YouTrackSource", () => {
     });
 
     it("returns empty on API failure", async () => {
-      const { source, httpClient } = createSource();
-      configureSource(source);
+      const { source, httpClient } = createConfiguredSource();
 
       httpClient.setResponse(ISSUES_URL, { status: 403, body: "Forbidden" });
 
@@ -162,17 +165,6 @@ describe("YouTrackSource", () => {
 
       expect(result.activeKeys.size).toBe(0);
       expect(result.newItems).toHaveLength(0);
-    });
-  });
-
-  describe("dispose", () => {
-    it("resets configured state", () => {
-      const { source } = createSource();
-      configureSource(source);
-      expect(source.isConfigured()).toBe(true);
-
-      source.dispose();
-      expect(source.isConfigured()).toBe(false);
     });
   });
 });

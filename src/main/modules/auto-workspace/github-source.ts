@@ -1,7 +1,7 @@
 import type { ProcessRunner } from "../../../services/platform/process";
 import type { HttpClient } from "../../../services/platform/network";
 import type { Logger } from "../../../services/logging/types";
-import type { ConfigKeyDefinition } from "../../../services/config/config-definition";
+import type { ConfigService } from "../../../services/config/config-service";
 import { configString } from "../../../services/config/config-definition";
 import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
 import { getErrorMessage } from "../../../shared/error-utils";
@@ -52,11 +52,18 @@ export interface GitHubSourceDeps {
   readonly processRunner: ProcessRunner;
   readonly httpClient: HttpClient;
   readonly logger: Logger;
+  readonly configService: ConfigService;
 }
 
 export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource {
+  deps.configService.register(CONFIG_KEYS.query, {
+    name: CONFIG_KEYS.query,
+    default: "is:open is:pr review-requested:@me",
+    description: "GitHub search query (e.g. is:open is:pr review-requested:@me)",
+    ...configString(),
+  });
+
   let token: string | null = null;
-  let configQuery: string | null = null;
 
   function githubHeaders(): Readonly<Record<string, string>> {
     return {
@@ -67,7 +74,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
   }
 
   async function fetchSearchResults(): Promise<GitHubSearchItem[]> {
-    const query = encodeURIComponent(configQuery!);
+    const query = encodeURIComponent(deps.configService.get(CONFIG_KEYS.query) as string);
     const url = `${GITHUB_API_BASE}/search/issues?q=${query}&sort=created&order=desc&per_page=100`;
 
     const response = await deps.httpClient.fetch(url, {
@@ -130,25 +137,8 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
     name: "github",
     fetchBasesBeforeDelete: true,
 
-    configDefinitions(): ConfigKeyDefinition<unknown>[] {
-      return [
-        {
-          name: CONFIG_KEYS.query,
-          default: "is:open is:pr review-requested:@me",
-          description: "GitHub search query (e.g. is:open is:pr review-requested:@me)",
-          ...configString(),
-        },
-      ];
-    },
-
-    onConfigUpdated(values: Record<string, unknown>): void {
-      if (CONFIG_KEYS.query in values) {
-        configQuery = values[CONFIG_KEYS.query] as string;
-      }
-    },
-
     isConfigured(): boolean {
-      return configQuery !== null;
+      return deps.configService.get(CONFIG_KEYS.query) !== null;
     },
 
     async initialize(): Promise<boolean> {
@@ -216,7 +206,6 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
 
     dispose(): void {
       token = null;
-      configQuery = null;
     },
   };
 }

@@ -68,7 +68,9 @@ import type { ConfigService } from "../../../services/config/config-service";
 function createMockConfigService(values?: Record<string, unknown>): ConfigService {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
-    register: () => {},
+    register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
+      if (!store.has(def.name)) store.set(def.name, def.default);
+    },
     load: () => {},
     get: (key: string) => store.get(key),
     set: async (key: string, value: unknown) => {
@@ -237,12 +239,10 @@ function createMockSource(
   options?: {
     isConfigured?: boolean;
     initializeFails?: boolean;
-    configKeys?: ConfigKeyDefinition<unknown>[];
     fetchBasesBeforeDelete?: boolean;
   }
 ): AutoWorkspaceSource & {
   pollResult: PollResult;
-  onConfigUpdatedCalls: Record<string, unknown>[];
   initializeCalled: boolean;
   disposeCalled: boolean;
   _isConfigured: boolean;
@@ -251,18 +251,9 @@ function createMockSource(
     name,
     fetchBasesBeforeDelete: options?.fetchBasesBeforeDelete ?? false,
     pollResult: { activeKeys: new Set<string>(), newItems: [] as PollItem[] } as PollResult,
-    onConfigUpdatedCalls: [] as Record<string, unknown>[],
     initializeCalled: false,
     disposeCalled: false,
     _isConfigured: options?.isConfigured ?? true,
-
-    configDefinitions(): ConfigKeyDefinition<unknown>[] {
-      return options?.configKeys ?? [];
-    },
-
-    onConfigUpdated(values: Record<string, unknown>): void {
-      mock.onConfigUpdatedCalls.push(values);
-    },
 
     isConfigured(): boolean {
       return mock._isConfigured;

@@ -8,12 +8,10 @@
  * A source needs both a template-path and source.isConfigured() to be active.
  *
  * Hooks:
- * - app:start -> "register-config": register per-source template-path + source config keys
  * - app:start -> "start": initialize active sources, load state, run initial poll, start timer
  * - app:shutdown -> "stop": clear poll timer, dispose sources
  *
  * Events:
- * - config:updated: forward to sources, toggle activation per source
  * - workspace:deleted: clean up state entry
  * - workspace:delete-failed: clear tracking metadata, set red tag
  */
@@ -114,7 +112,7 @@ function templatePathConfigKey(sourceName: string): string {
 // =============================================================================
 
 export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): IntentModule {
-  // Register config keys for each source
+  // Register template-path config keys (sources register their own keys)
   for (const source of deps.sources) {
     deps.configService.register(templatePathConfigKey(source.name), {
       name: templatePathConfigKey(source.name),
@@ -122,9 +120,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       description: `Path to Liquid template for ${source.name} auto-workspaces`,
       ...configPath({ nullable: true }),
     });
-    for (const def of source.configDefinitions()) {
-      deps.configService.register(def.name, def);
-    }
   }
 
   let state: AutoWorkspaceState = emptyState();
@@ -507,18 +502,11 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
-            // Read config values into local state
+            // Read template paths from config
             for (const source of deps.sources) {
               const tplKey = templatePathConfigKey(source.name);
               const tplValue = deps.configService.get(tplKey) as string | null;
               templatePaths.set(source.name, tplValue);
-
-              // Build initial config values for source
-              const configValues: Record<string, unknown> = {};
-              for (const def of source.configDefinitions()) {
-                configValues[def.name] = deps.configService.get(def.name);
-              }
-              source.onConfigUpdated(configValues);
             }
 
             await activateAll();

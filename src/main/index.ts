@@ -505,10 +505,12 @@ const githubSource = createGitHubSource({
   processRunner,
   httpClient: networkLayer,
   logger: loggingService.createLogger("auto-workspace:github"),
+  configService,
 });
 const youtrackSource = createYouTrackSource({
   httpClient: networkLayer,
   logger: loggingService.createLogger("auto-workspace:youtrack"),
+  configService,
 });
 const autoWorkspaceModule = createAutoWorkspaceModule({
   fs: fileSystemLayer,

@@ -4,7 +4,25 @@ import { describe, it, expect } from "vitest";
 import { SILENT_LOGGER } from "../../../services/logging";
 import { createMockProcessRunner } from "../../../services/platform/process.state-mock";
 import { createMockHttpClient } from "../../../services/platform/http-client.state-mock";
+import type { ConfigService } from "../../../services/config/config-service";
+import type { ConfigKeyDefinition } from "../../../services/config/config-definition";
 import { createGitHubSource } from "./github-source";
+
+function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+  const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  return {
+    register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
+      if (!store.has(def.name)) store.set(def.name, def.default);
+    },
+    load: () => {},
+    get: (key: string) => store.get(key),
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    getDefinitions: () => new Map(),
+    getEffective: () => Object.fromEntries(store),
+  };
+}
 
 // =============================================================================
 // GitHub API Response Helpers
@@ -78,15 +96,14 @@ describe("GitHubSource", () => {
     });
 
     const httpClient = createMockHttpClient();
+    const configService = createMockConfigService({
+      "experimental.github.query": options?.query ?? DEFAULT_QUERY,
+    });
     const source = createGitHubSource({
       processRunner,
       httpClient,
       logger: SILENT_LOGGER,
-    });
-
-    // Configure the query (defaults to the standard review-requested query)
-    source.onConfigUpdated({
-      "experimental.github.query": options?.query ?? DEFAULT_QUERY,
+      configService,
     });
 
     return { source, httpClient, processRunner };
@@ -104,29 +121,8 @@ describe("GitHubSource", () => {
     });
   });
 
-  describe("configDefinitions", () => {
-    it("returns query config definition", () => {
-      const { source } = createSource();
-      const defs = source.configDefinitions();
-      expect(defs).toHaveLength(1);
-      expect(defs[0]!.name).toBe("experimental.github.query");
-    });
-  });
-
   describe("isConfigured", () => {
-    it("returns false without query", () => {
-      const processRunner = createMockProcessRunner({
-        onSpawn: () => ({ exitCode: 0, stdout: "ghp_test_token_123\n" }),
-      });
-      const source = createGitHubSource({
-        processRunner,
-        httpClient: createMockHttpClient(),
-        logger: SILENT_LOGGER,
-      });
-      expect(source.isConfigured()).toBe(false);
-    });
-
-    it("returns true after query is configured", () => {
+    it("returns true when query has default value", () => {
       const { source } = createSource();
       expect(source.isConfigured()).toBe(true);
     });
