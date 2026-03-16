@@ -174,10 +174,9 @@ describe("detectCwdProcesses", () => {
     expect(warnings[0]!.message).toBe("Process detection timed out");
   });
 
-  it("filters out own process PID", async () => {
-    const ownPid = process.pid;
+  it("returns all matching processes (no own-PID filtering)", async () => {
     const lsofOutput = [
-      `p${ownPid}`,
+      `p${process.pid}`,
       "cbash",
       `n/workspaces/feature-1`,
       "p9999",
@@ -191,8 +190,9 @@ describe("detectCwdProcesses", () => {
 
     const result = await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
-    expect(result).toHaveLength(1);
-    expect(result[0]!.pid).toBe(9999);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.pid).toBe(process.pid);
+    expect(result[1]!.pid).toBe(9999);
   });
 
   it("does not match workspace path as substring prefix", async () => {
@@ -214,7 +214,9 @@ describe("detectCwdProcesses", () => {
 
     await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
-    expect(runner).toHaveSpawned([{ command: "lsof", args: ["-d", "cwd", "+c", "0", "-Fpnc"] }]);
+    expect(runner).toHaveSpawned([
+      { command: "lsof", args: ["-a", "-d", "cwd", "+c", "0", "-Fpnc", "+D", "/workspaces/feature-1"] },
+    ]);
   });
 });
 
