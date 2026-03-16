@@ -17,7 +17,7 @@
 import { readFileSync } from "node:fs";
 import type { ConfigKeyDefinition, ComputedDefaultContext } from "./config-definition";
 import { ConfigValidationError } from "./config-definition";
-import { envVarToConfigKey } from "./config-values";
+import { envVarToConfigKey, generateHelpText } from "./config-values";
 import type { FileSystemBoundary } from "./filesystem";
 import type { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
@@ -53,6 +53,9 @@ export interface Config {
 
   /** Get all effective config values (for help text). */
   getEffective(): Readonly<Record<string, unknown>>;
+
+  /** Generate human-readable config help text. */
+  getHelpText(): string;
 }
 
 // =============================================================================
@@ -295,8 +298,12 @@ export class DefaultConfig implements Config {
     const syncRead = this.deps.readFileSync ?? ((p: string) => readFileSync(p, "utf-8"));
     const computedDefaultCtx: ComputedDefaultContext = { isDevelopment, isPackaged };
 
-    // 1. Build defaults (static + computed)
+    // 1. Build defaults (static + computed) and seed effective immediately
+    //    so getHelpText()/getEffective() work even if parsing throws below
     const defaults = buildDefaults(this.definitions, computedDefaultCtx);
+    for (const [key, value] of Object.entries(defaults)) {
+      this.effective[key] = value;
+    }
 
     // 2. Read config.json from disk (sync)
     let fileValues: Record<string, unknown> = {};
@@ -404,5 +411,9 @@ export class DefaultConfig implements Config {
 
   getEffective(): Readonly<Record<string, unknown>> {
     return this.effective;
+  }
+
+  getHelpText(): string {
+    return generateHelpText(this.deps.configPath.toString(), this.definitions, this.effective);
   }
 }

@@ -73,7 +73,7 @@ export function generateHelpText(
     "",
   ];
 
-  for (const [key, def] of definitions) {
+  for (const [key, def] of [...definitions].sort(([a], [b]) => a.localeCompare(b))) {
     const value = defaults[key];
     const valueStr = value === null || value === undefined ? "—" : String(value);
 

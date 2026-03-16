@@ -29,8 +29,11 @@ import { ExecaProcessRunner } from "./boundaries/platform/process";
 import { GitWorktreeProvider } from "./boundaries/platform/git-worktree-provider";
 import { SimpleGitClient } from "./boundaries/platform/simple-git-client";
 import { DefaultConfig } from "./boundaries/platform/config";
-import { configBoolean, configEnum } from "./boundaries/platform/config-definition";
-import { generateHelpText } from "./boundaries/platform/config-values";
+import {
+  configBoolean,
+  configEnum,
+  ConfigValidationError,
+} from "./boundaries/platform/config-definition";
 // Boundaries - Shell
 import { DefaultIpcBoundary } from "./boundaries/shell/ipc";
 import { DefaultAppBoundary } from "./boundaries/shell/app";
@@ -625,17 +628,21 @@ dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(uiIpcModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)
-configService.load();
+try {
+  configService.load();
+} catch (error) {
+  if (error instanceof ConfigValidationError) {
+    appLogger.error("Config validation failed", { key: error.detail.key }, error);
+    process.stderr.write(`\nConfiguration error:\n${error.message}\n\n`);
+    process.stderr.write(configService.getHelpText());
+    process.exit(1);
+  }
+  throw error;
+}
 
 // Handle --help
 if (configService.get("help") === true) {
-  process.stdout.write(
-    generateHelpText(
-      pathProvider.dataPath("config.json").toString(),
-      configService.getDefinitions(),
-      configService.getEffective()
-    )
-  );
+  process.stdout.write(configService.getHelpText());
   app.quit();
 }
 
