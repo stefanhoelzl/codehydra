@@ -32,6 +32,10 @@ import type { Logger } from "../../../boundaries/platform/logging";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
 import { configString } from "../../../boundaries/platform/config-definition";
+import type { Config } from "../../../boundaries/platform/config";
+import type { PathProvider } from "../../../boundaries/platform/path-provider";
+import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
+import { CLAUDE_VERSION, getClaudeUrlForVersion, getClaudeSubPath } from "./setup-info";
 
 // =============================================================================
 // Dependency Interface
@@ -45,13 +49,13 @@ export interface ClaudeModuleProviderDeps {
   readonly downloadDeps: DownloadDeps;
   readonly binaryConfig: {
     readonly name: string;
-    readonly version: string | null;
-    readonly destDir: string;
-    readonly url: string;
     readonly executablePath: string;
-    readonly subPath?: string;
     readonly archiveExtension: ArchiveExtension;
   };
+  readonly configService: Config;
+  readonly pathProvider: Pick<PathProvider, "bundlePath">;
+  readonly platform: SupportedPlatform;
+  readonly arch: SupportedArch;
   readonly logger: Logger;
 }
 
@@ -66,7 +70,16 @@ export interface ClaudeModuleProviderDeps {
  * consistent with the existing module pattern.
  */
 export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): AgentModuleProvider {
-  const { serverManager, downloadDeps, binaryConfig, logger } = deps;
+  const {
+    serverManager,
+    downloadDeps,
+    binaryConfig,
+    configService,
+    pathProvider,
+    platform,
+    arch,
+    logger,
+  } = deps;
 
   // ===========================================================================
   // Internal closure state
@@ -275,11 +288,13 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     },
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
-      if (binaryConfig.version === null) {
+      const version = configService.get("version.claude") as string | null;
+      if (version === null) {
         return { success: true, needsDownload: false };
       }
       try {
-        const installed = await isBinaryInstalled(binaryConfig.destDir, downloadDeps);
+        const destDir = pathProvider.bundlePath(`claude/${version}`).toNative();
+        const installed = await isBinaryInstalled(destDir, downloadDeps);
         return { success: true, needsDownload: !installed };
       } catch {
         return { success: false, needsDownload: false };
@@ -287,14 +302,16 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     },
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-      if (binaryConfig.version === null) return;
+      const version = configService.get("version.claude") as string | null;
+      if (version === null) return;
+      const destDir = pathProvider.bundlePath(`claude/${version}`).toNative();
       const request: DownloadRequest = {
         name: binaryConfig.name,
-        url: binaryConfig.url,
-        destDir: binaryConfig.destDir,
+        url: getClaudeUrlForVersion(version, platform, arch),
+        destDir,
         archiveExtension: binaryConfig.archiveExtension,
         executablePath: binaryConfig.executablePath,
-        ...(binaryConfig.subPath ? { subPath: binaryConfig.subPath } : {}),
+        subPath: getClaudeSubPath(platform, arch),
       };
       try {
         await downloadBinary(request, downloadDeps, onProgress);
@@ -310,8 +327,8 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     getConfigDefinition(): ConfigKeyDefinition<string | null> {
       return {
         name: "version.claude",
-        default: null,
-        description: "Claude agent version override",
+        default: CLAUDE_VERSION,
+        description: "Claude agent version",
         ...configString({ nullable: true }),
       };
     },

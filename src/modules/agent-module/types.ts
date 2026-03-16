@@ -3,13 +3,10 @@
  * These interfaces enable pluggable agent implementations (OpenCode, Claude, etc.)
  *
  * Design principles:
- * - Use Path class for path parameters (not strings)
  * - AgentError provides typed error codes for consistent handling
  * - Factory functions enable dependency injection for testability
  */
 
-import type { Path } from "../../utils/path/path";
-import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { ProcessRunner } from "../../boundaries/platform/process";
 import type { PortManager, HttpClient } from "../../boundaries/platform/network";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
@@ -43,47 +40,6 @@ export interface AgentError {
 import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
 // Re-export platform types from canonical location
 export type { SupportedPlatform, SupportedArch };
-
-/** Static setup information for an agent type (singleton per agent type) */
-export interface AgentSetupInfo {
-  /** Version string (e.g., "0.1.0-beta.43"), or "latest" if using system-first preference */
-  readonly version: string;
-
-  /** Binary filename relative to bin directory (e.g., "opencode" or "opencode.exe") */
-  readonly binaryPath: string;
-
-  /** Entry point for wrapper script (e.g., "agents/opencode-wrapper.cjs") */
-  readonly wrapperEntryPoint: string;
-
-  /** Get download URL for the binary for current platform (uses instance's version) */
-  getBinaryUrl(): string;
-
-  /**
-   * Get download URL for a specific version and platform/arch.
-   * Used by downloadBinary for downloading specific versions.
-   *
-   * @param version - Version string (e.g., "1.0.58")
-   * @param platform - Operating system platform
-   * @param arch - CPU architecture
-   * @returns Download URL for the binary
-   */
-  getBinaryUrlForVersion(version: string, platform: SupportedPlatform, arch: SupportedArch): string;
-
-  /**
-   * Fetch the latest available version from the remote server.
-   * Used when version is "latest" or null to determine what to download.
-   *
-   * @returns Latest version string (e.g., "1.0.58")
-   */
-  getLatestVersion(): Promise<string>;
-
-  /**
-   * Generate config file with environment variable substitution
-   * @param targetPath - Path where config file should be written
-   * @param variables - Variables to substitute (e.g., { MCP_PORT: "3000" })
-   */
-  generateConfigFile(targetPath: Path, variables: Record<string, string>): Promise<void>;
-}
 
 /**
  * Result of stopping an agent server.
@@ -215,10 +171,4 @@ export interface ServerManagerDeps {
 export interface ProviderDeps {
   readonly httpClient: HttpClient;
   readonly logger: Logger;
-}
-
-/** Dependencies for AgentSetupInfo implementations */
-export interface SetupInfoDeps {
-  readonly fileSystem: FileSystemBoundary;
-  readonly pathProvider: PathProvider;
 }

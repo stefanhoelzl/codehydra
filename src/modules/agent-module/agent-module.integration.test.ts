@@ -89,7 +89,7 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
     getConfigDefinition: vi.fn().mockReturnValue({
       name: "version.claude",
       default: null,
-      description: "Claude agent version override",
+      description: "Claude agent version",
       ...configString({ nullable: true }),
     }),
     initialize: vi.fn(),
@@ -1196,18 +1196,17 @@ describe("createAgentModule", () => {
       expect(mockProvider.initialize).not.toHaveBeenCalled();
     });
 
-    it("defaults to opencode when agent is null", async () => {
+    it("does not activate claude module when agent is null", async () => {
       const { dispatcher, mockConfig, mockProvider } = createTestSetup();
       await mockConfig.set("agent", null);
 
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      // null agent defaults to "opencode", so claude module should be inactive
       expect(mockProvider.initialize).not.toHaveBeenCalled();
     });
 
-    it("activates opencode provider when agent is null (defaults to opencode)", async () => {
+    it("does not activate opencode module when agent is null", async () => {
       const { dispatcher, mockConfig, mockProvider } = createTestSetup({
         type: "opencode",
       });
@@ -1216,8 +1215,8 @@ describe("createAgentModule", () => {
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      // null agent defaults to "opencode", so opencode module should be active
-      expect(mockProvider.initialize).toHaveBeenCalled();
+      // null agent does not match any provider type
+      expect(mockProvider.initialize).not.toHaveBeenCalled();
     });
   });
 });

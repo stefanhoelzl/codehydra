@@ -35,6 +35,10 @@ import type { Logger } from "../../../boundaries/platform/logging";
 import type { Unsubscribe } from "../../../shared/api/interfaces";
 import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
 import { configString } from "../../../boundaries/platform/config-definition";
+import type { Config } from "../../../boundaries/platform/config";
+import type { PathProvider } from "../../../boundaries/platform/path-provider";
+import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
+import { OPENCODE_VERSION, getOpencodeUrlForVersion } from "./setup-info";
 import { OpenCodeProvider } from "./provider";
 
 // =============================================================================
@@ -49,13 +53,13 @@ export interface OpenCodeModuleProviderDeps {
   readonly downloadDeps: DownloadDeps;
   readonly binaryConfig: {
     readonly name: string;
-    readonly version: string | null;
-    readonly destDir: string;
-    readonly url: string;
     readonly executablePath: string;
-    readonly subPath?: string;
     readonly archiveExtension: ArchiveExtension;
   };
+  readonly configService: Config;
+  readonly pathProvider: Pick<PathProvider, "bundlePath">;
+  readonly platform: SupportedPlatform;
+  readonly arch: SupportedArch;
   readonly logger: Logger;
 }
 
@@ -70,7 +74,16 @@ export interface OpenCodeModuleProviderDeps {
 export function createOpenCodeModuleProvider(
   deps: OpenCodeModuleProviderDeps
 ): AgentModuleProvider {
-  const { serverManager, downloadDeps, binaryConfig, logger } = deps;
+  const {
+    serverManager,
+    downloadDeps,
+    binaryConfig,
+    configService,
+    pathProvider,
+    platform,
+    arch,
+    logger,
+  } = deps;
 
   // ===========================================================================
   // Internal closure state
@@ -327,11 +340,10 @@ export function createOpenCodeModuleProvider(
     binaryType: binaryConfig.name as BinaryType,
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
-      if (binaryConfig.version === null) {
-        return { success: true, needsDownload: false };
-      }
+      const version = configService.get("version.opencode") as string;
       try {
-        const installed = await isBinaryInstalled(binaryConfig.destDir, downloadDeps);
+        const destDir = pathProvider.bundlePath(`opencode/${version}`).toNative();
+        const installed = await isBinaryInstalled(destDir, downloadDeps);
         return { success: true, needsDownload: !installed };
       } catch {
         return { success: false, needsDownload: false };
@@ -339,14 +351,14 @@ export function createOpenCodeModuleProvider(
     },
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-      if (binaryConfig.version === null) return;
+      const version = configService.get("version.opencode") as string;
+      const destDir = pathProvider.bundlePath(`opencode/${version}`).toNative();
       const request: DownloadRequest = {
         name: binaryConfig.name,
-        url: binaryConfig.url,
-        destDir: binaryConfig.destDir,
+        url: getOpencodeUrlForVersion(version, platform, arch),
+        destDir,
         archiveExtension: binaryConfig.archiveExtension,
         executablePath: binaryConfig.executablePath,
-        ...(binaryConfig.subPath ? { subPath: binaryConfig.subPath } : {}),
       };
       try {
         await downloadBinary(request, downloadDeps, onProgress);
@@ -361,9 +373,9 @@ export function createOpenCodeModuleProvider(
     getConfigDefinition(): ConfigKeyDefinition<string | null> {
       return {
         name: "version.opencode",
-        default: null,
-        description: "OpenCode agent version override",
-        ...configString({ nullable: true }),
+        default: OPENCODE_VERSION,
+        description: "OpenCode agent version",
+        ...configString(),
       };
     },
 

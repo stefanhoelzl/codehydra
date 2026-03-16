@@ -82,11 +82,25 @@ function createDownloadDeps(): DownloadDeps {
 function createBinaryConfig() {
   return {
     name: "claude" as const,
-    version: null as string | null,
-    destDir: "/test/claude",
-    url: "",
     executablePath: "claude",
     archiveExtension: ".tar.gz" as ArchiveExtension,
+  };
+}
+
+function createMockConfigService(version: string | null = null) {
+  return {
+    register: vi.fn(),
+    load: vi.fn(),
+    get: vi.fn().mockReturnValue(version),
+    set: vi.fn(),
+    getDefinitions: vi.fn().mockReturnValue(new Map()),
+    getEffective: vi.fn().mockReturnValue({}),
+  };
+}
+
+function createMockPathProvider() {
+  return {
+    bundlePath: vi.fn().mockReturnValue({ toNative: () => "/mock/path" }),
   };
 }
 
@@ -101,6 +115,8 @@ describe("createClaudeModuleProvider", () => {
   let mockServerManager: ClaudeCodeServerManager;
   let downloadDeps: DownloadDeps;
   let binaryConfig: ReturnType<typeof createBinaryConfig>;
+  let configService: ReturnType<typeof createMockConfigService>;
+  let pathProvider: ReturnType<typeof createMockPathProvider>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -108,6 +124,8 @@ describe("createClaudeModuleProvider", () => {
     mockServerManager = createMockServerManager();
     downloadDeps = createDownloadDeps();
     binaryConfig = createBinaryConfig();
+    configService = createMockConfigService(null);
+    pathProvider = createMockPathProvider();
   });
 
   function createProvider() {
@@ -115,6 +133,10 @@ describe("createClaudeModuleProvider", () => {
       serverManager: mockServerManager,
       downloadDeps,
       binaryConfig,
+      configService,
+      pathProvider,
+      platform: "linux",
+      arch: "x64",
       logger: SILENT_LOGGER,
     });
   }
@@ -185,7 +207,7 @@ describe("createClaudeModuleProvider", () => {
 
       expect(config.name).toBe("version.claude");
       expect(config.default).toBeNull();
-      expect(config.description).toBe("Claude agent version override");
+      expect(config.description).toBe("Claude agent version");
     });
   });
 

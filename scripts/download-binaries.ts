@@ -39,7 +39,6 @@ import {
   getClaudeUrl,
   getClaudeSubPath,
   getClaudeExecutablePath,
-  getClaudeLatestVersionUrl,
 } from "../src/modules/agent-module/claude/setup-info";
 import { DefaultPathProvider } from "../src/boundaries/platform/path-provider";
 import { NodePlatformInfo } from "../src/boundaries/platform/node-platform-info";
@@ -110,7 +109,8 @@ function isSystemBinaryAvailable(binaryName: string): boolean {
  * Fetch the latest Claude version from the GCS bucket.
  */
 async function fetchLatestClaudeVersion(): Promise<string> {
-  const url = getClaudeLatestVersionUrl();
+  const url =
+    "https://storage.googleapis.com/anthropic-public/claude-code/claude-code-releases/latest";
   const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
 
   if (!response.ok) {

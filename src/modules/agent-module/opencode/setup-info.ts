@@ -1,11 +1,9 @@
 /**
  * OpenCode agent setup information.
- * Provides version, binary paths, and config generation for OpenCode.
+ * Provides version, binary paths, and download URLs for OpenCode.
  */
 
-import type { Path } from "../../../utils/path/path";
-import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem";
-import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
+import type { SupportedArch, SupportedPlatform } from "../types";
 
 /**
  * Current version of OpenCode to download.
@@ -66,94 +64,4 @@ export function getOpencodeUrl(platform: SupportedPlatform, arch: SupportedArch)
  */
 export function getOpencodeExecutablePath(platform: SupportedPlatform): string {
   return platform === "win32" ? "opencode.exe" : "opencode";
-}
-
-/**
- * Get the binary filename for the current platform.
- */
-function getBinaryFilename(platform: SupportedPlatform): string {
-  return getOpencodeExecutablePath(platform);
-}
-
-/**
- * Dependencies for creating OpenCodeSetupInfo.
- */
-export interface OpenCodeSetupInfoDeps {
-  readonly fileSystem: FileSystemBoundary;
-  readonly platform: SupportedPlatform;
-  readonly arch: SupportedArch;
-}
-
-/**
- * OpenCode implementation of AgentSetupInfo.
- * Provides version, URLs, and config generation for OpenCode agent.
- *
- * Note: OpenCode uses a pinned version, so getLatestVersion() returns
- * the pinned version rather than fetching from a remote endpoint.
- */
-export class OpenCodeSetupInfo implements AgentSetupInfo {
-  readonly version = OPENCODE_VERSION;
-  readonly wrapperEntryPoint = "agents/opencode-wrapper.cjs";
-
-  private readonly platform: SupportedPlatform;
-  private readonly arch: SupportedArch;
-
-  constructor(deps: OpenCodeSetupInfoDeps) {
-    this.platform = deps.platform;
-    this.arch = deps.arch;
-  }
-
-  get binaryPath(): string {
-    return getBinaryFilename(this.platform);
-  }
-
-  getBinaryUrl(): string {
-    return getOpencodeUrl(this.platform, this.arch);
-  }
-
-  /**
-   * Get download URL for a specific version and platform/arch.
-   * Used by downloadBinary for downloading specific versions.
-   *
-   * @param version - Version string (e.g., "1.0.223")
-   * @param platform - Operating system platform
-   * @param arch - CPU architecture
-   * @returns Download URL for the binary
-   */
-  getBinaryUrlForVersion(
-    version: string,
-    platform: SupportedPlatform,
-    arch: SupportedArch
-  ): string {
-    return getOpencodeUrlForVersion(version, platform, arch);
-  }
-
-  /**
-   * Get the latest available version.
-   * OpenCode uses a pinned version, so this returns the constant.
-   *
-   * @returns The pinned version string
-   */
-  async getLatestVersion(): Promise<string> {
-    // OpenCode uses pinned versions, return the constant
-    return OPENCODE_VERSION;
-  }
-
-  /**
-   * No-op for OpenCode. MCP config is passed inline via OPENCODE_CONFIG_CONTENT
-   * environment variable at spawn time (see OpenCodeServerManager.spawnServerOnPort).
-   */
-  async generateConfigFile(targetPath: Path, variables: Record<string, string>): Promise<void> {
-    void targetPath;
-    void variables;
-    // OpenCode uses inline config via OPENCODE_CONFIG_CONTENT env var.
-    // No file generation needed.
-  }
-}
-
-/**
- * Creates an OpenCodeSetupInfo instance with the given dependencies.
- */
-export function createOpenCodeSetupInfo(deps: OpenCodeSetupInfoDeps): AgentSetupInfo {
-  return new OpenCodeSetupInfo(deps);
 }

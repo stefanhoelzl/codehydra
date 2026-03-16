@@ -46,17 +46,8 @@ import { ViewManager } from "./boundaries/shell/view-manager";
 import { AutoUpdater } from "./modules/auto-updater";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
 import type { DownloadDeps } from "./utils/binary-download";
-import {
-  OPENCODE_VERSION,
-  getOpencodeUrl,
-  getOpencodeExecutablePath,
-} from "./modules/agent-module/opencode/setup-info";
-import {
-  CLAUDE_VERSION,
-  getClaudeUrl,
-  getClaudeSubPath,
-  getClaudeExecutablePath,
-} from "./modules/agent-module/claude/setup-info";
+import { getOpencodeExecutablePath } from "./modules/agent-module/opencode/setup-info";
+import { getClaudeExecutablePath } from "./modules/agent-module/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/platform-info";
 import { ClaudeCodeServerManager } from "./modules/agent-module/claude/server-manager";
 import { OpenCodeServerManager } from "./modules/agent-module/opencode/server-manager";
@@ -186,7 +177,7 @@ const configService = new DefaultConfig({
 // Register core config keys (not owned by any module)
 configService.register("agent", {
   name: "agent",
-  default: null,
+  default: "opencode",
   description: "Agent selection",
   ...configEnum(["claude", "opencode"], { nullable: true }),
 });
@@ -231,21 +222,14 @@ const downloadDeps: DownloadDeps = {
   logger: loggingService.createLogger("binary-download"),
 };
 
-// Per-agent binary configs
+// Per-agent binary configs (non-version fields only; version comes from configService)
 const claudeBinaryConfig = {
   name: "claude" as const,
-  version: CLAUDE_VERSION,
-  destDir: CLAUDE_VERSION ? pathProvider.bundlePath(`claude/${CLAUDE_VERSION}`).toNative() : "",
-  url: CLAUDE_VERSION ? getClaudeUrl(platform, arch) : "",
   executablePath: getClaudeExecutablePath(platform),
   archiveExtension: ".tar.gz" as const,
-  ...(CLAUDE_VERSION ? { subPath: getClaudeSubPath(platform, arch) } : {}),
 };
 const opencodeBinaryConfig = {
   name: "opencode" as const,
-  version: OPENCODE_VERSION,
-  destDir: pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`).toNative(),
-  url: getOpencodeUrl(platform, arch),
   executablePath: getOpencodeExecutablePath(platform),
   archiveExtension: (platform === "darwin" ? ".zip" : platform === "win32" ? ".zip" : ".tar.gz") as
     | ".tar.gz"
@@ -295,6 +279,7 @@ const agentServerManagers = {
     serverManagerDeps.portManager,
     serverManagerDeps.httpClient,
     serverManagerDeps.pathProvider,
+    configService,
     serverManagerDeps.logger
   ),
 };
@@ -409,6 +394,10 @@ const claudeAgentModule = createAgentModule(
     serverManager: agentServerManagers.claude,
     downloadDeps,
     binaryConfig: claudeBinaryConfig,
+    configService,
+    pathProvider,
+    platform,
+    arch,
     logger: providerLogger,
   }),
   { dispatcher, logger: apiLogger, configService }
@@ -419,6 +408,10 @@ const opencodeAgentModule = createAgentModule(
     serverManager: agentServerManagers.opencode,
     downloadDeps,
     binaryConfig: opencodeBinaryConfig,
+    configService,
+    pathProvider,
+    platform,
+    arch,
     logger: providerLogger,
   }),
   { dispatcher, logger: apiLogger, configService }

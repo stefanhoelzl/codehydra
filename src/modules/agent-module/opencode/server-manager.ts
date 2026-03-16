@@ -21,8 +21,9 @@ import { waitForHealthy } from "../../../utils/health-check";
 import { Path } from "../../../utils/path/path";
 import type { PromptModel } from "../../../shared/api/types";
 import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
-import { OPENCODE_VERSION, getOpencodeExecutablePath } from "./setup-info";
+import { getOpencodeExecutablePath } from "./setup-info";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
+import type { Config } from "../../../boundaries/platform/config";
 
 /**
  * Pending initial prompt to send when server becomes healthy.
@@ -109,6 +110,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   private readonly portManager: PortManager;
   private readonly httpClient: HttpClient;
   private readonly pathProvider: PathProvider;
+  private readonly configService: Config;
   private readonly logger: Logger;
   private readonly config: Required<OpenCodeServerManagerConfig>;
 
@@ -140,6 +142,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     portManager: PortManager,
     httpClient: HttpClient,
     pathProvider: PathProvider,
+    configService: Config,
     logger: Logger,
     config?: OpenCodeServerManagerConfig
   ) {
@@ -147,6 +150,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     this.portManager = portManager;
     this.httpClient = httpClient;
     this.pathProvider = pathProvider;
+    this.configService = configService;
     this.logger = logger;
     this.config = {
       healthCheckTimeoutMs: config?.healthCheckTimeoutMs ?? 30000,
@@ -271,8 +275,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     // Spawn opencode serve
     const platform = process.platform as SupportedPlatform;
+    const version = this.configService.get("version.opencode") as string;
     const opencodeCmd = new Path(
-      this.pathProvider.bundlePath(`opencode/${OPENCODE_VERSION}`),
+      this.pathProvider.bundlePath(`opencode/${version}`),
       getOpencodeExecutablePath(platform)
     ).toNative();
     const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {

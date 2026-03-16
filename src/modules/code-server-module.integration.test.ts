@@ -187,7 +187,12 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
 function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
-    register: () => {},
+    register: (_key: string, definition: { default?: unknown }) => {
+      // Only set the default if no explicit value was pre-populated
+      if (!store.has(_key) && definition.default !== undefined) {
+        store.set(_key, definition.default);
+      }
+    },
     load: () => {},
     get: (key: string) => store.get(key),
     set: async (key: string, value: unknown) => {
@@ -249,7 +254,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
-    configService: createMockConfig(),
+    configService: createMockConfig({ "version.opencode": "1.0.223" }),
     ...overrides,
   };
 }
