@@ -12,8 +12,8 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
-import type { Logger } from "../boundaries/platform/logging/types";
-import type { ProcessRunner } from "../boundaries/platform/process/process";
+import type { Logger } from "../boundaries/platform/logging-types";
+import type { ProcessRunner } from "../boundaries/platform/process";
 import type { BlockingProcess } from "../shared/api/types";
 import {
   DELETE_WORKSPACE_OPERATION_ID,

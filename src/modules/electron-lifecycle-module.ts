@@ -8,14 +8,14 @@
  * - "quit" hook on app:shutdown (calls app.quit())
  */
 
-import type { PathProvider } from "../boundaries/platform/env/path-provider";
+import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { AsyncWatcher } from "../boundaries/platform/async-watcher";
 import type { Logger } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
 import type { ConfigureResult } from "../intents/app-start";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import { configString } from "../boundaries/platform/config/config-definition";
+import { configString } from "../boundaries/platform/config-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { INTENT_APP_RESUME } from "../intents/app-resume";

@@ -2,12 +2,12 @@
 
 import { describe, it, expect } from "vitest";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
-import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
-import type { ConfigKeyDefinition } from "../../boundaries/platform/config/config-definition";
+import { createMockHttpClient } from "../../boundaries/platform/http-client.state-mock";
+import type { Config } from "../../boundaries/platform/config";
+import type { ConfigKeyDefinition } from "../../boundaries/platform/config-definition";
 import { createYouTrackSource } from "./youtrack-source";
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
@@ -69,7 +69,7 @@ const ISSUES_URL = `${BASE_URL}/api/issues?query=${encodeURIComponent(DEFAULT_QU
 describe("YouTrackSource", () => {
   function createSource(config?: Record<string, unknown>) {
     const httpClient = createMockHttpClient();
-    const configService = createMockConfigService(config);
+    const configService = createMockConfig(config);
     const source = createYouTrackSource({
       httpClient,
       logger: SILENT_LOGGER,

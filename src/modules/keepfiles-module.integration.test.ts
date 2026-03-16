@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Intent } from "../intents/lib/types";
@@ -15,12 +15,12 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { OPEN_WORKSPACE_OPERATION_ID, type SetupHookResult } from "../intents/open-workspace";
 import { createKeepFilesModule } from "./keepfiles-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
 import {
   createFileSystemMock,
   file,
   directory,
-} from "../boundaries/platform/filesystem/filesystem.state-mock";
+} from "../boundaries/platform/filesystem.state-mock";
 
 // =============================================================================
 // Test Setup

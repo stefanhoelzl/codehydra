@@ -50,12 +50,9 @@ import { Path } from "../utils/path/path";
 import type { ProjectId } from "../shared/api/types";
 import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";
 import type { IntentModule } from "../intents/lib/module";
-import {
-  createFileSystemMock,
-  directory,
-} from "../boundaries/platform/filesystem/filesystem.state-mock";
+import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
 import { CURRENT_PROJECT_VERSION } from "../shared/types/project";
-import { projectDirName } from "../boundaries/platform/env/paths";
+import { projectDirName } from "../boundaries/platform/paths";
 import nodePath from "path";
 
 // =============================================================================

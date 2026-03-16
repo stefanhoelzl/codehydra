@@ -19,12 +19,12 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { Path } from "../utils/path/path";
-import { projectDirName } from "../boundaries/platform/env/paths";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
+import { projectDirName } from "../boundaries/platform/paths";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { ProjectConfig } from "../shared/types/project";
 import { CURRENT_PROJECT_VERSION } from "../shared/types/project";
 import { ProjectStoreError, getErrorMessage } from "../shared/errors/service-errors";
-import type { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
+import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import {
   OPEN_PROJECT_OPERATION_ID,
   type OpenProjectIntent,

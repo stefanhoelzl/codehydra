@@ -14,9 +14,9 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
   createMockGitClient,
   gitClientMatchers,
-} from "../boundaries/platform/git/git-client.state-mock";
-import { createMockPathProvider } from "../boundaries/platform/env/path-provider.test-utils";
-import { createFileSystemMock } from "../boundaries/platform/filesystem/filesystem.state-mock";
+} from "../boundaries/platform/git-client.state-mock";
+import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
+import { createFileSystemMock } from "../boundaries/platform/filesystem.state-mock";
 import { createRemoteProjectModule } from "./remote-project-module";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import type {
@@ -227,9 +227,9 @@ describe("RemoteProjectModule Integration", () => {
       // Override mock clone to invoke onProgress
       const originalClone = gitClient.clone.bind(gitClient);
       (gitClient as { clone: typeof gitClient.clone }).clone = async (
-        url,
-        targetPath,
-        onProgress
+        url: string,
+        targetPath: Path,
+        onProgress?: (event: { stage: string; progress: number }) => void
       ) => {
         onProgress?.({ stage: "receiving", progress: 50 });
         onProgress?.({ stage: "resolving", progress: 100 });

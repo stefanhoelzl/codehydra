@@ -8,10 +8,10 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { DefaultPathProvider } from "../../boundaries/platform/env/path-provider";
-import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
-import { DefaultNetworkLayer } from "../../boundaries/platform/network/network";
-import { DefaultArchiveExtractor } from "../../boundaries/platform/archive/archive-extractor";
+import { DefaultPathProvider } from "../../boundaries/platform/path-provider";
+import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem";
+import { DefaultNetworkLayer } from "../../boundaries/platform/network";
+import { DefaultArchiveExtractor } from "../../boundaries/platform/archive-extractor";
 import {
   CODE_SERVER_VERSION,
   getCodeServerUrl,
@@ -24,13 +24,13 @@ import {
   getOpencodeExecutablePath,
 } from "../../modules/agent-module/opencode/setup-info";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
-import { createMockBuildInfo } from "../../boundaries/platform/env/build-info.test-utils";
-import { NodePlatformInfo } from "../../boundaries/platform/env/node-platform-info";
+import { createMockBuildInfo } from "../../boundaries/platform/build-info.test-utils";
+import { NodePlatformInfo } from "../../boundaries/platform/node-platform-info";
 import { downloadBinary } from "../binary-download";
 import type { DownloadRequest } from "../binary-download";
 import type { DownloadDeps } from "../binary-download";
-import type { PlatformInfo } from "../../boundaries/platform/env/platform-info";
-import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/env/platform-info";
+import type { PlatformInfo } from "../../boundaries/platform/platform-info";
+import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
 
 /**
  * Binary types supported for test downloads.

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Path } from "../utils/path/path";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";
@@ -22,7 +22,7 @@ import {
   createElectronLifecycleModule,
   type ElectronLifecycleModuleDeps,
 } from "./electron-lifecycle-module";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config";
 
 // =============================================================================
 // Mock Config

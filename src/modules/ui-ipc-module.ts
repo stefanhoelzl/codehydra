@@ -26,8 +26,8 @@ import type {
 import { ApiIpcChannels } from "../shared/ipc";
 import type { Logger, Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
 import type { ApiLogPayload } from "../shared/ipc";
-import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc/ipc";
-import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
+import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../intents/set-metadata";
 import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../intents/set-metadata";

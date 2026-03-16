@@ -22,10 +22,10 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { McpServerManager, createMcpModule } from "./mcp-module";
 import type { McpServerFactory } from "./mcp-module";
-import type { MockPortManager } from "../boundaries/platform/network/network.test-utils";
+import type { MockPortManager } from "../boundaries/platform/network.test-utils";
 import type { McpServer as McpServerSdk } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMockLogger } from "../boundaries/platform/logging";
-import { createPortManagerMock } from "../boundaries/platform/network/network.test-utils";
+import { createPortManagerMock } from "../boundaries/platform/network.test-utils";
 
 // =============================================================================
 // Mock helpers

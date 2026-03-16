@@ -3,19 +3,19 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { BinaryResolutionService } from "./binary-resolution-service";
-import { createMockPathProvider } from "../../boundaries/platform/env/path-provider.test-utils";
+import { createMockPathProvider } from "../../boundaries/platform/path-provider.test-utils";
 import {
   createFileSystemMock,
   file,
   directory,
   type MockFileSystemBoundary,
-} from "../../boundaries/platform/filesystem/filesystem.state-mock";
+} from "../../boundaries/platform/filesystem.state-mock";
 import {
   createMockProcessRunner,
   type MockProcessRunner,
-} from "../../boundaries/platform/process/process.state-mock";
-import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
-import type { PathProvider } from "../../boundaries/platform/env/path-provider";
+} from "../../boundaries/platform/process.state-mock";
+import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
+import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { Logger } from "../../boundaries/platform/logging";
 import type { BinaryType } from "./types";
 

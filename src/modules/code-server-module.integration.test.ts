@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { delimiter, join } from "node:path";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
@@ -30,11 +30,11 @@ import type {
   DeleteHookResult,
 } from "../intents/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/app-start";
-import type { DirEntry } from "../boundaries/platform/filesystem/filesystem";
-import type { SpawnedProcess } from "../boundaries/platform/process/process";
-import { createArchiveExtractorMock } from "../boundaries/platform/archive/archive-extractor.state-mock";
+import type { DirEntry } from "../boundaries/platform/filesystem";
+import type { SpawnedProcess } from "../boundaries/platform/process";
+import { createArchiveExtractorMock } from "../boundaries/platform/archive-extractor.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { FileSystemError, SetupError } from "../shared/errors/service-errors";

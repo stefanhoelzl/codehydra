@@ -2,13 +2,13 @@
 
 import { describe, it, expect } from "vitest";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
-import { createMockProcessRunner } from "../../boundaries/platform/process/process.state-mock";
-import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
-import type { ConfigKeyDefinition } from "../../boundaries/platform/config/config-definition";
+import { createMockProcessRunner } from "../../boundaries/platform/process.state-mock";
+import { createMockHttpClient } from "../../boundaries/platform/http-client.state-mock";
+import type { Config } from "../../boundaries/platform/config";
+import type { ConfigKeyDefinition } from "../../boundaries/platform/config-definition";
 import { createGitHubSource } from "./github-source";
 
-function createMockConfigService(values?: Record<string, unknown>): ConfigService {
+function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
   return {
     register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
@@ -96,7 +96,7 @@ describe("GitHubSource", () => {
     });
 
     const httpClient = createMockHttpClient();
-    const configService = createMockConfigService({
+    const configService = createMockConfig({
       "experimental.github.query": options?.query ?? DEFAULT_QUERY,
     });
     const source = createGitHubSource({

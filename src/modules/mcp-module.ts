@@ -28,10 +28,10 @@ import type { IntentModule } from "../intents/lib/module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import type { PortManager } from "../boundaries/platform/network/network";
+import type { PortManager } from "../boundaries/platform/network";
 import type { Logger, LogContext } from "../boundaries/platform/logging";
 import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
-import type { LogLevel } from "../boundaries/platform/logging/types";
+import type { LogLevel } from "../boundaries/platform/logging-types";
 import type { IDisposable } from "../shared/types";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import {

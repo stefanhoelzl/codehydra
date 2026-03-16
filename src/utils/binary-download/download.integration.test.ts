@@ -10,11 +10,11 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
 import { downloadBinary, isBinaryInstalled } from "./download";
-import { DefaultArchiveExtractor } from "../../boundaries/platform/archive/archive-extractor";
-import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
-import { createMockHttpClient } from "../../boundaries/platform/network/http-client.state-mock";
+import { DefaultArchiveExtractor } from "../../boundaries/platform/archive-extractor";
+import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem";
+import { createMockHttpClient } from "../../boundaries/platform/http-client.state-mock";
 import { createTestTarGzWithRoot, cleanupTestArchive } from "./test-utils";
-import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 import type { DownloadRequest } from "./types";
 import type { DownloadDeps } from "./download";
 

@@ -14,15 +14,15 @@ import { OpenCodeServerManager } from "./server-manager";
 import {
   createMockProcessRunner,
   type MockProcessRunner,
-} from "../../../boundaries/platform/process/process.state-mock";
-import { createMockPathProvider } from "../../../boundaries/platform/env/path-provider.test-utils";
+} from "../../../boundaries/platform/process.state-mock";
+import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 import {
   createPortManagerMock,
   type MockPortManager,
-} from "../../../boundaries/platform/network/network.test-utils";
+} from "../../../boundaries/platform/network.test-utils";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import type { HttpClient } from "../../../boundaries/platform/network/network";
-import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
+import type { HttpClient } from "../../../boundaries/platform/network";
+import type { PathProvider } from "../../../boundaries/platform/path-provider";
 
 /**
  * Create a mock HttpClient with vitest spies.

@@ -30,11 +30,11 @@ import { downloadBinary, isBinaryInstalled } from "../../../utils/binary-downloa
 import type { DownloadDeps } from "../../../utils/binary-download";
 import type { BinaryType } from "../../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../../shared/errors/service-errors";
-import type { ConfigKeyDefinition } from "../../../boundaries/platform/config/config-definition";
+import type { ConfigKeyDefinition } from "../../../boundaries/platform/config-definition";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { Unsubscribe } from "../../../shared/api/interfaces";
 import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
-import { configString } from "../../../boundaries/platform/config/config-definition";
+import { configString } from "../../../boundaries/platform/config-definition";
 import { OpenCodeProvider } from "./provider";
 
 // =============================================================================

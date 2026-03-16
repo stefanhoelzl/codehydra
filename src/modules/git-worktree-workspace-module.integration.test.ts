@@ -10,15 +10,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent, DomainEvent } from "../intents/lib/types";
-import type { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
-import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { Workspace } from "../boundaries/platform/git/types";
+import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
+import type { PathProvider } from "../boundaries/platform/path-provider";
+import type { Workspace } from "../boundaries/platform/git-types";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import type { DiscoverHookResult } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";

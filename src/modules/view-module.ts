@@ -18,16 +18,16 @@
  * Internal state: cachedActiveRef, loadingChangeCleanupFn.
  */
 
-import type { DialogBoundary } from "../boundaries/shell/dialog/dialog";
+import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { IntentModule } from "../intents/lib/module";
 import { ANY_VALUE, type HookContext } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
-import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
-import type { ViewBoundary } from "../boundaries/shell/view/view";
-import type { WindowBoundaryInternal } from "../boundaries/shell/window/window";
-import type { SessionBoundary } from "../boundaries/shell/session/session";
-import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
+import type { ViewBoundary } from "../boundaries/shell/view";
+import type { WindowBoundaryInternal } from "../boundaries/shell/window";
+import type { SessionBoundary } from "../boundaries/shell/session";
+import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceRef } from "../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../shared/ipc";
@@ -62,8 +62,8 @@ import { EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { Config } from "../boundaries/platform/config/config";
-import { configBoolean } from "../boundaries/platform/config/config-definition";
+import type { Config } from "../boundaries/platform/config";
+import { configBoolean } from "../boundaries/platform/config-definition";
 import {
   ApiIpcChannels,
   type LifecycleAgentType,

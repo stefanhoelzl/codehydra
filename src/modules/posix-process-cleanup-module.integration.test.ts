@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
@@ -22,9 +22,9 @@ import {
   killPosixProcesses,
 } from "./posix-process-cleanup-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";
-import { createMockProcessRunner } from "../boundaries/platform/process/process.state-mock";
-import type { MockProcessRunner } from "../boundaries/platform/process/process.state-mock";
+import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
+import { createMockProcessRunner } from "../boundaries/platform/process.state-mock";
+import type { MockProcessRunner } from "../boundaries/platform/process.state-mock";
 
 // =============================================================================
 // Test Helpers

@@ -8,8 +8,8 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
-import type { ViewBoundary } from "../boundaries/shell/view/view";
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
+import type { ViewBoundary } from "../boundaries/shell/view";
 import type { ViewHandle } from "../boundaries/shell/types";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 

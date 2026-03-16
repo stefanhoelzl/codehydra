@@ -9,10 +9,10 @@
  */
 
 import type { Path } from "../../utils/path/path";
-import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
-import type { ProcessRunner } from "../../boundaries/platform/process/process";
-import type { PortManager, HttpClient } from "../../boundaries/platform/network/network";
-import type { PathProvider } from "../../boundaries/platform/env/path-provider";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
+import type { ProcessRunner } from "../../boundaries/platform/process";
+import type { PortManager, HttpClient } from "../../boundaries/platform/network";
+import type { PathProvider } from "../../boundaries/platform/path-provider";
 import type { Logger } from "../../boundaries/platform/logging";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 
@@ -40,7 +40,7 @@ export interface AgentError {
   readonly cause?: Error;
 }
 
-import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/env/platform-info";
+import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
 // Re-export platform types from canonical location
 export type { SupportedPlatform, SupportedArch };
 

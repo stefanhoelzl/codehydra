@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../../intents/lib/dispatcher";
 import type { Operation, OperationContext, HookContext } from "../../intents/lib/operation";
 import type { Intent } from "../../intents/lib/types";
@@ -46,8 +46,8 @@ import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-p
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { SetupError } from "../../shared/errors/service-errors";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
-import { configString } from "../../boundaries/platform/config/config-definition";
-import type { Config } from "../../boundaries/platform/config/config";
+import { configString } from "../../boundaries/platform/config-definition";
+import type { Config } from "../../boundaries/platform/config";
 
 function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));

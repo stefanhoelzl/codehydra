@@ -4,8 +4,8 @@
  */
 
 import { Path } from "../../../utils/path/path";
-import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem";
-import type { HttpClient } from "../../../boundaries/platform/network/network";
+import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem";
+import type { HttpClient } from "../../../boundaries/platform/network";
 import type { AgentSetupInfo, SupportedArch, SupportedPlatform } from "../types";
 
 // Import config templates as JSON objects

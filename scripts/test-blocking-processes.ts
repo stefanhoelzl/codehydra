@@ -15,7 +15,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { runDetectAction, closeFileHandles } from "../src/modules/windows-file-lock-module";
-import { ExecaProcessRunner } from "../src/boundaries/platform/process/process";
+import { ExecaProcessRunner } from "../src/boundaries/platform/process";
 import type { Logger } from "../src/boundaries/platform/logging";
 import { Path } from "../src/utils/path/path";
 

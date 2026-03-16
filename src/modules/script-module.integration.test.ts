@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
@@ -14,7 +14,7 @@ import type { Intent } from "../intents/lib/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent, InitHookContext } from "../intents/app-start";
 import { createScriptModule } from "./script-module";
-import { createMockPathProvider } from "../boundaries/platform/env/path-provider.test-utils";
+import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import { Path } from "../utils/path/path";
 
 // =============================================================================

@@ -22,7 +22,7 @@ import {
   ExecaProcessRunner,
   type ProcessRunner,
   type SpawnedProcess,
-} from "../boundaries/platform/process/process";
+} from "../boundaries/platform/process";
 import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import { delay } from "@shared/test-fixtures";

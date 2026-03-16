@@ -18,20 +18,20 @@ import { join, delimiter } from "node:path";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import { ANY_VALUE } from "../intents/lib/operation";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
-import type { ProcessRunner, SpawnedProcess } from "../boundaries/platform/process/process";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
+import type { ProcessRunner, SpawnedProcess } from "../boundaries/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
   PROCESS_KILL_FORCE_TIMEOUT_MS,
-} from "../boundaries/platform/process/process";
-import type { HttpClient, PortManager } from "../boundaries/platform/network/network";
-import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { Logger } from "../boundaries/platform/logging/types";
-import type { SupportedPlatform, SupportedArch } from "../boundaries/platform/env/platform-info";
-import type { BuildInfo } from "../boundaries/platform/env/build-info";
+} from "../boundaries/platform/process";
+import type { HttpClient, PortManager } from "../boundaries/platform/network";
+import type { PathProvider } from "../boundaries/platform/path-provider";
+import type { Logger } from "../boundaries/platform/logging-types";
+import type { SupportedPlatform, SupportedArch } from "../boundaries/platform/platform-info";
+import type { BuildInfo } from "../boundaries/platform/build-info";
 import type { DownloadProgressCallback, DownloadRequest } from "../utils/binary-download";
 import { downloadBinary, isBinaryInstalled } from "../utils/binary-download";
-import type { ArchiveExtractor } from "../boundaries/platform/archive/archive-extractor";
+import type { ArchiveExtractor } from "../boundaries/platform/archive-extractor";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";
@@ -46,9 +46,9 @@ import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { OPENCODE_VERSION } from "./agent-module/opencode/setup-info";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
 import { Path } from "../utils/path/path";
-import { encodePathForUrl } from "../boundaries/platform/env/paths";
-import { configString, configCustom } from "../boundaries/platform/config/config-definition";
-import type { Config } from "../boundaries/platform/config/config";
+import { encodePathForUrl } from "../boundaries/platform/paths";
+import { configString, configCustom } from "../boundaries/platform/config-definition";
+import type { Config } from "../boundaries/platform/config";
 import { CodeServerError, SetupError, getErrorMessage } from "../shared/errors/service-errors";
 import { waitForHealthy } from "../utils/health-check";
 

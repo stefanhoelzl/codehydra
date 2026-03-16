@@ -18,11 +18,11 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
-import { configBoolean, configString } from "../boundaries/platform/config/config-definition";
-import type { Config } from "../boundaries/platform/config/config";
-import type { PlatformInfo } from "../boundaries/platform/env/platform-info";
-import type { BuildInfo } from "../boundaries/platform/env/build-info";
-import type { ConfigAgentType } from "../boundaries/platform/config/config-values";
+import { configBoolean, configString } from "../boundaries/platform/config-definition";
+import type { Config } from "../boundaries/platform/config";
+import type { PlatformInfo } from "../boundaries/platform/platform-info";
+import type { BuildInfo } from "../boundaries/platform/build-info";
+import type { ConfigAgentType } from "../boundaries/platform/config-values";
 import type { Logger } from "../boundaries/platform/logging";
 
 // =============================================================================

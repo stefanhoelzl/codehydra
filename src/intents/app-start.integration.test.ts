@@ -28,7 +28,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
@@ -51,7 +51,7 @@ import {
 } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
 import type { BinaryType } from "./app-start";
-import type { Config } from "../boundaries/platform/config/config";
+import type { Config } from "../boundaries/platform/config";
 
 /** Minimal Config mock for tests. Returns configuredAgent value from get(). */
 function createMockConfig(agent: ConfigAgentType | null = "opencode"): Config {

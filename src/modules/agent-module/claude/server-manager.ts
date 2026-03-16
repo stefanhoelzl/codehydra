@@ -12,9 +12,9 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
-import type { PortManager } from "../../../boundaries/platform/network/network";
-import type { PathProvider } from "../../../boundaries/platform/env/path-provider";
-import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem/filesystem";
+import type { PortManager } from "../../../boundaries/platform/network";
+import type { PathProvider } from "../../../boundaries/platform/path-provider";
+import type { FileSystemBoundary } from "../../../boundaries/platform/filesystem";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type {
   AgentServerManager,

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createMockLogger } from "../../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { Dispatcher } from "../../intents/lib/dispatcher";
 
@@ -48,11 +48,11 @@ import {
   createFileSystemMock,
   file,
   directory,
-} from "../../boundaries/platform/filesystem/filesystem.state-mock";
+} from "../../boundaries/platform/filesystem.state-mock";
 import { createAutoWorkspaceModule } from "./module";
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
-import type { ConfigKeyDefinition } from "../../boundaries/platform/config/config-definition";
-import type { Config } from "../../boundaries/platform/config/config";
+import type { ConfigKeyDefinition } from "../../boundaries/platform/config-definition";
+import type { Config } from "../../boundaries/platform/config";
 
 // =============================================================================
 // Minimal Test Operations

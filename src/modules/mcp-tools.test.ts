@@ -9,8 +9,8 @@ import { describe, it, expect, vi } from "vitest";
 import type { WorkspaceStatus, InitialPrompt } from "../shared/api/types";
 import type { McpError } from "./mcp-module";
 import type { Logger, LogContext } from "../boundaries/platform/logging";
-import type { LogLevel } from "../boundaries/platform/logging/types";
-import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";
+import type { LogLevel } from "../boundaries/platform/logging-types";
+import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
 
 /**
  * Flat handler interface used by the tool simulation harness.

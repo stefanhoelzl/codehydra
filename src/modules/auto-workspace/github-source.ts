@@ -1,8 +1,8 @@
-import type { ProcessRunner } from "../../boundaries/platform/process/process";
-import type { HttpClient } from "../../boundaries/platform/network/network";
-import type { Logger } from "../../boundaries/platform/logging/types";
-import type { ConfigService } from "../../boundaries/platform/config/config-service";
-import { configString } from "../../boundaries/platform/config/config-definition";
+import type { ProcessRunner } from "../../boundaries/platform/process";
+import type { HttpClient } from "../../boundaries/platform/network";
+import type { Logger } from "../../boundaries/platform/logging-types";
+import type { Config } from "../../boundaries/platform/config";
+import { configString } from "../../boundaries/platform/config-definition";
 import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
 import { getErrorMessage } from "../../shared/error-utils";
 
@@ -52,7 +52,7 @@ export interface GitHubSourceDeps {
   readonly processRunner: ProcessRunner;
   readonly httpClient: HttpClient;
   readonly logger: Logger;
-  readonly configService: ConfigService;
+  readonly configService: Config;
 }
 
 export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource {

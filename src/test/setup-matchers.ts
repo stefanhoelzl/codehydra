@@ -9,10 +9,10 @@
 import "./state-mock";
 
 // Register filesystem matchers (auto-registers via expect.extend on import)
-import "../boundaries/platform/filesystem/filesystem.state-mock";
+import "../boundaries/platform/filesystem.state-mock";
 
 // Register process runner matchers (auto-registers via expect.extend on import)
-import "../boundaries/platform/process/process.state-mock";
+import "../boundaries/platform/process.state-mock";
 
 // Register view layer matchers (auto-registers via expect.extend on import)
-import "../boundaries/shell/view/view.state-mock";
+import "../boundaries/shell/view.state-mock";

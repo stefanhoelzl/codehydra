@@ -8,14 +8,11 @@
 import { writeFileSync } from "fs";
 import { join } from "path";
 import { createOpencodeClient, type OpencodeClient as SdkClient } from "@opencode-ai/sdk";
-import type { SpawnedProcess, ProcessRunner } from "../../../boundaries/platform/process/process";
-import { ExecaProcessRunner } from "../../../boundaries/platform/process/process";
-import { DefaultNetworkLayer } from "../../../boundaries/platform/network/network";
+import type { SpawnedProcess, ProcessRunner } from "../../../boundaries/platform/process";
+import { ExecaProcessRunner } from "../../../boundaries/platform/process";
+import { DefaultNetworkLayer } from "../../../boundaries/platform/network";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import {
-  waitForPort,
-  CI_TIMEOUT_MS,
-} from "../../../boundaries/platform/network/network.test-utils";
+import { waitForPort, CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
 import { createTestGitRepo } from "../../../utils/testing/test-utils";
 import {
   createMockLlmServer,

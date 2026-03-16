@@ -18,10 +18,10 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
-import type { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
-import type { Workspace } from "../boundaries/platform/git/types";
-import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { Logger } from "../boundaries/platform/logging/types";
+import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
+import type { Workspace } from "../boundaries/platform/git-types";
+import type { PathProvider } from "../boundaries/platform/path-provider";
+import type { Logger } from "../boundaries/platform/logging-types";
 import type { WorkspaceName } from "../shared/api/types";
 import type {
   OpenWorkspaceIntent,

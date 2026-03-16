@@ -7,9 +7,9 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
-import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { Logger } from "../boundaries/platform/logging/types";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
+import type { PathProvider } from "../boundaries/platform/path-provider";
+import type { Logger } from "../boundaries/platform/logging-types";
 import type { InitResult, ExtensionRequirement } from "../intents/app-start";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { Path } from "../utils/path/path";

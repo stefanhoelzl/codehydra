@@ -9,10 +9,10 @@ import * as path from "node:path";
 import { BinaryDownloadError, getErrorMessage } from "../../shared/errors/service-errors.js";
 import { FileSystemError } from "../../shared/errors/service-errors.js";
 import type { DownloadRequest, DownloadProgressCallback } from "./types.js";
-import type { ArchiveExtractor } from "../../boundaries/platform/archive/archive-extractor.js";
-import type { HttpClient } from "../../boundaries/platform/network/network.js";
-import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem.js";
-import type { Logger } from "../../boundaries/platform/logging/index.js";
+import type { ArchiveExtractor } from "../../boundaries/platform/archive-extractor.js";
+import type { HttpClient } from "../../boundaries/platform/network.js";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem.js";
+import type { Logger } from "../../boundaries/platform/logging-types.js";
 import { Path } from "../path/path.js";
 
 /**

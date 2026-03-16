@@ -6,7 +6,7 @@
  */
 
 import { vi, type Mock } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { io as ioClient, type Socket as ClientSocket } from "socket.io-client";
 import type {
   ServerToClientEvents,
@@ -20,8 +20,8 @@ import {
   type PluginServerModuleDeps,
   type PluginServerOptions,
 } from "./plugin-server-module";
-import { DefaultNetworkLayer } from "../boundaries/platform/network/network";
-import { SILENT_LOGGER } from "../boundaries/platform/logging/logging.test-utils";
+import { DefaultNetworkLayer } from "../boundaries/platform/network";
+import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher, IntentHandle } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
 import type { Operation, OperationContext } from "../intents/lib/operation";
