@@ -1,7 +1,7 @@
 import type { HttpClient } from "../../../services/platform/network";
 import type { Logger } from "../../../services/logging/types";
+import type { ConfigService } from "../../../services/config/config-service";
 import { configString } from "../../../services/config/config-definition";
-import type { ConfigKeyDefinition } from "../../../services/config/config-definition";
 import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
 import { getErrorMessage } from "../../../shared/error-utils";
 
@@ -25,24 +25,41 @@ const CONFIG_KEYS = {
 export interface YouTrackSourceDeps {
   readonly httpClient: HttpClient;
   readonly logger: Logger;
+  readonly configService: ConfigService;
 }
 
 export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSource {
-  let configBaseUrl: string | null = null;
-  let configToken: string | null = null;
-  let configQuery: string | null = null;
+  deps.configService.register(CONFIG_KEYS.baseUrl, {
+    name: CONFIG_KEYS.baseUrl,
+    default: null,
+    description: "YouTrack instance URL (e.g. https://youtrack.example.com)",
+    ...configString({ nullable: true }),
+  });
+  deps.configService.register(CONFIG_KEYS.token, {
+    name: CONFIG_KEYS.token,
+    default: null,
+    description: "YouTrack API permanent token",
+    ...configString({ nullable: true }),
+  });
+  deps.configService.register(CONFIG_KEYS.query, {
+    name: CONFIG_KEYS.query,
+    default: null,
+    description: "YouTrack search query (e.g. for:me State: {In Progress})",
+    ...configString({ nullable: true }),
+  });
 
   function youtrackHeaders(): Readonly<Record<string, string>> {
     return {
-      Authorization: `Bearer ${configToken}`,
+      Authorization: `Bearer ${deps.configService.get(CONFIG_KEYS.token) as string}`,
       Accept: "application/json",
     };
   }
 
   async function fetchIssues(): Promise<Record<string, unknown>[]> {
-    const query = encodeURIComponent(configQuery!);
+    const baseUrl = deps.configService.get(CONFIG_KEYS.baseUrl) as string;
+    const query = encodeURIComponent(deps.configService.get(CONFIG_KEYS.query) as string);
     const fields = encodeURIComponent(YOUTRACK_FIELDS);
-    const url = `${configBaseUrl}/api/issues?query=${query}&fields=${fields}`;
+    const url = `${baseUrl}/api/issues?query=${query}&fields=${fields}`;
 
     const response = await deps.httpClient.fetch(url, {
       timeout: 15000,
@@ -58,50 +75,20 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
   }
 
   function issueStateKey(issueId: string): string {
-    return `${configBaseUrl}/api/issues/${issueId}`;
+    const baseUrl = deps.configService.get(CONFIG_KEYS.baseUrl) as string;
+    return `${baseUrl}/api/issues/${issueId}`;
   }
 
   return {
     name: "youtrack",
     fetchBasesBeforeDelete: false,
 
-    configDefinitions(): ConfigKeyDefinition<unknown>[] {
-      return [
-        {
-          name: CONFIG_KEYS.baseUrl,
-          default: null,
-          description: "YouTrack instance URL (e.g. https://youtrack.example.com)",
-          ...configString({ nullable: true }),
-        },
-        {
-          name: CONFIG_KEYS.token,
-          default: null,
-          description: "YouTrack API permanent token",
-          ...configString({ nullable: true }),
-        },
-        {
-          name: CONFIG_KEYS.query,
-          default: null,
-          description: "YouTrack search query (e.g. for:me State: {In Progress})",
-          ...configString({ nullable: true }),
-        },
-      ];
-    },
-
-    onConfigUpdated(values: Record<string, unknown>): void {
-      if (CONFIG_KEYS.baseUrl in values) {
-        configBaseUrl = (values[CONFIG_KEYS.baseUrl] as string | null) ?? null;
-      }
-      if (CONFIG_KEYS.token in values) {
-        configToken = (values[CONFIG_KEYS.token] as string | null) ?? null;
-      }
-      if (CONFIG_KEYS.query in values) {
-        configQuery = (values[CONFIG_KEYS.query] as string | null) ?? null;
-      }
-    },
-
     isConfigured(): boolean {
-      return configBaseUrl !== null && configToken !== null && configQuery !== null;
+      return (
+        deps.configService.get(CONFIG_KEYS.baseUrl) !== null &&
+        deps.configService.get(CONFIG_KEYS.token) !== null &&
+        deps.configService.get(CONFIG_KEYS.query) !== null
+      );
     },
 
     async initialize(): Promise<boolean> {
@@ -132,7 +119,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
 
         newItems.push({
           key,
-          url: `${configBaseUrl}/issue/${idReadable}`,
+          url: `${deps.configService.get(CONFIG_KEYS.baseUrl) as string}/issue/${idReadable}`,
           data: issue,
         });
       }
@@ -141,9 +128,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
     },
 
     dispose(): void {
-      configBaseUrl = null;
-      configToken = null;
-      configQuery = null;
+      // No runtime state to clean up; config lives in configService
     },
   };
 }
