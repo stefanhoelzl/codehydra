@@ -24,6 +24,7 @@ import {
   type ExistingWorkspaceData,
 } from "./open-workspace";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
+import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 import { toIpcWorkspaces } from "../api/workspace-conversion";
 import { Path } from "../../services/platform/path";
 
@@ -314,19 +315,25 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
         };
         ctx.emit(event);
 
-        // Dispatch workspace:switch for the first workspace
+        // Switch to the first workspace only if no workspace is currently active.
+        // During startup, multiple projects open sequentially — only the first
+        // should activate a workspace to avoid visual jumping.
         if (project.workspaces.length > 0) {
-          const firstWorkspace = project.workspaces[0]!;
-          const switchIntent: SwitchWorkspaceIntent = {
-            type: INTENT_SWITCH_WORKSPACE,
-            payload: {
-              workspacePath: firstWorkspace.path,
-            },
-          };
-          try {
-            await ctx.dispatch(switchIntent);
-          } catch {
-            // Best-effort: switch failure doesn't fail the project open
+          const activeWorkspace = await ctx.dispatch({
+            type: INTENT_GET_ACTIVE_WORKSPACE,
+            payload: {},
+          } as GetActiveWorkspaceIntent);
+
+          if (activeWorkspace === null) {
+            const firstWorkspace = project.workspaces[0]!;
+            try {
+              await ctx.dispatch({
+                type: INTENT_SWITCH_WORKSPACE,
+                payload: { workspacePath: firstWorkspace.path },
+              } as SwitchWorkspaceIntent);
+            } catch {
+              // Best-effort: switch failure doesn't fail the project open
+            }
           }
         }
       } else {

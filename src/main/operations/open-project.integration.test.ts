@@ -82,6 +82,12 @@ import type {
   ResolveHookResult as SharedResolveProjectHookResult,
   ResolveHookInput as SharedResolveProjectHookInput,
 } from "./resolve-project";
+import {
+  GetActiveWorkspaceOperation,
+  GET_ACTIVE_WORKSPACE_OPERATION_ID,
+  INTENT_GET_ACTIVE_WORKSPACE,
+} from "./get-active-workspace";
+import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 
 // =============================================================================
 // Test Helpers
@@ -346,6 +352,7 @@ function createTestHarness(options?: {
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
+  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
@@ -662,6 +669,28 @@ function createTestHarness(options?: {
             const focus = intent.payload.focus ?? true;
             viewManager.setActiveWorkspace(workspacePath, focus);
             return { resolvedPath: workspacePath };
+          },
+        },
+      },
+      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
+        get: {
+          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
+            const path = viewManager.getActiveWorkspacePath();
+            if (!path) return { workspaceRef: null };
+            const name = extractWorkspaceName(path);
+            // Find the project that owns this workspace
+            const project = projectState.registeredProjects.find((p) =>
+              p.workspaces.some((w) => w.path === path)
+            );
+            return {
+              workspaceRef: project
+                ? {
+                    projectId: testProjectId(project.path),
+                    workspaceName: name as WorkspaceName,
+                    path,
+                  }
+                : null,
+            };
           },
         },
       },
