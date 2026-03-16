@@ -414,6 +414,35 @@ describe("Config", () => {
     });
   });
 
+  describe("getHelpText", () => {
+    it("returns help text with registered keys", () => {
+      const svc = createService();
+      svc.register("test.key", { ...stringDef("test.key", "hello"), description: "A test key" });
+      svc.load();
+
+      const text = svc.getHelpText();
+      expect(text).toContain("test.key");
+      expect(text).toContain("hello");
+      expect(text).toContain("A test key");
+    });
+
+    it("returns help text with defaults even after failed load", () => {
+      const svc = createService({ env: { CH_TEST__FLAG: "invalid" } });
+      svc.register("test.flag", {
+        ...boolDef("test.flag", false),
+        description: "A flag",
+        validValues: "true|false",
+      });
+
+      expect(() => svc.load()).toThrow(ConfigValidationError);
+
+      const text = svc.getHelpText();
+      expect(text).toContain("test.flag");
+      expect(text).toContain("false");
+      expect(text).toContain("A flag");
+    });
+  });
+
   describe("getDefinitions + getEffective", () => {
     it("returns all registered definitions", () => {
       const svc = createService();
