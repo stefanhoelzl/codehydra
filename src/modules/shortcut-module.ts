@@ -22,14 +22,14 @@ import type { WindowBoundary } from "../boundaries/shell/window/window";
 import type { ViewHandle } from "../boundaries/shell/types";
 import type { WindowManager } from "../boundaries/shell/window/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import {
   EVENT_WORKSPACE_CREATED,
   type WorkspaceCreatedEvent,
-} from "../intents/operations/open-workspace";
-import { INTENT_SET_MODE, type SetModeIntent } from "../intents/operations/set-mode";
-import { INTENT_SHORTCUT_KEY, type ShortcutKeyIntent } from "../intents/operations/shortcut-key";
+} from "../intents/open-workspace";
+import { INTENT_SET_MODE, type SetModeIntent } from "../intents/set-mode";
+import { INTENT_SHORTCUT_KEY, type ShortcutKeyIntent } from "../intents/shortcut-key";
 
 type ShortcutActivationState = "NORMAL" | "ALT_WAITING";
 

@@ -10,8 +10,8 @@ import type { IntentModule } from "../intents/lib/module";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
 import type { Logger } from "../boundaries/platform/logging/types";
-import type { InitResult, ExtensionRequirement } from "../intents/operations/app-start";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
+import type { InitResult, ExtensionRequirement } from "../intents/app-start";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/errors/service-errors";
 

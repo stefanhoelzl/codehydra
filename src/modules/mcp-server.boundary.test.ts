@@ -15,37 +15,37 @@ import type { OperationContext, Operation } from "../intents/lib/operation";
 import {
   INTENT_GET_WORKSPACE_STATUS,
   GET_WORKSPACE_STATUS_OPERATION_ID,
-} from "../intents/operations/get-workspace-status";
-import { INTENT_GET_METADATA, GET_METADATA_OPERATION_ID } from "../intents/operations/get-metadata";
-import { INTENT_SET_METADATA, SET_METADATA_OPERATION_ID } from "../intents/operations/set-metadata";
+} from "../intents/get-workspace-status";
+import { INTENT_GET_METADATA, GET_METADATA_OPERATION_ID } from "../intents/get-metadata";
+import { INTENT_SET_METADATA, SET_METADATA_OPERATION_ID } from "../intents/set-metadata";
 import {
   INTENT_GET_AGENT_SESSION,
   GET_AGENT_SESSION_OPERATION_ID,
-} from "../intents/operations/get-agent-session";
+} from "../intents/get-agent-session";
 import {
   INTENT_RESTART_AGENT,
   RESTART_AGENT_OPERATION_ID,
-} from "../intents/operations/restart-agent";
+} from "../intents/restart-agent";
 import {
   INTENT_LIST_PROJECTS,
   LIST_PROJECTS_OPERATION_ID,
-} from "../intents/operations/list-projects";
+} from "../intents/list-projects";
 import {
   INTENT_OPEN_WORKSPACE,
   OPEN_WORKSPACE_OPERATION_ID,
-} from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import {
   INTENT_VSCODE_COMMAND,
   VSCODE_COMMAND_OPERATION_ID,
-} from "../intents/operations/vscode-command";
+} from "../intents/vscode-command";
 import {
   INTENT_VSCODE_SHOW_MESSAGE,
   VSCODE_SHOW_MESSAGE_OPERATION_ID,
-} from "../intents/operations/vscode-show-message";
+} from "../intents/vscode-show-message";
 
 /**
  * Find a free port for testing.

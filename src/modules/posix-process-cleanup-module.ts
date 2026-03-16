@@ -19,7 +19,7 @@ import {
   type DeleteWorkspaceIntent,
   type DeletePipelineHookInput,
   type ReleaseHookResult,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 
 /** Detected process info from lsof. */
 export interface DetectedProcess {

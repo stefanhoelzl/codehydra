@@ -17,17 +17,17 @@ import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-} from "../../intents/operations/app-start";
+} from "../../intents/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
-} from "../../intents/operations/app-shutdown";
-import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/operations/open-project";
+} from "../../intents/app-shutdown";
+import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
-} from "../../intents/operations/open-workspace";
+} from "../../intents/open-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
@@ -35,21 +35,21 @@ import {
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
   type WorkspaceDeleteFailedEvent,
-} from "../../intents/operations/delete-workspace";
+} from "../../intents/delete-workspace";
 import {
   INTENT_RESOLVE_WORKSPACE,
   type ResolveWorkspaceIntent,
-} from "../../intents/operations/resolve-workspace";
+} from "../../intents/resolve-workspace";
 import {
   INTENT_GET_PROJECT_BASES,
   type GetProjectBasesIntent,
   type GetProjectBasesResult,
-} from "../../intents/operations/get-project-bases";
-import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/operations/set-metadata";
+} from "../../intents/get-project-bases";
+import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import {
   INTENT_LIST_PROJECTS,
   type ListProjectsIntent,
-} from "../../intents/operations/list-projects";
+} from "../../intents/list-projects";
 import {
   createFileSystemMock,
   file,

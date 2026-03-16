@@ -37,19 +37,19 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-} from "../intents/operations/app-start";
-import type { BinaryHookInput, ExtensionsHookInput } from "../intents/operations/setup";
-import type { FinalizeHookInput } from "../intents/operations/open-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/operations/delete-workspace";
+} from "../intents/app-start";
+import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";
+import type { FinalizeHookInput } from "../intents/open-workspace";
+import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type {
   DeleteHookResult,
   DeletePipelineHookInput,
-} from "../intents/operations/delete-workspace";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
-import { SETUP_OPERATION_ID } from "../intents/operations/setup";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/operations/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { SETUP_OPERATION_ID } from "../intents/setup";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { OPENCODE_VERSION } from "./agent-module/opencode/setup-info";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
 import { Path } from "../utils/path/path";

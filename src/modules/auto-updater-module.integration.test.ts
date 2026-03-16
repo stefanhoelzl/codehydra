@@ -18,21 +18,21 @@ import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-} from "../intents/operations/app-start";
+} from "../intents/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
-} from "../intents/operations/app-shutdown";
+} from "../intents/app-shutdown";
 import {
   INTENT_UPDATE_AVAILABLE,
   type UpdateAvailableIntent,
-} from "../intents/operations/update-available";
+} from "../intents/update-available";
 import {
   UpdateApplyOperation,
   INTENT_UPDATE_APPLY,
   type UpdateApplyIntent,
-} from "../intents/operations/update-apply";
+} from "../intents/update-apply";
 import { createAutoUpdaterModule } from "./auto-updater-module";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";

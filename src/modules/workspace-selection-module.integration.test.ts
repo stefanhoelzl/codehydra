@@ -18,33 +18,33 @@ import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
   EVENT_WORKSPACE_SWITCHED,
-} from "../intents/operations/switch-workspace";
+} from "../intents/switch-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
   FindCandidatesHookResult,
   WorkspaceCandidate,
   WorkspaceSwitchedEvent,
-} from "../intents/operations/switch-workspace";
-import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/operations/switch-workspace";
+} from "../intents/switch-workspace";
+import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import {
   ResolveWorkspaceOperation,
   RESOLVE_WORKSPACE_OPERATION_ID,
   INTENT_RESOLVE_WORKSPACE,
-} from "../intents/operations/resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../intents/operations/resolve-workspace";
+} from "../intents/resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../intents/resolve-workspace";
 import {
   ResolveProjectOperation,
   RESOLVE_PROJECT_OPERATION_ID,
   INTENT_RESOLVE_PROJECT,
-} from "../intents/operations/resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/operations/resolve-project";
+} from "../intents/resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/resolve-project";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import { createWorkspaceSelectionModule } from "./workspace-selection-module";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/operations/update-agent-status";
-import type { AgentStatusUpdatedEvent } from "../intents/operations/update-agent-status";
+import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
+import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";

@@ -19,7 +19,7 @@ import {
   type DetectHookResult,
   type FlushHookResult,
   type FlushHookInput,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import { createWindowsFileLockModule } from "./windows-file-lock-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";

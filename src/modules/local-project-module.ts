@@ -31,25 +31,25 @@ import {
   type ResolveHookResult,
   type RegisterHookInput,
   type RegisterHookResult,
-} from "../intents/operations/open-project";
+} from "../intents/open-project";
 import {
   CLOSE_PROJECT_OPERATION_ID,
   type CloseProjectIntent,
   type CloseResolveHookResult,
   type CloseHookInput,
   type CloseHookResult,
-} from "../intents/operations/close-project";
-import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/operations/app-ready";
+} from "../intents/close-project";
+import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/app-ready";
 import {
   RESOLVE_PROJECT_OPERATION_ID,
   type ResolveHookInput as ResolveProjectHookInput,
   type ResolveHookResult as ResolveProjectHookResult,
-} from "../intents/operations/resolve-project";
+} from "../intents/resolve-project";
 import {
   LIST_PROJECTS_OPERATION_ID,
   type ListProjectsHookResult,
   type ListProjectsHookEntry,
-} from "../intents/operations/list-projects";
+} from "../intents/list-projects";
 
 // =============================================================================
 // Types

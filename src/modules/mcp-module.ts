@@ -26,8 +26,8 @@ import { createOpencodeClient } from "@opencode-ai/sdk";
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { PortManager } from "../boundaries/platform/network/network";
 import type { Logger, LogContext } from "../boundaries/platform/logging";
 import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
@@ -42,26 +42,26 @@ import {
 } from "../shared/api/types";
 
 // Intent types for direct dispatch
-import { INTENT_GET_WORKSPACE_STATUS } from "../intents/operations/get-workspace-status";
-import type { GetWorkspaceStatusIntent } from "../intents/operations/get-workspace-status";
-import { INTENT_GET_METADATA } from "../intents/operations/get-metadata";
-import type { GetMetadataIntent } from "../intents/operations/get-metadata";
-import { INTENT_SET_METADATA } from "../intents/operations/set-metadata";
-import type { SetMetadataIntent } from "../intents/operations/set-metadata";
-import { INTENT_GET_AGENT_SESSION } from "../intents/operations/get-agent-session";
-import type { GetAgentSessionIntent } from "../intents/operations/get-agent-session";
-import { INTENT_RESTART_AGENT } from "../intents/operations/restart-agent";
-import type { RestartAgentIntent } from "../intents/operations/restart-agent";
-import { INTENT_OPEN_WORKSPACE } from "../intents/operations/open-workspace";
-import type { OpenWorkspaceIntent } from "../intents/operations/open-workspace";
-import { INTENT_DELETE_WORKSPACE } from "../intents/operations/delete-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/operations/delete-workspace";
-import { INTENT_LIST_PROJECTS } from "../intents/operations/list-projects";
-import type { ListProjectsIntent } from "../intents/operations/list-projects";
-import { INTENT_VSCODE_SHOW_MESSAGE } from "../intents/operations/vscode-show-message";
-import type { VscodeShowMessageIntent } from "../intents/operations/vscode-show-message";
-import { INTENT_VSCODE_COMMAND } from "../intents/operations/vscode-command";
-import type { VscodeCommandIntent } from "../intents/operations/vscode-command";
+import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
+import { INTENT_GET_METADATA } from "../intents/get-metadata";
+import type { GetMetadataIntent } from "../intents/get-metadata";
+import { INTENT_SET_METADATA } from "../intents/set-metadata";
+import type { SetMetadataIntent } from "../intents/set-metadata";
+import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
+import type { GetAgentSessionIntent } from "../intents/get-agent-session";
+import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
+import type { RestartAgentIntent } from "../intents/restart-agent";
+import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
+import type { OpenWorkspaceIntent } from "../intents/open-workspace";
+import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
+import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
+import type { ListProjectsIntent } from "../intents/list-projects";
+import { INTENT_VSCODE_SHOW_MESSAGE } from "../intents/vscode-show-message";
+import type { VscodeShowMessageIntent } from "../intents/vscode-show-message";
+import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
+import type { VscodeCommandIntent } from "../intents/vscode-command";
 
 // =============================================================================
 // MCP Type Definitions

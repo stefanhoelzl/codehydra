@@ -8,10 +8,10 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
-import type { InitHookContext } from "../intents/operations/app-start";
+import type { InitHookContext } from "../intents/app-start";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
 import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { Path } from "../utils/path/path";
 
 // =============================================================================

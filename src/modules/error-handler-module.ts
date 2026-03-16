@@ -20,7 +20,7 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Logger } from "../boundaries/platform/logging/types";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 
 // =============================================================================
 // Dependencies

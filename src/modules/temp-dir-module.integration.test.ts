@@ -10,8 +10,8 @@ import { describe, it, expect, vi } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
-import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import type { AppStartIntent } from "../intents/operations/app-start";
+import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
+import type { AppStartIntent } from "../intents/app-start";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { createTempDirModule, type TempDirModuleDeps } from "./temp-dir-module";
 import { createMockPathProvider } from "../boundaries/platform/env/path-provider.test-utils";

@@ -22,43 +22,43 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
-} from "../intents/operations/update-agent-status";
-import type { UpdateAgentStatusIntent } from "../intents/operations/update-agent-status";
+} from "../intents/update-agent-status";
+import type { UpdateAgentStatusIntent } from "../intents/update-agent-status";
 import {
   ResolveWorkspaceOperation,
   RESOLVE_WORKSPACE_OPERATION_ID,
   INTENT_RESOLVE_WORKSPACE,
-} from "../intents/operations/resolve-workspace";
+} from "../intents/resolve-workspace";
 import type {
   ResolveHookResult as ResolveWorkspaceHookResult,
   ResolveHookInput as ResolveWorkspaceHookInput,
-} from "../intents/operations/resolve-workspace";
+} from "../intents/resolve-workspace";
 import {
   ResolveProjectOperation,
   RESOLVE_PROJECT_OPERATION_ID,
   INTENT_RESOLVE_PROJECT,
-} from "../intents/operations/resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/operations/resolve-project";
+} from "../intents/resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/resolve-project";
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
   DELETE_WORKSPACE_OPERATION_ID,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   WorkspaceDeletedEvent,
   WorkspaceDeletionProgressEvent,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
-} from "../intents/operations/app-shutdown";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
+} from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { Operation, OperationContext } from "../intents/lib/operation";
-import { SetupOperation, INTENT_SETUP } from "../intents/operations/setup";
-import type { SetupIntent } from "../intents/operations/setup";
+import { SetupOperation, INTENT_SETUP } from "../intents/setup";
+import type { SetupIntent } from "../intents/setup";
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
 import { createMockLogging } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
@@ -67,7 +67,7 @@ import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "
 import {
   EVENT_SHORTCUT_KEY_PRESSED,
   type ShortcutKeyPressedEvent,
-} from "../intents/operations/shortcut-key";
+} from "../intents/shortcut-key";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {

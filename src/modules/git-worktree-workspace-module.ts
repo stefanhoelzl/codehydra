@@ -27,42 +27,42 @@ import type {
   OpenWorkspaceIntent,
   CreateHookInput,
   CreateHookResult,
-} from "../intents/operations/open-workspace";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import type {
   ListBasesHookInput,
   ListBasesHookResult,
   RefreshBasesHookInput,
-} from "../intents/operations/get-project-bases";
-import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/operations/get-project-bases";
-import type { DeleteWorkspaceIntent } from "../intents/operations/delete-workspace";
+} from "../intents/get-project-bases";
+import { GET_PROJECT_BASES_OPERATION_ID } from "../intents/get-project-bases";
+import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type {
   DeleteHookResult,
   DeletePipelineHookInput,
   PreflightHookResult,
-} from "../intents/operations/delete-workspace";
-import type { DiscoverHookResult, DiscoverHookInput } from "../intents/operations/open-project";
-import type { CloseHookInput } from "../intents/operations/close-project";
-import { OPEN_PROJECT_OPERATION_ID } from "../intents/operations/open-project";
-import { CLOSE_PROJECT_OPERATION_ID } from "../intents/operations/close-project";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/operations/delete-workspace";
-import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/operations/switch-workspace";
-import type { FindCandidatesHookResult } from "../intents/operations/switch-workspace";
+} from "../intents/delete-workspace";
+import type { DiscoverHookResult, DiscoverHookInput } from "../intents/open-project";
+import type { CloseHookInput } from "../intents/close-project";
+import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
+import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
+import type { FindCandidatesHookResult } from "../intents/switch-workspace";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
   type ResolveHookInput,
   type ResolveHookResult,
-} from "../intents/operations/resolve-workspace";
+} from "../intents/resolve-workspace";
 import {
   GET_WORKSPACE_STATUS_OPERATION_ID,
   type GetStatusHookInput,
   type GetStatusHookResult,
-} from "../intents/operations/get-workspace-status";
+} from "../intents/get-workspace-status";
 import {
   LIST_PROJECTS_OPERATION_ID,
   type ListWorkspacesHookResult,
   type ListWorkspacesHookEntry,
-} from "../intents/operations/list-projects";
+} from "../intents/list-projects";
 import { extractWorkspaceName } from "../shared/api/id-utils";
 import { Path } from "../utils/path/path";
 import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
@@ -70,7 +70,7 @@ import type { DomainEvent } from "../intents/lib/types";
 import {
   EVENT_METADATA_CHANGED,
   type MetadataChangedEvent,
-} from "../intents/operations/set-metadata";
+} from "../intents/set-metadata";
 
 // =============================================================================
 // Hook Result Types

@@ -18,19 +18,19 @@ import {
 import { createMockPathProvider } from "../boundaries/platform/env/path-provider.test-utils";
 import { createFileSystemMock } from "../boundaries/platform/filesystem/filesystem.state-mock";
 import { createRemoteProjectModule } from "./remote-project-module";
-import { OPEN_PROJECT_OPERATION_ID } from "../intents/operations/open-project";
+import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import type {
   ResolveHookResult,
   ResolveHookInput,
   OpenProjectIntent,
   CloneProgressReporter,
-} from "../intents/operations/open-project";
-import { CLOSE_PROJECT_OPERATION_ID } from "../intents/operations/close-project";
+} from "../intents/open-project";
+import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import type {
   CloseHookInput,
   CloseHookResult,
   CloseProjectIntent,
-} from "../intents/operations/close-project";
+} from "../intents/close-project";
 import { Path } from "../utils/path/path";
 import { extractRepoName } from "../utils/url-utils";
 import type { ProjectId } from "../shared/api/types";

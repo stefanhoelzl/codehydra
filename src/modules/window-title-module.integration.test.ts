@@ -16,10 +16,10 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 import {
   UpdateAvailableOperation,
   INTENT_UPDATE_AVAILABLE,
-} from "../intents/operations/update-available";
-import type { UpdateAvailableIntent } from "../intents/operations/update-available";
-import { EVENT_WORKSPACE_SWITCHED } from "../intents/operations/switch-workspace";
-import type { WorkspaceSwitchedEvent } from "../intents/operations/switch-workspace";
+} from "../intents/update-available";
+import type { UpdateAvailableIntent } from "../intents/update-available";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
+import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { Intent } from "../intents/lib/types";
@@ -27,7 +27,7 @@ import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-} from "../intents/operations/app-start";
+} from "../intents/app-start";
 import { createWindowTitleModule } from "./window-title-module";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 

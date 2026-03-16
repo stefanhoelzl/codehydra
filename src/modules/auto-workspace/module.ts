@@ -19,12 +19,12 @@
 import type { IntentModule } from "../../intents/lib/module";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type { DomainEvent } from "../../intents/lib/types";
-import { APP_START_OPERATION_ID } from "../../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/operations/app-shutdown";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
-} from "../../intents/operations/open-workspace";
+} from "../../intents/open-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
@@ -32,22 +32,22 @@ import {
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
   type WorkspaceDeleteFailedEvent,
-} from "../../intents/operations/delete-workspace";
+} from "../../intents/delete-workspace";
 import {
   INTENT_RESOLVE_WORKSPACE,
   type ResolveWorkspaceIntent,
-} from "../../intents/operations/resolve-workspace";
+} from "../../intents/resolve-workspace";
 import {
   INTENT_GET_PROJECT_BASES,
   type GetProjectBasesIntent,
-} from "../../intents/operations/get-project-bases";
-import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/operations/open-project";
+} from "../../intents/get-project-bases";
+import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
 import {
   INTENT_LIST_PROJECTS,
   type ListProjectsIntent,
-} from "../../intents/operations/list-projects";
+} from "../../intents/list-projects";
 import type { Config } from "../../boundaries/platform/config/config";
-import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/operations/set-metadata";
+import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import { configPath } from "../../boundaries/platform/config/config-definition";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem/filesystem";
 import type { Logger } from "../../boundaries/platform/logging/types";

@@ -54,41 +54,41 @@ import {
   validateWorkspaceCreateRequest,
   validateLogRequest,
 } from "../shared/plugin-protocol";
-import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/operations/open-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/operations/delete-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
+import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type {
   DeleteHookResult,
   DeletePipelineHookInput,
-} from "../intents/operations/delete-workspace";
-import type { GetWorkspaceStatusIntent } from "../intents/operations/get-workspace-status";
-import type { GetAgentSessionIntent } from "../intents/operations/get-agent-session";
-import type { RestartAgentIntent } from "../intents/operations/restart-agent";
-import type { GetMetadataIntent } from "../intents/operations/get-metadata";
-import type { SetMetadataIntent } from "../intents/operations/set-metadata";
-import type { ResolveWorkspaceIntent } from "../intents/operations/resolve-workspace";
-import type { VscodeShowMessageIntent } from "../intents/operations/vscode-show-message";
-import type { ShowHookInput, ShowHookResult } from "../intents/operations/vscode-show-message";
-import type { VscodeCommandIntent } from "../intents/operations/vscode-command";
-import type { ExecuteHookInput, ExecuteHookResult } from "../intents/operations/vscode-command";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
+} from "../intents/delete-workspace";
+import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
+import type { GetAgentSessionIntent } from "../intents/get-agent-session";
+import type { RestartAgentIntent } from "../intents/restart-agent";
+import type { GetMetadataIntent } from "../intents/get-metadata";
+import type { SetMetadataIntent } from "../intents/set-metadata";
+import type { ResolveWorkspaceIntent } from "../intents/resolve-workspace";
+import type { VscodeShowMessageIntent } from "../intents/vscode-show-message";
+import type { ShowHookInput, ShowHookResult } from "../intents/vscode-show-message";
+import type { VscodeCommandIntent } from "../intents/vscode-command";
+import type { ExecuteHookInput, ExecuteHookResult } from "../intents/vscode-command";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   INTENT_OPEN_WORKSPACE,
-} from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,
-} from "../intents/operations/delete-workspace";
-import { INTENT_GET_WORKSPACE_STATUS } from "../intents/operations/get-workspace-status";
-import { INTENT_GET_AGENT_SESSION } from "../intents/operations/get-agent-session";
-import { INTENT_RESTART_AGENT } from "../intents/operations/restart-agent";
-import { INTENT_GET_METADATA } from "../intents/operations/get-metadata";
-import { INTENT_SET_METADATA } from "../intents/operations/set-metadata";
-import { INTENT_RESOLVE_WORKSPACE } from "../intents/operations/resolve-workspace";
-import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../intents/operations/vscode-show-message";
-import { VSCODE_COMMAND_OPERATION_ID } from "../intents/operations/vscode-command";
-import { INTENT_VSCODE_COMMAND } from "../intents/operations/vscode-command";
+} from "../intents/delete-workspace";
+import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
+import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
+import { INTENT_GET_METADATA } from "../intents/get-metadata";
+import { INTENT_SET_METADATA } from "../intents/set-metadata";
+import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
+import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../intents/vscode-show-message";
+import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
+import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
 

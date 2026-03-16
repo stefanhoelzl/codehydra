@@ -18,15 +18,15 @@ import {
   INTENT_APP_START,
   APP_START_OPERATION_ID,
   type AppStartIntent,
-} from "../intents/operations/app-start";
-import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
-import { INTENT_SHORTCUT_KEY, ShortcutKeyOperation } from "../intents/operations/shortcut-key";
+} from "../intents/app-start";
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
+import { INTENT_SHORTCUT_KEY, ShortcutKeyOperation } from "../intents/shortcut-key";
 import {
   EVENT_WORKSPACE_CREATED,
   type WorkspaceCreatedEvent,
-} from "../intents/operations/open-workspace";
-import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/operations/set-mode";
+} from "../intents/open-workspace";
+import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";
 import type { ViewHandle, WindowHandle } from "../boundaries/shell/types";

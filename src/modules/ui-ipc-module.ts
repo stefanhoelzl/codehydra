@@ -28,83 +28,83 @@ import type { Logger, Logging, LoggerName, LogContext } from "../boundaries/plat
 import type { ApiLogPayload } from "../shared/ipc";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc/ipc";
 import type { IViewManager } from "../boundaries/shell/view/view-manager.interface";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type {
   MetadataChangedPayload,
   MetadataChangedEvent,
-} from "../intents/operations/set-metadata";
-import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../intents/operations/set-metadata";
-import type { SetMetadataIntent } from "../intents/operations/set-metadata";
-import type { ModeChangedPayload, ModeChangedEvent } from "../intents/operations/set-mode";
-import { EVENT_MODE_CHANGED, INTENT_SET_MODE } from "../intents/operations/set-mode";
-import type { SetModeIntent } from "../intents/operations/set-mode";
-import type { WorkspaceCreatedEvent } from "../intents/operations/open-workspace";
+} from "../intents/set-metadata";
+import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../intents/set-metadata";
+import type { SetMetadataIntent } from "../intents/set-metadata";
+import type { ModeChangedPayload, ModeChangedEvent } from "../intents/set-mode";
+import { EVENT_MODE_CHANGED, INTENT_SET_MODE } from "../intents/set-mode";
+import type { SetModeIntent } from "../intents/set-mode";
+import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
 import {
   EVENT_WORKSPACE_CREATED,
   INTENT_OPEN_WORKSPACE,
-} from "../intents/operations/open-workspace";
-import type { OpenWorkspaceIntent } from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
+import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import type {
   WorkspaceDeletedEvent,
   WorkspaceDeletionProgressEvent,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
   INTENT_DELETE_WORKSPACE,
-} from "../intents/operations/delete-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type {
   ProjectOpenedEvent,
   CloneProgressEvent,
   ProjectOpenFailedEvent,
-} from "../intents/operations/open-project";
+} from "../intents/open-project";
 import {
   EVENT_PROJECT_OPENED,
   EVENT_CLONE_PROGRESS,
   EVENT_PROJECT_OPEN_FAILED,
   INTENT_OPEN_PROJECT,
-} from "../intents/operations/open-project";
-import type { OpenProjectIntent } from "../intents/operations/open-project";
-import type { ProjectClosedEvent } from "../intents/operations/close-project";
-import { EVENT_PROJECT_CLOSED, INTENT_CLOSE_PROJECT } from "../intents/operations/close-project";
-import type { CloseProjectIntent } from "../intents/operations/close-project";
-import type { WorkspaceSwitchedEvent } from "../intents/operations/switch-workspace";
+} from "../intents/open-project";
+import type { OpenProjectIntent } from "../intents/open-project";
+import type { ProjectClosedEvent } from "../intents/close-project";
+import { EVENT_PROJECT_CLOSED, INTENT_CLOSE_PROJECT } from "../intents/close-project";
+import type { CloseProjectIntent } from "../intents/close-project";
+import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import {
   EVENT_WORKSPACE_SWITCHED,
   INTENT_SWITCH_WORKSPACE,
-} from "../intents/operations/switch-workspace";
-import type { SwitchWorkspaceIntent } from "../intents/operations/switch-workspace";
-import type { AgentStatusUpdatedEvent } from "../intents/operations/update-agent-status";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/operations/update-agent-status";
-import type { BasesUpdatedEvent } from "../intents/operations/get-project-bases";
+} from "../intents/switch-workspace";
+import type { SwitchWorkspaceIntent } from "../intents/switch-workspace";
+import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
+import type { BasesUpdatedEvent } from "../intents/get-project-bases";
 import {
   EVENT_BASES_UPDATED,
   INTENT_GET_PROJECT_BASES,
-} from "../intents/operations/get-project-bases";
-import type { ShortcutKeyPressedEvent } from "../intents/operations/shortcut-key";
-import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/operations/shortcut-key";
+} from "../intents/get-project-bases";
+import type { ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { isShortcutKey } from "../shared/shortcuts";
-import type { GetProjectBasesIntent } from "../intents/operations/get-project-bases";
-import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../intents/operations/setup";
-import type { SetupErrorEvent, SetupProgressEvent } from "../intents/operations/setup";
-import { EVENT_UPDATE_PROGRESS } from "../intents/operations/update-apply";
-import type { UpdateProgressEvent } from "../intents/operations/update-apply";
+import type { GetProjectBasesIntent } from "../intents/get-project-bases";
+import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../intents/setup";
+import type { SetupErrorEvent, SetupProgressEvent } from "../intents/setup";
+import { EVENT_UPDATE_PROGRESS } from "../intents/update-apply";
+import type { UpdateProgressEvent } from "../intents/update-apply";
 import type { WorkspaceStatus, Workspace } from "../shared/api/types";
-import { INTENT_GET_METADATA } from "../intents/operations/get-metadata";
-import type { GetMetadataIntent } from "../intents/operations/get-metadata";
-import { INTENT_GET_WORKSPACE_STATUS } from "../intents/operations/get-workspace-status";
-import type { GetWorkspaceStatusIntent } from "../intents/operations/get-workspace-status";
-import { INTENT_GET_AGENT_SESSION } from "../intents/operations/get-agent-session";
-import type { GetAgentSessionIntent } from "../intents/operations/get-agent-session";
-import { INTENT_RESTART_AGENT } from "../intents/operations/restart-agent";
-import type { RestartAgentIntent } from "../intents/operations/restart-agent";
-import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/operations/get-active-workspace";
-import type { GetActiveWorkspaceIntent } from "../intents/operations/get-active-workspace";
-import { INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
-import { INTENT_APP_READY } from "../intents/operations/app-ready";
-import type { AppReadyIntent } from "../intents/operations/app-ready";
+import { INTENT_GET_METADATA } from "../intents/get-metadata";
+import type { GetMetadataIntent } from "../intents/get-metadata";
+import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
+import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
+import type { GetAgentSessionIntent } from "../intents/get-agent-session";
+import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
+import type { RestartAgentIntent } from "../intents/restart-agent";
+import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
+import type { GetActiveWorkspaceIntent } from "../intents/get-active-workspace";
+import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
+import { INTENT_APP_READY } from "../intents/app-ready";
+import type { AppReadyIntent } from "../intents/app-ready";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { Path } from "../utils/path/path";
 

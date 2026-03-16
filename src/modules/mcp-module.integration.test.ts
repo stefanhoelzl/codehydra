@@ -10,14 +10,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
-import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import type { AppStartIntent } from "../intents/operations/app-start";
+import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
+import type { AppStartIntent } from "../intents/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
-} from "../intents/operations/app-shutdown";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
+} from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { McpServerManager, createMcpModule } from "./mcp-module";

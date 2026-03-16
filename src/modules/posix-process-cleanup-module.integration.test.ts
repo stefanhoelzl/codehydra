@@ -15,7 +15,7 @@ import {
   DELETE_WORKSPACE_OPERATION_ID,
   type DeleteWorkspaceIntent,
   type ReleaseHookResult,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import {
   createPosixProcessCleanupModule,
   detectCwdProcesses,

@@ -13,10 +13,10 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type { WorkspaceSwitchedEvent } from "../intents/operations/switch-workspace";
-import { EVENT_WORKSPACE_SWITCHED } from "../intents/operations/switch-workspace";
-import { EVENT_UPDATE_AVAILABLE } from "../intents/operations/update-available";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
+import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
+import { EVENT_UPDATE_AVAILABLE } from "../intents/update-available";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { WindowManager } from "../boundaries/shell/window/window-manager";
 /**
  * Formats the window title based on current workspace.

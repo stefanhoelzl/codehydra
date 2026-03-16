@@ -1,0 +1,355 @@
+// @vitest-environment node
+/**
+ * Integration tests for get-workspace-status operation through the Dispatcher.
+ *
+ * Tests verify the full dispatch pipeline: intent -> operation -> hooks -> result,
+ * using the 2-stage hook pipeline: resolve → get.
+ *
+ * Test plan items covered:
+ * #1: get-workspace-status returns dirty + agent status
+ * #2: get-workspace-status returns none agent when no manager
+ */
+
+import { describe, it, expect, beforeEach } from "vitest";
+import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
+import { Dispatcher } from "./lib/dispatcher";
+import type { IntentInterceptor } from "./lib/dispatcher";
+
+import {
+  GetWorkspaceStatusOperation,
+  GET_WORKSPACE_STATUS_OPERATION_ID,
+  INTENT_GET_WORKSPACE_STATUS,
+} from "./get-workspace-status";
+import type {
+  GetWorkspaceStatusIntent,
+  GetStatusHookResult,
+  GetStatusHookInput,
+} from "./get-workspace-status";
+import {
+  ResolveWorkspaceOperation,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  INTENT_RESOLVE_WORKSPACE,
+} from "./resolve-workspace";
+import type { ResolveHookResult } from "./resolve-workspace";
+import type { IntentModule } from "./lib/module";
+import type { HookContext } from "./lib/operation";
+import type { Intent } from "./lib/types";
+import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
+import type { AggregatedAgentStatus } from "../shared/ipc";
+import { extractWorkspaceName } from "../shared/api/id-utils";
+import { Path } from "../utils/path/path";
+
+// =============================================================================
+// Test Constants
+// =============================================================================
+
+const PROJECT_ROOT = "/project";
+const WORKSPACE_PATH = "/workspaces/feature-x";
+
+// =============================================================================
+// Behavioral Mocks
+// =============================================================================
+
+interface MockWorkspaceProvider {
+  isDirtyMap: Map<string, boolean>;
+  isDirty(workspacePath: Path): Promise<boolean>;
+}
+
+function createMockWorkspaceProvider(entries: Record<string, boolean> = {}): MockWorkspaceProvider {
+  const isDirtyMap = new Map(Object.entries(entries));
+  return {
+    isDirtyMap,
+    isDirty: async (workspacePath: Path) => isDirtyMap.get(workspacePath.toString()) ?? false,
+  };
+}
+
+// =============================================================================
+// Test Setup
+// =============================================================================
+
+interface TestSetup {
+  dispatcher: Dispatcher;
+  workspaceName: WorkspaceName;
+}
+
+function createTestSetup(opts: {
+  workspaceProvider?: MockWorkspaceProvider | null;
+  agentStatus?: AggregatedAgentStatus | null;
+}): TestSetup {
+  const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+
+  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+  dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+
+  // resolve module: validates workspacePath → returns projectPath + workspaceName
+  const resolveModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const intent = ctx.intent as { payload: { workspacePath: string } };
+            if (intent.payload.workspacePath === WORKSPACE_PATH) {
+              return { projectPath: PROJECT_ROOT, workspaceName };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  // get module: returns isDirty from mock provider (reads workspacePath from enriched context)
+  const getStatusModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        get: {
+          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
+            const { workspacePath } = ctx as GetStatusHookInput;
+            const provider = opts.workspaceProvider;
+            const isDirty = provider ? await provider.isDirty(new Path(workspacePath)) : false;
+            return { isDirty };
+          },
+        },
+      },
+    },
+  };
+
+  // agent status module: returns agentStatus directly from test data
+  const agentStatusModule: IntentModule = {
+    name: "test",
+    hooks: {
+      [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+        get: {
+          handler: async (): Promise<GetStatusHookResult> => {
+            const status = opts.agentStatus;
+            if (status) {
+              return { agentStatus: status };
+            }
+            return {};
+          },
+        },
+      },
+    },
+  };
+
+  dispatcher.registerModule(resolveModule);
+  dispatcher.registerModule(getStatusModule);
+  dispatcher.registerModule(agentStatusModule);
+
+  return { dispatcher, workspaceName };
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+function statusIntent(workspacePath: string): GetWorkspaceStatusIntent {
+  return {
+    type: INTENT_GET_WORKSPACE_STATUS,
+    payload: { workspacePath },
+  };
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+describe("GetWorkspaceStatus Operation", () => {
+  describe("dirty + agent status (#1)", () => {
+    let setup: TestSetup;
+
+    beforeEach(() => {
+      setup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({
+          [WORKSPACE_PATH]: true,
+        }),
+        agentStatus: { status: "busy", counts: { idle: 0, busy: 1 } },
+      });
+    });
+
+    it("returns combined dirty + agent status", async () => {
+      const { dispatcher } = setup;
+
+      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_PATH))) as WorkspaceStatus;
+
+      expect(result.isDirty).toBe(true);
+      expect(result.agent).toEqual({
+        type: "busy",
+        counts: { idle: 0, busy: 1, total: 1 },
+      });
+    });
+
+    it("returns not dirty when workspace is clean", async () => {
+      const cleanSetup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({
+          [WORKSPACE_PATH]: false,
+        }),
+        agentStatus: { status: "idle", counts: { idle: 1, busy: 0 } },
+      });
+
+      const result = (await cleanSetup.dispatcher.dispatch(
+        statusIntent(WORKSPACE_PATH)
+      )) as WorkspaceStatus;
+
+      expect(result.isDirty).toBe(false);
+      expect(result.agent).toEqual({
+        type: "idle",
+        counts: { idle: 1, busy: 0, total: 1 },
+      });
+    });
+  });
+
+  describe("no agent status manager (#2)", () => {
+    it("returns none agent when no manager registered", async () => {
+      const setup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({
+          [WORKSPACE_PATH]: true,
+        }),
+        agentStatus: null,
+      });
+
+      const result = (await setup.dispatcher.dispatch(
+        statusIntent(WORKSPACE_PATH)
+      )) as WorkspaceStatus;
+
+      expect(result.isDirty).toBe(true);
+      expect(result.agent).toEqual({ type: "none" });
+    });
+
+    it("returns none agent when status is none", async () => {
+      const setup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({
+          [WORKSPACE_PATH]: false,
+        }),
+        agentStatus: null,
+      });
+
+      const result = (await setup.dispatcher.dispatch(
+        statusIntent(WORKSPACE_PATH)
+      )) as WorkspaceStatus;
+
+      expect(result.isDirty).toBe(false);
+      expect(result.agent).toEqual({ type: "none" });
+    });
+  });
+
+  describe("unmerged commits (#3)", () => {
+    it("returns unmergedCommits from hook result", async () => {
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+
+      dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
+      dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
+
+      const resolveModule: IntentModule = {
+        name: "test",
+        hooks: {
+          [RESOLVE_WORKSPACE_OPERATION_ID]: {
+            resolve: {
+              handler: async (): Promise<ResolveHookResult> => ({
+                projectPath: PROJECT_ROOT,
+                workspaceName,
+              }),
+            },
+          },
+        },
+      };
+
+      const unmergedModule: IntentModule = {
+        name: "test",
+        hooks: {
+          [GET_WORKSPACE_STATUS_OPERATION_ID]: {
+            get: {
+              handler: async (): Promise<GetStatusHookResult> => ({
+                isDirty: false,
+                unmergedCommits: 3,
+              }),
+            },
+          },
+        },
+      };
+
+      dispatcher.registerModule(resolveModule);
+      dispatcher.registerModule(unmergedModule);
+
+      const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_PATH))) as WorkspaceStatus;
+
+      expect(result.unmergedCommits).toBe(3);
+    });
+
+    it("defaults unmergedCommits to 0 when not provided", async () => {
+      const setup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({
+          [WORKSPACE_PATH]: false,
+        }),
+        agentStatus: null,
+      });
+
+      const result = (await setup.dispatcher.dispatch(
+        statusIntent(WORKSPACE_PATH)
+      )) as WorkspaceStatus;
+
+      expect(result.unmergedCommits).toBe(0);
+    });
+  });
+
+  describe("no workspace provider", () => {
+    it("returns isDirty false when no provider", async () => {
+      const setup = createTestSetup({
+        workspaceProvider: null,
+        agentStatus: null,
+      });
+
+      const result = (await setup.dispatcher.dispatch(
+        statusIntent(WORKSPACE_PATH)
+      )) as WorkspaceStatus;
+
+      expect(result.isDirty).toBe(false);
+      expect(result.agent).toEqual({ type: "none" });
+    });
+  });
+
+  describe("error cases", () => {
+    it("unknown workspace path throws", async () => {
+      const setup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider(),
+        agentStatus: null,
+      });
+
+      const error = await setup.dispatcher
+        .dispatch(statusIntent("/nonexistent/path"))
+        .then(() => expect.unreachable("should have thrown"))
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("Workspace not found: /nonexistent/path");
+    });
+  });
+
+  describe("interceptor", () => {
+    it("cancellation prevents operation execution (#14)", async () => {
+      const setup = createTestSetup({
+        workspaceProvider: createMockWorkspaceProvider({
+          [WORKSPACE_PATH]: true,
+        }),
+        agentStatus: { status: "busy", counts: { idle: 0, busy: 1 } },
+      });
+
+      const cancelInterceptor: IntentInterceptor = {
+        id: "cancel-all",
+        async before(): Promise<Intent | null> {
+          return null;
+        },
+      };
+      setup.dispatcher.addInterceptor(cancelInterceptor);
+
+      const result = await setup.dispatcher.dispatch(statusIntent(WORKSPACE_PATH));
+
+      expect(result).toBeUndefined();
+    });
+  });
+});

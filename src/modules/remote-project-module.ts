@@ -25,10 +25,10 @@ import type {
   OpenProjectIntent,
   ResolveHookResult,
   ResolveHookInput,
-} from "../intents/operations/open-project";
-import { OPEN_PROJECT_OPERATION_ID } from "../intents/operations/open-project";
-import type { CloseHookInput, CloseHookResult } from "../intents/operations/close-project";
-import { CLOSE_PROJECT_OPERATION_ID } from "../intents/operations/close-project";
+} from "../intents/open-project";
+import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import type { CloseHookInput, CloseHookResult } from "../intents/close-project";
+import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 
 // =============================================================================
 // Private Helpers
