@@ -50,6 +50,9 @@
       })
       .finally(() => {
         isCheckingStatus = false;
+        setTimeout(() => {
+          document.querySelector<HTMLElement>(".dialog-actions vscode-button")?.focus();
+        }, 0);
       });
   });
 
@@ -82,14 +85,7 @@
   const descriptionId = "remove-workspace-desc";
 </script>
 
-<Dialog
-  {open}
-  onClose={handleCancel}
-  busy={false}
-  {titleId}
-  {descriptionId}
-  initialFocusSelector="vscode-button"
->
+<Dialog {open} onClose={handleCancel} busy={false} {titleId} {descriptionId}>
   {#snippet title()}
     <h2 id={titleId} class="ch-dialog-title">Remove Workspace</h2>
   {/snippet}
