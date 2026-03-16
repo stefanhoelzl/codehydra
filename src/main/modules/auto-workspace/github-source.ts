@@ -2,6 +2,7 @@ import type { ProcessRunner } from "../../../services/platform/process";
 import type { HttpClient } from "../../../services/platform/network";
 import type { Logger } from "../../../services/logging/types";
 import type { ConfigKeyDefinition } from "../../../services/config/config-definition";
+import { configString } from "../../../services/config/config-definition";
 import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
 import { getErrorMessage } from "../../../shared/error-utils";
 
@@ -30,6 +31,10 @@ interface GitHubRepoDetail {
 
 const GITHUB_API_BASE = "https://api.github.com";
 
+const CONFIG_KEYS = {
+  query: "experimental.github.query",
+} as const;
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -51,6 +56,7 @@ export interface GitHubSourceDeps {
 
 export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource {
   let token: string | null = null;
+  let configQuery: string | null = null;
 
   function githubHeaders(): Readonly<Record<string, string>> {
     return {
@@ -61,7 +67,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
   }
 
   async function fetchSearchResults(): Promise<GitHubSearchItem[]> {
-    const query = encodeURIComponent("is:open is:pr review-requested:@me");
+    const query = encodeURIComponent(configQuery!);
     const url = `${GITHUB_API_BASE}/search/issues?q=${query}&sort=created&order=desc&per_page=100`;
 
     const response = await deps.httpClient.fetch(url, {
@@ -125,15 +131,24 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
     fetchBasesBeforeDelete: true,
 
     configDefinitions(): ConfigKeyDefinition<unknown>[] {
-      return [];
+      return [
+        {
+          name: CONFIG_KEYS.query,
+          default: "is:open is:pr review-requested:@me",
+          description: "GitHub search query (e.g. is:open is:pr review-requested:@me)",
+          ...configString(),
+        },
+      ];
     },
 
-    onConfigUpdated(): void {
-      // No source-specific config keys
+    onConfigUpdated(values: Record<string, unknown>): void {
+      if (CONFIG_KEYS.query in values) {
+        configQuery = values[CONFIG_KEYS.query] as string;
+      }
     },
 
     isConfigured(): boolean {
-      return true;
+      return configQuery !== null;
     },
 
     async initialize(): Promise<boolean> {
@@ -201,6 +216,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
 
     dispose(): void {
       token = null;
+      configQuery = null;
     },
   };
 }
