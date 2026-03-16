@@ -24,10 +24,7 @@ import {
   type AppShutdownIntent,
 } from "../../intents/app-shutdown";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
-import {
-  INTENT_OPEN_WORKSPACE,
-  type OpenWorkspaceIntent,
-} from "../../intents/open-workspace";
+import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
@@ -46,10 +43,7 @@ import {
   type GetProjectBasesResult,
 } from "../../intents/get-project-bases";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import {
-  INTENT_LIST_PROJECTS,
-  type ListProjectsIntent,
-} from "../../intents/list-projects";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import {
   createFileSystemMock,
   file,

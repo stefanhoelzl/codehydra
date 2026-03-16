@@ -56,10 +56,7 @@ import {
 } from "../shared/plugin-protocol";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
-import type {
-  DeleteHookResult,
-  DeletePipelineHookInput,
-} from "../intents/delete-workspace";
+import type { DeleteHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import type { GetAgentSessionIntent } from "../intents/get-agent-session";
 import type { RestartAgentIntent } from "../intents/restart-agent";
@@ -72,10 +69,7 @@ import type { VscodeCommandIntent } from "../intents/vscode-command";
 import type { ExecuteHookInput, ExecuteHookResult } from "../intents/vscode-command";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import {
-  OPEN_WORKSPACE_OPERATION_ID,
-  INTENT_OPEN_WORKSPACE,
-} from "../intents/open-workspace";
+import { OPEN_WORKSPACE_OPERATION_ID, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
   INTENT_DELETE_WORKSPACE,

@@ -17,11 +17,7 @@ import type { Intent } from "../intents/lib/types";
 import type { IntentModule } from "../intents/lib/module";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
-import type {
-  CheckDepsHookContext,
-  CheckDepsResult,
-  ConfigureResult,
-} from "../intents/app-start";
+import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../intents/setup";
 import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";

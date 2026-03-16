@@ -26,11 +26,7 @@ import type {
   CloneProgressReporter,
 } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
-import type {
-  CloseHookInput,
-  CloseHookResult,
-  CloseProjectIntent,
-} from "../intents/close-project";
+import type { CloseHookInput, CloseHookResult, CloseProjectIntent } from "../intents/close-project";
 import { Path } from "../utils/path/path";
 import { extractRepoName } from "../utils/url-utils";
 import type { ProjectId } from "../shared/api/types";

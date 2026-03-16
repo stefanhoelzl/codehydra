@@ -35,11 +35,7 @@ import {
 } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { INTENT_SETUP, SETUP_OPERATION_ID } from "../intents/setup";
-import type {
-  SetupIntent,
-  AgentSelectionHookContext,
-  RegisterAgentResult,
-} from "../intents/setup";
+import type { SetupIntent, AgentSelectionHookContext, RegisterAgentResult } from "../intents/setup";
 import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
 import type { GetActiveWorkspaceIntent } from "../intents/get-active-workspace";
 import { GetActiveWorkspaceOperation } from "../intents/get-active-workspace";
@@ -63,23 +59,14 @@ import type {
   DeletePipelineHookInput,
   ShutdownHookResult,
 } from "../intents/delete-workspace";
-import {
-  INTENT_OPEN_WORKSPACE,
-  EVENT_WORKSPACE_CREATED,
-} from "../intents/open-workspace";
-import type {
-  OpenWorkspaceIntent,
-  WorkspaceCreatedEvent,
-} from "../intents/open-workspace";
+import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
+import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../intents/open-workspace";
 import {
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
   OPEN_PROJECT_OPERATION_ID,
 } from "../intents/open-project";
-import type {
-  ProjectOpenedEvent,
-  SelectFolderHookResult,
-} from "../intents/open-project";
+import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";

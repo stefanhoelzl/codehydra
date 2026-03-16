@@ -11,11 +11,7 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
-import type {
-  AppStartIntent,
-  InitHookContext,
-  ConfigureResult,
-} from "../intents/app-start";
+import type { AppStartIntent, InitHookContext, ConfigureResult } from "../intents/app-start";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { createLoggingModule } from "./logging-module";
 import type { Config } from "../boundaries/platform/config/config";

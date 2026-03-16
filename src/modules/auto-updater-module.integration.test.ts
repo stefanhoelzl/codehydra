@@ -24,10 +24,7 @@ import {
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
 } from "../intents/app-shutdown";
-import {
-  INTENT_UPDATE_AVAILABLE,
-  type UpdateAvailableIntent,
-} from "../intents/update-available";
+import { INTENT_UPDATE_AVAILABLE, type UpdateAvailableIntent } from "../intents/update-available";
 import {
   UpdateApplyOperation,
   INTENT_UPDATE_APPLY,

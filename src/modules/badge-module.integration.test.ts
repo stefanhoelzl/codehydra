@@ -33,14 +33,8 @@ import {
   INTENT_RESOLVE_PROJECT,
 } from "../intents/resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/resolve-project";
-import {
-  EVENT_WORKSPACE_DELETED,
-  INTENT_DELETE_WORKSPACE,
-} from "../intents/delete-workspace";
-import type {
-  DeleteWorkspaceIntent,
-  WorkspaceDeletedEvent,
-} from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_DELETED, INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../intents/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";

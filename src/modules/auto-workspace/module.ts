@@ -21,10 +21,7 @@ import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type { DomainEvent } from "../../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
-import {
-  INTENT_OPEN_WORKSPACE,
-  type OpenWorkspaceIntent,
-} from "../../intents/open-workspace";
+import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
@@ -42,10 +39,7 @@ import {
   type GetProjectBasesIntent,
 } from "../../intents/get-project-bases";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-project";
-import {
-  INTENT_LIST_PROJECTS,
-  type ListProjectsIntent,
-} from "../../intents/list-projects";
+import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import type { Config } from "../../boundaries/platform/config/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import { configPath } from "../../boundaries/platform/config/config-definition";

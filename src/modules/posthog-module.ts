@@ -16,10 +16,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import {
-  EVENT_WORKSPACE_CREATED,
-  type WorkspaceCreatedEvent,
-} from "../intents/open-workspace";
+import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
 import { configBoolean, configString } from "../boundaries/platform/config/config-definition";
 import type { Config } from "../boundaries/platform/config/config";

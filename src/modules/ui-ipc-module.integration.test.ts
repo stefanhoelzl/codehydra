@@ -64,10 +64,7 @@ import { createMockLogging } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../shared/ipc";
-import {
-  EVENT_SHORTCUT_KEY_PRESSED,
-  type ShortcutKeyPressedEvent,
-} from "../intents/shortcut-key";
+import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {

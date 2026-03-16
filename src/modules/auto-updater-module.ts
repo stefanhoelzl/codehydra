@@ -20,14 +20,8 @@ import type { Intent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
 import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
-import {
-  APP_SHUTDOWN_OPERATION_ID,
-  type AppShutdownIntent,
-} from "../intents/app-shutdown";
-import {
-  INTENT_UPDATE_AVAILABLE,
-  type UpdateAvailableIntent,
-} from "../intents/update-available";
+import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../intents/app-shutdown";
+import { INTENT_UPDATE_AVAILABLE, type UpdateAvailableIntent } from "../intents/update-available";
 import {
   UPDATE_APPLY_OPERATION_ID,
   INTENT_UPDATE_APPLY,

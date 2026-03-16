@@ -217,7 +217,10 @@ describe("detectCwdProcesses", () => {
     await detectCwdProcesses(runner, "/workspaces/feature-1", SILENT_LOGGER);
 
     expect(runner).toHaveSpawned([
-      { command: "lsof", args: ["-a", "-d", "cwd", "+c", "0", "-Fpnc", "+D", "/workspaces/feature-1"] },
+      {
+        command: "lsof",
+        args: ["-a", "-d", "cwd", "+c", "0", "-Fpnc", "+D", "/workspaces/feature-1"],
+      },
     ]);
   });
 });

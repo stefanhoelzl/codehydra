@@ -33,18 +33,11 @@ import type { DownloadProgressCallback, DownloadRequest } from "../utils/binary-
 import { downloadBinary, isBinaryInstalled } from "../utils/binary-download";
 import type { ArchiveExtractor } from "../boundaries/platform/archive/archive-extractor";
 import type { BinaryType } from "../utils/binary-resolution/types";
-import type {
-  CheckDepsHookContext,
-  CheckDepsResult,
-  ConfigureResult,
-} from "../intents/app-start";
+import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
 import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";
 import type { FinalizeHookInput } from "../intents/open-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
-import type {
-  DeleteHookResult,
-  DeletePipelineHookInput,
-} from "../intents/delete-workspace";
+import type { DeleteHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../intents/setup";
