@@ -13,25 +13,25 @@ import { describe, it, expect } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
-import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/operations/set-metadata";
-import type { SetMetadataIntent } from "../intents/operations/set-metadata";
-import { GetMetadataOperation, INTENT_GET_METADATA } from "../intents/operations/get-metadata";
-import type { GetMetadataIntent } from "../intents/operations/get-metadata";
+import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/set-metadata";
+import type { SetMetadataIntent } from "../intents/set-metadata";
+import { GetMetadataOperation, INTENT_GET_METADATA } from "../intents/get-metadata";
+import type { GetMetadataIntent } from "../intents/get-metadata";
 import {
   ResolveWorkspaceOperation,
   RESOLVE_WORKSPACE_OPERATION_ID,
   INTENT_RESOLVE_WORKSPACE,
-} from "../intents/operations/resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../intents/operations/resolve-workspace";
+} from "../intents/resolve-workspace";
+import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../intents/resolve-workspace";
 import {
   ResolveProjectOperation,
   RESOLVE_PROJECT_OPERATION_ID,
   INTENT_RESOLVE_PROJECT,
-} from "../intents/operations/resolve-project";
+} from "../intents/resolve-project";
 import type {
   ResolveHookResult as ResolveProjectHookResult,
   ResolveHookInput as ResolveProjectHookInput,
-} from "../intents/operations/resolve-project";
+} from "../intents/resolve-project";
 import { createMetadataModule } from "./metadata-module";
 import { createMockGitClient } from "../boundaries/platform/git/git-client.state-mock";
 import {

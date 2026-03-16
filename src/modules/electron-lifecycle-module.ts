@@ -12,13 +12,13 @@ import type { PathProvider } from "../boundaries/platform/env/path-provider";
 import type { AsyncWatcher } from "../boundaries/platform/async-watcher";
 import type { Logger } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
-import type { ConfigureResult } from "../intents/operations/app-start";
+import type { ConfigureResult } from "../intents/app-start";
 import type { Config } from "../boundaries/platform/config/config";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { configString } from "../boundaries/platform/config/config-definition";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
-import { INTENT_APP_RESUME } from "../intents/operations/app-resume";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { INTENT_APP_RESUME } from "../intents/app-resume";
 
 // =============================================================================
 // Helpers

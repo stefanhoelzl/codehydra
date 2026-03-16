@@ -15,7 +15,7 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   type SetupHookResult,
-} from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
 import { createKeepFilesModule } from "./keepfiles-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";

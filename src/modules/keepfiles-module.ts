@@ -23,7 +23,7 @@ import {
   type OpenWorkspaceIntent,
   type SetupHookInput,
   type SetupHookResult,
-} from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/errors/service-errors";
 

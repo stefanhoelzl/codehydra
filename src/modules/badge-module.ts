@@ -14,11 +14,11 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type { AgentStatusUpdatedEvent } from "../intents/operations/update-agent-status";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/operations/update-agent-status";
-import type { WorkspaceDeletedEvent } from "../intents/operations/delete-workspace";
-import { EVENT_WORKSPACE_DELETED } from "../intents/operations/delete-workspace";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
+import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
+import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { PlatformInfo } from "../boundaries/platform/env/platform-info";
 import type { AppBoundary } from "../boundaries/shell/app/app";

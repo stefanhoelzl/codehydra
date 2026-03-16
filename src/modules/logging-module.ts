@@ -18,7 +18,7 @@ import {
   configEnum,
   configEnumList,
 } from "../boundaries/platform/config/config-definition";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 
 // =============================================================================
 // Dependency Interface

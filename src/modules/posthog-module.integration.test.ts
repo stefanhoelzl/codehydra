@@ -19,19 +19,19 @@ import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-} from "../intents/operations/app-start";
+} from "../intents/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
-} from "../intents/operations/app-shutdown";
+} from "../intents/app-shutdown";
 import {
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
   type WorkspaceCreatedPayload,
-} from "../intents/operations/open-workspace";
-import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/operations/app-resume";
-import { AppResumeOperation } from "../intents/operations/app-resume";
+} from "../intents/open-workspace";
+import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
+import { AppResumeOperation } from "../intents/app-resume";
 import { createPosthogModule } from "./posthog-module";
 import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
 import { createBehavioralLogger } from "../boundaries/platform/logging/logging.test-utils";

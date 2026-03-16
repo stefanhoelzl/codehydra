@@ -14,10 +14,10 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import type { AppStartIntent, ConfigureResult } from "../intents/operations/app-start";
-import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
+import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
+import type { AppStartIntent, ConfigureResult } from "../intents/app-start";
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
 import {
   createElectronLifecycleModule,
   type ElectronLifecycleModuleDeps,

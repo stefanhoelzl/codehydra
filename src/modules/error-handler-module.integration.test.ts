@@ -16,7 +16,7 @@ import {
   APP_START_OPERATION_ID,
   INTENT_APP_START,
   type AppStartIntent,
-} from "../intents/operations/app-start";
+} from "../intents/app-start";
 import { createErrorHandlerModule } from "./error-handler-module";
 import { createMockLogger } from "../boundaries/platform/logging/logging.test-utils";
 

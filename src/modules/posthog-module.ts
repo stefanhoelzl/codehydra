@@ -14,13 +14,13 @@ import { randomUUID } from "node:crypto";
 import { PostHog } from "posthog-node";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import {
   EVENT_WORKSPACE_CREATED,
   type WorkspaceCreatedEvent,
-} from "../intents/operations/open-workspace";
-import { EVENT_APP_RESUMED } from "../intents/operations/app-resume";
+} from "../intents/open-workspace";
+import { EVENT_APP_RESUMED } from "../intents/app-resume";
 import { configBoolean, configString } from "../boundaries/platform/config/config-definition";
 import type { Config } from "../boundaries/platform/config/config";
 import type { PlatformInfo } from "../boundaries/platform/env/platform-info";

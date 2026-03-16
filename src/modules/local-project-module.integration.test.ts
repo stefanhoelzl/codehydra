@@ -34,18 +34,18 @@ import {
   type ResolveHookResult,
   type RegisterHookResult,
   type RegisterHookInput,
-} from "../intents/operations/open-project";
-import type { OpenProjectIntent } from "../intents/operations/open-project";
+} from "../intents/open-project";
+import type { OpenProjectIntent } from "../intents/open-project";
 import {
   CLOSE_PROJECT_OPERATION_ID,
   INTENT_CLOSE_PROJECT,
   type CloseResolveHookResult,
   type CloseHookResult,
   type CloseHookInput,
-} from "../intents/operations/close-project";
-import type { CloseProjectIntent } from "../intents/operations/close-project";
-import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/operations/app-ready";
-import type { AppReadyIntent } from "../intents/operations/app-ready";
+} from "../intents/close-project";
+import type { CloseProjectIntent } from "../intents/close-project";
+import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/app-ready";
+import type { AppReadyIntent } from "../intents/app-ready";
 import { Path } from "../utils/path/path";
 import type { ProjectId } from "../shared/api/types";
 import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";

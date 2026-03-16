@@ -14,7 +14,7 @@ import type { ViewHandle } from "../boundaries/shell/types";
 import {
   EVENT_SHORTCUT_KEY_PRESSED,
   type ShortcutKeyPressedEvent,
-} from "../intents/operations/shortcut-key";
+} from "../intents/shortcut-key";
 
 export interface DevtoolsModuleDeps {
   readonly viewManager: Pick<

@@ -25,27 +25,27 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging/logging.test-utils
 import { Dispatcher, IntentHandle } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
 import type { Operation, OperationContext } from "../intents/lib/operation";
-import { APP_START_OPERATION_ID, INTENT_APP_START } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
+import { APP_START_OPERATION_ID, INTENT_APP_START } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import {
   OPEN_WORKSPACE_OPERATION_ID,
   INTENT_OPEN_WORKSPACE,
   type OpenWorkspaceIntent,
-} from "../intents/operations/open-workspace";
-import type { FinalizeHookInput } from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
+import type { FinalizeHookInput } from "../intents/open-workspace";
 import {
   VSCODE_COMMAND_OPERATION_ID,
   INTENT_VSCODE_COMMAND,
   type VscodeCommandIntent,
-} from "../intents/operations/vscode-command";
-import type { ExecuteHookInput, ExecuteHookResult } from "../intents/operations/vscode-command";
+} from "../intents/vscode-command";
+import type { ExecuteHookInput, ExecuteHookResult } from "../intents/vscode-command";
 import {
   VSCODE_SHOW_MESSAGE_OPERATION_ID,
   INTENT_VSCODE_SHOW_MESSAGE,
   type VscodeShowMessageIntent,
   type VscodeShowMessageType,
-} from "../intents/operations/vscode-show-message";
-import type { ShowHookInput, ShowHookResult } from "../intents/operations/vscode-show-message";
+} from "../intents/vscode-show-message";
+import type { ShowHookInput, ShowHookResult } from "../intents/vscode-show-message";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 
 // ============================================================================

@@ -16,16 +16,16 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/operations/open-workspace";
-import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/operations/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/operations/delete-workspace";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
   DeleteHookResult,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import { createPluginServerModule, type PluginServerModuleDeps } from "./plugin-server-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";

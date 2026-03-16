@@ -14,16 +14,16 @@ import type { DomainEvent } from "../intents/lib/types";
 import {
   SWITCH_WORKSPACE_OPERATION_ID,
   selectNextWorkspace,
-} from "../intents/operations/switch-workspace";
+} from "../intents/switch-workspace";
 import type {
   SelectNextHookInput,
   SelectNextHookResult,
   AgentStatusScorer,
-} from "../intents/operations/switch-workspace";
-import type { AgentStatusUpdatedEvent } from "../intents/operations/update-agent-status";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/operations/update-agent-status";
-import type { WorkspaceDeletedEvent } from "../intents/operations/delete-workspace";
-import { EVENT_WORKSPACE_DELETED } from "../intents/operations/delete-workspace";
+} from "../intents/switch-workspace";
+import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
+import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 

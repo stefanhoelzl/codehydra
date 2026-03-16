@@ -23,44 +23,44 @@ import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-} from "../../intents/operations/app-start";
+} from "../../intents/app-start";
 import type {
   RegisterAgentResult,
   SaveAgentHookInput,
   BinaryHookInput,
-} from "../../intents/operations/setup";
+} from "../../intents/setup";
 import type {
   SetupHookInput,
   SetupHookResult,
   OpenWorkspaceIntent,
-} from "../../intents/operations/open-workspace";
+} from "../../intents/open-workspace";
 import type {
   DeleteWorkspaceIntent,
   ShutdownHookResult,
   DeletePipelineHookInput,
-} from "../../intents/operations/delete-workspace";
+} from "../../intents/delete-workspace";
 import type {
   GetStatusHookInput,
   GetStatusHookResult,
-} from "../../intents/operations/get-workspace-status";
+} from "../../intents/get-workspace-status";
 import type {
   GetAgentSessionHookInput,
   GetAgentSessionHookResult,
-} from "../../intents/operations/get-agent-session";
+} from "../../intents/get-agent-session";
 import type {
   RestartAgentHookInput,
   RestartAgentHookResult,
-} from "../../intents/operations/restart-agent";
-import type { UpdateAgentStatusIntent } from "../../intents/operations/update-agent-status";
-import { APP_START_OPERATION_ID } from "../../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/operations/app-shutdown";
-import { SETUP_OPERATION_ID } from "../../intents/operations/setup";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/operations/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/operations/delete-workspace";
-import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/operations/get-workspace-status";
-import { GET_AGENT_SESSION_OPERATION_ID } from "../../intents/operations/get-agent-session";
-import { RESTART_AGENT_OPERATION_ID } from "../../intents/operations/restart-agent";
-import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/operations/update-agent-status";
+} from "../../intents/restart-agent";
+import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import { SETUP_OPERATION_ID } from "../../intents/setup";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
+import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/get-workspace-status";
+import { GET_AGENT_SESSION_OPERATION_ID } from "../../intents/get-agent-session";
+import { RESTART_AGENT_OPERATION_ID } from "../../intents/restart-agent";
+import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import { normalizeInitialPrompt } from "../../shared/api/types";
 import type { AgentModuleProvider } from "./agent-module-provider";

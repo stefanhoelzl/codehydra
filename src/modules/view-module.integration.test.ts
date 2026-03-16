@@ -24,66 +24,66 @@ import type { Operation, OperationContext, HookContext } from "../intents/lib/op
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
-import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/operations/set-mode";
-import type { SetModeIntent, SetModeHookResult } from "../intents/operations/set-mode";
-import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/operations/app-start";
-import type { AppStartIntent, ShowUIHookResult } from "../intents/operations/app-start";
+import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/set-mode";
+import type { SetModeIntent, SetModeHookResult } from "../intents/set-mode";
+import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
+import type { AppStartIntent, ShowUIHookResult } from "../intents/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
-} from "../intents/operations/app-shutdown";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
-import { INTENT_SETUP, SETUP_OPERATION_ID } from "../intents/operations/setup";
+} from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
+import { INTENT_SETUP, SETUP_OPERATION_ID } from "../intents/setup";
 import type {
   SetupIntent,
   AgentSelectionHookContext,
   RegisterAgentResult,
-} from "../intents/operations/setup";
-import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/operations/get-active-workspace";
-import type { GetActiveWorkspaceIntent } from "../intents/operations/get-active-workspace";
-import { GetActiveWorkspaceOperation } from "../intents/operations/get-active-workspace";
+} from "../intents/setup";
+import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
+import type { GetActiveWorkspaceIntent } from "../intents/get-active-workspace";
+import { GetActiveWorkspaceOperation } from "../intents/get-active-workspace";
 import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
   EVENT_WORKSPACE_SWITCHED,
-} from "../intents/operations/switch-workspace";
+} from "../intents/switch-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
   ActivateHookInput,
   WorkspaceSwitchedEvent,
-} from "../intents/operations/switch-workspace";
+} from "../intents/switch-workspace";
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
   ShutdownHookResult,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import {
   INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
-} from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
 import type {
   OpenWorkspaceIntent,
   WorkspaceCreatedEvent,
-} from "../intents/operations/open-workspace";
+} from "../intents/open-workspace";
 import {
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
   OPEN_PROJECT_OPERATION_ID,
-} from "../intents/operations/open-project";
+} from "../intents/open-project";
 import type {
   ProjectOpenedEvent,
   SelectFolderHookResult,
-} from "../intents/operations/open-project";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/operations/update-agent-status";
-import type { AgentStatusUpdatedEvent } from "../intents/operations/update-agent-status";
-import { EVENT_APP_RESUMED } from "../intents/operations/app-resume";
-import type { AppResumedEvent } from "../intents/operations/app-resume";
+} from "../intents/open-project";
+import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
+import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import { EVENT_APP_RESUMED } from "../intents/app-resume";
+import type { AppResumedEvent } from "../intents/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import type { Config } from "../boundaries/platform/config/config";
 import { createViewModule, type ViewModuleDeps } from "./view-module";

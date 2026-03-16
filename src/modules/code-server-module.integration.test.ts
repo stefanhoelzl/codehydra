@@ -16,26 +16,26 @@ import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import type { IntentModule } from "../intents/lib/module";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID } from "../intents/operations/app-start";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type {
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
-} from "../intents/operations/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
-import { SETUP_OPERATION_ID } from "../intents/operations/setup";
-import type { BinaryHookInput, ExtensionsHookInput } from "../intents/operations/setup";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/operations/open-workspace";
-import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/operations/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/operations/delete-workspace";
+} from "../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { SETUP_OPERATION_ID } from "../intents/setup";
+import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
   DeleteHookResult,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
 import type { Config } from "../boundaries/platform/config/config";
-import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/operations/app-start";
+import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/app-start";
 import type { DirEntry } from "../boundaries/platform/filesystem/filesystem";
 import type { SpawnedProcess } from "../boundaries/platform/process/process";
 import { createArchiveExtractorMock } from "../boundaries/platform/archive/archive-extractor.state-mock";

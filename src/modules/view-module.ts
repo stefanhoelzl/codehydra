@@ -31,43 +31,43 @@ import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc/ipc";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceRef } from "../shared/api/types";
 import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../shared/ipc";
-import type { SetModeIntent, SetModeHookResult } from "../intents/operations/set-mode";
-import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/operations/app-start";
-import type { AgentSelectionHookContext } from "../intents/operations/setup";
-import type { GetActiveWorkspaceHookResult } from "../intents/operations/get-active-workspace";
+import type { SetModeIntent, SetModeHookResult } from "../intents/set-mode";
+import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/app-start";
+import type { AgentSelectionHookContext } from "../intents/setup";
+import type { GetActiveWorkspaceHookResult } from "../intents/get-active-workspace";
 import type {
   SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
   ActivateHookInput,
   WorkspaceSwitchedEvent,
-} from "../intents/operations/switch-workspace";
+} from "../intents/switch-workspace";
 import type {
   DeleteWorkspaceIntent,
   ShutdownHookResult,
   DeletePipelineHookInput,
-} from "../intents/operations/delete-workspace";
-import type { WorkspaceCreatedEvent } from "../intents/operations/open-workspace";
+} from "../intents/delete-workspace";
+import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
 import type {
   ProjectOpenedEvent,
   SelectFolderHookResult,
-} from "../intents/operations/open-project";
-import type { AgentStatusUpdatedEvent } from "../intents/operations/update-agent-status";
-import { SET_MODE_OPERATION_ID } from "../intents/operations/set-mode";
-import { OPEN_PROJECT_OPERATION_ID } from "../intents/operations/open-project";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/operations/app-shutdown";
-import { EVENT_APP_RESUMED } from "../intents/operations/app-resume";
-import { SETUP_OPERATION_ID } from "../intents/operations/setup";
+} from "../intents/open-project";
+import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import { SET_MODE_OPERATION_ID } from "../intents/set-mode";
+import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { EVENT_APP_RESUMED } from "../intents/app-resume";
+import { SETUP_OPERATION_ID } from "../intents/setup";
 import {
   UPDATE_APPLY_OPERATION_ID,
   type UpdateChoiceResult,
-} from "../intents/operations/update-apply";
-import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/operations/get-active-workspace";
-import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/operations/switch-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/operations/delete-workspace";
-import { EVENT_WORKSPACE_CREATED } from "../intents/operations/open-workspace";
-import { EVENT_WORKSPACE_SWITCHED } from "../intents/operations/switch-workspace";
-import { EVENT_PROJECT_OPENED } from "../intents/operations/open-project";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/operations/update-agent-status";
+} from "../intents/update-apply";
+import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/get-active-workspace";
+import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
+import { EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
+import { EVENT_PROJECT_OPENED } from "../intents/open-project";
+import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { Config } from "../boundaries/platform/config/config";
 import { configBoolean } from "../boundaries/platform/config/config-definition";
 import {

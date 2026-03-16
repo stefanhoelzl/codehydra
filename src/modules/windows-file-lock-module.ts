@@ -23,7 +23,7 @@ import {
   type DetectHookResult,
   type FlushHookResult,
   type FlushHookInput,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
 

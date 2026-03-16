@@ -73,81 +73,81 @@ import { NodePlatformInfo } from "./boundaries/platform/env/node-platform-info";
 // Intents
 import { Dispatcher } from "./intents/lib/dispatcher";
 import { createIdempotencyModule } from "./intents/lib/idempotency-module";
-import { AppStartOperation, INTENT_APP_START } from "./intents/operations/app-start";
-import type { AppStartIntent } from "./intents/operations/app-start";
-import { AppReadyOperation, INTENT_APP_READY } from "./intents/operations/app-ready";
+import { AppStartOperation, INTENT_APP_START } from "./intents/app-start";
+import type { AppStartIntent } from "./intents/app-start";
+import { AppReadyOperation, INTENT_APP_READY } from "./intents/app-ready";
 // ConfigSetValuesOperation removed — config is now a plain service
-import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/operations/app-shutdown";
-import { AppResumeOperation, INTENT_APP_RESUME } from "./intents/operations/app-resume";
-import type { AppShutdownIntent } from "./intents/operations/app-shutdown";
-import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/operations/setup";
-import { SetModeOperation, INTENT_SET_MODE } from "./intents/operations/set-mode";
-import { SetMetadataOperation, INTENT_SET_METADATA } from "./intents/operations/set-metadata";
-import { GetMetadataOperation, INTENT_GET_METADATA } from "./intents/operations/get-metadata";
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/app-shutdown";
+import { AppResumeOperation, INTENT_APP_RESUME } from "./intents/app-resume";
+import type { AppShutdownIntent } from "./intents/app-shutdown";
+import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/setup";
+import { SetModeOperation, INTENT_SET_MODE } from "./intents/set-mode";
+import { SetMetadataOperation, INTENT_SET_METADATA } from "./intents/set-metadata";
+import { GetMetadataOperation, INTENT_GET_METADATA } from "./intents/get-metadata";
 import {
   GetWorkspaceStatusOperation,
   INTENT_GET_WORKSPACE_STATUS,
-} from "./intents/operations/get-workspace-status";
+} from "./intents/get-workspace-status";
 import {
   GetAgentSessionOperation,
   INTENT_GET_AGENT_SESSION,
-} from "./intents/operations/get-agent-session";
-import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./intents/operations/restart-agent";
+} from "./intents/get-agent-session";
+import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./intents/restart-agent";
 import {
   GetActiveWorkspaceOperation,
   INTENT_GET_ACTIVE_WORKSPACE,
-} from "./intents/operations/get-active-workspace";
-import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "./intents/operations/list-projects";
-import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./intents/operations/open-workspace";
+} from "./intents/get-active-workspace";
+import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "./intents/list-projects";
+import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./intents/open-workspace";
 import {
   GetProjectBasesOperation,
   INTENT_GET_PROJECT_BASES,
-} from "./intents/operations/get-project-bases";
+} from "./intents/get-project-bases";
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETE_FAILED,
-} from "./intents/operations/delete-workspace";
+} from "./intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeleteWorkspacePayload,
-} from "./intents/operations/delete-workspace";
+} from "./intents/delete-workspace";
 import {
   OpenProjectOperation,
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
   EVENT_PROJECT_OPEN_FAILED,
-} from "./intents/operations/open-project";
-import type { OpenProjectPayload } from "./intents/operations/open-project";
-import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./intents/operations/close-project";
+} from "./intents/open-project";
+import type { OpenProjectPayload } from "./intents/open-project";
+import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./intents/close-project";
 import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
-} from "./intents/operations/switch-workspace";
+} from "./intents/switch-workspace";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
-} from "./intents/operations/update-agent-status";
-import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/operations/shortcut-key";
+} from "./intents/update-agent-status";
+import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/shortcut-key";
 import {
   UpdateAvailableOperation,
   INTENT_UPDATE_AVAILABLE,
-} from "./intents/operations/update-available";
-import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./intents/operations/update-apply";
+} from "./intents/update-available";
+import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./intents/update-apply";
 import {
   VscodeShowMessageOperation,
   INTENT_VSCODE_SHOW_MESSAGE,
-} from "./intents/operations/vscode-show-message";
-import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/operations/vscode-command";
+} from "./intents/vscode-show-message";
+import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/vscode-command";
 import {
   ResolveWorkspaceOperation,
   INTENT_RESOLVE_WORKSPACE,
-} from "./intents/operations/resolve-workspace";
+} from "./intents/resolve-workspace";
 import {
   ResolveProjectOperation,
   INTENT_RESOLVE_PROJECT,
-} from "./intents/operations/resolve-project";
+} from "./intents/resolve-project";
 // Modules
 import { createExtensionModule } from "./modules/extension-module";
 import { createViewModule } from "./modules/view-module";

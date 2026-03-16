@@ -16,33 +16,33 @@ import { Dispatcher } from "../intents/lib/dispatcher";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
-} from "../intents/operations/update-agent-status";
-import type { UpdateAgentStatusIntent } from "../intents/operations/update-agent-status";
+} from "../intents/update-agent-status";
+import type { UpdateAgentStatusIntent } from "../intents/update-agent-status";
 import {
   ResolveWorkspaceOperation,
   RESOLVE_WORKSPACE_OPERATION_ID,
   INTENT_RESOLVE_WORKSPACE,
-} from "../intents/operations/resolve-workspace";
+} from "../intents/resolve-workspace";
 import type {
   ResolveHookResult as ResolveWorkspaceHookResult,
   ResolveHookInput as ResolveWorkspaceHookInput,
-} from "../intents/operations/resolve-workspace";
+} from "../intents/resolve-workspace";
 import {
   ResolveProjectOperation,
   RESOLVE_PROJECT_OPERATION_ID,
   INTENT_RESOLVE_PROJECT,
-} from "../intents/operations/resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/operations/resolve-project";
+} from "../intents/resolve-project";
+import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/resolve-project";
 import {
   EVENT_WORKSPACE_DELETED,
   INTENT_DELETE_WORKSPACE,
-} from "../intents/operations/delete-workspace";
+} from "../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   WorkspaceDeletedEvent,
-} from "../intents/operations/delete-workspace";
-import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
+} from "../intents/delete-workspace";
+import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";

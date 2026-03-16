@@ -21,13 +21,13 @@ import {
 } from "./plugin-server.test-utils";
 import type { WorkspaceStatus } from "../shared/api/types";
 import type { PluginConfig } from "../shared/plugin-protocol";
-import { INTENT_GET_WORKSPACE_STATUS } from "../intents/operations/get-workspace-status";
-import { INTENT_GET_AGENT_SESSION } from "../intents/operations/get-agent-session";
-import { INTENT_SET_METADATA } from "../intents/operations/set-metadata";
-import { INTENT_DELETE_WORKSPACE } from "../intents/operations/delete-workspace";
-import { INTENT_VSCODE_COMMAND } from "../intents/operations/vscode-command";
-import { INTENT_RESOLVE_WORKSPACE } from "../intents/operations/resolve-workspace";
-import { INTENT_OPEN_WORKSPACE } from "../intents/operations/open-workspace";
+import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
+import { INTENT_SET_METADATA } from "../intents/set-metadata";
+import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
+import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
+import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
+import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 
 // Longer timeout for CI environments
 const TEST_TIMEOUT = 15000;
