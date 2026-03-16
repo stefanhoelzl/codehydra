@@ -26,7 +26,7 @@ export default defineConfig({
       externalizeDeps: { exclude: ["@opencode-ai/sdk", "execa"] },
       rollupOptions: {
         input: {
-          index: resolve(__dirname, "src/main/index.ts"),
+          index: resolve(__dirname, "src/main.ts"),
         },
         output: {
           // Output CJS to avoid ESM/CJS interop issues with externalized deps.

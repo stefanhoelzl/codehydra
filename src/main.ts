@@ -20,172 +20,166 @@ import { app, powerMonitor } from "electron";
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 // Boundaries - Platform
-import { DefaultPathProvider, type PathProvider } from "../boundaries/platform/env/path-provider";
-import type { BuildInfo } from "../boundaries/platform/env/build-info";
-import { ElectronLog, type Logging } from "../boundaries/platform/logging";
-import { DefaultFileSystemBoundary } from "../boundaries/platform/filesystem/filesystem";
-import { DefaultNetworkLayer } from "../boundaries/platform/network/network";
-import { ExecaProcessRunner } from "../boundaries/platform/process/process";
-import { GitWorktreeProvider } from "../boundaries/platform/git/git-worktree-provider";
-import { SimpleGitClient } from "../boundaries/platform/git/simple-git-client";
+import { DefaultPathProvider, type PathProvider } from "./boundaries/platform/env/path-provider";
+import type { BuildInfo } from "./boundaries/platform/env/build-info";
+import { ElectronLog, type Logging } from "./boundaries/platform/logging";
+import { DefaultFileSystemBoundary } from "./boundaries/platform/filesystem/filesystem";
+import { DefaultNetworkLayer } from "./boundaries/platform/network/network";
+import { ExecaProcessRunner } from "./boundaries/platform/process/process";
+import { GitWorktreeProvider } from "./boundaries/platform/git/git-worktree-provider";
+import { SimpleGitClient } from "./boundaries/platform/git/simple-git-client";
 import {
   DefaultConfig,
   configBoolean,
   configEnum,
   generateHelpText,
-} from "../boundaries/platform/config";
+} from "./boundaries/platform/config";
 // Boundaries - Shell
-import { DefaultIpcBoundary } from "../boundaries/shell/ipc/ipc";
-import { DefaultAppBoundary } from "../boundaries/shell/app/app";
-import { DefaultImageBoundary } from "../boundaries/shell/image/image";
-import { DefaultDialogBoundary } from "../boundaries/shell/dialog/dialog";
-import { DefaultMenuBoundary } from "../boundaries/shell/menu/menu";
-import { DefaultWindowBoundary } from "../boundaries/shell/window/window";
-import { DefaultViewBoundary } from "../boundaries/shell/view/view";
-import { DefaultSessionBoundary } from "../boundaries/shell/session/session";
-import { WindowManager } from "../boundaries/shell/window/window-manager";
-import { ViewManager } from "../boundaries/shell/view/view-manager";
+import { DefaultIpcBoundary } from "./boundaries/shell/ipc/ipc";
+import { DefaultAppBoundary } from "./boundaries/shell/app/app";
+import { DefaultImageBoundary } from "./boundaries/shell/image/image";
+import { DefaultDialogBoundary } from "./boundaries/shell/dialog/dialog";
+import { DefaultMenuBoundary } from "./boundaries/shell/menu/menu";
+import { DefaultWindowBoundary } from "./boundaries/shell/window/window";
+import { DefaultViewBoundary } from "./boundaries/shell/view/view";
+import { DefaultSessionBoundary } from "./boundaries/shell/session/session";
+import { WindowManager } from "./boundaries/shell/window/window-manager";
+import { ViewManager } from "./boundaries/shell/view/view-manager";
 // Services (stayed)
-import { AutoUpdater } from "../modules/auto-updater";
-import { DefaultArchiveExtractor } from "../boundaries/platform/archive";
-import type { DownloadDeps } from "../utils/binary-download";
+import { AutoUpdater } from "./modules/auto-updater";
+import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
+import type { DownloadDeps } from "./utils/binary-download";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
   getOpencodeExecutablePath,
-} from "../modules/agent-module/opencode/setup-info";
+} from "./modules/agent-module/opencode/setup-info";
 import {
   CLAUDE_VERSION,
   getClaudeUrl,
   getClaudeSubPath,
   getClaudeExecutablePath,
-} from "../modules/agent-module/claude/setup-info";
-import type { SupportedPlatform, SupportedArch } from "../boundaries/platform/env/platform-info";
-import { ClaudeCodeServerManager } from "../modules/agent-module/claude/server-manager";
-import { OpenCodeServerManager } from "../modules/agent-module/opencode/server-manager";
-import { createClaudeModuleProvider } from "../modules/agent-module/claude/module-provider";
-import { createOpenCodeModuleProvider } from "../modules/agent-module/opencode/module-provider";
-import { expandGitUrl } from "../utils/url-utils";
-import { AsyncWatcher } from "../boundaries/platform/async-watcher";
+} from "./modules/agent-module/claude/setup-info";
+import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/env/platform-info";
+import { ClaudeCodeServerManager } from "./modules/agent-module/claude/server-manager";
+import { OpenCodeServerManager } from "./modules/agent-module/opencode/server-manager";
+import { createClaudeModuleProvider } from "./modules/agent-module/claude/module-provider";
+import { createOpenCodeModuleProvider } from "./modules/agent-module/opencode/module-provider";
+import { expandGitUrl } from "./utils/url-utils";
+import { AsyncWatcher } from "./boundaries/platform/async-watcher";
 // Main
-import { ElectronBuildInfo } from "../boundaries/platform/env/electron-build-info";
-import { NodePlatformInfo } from "../boundaries/platform/env/node-platform-info";
+import { ElectronBuildInfo } from "./boundaries/platform/env/electron-build-info";
+import { NodePlatformInfo } from "./boundaries/platform/env/node-platform-info";
 // Intents
-import { Dispatcher } from "../intents/lib/dispatcher";
-import { createIdempotencyModule } from "../intents/lib/idempotency-module";
-import { AppStartOperation, INTENT_APP_START } from "../intents/operations/app-start";
-import type { AppStartIntent } from "../intents/operations/app-start";
-import { AppReadyOperation, INTENT_APP_READY } from "../intents/operations/app-ready";
+import { Dispatcher } from "./intents/lib/dispatcher";
+import { createIdempotencyModule } from "./intents/lib/idempotency-module";
+import { AppStartOperation, INTENT_APP_START } from "./intents/operations/app-start";
+import type { AppStartIntent } from "./intents/operations/app-start";
+import { AppReadyOperation, INTENT_APP_READY } from "./intents/operations/app-ready";
 // ConfigSetValuesOperation removed — config is now a plain service
-import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/operations/app-shutdown";
-import { AppResumeOperation, INTENT_APP_RESUME } from "../intents/operations/app-resume";
-import type { AppShutdownIntent } from "../intents/operations/app-shutdown";
-import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "../intents/operations/setup";
-import { SetModeOperation, INTENT_SET_MODE } from "../intents/operations/set-mode";
-import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/operations/set-metadata";
-import { GetMetadataOperation, INTENT_GET_METADATA } from "../intents/operations/get-metadata";
+import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/operations/app-shutdown";
+import { AppResumeOperation, INTENT_APP_RESUME } from "./intents/operations/app-resume";
+import type { AppShutdownIntent } from "./intents/operations/app-shutdown";
+import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/operations/setup";
+import { SetModeOperation, INTENT_SET_MODE } from "./intents/operations/set-mode";
+import { SetMetadataOperation, INTENT_SET_METADATA } from "./intents/operations/set-metadata";
+import { GetMetadataOperation, INTENT_GET_METADATA } from "./intents/operations/get-metadata";
 import {
   GetWorkspaceStatusOperation,
   INTENT_GET_WORKSPACE_STATUS,
-} from "../intents/operations/get-workspace-status";
+} from "./intents/operations/get-workspace-status";
 import {
   GetAgentSessionOperation,
   INTENT_GET_AGENT_SESSION,
-} from "../intents/operations/get-agent-session";
-import { RestartAgentOperation, INTENT_RESTART_AGENT } from "../intents/operations/restart-agent";
+} from "./intents/operations/get-agent-session";
+import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./intents/operations/restart-agent";
 import {
   GetActiveWorkspaceOperation,
   INTENT_GET_ACTIVE_WORKSPACE,
-} from "../intents/operations/get-active-workspace";
-import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "../intents/operations/list-projects";
-import {
-  OpenWorkspaceOperation,
-  INTENT_OPEN_WORKSPACE,
-} from "../intents/operations/open-workspace";
+} from "./intents/operations/get-active-workspace";
+import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "./intents/operations/list-projects";
+import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./intents/operations/open-workspace";
 import {
   GetProjectBasesOperation,
   INTENT_GET_PROJECT_BASES,
-} from "../intents/operations/get-project-bases";
+} from "./intents/operations/get-project-bases";
 import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETE_FAILED,
-} from "../intents/operations/delete-workspace";
+} from "./intents/operations/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeleteWorkspacePayload,
-} from "../intents/operations/delete-workspace";
+} from "./intents/operations/delete-workspace";
 import {
   OpenProjectOperation,
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
   EVENT_PROJECT_OPEN_FAILED,
-} from "../intents/operations/open-project";
-import type { OpenProjectPayload } from "../intents/operations/open-project";
-import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "../intents/operations/close-project";
+} from "./intents/operations/open-project";
+import type { OpenProjectPayload } from "./intents/operations/open-project";
+import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./intents/operations/close-project";
 import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
-} from "../intents/operations/switch-workspace";
+} from "./intents/operations/switch-workspace";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
-} from "../intents/operations/update-agent-status";
-import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "../intents/operations/shortcut-key";
+} from "./intents/operations/update-agent-status";
+import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/operations/shortcut-key";
 import {
   UpdateAvailableOperation,
   INTENT_UPDATE_AVAILABLE,
-} from "../intents/operations/update-available";
-import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "../intents/operations/update-apply";
+} from "./intents/operations/update-available";
+import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./intents/operations/update-apply";
 import {
   VscodeShowMessageOperation,
   INTENT_VSCODE_SHOW_MESSAGE,
-} from "../intents/operations/vscode-show-message";
-import {
-  VscodeCommandOperation,
-  INTENT_VSCODE_COMMAND,
-} from "../intents/operations/vscode-command";
+} from "./intents/operations/vscode-show-message";
+import { VscodeCommandOperation, INTENT_VSCODE_COMMAND } from "./intents/operations/vscode-command";
 import {
   ResolveWorkspaceOperation,
   INTENT_RESOLVE_WORKSPACE,
-} from "../intents/operations/resolve-workspace";
+} from "./intents/operations/resolve-workspace";
 import {
   ResolveProjectOperation,
   INTENT_RESOLVE_PROJECT,
-} from "../intents/operations/resolve-project";
+} from "./intents/operations/resolve-project";
 // Modules
-import { createExtensionModule } from "../modules/extension-module";
-import { createViewModule } from "../modules/view-module";
-import { createCodeServerModule } from "../modules/code-server-module";
-import { createPluginServerModule } from "../modules/plugin-server-module";
-import { createAgentModule } from "../modules/agent-module/agent-module";
-import { createMetadataModule } from "../modules/metadata-module";
-import { createKeepFilesModule } from "../modules/keepfiles-module";
-import { createWindowsFileLockModule } from "../modules/windows-file-lock-module";
-import { createPosixProcessCleanupModule } from "../modules/posix-process-cleanup-module";
-import { createWindowTitleModule } from "../modules/window-title-module";
-import { createPosthogModule } from "../modules/posthog-module";
-import { createAutoUpdaterModule } from "../modules/auto-updater-module";
-import { createLocalProjectModule } from "../modules/local-project-module";
-import { createRemoteProjectModule } from "../modules/remote-project-module";
-import { createGitWorktreeWorkspaceModule } from "../modules/git-worktree-workspace-module";
-import { createBadgeModule } from "../modules/badge-module";
-import { createMcpModule } from "../modules/mcp-module";
-import { createElectronLifecycleModule } from "../modules/electron-lifecycle-module";
-import { createLoggingModule } from "../modules/logging-module";
-import { createScriptModule } from "../modules/script-module";
-import { createTempDirModule } from "../modules/temp-dir-module";
-import { createErrorHandlerModule } from "../modules/error-handler-module";
-import { createShortcutModule } from "../modules/shortcut-module";
-import { createDevtoolsModule } from "../modules/devtools-module";
-import { createUiIpcModule } from "../modules/ui-ipc-module";
-import { createWorkspaceSelectionModule } from "../modules/workspace-selection-module";
-import { createAutoWorkspaceModule } from "../modules/auto-workspace/module";
-import { createGitHubSource } from "../modules/auto-workspace/github-source";
-import { createYouTrackSource } from "../modules/auto-workspace/youtrack-source";
+import { createExtensionModule } from "./modules/extension-module";
+import { createViewModule } from "./modules/view-module";
+import { createCodeServerModule } from "./modules/code-server-module";
+import { createPluginServerModule } from "./modules/plugin-server-module";
+import { createAgentModule } from "./modules/agent-module/agent-module";
+import { createMetadataModule } from "./modules/metadata-module";
+import { createKeepFilesModule } from "./modules/keepfiles-module";
+import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
+import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
+import { createWindowTitleModule } from "./modules/window-title-module";
+import { createPosthogModule } from "./modules/posthog-module";
+import { createAutoUpdaterModule } from "./modules/auto-updater-module";
+import { createLocalProjectModule } from "./modules/local-project-module";
+import { createRemoteProjectModule } from "./modules/remote-project-module";
+import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
+import { createBadgeModule } from "./modules/badge-module";
+import { createMcpModule } from "./modules/mcp-module";
+import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
+import { createLoggingModule } from "./modules/logging-module";
+import { createScriptModule } from "./modules/script-module";
+import { createTempDirModule } from "./modules/temp-dir-module";
+import { createErrorHandlerModule } from "./modules/error-handler-module";
+import { createShortcutModule } from "./modules/shortcut-module";
+import { createDevtoolsModule } from "./modules/devtools-module";
+import { createUiIpcModule } from "./modules/ui-ipc-module";
+import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
+import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
+import { createGitHubSource } from "./modules/auto-workspace/github-source";
+import { createYouTrackSource } from "./modules/auto-workspace/youtrack-source";
 // Shared
-import { getErrorMessage } from "../shared/error-utils";
+import { getErrorMessage } from "./shared/error-utils";
 
 // Async watcher — detect unexpected I/O before app.whenReady()
 const asyncWatcher = new AsyncWatcher(["PROMISE", "TickObject", "RANDOMBYTESREQUEST"]);

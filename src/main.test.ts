@@ -2,21 +2,21 @@
  * Integration tests for main process wiring.
  *
  * Tests the integration of BuildInfo, PlatformInfo, and PathProvider
- * which are wired together in main/index.ts.
+ * which are wired together in main.ts.
  *
- * Note: The actual main/index.ts cannot be imported in tests due to
+ * Note: The actual main.ts cannot be imported in tests due to
  * Electron dependencies, but we can test the wiring pattern it uses.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { DefaultPathProvider } from "../boundaries/platform/env/path-provider";
-import { createMockBuildInfo } from "../boundaries/platform/env/build-info.test-utils";
-import { createMockPlatformInfo } from "../boundaries/platform/env/platform-info.test-utils";
-import { CODE_SERVER_VERSION, getCodeServerExecutablePath } from "../modules/code-server-module";
-import { OPENCODE_VERSION } from "../modules/agent-module/opencode/setup-info";
-import { Path } from "../utils/path/path";
-import type { PathProvider } from "../boundaries/platform/env/path-provider";
-import type { SupportedPlatform } from "../boundaries/platform/env/platform-info";
+import { DefaultPathProvider } from "./boundaries/platform/env/path-provider";
+import { createMockBuildInfo } from "./boundaries/platform/env/build-info.test-utils";
+import { createMockPlatformInfo } from "./boundaries/platform/env/platform-info.test-utils";
+import { CODE_SERVER_VERSION, getCodeServerExecutablePath } from "./modules/code-server-module";
+import { OPENCODE_VERSION } from "./modules/agent-module/opencode/setup-info";
+import { Path } from "./utils/path/path";
+import type { PathProvider } from "./boundaries/platform/env/path-provider";
+import type { SupportedPlatform } from "./boundaries/platform/env/platform-info";
 
 // Track mock isPackaged value for ElectronBuildInfo tests
 let mockIsPackaged = false;
@@ -56,7 +56,7 @@ describe("Main process wiring", () => {
 
   describe("createCodeServerConfig pattern", () => {
     /**
-     * This tests the same pattern used in main/index.ts createCodeServerConfig()
+     * This tests the same pattern used in main.ts createCodeServerConfig()
      * PathProvider now returns Path objects, so we convert to native strings for external use.
      * Uses dynamic bundlePath methods with version constants and setup-info functions.
      */
