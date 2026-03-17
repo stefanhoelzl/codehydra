@@ -180,7 +180,7 @@ const configService = new DefaultConfig({
 // Register core config keys (not owned by any module)
 configService.register("agent", {
   name: "agent",
-  default: "opencode",
+  default: null,
   description: "Agent selection",
   ...configEnum(["claude", "opencode"], { nullable: true }),
 });
