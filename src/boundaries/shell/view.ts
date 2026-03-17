@@ -56,6 +56,15 @@ export type WindowOpenHandler = (details: WindowOpenDetails) => WindowOpenAction
 export type Unsubscribe = () => void;
 
 /**
+ * Details about a failed load event.
+ */
+export interface FailLoadDetails {
+  readonly errorCode: number;
+  readonly errorDescription: string;
+  readonly isMainFrame: boolean;
+}
+
+/**
  * Keyboard input descriptor (no Electron types).
  */
 export interface KeyboardInput {
@@ -193,6 +202,16 @@ export interface ViewBoundary {
    * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
    */
   onDidFinishLoad(handle: ViewHandle, callback: () => void): Unsubscribe;
+
+  /**
+   * Subscribe to did-fail-load events.
+   *
+   * @param handle - Handle to the view
+   * @param callback - Called with failure details when page fails to load
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onDidFailLoad(handle: ViewHandle, callback: (details: FailLoadDetails) => void): Unsubscribe;
 
   /**
    * Subscribe to dom-ready events.
@@ -544,6 +563,26 @@ export class DefaultViewBoundary implements ViewBoundary {
       const wc = state.view.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.off("did-finish-load", callback);
+      }
+    };
+  }
+
+  onDidFailLoad(handle: ViewHandle, callback: (details: FailLoadDetails) => void): Unsubscribe {
+    const state = this.getView(handle);
+    const handler = (
+      _event: Electron.Event,
+      errorCode: number,
+      errorDescription: string,
+      _validatedURL: string,
+      isMainFrame: boolean
+    ) => {
+      callback({ errorCode, errorDescription, isMainFrame });
+    };
+    state.view.webContents.on("did-fail-load", handler);
+    return () => {
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("did-fail-load", handler);
       }
     };
   }

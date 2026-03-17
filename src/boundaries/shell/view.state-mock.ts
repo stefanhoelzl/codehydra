@@ -24,6 +24,7 @@ import type {
   WindowOpenHandler,
   Unsubscribe,
   KeyboardInput,
+  FailLoadDetails,
 } from "./view";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
@@ -89,6 +90,16 @@ export interface ViewBoundaryMockState extends MockState {
    * mock.$.triggerDidFinishLoad(handle); // callback is invoked
    */
   triggerDidFinishLoad(handle: ViewHandle): void;
+
+  /**
+   * Simulates Electron's 'did-fail-load' event.
+   * Invokes all registered handlers for the specified view.
+   *
+   * @example
+   * mock.onDidFailLoad(handle, (details) => console.log(details.errorDescription));
+   * mock.$.triggerDidFailLoad(handle, { errorCode: -21, errorDescription: "ERR_NETWORK_CHANGED", isMainFrame: true });
+   */
+  triggerDidFailLoad(handle: ViewHandle, details: FailLoadDetails): void;
 
   /**
    * Simulates Electron's 'dom-ready' event.
@@ -161,6 +172,7 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   private readonly _views: Map<string, ViewState>;
   private readonly _windowChildren: Map<string, string[]>;
   private readonly _didFinishLoadCallbacks: Map<string, Set<() => void>>;
+  private readonly _didFailLoadCallbacks: Map<string, Set<(details: FailLoadDetails) => void>>;
   private readonly _domReadyCallbacks: Map<string, Set<() => void>>;
   private readonly _willNavigateCallbacks: Map<string, Set<(url: string) => boolean>>;
   private readonly _beforeInputEventCallbacks: Map<
@@ -174,6 +186,7 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     this._views = new Map();
     this._windowChildren = new Map();
     this._didFinishLoadCallbacks = new Map();
+    this._didFailLoadCallbacks = new Map();
     this._domReadyCallbacks = new Map();
     this._willNavigateCallbacks = new Map();
     this._beforeInputEventCallbacks = new Map();
@@ -192,6 +205,10 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   get didFinishLoadCallbacks(): Map<string, Set<() => void>> {
     return this._didFinishLoadCallbacks;
+  }
+
+  get didFailLoadCallbacks(): Map<string, Set<(details: FailLoadDetails) => void>> {
+    return this._didFailLoadCallbacks;
   }
 
   get domReadyCallbacks(): Map<string, Set<() => void>> {
@@ -222,6 +239,15 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     if (callbacks) {
       for (const callback of callbacks) {
         callback();
+      }
+    }
+  }
+
+  triggerDidFailLoad(handle: ViewHandle, details: FailLoadDetails): void {
+    const callbacks = this._didFailLoadCallbacks.get(handle.id);
+    if (callbacks) {
+      for (const callback of callbacks) {
+        callback(details);
       }
     }
   }
@@ -399,6 +425,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
         focused: false,
       });
       state.didFinishLoadCallbacks.set(id, new Set());
+      state.didFailLoadCallbacks.set(id, new Set());
       state.domReadyCallbacks.set(id, new Set());
       state.willNavigateCallbacks.set(id, new Set());
       state.beforeInputEventCallbacks.set(id, new Set());
@@ -423,6 +450,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
       }
       state.views.delete(handle.id);
       state.didFinishLoadCallbacks.delete(handle.id);
+      state.didFailLoadCallbacks.delete(handle.id);
       state.domReadyCallbacks.delete(handle.id);
       state.willNavigateCallbacks.delete(handle.id);
       state.beforeInputEventCallbacks.delete(handle.id);
@@ -432,6 +460,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
     destroyAll(): void {
       state.views.clear();
       state.didFinishLoadCallbacks.clear();
+      state.didFailLoadCallbacks.clear();
       state.domReadyCallbacks.clear();
       state.willNavigateCallbacks.clear();
       state.beforeInputEventCallbacks.clear();
@@ -534,6 +563,15 @@ export function createViewBoundaryMock(): MockViewBoundary {
       };
     },
 
+    onDidFailLoad(handle: ViewHandle, callback: (details: FailLoadDetails) => void): Unsubscribe {
+      getView(handle); // Validate handle exists
+      const callbacks = state.didFailLoadCallbacks.get(handle.id);
+      callbacks?.add(callback);
+      return () => {
+        callbacks?.delete(callback);
+      };
+    },
+
     onDomReady(handle: ViewHandle, callback: () => void): Unsubscribe {
       getView(handle); // Validate handle exists
       const callbacks = state.domReadyCallbacks.get(handle.id);
@@ -610,6 +648,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
     async dispose(): Promise<void> {
       state.views.clear();
       state.didFinishLoadCallbacks.clear();
+      state.didFailLoadCallbacks.clear();
       state.domReadyCallbacks.clear();
       state.willNavigateCallbacks.clear();
       state.beforeInputEventCallbacks.clear();

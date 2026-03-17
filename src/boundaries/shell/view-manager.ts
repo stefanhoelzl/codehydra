@@ -15,7 +15,7 @@ import type { WindowManager } from "./window-manager";
 import { openExternal } from "../../utils/external-url";
 import type { Logger } from "../platform/logging";
 import { getErrorMessage } from "../../shared/error-utils";
-import type { ViewBoundary, WindowOpenDetails } from "./view";
+import type { ViewBoundary, WindowOpenDetails, FailLoadDetails } from "./view";
 import type { SessionBoundary } from "./session";
 import type { WindowBoundaryInternal } from "./window";
 import type { ViewHandle, SessionHandle, WindowHandle } from "./types";
@@ -53,6 +53,12 @@ const VIEW_BACKGROUND_COLOR = "#1e1e1e";
  * If navigation doesn't complete within this time, we proceed with closing.
  */
 const NAVIGATION_TIMEOUT_MS = 2000;
+
+/**
+ * Retry delays for failed URL loads (in milliseconds).
+ * Backs off to 10s then retries indefinitely at that interval.
+ */
+const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
 
 /**
  * Z-index for the UI layer when positioned at the bottom of the view stack.
@@ -104,6 +110,10 @@ interface WorkspaceState {
   urlLoaded: boolean;
   /** Partition name for cleanup */
   partitionName: string;
+  /** Current retry attempt count for load failures */
+  retryCount: number;
+  /** Timer handle for scheduled retry, if any */
+  retryTimer: NodeJS.Timeout | null;
 }
 
 /**
@@ -389,6 +399,25 @@ export class ViewManager implements IViewManager {
       url,
       urlLoaded: false,
       partitionName,
+      retryCount: 0,
+      retryTimer: null,
+    });
+
+    // Subscribe to load failures for retry with exponential backoff
+    this.viewLayer.onDidFailLoad(viewHandle, (details: FailLoadDetails) => {
+      this.handleLoadFailure(workspacePath, details);
+    });
+
+    // Reset retry count on successful load
+    this.viewLayer.onDidFinishLoad(viewHandle, () => {
+      const currentState = this.workspaceStates.get(workspacePath);
+      if (currentState) {
+        currentState.retryCount = 0;
+        if (currentState.retryTimer !== null) {
+          clearTimeout(currentState.retryTimer);
+          currentState.retryTimer = null;
+        }
+      }
     });
 
     // Only mark as loading for newly created workspaces (not existing ones loaded on startup)
@@ -430,6 +459,11 @@ export class ViewManager implements IViewManager {
     // Remove from maps FIRST to prevent re-entry during async operations
     // This makes the operation idempotent even if called concurrently
     this.workspaceStates.delete(workspacePath);
+
+    // Clean up retry timer
+    if (state.retryTimer !== null) {
+      clearTimeout(state.retryTimer);
+    }
 
     // Clean up loading state
     const timeout = this.loadingWorkspaces.get(workspacePath);
@@ -570,7 +604,66 @@ export class ViewManager implements IViewManager {
     state.urlLoaded = true;
 
     // Load the URL (fire-and-forget). View stays detached until activated.
+    // If loading fails, onDidFailLoad handler will retry with exponential backoff.
     void this.viewLayer.loadURL(state.handle, state.url);
+  }
+
+  /**
+   * Handles a load failure for a workspace view.
+   * Only retries main-frame failures, with exponential backoff.
+   *
+   * @param workspacePath - Path to the workspace
+   * @param details - Failure details from the did-fail-load event
+   */
+  private handleLoadFailure(workspacePath: string, details: FailLoadDetails): void {
+    // Only retry main-frame failures (sub-frame failures are not critical)
+    if (!details.isMainFrame) return;
+
+    const state = this.workspaceStates.get(workspacePath);
+    if (!state) return;
+
+    // Skip retries during shutdown
+    if (this.destroying) return;
+
+    const workspaceName = basename(workspacePath);
+
+    // Delay schedule: 1s, 2s, 5s, then 10s forever
+    const delayIndex = Math.min(state.retryCount, RETRY_DELAYS_MS.length - 1);
+    const delay = RETRY_DELAYS_MS[delayIndex];
+    state.retryCount++;
+
+    this.logger.warn("URL load failed, scheduling retry", {
+      workspace: workspaceName,
+      errorCode: details.errorCode,
+      errorDescription: details.errorDescription,
+      retryAttempt: state.retryCount,
+      retryDelayMs: delay,
+    });
+
+    // Clear any existing retry timer
+    if (state.retryTimer !== null) {
+      clearTimeout(state.retryTimer);
+    }
+
+    // Reset urlLoaded to allow retry
+    state.urlLoaded = false;
+
+    // Schedule retry
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+
+      // Re-check state validity (workspace may have been destroyed during delay)
+      const currentState = this.workspaceStates.get(workspacePath);
+      if (!currentState) return;
+
+      this.logger.debug("Retrying URL load", {
+        workspace: workspaceName,
+        retryAttempt: currentState.retryCount,
+      });
+
+      currentState.urlLoaded = true;
+      void this.viewLayer.loadURL(currentState.handle, currentState.url);
+    }, delay);
   }
 
   /**
@@ -1035,6 +1128,12 @@ export class ViewManager implements IViewManager {
     for (const [workspacePath, state] of this.workspaceStates) {
       if (!state.urlLoaded) continue;
       if (this.loadingWorkspaces.has(workspacePath)) continue;
+      // Reset retry state for fresh reload attempt
+      state.retryCount = 0;
+      if (state.retryTimer !== null) {
+        clearTimeout(state.retryTimer);
+        state.retryTimer = null;
+      }
       void this.viewLayer.loadURL(state.handle, state.url);
     }
   }

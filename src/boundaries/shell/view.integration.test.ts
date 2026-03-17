@@ -244,6 +244,58 @@ describe("ViewBoundary (integration)", () => {
     });
   });
 
+  describe("onDidFailLoad", () => {
+    it("registers callback with failure details", () => {
+      const handle = viewLayer.createView({});
+      const callback = vi.fn();
+
+      viewLayer.onDidFailLoad(handle, callback);
+      viewLayer.$.triggerDidFailLoad(handle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      expect(callback).toHaveBeenCalledWith({
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+    });
+
+    it("unsubscribes from callback", () => {
+      const handle = viewLayer.createView({});
+      const callback = vi.fn();
+
+      const unsubscribe = viewLayer.onDidFailLoad(handle, callback);
+      unsubscribe();
+      viewLayer.$.triggerDidFailLoad(handle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("supports multiple callbacks", () => {
+      const handle = viewLayer.createView({});
+      const callback1 = vi.fn();
+      const callback2 = vi.fn();
+
+      viewLayer.onDidFailLoad(handle, callback1);
+      viewLayer.onDidFailLoad(handle, callback2);
+      viewLayer.$.triggerDidFailLoad(handle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      expect(callback1).toHaveBeenCalled();
+      expect(callback2).toHaveBeenCalled();
+    });
+  });
+
   describe("onDomReady", () => {
     it("registers callback", () => {
       const handle = viewLayer.createView({});

@@ -1398,6 +1398,305 @@ describe("ViewManager", () => {
     });
   });
 
+  describe("URL load retry", () => {
+    it("retries on main-frame did-fail-load after URL is loaded", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Activate to trigger URL load
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockClear();
+
+      // Trigger load failure
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      // Advance past first retry delay (1s)
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(loadURLSpy).toHaveBeenCalledWith(wsHandle, "http://127.0.0.1:8080/?folder=/path");
+
+      vi.useRealTimers();
+    });
+
+    it("ignores sub-frame failures", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockClear();
+
+      // Trigger sub-frame failure
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: false,
+      });
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // No retry should have been scheduled
+      expect(loadURLSpy).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it("uses exponential backoff delays", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+
+      // First failure: 1s delay
+      loadURLSpy.mockClear();
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(loadURLSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loadURLSpy).toHaveBeenCalledTimes(1);
+
+      // Second failure: 2s delay
+      loadURLSpy.mockClear();
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(loadURLSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loadURLSpy).toHaveBeenCalledTimes(1);
+
+      // Third failure: 5s delay
+      loadURLSpy.mockClear();
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(loadURLSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loadURLSpy).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
+    it("caps at 10s delay and retries indefinitely", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+
+      // Burn through 1s, 2s, 5s, 10s delays
+      const delays = [1000, 2000, 5000, 10000];
+      for (const delay of delays) {
+        loadURLSpy.mockClear();
+        deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+          errorCode: -21,
+          errorDescription: "ERR_NETWORK_CHANGED",
+          isMainFrame: true,
+        });
+        await vi.advanceTimersByTimeAsync(delay);
+        expect(loadURLSpy).toHaveBeenCalledTimes(1);
+      }
+
+      // Further failures should still retry at 10s (not stop)
+      for (let i = 0; i < 3; i++) {
+        loadURLSpy.mockClear();
+        deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+          errorCode: -21,
+          errorDescription: "ERR_NETWORK_CHANGED",
+          isMainFrame: true,
+        });
+        await vi.advanceTimersByTimeAsync(9999);
+        expect(loadURLSpy).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(loadURLSpy).toHaveBeenCalledTimes(1);
+      }
+
+      vi.useRealTimers();
+    });
+
+    it("resets retry count on successful load", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+
+      // Trigger failure (retry count becomes 1)
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+
+      // Successful load resets retry count
+      deps.viewLayer.$.triggerDidFinishLoad(wsHandle);
+
+      // Next failure should use base delay (1s), not 2s
+      loadURLSpy.mockClear();
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(loadURLSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loadURLSpy).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
+    it("cleans up retry timer on destroyWorkspaceView", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+
+      // Trigger failure to schedule retry
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      // Destroy before retry fires
+      await manager.destroyWorkspaceView("/path/to/workspace");
+
+      // destroyWorkspaceView navigates to about:blank, so clear the spy after destroy
+      loadURLSpy.mockClear();
+
+      // Advance past retry delay - should not attempt loadURL for the workspace
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(loadURLSpy).not.toHaveBeenCalled();
+
+      vi.useRealTimers();
+    });
+
+    it("reloadAllViews resets retry state", async () => {
+      vi.useFakeTimers();
+
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Trigger two failures to increment retry count
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+
+      // reloadAllViews resets retry state
+      manager.reloadAllViews();
+
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockClear();
+
+      // Next failure should use base delay (1s), confirming retry count was reset
+      deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
+        errorCode: -21,
+        errorDescription: "ERR_NETWORK_CHANGED",
+        isMainFrame: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(loadURLSpy).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(loadURLSpy).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+  });
+
   describe("loading timeout", () => {
     it("marks workspace as loaded after timeout", async () => {
       vi.useFakeTimers();
