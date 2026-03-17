@@ -629,7 +629,8 @@ export class ViewManager implements IViewManager {
 
     // Delay schedule: 1s, 2s, 5s, then 10s forever
     const delayIndex = Math.min(state.retryCount, RETRY_DELAYS_MS.length - 1);
-    const delay = RETRY_DELAYS_MS[delayIndex];
+    // RETRY_DELAYS_MS is non-empty and delayIndex is clamped to valid range
+    const delay = RETRY_DELAYS_MS[delayIndex]!;
     state.retryCount++;
 
     this.logger.warn("URL load failed, scheduling retry", {
