@@ -75,6 +75,7 @@ function validateMetadataKeyInput(v: string): string | null {
 
 let socket: TypedSocket | null = null;
 let isConnected = false;
+let hasReceivedInitialConfig = false;
 let pendingReady: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
 
 /** Timeout for API calls in milliseconds (matches COMMAND_TIMEOUT_MS) */
@@ -571,9 +572,16 @@ function connectToPluginServer(port: number, workspacePath: string): void {
       isDevelopment,
       hasEnv: config.env !== null,
       agentType: config.agentType,
+      isReconnect: hasReceivedInitialConfig,
     });
 
     await vscode.commands.executeCommand("setContext", "codehydra.isDevelopment", isDevelopment);
+
+    // Skip setup on reconnect — the plugin is already configured
+    if (hasReceivedInitialConfig) {
+      return;
+    }
+    hasReceivedInitialConfig = true;
 
     // Execute pre-terminal layout commands (only for new workspaces)
     if (config.resetWorkspace) {
@@ -620,7 +628,6 @@ function connectToPluginServer(port: number, workspacePath: string): void {
   socket.on("disconnect", (reason) => {
     codehydraApi.log.info("Disconnected from PluginServer", { reason });
     isConnected = false;
-    disposeAllMcpStatusBarItems();
   });
 
   socket.on("connect_error", (err) => {
@@ -1043,6 +1050,7 @@ export function deactivate(): void {
     socket = null;
   }
   isConnected = false;
+  hasReceivedInitialConfig = false;
 
   // Clean up terminal close listener
   if (terminalCloseListener) {
