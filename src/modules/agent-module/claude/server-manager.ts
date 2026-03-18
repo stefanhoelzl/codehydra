@@ -758,7 +758,10 @@ export class ClaudeCodeServerManager implements AgentServerManager {
         // to process the sub-agent result, then Stop will transition to idle.
         state.mainAgentStopped = false;
       }
-    } else if (hookName === "Stop" && state.activeSubagents.size > 0) {
+    } else if (
+      (hookName === "Stop" || hookName === "StopFailure") &&
+      state.activeSubagents.size > 0
+    ) {
       state.mainAgentStopped = true;
       newStatus = null;
     } else if (hookName === "UserPromptSubmit") {
