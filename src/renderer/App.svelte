@@ -1,18 +1,18 @@
 <!--
   App.svelte
-  
-  Root application component that acts as a mode router between setup and normal app modes.
-  
+
+  Root application component that acts as a mode router between initializing and ready modes.
+
   Component Ownership Model:
-  - App.svelte: Mode routing, global keyboard events (shortcuts), setup flow
+  - App.svelte: Mode routing, global keyboard events (shortcuts)
   - MainView.svelte: Normal app state, IPC initialization, domain events (project/workspace/agent)
-  
+
   App.svelte owns:
   - <main> element with dynamic aria-label based on mode
   - Shortcut event subscriptions (global - work in both modes)
-  - Setup flow (setup screens, retry/quit handling)
   - aria-live announcements for mode transitions
-  
+  - DialogHost for declarative dialogs from main process
+
   MainView.svelte owns:
   - IPC initialization (listProjects, getAllAgentStatuses)
   - Domain event subscriptions (project/workspace/agent changes)
@@ -21,74 +21,34 @@
 -->
 <script lang="ts">
   import * as api from "$lib/api";
-  import type { SetupRowProgress, SetupRowId, ConfigAgentType } from "@shared/api/types";
-  import type {
-    AgentInfo,
-    ShowAgentSelectionPayload,
-    SetupErrorPayload,
-    LifecycleAgentType,
-    UpdateProgressPayload,
-    UpdateChoice,
-  } from "@shared/ipc";
   import {
     handleModeChange,
     handleKeyDown,
     handleWindowBlur,
     handleShortcutKey,
   } from "$lib/stores/shortcuts.svelte.js";
-  import { setupState, errorSetup, resetSetup } from "$lib/stores/setup.svelte.js";
   import { loadingState } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
   import MainView from "$lib/components/MainView.svelte";
+  import DialogHost from "$lib/components/DialogHost.svelte";
   import SetupScreen from "$lib/components/SetupScreen.svelte";
-  import SetupError from "$lib/components/SetupError.svelte";
-  import AgentSelectionDialog from "$lib/components/AgentSelectionDialog.svelte";
-  import UpdateOverlay from "$lib/components/UpdateOverlay.svelte";
 
   const logger = createLogger("ui");
 
   /**
    * App mode discriminated union.
-   * - initializing: Checking setup status (shows loading state)
-   * - agent-selection: Agent not selected (shows agent selection dialog)
-   * - setup: Setup is needed (shows setup screens)
-   * - loading: Services are starting (shows loading screen)
+   * - initializing: Waiting for main process IPC (shows blank/loading state)
    * - ready: Services started, normal app mode (shows MainView)
    */
-  type AppMode =
-    | { type: "initializing" }
-    | { type: "agent-selection" }
-    | { type: "setup" }
-    | { type: "loading" }
-    | { type: "ready" };
+  type AppMode = { type: "initializing" } | { type: "ready" };
 
   /** Time in ms before clearing ARIA announcement to prevent repetition */
   const ARIA_ANNOUNCEMENT_CLEAR_MS = 1000;
 
   let appMode = $state<AppMode>({ type: "initializing" });
 
-  // Selected agent type (from initial getState or after user selection)
-  let selectedAgent = $state<ConfigAgentType | null>(null);
-
-  // Available agents from IPC payload (populated when agent-selection event fires)
-  let availableAgents = $state<readonly AgentInfo[]>([]);
-
-  // Setup progress state - array of row progress updates, initialized with default rows
-  const DEFAULT_PROGRESS_ROWS: readonly SetupRowId[] = ["vscode", "agent", "setup"];
-  let setupProgress = $state<SetupRowProgress[]>(
-    DEFAULT_PROGRESS_ROWS.map((id) => ({ id, status: "pending" }))
-  );
-
   // Announcement message for screen readers (cleared after announcement)
   let announceMessage = $state<string>("");
-
-  // Update overlay state
-  type UpdateState =
-    | { type: "none" }
-    | { type: "choice"; version: string }
-    | { type: "downloading"; version: string; percent: number };
-
-  let updateState = $state<UpdateState>({ type: "none" });
 
   // Subscribe to ui:mode-changed events from main process (unified mode system)
   $effect(() => {
@@ -123,58 +83,6 @@
     };
   });
 
-  // Subscribe to setup progress events from main process
-  // Each event is a per-row update; merge into local aggregated state
-  $effect(() => {
-    const unsubProgress = api.on<SetupRowProgress>("lifecycle:setup-progress", (row) => {
-      setupProgress = setupProgress.map((r) => (r.id === row.id ? row : r));
-    });
-    return () => {
-      unsubProgress();
-    };
-  });
-
-  // Subscribe to lifecycle:show-starting event from main process
-  // Main process tells us to show the starting screen (loading mode)
-  $effect(() => {
-    const unsub = api.on<void>("lifecycle:show-starting", () => {
-      logger.debug("Showing starting screen");
-      appMode = { type: "loading" };
-    });
-    return () => {
-      unsub();
-    };
-  });
-
-  // Subscribe to lifecycle:show-setup event from main process
-  // Main process tells us to show the setup screen (setup mode)
-  $effect(() => {
-    const unsub = api.on<void>("lifecycle:show-setup", () => {
-      logger.debug("Showing setup screen");
-      // Reset progress state when entering setup
-      setupProgress = DEFAULT_PROGRESS_ROWS.map((id) => ({ id, status: "pending" }));
-      appMode = { type: "setup" };
-    });
-    return () => {
-      unsub();
-    };
-  });
-
-  // Subscribe to lifecycle:show-agent-selection event from main process
-  // Main process tells us when to show the agent selection dialog
-  $effect(() => {
-    const unsub = api.on<ShowAgentSelectionPayload>("lifecycle:show-agent-selection", (payload) => {
-      logger.debug("Showing agent selection", {
-        agents: payload.agents.map((a) => a.agent).join(","),
-      });
-      availableAgents = payload.agents;
-      appMode = { type: "agent-selection" };
-    });
-    return () => {
-      unsub();
-    };
-  });
-
   // Subscribe to lifecycle:show-main-view event from main process
   // Main process tells us when setup is complete and we can show the main view.
   // Note: MainView mounts in this mode but is covered by a startup overlay
@@ -203,101 +111,15 @@
     }
   });
 
-  // Subscribe to lifecycle:setup-error event from main process
-  // Main process tells us when setup fails and we should show an error
-  $effect(() => {
-    const unsub = api.on<SetupErrorPayload>("lifecycle:setup-error", (payload) => {
-      logger.warn("Setup error received", { message: payload.message, code: payload.code ?? null });
-      errorSetup(payload.message);
-    });
-    return () => {
-      unsub();
-    };
-  });
-
-  // Subscribe to update:progress events from main process
-  $effect(() => {
-    const unsub = api.on<UpdateProgressPayload>("update:progress", (payload) => {
-      if (payload.finished) {
-        updateState = { type: "none" };
-        return;
-      }
-
-      switch (payload.action) {
-        case "show-choice":
-          updateState = { type: "choice", version: payload.version };
-          break;
-        case "downloading":
-        case "progress":
-          updateState = {
-            type: "downloading",
-            version: payload.version,
-            percent: payload.percent,
-          };
-          break;
-      }
-    });
-    return () => {
-      unsub();
-    };
-  });
-
-  // Handle update choice
-  function handleUpdateChoice(choice: UpdateChoice): void {
-    logger.info("Update choice", { choice });
-    api.sendUpdateChoice(choice);
-  }
-
-  // Handle update cancel
-  function handleUpdateCancel(): void {
-    logger.info("Update cancelled");
-    api.sendCancelUpdate();
-  }
-
   // No onMount needed - main process drives the flow via IPC events
   // The renderer starts in "initializing" mode and waits for IPC instructions
-
-  // Handle setup/service retry
-  // Sends a signal to main process to retry the startup flow
-  function handleSetupRetry(): void {
-    resetSetup();
-    // Show loading state while main process re-dispatches app:setup
-    appMode = { type: "loading" };
-    // Signal main process to retry
-    api.sendRetry();
-  }
-
-  // Handle setup quit
-  function handleSetupQuit(): void {
-    void api.lifecycle.quit();
-  }
-
-  /**
-   * Handle agent selection from the dialog.
-   * Sends IPC event to main process with selected agent.
-   * Main process will continue the setup flow and send next IPC event.
-   */
-  function handleAgentSelect(agent: ConfigAgentType): void {
-    logger.info("Agent selected", { agent });
-    // Store selected agent for display in SetupScreen
-    selectedAgent = agent;
-    // Reset progress state
-    setupProgress = DEFAULT_PROGRESS_ROWS.map((id) => ({ id, status: "pending" }));
-    // Transition to setup mode while main process continues
-    appMode = { type: "setup" };
-    // Send IPC event to main process
-    api.sendAgentSelected(agent as LifecycleAgentType);
-  }
 
   // Get aria-label for main element based on mode
   function getAriaLabel(): string {
     if (appMode.type === "ready") {
       return loadingState.value === "loading" ? "Loading projects" : "Application workspace";
     }
-    if (appMode.type === "loading") return "Loading services";
-    if (appMode.type === "agent-selection") return "Agent selection";
-    if (appMode.type === "initializing") return "Application starting";
-    return "Setup wizard";
+    return "Application starting";
   }
 </script>
 
@@ -311,45 +133,7 @@
 <main class="app" aria-label={getAriaLabel()}>
   {#if appMode.type === "initializing"}
     <!-- Minimal blank state while waiting for main process IPC -->
-    <div class="setup-container" aria-busy="true"></div>
-  {:else if appMode.type === "agent-selection"}
-    <!-- Agent selection mode - show selection dialog -->
-    <div class="setup-container">
-      <AgentSelectionDialog agents={availableAgents} onselect={handleAgentSelect} />
-    </div>
-  {:else if appMode.type === "setup"}
-    <!-- Setup mode - show setup screens based on setup state -->
-    <div class="setup-container">
-      {#if setupState.value.type === "error"}
-        <SetupError
-          errorMessage={setupState.value.errorMessage}
-          onretry={handleSetupRetry}
-          onquit={handleSetupQuit}
-        />
-      {:else}
-        <!-- Setup in progress - main process will send lifecycle:show-main-view when done -->
-        <SetupScreen
-          agent={selectedAgent}
-          progress={setupProgress}
-          onretry={handleSetupRetry}
-          onquit={handleSetupQuit}
-        />
-      {/if}
-    </div>
-  {:else if appMode.type === "loading"}
-    <!-- Loading mode - starting services -->
-    <div class="setup-container">
-      {#if setupState.value.type === "error"}
-        <SetupError
-          errorMessage={setupState.value.errorMessage}
-          onretry={handleSetupRetry}
-          onquit={handleSetupQuit}
-        />
-      {:else}
-        <!-- Hide progress rows when starting services (we're past setup phase) -->
-        <SetupScreen message="CodeHydra is starting..." subtitle="" hideProgress={true} />
-      {/if}
-    </div>
+    <div class="initializing-container" aria-busy="true"></div>
   {:else}
     <!-- Ready mode - MainView must mount to call lifecycle.ready() -->
     <!-- Startup overlay stays visible until projects finish loading -->
@@ -363,17 +147,8 @@
     {/if}
   {/if}
 
-  {#if updateState.type !== "none"}
-    <div class="update-overlay-container">
-      <UpdateOverlay
-        mode={updateState.type === "choice" ? "choice" : "downloading"}
-        version={updateState.version}
-        percent={updateState.type === "downloading" ? updateState.percent : 0}
-        onchoice={handleUpdateChoice}
-        oncancel={handleUpdateCancel}
-      />
-    </div>
-  {/if}
+  <!-- Declarative dialog host: renders dialogs driven by main process -->
+  <DialogHost workspaceArea={appMode.type === "ready"} />
 </main>
 
 <style>
@@ -385,7 +160,7 @@
     background: transparent; /* Allow VS Code to show through UI layer */
   }
 
-  .setup-container {
+  .initializing-container {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -418,22 +193,6 @@
     color: var(--ch-foreground);
     background-color: var(--ch-background);
     z-index: 1000;
-  }
-
-  .update-overlay-container {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    color: var(--ch-foreground);
-    background-color: var(--ch-background);
-    z-index: 1100;
   }
 
   @keyframes fadeIn {

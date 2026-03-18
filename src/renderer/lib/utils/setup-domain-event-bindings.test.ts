@@ -215,21 +215,18 @@ describe("setupDomainEventBindings", () => {
       expect(projectsStore.activeWorkspacePath.value).toBe(TEST_WORKSPACE_PATH);
     });
 
-    it("marks workspace as loading when workspace:created is emitted", () => {
-      // This prevents a race condition where workspace:loading-changed might arrive
-      // after workspace:created, causing the loading overlay to not show.
+    it("does not mark workspace as loading on workspace:created (now handled by dialog framework)", () => {
+      // Loading state is now managed by the dialog framework via DialogManager
+      // in the main process, not by the renderer-side workspace-loading store.
       setupDomainEventBindings(notificationService, mockApi.api);
-
-      // Verify workspace is not loading initially
-      expect(workspaceLoadingStore.isWorkspaceLoading(TEST_WORKSPACE_PATH)).toBe(false);
 
       mockApi.emit("workspace:created", {
         projectId: TEST_PROJECT_ID,
         workspace: TEST_WORKSPACE,
       });
 
-      // Workspace should be marked as loading even without workspace:loading-changed event
-      expect(workspaceLoadingStore.isWorkspaceLoading(TEST_WORKSPACE_PATH)).toBe(true);
+      // Workspace should NOT be marked as loading — dialog framework handles this now
+      expect(workspaceLoadingStore.isWorkspaceLoading(TEST_WORKSPACE_PATH)).toBe(false);
     });
 
     it("removes workspace from store when workspace:removed is emitted", () => {

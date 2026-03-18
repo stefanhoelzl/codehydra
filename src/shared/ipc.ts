@@ -183,15 +183,10 @@ export const ApiIpcChannels = {
   LIFECYCLE_READY: "api:lifecycle:ready",
   LIFECYCLE_QUIT: "api:lifecycle:quit",
   // Lifecycle events (main → renderer)
-  LIFECYCLE_SETUP_PROGRESS: "api:lifecycle:setup-progress",
-  LIFECYCLE_SHOW_STARTING: "api:lifecycle:show-starting",
-  LIFECYCLE_SHOW_SETUP: "api:lifecycle:show-setup",
-  LIFECYCLE_SHOW_AGENT_SELECTION: "api:lifecycle:show-agent-selection",
   LIFECYCLE_SHOW_MAIN_VIEW: "api:lifecycle:show-main-view",
-  LIFECYCLE_SETUP_ERROR: "api:lifecycle:setup-error",
-  // Lifecycle events (renderer → main)
-  LIFECYCLE_AGENT_SELECTED: "api:lifecycle:agent-selected",
-  LIFECYCLE_RETRY: "api:lifecycle:retry",
+  // Dialog framework (main ↔ renderer)
+  DIALOG_COMMAND: "api:dialog:command",
+  DIALOG_EVENT: "api:dialog:event",
   // Log commands (renderer → main)
   LOG_DEBUG: "api:log:debug",
   LOG_INFO: "api:log:info",
@@ -209,27 +204,9 @@ export const ApiIpcChannels = {
   WORKSPACE_STATUS_CHANGED: "api:workspace:status-changed",
   WORKSPACE_METADATA_CHANGED: "api:workspace:metadata-changed",
   WORKSPACE_DELETION_PROGRESS: "api:workspace:deletion-progress",
-  WORKSPACE_LOADING_CHANGED: "api:workspace:loading-changed",
   UI_MODE_CHANGED: "api:ui:mode-changed",
   SHORTCUT_KEY: "api:shortcut:key",
-  // Update events
-  UPDATE_PROGRESS: "api:update:progress",
-  UPDATE_CHOICE: "api:update:choice",
-  UPDATE_CANCEL: "api:update:cancel",
 } as const satisfies Record<string, string>;
-
-// ============ Workspace Loading Types ============
-
-/**
- * Payload for workspace loading state change events.
- * Sent when a workspace starts or finishes loading.
- */
-export interface WorkspaceLoadingChangedPayload {
-  /** Path to the workspace */
-  readonly path: WorkspacePath;
-  /** True when loading starts, false when loading ends */
-  readonly loading: boolean;
-}
 
 // ============ Lifecycle Event Payload Types ============
 
@@ -247,35 +224,6 @@ export interface AgentInfo {
   readonly agent: LifecycleAgentType;
   readonly label: string;
   readonly icon: string;
-}
-
-/**
- * Payload for lifecycle:show-agent-selection event (main → renderer).
- * Tells the renderer to show the agent selection dialog.
- */
-export interface ShowAgentSelectionPayload {
-  /** Available agents to choose from */
-  readonly agents: readonly AgentInfo[];
-}
-
-/**
- * Payload for lifecycle:agent-selected event (renderer → main).
- * Sent when the user selects an agent in the dialog.
- */
-export interface AgentSelectedPayload {
-  /** The agent selected by the user */
-  readonly agent: LifecycleAgentType;
-}
-
-/**
- * Payload for lifecycle:setup-error event (main → renderer).
- * Sent when setup fails and the error should be displayed.
- */
-export interface SetupErrorPayload {
-  /** Error message to display */
-  readonly message: string;
-  /** Optional error code for categorization */
-  readonly code?: string;
 }
 
 // ============ Log API Types ============
@@ -296,37 +244,4 @@ export interface ApiLogPayload {
   readonly message: string;
   /** Optional context data */
   readonly context?: LogContext;
-}
-
-// ============ Update Progress Types ============
-
-/**
- * Actions for the update progress overlay.
- * - "show-choice": Show update choice dialog
- * - "downloading": Show downloading state (initial)
- * - "progress": Update download progress
- */
-export type UpdateProgressAction = "show-choice" | "downloading" | "progress";
-
-/**
- * Payload for api:update:progress events (main → renderer).
- * Single event type for all update overlay state transitions.
- */
-export interface UpdateProgressPayload {
-  readonly action: UpdateProgressAction;
-  readonly version: string;
-  readonly percent: number;
-  readonly finished?: boolean;
-}
-
-/**
- * User's choice from the update dialog.
- */
-export type UpdateChoice = "always" | "yes" | "skip" | "never";
-
-/**
- * Payload for api:update:choice events (renderer → main).
- */
-export interface UpdateChoicePayload {
-  readonly choice: UpdateChoice;
 }

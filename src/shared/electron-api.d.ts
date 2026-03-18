@@ -3,9 +3,10 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { UIModeChangedEvent, LogContext, LifecycleAgentType, UpdateChoice } from "./ipc";
+import type { UIModeChangedEvent, LogContext } from "./ipc";
 import type { UIMode } from "./ipc";
 import type { ShortcutKey } from "./shortcuts";
+import type { DialogUserEvent } from "./dialog-types";
 
 import type {
   Project,
@@ -118,32 +119,11 @@ export interface Api {
   onShortcut(callback: (key: ShortcutKey) => void): Unsubscribe;
 
   /**
-   * Send agent selected event to main process.
-   * Used when user selects an agent in the agent selection dialog.
+   * Send dialog user event to main process.
+   * Used when the user interacts with a declarative dialog (clicks an action button).
    * Fire-and-forget - does not return a promise.
    */
-  sendAgentSelected(agent: LifecycleAgentType): void;
-
-  /**
-   * Send retry event to main process.
-   * Used when user clicks retry after a setup/startup error.
-   * Fire-and-forget - does not return a promise.
-   */
-  sendRetry(): void;
-
-  /**
-   * Send update choice event to main process.
-   * Used when user responds to the update choice dialog.
-   * Fire-and-forget - does not return a promise.
-   */
-  sendUpdateChoice(choice: UpdateChoice): void;
-
-  /**
-   * Send cancel update event to main process.
-   * Used when user clicks Cancel during update download.
-   * Fire-and-forget - does not return a promise.
-   */
-  sendCancelUpdate(): void;
+  sendDialogEvent(event: DialogUserEvent): void;
 }
 
 declare global {

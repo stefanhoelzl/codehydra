@@ -384,23 +384,13 @@ describe("preload API", () => {
     });
   });
 
-  describe("sendAgentSelected", () => {
-    it("sends lifecycle:agent-selected IPC event with agent payload", () => {
-      const sendAgentSelected = exposedApi.sendAgentSelected as (agent: string) => void;
-      sendAgentSelected("opencode");
+  describe("sendDialogEvent", () => {
+    it("sends dialog:event IPC event with dialog user event payload", () => {
+      const sendDialogEvent = exposedApi.sendDialogEvent as (event: unknown) => void;
+      const event = { dialogId: "dlg-1", actionId: "retry" };
+      sendDialogEvent(event);
 
-      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:lifecycle:agent-selected", {
-        agent: "opencode",
-      });
-    });
-  });
-
-  describe("sendRetry", () => {
-    it("sends lifecycle:retry IPC event", () => {
-      const sendRetry = exposedApi.sendRetry as () => void;
-      sendRetry();
-
-      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:lifecycle:retry");
+      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:dialog:event", event);
     });
   });
 

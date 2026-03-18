@@ -15,9 +15,8 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  SetupScreenProgress,
 } from "./types";
-import type { UIModeChangedEvent, SetupErrorPayload } from "../ipc";
+import type { UIModeChangedEvent } from "../ipc";
 
 // Re-export for consumers that import from this module
 export type { Unsubscribe } from "../types";
@@ -56,6 +55,4 @@ export interface ApiEvents {
     readonly value: string | null;
   }) => void;
   "ui:mode-changed": (event: UIModeChangedEvent) => void;
-  "lifecycle:setup-progress": (event: SetupScreenProgress) => void;
-  "lifecycle:setup-error": (event: SetupErrorPayload) => void;
 }

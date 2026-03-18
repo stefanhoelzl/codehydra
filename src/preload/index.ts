@@ -5,14 +5,8 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
-import type {
-  UIModeChangedEvent,
-  LogContext,
-  LifecycleAgentType,
-  AgentSelectedPayload,
-  UpdateChoice,
-  UpdateChoicePayload,
-} from "../shared/ipc";
+import type { UIModeChangedEvent, LogContext } from "../shared/ipc";
+import type { DialogUserEvent } from "../shared/dialog-types";
 import type { ShortcutKey } from "../shared/shortcuts";
 import type { InitialPrompt } from "../shared/api/types";
 
@@ -100,34 +94,11 @@ contextBridge.exposeInMainWorld("api", {
     quit: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_QUIT),
   },
   /**
-   * Send agent selected event to main process.
-   * Used when user selects an agent in the agent selection dialog.
+   * Send dialog user event to main process.
+   * Used when the user interacts with a declarative dialog (clicks an action button).
    */
-  sendAgentSelected: (agent: LifecycleAgentType) => {
-    const payload: AgentSelectedPayload = { agent };
-    ipcRenderer.send(ApiIpcChannels.LIFECYCLE_AGENT_SELECTED, payload);
-  },
-  /**
-   * Send retry event to main process.
-   * Used when user clicks retry after a setup/startup error.
-   */
-  sendRetry: () => {
-    ipcRenderer.send(ApiIpcChannels.LIFECYCLE_RETRY);
-  },
-  /**
-   * Send update choice event to main process.
-   * Used when user responds to the update choice dialog.
-   */
-  sendUpdateChoice: (choice: UpdateChoice) => {
-    const payload: UpdateChoicePayload = { choice };
-    ipcRenderer.send(ApiIpcChannels.UPDATE_CHOICE, payload);
-  },
-  /**
-   * Send cancel update event to main process.
-   * Used when user clicks Cancel during update download.
-   */
-  sendCancelUpdate: () => {
-    ipcRenderer.send(ApiIpcChannels.UPDATE_CANCEL);
+  sendDialogEvent: (event: DialogUserEvent) => {
+    ipcRenderer.send(ApiIpcChannels.DIALOG_EVENT, event);
   },
   // Log API (renderer → main, fire-and-forget)
   log: {

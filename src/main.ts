@@ -145,6 +145,8 @@ import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
 import { createDebugModule } from "./modules/debug-module";
 import { createUiIpcModule } from "./modules/ui-ipc-module";
+import { DialogManager } from "./modules/dialog-manager";
+import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
 import { createGitHubSource } from "./modules/auto-workspace/github-source";
@@ -347,6 +349,8 @@ const idempotencyModule = createIdempotencyModule([
 
 const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
 
+const dialogManager = new DialogManager(viewManager.sendToUI.bind(viewManager), apiLogger);
+
 const viewModule = createViewModule({
   viewManager,
   logger: apiLogger,
@@ -360,6 +364,8 @@ const viewModule = createViewModule({
   buildInfo,
   uiHtmlPath,
   configService,
+  dialogManager,
+  dispatcher,
 });
 
 const codeServerModule = createCodeServerModule({
@@ -452,7 +458,7 @@ const posthogModule = createPosthogModule({
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
   dispatcher,
-  ipcLayer,
+  dialogManager,
   configService,
 });
 const localProjectModule = createLocalProjectModule({
@@ -477,6 +483,11 @@ const badgeModule = createBadgeModule({
   imageLayer,
   windowManager,
   logger: loggingService.createLogger("badge"),
+});
+const deletionDialogModule = createDeletionDialogModule({
+  dialogManager,
+  dispatcher,
+  logger: apiLogger,
 });
 const workspaceSelectionModule = createWorkspaceSelectionModule();
 const mcpModule = createMcpModule({
@@ -553,7 +564,7 @@ const devtoolsModule = createDevtoolsModule({
   viewLayer,
 });
 
-const debugModule = createDebugModule({ configService });
+const debugModule = createDebugModule({ configService, dialogManager });
 
 // 8. Operation registration
 
@@ -596,6 +607,7 @@ const uiIpcModule = createUiIpcModule({
   logger: apiLogger,
   dispatcher,
   loggingService,
+  dialogManager,
 });
 
 // 9. Register all modules
@@ -608,6 +620,7 @@ dispatcher.registerModule(codeServerModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
+dispatcher.registerModule(deletionDialogModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(keepFilesModule);

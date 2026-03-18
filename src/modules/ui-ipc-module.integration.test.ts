@@ -42,14 +42,9 @@ import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/r
 import {
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
-  EVENT_WORKSPACE_DELETION_PROGRESS,
   DELETE_WORKSPACE_OPERATION_ID,
 } from "../intents/delete-workspace";
-import type {
-  DeleteWorkspaceIntent,
-  WorkspaceDeletedEvent,
-  WorkspaceDeletionProgressEvent,
-} from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../intents/delete-workspace";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -57,8 +52,6 @@ import {
 } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { Operation, OperationContext } from "../intents/lib/operation";
-import { SetupOperation, INTENT_SETUP } from "../intents/setup";
-import type { SetupIntent } from "../intents/setup";
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
 import { createMockLogging } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
@@ -364,64 +357,7 @@ describe("UiIpcModule - bases:updated", () => {
   });
 });
 
-// =============================================================================
-// Tests - workspace:deletion-progress event
-// =============================================================================
-
-describe("UiIpcModule - workspace:deletion-progress", () => {
-  it("sends deletion progress to UI via sendToUI", async () => {
-    const deps = createBridgeDeps();
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const progressPayload = {
-      workspacePath: TEST_WORKSPACE_PATH as WorkspacePath,
-      workspaceName: TEST_WORKSPACE_NAME,
-      projectId: TEST_PROJECT_ID,
-      keepBranch: true,
-      operations: [
-        {
-          id: "kill-terminals" as const,
-          label: "Terminating processes",
-          status: "done" as const,
-        },
-      ],
-      completed: false,
-      hasErrors: false,
-    };
-    const event: WorkspaceDeletionProgressEvent = {
-      type: EVENT_WORKSPACE_DELETION_PROGRESS,
-      payload: progressPayload,
-    };
-
-    await uiIpcModule.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event);
-
-    expect(deps.sendToUI).toHaveBeenCalledWith(
-      ApiIpcChannels.WORKSPACE_DELETION_PROGRESS,
-      progressPayload
-    );
-  });
-
-  it("ignores when sendToUI is a no-op", async () => {
-    const deps = createBridgeDeps();
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const event: WorkspaceDeletionProgressEvent = {
-      type: EVENT_WORKSPACE_DELETION_PROGRESS,
-      payload: {
-        workspacePath: TEST_WORKSPACE_PATH as WorkspacePath,
-        workspaceName: TEST_WORKSPACE_NAME,
-        projectId: TEST_PROJECT_ID,
-        keepBranch: false,
-        operations: [],
-        completed: true,
-        hasErrors: false,
-      },
-    };
-    await expect(
-      uiIpcModule.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler(event)
-    ).resolves.not.toThrow();
-  });
-});
+// NOTE: workspace:deletion-progress tests removed — now handled by deletion-dialog-module
 
 // =============================================================================
 // Tests - IPC handler registration
@@ -538,94 +474,8 @@ describe("UiIpcModule - shutdown", () => {
   });
 });
 
-// =============================================================================
-// setup:error -> lifecycle:setup-error bridge tests
-// =============================================================================
-
-describe("UiIpcModule - setup:error", () => {
-  function createSetupErrorTestSetup(): {
-    dispatcher: Dispatcher;
-    sendToUI: SendToUIMock;
-  } {
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
-
-    dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
-
-    const deps = createBridgeDeps({
-      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
-    });
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const failingSetupHook: IntentModule = {
-      name: "test-failing-setup",
-      hooks: {
-        setup: {
-          "show-ui": {
-            handler: async () => {
-              throw new Error("Download failed");
-            },
-          },
-        },
-      },
-    };
-
-    dispatcher.registerModule(uiIpcModule);
-    dispatcher.registerModule(failingSetupHook);
-
-    return { dispatcher, sendToUI: deps.sendToUI };
-  }
-
-  it("sends lifecycle:setup-error to UI when setup operation fails", async () => {
-    const { dispatcher, sendToUI } = createSetupErrorTestSetup();
-
-    const intent: SetupIntent = {
-      type: INTENT_SETUP,
-      payload: {},
-    };
-
-    await expect(dispatcher.dispatch(intent)).rejects.toThrow("Download failed");
-
-    expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
-      message: "Download failed",
-    });
-  });
-
-  it("includes error code when present", async () => {
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
-
-    dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
-
-    const deps = createBridgeDeps({
-      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
-    });
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const errorWithCode = Object.assign(new Error("Network timeout"), { code: "ETIMEDOUT" });
-    const failingHook: IntentModule = {
-      name: "test-failing-hook",
-      hooks: {
-        setup: {
-          "show-ui": {
-            handler: async () => {
-              throw errorWithCode;
-            },
-          },
-        },
-      },
-    };
-
-    dispatcher.registerModule(uiIpcModule);
-    dispatcher.registerModule(failingHook);
-
-    const intent: SetupIntent = { type: INTENT_SETUP, payload: {} };
-    await expect(dispatcher.dispatch(intent)).rejects.toThrow("Network timeout");
-
-    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, {
-      message: "Network timeout",
-      code: "ETIMEDOUT",
-    });
-  });
-});
+// NOTE: setup:error forwarding tests removed — setup:error is now handled by view-module
+// via DialogManager, not the IPC event bridge.
 
 // =============================================================================
 // Tests - shortcut:key-pressed event

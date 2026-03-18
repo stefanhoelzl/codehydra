@@ -17,14 +17,12 @@ import {
   updateWorkspaceMetadata,
 } from "$lib/stores/projects.svelte.js";
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
-import { setWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
 import { dialogState, openCreateDialog } from "$lib/stores/dialogs.svelte.js";
 import { hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
 import { setupDomainEvents, type DomainEventApi } from "$lib/utils/domain-events";
 import { createLogger } from "$lib/logging";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
 import * as api from "$lib/api";
-import type { WorkspaceLoadingChangedPayload } from "@shared/ipc";
 
 const logger = createLogger("ui");
 
@@ -54,19 +52,6 @@ export function setupDomainEventBindings(
   notificationService: AgentNotificationService,
   apiImpl: DomainEventApi = defaultApi
 ): () => void {
-  // Subscribe to workspace loading state changes
-  const unsubLoading = api.on<WorkspaceLoadingChangedPayload>(
-    "workspace:loading-changed",
-    (payload) => {
-      setWorkspaceLoading(payload.path, payload.loading);
-      logger.debug("Store updated", {
-        store: "workspace-loading",
-        path: payload.path,
-        loading: payload.loading,
-      });
-    }
-  );
-
   // Setup domain events
   const cleanupDomainEvents = setupDomainEvents(
     apiImpl,
@@ -86,12 +71,6 @@ export function setupDomainEventBindings(
         const project = projects.value.find((p) => p.id === projectId);
         if (project) {
           addWorkspace(project.path, workspace);
-          // Mark newly created workspaces as loading immediately.
-          // This prevents a race condition where workspace:loading-changed event
-          // might arrive after workspace:created, causing the overlay to not show.
-          // The subsequent loading-changed(true) event will be a no-op.
-          // loading-changed(false) will clear the state when the workspace is ready.
-          setWorkspaceLoading(workspace.path, true);
           logger.debug("Store updated", { store: "projects" });
         }
       },
@@ -133,9 +112,5 @@ export function setupDomainEventBindings(
     { notificationService }
   );
 
-  // Return combined cleanup function
-  return () => {
-    unsubLoading();
-    cleanupDomainEvents();
-  };
+  return cleanupDomainEvents;
 }

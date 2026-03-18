@@ -12,9 +12,8 @@ import type {
   WorkspaceRef,
   WorkspaceStatus,
   BaseInfo,
-  SetupScreenProgress,
 } from "./types";
-import type { UIModeChangedEvent, SetupErrorPayload } from "../ipc";
+import type { UIModeChangedEvent } from "../ipc";
 
 describe("ApiEvents Interface", () => {
   it("should define all required event handlers", () => {
@@ -58,15 +57,9 @@ describe("ApiEvents Interface", () => {
       "ui:mode-changed": (event: UIModeChangedEvent) => {
         void event;
       },
-      "lifecycle:setup-progress": (event: SetupScreenProgress) => {
-        void event;
-      },
-      "lifecycle:setup-error": (event: SetupErrorPayload) => {
-        void event;
-      },
     };
 
     expect(handlers).toBeDefined();
-    expect(Object.keys(handlers)).toHaveLength(11);
+    expect(Object.keys(handlers)).toHaveLength(9);
   });
 });
