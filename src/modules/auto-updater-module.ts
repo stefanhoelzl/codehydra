@@ -4,14 +4,14 @@
  * Hooks:
  * - app:start -> "check-deps": check for updates, store detectedVersion, return updateNeedsChoice
  * - app:start -> "start": start auto-updater
- * - update-apply -> "show-choice": emit show-choice UI event
- * - update-apply -> "download": download update, report progress, handle cancel
- * - update-apply -> "install": dispatch app:shutdown with installUpdate
+ * - update-apply -> "show-choice": emit show-choice UI event (no-op when no update detected)
+ * - update-apply -> "download": download update, report progress, handle cancel (no-op when no update detected)
+ * - update-apply -> "install": dispatch app:shutdown with installUpdate (no-op when no update detected)
  * - app:shutdown -> "stop": dispose auto-updater
  * - app:shutdown -> "quit": quitAndInstall if installUpdate flag is set
  *
  * Interceptor:
- * - Rejects app:update if config="never" or no update detected
+ * - Rejects app:update if config="never"
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -57,13 +57,13 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     ...configEnum(["always", "ask", "never"]),
   });
 
-  // Interceptor: reject app:update if config="never" or no update detected
+  // Interceptor: reject app:update if config="never"
   const interceptor: IntentInterceptor = {
     id: "auto-updater-gate",
     async before(intent: Intent): Promise<Intent | null> {
       if (intent.type !== INTENT_UPDATE_APPLY) return intent;
       const autoUpdate = deps.configService.get("auto-update") as AutoUpdatePreference;
-      if (autoUpdate === "never" || detectedVersion === null) return null;
+      if (autoUpdate === "never") return null;
       return intent;
     },
   };
@@ -132,14 +132,16 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       [UPDATE_APPLY_OPERATION_ID]: {
         "show-choice": {
           handler: async (ctx: HookContext): Promise<void> => {
+            if (detectedVersion === null) return;
             const { report } = ctx as UpdateApplyHookContext;
-            report("show-choice", 0, detectedVersion ?? "");
+            report("show-choice", 0, detectedVersion);
           },
         },
         download: {
           handler: async (ctx: HookContext): Promise<UpdateDownloadResult> => {
+            if (detectedVersion === null) return {};
             const { report } = ctx as UpdateApplyHookContext;
-            const version = detectedVersion ?? "";
+            const version = detectedVersion;
             report("downloading", 0, version);
 
             // Wire progress reporting
@@ -181,6 +183,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
         },
         install: {
           handler: async (): Promise<void> => {
+            if (detectedVersion === null) return;
             await deps.dispatcher.dispatch({
               type: INTENT_APP_SHUTDOWN,
               payload: { installUpdate: true },
