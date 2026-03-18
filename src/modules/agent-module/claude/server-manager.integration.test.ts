@@ -279,6 +279,13 @@ describe("ClaudeCodeServerManager integration", () => {
         finalStatus: "idle",
       },
       {
+        hookName: "StopFailure",
+        setupHooks: ["SessionStart", "UserPromptSubmit"],
+        extraPayload: {},
+        expectedChanges: ["idle", "busy", "idle"],
+        finalStatus: "idle",
+      },
+      {
         hookName: "SessionEnd",
         setupHooks: ["SessionStart"],
         extraPayload: {},
@@ -1062,6 +1069,41 @@ describe("ClaudeCodeServerManager integration", () => {
   });
 
   describe("sub-agent tracking", () => {
+    it("StopFailure suppressed when sub-agents are active", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      // Main agent hits API error, but sub-agent is still running
+      await sendHook(port, "StopFailure", { workspacePath: "/workspace/feature-a" });
+
+      // Should stay busy — StopFailure suppressed
+      expect(statusChanges).toEqual(["idle", "busy"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+    });
+
+    it("StopFailure without sub-agents transitions to idle", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "StopFailure", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
     it("Stop suppressed to busy when sub-agents are active", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];

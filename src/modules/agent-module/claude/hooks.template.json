@@ -51,6 +51,16 @@
         ]
       }
     ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${HOOK_HANDLER_PATH} StopFailure"
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "hooks": [

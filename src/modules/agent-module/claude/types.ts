@@ -20,6 +20,7 @@ export type ClaudeCodeHookName =
   | "UserPromptSubmit"
   | "PermissionRequest"
   | "Stop"
+  | "StopFailure"
   | "SubagentStop"
   | "PreToolUse"
   | "PostToolUse"
@@ -92,6 +93,8 @@ export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChan
   PermissionRequest: "idle",
   // Agent finished working, waiting for next prompt
   Stop: "idle",
+  // Agent stopped due to API error (rate limit, auth failure), waiting for retry
+  StopFailure: "idle",
   // Subagent done, main agent continues (no change)
   SubagentStop: null,
   // Tool starting - handled specially with flag (see server-manager.ts)
