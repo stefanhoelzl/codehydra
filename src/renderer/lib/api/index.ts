@@ -25,13 +25,8 @@ export const {
   onModeChange,
   // Shortcut key event (main process → renderer)
   onShortcut,
-  // Agent selection event (renderer → main process)
-  sendAgentSelected,
-  // Retry event (renderer → main process)
-  sendRetry,
-  // Update events (renderer → main process)
-  sendUpdateChoice,
-  sendCancelUpdate,
+  // Dialog framework event (renderer → main process)
+  sendDialogEvent,
 } = window.api;
 
 // Re-export branded path types from IPC (still used for type safety)

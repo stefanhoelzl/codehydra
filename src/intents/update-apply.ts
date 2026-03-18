@@ -17,8 +17,17 @@
 
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { UpdateProgressAction, UpdateChoice } from "../shared/ipc";
 import type { Config } from "../boundaries/platform/config";
+
+/**
+ * Actions for update progress domain events.
+ */
+export type UpdateProgressAction = "show-choice" | "downloading" | "progress";
+
+/**
+ * User's choice from the update dialog.
+ */
+export type UpdateChoice = "always" | "yes" | "skip" | "never";
 
 // =============================================================================
 // Intent Types

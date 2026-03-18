@@ -31,12 +31,15 @@ import type { WorkspaceName } from "../shared/api/types";
 import { SETUP_OPERATION_ID, type BinaryHookInput } from "../intents/setup";
 import {
   UPDATE_APPLY_OPERATION_ID,
-  type UpdateApplyHookContext,
+  type UpdateChoiceResult,
   type UpdateDownloadResult,
 } from "../intents/update-apply";
+import type { DialogManager } from "./dialog-manager";
+import type { DialogConfig, DialogAction } from "../shared/dialog-types";
 
 interface DebugModuleDeps {
   readonly configService: Config;
+  readonly dialogManager?: DialogManager;
 }
 
 export function createDebugModule(deps: DebugModuleDeps): IntentModule {
@@ -150,27 +153,80 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         },
       },
 
-      // --- Update: show-choice + download simulation ---
+      // --- Update: choice + download simulation via DialogManager ---
       [UPDATE_APPLY_OPERATION_ID]: {
-        "show-choice": {
-          handler: async (ctx: HookContext): Promise<void> => {
-            if (!isActive("debug.update")) return;
-            const { report } = ctx as UpdateApplyHookContext;
-            report("show-choice", 0, "99.0.0-debug");
+        "await-choice": {
+          handler: async (): Promise<UpdateChoiceResult> => {
+            if (!isActive("debug.update") || !deps.dialogManager) return {};
+            const version = "99.0.0-debug";
+            const config: DialogConfig = {
+              sections: [
+                { type: "text", content: "Update Available", style: "heading" },
+                { type: "text", content: `Version ${version} is ready to install.` },
+              ],
+              actions: [
+                { id: "always", label: "Always", variant: "secondary" },
+                { id: "yes", label: "Yes" },
+                { id: "skip", label: "Skip", variant: "secondary" },
+                { id: "never", label: "Never", variant: "secondary" },
+              ],
+            };
+            const handle = deps.dialogManager.open(config);
+            const event = await handle.nextEvent(5 * 60_000);
+            handle.close();
+            const choiceMap: Record<string, "always" | "yes" | "skip" | "never"> = {
+              always: "always",
+              yes: "yes",
+              skip: "skip",
+              never: "never",
+            };
+            const choice = choiceMap[event.actionId];
+            return choice ? { choice } : {};
           },
         },
         download: {
-          handler: async (ctx: HookContext): Promise<UpdateDownloadResult> => {
-            if (!isActive("debug.update")) return {};
-            const { report } = ctx as UpdateApplyHookContext;
+          handler: async (): Promise<UpdateDownloadResult> => {
+            if (!isActive("debug.update") || !deps.dialogManager) return {};
             const version = "99.0.0-debug";
-            report("downloading", 0, version);
-            for (let percent = 10; percent <= 100; percent += 10) {
-              await delay(200);
-              report("progress", percent, version);
+            const buildConfig = (pct: number): DialogConfig => {
+              const actions: DialogAction[] = [
+                { id: "cancel", label: "Cancel", variant: "secondary" },
+              ];
+              return {
+                sections: [
+                  { type: "text", content: "Updating CodeHydra", style: "heading" },
+                  {
+                    type: "progress",
+                    items: [
+                      {
+                        id: "dl",
+                        label: `Downloading v${version}`,
+                        status: "running",
+                        ...(pct > 0 && { progress: pct }),
+                        ...(pct > 0 && { message: `${pct}%` }),
+                      },
+                    ],
+                  },
+                  {
+                    type: "text",
+                    content: "The app will restart automatically.",
+                    style: "subtitle",
+                  },
+                ],
+                actions,
+              };
+            };
+            const handle = deps.dialogManager.open(buildConfig(0));
+            let cancelled = false;
+            handle.onEvent((evt) => {
+              if (evt.actionId === "cancel") cancelled = true;
+            });
+            for (let percent = 5; percent <= 100 && !cancelled; percent += 5) {
+              await delay(150);
+              handle.update(buildConfig(percent));
             }
-            report("downloading", 0, version, true);
-            return { cancelled: true };
+            handle.close();
+            return { cancelled: true }; // Don't actually install in debug mode
           },
         },
       },

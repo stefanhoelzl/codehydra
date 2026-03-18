@@ -27,10 +27,9 @@ import type { Logger } from "../boundaries/platform/logging";
 import type { ViewBoundary } from "../boundaries/shell/view";
 import type { WindowBoundaryInternal } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
-import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc";
+import type { IpcBoundary } from "../boundaries/shell/ipc";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceRef } from "../shared/api/types";
-import type { WorkspacePath, WorkspaceLoadingChangedPayload } from "../shared/ipc";
 import type { SetModeIntent, SetModeHookResult } from "../intents/set-mode";
 import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/app-start";
 import type { AgentSelectionHookContext } from "../intents/setup";
@@ -52,9 +51,12 @@ import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../intents/setup";
-import { UPDATE_APPLY_OPERATION_ID, type UpdateChoiceResult } from "../intents/update-apply";
+import { EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../intents/setup";
+import type { SetupProgressEvent, SetupErrorEvent } from "../intents/setup";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/get-active-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
@@ -64,15 +66,11 @@ import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { Config } from "../boundaries/platform/config";
 import { configBoolean } from "../boundaries/platform/config-definition";
-import {
-  ApiIpcChannels,
-  type LifecycleAgentType,
-  type ShowAgentSelectionPayload,
-  type AgentSelectedPayload,
-  type UpdateChoice,
-  type UpdateChoicePayload,
-} from "../shared/ipc";
-import { ApiIpcChannels as SetupIpcChannels } from "../shared/ipc";
+import { ApiIpcChannels } from "../shared/ipc";
+import type { LifecycleAgentType } from "../shared/ipc";
+import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import type { DialogConfig, DialogSection, ProgressItem } from "../shared/dialog-types";
 import { SetupError } from "../shared/errors/service-errors";
 import { getErrorMessage } from "../shared/error-utils";
 
@@ -109,6 +107,8 @@ export interface ViewModuleDeps {
   } | null;
   readonly uiHtmlPath?: string | null;
   readonly configService: Config;
+  readonly dialogManager?: DialogManager;
+  readonly dispatcher?: Dispatcher;
 }
 
 // =============================================================================
@@ -136,6 +136,18 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
   let capAgentType: LifecycleAgentType | undefined;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
   // loadOnResume is read from configService on demand
+
+  /** Track which workspaces are loading (not necessarily showing a dialog). */
+  const loadingPaths = new Set<string>();
+  /** Currently visible loading dialog (only for active workspace). */
+  let loadingDialog: { path: string; handle: DialogHandle } | null = null;
+  /** Track the setup dialog handle (for show-ui/hide-ui). */
+  let setupDialogHandle: DialogHandle | null = null;
+  /** Accumulated setup row state (persists across progress events). */
+  const setupRowState = new Map<
+    string,
+    { status: ProgressItem["status"]; message?: string; progress?: number }
+  >();
 
   const module: IntentModule = {
     name: "view",
@@ -192,17 +204,47 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
         },
         "show-ui": {
           handler: async (): Promise<ShowUIHookResult> => {
-            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
-            if (!deps.ipcLayer) return {};
-            const ipcLayer = deps.ipcLayer;
+            // Open a "starting" dialog via DialogManager
+            if (deps.dialogManager) {
+              const config: DialogConfig = {
+                sections: [
+                  {
+                    type: "progress",
+                    items: [
+                      { id: "starting", label: "CodeHydra is starting...", status: "running" },
+                    ],
+                    style: "spinner",
+                  },
+                ],
+              };
+              setupDialogHandle = deps.dialogManager.open(config);
+            }
+            if (!deps.dialogManager) return {};
             return {
               waitForRetry: () =>
                 new Promise<void>((resolve) => {
-                  const handleRetry: IpcEventHandler = () => {
-                    ipcLayer.removeListener(ApiIpcChannels.LIFECYCLE_RETRY, handleRetry);
+                  // Called after error handler has opened an error dialog with retry/quit
+                  // actions and stored the handle in setupDialogHandle.
+                  if (!setupDialogHandle) {
                     resolve();
-                  };
-                  ipcLayer.on(ApiIpcChannels.LIFECYCLE_RETRY, handleRetry);
+                    return;
+                  }
+                  setupDialogHandle.onEvent((evt) => {
+                    if (evt.actionId === "retry") {
+                      setupDialogHandle?.close();
+                      setupDialogHandle = null;
+                      resolve();
+                    } else if (evt.actionId === "quit") {
+                      setupDialogHandle?.close();
+                      setupDialogHandle = null;
+                      if (deps.dispatcher) {
+                        void deps.dispatcher.dispatch({
+                          type: INTENT_APP_SHUTDOWN,
+                          payload: {},
+                        } as AppShutdownIntent);
+                      }
+                    }
+                  });
                 }),
             };
           },
@@ -216,14 +258,36 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               viewManager.updateCodeServerPort(codeServerPort);
             }
 
-            // Wire loading state changes to IPC
+            // Wire loading state changes — track silently, show dialog only for active workspace
             loadingChangeCleanupFn = viewManager.onLoadingChange(
               (path: string, loading: boolean) => {
-                const payload: WorkspaceLoadingChangedPayload = {
-                  path: path as WorkspacePath,
-                  loading,
-                };
-                viewManager.sendToUI(ApiIpcChannels.WORKSPACE_LOADING_CHANGED, payload);
+                if (!deps.dialogManager) return;
+                if (loading) {
+                  loadingPaths.add(path);
+                  // Show dialog only if this is the active workspace
+                  const activePath = cachedActiveRef?.path ?? null;
+                  if (path === activePath && !loadingDialog) {
+                    const handle = deps.dialogManager.open({
+                      sections: [
+                        {
+                          type: "progress",
+                          items: [
+                            { id: "loading", label: "Loading workspace...", status: "running" },
+                          ],
+                          style: "spinner",
+                        },
+                      ],
+                    });
+                    loadingDialog = { path, handle };
+                  }
+                } else {
+                  loadingPaths.delete(path);
+                  // Close dialog if it's for this workspace
+                  if (loadingDialog?.path === path) {
+                    loadingDialog.handle.close();
+                    loadingDialog = null;
+                  }
+                }
               }
             );
 
@@ -234,20 +298,52 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               logger.warn("UI not available for mount");
               return;
             }
+            // Close starting/setup dialog before mounting
+            if (setupDialogHandle) {
+              setupDialogHandle.close();
+              setupDialogHandle = null;
+            }
+
             logger.debug("Mounting renderer");
-            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
+            viewManager.sendToUI(ApiIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
           },
         },
       },
 
       // -------------------------------------------------------------------
-      // setup → show-ui: send LIFECYCLE_SHOW_SETUP
-      // setup → hide-ui: send LIFECYCLE_SHOW_STARTING (return to starting)
+      // setup → show-ui: open setup dialog via DialogManager
+      // setup → agent-selection: open selection dialog via DialogManager
+      // setup → hide-ui: close setup dialog
       // -------------------------------------------------------------------
       [SETUP_OPERATION_ID]: {
         "show-ui": {
           handler: async () => {
-            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_SETUP);
+            if (deps.dialogManager) {
+              // Close any existing setup dialog and reset accumulated state
+              if (setupDialogHandle) {
+                setupDialogHandle.close();
+              }
+              setupRowState.clear();
+              const config: DialogConfig = {
+                sections: [
+                  { type: "text", content: "Setting up CodeHydra", style: "heading" },
+                  {
+                    type: "text",
+                    content: "This is only required on first startup.",
+                    style: "subtitle",
+                  },
+                  {
+                    type: "progress",
+                    items: [
+                      { id: "vscode", label: "VSCode", status: "pending" },
+                      { id: "agent", label: "Agent", status: "pending" },
+                      { id: "setup", label: "Setup", status: "pending" },
+                    ],
+                  },
+                ],
+              };
+              setupDialogHandle = deps.dialogManager.open(config);
+            }
           },
         },
         "agent-selection": {
@@ -262,66 +358,75 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               throw new SetupError("UI not available for agent selection", "TIMEOUT");
             }
 
-            if (!deps.ipcLayer) {
-              throw new SetupError("IPC layer not available for agent selection", "TIMEOUT");
+            if (!deps.dialogManager) {
+              throw new SetupError("DialogManager not available for agent selection", "TIMEOUT");
             }
 
-            const ipcLayer = deps.ipcLayer;
             logger.debug("Showing agent selection dialog");
 
-            const agentPromise = new Promise<LifecycleAgentType>((resolve) => {
-              const handleAgentSelected: IpcEventHandler = (_event, ...args) => {
-                ipcLayer.removeListener(
-                  SetupIpcChannels.LIFECYCLE_AGENT_SELECTED,
-                  handleAgentSelected
-                );
-                const payload = args[0] as AgentSelectedPayload;
-                resolve(payload.agent);
-              };
+            // Close existing setup dialog to show selection dialog
+            if (setupDialogHandle) {
+              setupDialogHandle.close();
+              setupDialogHandle = null;
+            }
 
-              ipcLayer.on(SetupIpcChannels.LIFECYCLE_AGENT_SELECTED, handleAgentSelected);
-            });
-
-            const selectionPayload: ShowAgentSelectionPayload = {
-              agents: availableAgents.map((a) => ({
-                agent: a.agent,
-                label: a.label,
-                icon: a.icon,
-              })),
+            // Build selection dialog config
+            const config: DialogConfig = {
+              sections: [
+                { type: "text", content: "Choose Agent", style: "heading" },
+                {
+                  type: "selection",
+                  options: availableAgents.map((a) => ({
+                    id: a.agent,
+                    label: a.label,
+                    icon: a.icon,
+                  })),
+                },
+              ],
+              actions: [{ id: "select", label: "Continue", variant: "primary" }],
             };
-            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION, selectionPayload);
 
-            capAgentType = await agentPromise;
+            const handle = deps.dialogManager.open(config);
+            const event = await handle.nextEvent(5 * 60_000);
+            handle.close();
+
+            const selectedAgent =
+              (event.data?.["selection"] as string) ?? availableAgents[0]?.agent;
+            capAgentType = selectedAgent as LifecycleAgentType;
             logger.info("Agent selected", { agent: capAgentType });
+
+            // Re-open setup progress dialog for binary/extensions hooks
+            const labelMap: Record<string, string> = {
+              vscode: "VSCode",
+              agent: "Agent",
+              setup: "Setup",
+            };
+            const rowIds = ["vscode", "agent", "setup"];
+            const items: ProgressItem[] = rowIds.map((id) => {
+              const state = setupRowState.get(id);
+              return {
+                id,
+                label: labelMap[id] ?? id,
+                status: state?.status ?? "pending",
+                ...(state?.message !== undefined && { message: state.message }),
+                ...(state?.progress !== undefined && { progress: state.progress }),
+              };
+            });
+            setupDialogHandle = deps.dialogManager.open({
+              sections: [
+                { type: "text", content: "Setting up CodeHydra", style: "heading" },
+                { type: "progress", items },
+              ],
+            });
           },
         },
         "hide-ui": {
           handler: async () => {
-            viewManager.sendToUI(SetupIpcChannels.LIFECYCLE_SHOW_STARTING);
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // update-apply → await-choice: listen for user's update choice via IPC
-      // -------------------------------------------------------------------
-      [UPDATE_APPLY_OPERATION_ID]: {
-        "await-choice": {
-          handler: async (): Promise<UpdateChoiceResult> => {
-            if (!deps.ipcLayer) {
-              return {};
+            // Close setup dialog, return to starting state
+            if (setupDialogHandle) {
+              setupDialogHandle.close();
+              setupDialogHandle = null;
             }
-
-            const ipcLayer = deps.ipcLayer;
-            const choice = await new Promise<UpdateChoice>((resolve) => {
-              const handler: IpcEventHandler = (_event, ...args) => {
-                ipcLayer.removeListener(ApiIpcChannels.UPDATE_CHOICE, handler);
-                resolve((args[0] as UpdateChoicePayload).choice);
-              };
-              ipcLayer.on(ApiIpcChannels.UPDATE_CHOICE, handler);
-            });
-
-            return { choice };
           },
         },
       },
@@ -419,6 +524,19 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               loadingChangeCleanupFn = null;
             }
 
+            // Close loading dialog if open
+            if (loadingDialog) {
+              loadingDialog.handle.close();
+              loadingDialog = null;
+            }
+            loadingPaths.clear();
+
+            // Close setup dialog if open
+            if (setupDialogHandle) {
+              setupDialogHandle.close();
+              setupDialogHandle = null;
+            }
+
             // Destroy all views before disposing layers (uses viewLayer internally)
             viewManager.destroy();
 
@@ -461,6 +579,28 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [EVENT_WORKSPACE_SWITCHED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceSwitchedEvent).payload;
+          const newPath = payload?.path ?? null;
+
+          // Show/hide loading dialog based on active workspace
+          if (deps.dialogManager) {
+            if (loadingDialog && loadingDialog.path !== newPath) {
+              loadingDialog.handle.close();
+              loadingDialog = null;
+            }
+            if (newPath && loadingPaths.has(newPath) && !loadingDialog) {
+              const handle = deps.dialogManager.open({
+                sections: [
+                  {
+                    type: "progress",
+                    items: [{ id: "loading", label: "Loading workspace...", status: "running" }],
+                    style: "spinner",
+                  },
+                ],
+              });
+              loadingDialog = { path: newPath, handle };
+            }
+          }
+
           if (payload === null) {
             cachedActiveRef = null;
             viewManager.setActiveWorkspace(null);
@@ -484,6 +624,88 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           for (let i = 1; i < workspaces.length; i++) {
             viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
           }
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // setup:progress → update setup dialog with progress
+      // -------------------------------------------------------------------
+      [EVENT_SETUP_PROGRESS]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          if (!setupDialogHandle) return;
+          const row = (event as SetupProgressEvent).payload;
+
+          // Map SetupRowStatus → ProgressItem status ("failed" → "error", rest pass through)
+          const status: ProgressItem["status"] = row.status === "failed" ? "error" : row.status;
+
+          // Accumulate per-row state across events
+          setupRowState.set(row.id, {
+            status,
+            ...(row.message !== undefined && { message: row.message }),
+            ...(row.progress !== undefined && { progress: row.progress }),
+          });
+
+          const labelMap: Record<string, string> = {
+            vscode: "VSCode",
+            agent: "Agent",
+            setup: "Setup",
+          };
+          const rowIds = ["vscode", "agent", "setup"];
+          const items: ProgressItem[] = rowIds.map((id) => {
+            const state = setupRowState.get(id);
+            return {
+              id,
+              label: labelMap[id] ?? id,
+              status: state?.status ?? "pending",
+              ...(state?.message !== undefined && { message: state.message }),
+              ...(state?.progress !== undefined && { progress: state.progress }),
+            };
+          });
+
+          const hasFailed = [...setupRowState.values()].some((s) => s.status === "error");
+          const sections: DialogSection[] = [
+            { type: "text", content: "Setting up CodeHydra", style: "heading" },
+            { type: "progress", items },
+          ];
+          const config: DialogConfig = {
+            sections,
+            ...(hasFailed && {
+              actions: [
+                { id: "retry", label: "Retry" },
+                { id: "quit", label: "Quit", variant: "secondary" },
+              ],
+            }),
+          };
+          setupDialogHandle.update(config);
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // setup:error → open error dialog with retry/quit actions
+      // -------------------------------------------------------------------
+      [EVENT_SETUP_ERROR]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { message } = (event as SetupErrorEvent).payload;
+          if (!deps.dialogManager) return;
+
+          // Close existing setup dialog
+          if (setupDialogHandle) {
+            setupDialogHandle.close();
+          }
+
+          // Open error dialog with retry/quit actions
+          const config: DialogConfig = {
+            sections: [
+              { type: "text", content: "Setup Failed", style: "heading", icon: "error" },
+              { type: "text", content: message },
+            ],
+            actions: [
+              { id: "retry", label: "Retry", variant: "primary" },
+              { id: "quit", label: "Quit", variant: "secondary" },
+            ],
+          };
+          setupDialogHandle = deps.dialogManager.open(config);
+          // Event handling is done in waitForRetry
         },
       },
 

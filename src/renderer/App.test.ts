@@ -99,8 +99,6 @@ import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
-import * as setupStore from "$lib/stores/setup.svelte.js";
-
 describe("App component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -109,7 +107,6 @@ describe("App component", () => {
     dialogsStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
-    setupStore.resetSetup();
     // Reset v2 event callbacks
     clearEventCallbacks();
     // Reset v2.on implementation to capture callbacks (some tests override it)

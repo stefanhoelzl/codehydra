@@ -21,9 +21,10 @@ import type {
   WorkspaceGetPayload,
   UiSwitchWorkspacePayload,
   UiSetModePayload,
-  SetupErrorPayload,
 } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
+import type { DialogUserEvent } from "../shared/dialog-types";
+import type { DialogManager } from "./dialog-manager";
 import type { Logger, Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
 import type { ApiLogPayload } from "../shared/ipc";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
@@ -74,10 +75,6 @@ import type { ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { isShortcutKey } from "../shared/shortcuts";
 import type { GetProjectBasesIntent } from "../intents/get-project-bases";
-import { EVENT_SETUP_ERROR, EVENT_SETUP_PROGRESS } from "../intents/setup";
-import type { SetupErrorEvent, SetupProgressEvent } from "../intents/setup";
-import { EVENT_UPDATE_PROGRESS } from "../intents/update-apply";
-import type { UpdateProgressEvent } from "../intents/update-apply";
 import type { WorkspaceStatus, Workspace } from "../shared/api/types";
 import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import type { GetMetadataIntent } from "../intents/get-metadata";
@@ -105,6 +102,7 @@ export interface UiIpcModuleDeps {
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
   readonly loggingService: Pick<Logging, "createLogger">;
+  readonly dialogManager?: DialogManager;
 }
 
 /**
@@ -225,12 +223,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
         }
       },
     },
-    [EVENT_SETUP_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as SetupProgressEvent).payload;
-        deps.viewManager.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_PROGRESS, payload);
-      },
-    },
+    // NOTE: EVENT_SETUP_PROGRESS forwarding removed — handled by view-module
     [EVENT_CLONE_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const payload = (event as CloneProgressEvent).payload;
@@ -246,22 +239,8 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
         });
       },
     },
-    [EVENT_SETUP_ERROR]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { message, code } = (event as SetupErrorEvent).payload;
-        const errorPayload: SetupErrorPayload = {
-          message,
-          ...(code !== undefined && { code }),
-        };
-        deps.viewManager.sendToUI(ApiIpcChannels.LIFECYCLE_SETUP_ERROR, errorPayload);
-      },
-    },
-    [EVENT_UPDATE_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as UpdateProgressEvent).payload;
-        deps.viewManager.sendToUI(ApiIpcChannels.UPDATE_PROGRESS, payload);
-      },
-    },
+    // NOTE: EVENT_SETUP_ERROR forwarding removed — handled by view-module
+    // NOTE: EVENT_UPDATE_PROGRESS forwarding removed — handled by auto-updater-module
     [EVENT_BASES_UPDATED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const p = (event as BasesUpdatedEvent).payload;
@@ -554,6 +533,23 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     logListeners.push({ channel, listener });
   }
 
+  // ---------------------------------------------------------------------------
+  // Dialog event routing (renderer → main)
+  // ---------------------------------------------------------------------------
+
+  let dialogEventCleanup: (() => void) | null = null;
+  if (deps.dialogManager) {
+    const dialogManager = deps.dialogManager;
+    const handler = (_event: unknown, ...args: unknown[]) => {
+      const event = args[0] as DialogUserEvent;
+      dialogManager.routeEvent(event);
+    };
+    deps.ipcLayer.on(ApiIpcChannels.DIALOG_EVENT, handler);
+    dialogEventCleanup = () => {
+      deps.ipcLayer.removeListener(ApiIpcChannels.DIALOG_EVENT, handler);
+    };
+  }
+
   return {
     name: "ui-ipc",
     events,
@@ -561,6 +557,10 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
+            if (dialogEventCleanup) {
+              dialogEventCleanup();
+              dialogEventCleanup = null;
+            }
             for (const channel of registeredChannels) {
               try {
                 deps.ipcLayer.removeHandler(channel);

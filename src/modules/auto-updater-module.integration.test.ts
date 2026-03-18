@@ -39,8 +39,9 @@ import type {
   UpdateDownloadedCallback,
   DownloadProgressCallback,
 } from "./auto-updater";
-import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc";
 import type { Config } from "../boundaries/platform/config";
+import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { DialogConfig, DialogUserEvent } from "../shared/dialog-types";
 
 // =============================================================================
 // Mock Config
@@ -203,39 +204,70 @@ function createMockAutoUpdater(overrides?: {
   };
 }
 
-interface MockIpcBoundary {
-  layer: Pick<IpcBoundary, "on" | "removeListener">;
-  handlers: Map<string, IpcEventHandler[]>;
-  emit: (channel: string, ...args: unknown[]) => void;
+interface MockDialogManager {
+  manager: DialogManager;
+  lastHandle: MockDialogHandle | null;
 }
 
-function createMockIpcBoundary(): MockIpcBoundary {
-  const handlers = new Map<string, IpcEventHandler[]>();
+interface MockDialogHandle {
+  config: DialogConfig;
+  closed: boolean;
+  eventListeners: Set<(event: DialogUserEvent) => void>;
+  nextEventResolvers: Array<(event: DialogUserEvent) => void>;
+  emitEvent: (event: DialogUserEvent) => void;
+}
 
-  const layer: Pick<IpcBoundary, "on" | "removeListener"> = {
-    on(channel: string, handler: IpcEventHandler) {
-      if (!handlers.has(channel)) handlers.set(channel, []);
-      handlers.get(channel)!.push(handler);
+function createMockDialogManager(): MockDialogManager {
+  let lastHandle: MockDialogHandle | null = null;
+
+  const manager = {
+    open(config: DialogConfig): DialogHandle {
+      const handle: MockDialogHandle = {
+        config,
+        closed: false,
+        eventListeners: new Set(),
+        nextEventResolvers: [],
+        emitEvent(event: DialogUserEvent) {
+          for (const listener of handle.eventListeners) {
+            listener(event);
+          }
+          for (const resolver of handle.nextEventResolvers) {
+            resolver(event);
+          }
+          handle.nextEventResolvers = [];
+        },
+      };
+      lastHandle = handle;
+
+      return {
+        id: "dlg-test",
+        update(newConfig: DialogConfig) {
+          handle.config = newConfig;
+        },
+        close() {
+          handle.closed = true;
+        },
+        onEvent(handler: (event: DialogUserEvent) => void) {
+          handle.eventListeners.add(handler);
+          return () => {
+            handle.eventListeners.delete(handler);
+          };
+        },
+        nextEvent() {
+          return new Promise<DialogUserEvent>((resolve) => {
+            handle.nextEventResolvers.push(resolve);
+          });
+        },
+        closed: new Promise<void>(() => {}),
+      } as DialogHandle;
     },
-    removeListener(channel: string, handler: IpcEventHandler) {
-      const list = handlers.get(channel);
-      if (list) {
-        const idx = list.indexOf(handler);
-        if (idx !== -1) list.splice(idx, 1);
-      }
-    },
-  };
+    routeEvent() {},
+  } as unknown as DialogManager;
 
   return {
-    layer,
-    handlers,
-    emit(channel: string, ...args: unknown[]) {
-      const list = handlers.get(channel);
-      if (list) {
-        for (const handler of [...list]) {
-          handler({} as Electron.IpcMainEvent, ...args);
-        }
-      }
+    manager,
+    get lastHandle() {
+      return lastHandle;
     },
   };
 }
@@ -243,7 +275,7 @@ function createMockIpcBoundary(): MockIpcBoundary {
 interface TestSetup {
   dispatcher: Dispatcher;
   autoUpdater: MockAutoUpdater;
-  ipcLayer: MockIpcBoundary;
+  dialogManager: MockDialogManager;
   updateOperation: TrackingUpdateOperation;
   mockConfig: Config;
   module: IntentModule;
@@ -256,7 +288,7 @@ function createTestSetup(overrides?: {
   configValues?: Record<string, unknown>;
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
-  const ipcLayer = createMockIpcBoundary();
+  const dialogManager = createMockDialogManager();
   const updateOperation = new TrackingUpdateOperation();
   const emittedEvents: DomainEvent[] = [];
   const mockConfig = createMockConfig({
@@ -269,7 +301,7 @@ function createTestSetup(overrides?: {
   const autoUpdaterModule = createAutoUpdaterModule({
     autoUpdater: autoUpdater.mock,
     dispatcher,
-    ipcLayer: ipcLayer.layer,
+    dialogManager: dialogManager.manager,
     configService: mockConfig,
   });
 
@@ -290,7 +322,7 @@ function createTestSetup(overrides?: {
   return {
     dispatcher,
     autoUpdater,
-    ipcLayer,
+    dialogManager,
     updateOperation,
     mockConfig,
     module: autoUpdaterModule,

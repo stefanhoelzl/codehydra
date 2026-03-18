@@ -18,7 +18,6 @@ import type { IntentModule } from "../intents/lib/module";
 import type { IntentInterceptor } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
-import type { IpcEventHandler, IpcBoundary } from "../boundaries/shell/ipc";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../intents/app-shutdown";
 import { INTENT_UPDATE_AVAILABLE, type UpdateAvailableIntent } from "../intents/update-available";
@@ -27,6 +26,7 @@ import {
   INTENT_UPDATE_APPLY,
   type UpdateApplyHookContext,
   type UpdateDownloadResult,
+  type UpdateChoiceResult,
 } from "../intents/update-apply";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import { configEnum } from "../boundaries/platform/config-definition";
@@ -34,15 +34,56 @@ import type { AutoUpdatePreference } from "../boundaries/platform/config-values"
 import type { Config } from "../boundaries/platform/config";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import { ApiIpcChannels } from "../shared/ipc";
+import type { DialogManager } from "./dialog-manager";
+import type { DialogConfig, DialogSection, DialogAction } from "../shared/dialog-types";
 
 /** Timeout for update check during startup (ms). */
 const UPDATE_CHECK_TIMEOUT_MS = 15_000;
 
+/**
+ * Build dialog config for update choice.
+ */
+function buildChoiceConfig(version: string): DialogConfig {
+  const sections: DialogSection[] = [
+    { type: "text", content: "Update Available", style: "heading" },
+    { type: "text", content: `Version ${version} is ready to install.` },
+  ];
+  const actions: DialogAction[] = [
+    { id: "always", label: "Always", variant: "secondary" },
+    { id: "yes", label: "Yes" },
+    { id: "skip", label: "Skip", variant: "secondary" },
+    { id: "never", label: "Never", variant: "secondary" },
+  ];
+  return { sections, actions };
+}
+
+/**
+ * Build dialog config for download progress.
+ */
+function buildDownloadConfig(version: string, percent: number): DialogConfig {
+  const sections: DialogSection[] = [
+    { type: "text", content: "Downloading Update", style: "heading" },
+    {
+      type: "progress",
+      items: [
+        {
+          id: "download",
+          label: `Version ${version}`,
+          status: "running",
+          progress: percent,
+          message: `${Math.round(percent)}%`,
+        },
+      ],
+    },
+  ];
+  const actions: DialogAction[] = [{ id: "cancel", label: "Cancel", variant: "secondary" }];
+  return { sections, actions };
+}
+
 interface AutoUpdaterModuleDeps {
   readonly autoUpdater: AutoUpdater;
   readonly dispatcher: Dispatcher;
-  readonly ipcLayer: Pick<IpcBoundary, "on" | "removeListener">;
+  readonly dialogManager: DialogManager;
   readonly configService: Config;
 }
 
@@ -137,6 +178,25 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
             report("show-choice", 0, detectedVersion);
           },
         },
+        "await-choice": {
+          handler: async (): Promise<UpdateChoiceResult> => {
+            if (detectedVersion === null) return {};
+            const config = buildChoiceConfig(detectedVersion);
+            const handle = deps.dialogManager.open(config);
+            const event = await handle.nextEvent(5 * 60_000);
+            handle.close();
+
+            // Map action IDs to update choice values
+            const choiceMap: Record<string, "always" | "yes" | "skip" | "never"> = {
+              always: "always",
+              yes: "yes",
+              skip: "skip",
+              never: "never",
+            };
+            const choice = choiceMap[event.actionId];
+            return choice ? { choice } : {};
+          },
+        },
         download: {
           handler: async (ctx: HookContext): Promise<UpdateDownloadResult> => {
             if (detectedVersion === null) return {};
@@ -144,23 +204,30 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
             const version = detectedVersion;
             report("downloading", 0, version);
 
+            // Open download dialog
+            const config = buildDownloadConfig(version, 0);
+            const handle = deps.dialogManager.open(config);
+
             // Wire progress reporting
             const unsubProgress = deps.autoUpdater.onDownloadProgress((info) => {
               report("progress", info.percent, version);
+              handle.update(buildDownloadConfig(version, info.percent));
             });
 
-            // Listen for cancel IPC
+            // Listen for cancel via dialog events
             let cancelled = false;
-            const cancelHandler: IpcEventHandler = () => {
-              cancelled = true;
-              deps.autoUpdater.cancelDownload();
-            };
-            deps.ipcLayer.on(ApiIpcChannels.UPDATE_CANCEL, cancelHandler);
+            const unsubEvent = handle.onEvent((evt) => {
+              if (evt.actionId === "cancel") {
+                cancelled = true;
+                deps.autoUpdater.cancelDownload();
+              }
+            });
 
             try {
               await deps.autoUpdater.downloadUpdate();
             } catch {
               // Download failed or was cancelled
+              handle.close();
               if (cancelled) {
                 report("downloading", 0, version, true);
                 return { cancelled: true };
@@ -170,8 +237,10 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               return { cancelled: true };
             } finally {
               unsubProgress();
-              deps.ipcLayer.removeListener(ApiIpcChannels.UPDATE_CANCEL, cancelHandler);
+              unsubEvent();
             }
+
+            handle.close();
 
             if (cancelled) {
               report("downloading", 0, version, true);

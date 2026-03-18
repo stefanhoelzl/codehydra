@@ -104,7 +104,7 @@
 
   /* Z-index layers */
   --ch-z-sidebar-minimized: 1;
-  --ch-z-sidebar-expanded: 50;
+  --ch-z-sidebar-expanded: 950;
 }
 
 /* ============================================================================

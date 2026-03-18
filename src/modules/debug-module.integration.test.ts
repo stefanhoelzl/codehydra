@@ -13,7 +13,7 @@ import type { HookHandler, HookContext } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
 import type { CheckDepsResult } from "../intents/app-start";
 import type { SetupProgressReporter } from "../intents/setup";
-import type { UpdateApplyHookContext, UpdateDownloadResult } from "../intents/update-apply";
+import type { UpdateDownloadResult } from "../intents/update-apply";
 import type { DeleteHookResult, DetectHookResult } from "../intents/delete-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../intents/resolve-workspace";
@@ -70,24 +70,6 @@ function makeReportSpy(): {
   const calls: ReportCall[] = [];
   const report: SetupProgressReporter = (id, status, message?, error?, progress?) => {
     calls.push({ id, status, message, error, progress });
-  };
-  return { report, calls };
-}
-
-interface UpdateReportCall {
-  action: string;
-  percent: number;
-  version: string;
-  finished: boolean | undefined;
-}
-
-function makeUpdateReportSpy(): {
-  report: UpdateApplyHookContext["report"];
-  calls: UpdateReportCall[];
-} {
-  const calls: UpdateReportCall[] = [];
-  const report: UpdateApplyHookContext["report"] = (action, percent, version, finished?) => {
-    calls.push({ action, percent, version, finished });
   };
   return { report, calls };
 }
@@ -285,23 +267,11 @@ describe("DebugModule Integration", () => {
       expect(result).toEqual({});
     });
 
-    it("show-choice hook returns immediately", async () => {
-      const module = createDebugModule({ configService: createMockConfig() });
-      const hook = getHook(module, UPDATE_APPLY_OPERATION_ID, "show-choice");
-      const { report, calls } = makeUpdateReportSpy();
-      const ctx = { ...makeHookContext(), report } as unknown as HookContext;
-      await hook.handler(ctx);
-      expect(calls).toHaveLength(0);
-    });
-
-    it("download hook returns empty object", async () => {
+    it("download hook returns empty object without dialogManager", async () => {
       const module = createDebugModule({ configService: createMockConfig() });
       const hook = getHook(module, UPDATE_APPLY_OPERATION_ID, "download");
-      const { report, calls } = makeUpdateReportSpy();
-      const ctx = { ...makeHookContext(), report } as unknown as HookContext;
-      const result = (await hook.handler(ctx)) as UpdateDownloadResult;
+      const result = (await hook.handler(makeHookContext())) as UpdateDownloadResult;
       expect(result).toEqual({});
-      expect(calls).toHaveLength(0);
     });
   });
 
@@ -315,59 +285,40 @@ describe("DebugModule Integration", () => {
       expect(result.updateNeedsChoice).toBe(true);
     });
 
-    it("show-choice hook calls report with debug version", async () => {
-      const module = createDebugModule({
-        configService: createMockConfig({ "debug.update": true }),
-      });
-      const hook = getHook(module, UPDATE_APPLY_OPERATION_ID, "show-choice");
-      const { report, calls } = makeUpdateReportSpy();
-      const ctx = { ...makeHookContext(), report } as unknown as HookContext;
-      await hook.handler(ctx);
-      expect(calls).toHaveLength(1);
-      expect(calls[0]).toEqual({
-        action: "show-choice",
-        percent: 0,
-        version: "99.0.0-debug",
-        finished: undefined,
-      });
-    });
-
-    it("download hook simulates progress and returns cancelled", async () => {
+    it("download hook opens dialog, simulates progress, and returns cancelled", async () => {
       vi.useFakeTimers();
       try {
+        const updateCalls: unknown[] = [];
+        const mockHandle = {
+          id: "dlg-test",
+          update: vi.fn((config: unknown) => updateCalls.push(config)),
+          close: vi.fn(),
+          onEvent: vi.fn(() => () => {}),
+          nextEvent: vi.fn(),
+          closed: new Promise<void>(() => {}),
+        };
+        const mockDialogManager = { open: vi.fn(() => mockHandle) };
         const module = createDebugModule({
           configService: createMockConfig({ "debug.update": true }),
+          dialogManager: mockDialogManager as never,
         });
         const hook = getHook(module, UPDATE_APPLY_OPERATION_ID, "download");
-        const { report, calls } = makeUpdateReportSpy();
-        const ctx = { ...makeHookContext(), report } as unknown as HookContext;
 
-        const promise = hook.handler(ctx);
+        const promise = hook.handler(makeHookContext());
 
-        // Initial downloading report
-        expect(calls).toHaveLength(1);
-        expect(calls[0]).toEqual({
-          action: "downloading",
-          percent: 0,
-          version: "99.0.0-debug",
-          finished: undefined,
-        });
+        // Dialog should be opened
+        expect(mockDialogManager.open).toHaveBeenCalledTimes(1);
 
-        // Advance through all 10 increments (200ms each)
-        for (let i = 0; i < 10; i++) {
-          await vi.advanceTimersByTimeAsync(200);
+        // Advance through all 20 increments (150ms each, 5% to 100%)
+        for (let i = 0; i < 20; i++) {
+          await vi.advanceTimersByTimeAsync(150);
         }
 
         const result = (await promise) as UpdateDownloadResult;
 
-        // 1 initial + 10 progress + 1 finished = 12 calls
-        expect(calls).toHaveLength(12);
-        expect(calls[calls.length - 1]).toEqual({
-          action: "downloading",
-          percent: 0,
-          version: "99.0.0-debug",
-          finished: true,
-        });
+        // Should have updated dialog with progress increments
+        expect(updateCalls.length).toBeGreaterThan(0);
+        expect(mockHandle.close).toHaveBeenCalled();
         expect(result).toEqual({ cancelled: true });
       } finally {
         vi.useRealTimers();

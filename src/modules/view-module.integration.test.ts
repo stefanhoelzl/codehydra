@@ -77,10 +77,6 @@ import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
-import {
-  createBehavioralIpcBoundary,
-  type BehavioralIpcBoundary,
-} from "../boundaries/shell/ipc.test-utils";
 
 // =============================================================================
 // Mock Config
@@ -439,79 +435,72 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 2: app-start show-ui → sends LIFECYCLE_SHOW_STARTING
+  // Test 2: app-start show-ui → opens dialog via DialogManager (or no-op without it)
   // -------------------------------------------------------------------------
   describe("app-start/show-ui", () => {
-    it("sends LIFECYCLE_SHOW_STARTING to renderer", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
+    it("returns ShowUIHookResult (no-op without dialogManager)", async () => {
+      const { dispatcher } = createTestSetup({
         intentType: INTENT_APP_START,
         operation: new MinimalShowUIOperation(),
       });
 
-      await dispatcher.dispatch({
+      const result = await dispatcher.dispatch({
         type: INTENT_APP_START,
         payload: {},
       } as AppStartIntent);
 
-      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_STARTING);
+      // Without dialogManager, returns empty result
+      expect(result).toEqual({});
     });
   });
 
   // -------------------------------------------------------------------------
-  // Test 3: setup/show-ui → sends LIFECYCLE_SHOW_SETUP
+  // Test 3: setup/show-ui → opens setup dialog via DialogManager (no-op without it)
   // -------------------------------------------------------------------------
   describe("setup/show-ui", () => {
-    it("sends LIFECYCLE_SHOW_SETUP to renderer", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
+    it("completes without error when no dialogManager", async () => {
+      const { dispatcher } = createTestSetup({
         intentType: INTENT_SETUP,
         operation: new MinimalSetupOperation("show-ui"),
       });
 
-      await dispatcher.dispatch({
-        type: INTENT_SETUP,
-        payload: {},
-      } as SetupIntent);
-
-      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_SETUP);
+      await expect(
+        dispatcher.dispatch({
+          type: INTENT_SETUP,
+          payload: {},
+        } as SetupIntent)
+      ).resolves.not.toThrow();
     });
   });
 
   // -------------------------------------------------------------------------
-  // Test 4: setup/hide-ui → sends LIFECYCLE_SHOW_STARTING
+  // Test 4: setup/hide-ui → closes setup dialog (no-op without dialogManager)
   // -------------------------------------------------------------------------
   describe("setup/hide-ui", () => {
-    it("sends LIFECYCLE_SHOW_STARTING to renderer", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
+    it("completes without error when no dialogManager", async () => {
+      const { dispatcher } = createTestSetup({
         intentType: INTENT_SETUP,
         operation: new MinimalSetupOperation("hide-ui"),
       });
 
-      await dispatcher.dispatch({
-        type: INTENT_SETUP,
-        payload: {},
-      } as SetupIntent);
-
-      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_STARTING);
+      await expect(
+        dispatcher.dispatch({
+          type: INTENT_SETUP,
+          payload: {},
+        } as SetupIntent)
+      ).resolves.not.toThrow();
     });
   });
 
   // -------------------------------------------------------------------------
-  // Test 4b: setup/agent-selection → sends AgentInfo[] payload to renderer
+  // Test 4b: setup/agent-selection → uses DialogManager for agent selection
   // -------------------------------------------------------------------------
   describe("setup/agent-selection", () => {
-    it("sends AgentInfo objects in ShowAgentSelectionPayload", async () => {
+    it("throws SetupError when dialogManager not available", async () => {
       const availableAgents: RegisterAgentResult[] = [
         { agent: "claude", label: "Claude", icon: "sparkle" },
         { agent: "opencode", label: "OpenCode", icon: "terminal" },
       ];
-
-      const mockIpcBoundary = {
-        on: vi.fn((_channel: string, handler: (...args: unknown[]) => void) => {
-          // Simulate agent selection response immediately
-          setTimeout(() => handler(null, { agent: "claude" }), 0);
-        }),
-        removeListener: vi.fn(),
-      };
 
       const dispatcher = new Dispatcher({ logger: createMockLogger() });
       const viewManager = createMockViewManager();
@@ -527,26 +516,18 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        ipcLayer: mockIpcBoundary,
         configService: createMockConfig(),
+        // No dialogManager provided
       });
 
       dispatcher.registerModule(module);
 
-      await dispatcher.dispatch({
-        type: INTENT_SETUP,
-        payload: {},
-      } as SetupIntent);
-
-      expect(viewManager.sendToUI).toHaveBeenCalledWith(
-        ApiIpcChannels.LIFECYCLE_SHOW_AGENT_SELECTION,
-        {
-          agents: [
-            { agent: "claude", label: "Claude", icon: "sparkle" },
-            { agent: "opencode", label: "OpenCode", icon: "terminal" },
-          ],
-        }
-      );
+      await expect(
+        dispatcher.dispatch({
+          type: INTENT_SETUP,
+          payload: {},
+        } as SetupIntent)
+      ).rejects.toThrow("DialogManager not available");
     });
   });
 
@@ -1211,86 +1192,10 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Retry (absorbed from RetryModule)
+  // Retry (now uses DialogManager instead of IPC)
   // -------------------------------------------------------------------------
   describe("app-start/show-ui (retry)", () => {
-    function createRetrySetup(): {
-      dispatcher: Dispatcher;
-      viewManager: ReturnType<typeof createMockViewManager>;
-      ipcLayer: BehavioralIpcBoundary;
-    } {
-      const ipcLayer = createBehavioralIpcBoundary();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalShowUIOperation());
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        ipcLayer,
-        configService: createMockConfig(),
-      });
-
-      dispatcher.registerModule(module);
-
-      return { dispatcher, viewManager, ipcLayer };
-    }
-
-    it("show-ui hook returns a waitForRetry function when ipcLayer is provided", async () => {
-      const { dispatcher } = createRetrySetup();
-
-      const result = (await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent)) as unknown as ShowUIHookResult;
-
-      expect(result.waitForRetry).toBeTypeOf("function");
-    });
-
-    it("waitForRetry resolves when lifecycle:retry IPC is received", async () => {
-      const { dispatcher, ipcLayer } = createRetrySetup();
-
-      const result = (await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent)) as unknown as ShowUIHookResult;
-
-      let resolved = false;
-      const retryPromise = result.waitForRetry!().then(() => {
-        resolved = true;
-      });
-
-      expect(resolved).toBe(false);
-
-      ipcLayer._emit(ApiIpcChannels.LIFECYCLE_RETRY);
-
-      await retryPromise;
-      expect(resolved).toBe(true);
-    });
-
-    it("waitForRetry removes IPC listener after receiving retry signal", async () => {
-      const { dispatcher, ipcLayer } = createRetrySetup();
-
-      const result = (await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent)) as unknown as ShowUIHookResult;
-
-      const retryPromise = result.waitForRetry!();
-
-      expect(ipcLayer._getListeners(ApiIpcChannels.LIFECYCLE_RETRY).length).toBe(1);
-
-      ipcLayer._emit(ApiIpcChannels.LIFECYCLE_RETRY);
-      await retryPromise;
-
-      expect(ipcLayer._getListeners(ApiIpcChannels.LIFECYCLE_RETRY).length).toBe(0);
-    });
-
-    it("show-ui hook returns empty object when ipcLayer is not provided", async () => {
+    it("show-ui hook returns empty object when dialogManager is not provided", async () => {
       const { dispatcher } = createTestSetup({
         intentType: INTENT_APP_START,
         operation: new MinimalShowUIOperation(),

@@ -54,14 +54,11 @@
   import GitCloneDialog from "./GitCloneDialog.svelte";
   import OpenProjectErrorDialog from "./OpenProjectErrorDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
-  import DeletionProgressView from "./DeletionProgressView.svelte";
-  import WorkspaceLoadingOverlay from "./WorkspaceLoadingOverlay.svelte";
   import Logo from "./Logo.svelte";
 
-  import { clearDeletion, getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
+  import { getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
   import { activeClones, hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
-  import { isWorkspaceLoading } from "$lib/stores/workspace-loading.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -166,18 +163,6 @@
     prevWorkspaceCount = count;
   });
 
-  // Derive deletion state for active workspace
-  // Read directly from deletionStates.value to ensure Svelte tracks the SvelteMap read
-  // (calling through getDeletionState() may not properly track reactivity in $derived)
-  const activeDeletionState = $derived(
-    activeWorkspacePath.value ? deletionStates.value.get(activeWorkspacePath.value) : undefined
-  );
-
-  // Derive loading state for active workspace
-  const activeLoading = $derived(
-    activeWorkspacePath.value ? isWorkspaceLoading(activeWorkspacePath.value) : false
-  );
-
   // Derive count of idle workspaces for shortcut overlay
   const idleWorkspaceCount = $derived(
     getAllWorkspaces().filter((ws) => getStatus(ws.path).type === "idle").length
@@ -265,32 +250,6 @@
     logger.debug("Dialog opened", { type: "remove-workspace" });
     openRemoveDialog(workspaceRef);
   }
-
-  // Handle retry (Kill & Retry when blockers shown, plain retry otherwise)
-  function handleRetry(): void {
-    if (!activeDeletionState) return;
-    logger.debug("Retrying deletion", {
-      workspaceName: activeDeletionState.workspaceName,
-    });
-    // Dispatch new intent with blockingPids from previous failure
-    const pids = activeDeletionState.blockingProcesses?.map((p) => p.pid);
-    void api.workspaces.remove(activeDeletionState.workspacePath, {
-      keepBranch: activeDeletionState.keepBranch,
-      skipSwitch: true,
-      ignoreWarnings: true,
-      ...(pids && { blockingPids: pids }),
-    });
-  }
-
-  // Handle dismiss (force remove workspace from CodeHydra, files may remain on disk)
-  function handleDismiss(): void {
-    if (!activeDeletionState) return;
-    logger.debug("Dismissing deletion", { workspaceName: activeDeletionState.workspaceName });
-    void api.workspaces.remove(activeDeletionState.workspacePath, {
-      force: true,
-    });
-    clearDeletion(activeDeletionState.workspacePath);
-  }
 </script>
 
 <div class="main-view" bind:this={containerRef}>
@@ -338,17 +297,8 @@
     {idleWorkspaceCount}
   />
 
-  <!-- Backdrop/overlay shown based on workspace state -->
-  <!-- Priority: deletion > loading > empty -->
-  {#if activeDeletionState}
-    <DeletionProgressView
-      progress={activeDeletionState}
-      onRetry={handleRetry}
-      onDismiss={handleDismiss}
-    />
-  {:else if activeLoading}
-    <WorkspaceLoadingOverlay />
-  {:else if activeWorkspacePath.value === null}
+  <!-- Backdrop shown when no workspace is active -->
+  {#if activeWorkspacePath.value === null}
     <div class="empty-backdrop" aria-hidden="true">
       <div class="backdrop-logo">
         <Logo animated={false} />
