@@ -143,6 +143,7 @@ import { createTempDirModule } from "./modules/temp-dir-module";
 import { createErrorHandlerModule } from "./modules/error-handler-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
+import { createDebugModule } from "./modules/debug-module";
 import { createUiIpcModule } from "./modules/ui-ipc-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
@@ -552,6 +553,8 @@ const devtoolsModule = createDevtoolsModule({
   viewLayer,
 });
 
+const debugModule = createDebugModule({ configService });
+
 // 8. Operation registration
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
@@ -624,6 +627,7 @@ dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
+dispatcher.registerModule(debugModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(uiIpcModule);
 

@@ -2,8 +2,8 @@
  * UpdateApplyOperation - Orchestrates update choice, download, and install.
  *
  * Dispatched from AppStartOperation after check-deps detects an update.
- * Uses an interceptor (in auto-updater module) to reject when config="never"
- * or no update was detected.
+ * Uses an interceptor (in auto-updater module) to reject when config="never".
+ * Individual hook handlers no-op when no update was detected.
  *
  * Runs four hook points:
  * 1. "show-choice" - (if needsChoice) Emit show-choice UI event

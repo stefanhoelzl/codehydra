@@ -368,17 +368,16 @@ describe("AutoUpdaterModule Integration", () => {
     expect(accepted).toBe(false);
   });
 
-  it("interceptor rejects when no update detected", async () => {
-    const { dispatcher } = createTestSetup();
+  it("hooks no-op when no update detected (detectedVersion is null)", async () => {
+    const { dispatcher, autoUpdater } = createTestSetup();
 
-    // detectedVersion is null by default
-    const handle = dispatcher.dispatch({
+    // detectedVersion is null by default — intent is accepted but hooks no-op
+    await dispatcher.dispatch({
       type: INTENT_UPDATE_APPLY,
       payload: { needsChoice: false },
     } as UpdateApplyIntent);
 
-    const accepted = await handle.accepted;
-    expect(accepted).toBe(false);
+    expect(autoUpdater.downloadCalled).toBe(false);
   });
 
   it("auto-update=never still calls dispose() on shutdown", async () => {
