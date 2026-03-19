@@ -344,6 +344,7 @@
       box-shadow var(--ch-sidebar-transition, 150ms ease-out);
     z-index: var(--ch-z-sidebar-minimized, 1);
     pointer-events: auto;
+    user-select: none;
   }
 
   .sidebar.expanded {
