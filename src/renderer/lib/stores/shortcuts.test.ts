@@ -556,7 +556,7 @@ describe("shortcuts store", () => {
         });
       });
 
-      it("should-not-navigate-when-no-idle-workspaces", () => {
+      it("should-navigate-to-busy-workspace-when-no-idle-exist", async () => {
         const workspaces = createWorkspaces();
         const workspaceRefs = createWorkspaceRefs();
         mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
@@ -566,13 +566,83 @@ describe("shortcuts store", () => {
         mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
         mockProjectsStore.activeWorkspacePath.value = "/ws1";
 
-        // All other workspaces are busy
+        // All other workspaces are busy - should fall back to busy navigation
         mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
           if (path === "/ws2" || path === "/ws3") {
             return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
           }
           return { type: "none" };
         });
+
+        enableShortcutMode();
+        handleShortcutKey("left");
+
+        await vi.waitFor(() => {
+          // Left from ws1 wraps to ws3 (busy)
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws3", false);
+        });
+      });
+
+      it("should-prefer-idle-over-busy-when-both-exist", async () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
+        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+
+        // ws2 is busy, ws3 is idle - should navigate to idle ws3
+        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
+          if (path === "/ws2") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
+          if (path === "/ws3") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
+          return { type: "none" };
+        });
+
+        enableShortcutMode();
+        handleShortcutKey("right");
+
+        await vi.waitFor(() => {
+          // Should skip ws2 (busy) and go to ws3 (idle)
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws3", false);
+        });
+      });
+
+      it("should-not-fall-back-to-busy-when-current-workspace-is-idle", () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
+        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+
+        // ws1 (current) is idle, others are busy - should NOT jump to busy
+        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
+          if (path === "/ws1") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
+          return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
+        });
+
+        enableShortcutMode();
+        handleShortcutKey("right");
+
+        expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
+      });
+
+      it("should-not-navigate-when-all-workspaces-are-none", () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
+        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+
+        // All workspaces have no agent status
+        mockAgentStatusStore.getStatus.mockReturnValue({ type: "none" });
 
         enableShortcutMode();
         handleShortcutKey("left");
@@ -590,24 +660,18 @@ describe("shortcuts store", () => {
         mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
         mockProjectsStore.activeWorkspacePath.value = "/ws1";
 
-        // Initially ws2 and ws3 are busy
-        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
-          if (path === "/ws2" || path === "/ws3") {
-            return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
-          }
-          return { type: "none" };
-        });
+        // Initially all workspaces have no agents
+        mockAgentStatusStore.getStatus.mockReturnValue({ type: "none" });
 
         enableShortcutMode();
         handleShortcutKey("right");
 
-        // No idle workspaces, so no navigation
+        // No idle or busy workspaces, so no navigation
         expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
 
         // Now ws2 becomes idle (simulate status change)
         mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
           if (path === "/ws2") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
-          if (path === "/ws3") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
           return { type: "none" };
         });
 

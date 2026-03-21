@@ -132,10 +132,10 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
       await handleNavigation("ArrowDown");
       break;
     case "left":
-      await handleIdleNavigation(-1);
+      await handleStatusNavigation(-1);
       break;
     case "right":
-      await handleIdleNavigation(1);
+      await handleStatusNavigation(1);
       break;
     case "enter":
       handleDialog("Enter");
@@ -180,11 +180,12 @@ async function handleNavigation(key: NavigationKey): Promise<void> {
 }
 
 /**
- * Handle left/right arrow navigation to next idle workspace.
+ * Handle left/right arrow navigation to next workspace by status.
+ * Prefers idle workspaces; falls back to busy when no idle targets exist.
  * Direction: -1 for previous (left), 1 for next (right).
- * Wraps around if needed. No-op if no other idle workspace exists.
+ * Wraps around if needed. No-op if no targetable workspace exists.
  */
-async function handleIdleNavigation(direction: -1 | 1): Promise<void> {
+async function handleStatusNavigation(direction: -1 | 1): Promise<void> {
   if (_switchingWorkspace) return;
 
   const workspaces = getAllWorkspaces();
@@ -193,8 +194,15 @@ async function handleIdleNavigation(direction: -1 | 1): Promise<void> {
   const currentIndex = findWorkspaceIndex(activeWorkspacePath.value);
   if (currentIndex === -1) return;
 
-  // Find next idle workspace in the given direction
-  const targetIndex = findNextIdleIndex(workspaces, currentIndex, direction);
+  // Try idle first, fall back to busy only when the current workspace is not idle
+  let targetIndex = findNextByStatusType(workspaces, currentIndex, direction, "idle");
+  if (targetIndex === -1) {
+    const currentPath = workspaces[currentIndex]?.path;
+    const currentStatus = currentPath ? getStatus(currentPath) : undefined;
+    if (currentStatus?.type !== "idle") {
+      targetIndex = findNextByStatusType(workspaces, currentIndex, direction, "busy");
+    }
+  }
   if (targetIndex === -1) return;
 
   const targetWorkspaceRef = getWorkspaceRefByIndex(targetIndex);
@@ -204,20 +212,21 @@ async function handleIdleNavigation(direction: -1 | 1): Promise<void> {
   try {
     await api.ui.switchWorkspace(targetWorkspaceRef.path, false);
   } catch (error) {
-    logWorkspaceSwitchError("navigate to idle workspace", error);
+    logWorkspaceSwitchError("navigate workspace", error);
   } finally {
     _switchingWorkspace = false;
   }
 }
 
 /**
- * Find next idle workspace index in the given direction.
- * Returns -1 if no other idle workspace exists.
+ * Find next workspace index matching the given status type in the given direction.
+ * Returns -1 if no matching workspace exists.
  */
-function findNextIdleIndex(
+function findNextByStatusType(
   workspaces: { path: string }[],
   currentIndex: number,
-  direction: -1 | 1
+  direction: -1 | 1,
+  statusType: string
 ): number {
   const count = workspaces.length;
   for (let i = 1; i < count; i++) {
@@ -225,7 +234,7 @@ function findNextIdleIndex(
     const workspace = workspaces[index];
     if (!workspace) continue;
     const status = getStatus(workspace.path);
-    if (status.type === "idle") {
+    if (status.type === statusType) {
       return index;
     }
   }
