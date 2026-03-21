@@ -232,16 +232,13 @@ describe("GitHubSource", () => {
       expect(httpClient).not.toHaveRequested(SEARCH_URL);
     });
 
-    it("returns empty on search API failure", async () => {
+    it("throws on search API failure", async () => {
       const { source, httpClient } = createSource();
       await source.initialize();
 
       httpClient.setResponse(SEARCH_URL, { status: 403, body: "rate limited" });
 
-      const result = await source.poll(new Set());
-
-      expect(result.activeKeys.size).toBe(0);
-      expect(result.newItems).toHaveLength(0);
+      await expect(source.poll(new Set())).rejects.toThrow("403");
     });
   });
 });

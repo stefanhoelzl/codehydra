@@ -50,7 +50,7 @@ import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../utils/liquid/liquid-renderer";
 import { parseTemplateOutput } from "./template";
 import { Path } from "../../utils/path/path";
-import type { AutoWorkspaceSource, PollItem } from "./source";
+import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
 
 // =============================================================================
 // State Types
@@ -374,7 +374,17 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       }
     }
 
-    const { activeKeys, newItems } = await source.poll(trackedKeys);
+    let pollResult: PollResult;
+    try {
+      pollResult = await source.poll(trackedKeys);
+    } catch (error) {
+      deps.logger.warn("Poll failed for source, skipping", {
+        source: source.name,
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
+    const { activeKeys, newItems } = pollResult;
 
     let stateChanged = false;
     const stateBefore = state;

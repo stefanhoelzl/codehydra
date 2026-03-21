@@ -83,8 +83,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
     });
 
     if (!response.ok) {
-      deps.logger.warn("GitHub search API returned non-OK", { status: response.status });
-      return [];
+      throw new Error(`GitHub search API returned ${response.status}`);
     }
 
     const data = (await response.json()) as GitHubSearchResponse;
@@ -165,13 +164,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
     async poll(trackedKeys: ReadonlySet<string>): Promise<PollResult> {
       deps.logger.debug("Polling GitHub for review-requested PRs");
 
-      let items: GitHubSearchItem[];
-      try {
-        items = await fetchSearchResults();
-      } catch (error) {
-        deps.logger.warn("Failed to poll GitHub", { error: getErrorMessage(error) });
-        return { activeKeys: new Set(), newItems: [] };
-      }
+      const items = await fetchSearchResults();
 
       const activeKeys = new Set<string>();
       const newItems: PollItem[] = [];
