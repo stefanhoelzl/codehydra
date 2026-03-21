@@ -777,9 +777,11 @@ export class ViewManager implements IViewManager {
           if (!this.windowLayer.isDestroyed(this.windowHandle)) {
             // Re-attach UI view to move it to top
             this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
-            // In shortcut mode, restore focus to UI layer (lost during re-attach)
+            // Restore focus to UI layer (lost during re-attach)
             if (this.mode === "shortcut") {
               this.focus();
+            } else {
+              this.viewLayer.focus(this.uiViewHandle);
             }
           }
         } catch {
@@ -1056,8 +1058,14 @@ export class ViewManager implements IViewManager {
         }
       }
 
-      // Focus the correct view for current mode
-      this.focus();
+      // In dialog/hover mode, the view re-attachment above may have shifted
+      // focus to the workspace view. Restore focus to the UI view so the
+      // renderer's focus trap continues to work.
+      if (this.mode === "dialog" || this.mode === "hover") {
+        this.viewLayer.focus(this.uiViewHandle);
+      } else {
+        this.focus();
+      }
     }
     // Inactive: no-op (view stays detached, URL already loaded)
 

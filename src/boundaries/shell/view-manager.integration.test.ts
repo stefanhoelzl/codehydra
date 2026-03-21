@@ -1220,6 +1220,52 @@ describe("ViewManager", () => {
       expect(children![1]).toBe(uiId);
       expect(children![2]).toBe(ws2Handle.id);
     });
+
+    it("restores focus to UI view when workspace finishes loading in dialog mode", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew - starts loading
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+      manager.setMode("dialog");
+
+      const uiHandle = manager.getUIViewHandle();
+
+      // Workspace finishes loading — focus must stay on UI for dialog's focus trap
+      manager.setWorkspaceLoaded("/path/to/workspace");
+
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
+
+    it("restores focus to UI view when switching workspaces in dialog mode", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/ws1",
+        "http://127.0.0.1:8080/?folder=/ws1",
+        "/path/to/project"
+      );
+      manager.createWorkspaceView(
+        "/path/to/ws2",
+        "http://127.0.0.1:8080/?folder=/ws2",
+        "/path/to/project"
+      );
+      manager.setActiveWorkspace("/path/to/ws1");
+      manager.setMode("dialog");
+
+      const uiHandle = manager.getUIViewHandle();
+
+      // Switch workspace while dialog is open — focus must stay on UI
+      manager.setActiveWorkspace("/path/to/ws2");
+
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
+    });
   });
 
   describe("onLoadingChange", () => {
