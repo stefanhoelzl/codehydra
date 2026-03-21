@@ -157,15 +157,12 @@ describe("YouTrackSource", () => {
       expect(result.newItems).toHaveLength(0);
     });
 
-    it("returns empty on API failure", async () => {
+    it("throws on API failure", async () => {
       const { source, httpClient } = createConfiguredSource();
 
       httpClient.setResponse(ISSUES_URL, { status: 403, body: "Forbidden" });
 
-      const result = await source.poll(new Set());
-
-      expect(result.activeKeys.size).toBe(0);
-      expect(result.newItems).toHaveLength(0);
+      await expect(source.poll(new Set())).rejects.toThrow("403");
     });
   });
 });

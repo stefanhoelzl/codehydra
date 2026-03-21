@@ -3,7 +3,6 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import type { Config } from "../../boundaries/platform/config";
 import { configString } from "../../boundaries/platform/config-definition";
 import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
-import { getErrorMessage } from "../../shared/error-utils";
 
 // =============================================================================
 // Constants
@@ -67,8 +66,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
     });
 
     if (!response.ok) {
-      deps.logger.warn("YouTrack API returned non-OK", { status: response.status });
-      return [];
+      throw new Error(`YouTrack API returned ${response.status}`);
     }
 
     return (await response.json()) as Record<string, unknown>[];
@@ -98,13 +96,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
     async poll(trackedKeys: ReadonlySet<string>): Promise<PollResult> {
       deps.logger.debug("Polling YouTrack for issues");
 
-      let issues: Record<string, unknown>[];
-      try {
-        issues = await fetchIssues();
-      } catch (error) {
-        deps.logger.warn("Failed to poll YouTrack", { error: getErrorMessage(error) });
-        return { activeKeys: new Set(), newItems: [] };
-      }
+      const issues = await fetchIssues();
 
       const activeKeys = new Set<string>();
       const newItems: PollItem[] = [];

@@ -241,6 +241,7 @@ function createMockSource(
   }
 ): AutoWorkspaceSource & {
   pollResult: PollResult;
+  pollError: Error | null;
   initializeCalled: boolean;
   disposeCalled: boolean;
   _isConfigured: boolean;
@@ -249,6 +250,7 @@ function createMockSource(
     name,
     fetchBasesBeforeDelete: options?.fetchBasesBeforeDelete ?? false,
     pollResult: { activeKeys: new Set<string>(), newItems: [] as PollItem[] } as PollResult,
+    pollError: null as Error | null,
     initializeCalled: false,
     disposeCalled: false,
     _isConfigured: options?.isConfigured ?? true,
@@ -263,6 +265,7 @@ function createMockSource(
     },
 
     async poll(): Promise<PollResult> {
+      if (mock.pollError) throw mock.pollError;
       return mock.pollResult;
     },
 
@@ -1029,6 +1032,62 @@ describe("AutoWorkspaceModule Integration", () => {
       // Workspace should NOT be recreated
       expect(openProjectOp.dispatched).toHaveLength(0);
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
+    });
+  });
+
+  describe("poll failure resilience", () => {
+    it("preserves state when poll fails", async () => {
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": null,
+          "test-source/item-2": {
+            workspacePath: "/home/user/projects/repo/item-2",
+            workspaceName: "item-2",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, source, deleteWorkspaceOp, fs, listProjectsOp } = createTestSetup({
+        existingState,
+      });
+
+      listProjectsOp.projects = [trackedProject("/home/user/projects/repo/item-2")];
+      source.pollError = new Error("fetch failed");
+
+      await dispatcher.dispatch(startIntent());
+
+      // Null entry must be preserved (not removed)
+      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1":null');
+      // Tracked entry must not be auto-deleted
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
+      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"workspaceName":"item-2"');
+    });
+
+    it("does not auto-delete workspaces when poll fails", async () => {
+      const wsPath = "/home/user/projects/repo/item-1";
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: wsPath,
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, source, deleteWorkspaceOp, listProjectsOp } = createTestSetup({
+        existingState,
+      });
+
+      listProjectsOp.projects = [trackedProject(wsPath)];
+      source.pollError = new Error("DNS resolution failed");
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
     });
   });
 
