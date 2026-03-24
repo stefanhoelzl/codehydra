@@ -231,6 +231,20 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         return;
       }
 
+      // Fetch latest remote state before creating workspace
+      try {
+        await deps.dispatcher.dispatch({
+          type: INTENT_GET_PROJECT_BASES,
+          payload: { projectPath: project.path, refresh: true, wait: true },
+        } as GetProjectBasesIntent);
+      } catch (error) {
+        deps.logger.warn("Failed to fetch bases before auto-create (will retry next poll)", {
+          key,
+          error: getErrorMessage(error),
+        });
+        return;
+      }
+
       const initialPrompt: NormalizedInitialPrompt = {
         prompt: config.prompt,
         agent: config.agent ?? "plan",

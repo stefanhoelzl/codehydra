@@ -994,6 +994,69 @@ describe("AutoWorkspaceModule Integration", () => {
     });
   });
 
+  describe("fetch bases before create", () => {
+    it("fetches bases before creating workspace", async () => {
+      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp } = createTestSetup();
+
+      source.pollResult = {
+        activeKeys: new Set(["item-1"]),
+        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
+      };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(getProjectBasesOp.dispatched).toHaveLength(1);
+      expect(getProjectBasesOp.dispatched[0]!.payload.projectPath).toBe("/home/user/projects/repo");
+      expect(getProjectBasesOp.dispatched[0]!.payload.refresh).toBe(true);
+      expect(getProjectBasesOp.dispatched[0]!.payload.wait).toBe(true);
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+    });
+
+    it("skips workspace creation when fetch fails", async () => {
+      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp, fs } = createTestSetup();
+
+      getProjectBasesOp.shouldFail = true;
+      source.pollResult = {
+        activeKeys: new Set(["item-1"]),
+        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
+      };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+      // Item should NOT be dismissed (no null entry) — allows retry next poll
+      expect(fs).not.toHaveFileContaining(
+        "/data/auto-workspaces.json",
+        '"test-source/item-1": null'
+      );
+    });
+
+    it("retries on next poll after fetch failure", async () => {
+      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp } = createTestSetup();
+
+      getProjectBasesOp.shouldFail = true;
+      source.pollResult = {
+        activeKeys: new Set(["item-1"]),
+        newItems: [{ key: "item-1", url: "https://example.com/1", data: { id: "item-1" } }],
+      };
+
+      // First poll: fetch fails, workspace not created
+      await dispatcher.dispatch(startIntent());
+      expect(openWorkspaceOp.dispatched).toHaveLength(0);
+
+      // Fix fetch and restart
+      getProjectBasesOp.shouldFail = false;
+      getProjectBasesOp.dispatched.length = 0;
+
+      await dispatcher.dispatch(shutdownIntent());
+      await dispatcher.dispatch(startIntent());
+
+      // Second poll: fetch succeeds, workspace created
+      expect(openWorkspaceOp.dispatched).toHaveLength(1);
+    });
+  });
+
   describe("manual workspace deletion", () => {
     it("does not recreate workspace after manual deletion", async () => {
       const { dispatcher, source, openProjectOp, openWorkspaceOp } = createTestSetup();
