@@ -57,7 +57,8 @@ export type LoggerName =
   | "dispatcher" // Dispatcher - intent dispatch pipeline
   | "auto-workspace" // AutoWorkspaceModule - auto-workspace orchestrator
   | "auto-workspace:github" // GitHubSource - GitHub PR polling
-  | "auto-workspace:youtrack"; // YouTrackSource - YouTrack issue polling
+  | "auto-workspace:youtrack" // YouTrackSource - YouTrack issue polling
+  | "bug-report"; // BugReportModule - bug report dialog
 
 /**
  * Context data for log entries.
@@ -196,6 +197,13 @@ export interface Logging {
    * Cleans up any resources (e.g., IPC handlers).
    */
   dispose(): void;
+
+  /**
+   * Get the current session's log file path.
+   *
+   * @returns Absolute path to the session log file
+   */
+  getLogFilePath(): string;
 }
 
 /**

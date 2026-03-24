@@ -8,6 +8,7 @@
  * Events:
  * - workspace:created: captures "workspace_created" for new workspaces (not reopened)
  * - app:resumed: captures "app_resume" on system wake from sleep/hibernate
+ * - bug-report:submitted: captures "bug_report" (always sends, even when telemetry disabled)
  */
 
 import { randomUUID } from "node:crypto";
@@ -18,6 +19,10 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
 import { EVENT_APP_RESUMED } from "../intents/app-resume";
+import {
+  EVENT_BUG_REPORT_SUBMITTED,
+  type BugReportSubmittedEvent,
+} from "../intents/submit-bug-report";
 import { configBoolean, configString } from "../boundaries/platform/config-definition";
 import type { Config } from "../boundaries/platform/config";
 import type { PlatformInfo } from "../boundaries/platform/platform-info";
@@ -202,6 +207,47 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
     });
   }
 
+  /**
+   * Capture a bug report event. Always sends, even when telemetry is disabled.
+   * Bug reports are explicit user actions, not passive telemetry.
+   * No-op only if API key is missing.
+   */
+  function captureBugReport(description: string, logs: string): void {
+    if (!deps.apiKey || deps.apiKey.trim() === "") return;
+
+    // Lazily create client if telemetry was disabled
+    if (!client) {
+      const result = clientFactory(deps.apiKey, { host });
+      if (result instanceof Promise) {
+        void result.then((c) => {
+          client = c;
+          // Retry after async client creation
+          captureBugReport(description, logs);
+        });
+        return;
+      }
+      client = result;
+    }
+
+    // Use existing distinctId or generate an anonymous one (not persisted)
+    const id = distinctId ?? randomUUID();
+
+    const properties = {
+      description,
+      logs,
+      ...eventProperties(),
+      version: deps.buildInfo.version,
+    };
+
+    deps.logger.info("Bug report captured");
+
+    client.capture({
+      distinctId: id,
+      event: "bug_report",
+      properties,
+    });
+  }
+
   function sanitizeStack(stack: string | undefined): string | undefined {
     if (!stack) {
       return undefined;
@@ -335,6 +381,12 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
       [EVENT_APP_RESUMED]: {
         handler: async (): Promise<void> => {
           capture("app_resume", eventProperties());
+        },
+      },
+      [EVENT_BUG_REPORT_SUBMITTED]: {
+        handler: async (event: DomainEvent): Promise<void> => {
+          const { description, logs } = (event as BugReportSubmittedEvent).payload;
+          captureBugReport(description, logs);
         },
       },
     },

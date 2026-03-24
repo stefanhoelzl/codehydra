@@ -109,6 +109,7 @@ import {
   INTENT_UPDATE_AGENT_STATUS,
 } from "./intents/update-agent-status";
 import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/shortcut-key";
+import { SubmitBugReportOperation, INTENT_SUBMIT_BUG_REPORT } from "./intents/submit-bug-report";
 import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./intents/update-available";
 import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./intents/update-apply";
 import {
@@ -147,6 +148,7 @@ import { createDebugModule } from "./modules/debug-module";
 import { createUiIpcModule } from "./modules/ui-ipc-module";
 import { DialogManager } from "./modules/dialog-manager";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
+import { createBugReportModule } from "./modules/bug-report-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
 import { createGitHubSource } from "./modules/auto-workspace/github-source";
@@ -566,6 +568,14 @@ const devtoolsModule = createDevtoolsModule({
 
 const debugModule = createDebugModule({ configService, dialogManager });
 
+const bugReportModule = createBugReportModule({
+  dialogManager,
+  fileSystem: fileSystemLayer,
+  loggingService,
+  dispatcher,
+  logger: loggingService.createLogger("bug-report"),
+});
+
 // 8. Operation registration
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
@@ -595,6 +605,7 @@ dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
 dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
+dispatcher.registerOperation(INTENT_SUBMIT_BUG_REPORT, new SubmitBugReportOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
 dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(configService));
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
@@ -641,6 +652,7 @@ dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(debugModule);
+dispatcher.registerModule(bugReportModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(uiIpcModule);
 
