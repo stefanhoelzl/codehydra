@@ -377,6 +377,9 @@ export class DefaultViewBoundary implements ViewBoundary {
     if (options.webPreferences?.webviewTag !== undefined) {
       webPreferences.webviewTag = options.webPreferences.webviewTag;
     }
+    if (options.webPreferences?.backgroundThrottling !== undefined) {
+      webPreferences.backgroundThrottling = options.webPreferences.backgroundThrottling;
+    }
 
     const view = new WebContentsView({ webPreferences });
 

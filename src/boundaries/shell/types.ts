@@ -53,6 +53,7 @@ export interface WebPreferences {
   readonly preload?: string;
   readonly webviewTag?: boolean;
   readonly focusOnNavigation?: boolean;
+  readonly backgroundThrottling?: boolean;
 }
 
 /**
