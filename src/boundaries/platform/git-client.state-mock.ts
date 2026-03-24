@@ -446,7 +446,12 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       return result;
     },
 
-    async createBranch(repoPath: Path, name: string, startPoint: string): Promise<void> {
+    async createBranch(
+      repoPath: Path,
+      name: string,
+      startPoint: string,
+      _options?: { track?: boolean }
+    ): Promise<void> {
       const repo = getRepoOrThrow(repoPath);
 
       // Check if branch already exists

@@ -416,7 +416,12 @@ export class GitWorktreeProvider {
     return { fetchedRemotes, failedRemotes };
   }
 
-  async createWorkspace(projectRoot: Path, name: string, baseBranch: string): Promise<Workspace> {
+  async createWorkspace(
+    projectRoot: Path,
+    name: string,
+    baseBranch: string,
+    tracking?: string
+  ): Promise<Workspace> {
     const registration = this.getProjectRegistration(projectRoot);
 
     // Sanitize the name for filesystem (/ -> %)
@@ -428,6 +433,17 @@ export class GitWorktreeProvider {
     // Check if branch already exists (local branches only)
     const branches = await this.gitClient.listBranches(projectRoot);
     const branchExists = branches.some((b) => b.name === name && !b.isRemote);
+
+    // Validate tracking ref is a known remote branch
+    if (tracking !== undefined) {
+      const isRemoteRef = branches.some((b) => b.name === tracking && b.isRemote);
+      if (!isRemoteRef) {
+        throw new WorkspaceError(
+          `Tracking ref '${tracking}' is not a known remote branch. ` +
+            `Fetch remotes first or verify the branch name.`
+        );
+      }
+    }
 
     let createdBranch = false;
 
@@ -444,10 +460,39 @@ export class GitWorktreeProvider {
       }
       // Branch exists and not checked out - will use existing branch
       // The baseBranch is saved in config for tracking purposes regardless of whether it matches
+
+      // If tracking is set, reconfigure upstream
+      if (tracking !== undefined) {
+        const slashIndex = tracking.indexOf("/");
+        if (slashIndex !== -1) {
+          const remote = tracking.substring(0, slashIndex);
+          const remoteBranch = tracking.substring(slashIndex + 1);
+          try {
+            await this.gitClient.setBranchConfig(projectRoot, name, "remote", remote);
+            await this.gitClient.setBranchConfig(
+              projectRoot,
+              name,
+              "merge",
+              `refs/heads/${remoteBranch}`
+            );
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            this.logger.warn("Failed to configure upstream tracking", {
+              branch: name,
+              tracking,
+              error: message,
+            });
+          }
+        }
+      }
     } else {
       // Branch doesn't exist - create it
       try {
-        await this.gitClient.createBranch(projectRoot, name, baseBranch);
+        if (tracking !== undefined) {
+          await this.gitClient.createBranch(projectRoot, name, tracking, { track: true });
+        } else {
+          await this.gitClient.createBranch(projectRoot, name, baseBranch);
+        }
         createdBranch = true;
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : "Unknown error creating branch";

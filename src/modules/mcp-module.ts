@@ -611,6 +611,15 @@ export class McpServer implements IMcpServer {
             ),
           name: z.string().min(1).describe("Name for the new workspace (becomes branch name)"),
           base: z.string().min(1).describe("Base branch to create the workspace from"),
+          tracking: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "Remote branch to check out (e.g., 'origin/feature-login'). " +
+                "When set, the local branch is created at this ref with upstream configured. " +
+                "Must be a valid remote-tracking branch."
+            ),
           initialPrompt: initialPromptSchema
             .optional()
             .describe(
@@ -634,6 +643,7 @@ export class McpServer implements IMcpServer {
           const projectPath = args.projectPath as string;
           const name = args.name as string;
           const base = args.base as string;
+          const tracking = args.tracking as string | undefined;
           const rawInitialPrompt = args.initialPrompt as
             | string
             | { prompt: string; agent?: string; model?: PromptModel }
@@ -668,6 +678,7 @@ export class McpServer implements IMcpServer {
               projectPath,
               workspaceName: name,
               base,
+              ...(tracking !== undefined && { tracking }),
               ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
               stealFocus,
             },

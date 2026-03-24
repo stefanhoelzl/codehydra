@@ -27,6 +27,7 @@ interface ToolHandlerFns {
     projectPath: string;
     name: string;
     base: string;
+    tracking?: string;
     initialPrompt?: InitialPrompt;
     stealFocus?: boolean;
   }): Promise<unknown>;
@@ -226,13 +227,20 @@ function createToolHandlers(handlers: ToolHandlerFns) {
 
     workspace_create: async (
       _context: SimulatedToolContext,
-      args: { projectPath: string; name: string; base: string; stealFocus?: boolean }
+      args: {
+        projectPath: string;
+        name: string;
+        base: string;
+        tracking?: string;
+        stealFocus?: boolean;
+      }
     ): Promise<ToolResult> => {
       try {
         const result = await handlers.createWorkspace({
           projectPath: args.projectPath,
           name: args.name,
           base: args.base,
+          ...(args.tracking !== undefined && { tracking: args.tracking }),
           stealFocus: args.stealFocus ?? false,
         });
         return successResult(result);
@@ -774,6 +782,40 @@ describe("MCP Tools", () => {
       });
 
       expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ stealFocus: true }));
+    });
+
+    it("passes tracking when provided", async () => {
+      const createMock = vi.fn().mockResolvedValue({ name: "ws", path: "/ws" });
+      const mockHandlers = createMockHandlers({ createWorkspace: createMock });
+      const toolHandlers = createToolHandlers(mockHandlers);
+      const context = createContext();
+
+      await toolHandlers.workspace_create(context, {
+        projectPath: "/projects/my-project",
+        name: "ws",
+        base: "main",
+        tracking: "origin/feature-login",
+      });
+
+      expect(createMock).toHaveBeenCalledWith(
+        expect.objectContaining({ tracking: "origin/feature-login" })
+      );
+    });
+
+    it("omits tracking when not provided", async () => {
+      const createMock = vi.fn().mockResolvedValue({ name: "ws", path: "/ws" });
+      const mockHandlers = createMockHandlers({ createWorkspace: createMock });
+      const toolHandlers = createToolHandlers(mockHandlers);
+      const context = createContext();
+
+      await toolHandlers.workspace_create(context, {
+        projectPath: "/projects/my-project",
+        name: "ws",
+        base: "main",
+      });
+
+      const callArgs = createMock.mock.calls[0]![0] as Record<string, unknown>;
+      expect(callArgs).not.toHaveProperty("tracking");
     });
 
     it("propagates errors", async () => {

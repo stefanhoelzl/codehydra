@@ -4,6 +4,7 @@ export interface TemplateConfig {
   readonly name?: string;
   readonly agent?: string;
   readonly base?: string;
+  readonly tracking?: string;
   readonly focus?: boolean;
   readonly model?: { readonly providerID: string; readonly modelID: string };
   readonly metadata?: Readonly<Record<string, string>>;
@@ -22,6 +23,7 @@ const KNOWN_KEYS = new Set([
   "name",
   "agent",
   "base",
+  "tracking",
   "focus",
   "model.provider",
   "model.id",
@@ -107,6 +109,7 @@ export function parseTemplateOutput(rendered: string): ParseResult {
     ...(fields["name"] !== undefined && { name: fields["name"] }),
     ...(fields["agent"] !== undefined && { agent: fields["agent"] }),
     ...(fields["base"] !== undefined && { base: fields["base"] }),
+    ...(fields["tracking"] !== undefined && { tracking: fields["tracking"] }),
     ...(focus !== undefined && { focus }),
     ...(model !== undefined && { model }),
     ...(Object.keys(metadataFields).length > 0 && { metadata: metadataFields }),

@@ -75,10 +75,17 @@ export interface IGitClient {
    * @param repoPath Absolute path to the git repository
    * @param name Name for the new branch
    * @param startPoint Commit, branch, or tag to start from
+   * @param options Optional configuration
+   * @param options.track If true, set up tracking relationship (git branch --track)
    * @returns Promise resolving when branch is created
    * @throws GitError if branch already exists, start point doesn't exist, or not a git repository
    */
-  createBranch(repoPath: Path, name: string, startPoint: string): Promise<void>;
+  createBranch(
+    repoPath: Path,
+    name: string,
+    startPoint: string,
+    options?: { track?: boolean }
+  ): Promise<void>;
 
   /**
    * Delete a branch.

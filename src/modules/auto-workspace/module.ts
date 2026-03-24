@@ -257,6 +257,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         payload: {
           workspaceName: config.name,
           ...(config.base !== undefined && { base: config.base }),
+          ...(config.tracking !== undefined && { tracking: config.tracking }),
           stealFocus: config.focus ?? false,
           projectPath: project.path,
           initialPrompt,

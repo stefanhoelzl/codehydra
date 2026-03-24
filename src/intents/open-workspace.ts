@@ -48,6 +48,9 @@ export interface ExistingWorkspaceData {
 export interface OpenWorkspacePayload {
   readonly workspaceName: string;
   readonly base?: string;
+  /** Remote branch to check out (e.g., 'origin/feature-login'). When set, the local branch
+   *  is created at this ref with upstream configured, instead of forking from base. */
+  readonly tracking?: string;
   readonly initialPrompt?: InitialPrompt;
   /** If true, switch to the new workspace. If false, don't steal focus but still switch when
    *  no workspace is active. Default behavior (undefined): switch. */
@@ -78,6 +81,7 @@ export interface WorkspaceCreatedPayload {
   readonly projectPath: string;
   readonly branch: string;
   readonly base?: string;
+  readonly tracking?: string;
   readonly metadata: Readonly<Record<string, string>>;
   readonly workspaceUrl: string;
   readonly initialPrompt?: NormalizedInitialPrompt;
@@ -238,6 +242,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       projectPath,
       branch,
       ...(eventBase !== undefined && { base: eventBase }),
+      ...(ctx.intent.payload.tracking !== undefined && { tracking: ctx.intent.payload.tracking }),
       metadata,
       workspaceUrl,
       ...(ctx.intent.payload.initialPrompt !== undefined && {
