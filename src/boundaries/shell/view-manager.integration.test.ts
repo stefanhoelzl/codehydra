@@ -267,6 +267,23 @@ describe("ViewManager", () => {
       expect(deps.viewLayer).toHaveView(wsHandle.id, { backgroundColor: "#1e1e1e" });
     });
 
+    it("sets full-size bounds on detached view at creation time", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Detached view should have workspace bounds so code-server renders correctly
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        attachedTo: null,
+        bounds: { x: 20, y: 0, width: 1180, height: 800 },
+      });
+    });
+
     it("returns a ViewHandle", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
@@ -606,8 +623,10 @@ describe("ViewManager", () => {
           height: 900,
         },
       });
-      // Inactive workspace should NOT have bounds set (it's detached)
-      expect(deps.viewLayer).toHaveView(ws2Handle.id, { bounds: null });
+      // Inactive workspace has creation-time bounds (set at creation, not updated by updateBounds)
+      expect(deps.viewLayer).toHaveView(ws2Handle.id, {
+        bounds: { x: 20, y: 0, width: 1380, height: 900 },
+      });
     });
 
     it("sets UI layer bounds to full window", () => {
@@ -667,6 +686,34 @@ describe("ViewManager", () => {
           y: 0,
           width: 800 - SIDEBAR_MINIMIZED_WIDTH,
           height: 600,
+        },
+      });
+    });
+
+    it("updates loading (detached) workspace bounds on resize", () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      const wsHandle = manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project",
+        true // isNew — loading
+      );
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Simulate resize
+      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1600, height: 1000 });
+      manager.updateBounds();
+
+      // Detached loading workspace should have updated bounds
+      expect(deps.viewLayer).toHaveView(wsHandle.id, {
+        attachedTo: null,
+        bounds: {
+          x: SIDEBAR_MINIMIZED_WIDTH,
+          y: 0,
+          width: 1600 - SIDEBAR_MINIMIZED_WIDTH,
+          height: 1000,
         },
       });
     });
@@ -832,11 +879,11 @@ describe("ViewManager", () => {
       expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
     });
 
-    it("focuses workspace during loading for keyboard input initialization", () => {
+    it("focuses UI during loading (workspace is detached)", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
 
-      const wsHandle = manager.createWorkspaceView(
+      manager.createWorkspaceView(
         "/path/to/workspace",
         "http://127.0.0.1:8080/?folder=/path",
         "/path/to/project",
@@ -844,9 +891,10 @@ describe("ViewManager", () => {
       );
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // Workspace should be focused at 1x1 bounds so
-      // before-input-event fires for Alt+X shortcut detection
-      expect(deps.viewLayer).toHaveView(wsHandle.id, { focused: true });
+      // UI view should be focused — loading workspace is detached,
+      // Alt+X detection works via UI view's before-input-event
+      const uiHandle = manager.getUIViewHandle();
+      expect(deps.viewLayer).toHaveView(uiHandle.id, { focused: true });
     });
 
     it("focuses UI in shortcut mode even when workspace is attached", () => {
@@ -1030,7 +1078,7 @@ describe("ViewManager", () => {
   });
 
   describe("setWorkspaceLoaded", () => {
-    it("transitions from 1x1 to full bounds when active workspace finishes loading", () => {
+    it("attaches detached view at full bounds when active workspace finishes loading", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -1042,14 +1090,14 @@ describe("ViewManager", () => {
         true // isNew - starts loading
       );
 
-      // Activate attaches view at 1x1 bounds
+      // Activate — view stays detached with full-size bounds
       manager.setActiveWorkspace("/path/to/workspace");
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
-        attachedTo: windowId,
-        bounds: { x: 0, y: 0, width: 1, height: 1 },
+        attachedTo: null,
+        bounds: { x: 20, y: 0, width: 1180, height: 800 },
       });
 
-      // Mark as loaded — view transitions to full bounds
+      // Mark as loaded — view gets attached at full bounds
       manager.setWorkspaceLoaded("/path/to/workspace");
 
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
@@ -1077,7 +1125,7 @@ describe("ViewManager", () => {
       }).not.toThrow();
     });
 
-    it("attaches active loading workspace at top z-order with 1x1 bounds", () => {
+    it("keeps loading workspace detached with full-size bounds", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -1091,22 +1139,18 @@ describe("ViewManager", () => {
 
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // View should be attached at top z-order with 1x1 bounds
+      // Loading workspace stays detached — not in window children
       const children = deps.viewLayer.$.windowChildren.get(windowId);
-      expect(children).toContain(wsHandle.id);
+      expect(children).not.toContain(wsHandle.id);
 
-      // 1x1 bounds so loading overlay (UI layer) stays visible
+      // Full-size bounds set on detached view so code-server renders correctly
       expect(deps.viewLayer).toHaveView(wsHandle.id, {
-        bounds: { x: 0, y: 0, width: 1, height: 1 },
+        attachedTo: null,
+        bounds: { x: 20, y: 0, width: 1180, height: 800 },
       });
 
-      // Z-order: background(0) < UI(1) < workspace(2) — workspace on top for input events
-      const uiId = manager.getUIViewHandle().id;
-      expect(children).toHaveLength(3);
-      expect(children![0]).not.toBe(wsHandle.id);
-      expect(children![0]).not.toBe(uiId);
-      expect(children![1]).toBe(uiId);
-      expect(children![2]).toBe(wsHandle.id);
+      // Z-order: only background + UI (workspace is detached)
+      expect(children).toHaveLength(2);
     });
 
     it("setMode to workspace during loading preserves z-order", () => {
@@ -1116,7 +1160,7 @@ describe("ViewManager", () => {
 
       manager.setMode("dialog");
 
-      const wsHandle = manager.createWorkspaceView(
+      manager.createWorkspaceView(
         "/path/to/workspace",
         "http://127.0.0.1:8080/?folder=/path",
         "/path/to/project",
@@ -1125,14 +1169,9 @@ describe("ViewManager", () => {
       manager.setActiveWorkspace("/path/to/workspace");
       manager.setMode("workspace");
 
-      // Z-order: background(0) < UI(1) < workspace(2)
+      // Loading workspace is detached — only background + UI in window
       const children = deps.viewLayer.$.windowChildren.get(windowId);
-      const uiId = manager.getUIViewHandle().id;
-      expect(children).toHaveLength(3);
-      expect(children![0]).not.toBe(wsHandle.id);
-      expect(children![0]).not.toBe(uiId);
-      expect(children![1]).toBe(uiId);
-      expect(children![2]).toBe(wsHandle.id);
+      expect(children).toHaveLength(2);
     });
 
     it("background preload does not disrupt active workspace z-order", () => {
@@ -1212,13 +1251,11 @@ describe("ViewManager", () => {
       manager.setActiveWorkspace("/path/to/ws2");
 
       const children = deps.viewLayer.$.windowChildren.get(windowId);
-      const uiId = manager.getUIViewHandle().id;
 
-      // ws1 detached, ws2 on top — UI stays below workspace
+      // Both loading workspaces stay detached — only background + UI in window
       expect(children).not.toContain(ws1Handle.id);
-      expect(children).toHaveLength(3);
-      expect(children![1]).toBe(uiId);
-      expect(children![2]).toBe(ws2Handle.id);
+      expect(children).not.toContain(ws2Handle.id);
+      expect(children).toHaveLength(2);
     });
 
     it("restores focus to UI view when workspace finishes loading in dialog mode", () => {
