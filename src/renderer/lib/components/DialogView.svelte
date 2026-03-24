@@ -32,6 +32,9 @@
   // Track selection state for selection sections
   let selectionState = $state<Record<number, string>>({});
 
+  // Track input values for input sections (keyed by input id)
+  let inputState = $state<Record<string, string>>({});
+
   // Initialize selection state when config changes (not when selection changes)
   $effect(() => {
     const newState: Record<number, string> = {};
@@ -66,13 +69,28 @@
     return data;
   }
 
+  /** Get input values to include in events. */
+  function getInputData(): Record<string, string> {
+    const inputs: Record<string, string> = {};
+    for (const section of config.sections) {
+      if (section.type === "input") {
+        inputs[section.id] = inputState[section.id] ?? "";
+      }
+    }
+    return inputs;
+  }
+
   /** Handle action button click. */
   function handleAction(action: DialogAction): void {
     if (action.disabled || action.busy) return;
+    const inputs = getInputData();
     const event: DialogUserEvent = {
       dialogId,
       actionId: action.id,
-      data: getSelectionData(),
+      data: {
+        ...getSelectionData(),
+        ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
+      },
     };
     sendDialogEvent(event);
   }
@@ -274,6 +292,28 @@
             </button>
           {/each}
         </div>
+      {:else if s.type === "input"}
+        {#if s.multiline}
+          <textarea
+            class="input-textarea"
+            placeholder={s.placeholder ?? ""}
+            aria-label={s.placeholder ?? "Text input"}
+            value={inputState[s.id] ?? ""}
+            oninput={(e) => {
+              inputState = { ...inputState, [s.id]: e.currentTarget.value };
+            }}
+          ></textarea>
+        {:else}
+          <vscode-textfield
+            class="input-textfield"
+            placeholder={s.placeholder ?? ""}
+            aria-label={s.placeholder ?? "Text input"}
+            value={inputState[s.id] ?? ""}
+            oninput={(e: Event) => {
+              inputState = { ...inputState, [s.id]: (e.currentTarget as HTMLInputElement).value };
+            }}
+          ></vscode-textfield>
+        {/if}
       {:else if s.type === "table"}
         <div class="table-container">
           {#if s.header}
@@ -635,6 +675,34 @@
 
   tr:last-child td {
     border-bottom: none;
+  }
+
+  /* ---- Input sections ---- */
+
+  .input-textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 0.5rem;
+    font-family: inherit;
+    font-size: 0.875rem;
+    color: var(--ch-foreground);
+    background: var(--ch-input-background);
+    border: 1px solid var(--ch-border);
+    border-radius: 4px;
+    resize: vertical;
+  }
+
+  .input-textarea:focus {
+    outline: none;
+    border-color: var(--ch-focus-border);
+  }
+
+  .input-textarea::placeholder {
+    color: var(--ch-foreground-dim, rgba(255, 255, 255, 0.5));
+  }
+
+  .input-textfield {
+    width: 100%;
   }
 
   /* ---- Actions ---- */

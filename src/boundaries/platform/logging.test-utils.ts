@@ -105,6 +105,7 @@ export function createMockLogging(): MockLogging {
     configure: vi.fn(),
     initialize: vi.fn(),
     dispose: vi.fn(),
+    getLogFilePath: vi.fn().mockReturnValue("/mock/logs/test-session.log"),
 
     getCreatedLoggerNames(): LoggerName[] {
       return Array.from(loggers.keys());

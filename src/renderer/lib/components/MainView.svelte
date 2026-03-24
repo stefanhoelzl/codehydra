@@ -59,6 +59,7 @@
   import { getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
   import { activeClones, hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
+  import { dialogs } from "$lib/stores/dialog-framework.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -75,8 +76,9 @@
   let autoShowDismissed = $state(false);
 
   // Sync dialog state to central ui-mode store
+  // Includes both renderer-side dialogs (create/remove) and declarative framework dialogs
   $effect(() => {
-    const isDialogOpen = dialogState.value.type !== "closed";
+    const isDialogOpen = dialogState.value.type !== "closed" || dialogs.value.size > 0;
     setDialogOpen(isDialogOpen);
   });
 

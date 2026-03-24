@@ -470,6 +470,7 @@ export class ElectronLog implements Logging {
   private logLevel: LogLevel = "warn";
   private logFormat: LogFormat = "text";
   private allowedLoggers: Set<LoggerName> | undefined;
+  private readonly logPath: string;
 
   constructor(pathProvider: PathProvider) {
     // Transports start silent — configure() enables them
@@ -479,7 +480,8 @@ export class ElectronLog implements Logging {
     // Configure file path (known at construction)
     const logsDir = pathProvider.dataPath("logs").toNative();
     const filename = generateSessionFilename();
-    log.transports.file.resolvePathFn = (): string => join(logsDir, filename);
+    this.logPath = join(logsDir, filename);
+    log.transports.file.resolvePathFn = (): string => this.logPath;
 
     // Format: [timestamp] [level] [scope] message
     log.transports.file.format = TEXT_FORMAT;
@@ -552,5 +554,9 @@ export class ElectronLog implements Logging {
    */
   dispose(): void {
     this.loggers.clear();
+  }
+
+  getLogFilePath(): string {
+    return this.logPath;
   }
 }

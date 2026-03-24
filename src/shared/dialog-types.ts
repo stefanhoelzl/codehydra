@@ -59,7 +59,26 @@ interface TableSection {
   readonly headerIcon?: string;
 }
 
-export type DialogSection = TextSection | ProgressSection | SelectionSection | TableSection;
+/**
+ * Input section - displays a text input field.
+ *
+ * - multiline false (default): single-line text field
+ * - multiline true: multi-line textarea
+ * - Input values are included in DialogUserEvent.data.inputs when actions fire
+ */
+interface InputSection {
+  readonly type: "input";
+  readonly id: string;
+  readonly placeholder?: string;
+  readonly multiline?: boolean;
+}
+
+export type DialogSection =
+  | TextSection
+  | ProgressSection
+  | SelectionSection
+  | TableSection
+  | InputSection;
 
 // ---- Progress Items ----
 
