@@ -23,6 +23,8 @@ import type { WindowBoundary } from "./window";
 export interface ViewOptions {
   readonly webPreferences?: WebPreferences;
   readonly backgroundColor?: string;
+  /** Debug label for logging (e.g., "ui", workspace name). */
+  readonly label?: string;
 }
 
 /**
@@ -341,6 +343,7 @@ interface ViewState {
   view: WebContentsView;
   attachedToWindow: WindowHandle | null;
   options: ViewOptions;
+  label: string;
 }
 
 /**
@@ -381,10 +384,21 @@ export class DefaultViewBoundary implements ViewBoundary {
       view.setBackgroundColor(options.backgroundColor);
     }
 
+    const label = options.label ?? id;
+
     this.views.set(id, {
       view,
       attachedToWindow: null,
       options,
+      label,
+    });
+
+    view.webContents.on("blur", () => {
+      this.logger.debug(`blur ${label}`);
+    });
+
+    view.webContents.on("focus", () => {
+      this.logger.debug(`focus ${label}`);
     });
 
     const handle = createViewHandle(id);
