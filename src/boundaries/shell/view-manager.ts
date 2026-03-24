@@ -432,7 +432,18 @@ export class ViewManager implements IViewManager {
 
     // Note: No attachToWindow() - view starts detached
     // Note: No loadURL() - URL is loaded on first activation
-    // Note: No setBounds() - detached views don't need bounds
+
+    // Set workspace bounds on detached view so code-server renders at correct size.
+    // Electron respects setBounds on detached WebContentsViews.
+    const windowBounds = this.windowManager.getBounds();
+    const clampedWidth = Math.max(windowBounds.width, MIN_WIDTH);
+    const clampedHeight = Math.max(windowBounds.height, MIN_HEIGHT);
+    this.viewLayer.setBounds(viewHandle, {
+      x: SIDEBAR_MINIMIZED_WIDTH,
+      y: 0,
+      width: clampedWidth - SIDEBAR_MINIMIZED_WIDTH,
+      height: clampedHeight,
+    });
 
     this.logger.debug("View created", { workspace: workspaceName });
     return viewHandle;
@@ -563,11 +574,9 @@ export class ViewManager implements IViewManager {
     });
 
     // Only update active workspace bounds (O(1) - inactive views are detached).
-    // Skip loading workspaces: they use 1x1 bounds so the loading overlay stays visible.
-    if (
-      this.activeWorkspacePath !== null &&
-      !this.loadingWorkspaces.has(this.activeWorkspacePath)
-    ) {
+    // Loading workspaces are also updated: they are detached but setBounds keeps
+    // the renderer viewport in sync so code-server re-layouts at the correct size.
+    if (this.activeWorkspacePath !== null) {
       const state = this.workspaceStates.get(this.activeWorkspacePath);
       if (state) {
         this.viewLayer.setBounds(state.handle, {
@@ -745,22 +754,9 @@ export class ViewManager implements IViewManager {
         this.loadViewUrl(workspacePath);
         if (!this.loadingWorkspaces.has(workspacePath)) {
           this.attachView(workspacePath);
-        } else {
-          // Loading workspace: attach at top z-order with 1x1 bounds so
-          // the loading overlay (UI layer) remains visible while
-          // before-input-event still fires for Alt+X shortcut detection.
-          try {
-            if (!this.windowLayer.isDestroyed(this.windowHandle)) {
-              const state = this.workspaceStates.get(workspacePath);
-              if (state) {
-                this.viewLayer.attachToWindow(state.handle, this.windowHandle);
-                this.viewLayer.setBounds(state.handle, { x: 0, y: 0, width: 1, height: 1 });
-              }
-            }
-          } catch {
-            // Window may be closing
-          }
         }
+        // Loading workspaces stay detached with full-size bounds (set at creation).
+        // Alt+X works via the UI view's before-input-event (focus goes to UI).
       }
 
       // Then detach previous
@@ -839,11 +835,15 @@ export class ViewManager implements IViewManager {
 
   /**
    * Returns the topmost focusable view handle.
-   * If an active workspace is attached at top, returns it.
-   * Otherwise returns the UI view (which is always above background).
+   * If an active workspace is attached (not loading), returns it.
+   * Otherwise returns the UI view (loading workspaces are detached,
+   * so focus goes to the UI view where Alt+X detection works).
    */
   private getTopView(): ViewHandle {
-    if (this.activeWorkspacePath !== null) {
+    if (
+      this.activeWorkspacePath !== null &&
+      !this.loadingWorkspaces.has(this.activeWorkspacePath)
+    ) {
       const state = this.workspaceStates.get(this.activeWorkspacePath);
       if (state) return state.handle;
     }
@@ -1029,7 +1029,7 @@ export class ViewManager implements IViewManager {
     this.notifyLoadingChange(workspacePath, false);
 
     if (this.activeWorkspacePath === workspacePath) {
-      // Attach view at full bounds (transitions from 1x1 loading bounds)
+      // Attach detached view at full bounds
       this.attachView(workspacePath);
       this.updateBounds();
 
