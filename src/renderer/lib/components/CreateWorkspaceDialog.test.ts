@@ -68,6 +68,23 @@ vi.mock("$lib/stores/projects.svelte.js", () => ({
     },
   },
   getProjectById: mockGetProjectById,
+  addWorkspace: vi.fn(),
+  removeWorkspace: vi.fn(),
+  setActiveWorkspace: vi.fn(),
+  activeWorkspacePath: {
+    get value() {
+      return null;
+    },
+  },
+}));
+
+// Mock $lib/stores/pending-workspaces.svelte.js
+vi.mock("$lib/stores/pending-workspaces.svelte.js", () => ({
+  createPendingPath: vi.fn(
+    (projectPath: string, name: string) => `__pending__/${projectPath}/${name}`
+  ),
+  addPending: vi.fn(),
+  removePending: vi.fn(),
 }));
 
 // Mock $lib/stores/dialogs.svelte.js
@@ -605,8 +622,7 @@ describe("CreateWorkspaceDialog component", () => {
       expect(okButton).not.toBeDisabled();
     });
 
-    it("OK shows spinner during submit", async () => {
-      // Delay the API response
+    it("dialog closes immediately on submit and adds placeholder", async () => {
       mockCreateWorkspace.mockImplementation(
         () => new Promise((resolve) => setTimeout(resolve, 1000))
       );
@@ -616,12 +632,20 @@ describe("CreateWorkspaceDialog component", () => {
 
       await fillValidForm();
 
-      // Click OK
+      // Click Create
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
 
-      // Should show submitting state in the button
-      expect(screen.getByRole("button", { name: /creating/i })).toBeInTheDocument();
+      // Dialog should close immediately
+      expect(mockCloseDialog).toHaveBeenCalled();
+
+      // Placeholder should be added to the store
+      const { addWorkspace } = await import("$lib/stores/projects.svelte.js");
+      expect(addWorkspace).toHaveBeenCalled();
+
+      // Pending state should be registered
+      const { addPending } = await import("$lib/stores/pending-workspaces.svelte.js");
+      expect(addPending).toHaveBeenCalled();
 
       await completeAllLoading();
     });
@@ -1297,7 +1321,7 @@ describe("CreateWorkspaceDialog component", () => {
   });
 
   describe("error handling", () => {
-    it('api.createWorkspace failure displays error in role="alert"', async () => {
+    it("api.createWorkspace failure removes placeholder silently", async () => {
       mockCreateWorkspace.mockRejectedValue(new Error("Network error"));
 
       render(CreateWorkspaceDialog, { props: defaultProps });
@@ -1314,83 +1338,22 @@ describe("CreateWorkspaceDialog component", () => {
       await fireEvent.keyDown(branchDropdown, { key: "Enter" });
       await completeAllLoading();
 
-      // Click OK
+      // Click Create
       const okButton = screen.getByRole("button", { name: /ok|create/i });
       await fireEvent.click(okButton);
 
+      // Dialog closes immediately
+      expect(mockCloseDialog).toHaveBeenCalled();
+
+      // Wait for the .catch() to run
       await completeAllLoading();
 
-      // The submit error is displayed
-      const errorElement = screen.getByText(/network error/i);
-      expect(errorElement).toBeInTheDocument();
-      expect(errorElement.closest("[role='alert']")).toBeInTheDocument();
-    });
+      // Placeholder should be cleaned up
+      const { removePending } = await import("$lib/stores/pending-workspaces.svelte.js");
+      expect(removePending).toHaveBeenCalled();
 
-    it("error re-enables form for retry", async () => {
-      mockCreateWorkspace.mockRejectedValue(new Error("Network error"));
-
-      render(CreateWorkspaceDialog, { props: defaultProps });
-      await completeAllLoading();
-
-      // Fill valid form (type name and press Enter to confirm)
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "my-feature" } });
-      await fireEvent.keyDown(nameInput, { key: "Enter" });
-
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await completeAllLoading();
-
-      // Click OK
-      const okButton = screen.getByRole("button", { name: /ok|create/i });
-      await fireEvent.click(okButton);
-
-      await completeAllLoading();
-
-      // Form should be re-enabled
-      expect(nameInput).not.toBeDisabled();
-      expect(okButton).not.toBeDisabled();
-    });
-
-    it("error message cleared on next submit attempt", async () => {
-      let callCount = 0;
-      mockCreateWorkspace.mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.reject(new Error("Network error"));
-        }
-        return Promise.resolve();
-      });
-
-      render(CreateWorkspaceDialog, { props: defaultProps });
-      await completeAllLoading();
-
-      // Fill valid form (type name and press Enter to confirm)
-      const nameInput = getNameInput();
-      await fireEvent.input(nameInput, { target: { value: "my-feature" } });
-      await fireEvent.keyDown(nameInput, { key: "Enter" });
-
-      const branchDropdown = getBranchDropdown();
-      await fireEvent.focus(branchDropdown);
-      await fireEvent.keyDown(branchDropdown, { key: "ArrowDown" });
-      await fireEvent.keyDown(branchDropdown, { key: "Enter" });
-      await completeAllLoading();
-
-      // First attempt - fails
-      const okButton = screen.getByRole("button", { name: /ok|create/i });
-      await fireEvent.click(okButton);
-      await completeAllLoading();
-
-      expect(screen.getByText(/network error/i)).toBeInTheDocument();
-
-      // Second attempt - should clear error
-      await fireEvent.click(okButton);
-
-      expect(screen.queryByText(/network error/i)).not.toBeInTheDocument();
-
-      await completeAllLoading();
+      const { removeWorkspace } = await import("$lib/stores/projects.svelte.js");
+      expect(removeWorkspace).toHaveBeenCalled();
     });
   });
 });

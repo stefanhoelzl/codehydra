@@ -60,7 +60,12 @@ import type { SetupProgressEvent, SetupErrorEvent } from "../intents/setup";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/get-active-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
+import {
+  EVENT_WORKSPACE_CREATED,
+  EVENT_WORKSPACE_LOADING,
+  EVENT_WORKSPACE_CREATE_FAILED,
+} from "../intents/open-workspace";
+
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
@@ -146,8 +151,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
   /** Track which workspaces are loading (not necessarily showing a dialog). */
   const loadingPaths = new Set<string>();
-  /** Currently visible loading dialog (only for active workspace). */
-  let loadingDialog: { path: string; handle: DialogHandle } | null = null;
+  /** Currently visible loading dialog (only for active workspace).
+   *  path is null when opened by workspace:loading before the workspace path is known. */
+  let loadingDialog: { path: string | null; handle: DialogHandle } | null = null;
   /** Track the setup dialog handle (for show-ui/hide-ui). */
   let setupDialogHandle: DialogHandle | null = null;
   /** Accumulated setup row state (persists across progress events). */
@@ -273,19 +279,28 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                   loadingPaths.add(path);
                   // Show dialog only if this is the active workspace
                   const activePath = cachedActiveRef?.path ?? null;
-                  if (path === activePath && !loadingDialog) {
-                    const handle = deps.dialogManager.open({
-                      sections: [
-                        {
-                          type: "progress",
-                          items: [
-                            { id: "loading", label: "Loading workspace...", status: "running" },
-                          ],
-                          style: "spinner",
-                        },
-                      ],
-                    });
-                    loadingDialog = { path, handle };
+                  if (path === activePath) {
+                    if (loadingDialog && loadingDialog.path === null) {
+                      // Associate path with dialog opened early by workspace:loading event
+                      loadingDialog = { path, handle: loadingDialog.handle };
+                    } else if (!loadingDialog) {
+                      const handle = deps.dialogManager.open({
+                        sections: [
+                          {
+                            type: "progress",
+                            items: [
+                              {
+                                id: "loading",
+                                label: "Loading workspace...",
+                                status: "running",
+                              },
+                            ],
+                            style: "spinner",
+                          },
+                        ],
+                      });
+                      loadingDialog = { path, handle };
+                    }
                   }
                 } else {
                   loadingPaths.delete(path);
@@ -563,6 +578,38 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
     },
 
     events: {
+      // -------------------------------------------------------------------
+      // workspace:loading → open loading dialog before slow work begins
+      // -------------------------------------------------------------------
+      [EVENT_WORKSPACE_LOADING]: {
+        handler: async (): Promise<void> => {
+          if (deps.dialogManager && !loadingDialog) {
+            const handle = deps.dialogManager.open({
+              sections: [
+                {
+                  type: "progress",
+                  items: [{ id: "loading", label: "Loading workspace...", status: "running" }],
+                  style: "spinner",
+                },
+              ],
+            });
+            loadingDialog = { path: null, handle };
+          }
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // workspace:create-failed → close loading dialog on error
+      // -------------------------------------------------------------------
+      [EVENT_WORKSPACE_CREATE_FAILED]: {
+        handler: async (): Promise<void> => {
+          if (loadingDialog?.path === null) {
+            loadingDialog.handle.close();
+            loadingDialog = null;
+          }
+        },
+      },
+
       // -------------------------------------------------------------------
       // workspace:created → create view + preload URL
       // -------------------------------------------------------------------
