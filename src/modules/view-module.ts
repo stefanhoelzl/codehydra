@@ -122,11 +122,18 @@ export interface ViewModuleDeps {
 export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const { viewManager, logger } = deps;
 
-  // Register config key
+  // Register config keys
   deps.configService.register("experimental.load-on-resume", {
     name: "experimental.load-on-resume",
     default: false,
     description: "Reload workspace views when system resumes from sleep",
+    ...configBoolean(),
+  });
+  deps.configService.register("experimental.disable-bg-throttling", {
+    name: "experimental.disable-bg-throttling",
+    default: false,
+    description:
+      "Disable background throttling on workspace views (fixes agent startup on Windows)",
     ...configBoolean(),
   });
 
@@ -562,11 +569,15 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceCreatedEvent).payload;
+          const disableBgThrottling = deps.configService.get(
+            "experimental.disable-bg-throttling"
+          ) as boolean;
           viewManager.createWorkspaceView(
             payload.workspacePath,
             payload.workspaceUrl,
             payload.projectPath,
-            true
+            true,
+            { disableBgThrottling }
           );
           viewManager.preloadWorkspaceUrl(payload.workspacePath);
         },

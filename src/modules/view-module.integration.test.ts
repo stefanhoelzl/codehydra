@@ -554,7 +554,8 @@ describe("ViewModule Integration", () => {
         "/workspaces/ws1",
         "http://127.0.0.1:0/?folder=/workspaces/ws1",
         "/projects/test",
-        true
+        true,
+        { disableBgThrottling: undefined }
       );
       expect(viewManager.preloadWorkspaceUrl).toHaveBeenCalledWith("/workspaces/ws1");
     });

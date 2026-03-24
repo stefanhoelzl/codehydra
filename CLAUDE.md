@@ -303,22 +303,23 @@ All settings use dot-separated, kebab-case config keys. The same key works in th
 
 Precedence (highest wins): CLI flag > env var > config.json > computed defaults > static defaults.
 
-| Key                                 | Default | Description                                                                           |
-| ----------------------------------- | ------- | ------------------------------------------------------------------------------------- |
-| `agent`                             | `null`  | Agent selection: claude\|opencode                                                     |
-| `auto-update`                       | `ask`   | Auto-update preference: always\|ask\|never                                            |
-| `version.claude`                    | `null`  | Claude agent version override                                                         |
-| `version.opencode`                  | `null`  | OpenCode agent version override                                                       |
-| `code-server.port`                  | (auto)  | Code-server port (auto = 25448 in prod, branch-derived in dev)                        |
-| `version.code-server`               | `null`  | Code-server version override (null = built-in)                                        |
-| `telemetry.enabled`                 | `true`  | Enable telemetry (false in dev/unpackaged)                                            |
-| `telemetry.distinct-id`             | —       | Telemetry user ID (auto-generated)                                                    |
-| `log.level`                         | `warn`  | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`)               |
-| `log.output`                        | `file`  | Output destinations: `file`, `console`, or `file,console`                             |
-| `electron.flags`                    | —       | Electron switches (e.g., `--disable-gpu`)                                             |
-| `experimental.github.query`         | (below) | GitHub search query; default: `is:open is:pr review-requested:@me`                    |
-| `experimental.github.template-path` | `null`  | Path to Liquid template for GitHub auto-workspaces; set to enable (requires `gh` CLI) |
-| `help`                              | `false` | Print config help and exit                                                            |
+| Key                                  | Default | Description                                                                           |
+| ------------------------------------ | ------- | ------------------------------------------------------------------------------------- |
+| `agent`                              | `null`  | Agent selection: claude\|opencode                                                     |
+| `auto-update`                        | `ask`   | Auto-update preference: always\|ask\|never                                            |
+| `version.claude`                     | `null`  | Claude agent version override                                                         |
+| `version.opencode`                   | `null`  | OpenCode agent version override                                                       |
+| `code-server.port`                   | (auto)  | Code-server port (auto = 25448 in prod, branch-derived in dev)                        |
+| `version.code-server`                | `null`  | Code-server version override (null = built-in)                                        |
+| `telemetry.enabled`                  | `true`  | Enable telemetry (false in dev/unpackaged)                                            |
+| `telemetry.distinct-id`              | —       | Telemetry user ID (auto-generated)                                                    |
+| `log.level`                          | `warn`  | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`)               |
+| `log.output`                         | `file`  | Output destinations: `file`, `console`, or `file,console`                             |
+| `electron.flags`                     | —       | Electron switches (e.g., `--disable-gpu`)                                             |
+| `experimental.github.query`          | (below) | GitHub search query; default: `is:open is:pr review-requested:@me`                    |
+| `experimental.github.template-path`  | `null`  | Path to Liquid template for GitHub auto-workspaces; set to enable (requires `gh` CLI) |
+| `experimental.disable-bg-throttling` | `false` | Disable background throttling on workspace views (fixes agent startup on Windows)     |
+| `help`                               | `false` | Print config help and exit                                                            |
 
 Any key can appear in config.json, env vars, or CLI flags.
 
