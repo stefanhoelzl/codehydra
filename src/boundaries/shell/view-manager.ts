@@ -191,6 +191,7 @@ export class ViewManager implements IViewManager {
 
     // Create UI layer with security settings
     this.uiViewHandle = viewLayer.createView({
+      label: "ui",
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -204,6 +205,7 @@ export class ViewManager implements IViewManager {
 
     // Create background view (theme-colored backdrop to prevent white flash)
     this.backgroundViewHandle = viewLayer.createView({
+      label: "background",
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -353,6 +355,7 @@ export class ViewManager implements IViewManager {
     // Create workspace view with security settings and partition for session isolation
     // Note: No preload script - keyboard capture is handled via main-process before-input-event
     const viewHandle = this.viewLayer.createView({
+      label: workspaceName,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
