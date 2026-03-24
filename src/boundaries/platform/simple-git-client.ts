@@ -252,10 +252,16 @@ export class SimpleGitClient implements IGitClient {
     return branches;
   }
 
-  async createBranch(repoPath: Path, name: string, startPoint: string): Promise<void> {
+  async createBranch(
+    repoPath: Path,
+    name: string,
+    startPoint: string,
+    options?: { track?: boolean }
+  ): Promise<void> {
     return this.wrapGitOperation(async () => {
       const git = this.getGit(repoPath);
-      await git.branch([name, startPoint]);
+      const args = options?.track ? [name, "--track", startPoint] : [name, startPoint];
+      await git.branch(args);
     }, `Failed to create branch ${name}`);
   }
 

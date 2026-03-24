@@ -1197,6 +1197,130 @@ describe("GitWorktreeProvider", () => {
 
       expect(workspace.metadata.base).toBe("main");
     });
+
+    it("creates workspace with tracking (new branch from tracking ref)", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            remoteBranches: ["origin/feature-login"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const workspace = await provider.createWorkspace(
+        PROJECT_ROOT,
+        "review-pr-42",
+        "origin/main",
+        "origin/feature-login"
+      );
+
+      expect(workspace.name).toBe("review-pr-42");
+      expect(workspace.branch).toBe("review-pr-42");
+      expect(workspace.metadata.base).toBe("origin/main");
+      expect(mockClient).toHaveBranch(PROJECT_ROOT, "review-pr-42");
+    });
+
+    it("reconfigures upstream when tracking is set and branch already exists", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "review-pr-42"],
+            remoteBranches: ["origin/feature-login"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await provider.createWorkspace(
+        PROJECT_ROOT,
+        "review-pr-42",
+        "origin/main",
+        "origin/feature-login"
+      );
+
+      expect(mockClient).toHaveBranchConfig(PROJECT_ROOT, "review-pr-42", "remote", "origin");
+      expect(mockClient).toHaveBranchConfig(
+        PROJECT_ROOT,
+        "review-pr-42",
+        "merge",
+        "refs/heads/feature-login"
+      );
+    });
+
+    it("handles multi-segment branch names in tracking ref", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "review-pr-99"],
+            remoteBranches: ["origin/feature/nested/branch"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await provider.createWorkspace(
+        PROJECT_ROOT,
+        "review-pr-99",
+        "origin/main",
+        "origin/feature/nested/branch"
+      );
+
+      expect(mockClient).toHaveBranchConfig(PROJECT_ROOT, "review-pr-99", "remote", "origin");
+      expect(mockClient).toHaveBranchConfig(
+        PROJECT_ROOT,
+        "review-pr-99",
+        "merge",
+        "refs/heads/feature/nested/branch"
+      );
+    });
+
+    it("throws when tracking ref is not a known remote branch", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main"],
+            currentBranch: "main",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      await expect(
+        provider.createWorkspace(PROJECT_ROOT, "review-pr-42", "main", "origin/nonexistent")
+      ).rejects.toThrow(WorkspaceError);
+      await expect(
+        provider.createWorkspace(PROJECT_ROOT, "review-pr-42", "main", "origin/nonexistent")
+      ).rejects.toThrow(/not a known remote branch/);
+    });
   });
 
   describe("removeWorkspace", () => {

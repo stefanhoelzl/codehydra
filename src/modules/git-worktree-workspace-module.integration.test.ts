@@ -610,7 +610,8 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(provider.createWorkspace).toHaveBeenCalledWith(
           new Path(projectPath),
           "new-feature",
-          "origin/main"
+          "origin/main",
+          undefined
         );
         expect(result.workspacePath).toBe("/workspaces/new-feature");
         expect(result.branch).toBe("new-feature");
@@ -689,7 +690,8 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(provider.createWorkspace).toHaveBeenCalledWith(
           new Path(projectPath),
           "auto-base",
-          "origin/main"
+          "origin/main",
+          undefined
         );
         expect(result.resolvedBase).toBe("origin/main");
       });
@@ -772,7 +774,8 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         expect(provider.createWorkspace).toHaveBeenCalledWith(
           new Path(projectPath),
           "explicit-base",
-          "develop"
+          "develop",
+          undefined
         );
         expect(result.resolvedBase).toBe("develop");
       });

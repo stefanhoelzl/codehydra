@@ -655,6 +655,39 @@ describe("AutoWorkspaceModule Integration", () => {
       });
     });
 
+    it("passes tracking from template to workspace:open intent", async () => {
+      const template = [
+        "---",
+        "git: https://github.com/org/repo.git",
+        "name: review-{{ id }}",
+        "base: origin/main",
+        "tracking: origin/{{ id }}",
+        "---",
+        "Review PR for {{ id }}",
+      ].join("\n");
+
+      const { dispatcher, source, openWorkspaceOp } = createTestSetup({
+        templateContent: template,
+      });
+
+      source.pollResult = {
+        activeKeys: new Set(["feature-login"]),
+        newItems: [
+          {
+            key: "feature-login",
+            url: "https://example.com/pr/1",
+            data: { id: "feature-login" },
+          },
+        ],
+      };
+
+      await dispatcher.dispatch(startIntent());
+
+      const payload = openWorkspaceOp.dispatched[0]!.payload;
+      expect(payload.tracking).toBe("origin/feature-login");
+      expect(payload.base).toBe("origin/main");
+    });
+
     it("dispatches template metadata alongside auto metadata", async () => {
       const template = [
         "---",

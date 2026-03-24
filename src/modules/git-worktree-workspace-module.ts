@@ -317,7 +317,8 @@ export function createGitWorktreeWorkspaceModule(
               internalWorkspace = await gitWorktreeProvider.createWorkspace(
                 projectPathObj,
                 payload.workspaceName!,
-                base
+                base,
+                payload.tracking
               );
             } catch (error: unknown) {
               const message = error instanceof Error ? error.message : String(error);

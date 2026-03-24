@@ -16,6 +16,7 @@ describe("parseTemplateOutput", () => {
       "name: review/42",
       "agent: plan",
       "base: origin/main",
+      "tracking: origin/feature-login",
       "focus: true",
       "model.provider: anthropic",
       "model.id: claude-sonnet-4-6",
@@ -31,6 +32,7 @@ describe("parseTemplateOutput", () => {
       name: "review/42",
       agent: "plan",
       base: "origin/main",
+      tracking: "origin/feature-login",
       focus: true,
       model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
       project: "/home/user/repo",
@@ -45,6 +47,7 @@ describe("parseTemplateOutput", () => {
     expect(result.config.agent).toBe("build");
     expect(result.config.name).toBeUndefined();
     expect(result.config.base).toBeUndefined();
+    expect(result.config.tracking).toBeUndefined();
     expect(result.config.focus).toBeUndefined();
     expect(result.config.model).toBeUndefined();
     expect(result.config.project).toBeUndefined();

@@ -497,6 +497,32 @@ describe("OpenWorkspace Operation", () => {
       expect(event.payload.metadata).toEqual(WORKSPACE_METADATA);
       expect(event.payload.workspaceUrl).toBe(WORKSPACE_URL);
     });
+
+    it("includes tracking in event when provided", async () => {
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await setup.dispatcher.dispatch(createIntent({ tracking: "origin/feature-login" }));
+
+      expect(receivedEvents).toHaveLength(1);
+      const event = receivedEvents[0] as WorkspaceCreatedEvent;
+      expect(event.payload.tracking).toBe("origin/feature-login");
+    });
+
+    it("omits tracking from event when not provided", async () => {
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await setup.dispatcher.dispatch(createIntent());
+
+      expect(receivedEvents).toHaveLength(1);
+      const event = receivedEvents[0] as WorkspaceCreatedEvent;
+      expect(event.payload.tracking).toBeUndefined();
+    });
   });
 
   describe("worktree creation failure propagates error (#3)", () => {
