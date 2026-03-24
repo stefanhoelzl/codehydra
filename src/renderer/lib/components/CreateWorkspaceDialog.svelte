@@ -13,7 +13,19 @@
   } from "$lib/api";
   import { validateWorkspaceName, type InitialPrompt } from "@shared/api/types";
   import { closeDialog, openGitCloneDialog } from "$lib/stores/dialogs.svelte.js";
-  import { getProjectById, projects } from "$lib/stores/projects.svelte.js";
+  import {
+    getProjectById,
+    projects,
+    addWorkspace,
+    removeWorkspace,
+    setActiveWorkspace,
+    activeWorkspacePath,
+  } from "$lib/stores/projects.svelte.js";
+  import {
+    createPendingPath,
+    addPending,
+    removePending,
+  } from "$lib/stores/pending-workspaces.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -159,42 +171,68 @@
     }, 0);
   }
 
-  // Handle form submission
-  async function handleSubmit(): Promise<void> {
+  // Handle form submission — fire-and-forget for instant UI response
+  function handleSubmit(): void {
     // isFormValid includes hasProject check, so selectedProject is defined
     if (!isFormValid || isSubmitting || !selectedProject) return;
-
-    submitError = null;
     isSubmitting = true;
 
-    try {
-      logger.debug("Dialog submitted", { type: "create-workspace" });
+    logger.debug("Dialog submitted", { type: "create-workspace" });
 
-      // Build options from "More options" fields
-      const options: { initialPrompt?: InitialPrompt; stealFocus?: boolean } = {};
-      const trimmedPrompt = initialPrompt.trim();
-      if (trimmedPrompt || agentMode) {
-        options.initialPrompt = agentMode
-          ? { prompt: trimmedPrompt, agent: agentMode }
-          : trimmedPrompt;
-      }
-      if (openInBackground) {
-        options.stealFocus = false;
-      }
+    // Build options from "More options" fields
+    const options: { initialPrompt?: InitialPrompt; stealFocus?: boolean } = {};
+    const trimmedPrompt = initialPrompt.trim();
+    if (trimmedPrompt || agentMode) {
+      options.initialPrompt = agentMode
+        ? { prompt: trimmedPrompt, agent: agentMode }
+        : trimmedPrompt;
+    }
+    if (openInBackground) {
+      options.stealFocus = false;
+    }
 
-      await workspaces.create(
-        selectedProject.path,
+    // Close dialog immediately
+    closeDialog();
+
+    // Add placeholder workspace to sidebar
+    const pendingPath = createPendingPath(selectedProject.path, name);
+    const placeholder: Workspace = {
+      projectId: selectedProject.id,
+      name: name as Workspace["name"],
+      branch: selectedBranch,
+      metadata: {},
+      path: pendingPath,
+    };
+    addWorkspace(selectedProject.path, placeholder);
+    addPending(pendingPath, selectedProject.path, name);
+
+    // Set active unless opening in background
+    if (!openInBackground) {
+      setActiveWorkspace(pendingPath);
+    }
+
+    // Capture values for the closure (component state may reset after dialog closes)
+    const projectPath = selectedProject.path;
+
+    // Fire-and-forget the IPC call, clean up on error
+    workspaces
+      .create(
+        projectPath,
         name,
         selectedBranch,
         Object.keys(options).length > 0 ? options : undefined
-      );
-      closeDialog();
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("UI error", { component: "CreateWorkspaceDialog", error: message });
-      submitError = message;
-      isSubmitting = false;
-    }
+      )
+      .catch((error: unknown) => {
+        const message = getErrorMessage(error);
+        logger.warn("Workspace creation failed", { name, error: message });
+        // Remove placeholder
+        removePending(pendingPath);
+        removeWorkspace(projectPath, pendingPath);
+        // Reset active workspace if it was the placeholder
+        if (activeWorkspacePath.value === pendingPath) {
+          setActiveWorkspace(null);
+        }
+      });
   }
 
   // Handle opening git clone dialog
@@ -385,10 +423,6 @@
       </div>
     {/if}
 
-    {#if isSubmitting}
-      <div class="ch-status-message" aria-live="polite">Creating workspace...</div>
-    {/if}
-
     {#if submitError}
       <div class="ch-alert-box" role="alert">
         {submitError}
@@ -401,14 +435,12 @@
     <vscode-button
       bind:this={createButtonRef}
       onclick={handleSubmit}
-      disabled={!isFormValid || isSubmitting || isOpeningProject}
+      disabled={!isFormValid || isOpeningProject}
     >
-      {isSubmitting ? "Creating..." : "Create"}
+      Create
     </vscode-button>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <vscode-button secondary={true} onclick={handleCancel} disabled={isSubmitting}>
-      Cancel
-    </vscode-button>
+    <vscode-button secondary={true} onclick={handleCancel}> Cancel </vscode-button>
     {#if !showMoreOptions}
       {@render moreOptionsToggle()}
     {/if}

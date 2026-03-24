@@ -8,6 +8,7 @@
   import { extractTags } from "@shared/api/types";
   import { getCounts } from "$lib/stores/agent-status.svelte.js";
   import { getDeletionStatus } from "$lib/stores/deletion.svelte.js";
+  import { isPending } from "$lib/stores/pending-workspaces.svelte.js";
   import { uiMode, setSidebarExpanded } from "$lib/stores/ui-mode.svelte.js";
   import {
     getWorkspaceGlobalIndex,
@@ -198,6 +199,7 @@
                 {@const hasTags = workspace.metadata
                   ? extractTags(workspace.metadata).length > 0
                   : false}
+                {@const pending = isPending(workspace.path)}
                 {#if isExpanded}
                   <!-- Expanded layout: two-row when tags exist -->
                   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -206,7 +208,9 @@
                     class:active={isActive}
                     class:has-tags={hasTags}
                     aria-current={isActive ? "true" : undefined}
-                    onclick={() => onSwitchWorkspace(workspaceRef)}
+                    onclick={() => {
+                      if (!pending) onSwitchWorkspace(workspaceRef);
+                    }}
                   >
                     <div class="workspace-row">
                       <button
@@ -225,7 +229,7 @@
                         {/if}
                         {workspace.name}
                       </button>
-                      {#if deletionStatus === "none"}
+                      {#if !pending && deletionStatus === "none"}
                         <button
                           type="button"
                           class="action-btn remove-btn"
@@ -239,7 +243,9 @@
                           <Icon name="trash" size={14} />
                         </button>
                       {/if}
-                      {#if deletionStatus === "in-progress"}
+                      {#if pending}
+                        <vscode-progress-ring class="creation-spinner"></vscode-progress-ring>
+                      {:else if deletionStatus === "in-progress"}
                         <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
                       {:else if deletionStatus === "error"}
                         <span class="deletion-error" role="img" aria-label="Deletion failed">
@@ -267,11 +273,15 @@
                     <button
                       type="button"
                       class="status-indicator-btn"
-                      aria-label={`${workspace.name} in ${project.name} - ${deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : statusText}`}
+                      aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : statusText}`}
                       aria-current={isActive ? "true" : undefined}
-                      onclick={() => onSwitchWorkspace(workspaceRef)}
+                      onclick={() => {
+                        if (!pending) onSwitchWorkspace(workspaceRef);
+                      }}
                     >
-                      {#if deletionStatus === "in-progress"}
+                      {#if pending}
+                        <vscode-progress-ring class="creation-spinner"></vscode-progress-ring>
+                      {:else if deletionStatus === "in-progress"}
                         <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
                       {:else if deletionStatus === "error"}
                         <span class="deletion-error" role="img" aria-label="Deletion failed">

@@ -97,6 +97,29 @@ export interface WorkspaceCreatedEvent extends DomainEvent {
 
 export const EVENT_WORKSPACE_CREATED = "workspace:created" as const;
 
+// -- workspace:loading (emitted before slow work begins) --
+
+export interface WorkspaceLoadingEvent extends DomainEvent {
+  readonly type: "workspace:loading";
+  readonly payload: Record<string, never>;
+}
+
+export const EVENT_WORKSPACE_LOADING = "workspace:loading" as const;
+
+// -- workspace:create-failed (emitted on operation error) --
+
+export interface WorkspaceCreateFailedPayload {
+  readonly workspaceName: string;
+  readonly projectPath: string;
+}
+
+export interface WorkspaceCreateFailedEvent extends DomainEvent {
+  readonly type: "workspace:create-failed";
+  readonly payload: WorkspaceCreateFailedPayload;
+}
+
+export const EVENT_WORKSPACE_CREATE_FAILED = "workspace:create-failed" as const;
+
 // =============================================================================
 // Operation
 // =============================================================================
@@ -161,6 +184,34 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
   async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
     const { projectPath } = ctx.intent.payload;
 
+    // Show loading dialog for foreground workspace creations (not reopens, not background)
+    const showLoading =
+      ctx.intent.payload.stealFocus !== false && !ctx.intent.payload.existingWorkspace;
+
+    if (showLoading) {
+      ctx.emit({ type: EVENT_WORKSPACE_LOADING, payload: {} } as WorkspaceLoadingEvent);
+    }
+
+    try {
+      return await this.executeWorkspaceOpen(ctx, projectPath);
+    } catch (error) {
+      if (showLoading) {
+        ctx.emit({
+          type: EVENT_WORKSPACE_CREATE_FAILED,
+          payload: {
+            workspaceName: ctx.intent.payload.workspaceName,
+            projectPath,
+          },
+        } as WorkspaceCreateFailedEvent);
+      }
+      throw error;
+    }
+  }
+
+  private async executeWorkspaceOpen(
+    ctx: OperationContext<OpenWorkspaceIntent>,
+    projectPath: string
+  ): Promise<OpenWorkspaceResult> {
     // Dispatch project:resolve to get projectId from projectPath
     const projResolved = await ctx.dispatch({
       type: INTENT_RESOLVE_PROJECT,

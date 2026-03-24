@@ -9,6 +9,7 @@
 import {
   projects,
   loadingState,
+  activeWorkspacePath,
   addProject,
   removeProject,
   setActiveWorkspace,
@@ -19,6 +20,11 @@ import {
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
 import { dialogState, openCreateDialog } from "$lib/stores/dialogs.svelte.js";
 import { hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
+import {
+  findPendingByName,
+  removePending,
+  isPending,
+} from "$lib/stores/pending-workspaces.svelte.js";
 import { setupDomainEvents, type DomainEventApi } from "$lib/utils/domain-events";
 import { createLogger } from "$lib/logging";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
@@ -70,6 +76,12 @@ export function setupDomainEventBindings(
       addWorkspace: (projectId, workspace) => {
         const project = projects.value.find((p) => p.id === projectId);
         if (project) {
+          // Replace pending placeholder if one exists for this workspace
+          const pendingPath = findPendingByName(project.path, workspace.name);
+          if (pendingPath) {
+            removeWorkspace(project.path, pendingPath);
+            removePending(pendingPath);
+          }
           addWorkspace(project.path, workspace);
           logger.debug("Store updated", { store: "projects" });
         }
@@ -82,6 +94,18 @@ export function setupDomainEventBindings(
         }
       },
       setActiveWorkspace: (ref) => {
+        // Clean up pending placeholder if switching away from it
+        const currentPath = activeWorkspacePath.value;
+        if (currentPath && isPending(currentPath) && ref?.path !== currentPath) {
+          removePending(currentPath);
+          // Find and remove the placeholder from the project
+          for (const project of projects.value) {
+            if (project.workspaces.some((w) => w.path === currentPath)) {
+              removeWorkspace(project.path, currentPath);
+              break;
+            }
+          }
+        }
         setActiveWorkspace(ref?.path ?? null);
         logger.debug("Store updated", { store: "projects" });
       },
