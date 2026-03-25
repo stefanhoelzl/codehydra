@@ -239,7 +239,7 @@ export const postHogClientMatchers: MatcherImplementationsFor<
 
   toHaveCapturedError(received) {
     const events = received.$.capturedEvents;
-    const errorEvent = events.find((e) => e.event === "error");
+    const errorEvent = events.find((e) => e.event === "$exception");
 
     if (!errorEvent) {
       const eventsList = events.map((e) => `  - ${e.event}`).join("\n") || "  (none)";

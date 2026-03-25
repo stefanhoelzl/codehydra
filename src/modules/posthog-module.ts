@@ -193,8 +193,9 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
     const sanitizedStack = sanitizeStack(error.stack);
 
     const properties = {
-      message: error.message,
-      stack: sanitizedStack,
+      $exception_type: error.name,
+      $exception_message: error.message,
+      $exception_stack_trace_raw: sanitizedStack,
       version: deps.buildInfo.version,
     };
 
@@ -202,7 +203,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
 
     client.capture({
       distinctId,
-      event: "error",
+      event: "$exception",
       properties,
     });
   }
