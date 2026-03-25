@@ -191,43 +191,49 @@
       options.stealFocus = false;
     }
 
+    // Snapshot reactive state before closing dialog. closeDialog() sets
+    // dialogState to { type: "closed" }, which invalidates the projectId prop
+    // (dialogState.value.projectId becomes undefined). This causes selectedProjectId
+    // to fall through to projects.value[0]?.id — the wrong project.
+    const project = selectedProject;
+    const workspaceName = name;
+    const branch = selectedBranch;
+    const background = openInBackground;
+
     // Close dialog immediately
     closeDialog();
 
     // Add placeholder workspace to sidebar
-    const pendingPath = createPendingPath(selectedProject.path, name);
+    const pendingPath = createPendingPath(project.path, workspaceName);
     const placeholder: Workspace = {
-      projectId: selectedProject.id,
-      name: name as Workspace["name"],
-      branch: selectedBranch,
+      projectId: project.id,
+      name: workspaceName as Workspace["name"],
+      branch: branch,
       metadata: {},
       path: pendingPath,
     };
-    addWorkspace(selectedProject.path, placeholder);
-    addPending(pendingPath, selectedProject.path, name);
+    addWorkspace(project.path, placeholder);
+    addPending(pendingPath, project.path, workspaceName);
 
     // Set active unless opening in background
-    if (!openInBackground) {
+    if (!background) {
       setActiveWorkspace(pendingPath);
     }
-
-    // Capture values for the closure (component state may reset after dialog closes)
-    const projectPath = selectedProject.path;
 
     // Fire-and-forget the IPC call, clean up on error
     workspaces
       .create(
-        projectPath,
-        name,
-        selectedBranch,
+        project.path,
+        workspaceName,
+        branch,
         Object.keys(options).length > 0 ? options : undefined
       )
       .catch((error: unknown) => {
         const message = getErrorMessage(error);
-        logger.warn("Workspace creation failed", { name, error: message });
+        logger.warn("Workspace creation failed", { name: workspaceName, error: message });
         // Remove placeholder
         removePending(pendingPath);
-        removeWorkspace(projectPath, pendingPath);
+        removeWorkspace(project.path, pendingPath);
         // Reset active workspace if it was the placeholder
         if (activeWorkspacePath.value === pendingPath) {
           setActiveWorkspace(null);
