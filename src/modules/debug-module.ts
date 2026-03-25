@@ -170,6 +170,7 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
                 { id: "skip", label: "Skip", variant: "secondary" },
                 { id: "never", label: "Never", variant: "secondary" },
               ],
+              modal: true,
             };
             const handle = deps.dialogManager.open(config);
             const event = await handle.nextEvent(5 * 60_000);
@@ -214,6 +215,7 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
                   },
                 ],
                 actions,
+                modal: true,
               };
             };
             const handle = deps.dialogManager.open(buildConfig(0));

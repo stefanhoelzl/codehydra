@@ -131,6 +131,8 @@ export interface DialogAction {
 export interface DialogConfig {
   readonly sections: readonly DialogSection[];
   readonly actions?: readonly DialogAction[];
+  /** When true, the dialog is on top of everything and blocks keyboard shortcuts (Alt+X). Default: false. */
+  readonly modal?: boolean;
 }
 
 // ---- IPC Protocol ----

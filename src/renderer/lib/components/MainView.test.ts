@@ -101,6 +101,7 @@ import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as deletionStore from "$lib/stores/deletion.svelte.js";
+import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import type { DeletionProgress } from "@shared/api/types";
 
 describe("MainView component", () => {
@@ -112,6 +113,7 @@ describe("MainView component", () => {
     shortcutsStore.reset();
     agentStatusStore.reset();
     deletionStore.reset();
+    dialogFrameworkStore.reset();
     // Clear event callbacks between tests
     clearEventCallbacks();
     // Default to returning empty projects
@@ -608,6 +610,61 @@ describe("MainView component", () => {
       // ViewManager's setMode("workspace") gracefully handles null activeWorkspacePath
       await waitFor(() => {
         expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
+      });
+    });
+
+    it("does not call setMode('dialog') for non-modal framework dialog", async () => {
+      render(MainView);
+
+      await waitFor(() => {
+        expect(mockApi.projects.list).toHaveBeenCalled();
+      });
+
+      mockApi.ui.setMode.mockClear();
+
+      // Open a non-modal framework dialog (e.g., loading workspace spinner)
+      dialogFrameworkStore.processCommand({
+        action: "open",
+        dialogId: "dlg-loading",
+        config: {
+          sections: [
+            {
+              type: "progress",
+              items: [{ id: "loading", label: "Loading workspace...", status: "running" as const }],
+              style: "spinner",
+            },
+          ],
+        },
+      });
+
+      // Give effects time to run
+      await waitFor(() => {
+        expect(mockApi.ui.setMode).not.toHaveBeenCalledWith("dialog");
+      });
+    });
+
+    it("calls setMode('dialog') for modal framework dialog", async () => {
+      render(MainView);
+
+      await waitFor(() => {
+        expect(mockApi.projects.list).toHaveBeenCalled();
+      });
+
+      mockApi.ui.setMode.mockClear();
+
+      // Open a modal framework dialog (e.g., agent selection)
+      dialogFrameworkStore.processCommand({
+        action: "open",
+        dialogId: "dlg-modal",
+        config: {
+          sections: [{ type: "text", content: "Choose Agent", style: "heading" }],
+          actions: [{ id: "select", label: "Continue", variant: "primary" }],
+          modal: true,
+        },
+      });
+
+      await waitFor(() => {
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
       });
     });
   });

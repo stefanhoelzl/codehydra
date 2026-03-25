@@ -52,6 +52,7 @@ function buildDialogConfig(): DialogConfig {
       { id: "send", label: "Send", variant: "primary" },
       { id: "cancel", label: "Cancel", variant: "secondary" },
     ],
+    modal: true,
   };
 }
 

@@ -54,7 +54,7 @@ function buildChoiceConfig(version: string): DialogConfig {
     { id: "skip", label: "Skip", variant: "secondary" },
     { id: "never", label: "Never", variant: "secondary" },
   ];
-  return { sections, actions };
+  return { sections, actions, modal: true };
 }
 
 /**
@@ -77,7 +77,7 @@ function buildDownloadConfig(version: string, percent: number): DialogConfig {
     },
   ];
   const actions: DialogAction[] = [{ id: "cancel", label: "Cancel", variant: "secondary" }];
-  return { sections, actions };
+  return { sections, actions, modal: true };
 }
 
 interface AutoUpdaterModuleDeps {
