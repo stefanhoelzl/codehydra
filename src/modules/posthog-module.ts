@@ -234,7 +234,9 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
     const id = distinctId ?? randomUUID();
 
     const properties = {
-      description,
+      $exception_type: "BugReport",
+      $exception_message: description,
+      $exception_stack_trace_raw: "",
       logs,
       ...eventProperties(),
       version: deps.buildInfo.version,
@@ -244,7 +246,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
 
     client.capture({
       distinctId: id,
-      event: "bug_report",
+      event: "$exception",
       properties,
     });
   }
