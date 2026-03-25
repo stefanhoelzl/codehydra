@@ -370,7 +370,7 @@ describe("PosthogModule Integration", () => {
 
         const mock = getMock()!;
         expect(mock).toHaveCapturedError();
-        expect(mock).toHaveCaptured("error", { message: "test uncaught" });
+        expect(mock).toHaveCaptured("$exception", { $exception_message: "test uncaught" });
       } finally {
         process.on = originalOn;
       }
@@ -422,7 +422,7 @@ describe("PosthogModule Integration", () => {
 
         const mock = getMock()!;
         expect(mock).toHaveCapturedError();
-        expect(mock).toHaveCaptured("error", { message: "test rejection" });
+        expect(mock).toHaveCaptured("$exception", { $exception_message: "test rejection" });
       } finally {
         process.on = originalOn;
       }
@@ -450,7 +450,9 @@ describe("PosthogModule Integration", () => {
 
         const mock = getMock()!;
         expect(mock).toHaveCapturedError();
-        expect(mock).toHaveCaptured("error", { message: "string rejection reason" });
+        expect(mock).toHaveCaptured("$exception", {
+          $exception_message: "string rejection reason",
+        });
       } finally {
         process.on = originalOn;
       }
@@ -661,10 +663,10 @@ describe("PosthogModule Integration", () => {
         monitorHandler!.handler(error);
 
         const mock = getMock()!;
-        const errorEvent = mock.$.capturedEvents.find((e) => e.event === "error");
+        const errorEvent = mock.$.capturedEvents.find((e) => e.event === "$exception");
         expect(errorEvent).toBeDefined();
 
-        const stack = errorEvent?.properties?.stack as string;
+        const stack = errorEvent?.properties?.$exception_stack_trace_raw as string;
         expect(stack).not.toContain(homeDir);
         expect(stack).toContain("<home>");
       } finally {
