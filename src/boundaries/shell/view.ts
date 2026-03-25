@@ -120,7 +120,6 @@ export interface ViewBoundary {
    * @param handle - Handle to the view
    * @param url - URL to load
    * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   * @throws ShellError with code NAVIGATION_FAILED if navigation fails
    */
   loadURL(handle: ViewHandle, url: string): Promise<void>;
 
@@ -443,8 +442,15 @@ export class DefaultViewBoundary implements ViewBoundary {
     try {
       await state.view.webContents.loadURL(url);
     } catch (error) {
+      // Navigation failures are transient (network changes, sleep/resume, etc.)
+      // and already handled by the did-fail-load event which triggers retry with backoff.
+      // Swallow the rejection to prevent unhandled promise rejections in fire-and-forget callers.
       const message = error instanceof Error ? error.message : String(error);
-      throw new ShellError("NAVIGATION_FAILED", `Failed to load URL: ${message}`, handle.id);
+      this.logger.debug("Navigation failed (handled via did-fail-load)", {
+        id: handle.id,
+        url,
+        error: message,
+      });
     }
   }
 

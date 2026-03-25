@@ -1780,6 +1780,59 @@ describe("ViewManager", () => {
     });
   });
 
+  describe("loadURL rejection handling", () => {
+    it("does not produce unhandled rejection when loadURL rejects during activation", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Mock loadURL to reject (simulating network error)
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockRejectedValue(new Error("ERR_NETWORK_CHANGED"));
+
+      // Activate workspace — triggers fire-and-forget loadURL
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Flush microtasks so the rejection propagates
+      await vi.waitFor(() => {
+        expect(loadURLSpy).toHaveBeenCalled();
+      });
+
+      // Test passing = no unhandled rejection (vitest would fail the test)
+    });
+
+    it("does not produce unhandled rejection when reloadAllViews loadURL rejects", async () => {
+      const deps = createViewManagerDeps();
+      const manager = createViewManager(deps);
+
+      manager.createWorkspaceView(
+        "/path/to/workspace",
+        "http://127.0.0.1:8080/?folder=/path",
+        "/path/to/project"
+      );
+
+      // Activate to mark URL as loaded
+      manager.setActiveWorkspace("/path/to/workspace");
+
+      // Now mock loadURL to reject
+      const loadURLSpy = vi.spyOn(deps.viewLayer, "loadURL");
+      loadURLSpy.mockRejectedValue(new Error("ERR_NETWORK_IO_SUSPENDED"));
+
+      manager.reloadAllViews();
+
+      await vi.waitFor(() => {
+        expect(loadURLSpy).toHaveBeenCalled();
+      });
+
+      // Test passing = no unhandled rejection
+    });
+  });
+
   describe("loading timeout", () => {
     it("marks workspace as loaded after timeout", async () => {
       vi.useFakeTimers();
