@@ -32,6 +32,11 @@ import {
 } from "../intents/open-workspace";
 import { INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
 import { AppResumeOperation } from "../intents/app-resume";
+import {
+  INTENT_SUBMIT_BUG_REPORT,
+  SubmitBugReportOperation,
+  type SubmitBugReportIntent,
+} from "../intents/submit-bug-report";
 import { createPosthogModule } from "./posthog-module";
 import { createMockPlatformInfo } from "../boundaries/platform/platform-info.test-utils";
 import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
@@ -137,6 +142,7 @@ function createTestSetup(overrides?: {
     new MinimalOpenWorkspaceOperation(overrides?.workspacePayload ?? NEW_WORKSPACE_PAYLOAD)
   );
   dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+  dispatcher.registerOperation(INTENT_SUBMIT_BUG_REPORT, new SubmitBugReportOperation());
 
   dispatcher.registerModule(posthogModule);
 
@@ -160,6 +166,10 @@ function openWorkspaceIntent(): OpenWorkspaceIntent {
 
 function appResumeIntent(): AppResumeIntent {
   return { type: INTENT_APP_RESUME, payload: {} as AppResumeIntent["payload"] };
+}
+
+function submitBugReportIntent(description: string, logs: string): SubmitBugReportIntent {
+  return { type: INTENT_SUBMIT_BUG_REPORT, payload: { description, logs } };
 }
 
 // =============================================================================
@@ -623,6 +633,58 @@ describe("PosthogModule Integration", () => {
       // (since start generates one when missing)
       await dispatcher.dispatch(appResumeIntent());
       expect(mock.$.capturedEvents.filter((e) => e.event === "app_resume")).toHaveLength(1);
+    });
+  });
+
+  describe("bug-report:submitted event", () => {
+    it("captures $exception with BugReport type and logs", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "claude",
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(
+        submitBugReportIntent("App freezes on startup", "log line 1\nlog line 2")
+      );
+
+      const mock = getMock()!;
+      expect(mock).toHaveCaptured("$exception", {
+        $exception_type: "BugReport",
+        $exception_message: "App freezes on startup",
+        $exception_stack_trace_raw: "",
+        logs: "log line 1\nlog line 2",
+      });
+    });
+
+    it("sends bug report even when telemetry is disabled", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": false,
+          "telemetry.distinct-id": null,
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(submitBugReportIntent("Something broke", "logs here"));
+
+      const mock = getMock()!;
+      expect(mock).toHaveCaptured("$exception", {
+        $exception_type: "BugReport",
+        $exception_message: "Something broke",
+      });
+    });
+
+    it("no-op when API key is missing", async () => {
+      const { dispatcher, getMock } = createTestSetup({ apiKey: undefined });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(submitBugReportIntent("desc", "logs"));
+
+      expect(getMock()).toBeNull();
     });
   });
 
