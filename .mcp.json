@@ -4,6 +4,11 @@
       "type": "stdio",
       "command": "npx",
       "args": ["tsx", "scripts/appctrl.ts"]
+    },
+    "posthog": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "mcp-remote@latest", "https://mcp.posthog.com/sse"]
     }
   }
 }
