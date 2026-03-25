@@ -27,6 +27,8 @@ export const {
   onShortcut,
   // Dialog framework event (renderer → main process)
   sendDialogEvent,
+  // Notification framework event (renderer → main process)
+  sendNotificationEvent,
 } = window.api;
 
 // Re-export branded path types from IPC (still used for type safety)

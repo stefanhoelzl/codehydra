@@ -7,6 +7,7 @@ import type { UIModeChangedEvent, LogContext } from "./ipc";
 import type { UIMode } from "./ipc";
 import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
+import type { NotificationUserEvent } from "./notification-types";
 
 import type {
   Project,
@@ -124,6 +125,13 @@ export interface Api {
    * Fire-and-forget - does not return a promise.
    */
   sendDialogEvent(event: DialogUserEvent): void;
+
+  /**
+   * Send notification user event to main process.
+   * Used when the user interacts with a sidebar notification (dismiss or action button).
+   * Fire-and-forget - does not return a promise.
+   */
+  sendNotificationEvent(event: NotificationUserEvent): void;
 }
 
 declare global {

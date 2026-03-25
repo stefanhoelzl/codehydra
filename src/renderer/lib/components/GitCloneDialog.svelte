@@ -3,12 +3,6 @@
   import Icon from "./Icon.svelte";
   import { projects } from "$lib/api";
   import { openCreateDialog, closeDialog } from "$lib/stores/dialogs.svelte.js";
-  import {
-    getClone,
-    startClone,
-    completeClone,
-    stageLabel,
-  } from "$lib/stores/clone-progress.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -28,13 +22,7 @@
   let cloneUrl = $state<string | null>(null);
 
   // Clone is in progress for this dialog's URL
-  const cloneEntry = $derived(cloneUrl !== null ? getClone(cloneUrl) : undefined);
-  const isCloning = $derived(cloneEntry !== undefined);
-
-  // Read progress from store for this dialog's clone
-  const currentStage = $derived(cloneEntry?.stage ?? null);
-  const currentProgress = $derived(cloneEntry?.progress ?? 0);
-  const progressPercent = $derived(Math.round(currentProgress * 100));
+  const isCloning = $derived(cloneUrl !== null);
 
   // URL validation state
   // Validates full URLs and shorthand formats (org/repo, github.com/org/repo)
@@ -68,22 +56,14 @@
 
     const trimmedUrl = url.trim();
 
-    // Reject if this URL is already being cloned in the background
-    if (getClone(trimmedUrl) !== undefined) {
-      submitError = "Clone already in progress for this URL";
-      return;
-    }
-
     logger.debug("Cloning repository", { url: trimmedUrl });
 
     cloneUrl = trimmedUrl;
-    startClone(trimmedUrl);
 
     // Fire clone as detached promise — dialog may close before it resolves
     void projects.clone(trimmedUrl).then(
       (project) => {
         logger.info("Repository cloned successfully", { projectId: project.id });
-        completeClone(trimmedUrl);
         // Only navigate if this dialog instance owns the clone and is still open
         if (cloneUrl === trimmedUrl) {
           openCreateDialog(project.id);
@@ -92,7 +72,6 @@
       (error: unknown) => {
         const message = getErrorMessage(error);
         logger.warn("Clone failed", { url: trimmedUrl, error: message });
-        completeClone(trimmedUrl);
         // If dialog is still open and tracking this URL, show error inline
         if (cloneUrl === trimmedUrl) {
           submitError = message;
@@ -169,22 +148,6 @@
       {/if}
     </div>
 
-    {#if isCloning && currentStage !== null}
-      <div class="clone-progress" aria-live="polite">
-        <div class="clone-progress-header">
-          <span class="clone-progress-stage">{stageLabel(currentStage)}</span>
-          <span class="clone-progress-pct">{progressPercent}%</span>
-        </div>
-        <vscode-progress-bar
-          value={progressPercent}
-          aria-label="Clone progress"
-          aria-valuenow={progressPercent}
-          aria-valuemin="0"
-          aria-valuemax="100"
-        ></vscode-progress-bar>
-      </div>
-    {/if}
-
     {#if submitError}
       <div class="ch-alert-box" role="alert">
         <span class="ch-alert-box-icon" aria-hidden="true">
@@ -215,26 +178,6 @@
 </Dialog>
 
 <style>
-  .clone-progress {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: 8px;
-  }
-
-  .clone-progress-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .clone-progress-stage,
-  .clone-progress-pct {
-    font-size: 12px;
-    color: var(--vscode-descriptionForeground, #888888);
-    margin: 0;
-  }
-
   .error-text {
     white-space: pre-line;
   }

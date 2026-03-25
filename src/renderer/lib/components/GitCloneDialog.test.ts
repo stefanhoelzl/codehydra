@@ -29,7 +29,6 @@ vi.mock("$lib/stores/dialogs.svelte.js", () => ({
 
 // Import component after mocks
 import GitCloneDialog from "./GitCloneDialog.svelte";
-import * as cloneProgressStore from "$lib/stores/clone-progress.svelte.js";
 
 // Test data
 const testProjectId = "test-repo-12345678" as ProjectId;
@@ -62,12 +61,10 @@ describe("GitCloneDialog component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    cloneProgressStore.reset();
     mockCloneProject.mockResolvedValue(createProject(testProjectId));
   });
 
   afterEach(() => {
-    cloneProgressStore.reset();
     vi.useRealTimers();
     document.body.innerHTML = "";
   });

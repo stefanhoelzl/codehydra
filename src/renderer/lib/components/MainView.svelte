@@ -42,12 +42,12 @@
 
   // Setup functions
   import { setupDeletionProgress } from "$lib/utils/setup-deletion-progress";
-  import { setupCloneProgress } from "$lib/utils/setup-clone-progress";
   import { setupDomainEventBindings } from "$lib/utils/setup-domain-event-bindings";
   import { initializeApp } from "$lib/utils/initialize-app";
 
   // Components
   import Sidebar from "./Sidebar.svelte";
+  import NotificationHost from "./NotificationHost.svelte";
   import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
@@ -57,7 +57,7 @@
   import Logo from "./Logo.svelte";
 
   import { getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
-  import { activeClones, hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
+  import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
   import { dialogs } from "$lib/stores/dialog-framework.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
@@ -132,8 +132,8 @@
 
     // Check all conditions
     // Show Create Workspace dialog when no effective workspaces exist (even if no projects)
-    // Suppress when a background clone is running — don't interrupt with the dialog
-    const cloneRunning = hasActiveClones.value;
+    // Suppress when a background operation is running — don't interrupt with the dialog
+    const cloneRunning = hasSpinnerNotifications.value;
     const firstProject = projectList[0];
     if (
       effectiveCount === 0 &&
@@ -177,7 +177,6 @@
 
     // Compose setup functions - each returns cleanup callback
     const cleanupDeletion = setupDeletionProgress();
-    const cleanupClone = setupCloneProgress();
     const cleanupDomainEvents = setupDomainEventBindings(notificationService);
 
     // Initialize app (async with no-op cleanup for consistent composition)
@@ -192,7 +191,6 @@
     // Combined cleanup
     return () => {
       cleanupDeletion();
-      cleanupClone();
       cleanupDomainEvents();
       cleanupInit();
     };
@@ -256,6 +254,7 @@
 </script>
 
 <div class="main-view" bind:this={containerRef}>
+  <NotificationHost />
   <Sidebar
     projects={projects.value}
     activeWorkspacePath={activeWorkspacePath.value}
@@ -263,7 +262,6 @@
     loadingError={loadingError.value}
     shortcutModeActive={shortcutModeActive.value}
     totalWorkspaces={getAllWorkspaces().length}
-    activeClones={activeClones.value}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
     onOpenCreateDialog={handleOpenCreateDialog}

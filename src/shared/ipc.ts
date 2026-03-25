@@ -187,6 +187,9 @@ export const ApiIpcChannels = {
   // Dialog framework (main ↔ renderer)
   DIALOG_COMMAND: "api:dialog:command",
   DIALOG_EVENT: "api:dialog:event",
+  // Notification framework (main ↔ renderer)
+  NOTIFICATION_COMMAND: "api:notification:command",
+  NOTIFICATION_EVENT: "api:notification:event",
   // Log commands (renderer → main)
   LOG_DEBUG: "api:log:debug",
   LOG_INFO: "api:log:info",
@@ -196,8 +199,6 @@ export const ApiIpcChannels = {
   PROJECT_OPENED: "api:project:opened",
   PROJECT_CLOSED: "api:project:closed",
   PROJECT_BASES_UPDATED: "api:project:bases-updated",
-  PROJECT_CLONE_PROGRESS: "api:project:clone-progress",
-  PROJECT_CLONE_FAILED: "api:project:clone-failed",
   WORKSPACE_CREATED: "api:workspace:created",
   WORKSPACE_REMOVED: "api:workspace:removed",
   WORKSPACE_SWITCHED: "api:workspace:switched",
