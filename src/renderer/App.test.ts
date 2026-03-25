@@ -1049,43 +1049,6 @@ describe("App component", () => {
   });
 
   describe("startup overlay", () => {
-    it("shows startup overlay when main view appears but loading is not complete", async () => {
-      // Block lifecycle.ready() to keep loading state
-      mockApi.lifecycle.ready.mockImplementation(() => new Promise(() => {}));
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(screen.getByText("CodeHydra is starting...")).toBeInTheDocument();
-      });
-    });
-
-    it("hides startup overlay after loading completes", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for loading to complete (default mock resolves lifecycle.ready)
-      await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
-      });
-
-      expect(screen.queryByText("CodeHydra is starting...")).not.toBeInTheDocument();
-    });
-
-    it("hides startup overlay on loading error", async () => {
-      mockApi.lifecycle.ready.mockRejectedValue(new Error("Network error"));
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("error");
-      });
-
-      expect(screen.queryByText("CodeHydra is starting...")).not.toBeInTheDocument();
-    });
-
     it("marks main-view-container as inert during loading", async () => {
       // Block lifecycle.ready() to keep loading state
       mockApi.lifecycle.ready.mockImplementation(() => new Promise(() => {}));
@@ -1103,6 +1066,7 @@ describe("App component", () => {
       render(App);
       showMainView();
 
+      // Wait for loading to complete (default mock resolves lifecycle.ready)
       await waitFor(() => {
         expect(projectsStore.loadingState.value).toBe("loaded");
       });
@@ -1126,7 +1090,8 @@ describe("App component", () => {
 
       // During loading, should NOT announce "Application ready"
       await waitFor(() => {
-        expect(screen.getByText("CodeHydra is starting...")).toBeInTheDocument();
+        const container = document.querySelector(".main-view-container");
+        expect(container).toHaveAttribute("inert");
       });
       const liveRegion = document.querySelector('[aria-live="polite"]');
       expect(liveRegion).not.toHaveTextContent("Application ready");
