@@ -31,7 +31,6 @@
   import { createLogger } from "$lib/logging";
   import MainView from "$lib/components/MainView.svelte";
   import DialogHost from "$lib/components/DialogHost.svelte";
-  import SetupScreen from "$lib/components/SetupScreen.svelte";
 
   const logger = createLogger("ui");
 
@@ -140,11 +139,6 @@
     <div class="main-view-container" inert={loadingState.value === "loading"}>
       <MainView />
     </div>
-    {#if loadingState.value === "loading"}
-      <div class="startup-overlay" role="status" aria-busy="true" aria-label="Loading projects">
-        <SetupScreen message="CodeHydra is starting..." subtitle="" hideProgress={true} />
-      </div>
-    {/if}
   {/if}
 
   <!-- Declarative dialog host: renders dialogs driven by main process -->
@@ -177,22 +171,6 @@
     width: 100vw;
     height: 100vh;
     animation: fadeIn 200ms ease-out;
-  }
-
-  .startup-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    color: var(--ch-foreground);
-    background-color: var(--ch-background);
-    z-index: 1000;
   }
 
   @keyframes fadeIn {

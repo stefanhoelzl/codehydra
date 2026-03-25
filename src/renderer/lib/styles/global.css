@@ -24,13 +24,7 @@ body,
 body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
-  font-family: var(
-    --vscode-font-family,
-    "Inter Variable",
-    "Inter",
-    system-ui,
-    sans-serif
-  );
+  font-family: var(--vscode-font-family, "Inter Variable", "Inter", system-ui, sans-serif);
   color: var(--ch-foreground);
 }
 
