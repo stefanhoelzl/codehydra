@@ -765,6 +765,10 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       state.mainAgentStopped = true;
       newStatus = null;
     } else if (hookName === "UserPromptSubmit") {
+      // New turn — clear stale sub-agent tracking. SubagentStop may never fire
+      // (e.g., sub-agent crashes), leaving orphan IDs that permanently block
+      // Stop → idle. Clearing here ensures each turn starts clean.
+      state.activeSubagents.clear();
       state.mainAgentStopped = false;
     }
 
