@@ -24,7 +24,9 @@ import type {
 } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { DialogUserEvent } from "../shared/dialog-types";
+import type { NotificationUserEvent } from "../shared/notification-types";
 import type { DialogManager } from "./dialog-manager";
+import type { NotificationManager } from "./notification-manager";
 import type { Logger, Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
 import type { ApiLogPayload } from "../shared/ipc";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
@@ -49,17 +51,8 @@ import {
   INTENT_DELETE_WORKSPACE,
 } from "../intents/delete-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
-import type {
-  ProjectOpenedEvent,
-  CloneProgressEvent,
-  ProjectOpenFailedEvent,
-} from "../intents/open-project";
-import {
-  EVENT_PROJECT_OPENED,
-  EVENT_CLONE_PROGRESS,
-  EVENT_PROJECT_OPEN_FAILED,
-  INTENT_OPEN_PROJECT,
-} from "../intents/open-project";
+import type { ProjectOpenedEvent } from "../intents/open-project";
+import { EVENT_PROJECT_OPENED, INTENT_OPEN_PROJECT } from "../intents/open-project";
 import type { OpenProjectIntent } from "../intents/open-project";
 import type { ProjectClosedEvent } from "../intents/close-project";
 import { EVENT_PROJECT_CLOSED, INTENT_CLOSE_PROJECT } from "../intents/close-project";
@@ -103,6 +96,7 @@ export interface UiIpcModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly loggingService: Pick<Logging, "createLogger">;
   readonly dialogManager?: DialogManager;
+  readonly notificationManager?: NotificationManager;
 }
 
 /**
@@ -224,21 +218,8 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
       },
     },
     // NOTE: EVENT_SETUP_PROGRESS forwarding removed — handled by view-module
-    [EVENT_CLONE_PROGRESS]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as CloneProgressEvent).payload;
-        deps.viewManager.sendToUI(ApiIpcChannels.PROJECT_CLONE_PROGRESS, payload);
-      },
-    },
-    [EVENT_PROJECT_OPEN_FAILED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as ProjectOpenFailedEvent).payload;
-        deps.viewManager.sendToUI(ApiIpcChannels.PROJECT_CLONE_FAILED, {
-          reason: payload.reason,
-          url: payload.git,
-        });
-      },
-    },
+    // NOTE: EVENT_CLONE_PROGRESS forwarding removed — handled by clone-notification-module
+    // NOTE: EVENT_PROJECT_OPEN_FAILED forwarding removed — handled by clone-notification-module
     // NOTE: EVENT_SETUP_ERROR forwarding removed — handled by view-module
     // NOTE: EVENT_UPDATE_PROGRESS forwarding removed — handled by auto-updater-module
     [EVENT_BASES_UPDATED]: {
@@ -550,6 +531,23 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Notification event routing (renderer → main)
+  // ---------------------------------------------------------------------------
+
+  let notificationEventCleanup: (() => void) | null = null;
+  if (deps.notificationManager) {
+    const notificationManager = deps.notificationManager;
+    const handler: IpcEventHandler = (_event: unknown, ...args: unknown[]) => {
+      const event = args[0] as NotificationUserEvent;
+      notificationManager.routeEvent(event);
+    };
+    deps.ipcLayer.on(ApiIpcChannels.NOTIFICATION_EVENT, handler);
+    notificationEventCleanup = () => {
+      deps.ipcLayer.removeListener(ApiIpcChannels.NOTIFICATION_EVENT, handler);
+    };
+  }
+
   return {
     name: "ui-ipc",
     events,
@@ -560,6 +558,10 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
             if (dialogEventCleanup) {
               dialogEventCleanup();
               dialogEventCleanup = null;
+            }
+            if (notificationEventCleanup) {
+              notificationEventCleanup();
+              notificationEventCleanup = null;
             }
             for (const channel of registeredChannels) {
               try {

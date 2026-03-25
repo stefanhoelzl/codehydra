@@ -19,7 +19,7 @@ import {
 } from "$lib/stores/projects.svelte.js";
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
 import { dialogState, openCreateDialog } from "$lib/stores/dialogs.svelte.js";
-import { hasActiveClones } from "$lib/stores/clone-progress.svelte.js";
+import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
 import {
   findPendingByName,
   removePending,
@@ -127,7 +127,7 @@ export function setupDomainEventBindings(
           loadingState.value === "loaded" &&
           project.workspaces.length === 0 &&
           dialogState.value.type === "closed" &&
-          !hasActiveClones.value
+          !hasSpinnerNotifications.value
         ) {
           openCreateDialog(project.id);
         }

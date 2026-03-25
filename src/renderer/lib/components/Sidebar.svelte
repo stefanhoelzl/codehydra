@@ -5,6 +5,7 @@
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
   import Icon from "./Icon.svelte";
+  import NotificationStack from "./NotificationStack.svelte";
   import { extractTags } from "@shared/api/types";
   import { getCounts } from "$lib/stores/agent-status.svelte.js";
   import { getDeletionStatus } from "$lib/stores/deletion.svelte.js";
@@ -17,8 +18,6 @@
     getStatusText,
   } from "$lib/utils/sidebar-utils.js";
   import type { Project } from "$lib/api";
-  import type { CloneState } from "$lib/stores/clone-progress.svelte.js";
-  import { stageLabel } from "$lib/stores/clone-progress.svelte.js";
 
   interface SidebarProps {
     projects: readonly Project[];
@@ -27,7 +26,6 @@
     loadingError: string | null;
     shortcutModeActive?: boolean;
     totalWorkspaces: number;
-    activeClones: readonly CloneState[];
     onCloseProject: (projectId: ProjectId) => void;
     onSwitchWorkspace: (workspaceRef: WorkspaceRef) => void;
     onOpenCreateDialog: (projectId: ProjectId) => void;
@@ -41,7 +39,6 @@
     loadingError,
     shortcutModeActive = false,
     totalWorkspaces,
-    activeClones,
     onCloseProject,
     onSwitchWorkspace,
     onOpenCreateDialog,
@@ -305,35 +302,7 @@
     {/if}
   </div>
 
-  {#each activeClones as clone (clone.url)}
-    {@const cloneName = clone.name || clone.url}
-    {@const clonePercent = Math.round(clone.progress * 100)}
-    {#if isExpanded}
-      <div class="clone-entry" role="status" aria-label={`Cloning ${cloneName}`}>
-        <vscode-divider></vscode-divider>
-        <div class="clone-entry-row">
-          <span class="project-icon" aria-hidden="true">
-            <Icon name="source-control" size={14} />
-          </span>
-          <span class="clone-entry-name" title={clone.url}>{cloneName}</span>
-          {#if clone.stage}
-            <span class="clone-entry-pct">{clonePercent}%</span>
-          {:else}
-            <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
-          {/if}
-        </div>
-        {#if clone.stage}
-          <div class="clone-entry-progress">
-            <span class="clone-entry-stage">{stageLabel(clone.stage)}</span>
-          </div>
-        {/if}
-      </div>
-    {:else}
-      <div class="clone-entry-minimized" role="status" aria-label={`Cloning ${cloneName}`}>
-        <vscode-progress-ring class="clone-spinner"></vscode-progress-ring>
-      </div>
-    {/if}
-  {/each}
+  <NotificationStack {isExpanded} />
 </nav>
 
 <style>
@@ -621,60 +590,6 @@
   .deletion-error {
     --vscode-icon-foreground: var(--ch-danger);
     font-size: 14px;
-    flex-shrink: 0;
-  }
-
-  /* Clone-in-progress entry — pinned to bottom of sidebar */
-  .clone-entry {
-    padding: 0 0 8px 0;
-    min-width: var(--ch-sidebar-width, 250px);
-    flex-shrink: 0;
-  }
-
-  .clone-entry-row {
-    display: flex;
-    align-items: center;
-    padding: 8px 12px 0 calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
-    gap: 8px;
-  }
-
-  .clone-entry-name {
-    flex: 1;
-    font-size: 13px;
-    opacity: 0.7;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .clone-entry-pct {
-    font-size: 12px;
-    opacity: 0.7;
-    flex-shrink: 0;
-  }
-
-  .clone-entry-progress {
-    padding: 2px 12px 0 calc(var(--ch-sidebar-minimized-width, 20px) + 8px + 14px + 8px);
-  }
-
-  .clone-entry-stage {
-    font-size: 11px;
-    opacity: 0.5;
-  }
-
-  .clone-spinner {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-  }
-
-  .clone-entry-minimized {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--ch-sidebar-minimized-width, 20px);
-    min-height: 36px;
-    padding: 4px;
     flex-shrink: 0;
   }
 </style>

@@ -7,6 +7,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { UIModeChangedEvent, LogContext } from "../shared/ipc";
 import type { DialogUserEvent } from "../shared/dialog-types";
+import type { NotificationUserEvent } from "../shared/notification-types";
 import type { ShortcutKey } from "../shared/shortcuts";
 import type { InitialPrompt } from "../shared/api/types";
 
@@ -99,6 +100,13 @@ contextBridge.exposeInMainWorld("api", {
    */
   sendDialogEvent: (event: DialogUserEvent) => {
     ipcRenderer.send(ApiIpcChannels.DIALOG_EVENT, event);
+  },
+  /**
+   * Send notification user event to main process.
+   * Used when the user interacts with a sidebar notification (dismiss or action button).
+   */
+  sendNotificationEvent: (event: NotificationUserEvent) => {
+    ipcRenderer.send(ApiIpcChannels.NOTIFICATION_EVENT, event);
   },
   // Log API (renderer → main, fire-and-forget)
   log: {

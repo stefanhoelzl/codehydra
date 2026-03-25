@@ -24,11 +24,16 @@ vi.mock("$lib/stores/ui-mode.svelte", () => mockUiModeStore);
 // Mock the shortcuts store (re-exports from ui-mode)
 vi.mock("$lib/stores/shortcuts.svelte", () => mockUiModeStore);
 
-// Create mock API (flat structure)
+// Create mock API (flat structure) — must be set before Sidebar import
+// because NotificationStack transitively imports $lib/api which checks window.api
 const mockApi: Api = createMockApi();
-
-// Set up window.api
 window.api = mockApi;
+
+// Mock $lib/api to avoid import-time window.api check
+vi.mock("$lib/api", () => ({
+  sendNotificationEvent: vi.fn(),
+  on: vi.fn(() => () => {}),
+}));
 
 // Import after mock setup
 import Sidebar from "./Sidebar.svelte";
@@ -72,7 +77,6 @@ describe("Sidebar component", () => {
     loadingError: null,
     shortcutModeActive: false,
     totalWorkspaces: 0,
-    activeClones: [],
     onCloseProject: vi.fn(),
     onSwitchWorkspace: vi.fn(),
     onOpenCreateDialog: vi.fn(),

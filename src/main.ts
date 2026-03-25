@@ -147,6 +147,8 @@ import { createDevtoolsModule } from "./modules/devtools-module";
 import { createDebugModule } from "./modules/debug-module";
 import { createUiIpcModule } from "./modules/ui-ipc-module";
 import { DialogManager } from "./modules/dialog-manager";
+import { NotificationManager } from "./modules/notification-manager";
+import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
 import { createBugReportModule } from "./modules/bug-report-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
@@ -352,6 +354,8 @@ const idempotencyModule = createIdempotencyModule([
 const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
 
 const dialogManager = new DialogManager(viewManager.sendToUI.bind(viewManager), apiLogger);
+const notificationManager = new NotificationManager(viewManager, apiLogger);
+const cloneNotificationModule = createCloneNotificationModule({ notificationManager });
 
 const viewModule = createViewModule({
   viewManager,
@@ -619,6 +623,7 @@ const uiIpcModule = createUiIpcModule({
   dispatcher,
   loggingService,
   dialogManager,
+  notificationManager,
 });
 
 // 9. Register all modules
@@ -654,6 +659,7 @@ dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(debugModule);
 dispatcher.registerModule(bugReportModule);
 dispatcher.registerModule(autoWorkspaceModule);
+dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(uiIpcModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)
