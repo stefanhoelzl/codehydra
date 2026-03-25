@@ -1287,6 +1287,35 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "none"]);
     });
 
+    it("stale sub-agent IDs from previous turn do not block next Stop", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Turn 1: sub-agent spawned but SubagentStop never fires (e.g., sub-agent crashes)
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-orphan",
+      });
+      // Turn completes via Notification (idle_prompt) — bypasses sub-agent guard
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "idle_prompt",
+      });
+
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+
+      // Turn 2: normal turn, no sub-agents — Stop must go idle
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy", "idle"]);
+    });
+
     it("Stop without sub-agents still transitions to idle normally", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
