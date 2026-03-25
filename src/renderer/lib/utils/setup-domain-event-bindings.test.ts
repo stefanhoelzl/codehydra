@@ -23,7 +23,6 @@ import type { DomainEventApi, ApiEvents } from "./domain-events";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
-import * as workspaceLoadingStore from "$lib/stores/workspace-loading.svelte.js";
 import { AgentNotificationService } from "$lib/services/agent-notifications";
 
 // =============================================================================
@@ -104,14 +103,12 @@ describe("setupDomainEventBindings", () => {
     projectsStore.reset();
     agentStatusStore.reset();
     dialogsStore.reset();
-    workspaceLoadingStore.reset();
   });
 
   afterEach(() => {
     projectsStore.reset();
     agentStatusStore.reset();
     dialogsStore.reset();
-    workspaceLoadingStore.reset();
     vi.restoreAllMocks();
   });
 
@@ -213,20 +210,6 @@ describe("setupDomainEventBindings", () => {
       });
 
       expect(projectsStore.activeWorkspacePath.value).toBe(TEST_WORKSPACE_PATH);
-    });
-
-    it("does not mark workspace as loading on workspace:created (now handled by dialog framework)", () => {
-      // Loading state is now managed by the dialog framework via DialogManager
-      // in the main process, not by the renderer-side workspace-loading store.
-      setupDomainEventBindings(notificationService, mockApi.api);
-
-      mockApi.emit("workspace:created", {
-        projectId: TEST_PROJECT_ID,
-        workspace: TEST_WORKSPACE,
-      });
-
-      // Workspace should NOT be marked as loading — dialog framework handles this now
-      expect(workspaceLoadingStore.isWorkspaceLoading(TEST_WORKSPACE_PATH)).toBe(false);
     });
 
     it("removes workspace from store when workspace:removed is emitted", () => {
