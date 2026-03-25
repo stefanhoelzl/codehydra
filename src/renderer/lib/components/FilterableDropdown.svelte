@@ -407,7 +407,7 @@
     background: var(--ch-input-bg);
     color: var(--ch-foreground);
     border: 1px solid var(--ch-input-border);
-    border-radius: 2px;
+    border-radius: var(--ch-radius-sm, 6px);
     font-size: 13px;
     box-sizing: border-box;
   }
@@ -429,7 +429,7 @@
     background: var(--ch-input-bg);
     border: 1px solid var(--ch-input-border);
     border-top: none;
-    border-radius: 0 0 2px 2px;
+    border-radius: 0 0 var(--ch-radius-sm, 6px) var(--ch-radius-sm, 6px);
     list-style: none;
     padding: 0;
     margin: 0;

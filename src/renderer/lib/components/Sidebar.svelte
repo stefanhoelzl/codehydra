@@ -313,7 +313,7 @@
     /* Minimized: show only left 20px, expanded: full width */
     width: var(--ch-sidebar-minimized-width, 20px);
     height: 100%;
-    background: var(--ch-background);
+    background: var(--ch-surface-1, var(--ch-background));
     color: var(--ch-foreground);
     display: flex;
     flex-direction: column;
@@ -416,7 +416,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px 8px calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
+    padding: 4px 12px 4px calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
     gap: 8px;
     min-width: var(--ch-sidebar-width, 250px);
   }
@@ -459,7 +459,7 @@
     cursor: pointer;
     padding: 2px 6px;
     opacity: 0.7;
-    border-radius: 2px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   .action-btn:hover {
@@ -480,6 +480,8 @@
     min-height: 44px; /* Accessible click target */
     min-width: var(--ch-sidebar-width, 250px);
     cursor: pointer;
+    border-radius: var(--ch-radius-sm, 6px);
+    position: relative;
   }
 
   .workspace-item.has-tags {
@@ -504,7 +506,7 @@
     cursor: pointer;
     padding: 4px;
     flex-shrink: 0;
-    border-radius: 2px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   .status-indicator-btn:hover {
@@ -517,8 +519,19 @@
   }
 
   .workspace-item.active {
-    background: var(--ch-list-active-bg);
+    background: var(--ch-accent-muted, var(--ch-list-active-bg));
     color: var(--ch-list-active-fg);
+  }
+
+  .workspace-item.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--ch-focus-border);
   }
 
   .workspace-item.active .workspace-btn {
@@ -550,7 +563,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    border-radius: 2px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   .workspace-item .remove-btn {
@@ -567,10 +580,23 @@
     display: flex;
     align-items: center;
     min-height: 44px; /* Accessible click target */
+    position: relative;
   }
 
   .workspace-item-minimized.active .status-indicator-btn {
-    background: var(--ch-list-active-bg);
+    background: var(--ch-accent-muted, var(--ch-list-active-bg));
+    border-radius: 0;
+  }
+
+  .workspace-item-minimized.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--ch-focus-border);
   }
 
   .shortcut-badge {

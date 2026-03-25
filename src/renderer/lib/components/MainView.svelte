@@ -324,7 +324,7 @@
     right: 0;
     bottom: 0;
     left: var(--ch-sidebar-minimized-width, 20px);
-    background: var(--ch-background);
+    background: var(--ch-surface-0, var(--ch-background));
     z-index: -1;
     display: flex;
     align-items: center;

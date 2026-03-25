@@ -163,7 +163,7 @@
     cursor: pointer;
     padding: 2px;
     opacity: 0.5;
-    border-radius: 2px;
+    border-radius: var(--ch-radius-sm, 6px);
     flex-shrink: 0;
   }
 
@@ -198,14 +198,14 @@
     flex: 1;
     height: 4px;
     background: var(--ch-input-border, #3c3c3c);
-    border-radius: 2px;
+    border-radius: 3px;
     overflow: hidden;
   }
 
   .progress-fill {
     height: 100%;
     background: var(--ch-focus-border, #007fd4);
-    border-radius: 2px;
+    border-radius: 3px;
     transition: width 0.2s ease-out;
   }
 

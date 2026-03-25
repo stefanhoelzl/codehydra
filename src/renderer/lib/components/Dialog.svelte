@@ -114,26 +114,61 @@
     position: fixed;
     inset: 0;
     background: var(--ch-overlay-bg);
+    backdrop-filter: var(--ch-overlay-blur, blur(8px));
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
+    padding-top: 12vh;
     z-index: 1000;
+    animation: ch-overlay-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes ch-overlay-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .dialog {
-    background: var(--ch-background);
+    background: var(--ch-surface-2, var(--ch-background));
     color: var(--ch-foreground);
-    border: 1px solid var(--ch-input-border);
-    border-radius: 4px;
-    padding: 16px;
-    max-width: var(--ch-dialog-max-width, 450px);
+    border: 1px solid var(--ch-border);
+    border-radius: var(--ch-radius-lg, 14px);
+    padding: 20px 24px;
+    max-width: var(--ch-dialog-max-width, 480px);
     width: 90%;
-    max-height: 90vh;
+    max-height: 80vh;
     overflow-y: auto;
+    box-shadow: var(--ch-shadow-dialog);
+    animation: ch-dialog-in 350ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes ch-dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(-12px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dialog-overlay {
+      animation: none;
+    }
+
+    .dialog {
+      animation: none;
+    }
   }
 
   .dialog-title {
-    margin-bottom: 12px;
+    margin-bottom: 14px;
   }
 
   .dialog-content {
@@ -145,5 +180,7 @@
     flex-direction: row-reverse;
     justify-content: flex-start;
     gap: 8px;
+    border-top: 1px solid var(--ch-border);
+    padding-top: 16px;
   }
 </style>
