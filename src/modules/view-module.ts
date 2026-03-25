@@ -229,6 +229,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                     style: "spinner",
                   },
                 ],
+                modal: true,
               };
               setupDialogHandle = deps.dialogManager.open(config);
             }
@@ -363,6 +364,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                     ],
                   },
                 ],
+                modal: true,
               };
               setupDialogHandle = deps.dialogManager.open(config);
             }
@@ -406,6 +408,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                 },
               ],
               actions: [{ id: "select", label: "Continue", variant: "primary" }],
+              modal: true,
             };
 
             const handle = deps.dialogManager.open(config);
@@ -439,6 +442,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                 { type: "text", content: "Setting up CodeHydra", style: "heading" },
                 { type: "progress", items },
               ],
+              modal: true,
             });
           },
         },
@@ -761,6 +765,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               { id: "retry", label: "Retry", variant: "primary" },
               { id: "quit", label: "Quit", variant: "secondary" },
             ],
+            modal: true,
           };
           setupDialogHandle = deps.dialogManager.open(config);
           // Event handling is done in waitForRetry

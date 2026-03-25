@@ -78,7 +78,8 @@
   // Sync dialog state to central ui-mode store
   // Includes both renderer-side dialogs (create/remove) and declarative framework dialogs
   $effect(() => {
-    const isDialogOpen = dialogState.value.type !== "closed" || dialogs.value.size > 0;
+    const hasModalFrameworkDialog = [...dialogs.value.values()].some((entry) => entry.config.modal);
+    const isDialogOpen = dialogState.value.type !== "closed" || hasModalFrameworkDialog;
     setDialogOpen(isDialogOpen);
   });
 
