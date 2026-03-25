@@ -217,7 +217,7 @@
     right: 0;
     bottom: 0;
     left: var(--ch-sidebar-minimized-width, 20px);
-    background: var(--ch-background);
+    background: var(--ch-surface-0, var(--ch-background));
     display: flex;
     align-items: center;
     justify-content: center;
@@ -236,9 +236,9 @@
 
   .progress-card {
     position: relative;
-    background: var(--ch-background);
+    background: var(--ch-surface-1, var(--ch-background));
     border: 1px solid var(--ch-border);
-    border-radius: 4px;
+    border-radius: var(--ch-radius-lg, 14px);
     padding: 24px 32px;
     max-width: 400px;
     width: 100%;
@@ -322,7 +322,7 @@
     margin-top: 16px;
     padding: 10px 12px;
     background: var(--ch-error-bg);
-    border-radius: 2px;
+    border-radius: var(--ch-radius-sm, 6px);
     font-size: 13px;
     color: var(--ch-error-fg);
   }
@@ -358,7 +358,7 @@
     max-height: 300px;
     overflow-y: auto;
     border: 1px solid var(--ch-border);
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
     padding: 8px;
   }
 

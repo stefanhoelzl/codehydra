@@ -238,8 +238,8 @@
     margin-top: 1rem;
     padding: 0.5rem;
     border: 1px solid var(--ch-border);
-    border-radius: 8px;
-    background: var(--ch-panel-background);
+    border-radius: var(--ch-radius-sm, 6px);
+    background: var(--ch-surface-2, var(--ch-panel-background, var(--ch-background)));
   }
 
   .row {
@@ -251,7 +251,7 @@
 
   .row-failed {
     background: color-mix(in srgb, var(--ch-error) 10%, transparent);
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   .row-divider {

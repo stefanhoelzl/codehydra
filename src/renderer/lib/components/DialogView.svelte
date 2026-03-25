@@ -378,7 +378,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: var(--ch-background);
+    background-color: var(--ch-surface-0, var(--ch-background));
     z-index: 900;
   }
 
@@ -406,9 +406,9 @@
     width: 100%;
     padding: 2rem;
     text-align: center;
-    background: color-mix(in srgb, var(--ch-background) 85%, transparent);
+    background: color-mix(in srgb, var(--ch-surface-1, var(--ch-background)) 90%, transparent);
     border: 1px solid var(--ch-border);
-    border-radius: 8px;
+    border-radius: var(--ch-radius-lg, 14px);
     box-shadow: var(--ch-shadow);
   }
 
@@ -453,7 +453,7 @@
     width: 100%;
     padding: 0.75rem;
     background: color-mix(in srgb, var(--ch-foreground) 5%, transparent);
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   /* ---- Progress sections ---- */
@@ -464,7 +464,7 @@
     width: 100%;
     max-width: 400px;
     padding: 0.5rem;
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   .progress-row {
@@ -475,7 +475,7 @@
   }
 
   .progress-row-error {
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   .progress-divider {
@@ -572,7 +572,7 @@
     width: 140px;
     padding: 1.5rem 1rem;
     border: 1px solid var(--ch-border);
-    border-radius: 8px;
+    border-radius: var(--ch-radius-md, 10px);
     background: var(--ch-panel-background);
     cursor: pointer;
     transition:
@@ -584,7 +584,7 @@
 
   .selection-card:hover {
     border-color: var(--ch-focus-border);
-    background: var(--ch-list-hover-bg);
+    background: var(--ch-accent-muted, var(--ch-list-hover-bg));
   }
 
   .selection-card:focus {
@@ -595,7 +595,7 @@
 
   .selection-card.selected {
     border-color: var(--ch-focus-border);
-    background: var(--ch-list-active-bg);
+    background: var(--ch-accent-muted, var(--ch-list-active-bg));
   }
 
   .selection-card-icon {
@@ -649,7 +649,7 @@
     max-height: 200px;
     overflow-y: auto;
     border: 1px solid var(--ch-border);
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
   }
 
   table {
@@ -688,7 +688,7 @@
     color: var(--ch-foreground);
     background: var(--ch-input-background);
     border: 1px solid var(--ch-border);
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
     resize: vertical;
   }
 

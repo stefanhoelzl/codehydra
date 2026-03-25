@@ -151,8 +151,8 @@
     width: 140px;
     padding: 1.5rem 1rem;
     border: 1px solid var(--ch-border);
-    border-radius: 8px;
-    background: var(--ch-panel-background);
+    border-radius: var(--ch-radius-md, 10px);
+    background: var(--ch-surface-2, var(--ch-panel-background, transparent));
     cursor: pointer;
     transition:
       border-color 0.15s ease,
@@ -163,7 +163,7 @@
 
   .card:hover {
     border-color: var(--ch-focus-border);
-    background: var(--ch-list-hover-background);
+    background: var(--ch-accent-muted, var(--ch-list-hover-background));
   }
 
   .card:focus {
@@ -174,7 +174,7 @@
 
   .card.selected {
     border-color: var(--ch-focus-border);
-    background: var(--ch-list-active-selection-background);
+    background: var(--ch-accent-muted, var(--ch-list-active-selection-background));
   }
 
   .card-icon {

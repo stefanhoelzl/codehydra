@@ -86,9 +86,9 @@
 <style>
   .indicator {
     position: relative;
-    width: 6px;
-    height: 16px;
-    border-radius: 2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
     flex-shrink: 0;
   }
 
@@ -100,22 +100,25 @@
   /* None state - grey with low opacity */
   .indicator--none {
     background-color: var(--ch-foreground);
-    opacity: 0.4;
+    opacity: 0.5;
   }
 
-  /* Idle state - green (uses semantic agent color) */
+  /* Idle state - green dot with glow */
   .indicator--idle {
     background-color: var(--ch-agent-idle);
+    box-shadow: var(--ch-status-glow-idle);
   }
 
-  /* Busy state - red (uses semantic agent color) */
+  /* Busy state - red dot with glow */
   .indicator--busy {
     background-color: var(--ch-agent-busy);
+    box-shadow: var(--ch-status-glow-busy);
   }
 
-  /* Mixed state - gradient (red top, green bottom) */
+  /* Mixed state - red dot with glow (same as busy) */
   .indicator--mixed {
-    background: linear-gradient(to bottom, var(--ch-agent-busy) 50%, var(--ch-agent-idle) 50%);
+    background-color: var(--ch-agent-busy);
+    box-shadow: var(--ch-status-glow-busy);
   }
 
   /* Synchronized pulse animation for busy and mixed states */
@@ -150,7 +153,7 @@
     background: var(--ch-input-bg);
     color: var(--ch-foreground);
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
     font-size: 12px;
     white-space: nowrap;
     max-width: 200px;

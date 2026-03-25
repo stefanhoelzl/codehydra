@@ -486,7 +486,7 @@
 
   .more-options-box {
     border: 1px solid var(--ch-input-border);
-    border-radius: 4px;
+    border-radius: var(--ch-radius-sm, 6px);
     padding: 12px;
     margin-bottom: 0;
   }

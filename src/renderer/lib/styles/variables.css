@@ -20,58 +20,65 @@
    * These are only used when VS Code hasn't injected its own values.
    * In code-server context, these are overridden by VS Code's theme.
    */
-  --vscode-foreground: #cccccc;
-  --vscode-editor-background: #1e1e1e;
-  --vscode-panel-border: #454545;
-  --vscode-settings-textInputBackground: #3c3c3c;
-  --vscode-settings-textInputBorder: #3c3c3c;
-  --vscode-settings-textInputForeground: #cccccc;
-  --vscode-button-background: #0e639c;
+  --vscode-foreground: #e4e4e8;
+  --vscode-editor-background: #16161a;
+  --vscode-panel-border: rgba(255, 255, 255, 0.06);
+  --vscode-settings-textInputBackground: #0e0e10;
+  --vscode-settings-textInputBorder: rgba(255, 255, 255, 0.06);
+  --vscode-settings-textInputForeground: #e4e4e8;
+  --vscode-button-background: #6c8cff;
   --vscode-button-foreground: #ffffff;
-  --vscode-button-hoverBackground: #1177bb;
-  --vscode-button-secondaryBackground: #3a3d41;
-  --vscode-button-secondaryForeground: #ffffff;
-  --vscode-button-secondaryHoverBackground: #45494e;
-  --vscode-focusBorder: #007fd4;
-  --vscode-errorForeground: #f48771;
-  --vscode-badge-background: #4d4d4d;
-  --vscode-badge-foreground: #ffffff;
-  --vscode-progressBar-background: #0e70c0;
-  --vscode-settings-checkboxBackground: #3c3c3c;
-  --vscode-settings-checkboxBorder: #3c3c3c;
-  --vscode-settings-checkboxForeground: #f0f0f0;
-  --vscode-icon-foreground: #c5c5c5;
+  --vscode-button-hoverBackground: #8aa4ff;
+  --vscode-button-secondaryBackground: #24242c;
+  --vscode-button-secondaryForeground: #9898a4;
+  --vscode-button-secondaryHoverBackground: #2c2c36;
+  --vscode-focusBorder: #6c8cff;
+  --vscode-errorForeground: #f87171;
+  --vscode-badge-background: #24242c;
+  --vscode-badge-foreground: #e4e4e8;
+  --vscode-progressBar-background: #6c8cff;
+  --vscode-settings-checkboxBackground: #0e0e10;
+  --vscode-settings-checkboxBorder: rgba(255, 255, 255, 0.12);
+  --vscode-settings-checkboxForeground: #e4e4e8;
+  --vscode-icon-foreground: #9898a4;
 
   /* Core colors */
-  --ch-foreground: var(--vscode-foreground, #cccccc);
-  --ch-background: var(--vscode-editor-background, #1e1e1e);
+  --ch-foreground: var(--vscode-foreground, #e4e4e8);
+  --ch-background: var(--vscode-editor-background, #16161a);
+
+  /* Surface layering */
+  --ch-surface-0: #0e0e10;
+  --ch-surface-1: #16161a;
+  --ch-surface-2: #1c1c22;
+  --ch-surface-3: #24242c;
+  --ch-surface-4: #2c2c36;
 
   /* Border colors */
-  --ch-border: var(--vscode-panel-border, #454545);
-  --ch-input-border: var(--vscode-settings-textInputBorder, #3c3c3c);
-  --ch-input-hover-border: #5a5a5a;
+  --ch-border: var(--vscode-panel-border, rgba(255, 255, 255, 0.06));
+  --ch-input-border: var(--vscode-settings-textInputBorder, rgba(255, 255, 255, 0.06));
+  --ch-input-hover-border: rgba(255, 255, 255, 0.12);
 
   /* Button colors */
-  --ch-button-bg: var(--vscode-button-background, #0e639c);
+  --ch-button-bg: var(--vscode-button-background, #6c8cff);
   --ch-button-fg: var(--vscode-button-foreground, #ffffff);
-  --ch-button-hover-bg: var(--vscode-button-hoverBackground, #1177bb);
-  --ch-button-disabled-bg: #3c3c3c;
-  --ch-button-disabled-fg: #8c8c8c;
+  --ch-button-hover-bg: var(--vscode-button-hoverBackground, #8aa4ff);
+  --ch-button-disabled-bg: #24242c;
+  --ch-button-disabled-fg: #6c6c78;
 
   /* Input colors */
-  --ch-input-bg: var(--vscode-settings-textInputBackground, #3c3c3c);
-  --ch-input-disabled-bg: #2d2d2d;
-  --ch-input-disabled-fg: #6c6c6c;
+  --ch-input-bg: var(--vscode-settings-textInputBackground, #0e0e10);
+  --ch-input-disabled-bg: #1c1c22;
+  --ch-input-disabled-fg: #6c6c78;
 
   /* Focus/selection colors */
-  --ch-focus-border: var(--vscode-focusBorder, #007fd4);
-  --ch-list-active-bg: var(--vscode-list-activeSelectionBackground, #094771);
-  --ch-list-active-fg: var(--vscode-list-activeSelectionForeground, #ffffff);
-  --ch-list-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
+  --ch-focus-border: var(--vscode-focusBorder, #6c8cff);
+  --ch-list-active-bg: var(--vscode-list-activeSelectionBackground, rgba(108, 140, 255, 0.12));
+  --ch-list-active-fg: var(--vscode-list-activeSelectionForeground, #e4e4e8);
+  --ch-list-hover-bg: var(--vscode-list-hoverBackground, #24242c);
 
   /* Error colors */
-  --ch-error-fg: var(--vscode-errorForeground, #f48771);
-  --ch-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  --ch-error-fg: var(--vscode-errorForeground, #f87171);
+  --ch-error-bg: var(--vscode-inputValidation-errorBackground, rgba(248, 113, 113, 0.12));
 
   /* Semantic colors */
   --ch-success: var(--vscode-terminal-ansiGreen, #4ade80);
@@ -83,9 +90,23 @@
   --ch-agent-busy: var(--ch-danger);
 
   /* Overlay/shadow colors */
-  --ch-overlay-bg: rgba(0, 0, 0, 0.5);
+  --ch-overlay-bg: rgba(0, 0, 0, 0.6);
   --ch-shadow-color: rgba(0, 0, 0, 0.3);
-  --ch-shadow: 0 2px 8px var(--ch-shadow-color);
+  --ch-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --ch-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
+  --ch-overlay-blur: blur(8px);
+
+  /* Accent muted (for active/selected backgrounds) */
+  --ch-accent-muted: rgba(108, 140, 255, 0.12);
+
+  /* Status dot glow */
+  --ch-status-glow-idle: 0 0 6px rgba(74, 222, 128, 0.4);
+  --ch-status-glow-busy: 0 0 6px rgba(248, 113, 113, 0.4);
+
+  /* Border radius */
+  --ch-radius-sm: 6px;
+  --ch-radius-md: 10px;
+  --ch-radius-lg: 14px;
 
   /* Logo backdrop opacity */
   --ch-logo-backdrop-opacity: 0.15;
@@ -100,7 +121,7 @@
   --ch-sidebar-width: 250px;
   --ch-sidebar-minimized-width: 20px;
   --ch-sidebar-transition: 150ms ease-out;
-  --ch-dialog-max-width: 450px;
+  --ch-dialog-max-width: 480px;
 
   /* Z-index layers */
   --ch-z-sidebar-minimized: 1;
@@ -128,7 +149,7 @@
   margin-bottom: 16px;
   padding: 10px 12px;
   background: var(--ch-error-bg);
-  border-radius: 2px;
+  border-radius: var(--ch-radius-sm);
   font-size: 13px;
   color: var(--ch-error-fg);
 }
@@ -182,63 +203,79 @@
      * VSCode variable fallbacks for light theme.
      * Used by @vscode-elements/elements in standalone mode.
      */
-    --vscode-foreground: #3c3c3c;
+    --vscode-foreground: #1a1a24;
     --vscode-editor-background: #ffffff;
-    --vscode-panel-border: #e5e5e5;
-    --vscode-settings-textInputBackground: #ffffff;
-    --vscode-settings-textInputBorder: #cecece;
-    --vscode-settings-textInputForeground: #3c3c3c;
-    --vscode-button-background: #007acc;
+    --vscode-panel-border: rgba(0, 0, 0, 0.08);
+    --vscode-settings-textInputBackground: #f4f4f8;
+    --vscode-settings-textInputBorder: rgba(0, 0, 0, 0.08);
+    --vscode-settings-textInputForeground: #1a1a24;
+    --vscode-button-background: #4b6de8;
     --vscode-button-foreground: #ffffff;
-    --vscode-button-hoverBackground: #0062a3;
-    --vscode-button-secondaryBackground: #5f6a79;
-    --vscode-button-secondaryForeground: #ffffff;
-    --vscode-button-secondaryHoverBackground: #4c5561;
-    --vscode-focusBorder: #0066b8;
-    --vscode-errorForeground: #e51400;
-    --vscode-badge-background: #c4c4c4;
-    --vscode-badge-foreground: #333333;
-    --vscode-progressBar-background: #0066b8;
-    --vscode-settings-checkboxBackground: #ffffff;
-    --vscode-settings-checkboxBorder: #919191;
-    --vscode-settings-checkboxForeground: #616161;
-    --vscode-icon-foreground: #424242;
+    --vscode-button-hoverBackground: #3a5cd6;
+    --vscode-button-secondaryBackground: #ededf2;
+    --vscode-button-secondaryForeground: #5c5c6e;
+    --vscode-button-secondaryHoverBackground: #e0e0e8;
+    --vscode-focusBorder: #4b6de8;
+    --vscode-errorForeground: #dc3545;
+    --vscode-badge-background: #ededf2;
+    --vscode-badge-foreground: #1a1a24;
+    --vscode-progressBar-background: #4b6de8;
+    --vscode-settings-checkboxBackground: #f4f4f8;
+    --vscode-settings-checkboxBorder: rgba(0, 0, 0, 0.15);
+    --vscode-settings-checkboxForeground: #1a1a24;
+    --vscode-icon-foreground: #5c5c6e;
 
     /* Core colors */
-    --ch-foreground: var(--vscode-foreground, #3c3c3c);
+    --ch-foreground: var(--vscode-foreground, #1a1a24);
     --ch-background: var(--vscode-editor-background, #ffffff);
 
+    /* Surface layering (light) */
+    --ch-surface-0: #f4f4f8;
+    --ch-surface-1: #ffffff;
+    --ch-surface-2: #ffffff;
+    --ch-surface-3: #ededf2;
+    --ch-surface-4: #e0e0e8;
+
     /* Border colors */
-    --ch-border: var(--vscode-panel-border, #e5e5e5);
-    --ch-input-border: var(--vscode-settings-textInputBorder, #cecece);
-    --ch-input-hover-border: #b0b0b0;
+    --ch-border: var(--vscode-panel-border, rgba(0, 0, 0, 0.08));
+    --ch-input-border: var(--vscode-settings-textInputBorder, rgba(0, 0, 0, 0.08));
+    --ch-input-hover-border: rgba(0, 0, 0, 0.15);
 
     /* Button colors */
-    --ch-button-disabled-bg: #e5e5e5;
-    --ch-button-disabled-fg: #a0a0a0;
+    --ch-button-disabled-bg: #ededf2;
+    --ch-button-disabled-fg: #9494a4;
 
     /* Input colors */
-    --ch-input-bg: var(--vscode-settings-textInputBackground, #ffffff);
-    --ch-input-disabled-bg: #f0f0f0;
-    --ch-input-disabled-fg: #a0a0a0;
+    --ch-input-bg: var(--vscode-settings-textInputBackground, #f4f4f8);
+    --ch-input-disabled-bg: #f4f4f8;
+    --ch-input-disabled-fg: #9494a4;
 
     /* Focus/selection colors */
-    --ch-focus-border: var(--vscode-focusBorder, #0066b8);
-    --ch-list-active-bg: var(--vscode-list-activeSelectionBackground, #0060c0);
-    --ch-list-active-fg: var(--vscode-list-activeSelectionForeground, #ffffff);
-    --ch-list-hover-bg: var(--vscode-list-hoverBackground, #f0f0f0);
+    --ch-focus-border: var(--vscode-focusBorder, #4b6de8);
+    --ch-list-active-bg: var(--vscode-list-activeSelectionBackground, rgba(75, 109, 232, 0.1));
+    --ch-list-active-fg: var(--vscode-list-activeSelectionForeground, #1a1a24);
+    --ch-list-hover-bg: var(--vscode-list-hoverBackground, #ededf2);
 
     /* Error colors */
-    --ch-error-fg: var(--vscode-errorForeground, #e51400);
-    --ch-error-bg: var(--vscode-inputValidation-errorBackground, #f2dede);
+    --ch-error-fg: var(--vscode-errorForeground, #dc3545);
+    --ch-error-bg: var(--vscode-inputValidation-errorBackground, rgba(220, 53, 69, 0.08));
 
     /* Semantic colors */
-    --ch-success: var(--vscode-terminal-ansiGreen, #22c55e);
-    --ch-danger: var(--vscode-errorForeground, #e51400);
-    --ch-warning: var(--vscode-editorWarning-foreground, #bf8803);
+    --ch-success: var(--vscode-terminal-ansiGreen, #1a9a4e);
+    --ch-danger: var(--vscode-errorForeground, #dc3545);
+    --ch-warning: var(--vscode-editorWarning-foreground, #b07d00);
 
     /* Overlay/shadow colors */
-    --ch-overlay-bg: rgba(0, 0, 0, 0.4);
-    --ch-shadow-color: rgba(0, 0, 0, 0.15);
+    --ch-overlay-bg: rgba(0, 0, 0, 0.2);
+    --ch-shadow-color: rgba(0, 0, 0, 0.1);
+    --ch-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    --ch-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.15);
+
+    /* Accent muted (light) */
+    --ch-accent-muted: rgba(75, 109, 232, 0.1);
+
+    /* Status dot glow (light) */
+    --ch-status-glow-idle: 0 0 6px rgba(26, 154, 78, 0.3);
+    --ch-status-glow-busy: 0 0 6px rgba(220, 53, 69, 0.3);
   }
 }
