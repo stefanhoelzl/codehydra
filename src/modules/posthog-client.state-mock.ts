@@ -157,6 +157,23 @@ export function createMockPostHogClientFactory(): MockPostHogClientFactoryResult
         });
       },
 
+      captureException(
+        error: unknown,
+        distinctId?: string,
+        additionalProperties?: Record<string | number, unknown>
+      ): void {
+        const err = error instanceof Error ? error : new Error(String(error));
+        state.addEvent({
+          distinctId: distinctId ?? "unknown",
+          event: "$exception",
+          properties: {
+            $exception_list: [{ type: err.name, value: err.message }],
+            ...additionalProperties,
+          },
+          timestamp: Date.now(),
+        });
+      },
+
       async shutdown(): Promise<void> {
         state.markShutdown();
       },
@@ -212,9 +229,14 @@ export const postHogClientMatchers: MatcherImplementationsFor<
     const matchingEvent = events.find((e) => {
       if (e.event !== eventName) return false;
       if (properties) {
-        // Partial match on properties
+        // Partial match on properties (deep comparison for objects/arrays)
         for (const [key, value] of Object.entries(properties)) {
-          if (e.properties?.[key] !== value) return false;
+          const actual = e.properties?.[key];
+          if (typeof value === "object" && value !== null) {
+            if (JSON.stringify(actual) !== JSON.stringify(value)) return false;
+          } else {
+            if (actual !== value) return false;
+          }
         }
       }
       return true;

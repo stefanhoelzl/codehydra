@@ -380,7 +380,9 @@ describe("PosthogModule Integration", () => {
 
         const mock = getMock()!;
         expect(mock).toHaveCapturedError();
-        expect(mock).toHaveCaptured("$exception", { $exception_message: "test uncaught" });
+        expect(mock).toHaveCaptured("$exception", {
+          $exception_list: [{ type: "Error", value: "test uncaught" }],
+        });
       } finally {
         process.on = originalOn;
       }
@@ -432,7 +434,9 @@ describe("PosthogModule Integration", () => {
 
         const mock = getMock()!;
         expect(mock).toHaveCapturedError();
-        expect(mock).toHaveCaptured("$exception", { $exception_message: "test rejection" });
+        expect(mock).toHaveCaptured("$exception", {
+          $exception_list: [{ type: "Error", value: "test rejection" }],
+        });
       } finally {
         process.on = originalOn;
       }
@@ -461,7 +465,7 @@ describe("PosthogModule Integration", () => {
         const mock = getMock()!;
         expect(mock).toHaveCapturedError();
         expect(mock).toHaveCaptured("$exception", {
-          $exception_message: "string rejection reason",
+          $exception_list: [{ type: "Error", value: "string rejection reason" }],
         });
       } finally {
         process.on = originalOn;
@@ -653,9 +657,7 @@ describe("PosthogModule Integration", () => {
 
       const mock = getMock()!;
       expect(mock).toHaveCaptured("$exception", {
-        $exception_type: "BugReport",
-        $exception_message: "App freezes on startup",
-        $exception_stack_trace_raw: "",
+        $exception_list: [{ type: "BugReport", value: "App freezes on startup" }],
         logs: "log line 1\nlog line 2",
       });
     });
@@ -673,8 +675,7 @@ describe("PosthogModule Integration", () => {
 
       const mock = getMock()!;
       expect(mock).toHaveCaptured("$exception", {
-        $exception_type: "BugReport",
-        $exception_message: "Something broke",
+        $exception_list: [{ type: "BugReport", value: "Something broke" }],
       });
     });
 
@@ -685,55 +686,6 @@ describe("PosthogModule Integration", () => {
       await dispatcher.dispatch(submitBugReportIntent("desc", "logs"));
 
       expect(getMock()).toBeNull();
-    });
-  });
-
-  describe("error stack sanitization", () => {
-    it("sanitizes user paths from error stacks", async () => {
-      type Handler = (...args: unknown[]) => void;
-      const registeredHandlers: { event: string; handler: Handler }[] = [];
-      const originalOn = process.on;
-      process.on = ((event: string, handler: Handler) => {
-        registeredHandlers.push({ event, handler });
-        return process;
-      }) as typeof process.on;
-
-      try {
-        const { dispatcher, getMock } = createTestSetup({
-          configValues: {
-            "telemetry.enabled": true,
-            "telemetry.distinct-id": "test-id",
-            agent: "opencode",
-          },
-        });
-        const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
-        const homeDir = platformInfo.homeDir;
-
-        await dispatcher.dispatch(startIntent());
-
-        const monitorHandler = registeredHandlers.find(
-          (h) => h.event === "uncaughtExceptionMonitor"
-        );
-
-        // Create error with home directory in stack
-        const error = new Error("Test error");
-        error.stack = `Error: Test error
-    at Object.<anonymous> (${homeDir}/projects/myapp/src/index.ts:10:5)
-    at Module._compile (node:internal/modules/cjs/loader:1369:14)
-    at ${homeDir}/.config/myapp/plugin.js:5:10`;
-
-        monitorHandler!.handler(error);
-
-        const mock = getMock()!;
-        const errorEvent = mock.$.capturedEvents.find((e) => e.event === "$exception");
-        expect(errorEvent).toBeDefined();
-
-        const stack = errorEvent?.properties?.$exception_stack_trace_raw as string;
-        expect(stack).not.toContain(homeDir);
-        expect(stack).toContain("<home>");
-      } finally {
-        process.on = originalOn;
-      }
     });
   });
 });

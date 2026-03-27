@@ -45,6 +45,12 @@ export interface PostHogClient {
     properties?: Record<string, unknown>;
   }): void;
 
+  captureException(
+    error: unknown,
+    distinctId?: string,
+    additionalProperties?: Record<string | number, unknown>
+  ): void;
+
   shutdown(): Promise<void>;
 }
 
@@ -63,12 +69,6 @@ export type PostHogClientFactory = (
 
 /** Default PostHog host (EU region) */
 const DEFAULT_HOST = "https://eu.posthog.com";
-
-/** Maximum stack frames to include */
-const MAX_STACK_FRAMES = 10;
-
-/** Maximum stack string length */
-const MAX_STACK_LENGTH = 2000;
 
 /**
  * Create the default PostHog client using posthog-node SDK.
@@ -190,21 +190,10 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
       return;
     }
 
-    const sanitizedStack = sanitizeStack(error.stack);
-
-    const properties = {
-      $exception_type: error.name,
-      $exception_message: error.message,
-      $exception_stack_trace_raw: sanitizedStack,
-      version: deps.buildInfo.version,
-    };
-
     deps.logger.info("Telemetry error event", { message: error.message });
 
-    client.capture({
-      distinctId,
-      event: "$exception",
-      properties,
+    client.captureException(error, distinctId, {
+      version: deps.buildInfo.version,
     });
   }
 
@@ -233,50 +222,18 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
     // Use existing distinctId or generate an anonymous one (not persisted)
     const id = distinctId ?? randomUUID();
 
-    const properties = {
-      $exception_type: "BugReport",
-      $exception_message: description,
-      $exception_stack_trace_raw: "",
-      logs,
-      ...eventProperties(),
-      version: deps.buildInfo.version,
-    };
+    // Create a synthetic Error so the SDK formats it as $exception_list
+    const bugError = new Error(description);
+    bugError.name = "BugReport";
+    bugError.stack = ""; // No meaningful stack trace for user reports
 
     deps.logger.info("Bug report captured");
 
-    client.capture({
-      distinctId: id,
-      event: "$exception",
-      properties,
+    client.captureException(bugError, id, {
+      logs,
+      ...eventProperties(),
+      version: deps.buildInfo.version,
     });
-  }
-
-  function sanitizeStack(stack: string | undefined): string | undefined {
-    if (!stack) {
-      return undefined;
-    }
-
-    const homeDir = deps.platformInfo.homeDir;
-    const homeDirEscaped = homeDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const homeDirRegex = new RegExp(homeDirEscaped.replace(/\\\\/g, "[\\\\/]"), "gi");
-
-    const lines = stack.split("\n");
-    const limitedLines = lines.slice(0, MAX_STACK_FRAMES + 1); // +1 for error message line
-
-    const sanitizedLines = limitedLines.map((line) => {
-      let sanitized = line;
-      sanitized = sanitized.replace(homeDirRegex, "<home>");
-      sanitized = sanitized.replace(/\?[^\s)]+/g, "");
-      return sanitized;
-    });
-
-    let result = sanitizedLines.join("\n");
-
-    if (result.length > MAX_STACK_LENGTH) {
-      result = result.substring(0, MAX_STACK_LENGTH) + "...";
-    }
-
-    return result;
   }
 
   // ---------------------------------------------------------------------------
