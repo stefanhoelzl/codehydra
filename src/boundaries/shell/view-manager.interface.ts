@@ -71,8 +71,7 @@ export interface IViewManager {
     workspacePath: string,
     url: string,
     projectPath: string,
-    isNew?: boolean,
-    options?: { disableBgThrottling?: boolean }
+    isNew?: boolean
   ): ViewHandle;
 
   /**
