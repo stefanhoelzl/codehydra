@@ -279,8 +279,7 @@ export class ViewManager implements IViewManager {
     workspacePath: string,
     url: string,
     _projectPath: string,
-    isNew = false,
-    options?: { disableBgThrottling?: boolean }
+    isNew = false
   ): ViewHandle {
     // Use global partition for all workspaces to share extension storage
     const workspaceName = basename(workspacePath);
@@ -364,7 +363,7 @@ export class ViewManager implements IViewManager {
         partition: partitionName,
         webviewTag: true,
         focusOnNavigation: false,
-        ...(options?.disableBgThrottling === true && { backgroundThrottling: false }),
+        backgroundThrottling: false,
       },
     });
 
