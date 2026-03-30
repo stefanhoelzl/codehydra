@@ -36,6 +36,11 @@
         "category": "CodeHydra"
       },
       {
+        "command": "codehydra.closeAgent",
+        "title": "Close Agent",
+        "category": "CodeHydra"
+      },
+      {
         "command": "codehydra.getTags",
         "title": "Get Tags",
         "category": "CodeHydra"

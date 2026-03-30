@@ -194,6 +194,47 @@ function setupTerminalCloseListener(): void {
   });
 }
 
+/** Timeout for graceful agent close in milliseconds */
+const AGENT_CLOSE_TIMEOUT_MS = 3000;
+
+/** Interval between Ctrl+C signals in milliseconds */
+const AGENT_CLOSE_SIGNAL_INTERVAL_MS = 500;
+
+/**
+ * Close the agent terminal gracefully.
+ * Sends repeated Ctrl+C signals to exit Claude Code, waits up to 3 seconds
+ * for the terminal to close naturally (triggering WrapperEnd hook → gray status),
+ * then force-disposes if still open.
+ */
+function closeAgentTerminal(): void {
+  if (!agentTerminal) {
+    return;
+  }
+
+  const terminal = agentTerminal;
+
+  // Send Ctrl+C repeatedly until terminal closes or timeout
+  terminal.sendText("\x03", false);
+  const signalInterval = setInterval(() => {
+    terminal.sendText("\x03", false);
+  }, AGENT_CLOSE_SIGNAL_INTERVAL_MS);
+
+  // Wait for natural close, force-dispose on timeout
+  const timeout = setTimeout(() => {
+    clearInterval(signalInterval);
+    disposable.dispose();
+    terminal.dispose();
+  }, AGENT_CLOSE_TIMEOUT_MS);
+
+  const disposable = vscode.window.onDidCloseTerminal((closed) => {
+    if (closed === terminal) {
+      clearInterval(signalInterval);
+      clearTimeout(timeout);
+      disposable.dispose();
+    }
+  });
+}
+
 // ============================================================================
 // MCP Status Bar Management
 // ============================================================================
@@ -820,6 +861,12 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
         return;
       }
       openAgentTerminal(currentAgentType, currentAgentEnv);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.closeAgent", () => {
+      closeAgentTerminal();
     })
   );
 
