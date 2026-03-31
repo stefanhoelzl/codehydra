@@ -111,6 +111,7 @@ export const EVENT_WORKSPACE_LOADING = "workspace:loading" as const;
 export interface WorkspaceCreateFailedPayload {
   readonly workspaceName: string;
   readonly projectPath: string;
+  readonly error: string;
 }
 
 export interface WorkspaceCreateFailedEvent extends DomainEvent {
@@ -195,15 +196,14 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     try {
       return await this.executeWorkspaceOpen(ctx, projectPath);
     } catch (error) {
-      if (showLoading) {
-        ctx.emit({
-          type: EVENT_WORKSPACE_CREATE_FAILED,
-          payload: {
-            workspaceName: ctx.intent.payload.workspaceName,
-            projectPath,
-          },
-        } as WorkspaceCreateFailedEvent);
-      }
+      ctx.emit({
+        type: EVENT_WORKSPACE_CREATE_FAILED,
+        payload: {
+          workspaceName: ctx.intent.payload.workspaceName,
+          projectPath,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      } as WorkspaceCreateFailedEvent);
       throw error;
     }
   }
