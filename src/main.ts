@@ -317,6 +317,7 @@ const viewManager = new ViewManager({
   windowLayer,
   viewLayer,
   sessionLayer,
+  appLayer,
   config: {
     uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
     codeServerPort: 0,
@@ -394,6 +395,7 @@ const codeServerModule = createCodeServerModule({
 const pluginServerModule = createPluginServerModule({
   portManager: networkLayer,
   dispatcher,
+  appLayer,
   logger: apiLogger,
   options: {
     isDevelopment: buildInfo.isDevelopment,

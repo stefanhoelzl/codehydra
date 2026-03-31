@@ -8,6 +8,7 @@
  */
 
 import type { Logger } from "../platform/logging";
+import { pathToFileURL } from "node:url";
 
 // ============================================================================
 // Types
@@ -85,13 +86,28 @@ export interface AppBoundary {
    * @param value - Optional switch value
    */
   commandLineAppendSwitch(key: string, value?: string): void;
+
+  /**
+   * Open a URL in the system's default handler (browser for http/https, mail client for mailto).
+   *
+   * @param url - URL to open
+   */
+  openUrl(url: string): Promise<void>;
+
+  /**
+   * Open a local file path in the system's default handler.
+   * Converts the path to a file:// URI internally.
+   *
+   * @param filePath - Absolute path to the file or folder
+   */
+  openPath(filePath: string): Promise<void>;
 }
 
 // ============================================================================
 // Default Implementation
 // ============================================================================
 
-import { app } from "electron";
+import { app, shell } from "electron";
 
 /**
  * Default implementation of AppBoundary using Electron's app module.
@@ -129,5 +145,13 @@ export class DefaultAppBoundary implements AppBoundary {
       app.commandLine.appendSwitch(key);
       this.logger.debug("Command line switch appended", { key });
     }
+  }
+
+  async openUrl(url: string): Promise<void> {
+    await shell.openExternal(url);
+  }
+
+  async openPath(filePath: string): Promise<void> {
+    await shell.openExternal(pathToFileURL(filePath).href);
   }
 }

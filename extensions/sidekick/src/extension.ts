@@ -870,6 +870,43 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
     })
   );
 
+  // File explorer commands
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.revealInFileExplorer", async (uri?: vscode.Uri) => {
+      const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (!targetUri || targetUri.scheme !== "file") return;
+
+      try {
+        await emitApiCall<void>("api:workspace:openSystemPath", {
+          app: "explorer",
+          path: targetUri.fsPath,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        codehydraApi.log.error("Reveal in file explorer failed", { error: message });
+        await vscode.window.showErrorMessage(`Failed to reveal in file explorer: ${message}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codehydra.openWithDefaultApp", async (uri?: vscode.Uri) => {
+      const targetUri = uri ?? vscode.window.activeTextEditor?.document.uri;
+      if (!targetUri || targetUri.scheme !== "file") return;
+
+      try {
+        await emitApiCall<void>("api:workspace:openSystemPath", {
+          app: "default",
+          path: targetUri.fsPath,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        codehydraApi.log.error("Open with default app failed", { error: message });
+        await vscode.window.showErrorMessage(`Failed to open with default application: ${message}`);
+      }
+    })
+  );
+
   // Tag commands
   context.subscriptions.push(
     vscode.commands.registerCommand(

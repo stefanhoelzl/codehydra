@@ -71,6 +71,16 @@
         "category": "CodeHydra"
       },
       {
+        "command": "codehydra.revealInFileExplorer",
+        "title": "Reveal in File Explorer",
+        "category": "CodeHydra"
+      },
+      {
+        "command": "codehydra.openWithDefaultApp",
+        "title": "Open with Default Application",
+        "category": "CodeHydra"
+      },
+      {
         "command": "codehydra.debug.getStatus",
         "title": "CodeHydra Debug: Get Workspace Status",
         "enablement": "codehydra.isDevelopment"
@@ -86,6 +96,19 @@
         "enablement": "codehydra.isDevelopment"
       }
     ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "codehydra.revealInFileExplorer",
+          "group": "navigation@20"
+        },
+        {
+          "command": "codehydra.openWithDefaultApp",
+          "group": "navigation@21",
+          "when": "!explorerResourceIsFolder"
+        }
+      ]
+    },
     "keybindings": [
       {
         "command": "codehydra.openAgent",

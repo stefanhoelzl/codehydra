@@ -12,7 +12,7 @@ import type { IViewManager, Unsubscribe, LoadingChangeCallback } from "./view-ma
 import { WORKSPACE_LOADING_TIMEOUT_MS } from "./view-manager.interface";
 import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
 import type { WindowManager } from "./window-manager";
-import { openExternal } from "../../utils/external-url";
+import type { AppBoundary } from "./app";
 import type { Logger } from "../platform/logging";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { ViewBoundary, WindowOpenDetails, FailLoadDetails } from "./view";
@@ -90,6 +90,8 @@ export interface ViewManagerDeps {
   readonly viewLayer: ViewBoundary;
   /** Session layer for session operations */
   readonly sessionLayer: SessionBoundary;
+  /** App layer for opening URLs/paths externally */
+  readonly appLayer: Pick<AppBoundary, "openUrl">;
   /** Configuration */
   readonly config: ViewManagerConfig;
   /** Logger */
@@ -125,6 +127,7 @@ export class ViewManager implements IViewManager {
   private readonly windowLayer: WindowBoundaryInternal;
   private readonly viewLayer: ViewBoundary;
   private readonly sessionLayer: SessionBoundary;
+  private readonly appLayer: Pick<AppBoundary, "openUrl">;
   private readonly config: ViewManagerConfig;
   private uiViewHandle!: ViewHandle;
   private backgroundViewHandle!: ViewHandle;
@@ -177,6 +180,7 @@ export class ViewManager implements IViewManager {
     this.windowLayer = deps.windowLayer;
     this.viewLayer = deps.viewLayer;
     this.sessionLayer = deps.sessionLayer;
+    this.appLayer = deps.appLayer;
     this.config = deps.config;
     this.codeServerPort = deps.config.codeServerPort;
     this.logger = deps.logger;
@@ -372,7 +376,7 @@ export class ViewManager implements IViewManager {
 
     // Configure window open handler to open external URLs
     this.viewLayer.setWindowOpenHandler(viewHandle, (details: WindowOpenDetails) => {
-      openExternal(details.url).catch((error: unknown) => {
+      this.appLayer.openUrl(details.url).catch((error: unknown) => {
         this.logger.warn("Failed to open external URL", {
           url: details.url,
           error: getErrorMessage(error),
@@ -385,7 +389,7 @@ export class ViewManager implements IViewManager {
     this.viewLayer.onWillNavigate(viewHandle, (navigationUrl) => {
       const codeServerOrigin = `http://127.0.0.1:${this.codeServerPort}`;
       if (!navigationUrl.startsWith(codeServerOrigin)) {
-        openExternal(navigationUrl).catch((error: unknown) => {
+        this.appLayer.openUrl(navigationUrl).catch((error: unknown) => {
           this.logger.warn("Failed to open external URL", {
             url: navigationUrl,
             error: getErrorMessage(error),

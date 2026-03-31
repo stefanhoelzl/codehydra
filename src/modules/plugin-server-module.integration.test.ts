@@ -93,6 +93,7 @@ function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServ
       findFreePort: vi.fn().mockResolvedValue(3456),
     },
     dispatcher: { dispatch: vi.fn() } as unknown as PluginServerModuleDeps["dispatcher"],
+    appLayer: { openPath: vi.fn().mockResolvedValue(undefined) },
     logger: SILENT_LOGGER,
     ...overrides,
   };

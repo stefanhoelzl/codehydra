@@ -14,6 +14,8 @@
 
 import { Server, type Socket } from "socket.io";
 import { createServer, type Server as HttpServer } from "node:http";
+import { dirname } from "node:path";
+import { stat } from "node:fs/promises";
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
@@ -51,9 +53,11 @@ import {
   validateSetMetadataRequest,
   validateDeleteWorkspaceRequest,
   validateExecuteCommandRequest,
+  validateOpenSystemPathRequest,
   validateWorkspaceCreateRequest,
   validateLogRequest,
 } from "../shared/plugin-protocol";
+import type { OpenSystemPathRequest } from "../shared/plugin-protocol";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
@@ -83,6 +87,7 @@ import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
 import { VSCODE_SHOW_MESSAGE_OPERATION_ID } from "../intents/vscode-show-message";
 import { VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
+import type { AppBoundary } from "../boundaries/shell/app";
 import { getErrorMessage } from "../shared/errors/service-errors";
 import { Path } from "../utils/path/path";
 
@@ -110,6 +115,7 @@ const STATUS_BAR_ID = "mcp";
 export interface PluginServerModuleDeps {
   readonly portManager: Pick<PortManager, "findFreePort">;
   readonly dispatcher: Dispatcher;
+  readonly appLayer: Pick<AppBoundary, "openPath">;
   readonly logger: Logger;
   readonly options?: PluginServerOptions;
 }
@@ -128,7 +134,7 @@ export interface PluginServerOptions {
 // =============================================================================
 
 export function createPluginServerModule(deps: PluginServerModuleDeps): IntentModule {
-  const { portManager, dispatcher, logger } = deps;
+  const { portManager, dispatcher, appLayer, logger } = deps;
   const transports: readonly ("polling" | "websocket")[] = deps.options?.transports ?? [
     "websocket",
   ];
@@ -692,6 +698,26 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     );
 
     socket.on(
+      "api:workspace:openSystemPath",
+      createValidatedHandler<OpenSystemPathRequest, OpenSystemPathRequest, void>(
+        "api:workspace:openSystemPath",
+        workspacePath,
+        validateOpenSystemPathRequest,
+        (req) =>
+          handlePluginApiCall(workspacePath, "openSystemPath", async () => {
+            if (req.app === "explorer") {
+              const isDir = await isDirectory(req.path);
+              const target = isDir ? req.path : dirname(req.path);
+              await appLayer.openPath(target);
+            } else {
+              await appLayer.openPath(req.path);
+            }
+          }),
+        (req) => ({ app: req.app, path: req.path })
+      )
+    );
+
+    socket.on(
       "api:workspace:create",
       createValidatedHandler<WorkspaceCreateRequest, WorkspaceCreateRequest, Workspace>(
         "api:workspace:create",
@@ -934,4 +960,17 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
       },
     },
   };
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+async function isDirectory(filePath: string): Promise<boolean> {
+  try {
+    const stats = await stat(filePath);
+    return stats.isDirectory();
+  } catch {
+    return false;
+  }
 }
