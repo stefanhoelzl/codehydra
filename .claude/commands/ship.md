@@ -1,6 +1,6 @@
 ---
 description: Create PR with auto-merge, wait for merge via client-side queue
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(npx:*), Bash(pnpm:*)
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(npx:*), Bash(pnpm:*), mcp__posthog__update-issue-status
 ---
 
 # /ship Command
@@ -350,6 +350,16 @@ If `--keep-workspace` was NOT passed and merge succeeded (exit code 0):
 
 If `--keep-workspace` was passed, report: "Workspace kept."
 
+### 12. Resolve PostHog issue
+
+If this conversation involved fixing a PostHog error tracking issue and the PostHog issue ID (UUID) is known from the conversation context:
+
+1. Call `mcp__posthog__update-issue-status` with the issue ID and status `resolved`.
+2. If the call succeeds, record the issue ID for the report.
+3. If the call fails, log a warning but do NOT fail the ship — the PR is already merged.
+
+If no PostHog issue was involved in this conversation, skip this step silently.
+
 ## Report Formats
 
 ### MERGED (exit code 0)
@@ -360,6 +370,7 @@ PR merged successfully!
 **PR**: <url>
 **Commit**: <sha> merged to main
 **Workspace**: deleted (or "kept" if --keep-workspace)
+**PostHog**: <issue-id> resolved (or omit this line if no PostHog issue)
 ```
 
 ### FAILED (exit code 1)
