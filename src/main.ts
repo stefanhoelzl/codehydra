@@ -149,6 +149,7 @@ import { createUiIpcModule } from "./modules/ui-ipc-module";
 import { DialogManager } from "./modules/dialog-manager";
 import { NotificationManager } from "./modules/notification-manager";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
+import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
 import { createBugReportModule } from "./modules/bug-report-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
@@ -356,6 +357,7 @@ const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}
 const dialogManager = new DialogManager(viewManager.sendToUI.bind(viewManager), apiLogger);
 const notificationManager = new NotificationManager(viewManager, apiLogger);
 const cloneNotificationModule = createCloneNotificationModule({ notificationManager });
+const errorNotificationModule = createErrorNotificationModule({ notificationManager });
 
 const viewModule = createViewModule({
   viewManager,
@@ -660,6 +662,7 @@ dispatcher.registerModule(debugModule);
 dispatcher.registerModule(bugReportModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(cloneNotificationModule);
+dispatcher.registerModule(errorNotificationModule);
 dispatcher.registerModule(uiIpcModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)
