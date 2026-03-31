@@ -182,6 +182,9 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
     commandLineAppendSwitch(key: string, value?: string): void {
       state.commandLineSwitches.push({ key, value });
     },
+
+    async openUrl(): Promise<void> {},
+    async openPath(): Promise<void> {},
   };
 }
 

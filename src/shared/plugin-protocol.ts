@@ -198,6 +198,62 @@ export function validateExecuteCommandRequest(
 }
 
 /**
+ * The action to perform on a system path.
+ * - "explorer": show in system file manager
+ * - "default": open with default application
+ */
+export type SystemPathApp = "default" | "explorer";
+
+/**
+ * Request payload for opening a path via the OS desktop.
+ */
+export interface OpenSystemPathRequest {
+  /** "explorer" = show in file manager, "default" = open with default app */
+  readonly app: SystemPathApp;
+  /** Absolute path to the file or folder */
+  readonly path: string;
+}
+
+/**
+ * Runtime validation for OpenSystemPathRequest.
+ * Validates that app is a valid action and path is a non-empty string.
+ *
+ * @param payload - The payload to validate
+ * @returns Object with valid boolean and optional error message
+ */
+export function validateOpenSystemPathRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if (!("app" in request)) {
+    return { valid: false, error: "Missing required field: app" };
+  }
+
+  if (request.app !== "default" && request.app !== "explorer") {
+    return { valid: false, error: "Field 'app' must be 'default' or 'explorer'" };
+  }
+
+  if (!("path" in request)) {
+    return { valid: false, error: "Missing required field: path" };
+  }
+
+  if (typeof request.path !== "string") {
+    return { valid: false, error: "Field 'path' must be a string" };
+  }
+
+  if (request.path.trim().length === 0) {
+    return { valid: false, error: "Field 'path' cannot be empty" };
+  }
+
+  return { valid: true };
+}
+
+/**
  * Request payload for deleting a workspace.
  */
 export interface DeleteWorkspaceRequest {
@@ -524,6 +580,18 @@ export interface ClientToServerEvents {
   "api:workspace:executeCommand": (
     request: ExecuteCommandRequest,
     ack: (result: PluginResult<unknown>) => void
+  ) => void;
+
+  /**
+   * Open a file or folder via the OS desktop.
+   * "explorer" shows in file manager, "default" opens with default application.
+   *
+   * @param request - The app action and path
+   * @param ack - Acknowledgment callback with void result
+   */
+  "api:workspace:openSystemPath": (
+    request: OpenSystemPathRequest,
+    ack: (result: PluginResult<void>) => void
   ) => void;
 
   /**

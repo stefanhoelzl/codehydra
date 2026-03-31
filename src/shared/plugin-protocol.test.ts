@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   validateSetMetadataRequest,
   validateExecuteCommandRequest,
+  validateOpenSystemPathRequest,
   validateLogRequest,
   COMMAND_TIMEOUT_MS,
   SHUTDOWN_DISCONNECT_TIMEOUT_MS,
@@ -271,6 +272,76 @@ describe("validateExecuteCommandRequest", () => {
     it("rejects command with only tabs", () => {
       const result = validateExecuteCommandRequest({ command: "\t\t" });
       expect(result).toEqual({ valid: false, error: "Field 'command' cannot be empty" });
+    });
+  });
+});
+
+describe("validateOpenSystemPathRequest", () => {
+  describe("valid requests", () => {
+    it("accepts explorer action with path", () => {
+      const result = validateOpenSystemPathRequest({ app: "explorer", path: "/project/src" });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts default action with path", () => {
+      const result = validateOpenSystemPathRequest({ app: "default", path: "/project/file.txt" });
+      expect(result).toEqual({ valid: true });
+    });
+  });
+
+  describe("invalid requests - structure", () => {
+    it("rejects null payload", () => {
+      const result = validateOpenSystemPathRequest(null);
+      expect(result).toEqual({ valid: false, error: "Request must be an object" });
+    });
+
+    it("rejects undefined payload", () => {
+      const result = validateOpenSystemPathRequest(undefined);
+      expect(result).toEqual({ valid: false, error: "Request must be an object" });
+    });
+
+    it("rejects primitive values", () => {
+      expect(validateOpenSystemPathRequest("string")).toEqual({
+        valid: false,
+        error: "Request must be an object",
+      });
+    });
+  });
+
+  describe("invalid requests - app field", () => {
+    it("rejects missing app field", () => {
+      const result = validateOpenSystemPathRequest({ path: "/some/path" });
+      expect(result).toEqual({ valid: false, error: "Missing required field: app" });
+    });
+
+    it("rejects invalid app value", () => {
+      const result = validateOpenSystemPathRequest({ app: "invalid", path: "/some/path" });
+      expect(result).toEqual({
+        valid: false,
+        error: "Field 'app' must be 'default' or 'explorer'",
+      });
+    });
+  });
+
+  describe("invalid requests - path field", () => {
+    it("rejects missing path field", () => {
+      const result = validateOpenSystemPathRequest({ app: "explorer" });
+      expect(result).toEqual({ valid: false, error: "Missing required field: path" });
+    });
+
+    it("rejects non-string path", () => {
+      const result = validateOpenSystemPathRequest({ app: "explorer", path: 123 });
+      expect(result).toEqual({ valid: false, error: "Field 'path' must be a string" });
+    });
+
+    it("rejects empty path string", () => {
+      const result = validateOpenSystemPathRequest({ app: "explorer", path: "" });
+      expect(result).toEqual({ valid: false, error: "Field 'path' cannot be empty" });
+    });
+
+    it("rejects whitespace-only path", () => {
+      const result = validateOpenSystemPathRequest({ app: "explorer", path: "   " });
+      expect(result).toEqual({ valid: false, error: "Field 'path' cannot be empty" });
     });
   });
 });

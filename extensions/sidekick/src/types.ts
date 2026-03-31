@@ -21,6 +21,11 @@ export interface CommandRequest {
   readonly args?: readonly unknown[];
 }
 
+export interface OpenSystemPathRequest {
+  readonly app: "default" | "explorer";
+  readonly path: string;
+}
+
 /** Agent type for terminal launching */
 export type AgentType = "opencode" | "claude";
 
@@ -146,6 +151,10 @@ export interface ClientToServerEvents {
   "api:workspace:executeCommand": (
     request: CommandRequest,
     ack: (result: PluginResult<unknown>) => void
+  ) => void;
+  "api:workspace:openSystemPath": (
+    request: OpenSystemPathRequest,
+    ack: (result: PluginResult<void>) => void
   ) => void;
   "api:workspace:create": (
     request: WorkspaceCreateRequest,

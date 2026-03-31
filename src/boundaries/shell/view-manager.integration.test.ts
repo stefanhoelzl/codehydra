@@ -15,12 +15,8 @@ import {
 import { createViewHandle, type WindowHandle } from "./types";
 import { createMockWindowManager } from "./window-manager.test-utils";
 
-// Mock external-url
-const mockOpenExternal = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-
-vi.mock("../utils/external-url", () => ({
-  openExternal: mockOpenExternal,
-}));
+// Mock openUrl for AppBoundary
+const mockOpenUrl = vi.fn().mockResolvedValue(undefined);
 
 /**
  * Creates a test window layer with a pre-created window for ViewManager tests.
@@ -63,6 +59,7 @@ function createViewManagerDeps(): ViewManagerDeps & {
     windowLayer,
     viewLayer,
     sessionLayer,
+    appLayer: { openUrl: mockOpenUrl },
     config: {
       uiPreloadPath: "/path/to/preload.js",
       codeServerPort: 8080,

@@ -288,6 +288,7 @@ export async function createPluginServerEnv(options?: PluginServerOptions) {
   const moduleDeps: PluginServerModuleDeps = {
     portManager: networkLayer,
     dispatcher: mockDispatcher,
+    appLayer: { openPath: async () => {} },
     logger: SILENT_LOGGER,
     options: {
       transports: ["polling"],
