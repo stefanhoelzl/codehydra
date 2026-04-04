@@ -8,7 +8,7 @@
     "posthog": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "mcp-remote@latest", "https://mcp.posthog.com/sse"]
+      "args": ["-y", "mcp-remote@latest", "https://mcp-eu.posthog.com/sse"]
     }
   }
 }
