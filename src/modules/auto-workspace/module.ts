@@ -263,6 +263,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           stealFocus: config.focus ?? false,
           projectPath: project.path,
           initialPrompt,
+          source: "auto-workspace",
         },
       } as OpenWorkspaceIntent);
 

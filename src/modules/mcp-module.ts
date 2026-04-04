@@ -681,6 +681,7 @@ export class McpServer implements IMcpServer {
               ...(tracking !== undefined && { tracking }),
               ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
               stealFocus,
+              source: "mcp",
             },
           };
           const result = await this.dispatcher.dispatch(intent);

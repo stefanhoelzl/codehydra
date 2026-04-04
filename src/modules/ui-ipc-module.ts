@@ -307,6 +307,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
         base: p.base,
         ...(p.initialPrompt !== undefined && { initialPrompt: p.initialPrompt }),
         ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
+        source: "ui-ipc",
       },
     };
     const result = await dispatcher.dispatch(intent);
