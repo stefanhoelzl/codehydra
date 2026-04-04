@@ -742,6 +742,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
                 ...(req.stealFocus !== undefined && {
                   stealFocus: req.stealFocus,
                 }),
+                source: "plugin-server",
               },
             };
             const result = await dispatcher.dispatch(intent);

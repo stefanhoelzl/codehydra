@@ -134,6 +134,53 @@ describe("ErrorNotificationModule", () => {
     expect(returnedHandle.close).toHaveBeenCalledOnce();
   });
 
+  it("should skip notification for mcp source", async () => {
+    const event: WorkspaceCreateFailedEvent = {
+      type: EVENT_WORKSPACE_CREATE_FAILED,
+      payload: {
+        workspaceName: "mcp-workspace",
+        projectPath: "/projects/test",
+        error: "Some MCP error",
+        source: "mcp",
+      },
+    };
+
+    await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
+
+    expect(notificationManager.open).not.toHaveBeenCalled();
+  });
+
+  it("should show notification for non-mcp sources", async () => {
+    const event: WorkspaceCreateFailedEvent = {
+      type: EVENT_WORKSPACE_CREATE_FAILED,
+      payload: {
+        workspaceName: "plugin-workspace",
+        projectPath: "/projects/test",
+        error: "Some plugin error",
+        source: "plugin-server",
+      },
+    };
+
+    await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
+
+    expect(notificationManager.open).toHaveBeenCalledOnce();
+  });
+
+  it("should show notification when source is undefined", async () => {
+    const event: WorkspaceCreateFailedEvent = {
+      type: EVENT_WORKSPACE_CREATE_FAILED,
+      payload: {
+        workspaceName: "unknown-workspace",
+        projectPath: "/projects/test",
+        error: "Some error",
+      },
+    };
+
+    await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
+
+    expect(notificationManager.open).toHaveBeenCalledOnce();
+  });
+
   it("should handle multiple failures independently", async () => {
     const event1: WorkspaceCreateFailedEvent = {
       type: EVENT_WORKSPACE_CREATE_FAILED,

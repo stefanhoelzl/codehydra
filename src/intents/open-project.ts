@@ -299,6 +299,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
                 existingWorkspace,
                 projectPath,
                 stealFocus: false,
+                source: "open-project",
               },
             };
 

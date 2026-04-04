@@ -37,6 +37,14 @@ import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./ge
 // Intent Types
 // =============================================================================
 
+/** Identifies which module dispatched a workspace:open intent. */
+export type WorkspaceOpenSource =
+  | "ui-ipc"
+  | "mcp"
+  | "plugin-server"
+  | "auto-workspace"
+  | "open-project";
+
 /** Data for activating an existing (discovered) workspace via workspace:open */
 export interface ExistingWorkspaceData {
   readonly path: string;
@@ -59,6 +67,8 @@ export interface OpenWorkspacePayload {
   readonly existingWorkspace?: ExistingWorkspaceData;
   /** Authoritative project path. */
   readonly projectPath: string;
+  /** Which module dispatched this intent. Used by error-notification to skip non-interactive sources. */
+  readonly source?: WorkspaceOpenSource;
 }
 
 export type OpenWorkspaceResult = Workspace;
@@ -88,6 +98,8 @@ export interface WorkspaceCreatedPayload {
   readonly stealFocus?: boolean;
   /** True when re-activating a discovered workspace (not a fresh creation). */
   readonly reopened?: boolean;
+  /** Which module dispatched the original intent. */
+  readonly source?: WorkspaceOpenSource;
 }
 
 export interface WorkspaceCreatedEvent extends DomainEvent {
@@ -112,6 +124,8 @@ export interface WorkspaceCreateFailedPayload {
   readonly workspaceName: string;
   readonly projectPath: string;
   readonly error: string;
+  /** Which module dispatched the original intent. */
+  readonly source?: WorkspaceOpenSource;
 }
 
 export interface WorkspaceCreateFailedEvent extends DomainEvent {
@@ -202,6 +216,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
           workspaceName: ctx.intent.payload.workspaceName,
           projectPath,
           error: error instanceof Error ? error.message : String(error),
+          ...(ctx.intent.payload.source !== undefined && { source: ctx.intent.payload.source }),
         },
       } as WorkspaceCreateFailedEvent);
       throw error;
@@ -303,6 +318,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
         stealFocus: ctx.intent.payload.stealFocus,
       }),
       ...(ctx.intent.payload.existingWorkspace !== undefined && { reopened: true }),
+      ...(ctx.intent.payload.source !== undefined && { source: ctx.intent.payload.source }),
     };
 
     const event: WorkspaceCreatedEvent = {

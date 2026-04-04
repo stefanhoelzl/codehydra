@@ -19,7 +19,8 @@ export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps)
   const events: EventDeclarations = {
     [EVENT_WORKSPACE_CREATE_FAILED]: {
       handler: async (event: DomainEvent): Promise<void> => {
-        const { workspaceName, error } = (event as WorkspaceCreateFailedEvent).payload;
+        const { workspaceName, error, source } = (event as WorkspaceCreateFailedEvent).payload;
+        if (source === "mcp") return;
         const handle = deps.notificationManager.open({
           type: "error",
           title: `Failed to create "${workspaceName}"`,
