@@ -8,10 +8,11 @@
  * A source needs both a template-path and source.isConfigured() to be active.
  *
  * Hooks:
- * - app:start -> "start": initialize active sources, load state, run initial poll, start timer
+ * - app:start -> "start": read template paths from config
  * - app:shutdown -> "stop": clear poll timer, dispose sources
  *
  * Events:
+ * - app:started: initialize active sources, load state, run initial poll, start timer
  * - workspace:deleted: clean up state entry
  * - workspace:delete-failed: clear tracking metadata, set red tag
  */
@@ -20,6 +21,7 @@ import type { IntentModule } from "../../intents/lib/module";
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type { DomainEvent } from "../../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { INTENT_OPEN_WORKSPACE, type OpenWorkspaceIntent } from "../../intents/open-workspace";
 import {
@@ -533,8 +535,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
               const tplValue = deps.configService.get(tplKey) as string | null;
               templatePaths.set(source.name, tplValue);
             }
-
-            await activateAll();
           },
         },
       },
@@ -547,6 +547,11 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       },
     },
     events: {
+      [EVENT_APP_STARTED]: {
+        handler: async (): Promise<void> => {
+          await activateAll();
+        },
+      },
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
