@@ -18,6 +18,7 @@ import {
   INTENT_APP_START,
   type AppStartIntent,
 } from "../../intents/app-start";
+import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -86,6 +87,8 @@ class MinimalActivateOperation implements Operation<AppStartIntent, void> {
     const hookCtx: HookContext = { intent: ctx.intent };
     const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
     if (errors.length > 0) throw errors[0]!;
+    // Simulate app:ready emitting app:started after projects are loaded
+    await ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
   }
 }
 
