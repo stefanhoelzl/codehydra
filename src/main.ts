@@ -475,6 +475,8 @@ const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
   fs: fileSystemLayer,
   gitWorktreeProvider,
+  dialogManager,
+  gitClient,
 });
 const remoteProjectModule = createRemoteProjectModule({
   fs: fileSystemLayer,
