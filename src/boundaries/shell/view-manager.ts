@@ -204,6 +204,17 @@ export class ViewManager implements IViewManager {
       },
     });
 
+    // Open external URLs from the UI view in the system browser
+    viewLayer.setWindowOpenHandler(this.uiViewHandle, (details: WindowOpenDetails) => {
+      this.appLayer.openUrl(details.url).catch((error: unknown) => {
+        this.logger.warn("Failed to open external URL from UI", {
+          url: details.url,
+          error: getErrorMessage(error),
+        });
+      });
+      return { action: "deny" };
+    });
+
     // Set transparent background for UI layer
     viewLayer.setBackgroundColor(this.uiViewHandle, "#00000000");
 
