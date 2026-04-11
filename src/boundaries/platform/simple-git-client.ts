@@ -481,6 +481,17 @@ export class SimpleGitClient implements IGitClient {
     }, "Failed to check if repository is bare");
   }
 
+  async init(targetPath: Path, options?: { initialCommit?: string }): Promise<void> {
+    await this.wrapGitOperation(async () => {
+      const git = this.getGit(targetPath);
+      await git.init();
+      if (options?.initialCommit) {
+        await git.commit(options.initialCommit, { "--allow-empty": null });
+      }
+    }, `Failed to initialize repository at ${targetPath.toString()}`);
+    this.logger.debug("Init", { path: targetPath.toString() });
+  }
+
   async countUnmergedCommits(repoPath: Path, branch: string, base: string): Promise<number> {
     return this.wrapGitOperation(async () => {
       const git = this.getGit(repoPath);

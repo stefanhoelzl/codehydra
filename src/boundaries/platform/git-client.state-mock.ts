@@ -670,6 +670,24 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       const repo = getRepoOrThrow(repoPath);
       return repo.isBare;
     },
+
+    async init(targetPath: Path, options?: { initialCommit?: string }): Promise<void> {
+      const normalizedTarget = normalizePath(targetPath);
+      if (state.repositories.has(normalizedTarget)) {
+        throw new GitError(`Repository already exists: ${normalizedTarget}`);
+      }
+      const hasCommit = !!options?.initialCommit;
+      (state as GitClientMockStateImpl).addRepository(normalizedTarget, {
+        branches: hasCommit ? new Set(["main"]) : new Set(),
+        remoteBranches: new Set(),
+        remotes: new Set(),
+        worktrees: new Map(),
+        branchConfigs: new Map(),
+        mainIsDirty: false,
+        currentBranch: hasCommit ? "main" : null,
+        isBare: false,
+      });
+    },
   };
 
   return Object.assign(client, { $: state });

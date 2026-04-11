@@ -36,6 +36,7 @@ import {
 import type {
   OpenProjectIntent,
   SelectFolderHookResult,
+  PrepareHookResult,
   ResolveHookResult,
   DiscoverHookResult,
   RegisterHookInput,
@@ -1206,5 +1207,61 @@ describe("OpenProjectOperation", () => {
     expect(event.payload.project.id).toBe(PROJECT_ID);
     expect(event.payload.path).toEqual(new Path(PROJECT_PATH));
     expect(event.payload.git).toBeUndefined();
+  });
+
+  it("returns null when prepare hook cancels", async () => {
+    const harness = createTestHarness();
+
+    // Register a prepare module that cancels
+    const prepareModule: IntentModule = {
+      name: "test",
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          prepare: {
+            handler: async (): Promise<PrepareHookResult> => {
+              return { canceled: true };
+            },
+          },
+        },
+      },
+    };
+    harness.dispatcher.registerModule(prepareModule);
+
+    const result = await harness.dispatcher.dispatch(
+      buildOpenIntent({ path: new Path(PROJECT_PATH) })
+    );
+
+    expect(result).toBeNull();
+
+    // No project registered
+    expect(harness.projectState.registeredProjects).toHaveLength(0);
+  });
+
+  it("skips prepare hook for git URL intents", async () => {
+    const harness = createTestHarness();
+
+    // Register a prepare module that would cancel if called
+    const prepareSpy = vi.fn().mockResolvedValue({ canceled: true });
+    const prepareModule: IntentModule = {
+      name: "test",
+      hooks: {
+        [OPEN_PROJECT_OPERATION_ID]: {
+          prepare: {
+            handler: prepareSpy,
+          },
+        },
+      },
+    };
+    harness.dispatcher.registerModule(prepareModule);
+
+    const result = await harness.dispatcher.dispatch(
+      buildOpenIntent({ git: "https://github.com/org/repo.git" })
+    );
+
+    // prepare should not have been called (git URL bypasses prepare)
+    expect(prepareSpy).not.toHaveBeenCalled();
+
+    // Project should have been created successfully
+    expect(result).toBeDefined();
   });
 });

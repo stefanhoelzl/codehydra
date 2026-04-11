@@ -203,6 +203,16 @@ export interface IGitClient {
   isBare(repoPath: Path): Promise<boolean>;
 
   /**
+   * Initialize a new git repository at the given path.
+   * @param targetPath Absolute path to the directory to initialize
+   * @param options Optional configuration
+   * @param options.initialCommit If provided, creates an empty initial commit with this message
+   * @returns Promise resolving when the repository is initialized
+   * @throws GitError if initialization fails
+   */
+  init(targetPath: Path, options?: { initialCommit?: string }): Promise<void>;
+
+  /**
    * Count commits on a branch whose patch content has not been merged into a base ref.
    * Uses `git rev-list --count --cherry-pick --right-only <base>...<branch>` to detect
    * squash-merged and rebase-merged commits by comparing patch-ids.

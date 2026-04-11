@@ -83,6 +83,15 @@
     setDialogOpen(isDialogOpen);
   });
 
+  // Close renderer-side dialog when a modal framework dialog opens
+  // (framework dialogs have lower z-index and would be hidden otherwise)
+  $effect(() => {
+    const hasModalFrameworkDialog = [...dialogs.value.values()].some((entry) => entry.config.modal);
+    if (hasModalFrameworkDialog && dialogState.value.type !== "closed") {
+      closeDialog();
+    }
+  });
+
   // Sync desiredMode with main process (single IPC sync point)
   // Note: desiredMode.value is accessed to establish reactive dependency,
   // then syncMode() reads it internally and sends to main process
@@ -133,14 +142,17 @@
     // Check all conditions
     // Show Create Workspace dialog when no effective workspaces exist (even if no projects)
     // Suppress when a background operation is running — don't interrupt with the dialog
+    // Suppress when a framework dialog is open (e.g., git init confirmation)
     const cloneRunning = hasSpinnerNotifications.value;
+    const hasFrameworkDialog = dialogs.value.size > 0;
     const firstProject = projectList[0];
     if (
       effectiveCount === 0 &&
       loading === "loaded" &&
       dialog.type === "closed" &&
       !autoShowDismissed &&
-      !cloneRunning
+      !cloneRunning &&
+      !hasFrameworkDialog
     ) {
       // Debounce to avoid showing during rapid state changes
       autoShowTimeout = setTimeout(() => {

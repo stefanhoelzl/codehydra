@@ -28,10 +28,13 @@ import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-pr
 import {
   OPEN_PROJECT_OPERATION_ID,
   type OpenProjectIntent,
+  type PrepareHookResult,
   type ResolveHookResult,
   type RegisterHookInput,
   type RegisterHookResult,
 } from "../intents/open-project";
+import type { DialogManager } from "./dialog-manager";
+import type { IGitClient } from "../boundaries/platform/git-client";
 import {
   CLOSE_PROJECT_OPERATION_ID,
   type CloseProjectIntent,
@@ -75,6 +78,8 @@ export interface LocalProjectModuleDeps {
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm" | "rename"
   >;
   readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
+  readonly dialogManager: DialogManager;
+  readonly gitClient: Pick<IGitClient, "isRepositoryRoot" | "init">;
 }
 
 // =============================================================================
@@ -290,7 +295,7 @@ async function removeProject(
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
-  const { projectsDir, fs, gitWorktreeProvider } = deps;
+  const { projectsDir, fs, gitWorktreeProvider, dialogManager, gitClient } = deps;
 
   /** Internal state: all projects keyed by normalized path string. */
   const projects = new Map<string, LocalProject>();
@@ -312,6 +317,53 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       },
 
       [OPEN_PROJECT_OPERATION_ID]: {
+        // prepare: offer git init for non-git directories
+        prepare: {
+          handler: async (ctx: HookContext): Promise<PrepareHookResult> => {
+            const intent = ctx.intent as OpenProjectIntent;
+            const { path, git } = intent.payload;
+
+            // Self-select: only handle local paths
+            if (git || !path) return {};
+
+            // Already open — skip
+            if (projects.has(path.toString())) return {};
+
+            // Check if it's already a git repo
+            let isRepo: boolean;
+            try {
+              isRepo = await gitClient.isRepositoryRoot(path);
+            } catch {
+              // Path doesn't exist or inaccessible — let resolve handle the error
+              return {};
+            }
+            if (isRepo) return {};
+
+            // Not a git repo — ask user
+            const dialog = dialogManager.open({
+              sections: [
+                { type: "text", content: "Initialize Git Repository?", style: "heading" },
+                { type: "text", content: path.toString(), style: "subtitle" },
+              ],
+              actions: [
+                { id: "init", label: "Initialize" },
+                { id: "cancel", label: "Cancel", variant: "secondary" },
+              ],
+              modal: true,
+            });
+
+            const event = await dialog.nextEvent();
+            dialog.close();
+
+            if (event.actionId !== "init") {
+              return { canceled: true };
+            }
+
+            await gitClient.init(path, { initialCommit: "Initial commit" });
+            return {};
+          },
+        },
+
         // resolve: validate .git exists for local paths
         resolve: {
           handler: async (ctx: HookContext): Promise<ResolveHookResult> => {

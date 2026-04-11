@@ -92,6 +92,12 @@ export interface SelectFolderHookResult {
   readonly folderPath: string | null;
 }
 
+/** Result returned by handlers on the "prepare" hook point. */
+export interface PrepareHookResult {
+  /** If true, user canceled — abort the open operation. */
+  readonly canceled?: boolean;
+}
+
 /** Result returned by handlers on the "resolve" hook point. */
 export interface ResolveHookResult {
   /** Optional when using collect() — handler may skip via self-selection. */
@@ -193,6 +199,23 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
         ...intent,
         payload: { ...intent.payload, path: new Path(folderPath) },
       };
+    }
+
+    // 0.5. Prepare: give modules a chance to prepare the directory (e.g., git init)
+    // Only runs for local paths, not git URLs
+    if (effectiveIntent.payload.path && !effectiveIntent.payload.git) {
+      const prepareCtx: HookContext = { intent: effectiveIntent };
+      const { results: prepareResults, errors: prepareErrors } =
+        await ctx.hooks.collect<PrepareHookResult>("prepare", prepareCtx);
+      if (prepareErrors.length === 1) {
+        throw prepareErrors[0]!;
+      }
+      if (prepareErrors.length > 1) {
+        throw new AggregateError(prepareErrors, "project:open prepare hooks failed");
+      }
+      for (const r of prepareResults) {
+        if (r.canceled) return null;
+      }
     }
 
     try {

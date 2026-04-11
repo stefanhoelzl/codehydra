@@ -31,6 +31,7 @@ import { createLocalProjectModule, type LocalProjectModuleDeps } from "./local-p
 import {
   OPEN_PROJECT_OPERATION_ID,
   INTENT_OPEN_PROJECT,
+  type PrepareHookResult,
   type ResolveHookResult,
   type RegisterHookResult,
   type RegisterHookInput,
@@ -67,10 +68,86 @@ const PROJECTS_DIR = "/test/app-data/projects";
 // Mock Factories
 // =============================================================================
 
+interface MockDialogHandle {
+  id: string;
+  config: unknown;
+  closed: boolean;
+  eventListeners: Array<(event: { dialogId: string; actionId: string }) => void>;
+  close(): void;
+  nextEvent(): Promise<{ dialogId: string; actionId: string }>;
+  onEvent(handler: (event: { dialogId: string; actionId: string }) => void): () => void;
+  emitEvent(event: { dialogId: string; actionId: string }): void;
+  readonly closed_promise: Promise<void>;
+}
+
+function createMockDialogManager(): {
+  dialogManager: LocalProjectModuleDeps["dialogManager"];
+  handles: MockDialogHandle[];
+  lastHandle: MockDialogHandle | null;
+} {
+  const handles: MockDialogHandle[] = [];
+  const state = { lastHandle: null as MockDialogHandle | null };
+
+  const dialogManager = {
+    open: vi.fn().mockImplementation((config: unknown) => {
+      const listeners: Array<(event: { dialogId: string; actionId: string }) => void> = [];
+      let resolveClosed: () => void;
+      const closedPromise = new Promise<void>((resolve) => {
+        resolveClosed = resolve;
+      });
+
+      const handle: MockDialogHandle = {
+        id: `dlg-${handles.length + 1}`,
+        config,
+        closed: false,
+        eventListeners: listeners,
+        close() {
+          this.closed = true;
+          resolveClosed();
+        },
+        nextEvent() {
+          return new Promise((resolve) => {
+            listeners.push((event) => resolve(event));
+          });
+        },
+        onEvent(handler: (event: { dialogId: string; actionId: string }) => void) {
+          listeners.push(handler);
+          return () => {
+            const idx = listeners.indexOf(handler);
+            if (idx >= 0) listeners.splice(idx, 1);
+          };
+        },
+        emitEvent(event: { dialogId: string; actionId: string }) {
+          for (const listener of [...listeners]) {
+            listener(event);
+          }
+        },
+        get closed_promise() {
+          return closedPromise;
+        },
+      };
+      handles.push(handle);
+      state.lastHandle = handle;
+      return handle;
+    }),
+    routeEvent() {},
+  } as unknown as LocalProjectModuleDeps["dialogManager"];
+
+  return {
+    dialogManager,
+    handles,
+    get lastHandle() {
+      return state.lastHandle;
+    },
+  };
+}
+
 function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): {
   deps: LocalProjectModuleDeps;
   fs: ReturnType<typeof createFileSystemMock>;
   gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
+  dialogManager: ReturnType<typeof createMockDialogManager>;
+  gitClient: LocalProjectModuleDeps["gitClient"];
 } {
   const fs = createFileSystemMock({
     entries: {
@@ -83,14 +160,25 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
     validateRepository: vi.fn().mockResolvedValue(undefined),
   };
 
+  const dialog = createMockDialogManager();
+
+  const gitClient = {
+    isRepositoryRoot: vi.fn().mockResolvedValue(true),
+    init: vi.fn().mockResolvedValue(undefined),
+  };
+
   return {
     deps: {
       projectsDir: PROJECTS_DIR,
       fs,
       gitWorktreeProvider,
+      dialogManager: dialog.dialogManager,
+      gitClient,
     },
     fs,
     gitWorktreeProvider,
+    dialogManager: dialog,
+    gitClient,
   };
 }
 
@@ -127,10 +215,12 @@ interface TestSetup {
   readyHooks: ResolvedHooks;
   fs: ReturnType<typeof createFileSystemMock>;
   gitWorktreeProvider: LocalProjectModuleDeps["gitWorktreeProvider"];
+  dialogManager: ReturnType<typeof createMockDialogManager>;
+  gitClient: LocalProjectModuleDeps["gitClient"];
 }
 
 function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): TestSetup {
-  const { deps, fs, gitWorktreeProvider } = createMockDeps(fsOverrides);
+  const { deps, fs, gitWorktreeProvider, dialogManager, gitClient } = createMockDeps(fsOverrides);
 
   const module = createLocalProjectModule(deps);
 
@@ -140,6 +230,8 @@ function createTestSetup(fsOverrides?: Parameters<typeof createFileSystemMock>[0
     readyHooks: resolveHooksFromModule(module, APP_READY_OPERATION_ID),
     fs,
     gitWorktreeProvider,
+    dialogManager,
+    gitClient,
   };
 }
 
@@ -656,6 +748,125 @@ describe("LocalProjectModule Integration", () => {
       expect(results).toHaveLength(1);
       // Local project config has no remoteUrl, so result is empty
       expect(results[0]).toEqual({});
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // project:open → prepare
+  // ---------------------------------------------------------------------------
+
+  describe("project:open prepare", () => {
+    it("skips for git URL payloads", async () => {
+      const { openHooks, gitClient } = createTestSetup();
+
+      const { results, errors } = await openHooks.collect<PrepareHookResult>("prepare", {
+        intent: openGitIntent("https://github.com/user/repo.git"),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({});
+      expect(gitClient.isRepositoryRoot).not.toHaveBeenCalled();
+    });
+
+    it("skips when directory is already a git repo", async () => {
+      const { openHooks, dialogManager, gitClient } = createTestSetup();
+      vi.mocked(gitClient.isRepositoryRoot).mockResolvedValue(true);
+
+      const { results, errors } = await openHooks.collect<PrepareHookResult>("prepare", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({});
+      expect(dialogManager.dialogManager.open).not.toHaveBeenCalled();
+    });
+
+    it("skips when project is already open", async () => {
+      const setup = createTestSetup();
+
+      // Register project first so it's in internal state
+      const registerCtx: RegisterHookInput = {
+        intent: openLocalIntent(PROJECT_PATH),
+        projectPath: new Path(PROJECT_PATH).toString(),
+      };
+      await setup.openHooks.collect<RegisterHookResult>("register", registerCtx);
+
+      const { results, errors } = await setup.openHooks.collect<PrepareHookResult>("prepare", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({});
+      expect(setup.gitClient.isRepositoryRoot).not.toHaveBeenCalled();
+    });
+
+    it("shows dialog and inits repo when user confirms", async () => {
+      const { openHooks, dialogManager, gitClient } = createTestSetup();
+      vi.mocked(gitClient.isRepositoryRoot).mockResolvedValue(false);
+
+      // Start the prepare hook (will block on dialog.nextEvent())
+      const preparePromise = openHooks.collect<PrepareHookResult>("prepare", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      // Simulate user clicking "Initialize"
+      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
+      dialogManager.lastHandle!.emitEvent({
+        dialogId: dialogManager.lastHandle!.id,
+        actionId: "init",
+      });
+
+      const { results, errors } = await preparePromise;
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({});
+      expect(gitClient.init).toHaveBeenCalledWith(new Path(PROJECT_PATH), {
+        initialCommit: "Initial commit",
+      });
+      expect(dialogManager.lastHandle!.closed).toBe(true);
+    });
+
+    it("returns canceled when user clicks cancel", async () => {
+      const { openHooks, dialogManager, gitClient } = createTestSetup();
+      vi.mocked(gitClient.isRepositoryRoot).mockResolvedValue(false);
+
+      // Start the prepare hook (will block on dialog.nextEvent())
+      const preparePromise = openHooks.collect<PrepareHookResult>("prepare", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      // Simulate user clicking "Cancel"
+      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
+      dialogManager.lastHandle!.emitEvent({
+        dialogId: dialogManager.lastHandle!.id,
+        actionId: "cancel",
+      });
+
+      const { results, errors } = await preparePromise;
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({ canceled: true });
+      expect(gitClient.init).not.toHaveBeenCalled();
+      expect(dialogManager.lastHandle!.closed).toBe(true);
+    });
+
+    it("lets resolve handle the error when isRepositoryRoot throws", async () => {
+      const { openHooks, dialogManager, gitClient } = createTestSetup();
+      vi.mocked(gitClient.isRepositoryRoot).mockRejectedValue(new Error("Path not found"));
+
+      const { results, errors } = await openHooks.collect<PrepareHookResult>("prepare", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({});
+      expect(dialogManager.dialogManager.open).not.toHaveBeenCalled();
     });
   });
 });
