@@ -5,6 +5,7 @@
   import { openCreateDialog, closeDialog } from "$lib/stores/dialogs.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
+  import { extractGitHubOwnerRepo, buildGitHubNewRepoUrl } from "@shared/github-utils";
 
   const logger = createLogger("ui");
 
@@ -48,6 +49,9 @@
   // Clone button disabled state
   const isCloneDisabled = $derived(!url.trim() || urlValidationError() !== null || isCloning);
 
+  // GitHub-specific error state: non-null when clone failed and URL is a GitHub repo
+  const gitHubInfo = $derived(submitError ? extractGitHubOwnerRepo(url.trim()) : null);
+
   // Handle form submission
   function handleSubmit(): void {
     if (isCloning || isCloneDisabled) return;
@@ -86,6 +90,20 @@
     logger.debug("Clone continuing in background", { url: cloneUrl });
     cloneUrl = null;
     closeDialog();
+  }
+
+  // Open GitHub new repo page with pre-filled owner and name
+  function handleCreateOnGitHub(): void {
+    if (!gitHubInfo) return;
+    const createUrl = buildGitHubNewRepoUrl(gitHubInfo.owner, gitHubInfo.repo);
+    logger.info("Opening GitHub repo creation", { url: createUrl });
+    window.open(createUrl);
+  }
+
+  // Retry clone after creating repo on GitHub
+  function handleRetryClone(): void {
+    submitError = null;
+    handleSubmit();
   }
 
   // Handle cancel (only available when not cloning)
@@ -148,7 +166,24 @@
       {/if}
     </div>
 
-    {#if submitError}
+    {#if submitError && gitHubInfo}
+      <div class="github-create-box" role="alert">
+        <p class="github-create-message">
+          {gitHubInfo.owner}/{gitHubInfo.repo} not found on GitHub.
+        </p>
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <vscode-button onclick={handleCreateOnGitHub}>
+          <Icon name="github" />
+          Create on GitHub
+        </vscode-button>
+        <div class="ch-alert-box">
+          <span class="ch-alert-box-icon" aria-hidden="true">
+            <Icon name="warning" />
+          </span>
+          <span>Initialize with a README to enable cloning.</span>
+        </div>
+      </div>
+    {:else if submitError}
       <div class="ch-alert-box" role="alert">
         <span class="ch-alert-box-icon" aria-hidden="true">
           <Icon name="error" />
@@ -164,6 +199,9 @@
       <vscode-button onclick={handleContinueInBackground} class="clone-button">
         <span id={descriptionId}>Continue in background</span>
       </vscode-button>
+    {:else if gitHubInfo}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <vscode-button onclick={handleRetryClone} class="clone-button"> Retry Clone </vscode-button>
     {:else}
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <vscode-button onclick={handleSubmit} disabled={isCloneDisabled} class="clone-button">
@@ -187,5 +225,17 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .github-create-box {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .github-create-message {
+    margin: 0;
+    color: var(--ch-foreground);
   }
 </style>

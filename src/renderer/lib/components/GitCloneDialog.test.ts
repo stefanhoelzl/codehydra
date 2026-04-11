@@ -313,8 +313,11 @@ describe("GitCloneDialog component", () => {
       render(GitCloneDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
+      // Use non-GitHub URL to test generic error path
       const input = getUrlInput();
-      await fireEvent.input(input, { target: { value: testUrl } });
+      await fireEvent.input(input, {
+        target: { value: "https://gitlab.com/org/test-repo.git" },
+      });
 
       const cloneButton = screen.getByRole("button", { name: /clone/i });
       await fireEvent.click(cloneButton);
@@ -460,6 +463,146 @@ describe("GitCloneDialog component", () => {
       await vi.runAllTimersAsync();
 
       expect(mockCloneProject).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("GitHub repo creation", () => {
+    const githubUrl = "https://github.com/org/new-repo.git";
+    const nonGithubUrl = "https://gitlab.com/org/repo.git";
+    const shorthandUrl = "org/new-repo";
+
+    it("shows GitHub-specific error for GitHub URL clone failure", async () => {
+      mockCloneProject.mockRejectedValue(new Error("Repository not found"));
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: githubUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      await vi.runAllTimersAsync();
+
+      expect(screen.getByText(/org\/new-repo not found on GitHub/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /create on github/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /retry clone/i })).toBeInTheDocument();
+      expect(screen.getByText(/initialize with a readme/i)).toBeInTheDocument();
+    });
+
+    it("shows GitHub-specific error for shorthand URL clone failure", async () => {
+      mockCloneProject.mockRejectedValue(new Error("Repository not found"));
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: shorthandUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      await vi.runAllTimersAsync();
+
+      expect(screen.getByText(/org\/new-repo not found on GitHub/)).toBeInTheDocument();
+    });
+
+    it("shows generic error for non-GitHub URL clone failure", async () => {
+      mockCloneProject.mockRejectedValue(new Error("Repository not found"));
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: nonGithubUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      await vi.runAllTimersAsync();
+
+      // Should show generic error, not GitHub-specific
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.getByText(/repository not found/i)).toBeInTheDocument();
+      expect(screen.queryByText(/not found on GitHub/)).not.toBeInTheDocument();
+    });
+
+    it('"Create on GitHub" opens browser with pre-filled URL', async () => {
+      mockCloneProject.mockRejectedValue(new Error("Repository not found"));
+      const mockWindowOpen = vi.spyOn(window, "open").mockImplementation(() => null);
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: githubUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      await vi.runAllTimersAsync();
+
+      const createButton = screen.getByRole("button", { name: /create on github/i });
+      await fireEvent.click(createButton);
+
+      expect(mockWindowOpen).toHaveBeenCalledWith(
+        expect.stringContaining("https://github.com/new?")
+      );
+      expect(mockWindowOpen).toHaveBeenCalledWith(expect.stringContaining("owner=org"));
+      expect(mockWindowOpen).toHaveBeenCalledWith(expect.stringContaining("name=new-repo"));
+
+      mockWindowOpen.mockRestore();
+    });
+
+    it('"Retry Clone" retries the clone', async () => {
+      mockCloneProject.mockRejectedValueOnce(new Error("Repository not found"));
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: githubUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      await vi.runAllTimersAsync();
+
+      // Now resolve successfully on retry
+      mockCloneProject.mockResolvedValue(createProject(testProjectId));
+
+      const retryButton = screen.getByRole("button", { name: /retry clone/i });
+      await fireEvent.click(retryButton);
+
+      await vi.runAllTimersAsync();
+
+      expect(mockCloneProject).toHaveBeenCalledTimes(2);
+      expect(mockCloneProject).toHaveBeenLastCalledWith(githubUrl);
+    });
+
+    it("clears GitHub error state when user types", async () => {
+      mockCloneProject.mockRejectedValue(new Error("Repository not found"));
+
+      render(GitCloneDialog, { props: defaultProps });
+      await vi.runAllTimersAsync();
+
+      const input = getUrlInput();
+      await fireEvent.input(input, { target: { value: githubUrl } });
+
+      const cloneButton = screen.getByRole("button", { name: /clone/i });
+      await fireEvent.click(cloneButton);
+
+      await vi.runAllTimersAsync();
+
+      // GitHub error should be shown
+      expect(screen.getByText(/not found on GitHub/)).toBeInTheDocument();
+
+      // Type in the input
+      await fireEvent.input(input, { target: { value: "https://github.com/org/other.git" } });
+
+      // GitHub error should be cleared
+      expect(screen.queryByText(/not found on GitHub/)).not.toBeInTheDocument();
     });
   });
 
