@@ -69,8 +69,11 @@ import {
 import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { EVENT_APP_RESUMED } from "../intents/app-resume";
-import type { AppResumedEvent } from "../intents/app-resume";
+import {
+  APP_RESUME_OPERATION_ID,
+  APP_RESUME_HOOK_RESUME,
+  INTENT_APP_RESUME,
+} from "../intents/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import type { Config } from "../boundaries/platform/config";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
@@ -1211,17 +1214,19 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // app:resumed event
+  // app:resume hook
   // -------------------------------------------------------------------------
-  describe("app:resumed event", () => {
-    const resumedEvent: AppResumedEvent = { type: EVENT_APP_RESUMED, payload: {} };
+  describe("app:resume resume hook", () => {
+    const hookCtx = {
+      intent: { type: INTENT_APP_RESUME, payload: {} },
+    };
 
     it("calls reloadAllViews when experimental.load-on-resume is true", async () => {
       const { viewManager, module } = createTestSetup(undefined, {
         configValues: { "experimental.load-on-resume": true },
       });
 
-      await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
+      await module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!.handler(hookCtx);
 
       expect(viewManager.reloadAllViews).toHaveBeenCalledOnce();
     });
@@ -1229,7 +1234,7 @@ describe("ViewModule Integration", () => {
     it("does NOT call reloadAllViews when config is false (default)", async () => {
       const { viewManager, module } = createTestSetup();
 
-      await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
+      await module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!.handler(hookCtx);
 
       expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
     });
@@ -1239,9 +1244,16 @@ describe("ViewModule Integration", () => {
         configValues: { "experimental.load-on-resume": false },
       });
 
-      await module.events![EVENT_APP_RESUMED]!.handler(resumedEvent);
+      await module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!.handler(hookCtx);
 
       expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
+    });
+
+    it("declares requires: { codeServerReady: ANY_VALUE }", () => {
+      const { module } = createTestSetup();
+      const hook = module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!;
+      expect(hook.requires).toBeDefined();
+      expect(hook.requires).toHaveProperty("codeServerReady");
     });
   });
 });

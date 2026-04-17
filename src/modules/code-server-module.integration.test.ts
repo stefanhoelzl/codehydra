@@ -19,6 +19,13 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import {
+  AppResumeOperation,
+  INTENT_APP_RESUME,
+  EVENT_APP_RESUMED,
+  EVENT_APP_RESUME_FAILED,
+} from "../intents/app-resume";
+import type { DomainEvent } from "../intents/lib/types";
 import { SETUP_OPERATION_ID } from "../intents/setup";
 import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
@@ -1165,6 +1172,126 @@ describe("CodeServerModule", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // app-resume: probe + restart
+  // ---------------------------------------------------------------------------
+
+  describe("app-resume probe + restart", () => {
+    async function startCodeServer(
+      deps: CodeServerModuleDeps
+    ): Promise<{ dispatcher: ReturnType<typeof createTestSetup>["dispatcher"] }> {
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+      return { dispatcher };
+    }
+
+    it("passes through without restart when /healthz succeeds", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = await startCodeServer(deps);
+
+      const initialRunCount = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls
+        .length;
+
+      await dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
+
+      // No additional process spawned (no restart)
+      expect(deps.processRunner.run).toHaveBeenCalledTimes(initialRunCount);
+    });
+
+    it("restarts code-server when probe fails (unhealthy response)", async () => {
+      vi.useFakeTimers();
+
+      try {
+        const deps = createMockDeps();
+        const { dispatcher } = await startCodeServer(deps);
+
+        const initialProcess = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.results[0]!
+          .value as SpawnedProcess;
+
+        // Flip /healthz to 503 for the probe, then back to 200 for the restart
+        const fetch = deps.httpClient.fetch as ReturnType<typeof vi.fn>;
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValueOnce({ status: 503 });
+        fetch.mockResolvedValue({ status: 200 });
+
+        const resumePromise = dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
+
+        // Drive the 5s probe timeout + any intervals
+        await vi.advanceTimersByTimeAsync(6000);
+        await resumePromise;
+
+        // Old process killed, new process spawned
+        expect(initialProcess.kill).toHaveBeenCalled();
+        expect(deps.processRunner.run).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("emits app:resume-failed and blocks codeServerReady when restart fails", async () => {
+      vi.useFakeTimers();
+
+      try {
+        const deps = createMockDeps();
+        const { dispatcher } = await startCodeServer(deps);
+
+        // Force probe to keep returning unhealthy
+        (deps.httpClient.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 503 });
+        // Force restart failure: next isPortAvailable returns false
+        (deps.portManager.isPortAvailable as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+        const failureEvents: DomainEvent[] = [];
+        dispatcher.subscribe(EVENT_APP_RESUME_FAILED, (e) => failureEvents.push(e));
+
+        const resumePromise = dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
+        await vi.advanceTimersByTimeAsync(6000);
+        await resumePromise;
+
+        expect(failureEvents).toHaveLength(1);
+        const payload = failureEvents[0]!.payload as { error: string };
+        expect(payload.error).toContain("already in use");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("provides codeServerReady capability and emits app:resumed when healthy", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = await startCodeServer(deps);
+
+      const resumedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_APP_RESUMED, (e) => resumedEvents.push(e));
+
+      await dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
+
+      expect(resumedEvents).toHaveLength(1);
+    });
+
+    it("skips probe when code-server was never started", async () => {
+      const deps = createMockDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
+
+      const fetchMock = deps.httpClient.fetch as ReturnType<typeof vi.fn>;
+      fetchMock.mockClear();
+
+      await dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
+
+      // No /healthz called — currentPort is null
+      expect(fetchMock).not.toHaveBeenCalled();
     });
   });
 });

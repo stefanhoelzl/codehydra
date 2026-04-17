@@ -69,7 +69,7 @@ import type { AppStartIntent } from "./intents/app-start";
 import { AppReadyOperation, INTENT_APP_READY } from "./intents/app-ready";
 // ConfigSetValuesOperation removed — config is now a plain service
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/app-shutdown";
-import { AppResumeOperation, INTENT_APP_RESUME } from "./intents/app-resume";
+import { AppResumeOperation, INTENT_APP_RESUME, EVENT_APP_RESUMED } from "./intents/app-resume";
 import type { AppShutdownIntent } from "./intents/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/setup";
 import { SetModeOperation, INTENT_SET_MODE } from "./intents/set-mode";
@@ -331,6 +331,7 @@ const viewManager = new ViewManager({
 const idempotencyModule = createIdempotencyModule([
   { intentType: INTENT_APP_SHUTDOWN },
   { intentType: INTENT_APP_READY },
+  { intentType: INTENT_APP_RESUME, resetOn: EVENT_APP_RESUMED },
   { intentType: INTENT_SETUP, resetOn: EVENT_SETUP_ERROR },
   {
     intentType: INTENT_DELETE_WORKSPACE,
