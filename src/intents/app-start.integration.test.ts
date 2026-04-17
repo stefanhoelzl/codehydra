@@ -62,6 +62,7 @@ function createMockConfig(agent: ConfigAgentType | null = "opencode"): Config {
     set: async () => {},
     getDefinitions: () => new Map(),
     getEffective: () => ({}),
+    getDefaults: () => ({}),
     getHelpText: () => "",
   };
 }

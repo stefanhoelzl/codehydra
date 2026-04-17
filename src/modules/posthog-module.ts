@@ -106,6 +106,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
     name: "telemetry.distinct-id",
     default: null,
     description: "Telemetry user ID (auto-generated)",
+    sensitive: true,
     ...configString({ nullable: true }),
   });
 

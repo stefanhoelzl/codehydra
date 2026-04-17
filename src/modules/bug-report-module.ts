@@ -17,9 +17,11 @@ import type { IDispatcher } from "../intents/lib/dispatcher";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logging, Logger } from "../boundaries/platform/logging";
+import type { Config } from "../boundaries/platform/config";
 import type { DialogConfig } from "../shared/dialog-types";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { INTENT_SUBMIT_BUG_REPORT, type SubmitBugReportIntent } from "../intents/submit-bug-report";
+import { buildConfigBlock } from "./bug-report-config-block";
 
 /** Maximum log content to send via PostHog (~1MB). */
 const MAX_LOG_SIZE = 1_000_000;
@@ -29,10 +31,11 @@ export interface BugReportModuleDeps {
   readonly fileSystem: Pick<FileSystemBoundary, "readFile">;
   readonly loggingService: Pick<Logging, "getLogFilePath">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
+  readonly config: Pick<Config, "getDefinitions" | "getEffective" | "getDefaults">;
   readonly logger: Logger;
 }
 
-function buildDialogConfig(): DialogConfig {
+function buildDialogConfig(initial: { value: string; cursorOffset: number }): DialogConfig {
   return {
     sections: [
       { type: "text", content: "Report a Bug", style: "heading", icon: "bug" },
@@ -41,6 +44,14 @@ function buildDialogConfig(): DialogConfig {
         id: "description",
         placeholder: "Describe the issue...",
         multiline: true,
+        initialValue: initial.value,
+        cursorOffset: initial.cursorOffset,
+      },
+      {
+        type: "text",
+        content:
+          "Your non-default config is included below — review for sensitive values before sending.",
+        style: "subtitle",
       },
       {
         type: "text",
@@ -76,7 +87,8 @@ export function createBugReportModule(deps: BugReportModuleDeps): IntentModule {
   function openDialog(): void {
     if (activeHandle) return;
 
-    const handle = deps.dialogManager.open(buildDialogConfig());
+    const initial = buildConfigBlock(deps.config);
+    const handle = deps.dialogManager.open(buildDialogConfig(initial));
     activeHandle = handle;
 
     handle.onEvent((event) => {

@@ -37,6 +37,8 @@ export interface ConfigKeyDefinition<T> {
   readonly description?: string;
   /** Valid values hint for help text (e.g. "true|false", "claude|opencode"). */
   readonly validValues?: string;
+  /** When true, the value is redacted in contexts like bug reports. */
+  readonly sensitive?: boolean;
 }
 
 /**

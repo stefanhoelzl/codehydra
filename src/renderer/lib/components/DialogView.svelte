@@ -49,6 +49,25 @@
     selectionState = newState;
   });
 
+  // Seed input state from initialValue on first sight of each input id.
+  // Existing edits are preserved; re-seeds would overwrite user content.
+  $effect(() => {
+    const seeded: Record<string, string> = {};
+    let changed = false;
+    for (const section of config.sections) {
+      if (section.type !== "input") continue;
+      const existing = untrack(() => inputState[section.id]);
+      if (existing !== undefined) continue;
+      if (section.initialValue !== undefined) {
+        seeded[section.id] = section.initialValue;
+        changed = true;
+      }
+    }
+    if (changed) {
+      inputState = { ...untrack(() => inputState), ...seeded };
+    }
+  });
+
   // Auto-focus the selected card on mount (for keyboard navigation)
   onMount(() => {
     setTimeout(() => {
@@ -56,6 +75,19 @@
       selected?.focus();
     }, 0);
   });
+
+  /** Place the caret at `cursorOffset` and focus, once, after the textarea seeds itself. */
+  function seedCursor(
+    node: HTMLTextAreaElement,
+    params: { initialValue: string | undefined; cursorOffset: number | undefined }
+  ): void {
+    if (params.initialValue === undefined || params.cursorOffset === undefined) return;
+    const offset = Math.max(0, Math.min(params.cursorOffset, params.initialValue.length));
+    queueMicrotask(() => {
+      node.focus();
+      node.setSelectionRange(offset, offset);
+    });
+  }
 
   /** Get the current selection data to include in events.
    * NOTE: Supports one selection section per dialog. If multiple exist, last wins. */
@@ -299,6 +331,10 @@
             placeholder={s.placeholder ?? ""}
             aria-label={s.placeholder ?? "Text input"}
             value={inputState[s.id] ?? ""}
+            use:seedCursor={{
+              initialValue: s.initialValue,
+              cursorOffset: s.cursorOffset,
+            }}
             oninput={(e) => {
               inputState = { ...inputState, [s.id]: e.currentTarget.value };
             }}
@@ -681,7 +717,8 @@
 
   .input-textarea {
     width: 100%;
-    min-height: 80px;
+    min-height: 30vh;
+    max-height: 60vh;
     padding: 0.5rem;
     font-family: inherit;
     font-size: 0.875rem;

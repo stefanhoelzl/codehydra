@@ -120,6 +120,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       name: templatePathConfigKey(source.name),
       default: null,
       description: `Path to Liquid template for ${source.name} auto-workspaces`,
+      sensitive: true,
       ...configPath({ nullable: true }),
     });
   }

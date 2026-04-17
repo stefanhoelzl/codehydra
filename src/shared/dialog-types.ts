@@ -64,6 +64,9 @@ interface TableSection {
  *
  * - multiline false (default): single-line text field
  * - multiline true: multi-line textarea
+ * - initialValue seeds the field on first render only; later edits are preserved
+ * - cursorOffset places the caret at this character offset after seeding
+ *   (only applied when initialValue is set)
  * - Input values are included in DialogUserEvent.data.inputs when actions fire
  */
 interface InputSection {
@@ -71,6 +74,8 @@ interface InputSection {
   readonly id: string;
   readonly placeholder?: string;
   readonly multiline?: boolean;
+  readonly initialValue?: string;
+  readonly cursorOffset?: number;
 }
 
 export type DialogSection =

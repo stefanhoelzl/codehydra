@@ -95,6 +95,7 @@ function createMockConfigService(version: string | null = null) {
     set: vi.fn(),
     getDefinitions: vi.fn().mockReturnValue(new Map()),
     getEffective: vi.fn().mockReturnValue({}),
+    getDefaults: vi.fn().mockReturnValue({}),
     getHelpText: vi.fn().mockReturnValue(""),
   };
 }
