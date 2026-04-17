@@ -32,12 +32,14 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
     name: CONFIG_KEYS.baseUrl,
     default: null,
     description: "YouTrack instance URL (e.g. https://youtrack.example.com)",
+    sensitive: true,
     ...configString({ nullable: true }),
   });
   deps.configService.register(CONFIG_KEYS.token, {
     name: CONFIG_KEYS.token,
     default: null,
     description: "YouTrack API permanent token",
+    sensitive: true,
     ...configString({ nullable: true }),
   });
   deps.configService.register(CONFIG_KEYS.query, {

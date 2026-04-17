@@ -54,6 +54,9 @@ export interface Config {
   /** Get all effective config values (for help text). */
   getEffective(): Readonly<Record<string, unknown>>;
 
+  /** Get the resolved defaults (static + computed) for all registered keys. */
+  getDefaults(): Readonly<Record<string, unknown>>;
+
   /** Generate human-readable config help text. */
   getHelpText(): string;
 }
@@ -274,6 +277,7 @@ export function buildDefaults(
 export class DefaultConfig implements Config {
   private readonly definitions = new Map<string, ConfigKeyDefinition<unknown>>();
   private readonly effective: Record<string, unknown> = {};
+  private readonly defaults: Record<string, unknown> = {};
   private loaded = false;
 
   constructor(private readonly deps: ConfigDeps) {}
@@ -303,6 +307,7 @@ export class DefaultConfig implements Config {
     const defaults = buildDefaults(this.definitions, computedDefaultCtx);
     for (const [key, value] of Object.entries(defaults)) {
       this.effective[key] = value;
+      this.defaults[key] = value;
     }
 
     // 2. Read config.json from disk (sync)
@@ -411,6 +416,10 @@ export class DefaultConfig implements Config {
 
   getEffective(): Readonly<Record<string, unknown>> {
     return this.effective;
+  }
+
+  getDefaults(): Readonly<Record<string, unknown>> {
+    return this.defaults;
   }
 
   getHelpText(): string {

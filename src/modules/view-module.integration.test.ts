@@ -96,6 +96,7 @@ function createMockConfig(values?: Record<string, unknown>): Config {
     },
     getDefinitions: () => new Map(),
     getEffective: () => Object.fromEntries(store),
+    getDefaults: () => ({}),
     getHelpText: () => "",
   };
 }
