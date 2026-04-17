@@ -24,6 +24,7 @@ import {
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
 } from "../intents/app-shutdown";
+import { AppResumeOperation, INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
 import { INTENT_UPDATE_AVAILABLE, type UpdateAvailableIntent } from "../intents/update-available";
 import {
   UpdateApplyOperation,
@@ -42,6 +43,8 @@ import type {
 import type { Config } from "../boundaries/platform/config";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type { DialogConfig, DialogUserEvent } from "../shared/dialog-types";
+import type { NotificationManager, NotificationHandle } from "./notification-manager";
+import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 
 // =============================================================================
 // Mock Config
@@ -273,10 +276,35 @@ function createMockDialogManager(): MockDialogManager {
   };
 }
 
+interface MockNotificationManager {
+  manager: NotificationManager;
+  opened: NotificationConfig[];
+}
+
+function createMockNotificationManager(): MockNotificationManager {
+  const opened: NotificationConfig[] = [];
+  const manager = {
+    open(config: NotificationConfig): NotificationHandle {
+      opened.push(config);
+      return {
+        id: `ntf-${opened.length}`,
+        update: () => {},
+        close: () => {},
+        onEvent: () => () => {},
+        nextEvent: () => new Promise<NotificationUserEvent>(() => {}),
+        closed: new Promise<void>(() => {}),
+      } satisfies NotificationHandle;
+    },
+    routeEvent: () => {},
+  } as unknown as NotificationManager;
+  return { manager, opened };
+}
+
 interface TestSetup {
   dispatcher: Dispatcher;
   autoUpdater: MockAutoUpdater;
   dialogManager: MockDialogManager;
+  notificationManager: MockNotificationManager;
   updateOperation: TrackingUpdateOperation;
   mockConfig: Config;
   module: IntentModule;
@@ -290,6 +318,7 @@ function createTestSetup(overrides?: {
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
   const dialogManager = createMockDialogManager();
+  const notificationManager = createMockNotificationManager();
   const updateOperation = new TrackingUpdateOperation();
   const emittedEvents: DomainEvent[] = [];
   const mockConfig = createMockConfig({
@@ -304,6 +333,7 @@ function createTestSetup(overrides?: {
     dispatcher,
     dialogManager: dialogManager.manager,
     configService: mockConfig,
+    notificationManager: notificationManager.manager,
   });
 
   // Register minimal operations for the hooks we test
@@ -312,6 +342,7 @@ function createTestSetup(overrides?: {
     createMinimalOperation(APP_START_OPERATION_ID, "start")
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
+  dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
   dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, updateOperation);
   dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(mockConfig));
 
@@ -324,6 +355,7 @@ function createTestSetup(overrides?: {
     dispatcher,
     autoUpdater,
     dialogManager,
+    notificationManager,
     updateOperation,
     mockConfig,
     module: autoUpdaterModule,
@@ -340,6 +372,10 @@ function shutdownIntent(installUpdate?: boolean): AppShutdownIntent {
     type: INTENT_APP_SHUTDOWN,
     payload: { ...(installUpdate !== undefined && { installUpdate }) },
   };
+}
+
+function resumeIntent(): AppResumeIntent {
+  return { type: INTENT_APP_RESUME, payload: {} as AppResumeIntent["payload"] };
 }
 
 // =============================================================================
@@ -446,5 +482,163 @@ describe("AutoUpdaterModule Integration", () => {
     // Factory registers "auto-update" via configService.register
     // Verify the config service was provided and module created without error
     expect(mockConfig).toBeDefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // app:resume -> resume hook
+  // ---------------------------------------------------------------------------
+
+  it("app:resume with config=never skips check and notification", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "never" },
+      checkReturns: true,
+    });
+    // App starts cleanly (never bypasses startup update flow too).
+    await dispatcher.dispatch(startIntent());
+    // Reset tracking: startup already called checkForUpdates via check-deps.
+    const startupChecks = autoUpdater.checkForUpdatesCalled;
+
+    await dispatcher.dispatch(resumeIntent());
+
+    // No additional check beyond startup's (which would be the same single flag).
+    // Concretely: config=never → resume handler returns early before checkForUpdates.
+    expect(autoUpdater.checkForUpdatesCalled).toBe(startupChecks);
+    expect(notificationManager.opened).toHaveLength(0);
+  });
+
+  it("app:resume with config=ask and update detected opens info notification", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "ask" },
+      checkReturns: false,
+    });
+    await dispatcher.dispatch(startIntent());
+
+    // Now simulate a new version being released during the session.
+    autoUpdater.setCheckResult(true);
+    await dispatcher.dispatch(resumeIntent());
+
+    expect(autoUpdater.downloadCalled).toBe(false);
+    expect(notificationManager.opened).toHaveLength(1);
+    const cfg = notificationManager.opened[0]!;
+    expect(cfg.type).toBe("info");
+    expect(cfg.title).toBe("Update available");
+    expect(cfg.message).toContain("2.0.0");
+    expect(cfg.dismissible).toBe(true);
+  });
+
+  it("app:resume with config=ask and no update — no notification", async () => {
+    const { dispatcher, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "ask" },
+      checkReturns: false,
+    });
+    await dispatcher.dispatch(startIntent());
+
+    await dispatcher.dispatch(resumeIntent());
+
+    expect(notificationManager.opened).toHaveLength(0);
+  });
+
+  it("app:resume with config=always downloads silently then opens ready notification", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "always" },
+      checkReturns: false,
+    });
+    await dispatcher.dispatch(startIntent());
+
+    autoUpdater.setCheckResult(true);
+    const resumePromise = dispatcher.dispatch(resumeIntent());
+
+    // Let the check complete and download start
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(autoUpdater.downloadCalled).toBe(true);
+    expect(notificationManager.opened).toHaveLength(0);
+
+    // Complete the download
+    autoUpdater.resolveDownload!();
+    await resumePromise;
+
+    expect(notificationManager.opened).toHaveLength(1);
+    const cfg = notificationManager.opened[0]!;
+    expect(cfg.type).toBe("info");
+    expect(cfg.title).toBe("Update ready");
+    expect(cfg.message).toContain("2.0.0");
+    expect(cfg.message).toContain("next restart");
+  });
+
+  it("app:resume with config=always and download failure — no notification", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "always" },
+      checkReturns: false,
+    });
+    await dispatcher.dispatch(startIntent());
+
+    autoUpdater.setCheckResult(true);
+    const resumePromise = dispatcher.dispatch(resumeIntent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    autoUpdater.rejectDownload!(new Error("network down"));
+    await resumePromise;
+
+    expect(notificationManager.opened).toHaveLength(0);
+  });
+
+  it("second app:resume with same detected version does not re-notify", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "ask" },
+      checkReturns: false,
+    });
+    await dispatcher.dispatch(startIntent());
+
+    autoUpdater.setCheckResult(true);
+    await dispatcher.dispatch(resumeIntent());
+    expect(notificationManager.opened).toHaveLength(1);
+
+    await dispatcher.dispatch(resumeIntent());
+    expect(notificationManager.opened).toHaveLength(1);
+  });
+
+  it("app:resume after startup already detected a version — no new notification", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "ask" },
+      checkReturns: false,
+    });
+
+    // Startup registers persistent onUpdateDetected callback.
+    await dispatcher.dispatch(startIntent());
+    // Simulate startup having detected a version (via the persistent callback).
+    autoUpdater.capturedDetectedCb!("1.9.0");
+
+    await dispatcher.dispatch(resumeIntent());
+
+    // detectedVersion !== null guard short-circuits resume.
+    expect(notificationManager.opened).toHaveLength(0);
+  });
+
+  it("app:resume skipped while startup download is in flight", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "always" },
+      checkReturns: false,
+    });
+
+    await dispatcher.dispatch(startIntent());
+    // Simulate startup having detected a version.
+    autoUpdater.capturedDetectedCb!("2.0.0");
+
+    // Kick off the startup download (app:update → download hook) but don't resolve.
+    const updatePromise = dispatcher.dispatch({
+      type: INTENT_UPDATE_APPLY,
+      payload: { needsChoice: false },
+    } as UpdateApplyIntent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(autoUpdater.downloadCalled).toBe(true);
+
+    // System resume fires mid-download.
+    await dispatcher.dispatch(resumeIntent());
+
+    // Resume saw detectedVersion already set + checkInProgress → no new notification.
+    expect(notificationManager.opened).toHaveLength(0);
+
+    // Clean up: complete the download.
+    autoUpdater.resolveDownload!();
+    await updatePromise;
   });
 });

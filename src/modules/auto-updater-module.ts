@@ -7,6 +7,7 @@
  * - update-apply -> "show-choice": emit show-choice UI event (no-op when no update detected)
  * - update-apply -> "download": download update, report progress, handle cancel (no-op when no update detected)
  * - update-apply -> "install": dispatch app:shutdown with installUpdate (no-op when no update detected)
+ * - app:resume -> "resume": re-check for updates; ask=notify, always=silent-download+notify
  * - app:shutdown -> "stop": dispose auto-updater
  * - app:shutdown -> "quit": quitAndInstall if installUpdate flag is set
  *
@@ -20,6 +21,7 @@ import type { Intent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../intents/app-shutdown";
+import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
 import { INTENT_UPDATE_AVAILABLE, type UpdateAvailableIntent } from "../intents/update-available";
 import {
   UPDATE_APPLY_OPERATION_ID,
@@ -35,6 +37,7 @@ import type { Config } from "../boundaries/platform/config";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DialogManager } from "./dialog-manager";
+import type { NotificationManager } from "./notification-manager";
 import type { DialogConfig, DialogSection, DialogAction } from "../shared/dialog-types";
 
 /** Timeout for update check during startup (ms). */
@@ -85,10 +88,12 @@ interface AutoUpdaterModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly dialogManager: DialogManager;
   readonly configService: Config;
+  readonly notificationManager: NotificationManager;
 }
 
 export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModule {
   let detectedVersion: string | null = null;
+  let checkInProgress = false;
 
   // Register config key
   deps.configService.register("auto-update", {
@@ -223,6 +228,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               }
             });
 
+            checkInProgress = true;
             try {
               await deps.autoUpdater.downloadUpdate();
             } catch {
@@ -236,6 +242,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               report("downloading", 0, version, true);
               return { cancelled: true };
             } finally {
+              checkInProgress = false;
               unsubProgress();
               unsubEvent();
             }
@@ -257,6 +264,52 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               type: INTENT_APP_SHUTDOWN,
               payload: { installUpdate: true },
             });
+          },
+        },
+      },
+      [APP_RESUME_OPERATION_ID]: {
+        [APP_RESUME_HOOK_RESUME]: {
+          handler: async (): Promise<void> => {
+            const autoUpdate = deps.configService.get("auto-update") as AutoUpdatePreference;
+            if (autoUpdate === "never") return;
+            if (checkInProgress) return;
+            // Already detected (dialog shown at startup, or prior resume notified).
+            // "Never re-show until restart" — fresh session resets state.
+            if (detectedVersion !== null) return;
+
+            checkInProgress = true;
+            try {
+              await deps.autoUpdater.checkForUpdates();
+            } finally {
+              checkInProgress = false;
+            }
+
+            const version = detectedVersion;
+            if (version === null) return;
+
+            if (autoUpdate === "always") {
+              checkInProgress = true;
+              try {
+                await deps.autoUpdater.downloadUpdate();
+              } catch {
+                return;
+              } finally {
+                checkInProgress = false;
+              }
+              deps.notificationManager.open({
+                type: "info",
+                title: "Update ready",
+                message: `Version ${version} will be installed on next restart.`,
+                dismissible: true,
+              });
+            } else {
+              deps.notificationManager.open({
+                type: "info",
+                title: "Update available",
+                message: `Version ${version} will be offered at next startup.`,
+                dismissible: true,
+              });
+            }
           },
         },
       },
