@@ -471,6 +471,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   dispatcher,
   dialogManager,
   configService,
+  notificationManager,
 });
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
