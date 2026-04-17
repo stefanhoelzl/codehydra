@@ -40,6 +40,12 @@ import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import {
+  APP_RESUME_OPERATION_ID,
+  APP_RESUME_HOOK_RESUME,
+  EVENT_APP_RESUME_FAILED,
+  type ResumeHookContext,
+} from "../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
@@ -725,6 +731,51 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
             // Update internal port (consumed by finalize hook for workspace URLs)
             codeServerPort = port;
+          },
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // app-resume -> resume: probe /healthz, restart on failure
+      // -------------------------------------------------------------------
+      [APP_RESUME_OPERATION_ID]: {
+        [APP_RESUME_HOOK_RESUME]: {
+          provides: () => ({ codeServerReady: true }),
+          handler: async (ctx: HookContext): Promise<void> => {
+            const port = currentPort;
+            if (port === null) {
+              // Never started — nothing to probe. Still provide capability so
+              // view-module's reload runs (it will be a no-op with no workspaces).
+              return;
+            }
+
+            try {
+              await waitForHealthy({
+                checkFn: () => checkHealth(port),
+                timeoutMs: 5000,
+                intervalMs: 500,
+                errorMessage: "Code-server health check timed out after 5s",
+              });
+              return;
+            } catch {
+              // Fall through to restart
+            }
+
+            logger.warn("Code-server unhealthy after resume, restarting");
+            try {
+              await stop();
+              await ensureRunning();
+              logger.info("Code-server restarted after resume");
+            } catch (error) {
+              const message = getErrorMessage(error);
+              logger.error("Code-server restart failed after resume", { error: message });
+              const resumeCtx = ctx as ResumeHookContext;
+              await resumeCtx.emit({
+                type: EVENT_APP_RESUME_FAILED,
+                payload: { error: message },
+              });
+              throw error;
+            }
           },
         },
       },

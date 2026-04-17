@@ -53,7 +53,7 @@ import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import { EVENT_APP_RESUMED } from "../intents/app-resume";
+import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../intents/setup";
 import { EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../intents/setup";
 import type { SetupProgressEvent, SetupErrorEvent } from "../intents/setup";
@@ -532,6 +532,23 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
+      // app-resume → resume: reload workspace views (gated by config)
+      // Requires codeServerReady from code-server-module so reload only runs
+      // after the server is confirmed healthy (or has been restarted).
+      // -------------------------------------------------------------------
+      [APP_RESUME_OPERATION_ID]: {
+        [APP_RESUME_HOOK_RESUME]: {
+          requires: { codeServerReady: ANY_VALUE },
+          handler: async (): Promise<void> => {
+            const loadOnResume = deps.configService.get("experimental.load-on-resume") as boolean;
+            if (!loadOnResume) return;
+            logger.info("Reloading workspace views after system resume");
+            viewManager.reloadAllViews();
+          },
+        },
+      },
+
+      // -------------------------------------------------------------------
       // app-shutdown → stop: cleanup + layer disposal
       // -------------------------------------------------------------------
       [APP_SHUTDOWN_OPERATION_ID]: {
@@ -768,18 +785,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as AgentStatusUpdatedEvent).payload;
           viewManager.setWorkspaceLoaded(payload.workspacePath);
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // app:resumed → reload workspace views (gated by config)
-      // -------------------------------------------------------------------
-      [EVENT_APP_RESUMED]: {
-        handler: async (): Promise<void> => {
-          const loadOnResume = deps.configService.get("experimental.load-on-resume") as boolean;
-          if (!loadOnResume) return;
-          logger.info("Reloading workspace views after system resume");
-          viewManager.reloadAllViews();
         },
       },
     },

@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
 import type { WorkspaceCreateFailedEvent } from "../intents/open-workspace";
+import { EVENT_APP_RESUME_FAILED, type AppResumeFailedEvent } from "../intents/app-resume";
 import { createErrorNotificationModule } from "./error-notification-module";
 import type { IntentModule } from "../intents/lib/module";
 import type { NotificationManager } from "./notification-manager";
@@ -179,6 +180,38 @@ describe("ErrorNotificationModule", () => {
     await module.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler(event);
 
     expect(notificationManager.open).toHaveBeenCalledOnce();
+  });
+
+  it("should open error notification on app:resume-failed", async () => {
+    const event: AppResumeFailedEvent = {
+      type: EVENT_APP_RESUME_FAILED,
+      payload: { error: "Port 25448 already in use" },
+    };
+
+    await module.events![EVENT_APP_RESUME_FAILED]!.handler(event);
+
+    expect(notificationManager.open).toHaveBeenCalledOnce();
+    expect(notificationManager.open).toHaveBeenCalledWith({
+      type: "error",
+      title: "Failed to recover after system resume",
+      message: "Port 25448 already in use",
+      dismissible: true,
+    });
+  });
+
+  it("should close resume-failed notification on user dismiss", async () => {
+    const event: AppResumeFailedEvent = {
+      type: EVENT_APP_RESUME_FAILED,
+      payload: { error: "health check timed out" },
+    };
+
+    await module.events![EVENT_APP_RESUME_FAILED]!.handler(event);
+
+    const handle = notificationManager.lastHandle!;
+    handle.emitEvent({ notificationId: handle.id, actionId: "dismiss" });
+
+    const returnedHandle = notificationManager.open.mock.results[0]!.value;
+    expect(returnedHandle.close).toHaveBeenCalledOnce();
   });
 
   it("should handle multiple failures independently", async () => {
