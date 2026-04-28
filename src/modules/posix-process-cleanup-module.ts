@@ -1,8 +1,9 @@
 /**
- * PosixProcessCleanupModule — Kills processes whose CWD is under the workspace path during deletion.
+ * PosixProcessCleanupModule — Kills processes whose CWD is under the workspace path during deletion or hibernation.
  *
  * Hooks:
  * - delete-workspace → release: Use lsof to find CWD matches, kill with SIGTERM (best-effort)
+ * - hibernate-workspace → release: Same CWD scan + SIGTERM, runs after shutdown (best-effort)
  *
  * Detection uses `lsof -a -d cwd +c 0 -Fpnc +D <path>` for machine-parseable output
  * scoped to the workspace directory tree. The -a flag ANDs the -d and +D selections
@@ -20,6 +21,11 @@ import {
   type DeletePipelineHookInput,
   type ReleaseHookResult,
 } from "../intents/delete-workspace";
+import {
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+  type HibernatePipelineHookInput,
+  type HibernateReleaseHookResult,
+} from "../intents/hibernate-workspace";
 
 /** Detected process info from lsof. */
 export interface DetectedProcess {
@@ -159,30 +165,43 @@ export function createPosixProcessCleanupModule(deps: PosixProcessCleanupModuleD
               return {};
             }
 
-            try {
-              const detected = await detectCwdProcesses(
-                deps.processRunner,
-                workspacePath,
-                deps.logger
-              );
-
-              if (detected.length > 0) {
-                deps.logger.info("Killing CWD-blocking processes before deletion", {
-                  workspacePath,
-                  pids: detected.map((p) => p.pid).join(","),
-                });
-                await killPosixProcesses(
-                  deps.processRunner,
-                  detected.map((p) => p.pid)
-                );
-              }
-            } catch {
-              // Non-fatal: detection/kill failure shouldn't block deletion
-            }
+            await runCwdReleaseKill(deps, workspacePath, "deletion");
+            return {};
+          },
+        },
+      },
+      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
+        release: {
+          handler: async (ctx: HookContext): Promise<HibernateReleaseHookResult> => {
+            const { workspacePath } = ctx as HibernatePipelineHookInput;
+            await runCwdReleaseKill(deps, workspacePath, "hibernation");
             return {};
           },
         },
       },
     },
   };
+}
+
+async function runCwdReleaseKill(
+  deps: PosixProcessCleanupModuleDeps,
+  workspacePath: string,
+  phase: "deletion" | "hibernation"
+): Promise<void> {
+  try {
+    const detected = await detectCwdProcesses(deps.processRunner, workspacePath, deps.logger);
+
+    if (detected.length > 0) {
+      deps.logger.info(`Killing CWD-blocking processes before ${phase}`, {
+        workspacePath,
+        pids: detected.map((p) => p.pid).join(","),
+      });
+      await killPosixProcesses(
+        deps.processRunner,
+        detected.map((p) => p.pid)
+      );
+    }
+  } catch {
+    // Non-fatal: detection/kill failure shouldn't block the operation
+  }
 }
