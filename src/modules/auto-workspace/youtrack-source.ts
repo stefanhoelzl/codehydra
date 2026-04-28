@@ -96,8 +96,6 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
     },
 
     async poll(trackedKeys: ReadonlySet<string>): Promise<PollResult> {
-      deps.logger.debug("Polling YouTrack for issues");
-
       const issues = await fetchIssues();
 
       const activeKeys = new Set<string>();

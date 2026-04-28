@@ -405,6 +405,19 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
     const { activeKeys, newItems } = pollResult;
 
+    deps.logger.debug("Poll completed", {
+      source: source.name,
+      total: activeKeys.size,
+      tracked: activeKeys.size - newItems.length,
+      new: newItems.length,
+    });
+    if (newItems.length > 0) {
+      deps.logger.debug("Poll new items", {
+        source: source.name,
+        keys: newItems.map((i) => i.key).join(","),
+      });
+    }
+
     let stateChanged = false;
     const stateBefore = state;
 
@@ -422,15 +435,25 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
       if (entry === null) {
         // Dismissed entry — remove from state
+        deps.logger.info("Forgot dismissed entry (item disappeared from poll)", {
+          source: source.name,
+          key,
+        });
         const remaining = Object.fromEntries(
           Object.entries(state.entries).filter(([k]) => k !== key)
         );
         state = { ...state, entries: remaining };
       } else if (trackedPaths.has(entry.workspacePath)) {
-        // Active entry with tracked metadata — auto-delete
+        // Active entry with tracked metadata — auto-delete (deleteWorkspace logs)
         await deleteWorkspace(source, key, entry);
+      } else {
+        // Entry exists but workspace not tracked → previous failure, leave entry
+        deps.logger.info("Leaving stale entry to prevent recreation", {
+          source: source.name,
+          key,
+          workspaceName: entry.workspaceName,
+        });
       }
-      // Entry exists but not tracked → previous failure, leave entry to prevent recreation
     }
 
     // Create workspaces for new items
