@@ -12,6 +12,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { PostHog } from "posthog-node";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
@@ -230,8 +231,31 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
 
     deps.logger.info("Bug report captured");
 
+    // PostHog discards events larger than 1 MB. Compress logs (gzip+base64) and,
+    // if the payload overshoots, trim the raw input from the front (keeping the
+    // most recent tail). Each iteration scales the raw size down by the observed
+    // overshoot ratio with a safety margin, so we usually converge in 1–2 passes
+    // and keep close to the cap (vs. naive halving which would ship ~half on a
+    // small overshoot).
+    const POSTHOG_EVENT_LIMIT = 1_000_000;
+    const SAFETY_FACTOR = 0.95;
+    let rawLogs = logs;
+    let logsCompressed = rawLogs ? gzipSync(rawLogs).toString("base64") : "";
+    while (logsCompressed.length > POSTHOG_EVENT_LIMIT && rawLogs.length > 0) {
+      const scaled = Math.floor(
+        (rawLogs.length * POSTHOG_EVENT_LIMIT * SAFETY_FACTOR) / logsCompressed.length
+      );
+      // Guarantee progress even if rounding/SAFETY_FACTOR don't shrink enough
+      const nextLen = Math.max(0, Math.min(scaled, rawLogs.length - 1));
+      rawLogs = nextLen > 0 ? rawLogs.slice(rawLogs.length - nextLen) : "";
+      logsCompressed = rawLogs ? gzipSync(rawLogs).toString("base64") : "";
+    }
+
     client.captureException(bugError, id, {
-      logs,
+      logs: logsCompressed,
+      logs_format: logsCompressed ? "gzip+base64" : "none",
+      logs_raw_bytes: rawLogs.length,
+      logs_raw_bytes_dropped: logs.length - rawLogs.length,
       ...eventProperties(),
       version: deps.buildInfo.version,
     });

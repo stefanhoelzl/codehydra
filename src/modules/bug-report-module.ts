@@ -23,8 +23,8 @@ import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../int
 import { INTENT_SUBMIT_BUG_REPORT, type SubmitBugReportIntent } from "../intents/submit-bug-report";
 import { buildConfigBlock } from "./bug-report-config-block";
 
-/** Maximum log content to send via PostHog (~1MB). */
-const MAX_LOG_SIZE = 1_000_000;
+/** Maximum raw log bytes captured per bug report (compressed before send). */
+const MAX_LOG_SIZE = 20 * 1024 * 1024;
 
 export interface BugReportModuleDeps {
   readonly dialogManager: DialogManager;
@@ -71,17 +71,22 @@ export function createBugReportModule(deps: BugReportModuleDeps): IntentModule {
   let activeHandle: DialogHandle | null = null;
 
   async function readLogContent(): Promise<string> {
-    try {
-      const logPath = deps.loggingService.getLogFilePath();
-      const content = await deps.fileSystem.readFile(logPath);
-      if (content.length > MAX_LOG_SIZE) {
-        return content.slice(-MAX_LOG_SIZE);
-      }
-      return content;
-    } catch {
+    const logPath = deps.loggingService.getLogFilePath();
+
+    // electron-log rotates `<name>.log` to `<name>.old.log` once it exceeds maxSize.
+    // Include the archive so reports submitted after a rotation still carry context.
+    const dot = logPath.lastIndexOf(".");
+    const archivePath =
+      dot >= 0 ? `${logPath.slice(0, dot)}.old${logPath.slice(dot)}` : `${logPath}.old`;
+
+    const archive = await deps.fileSystem.readFile(archivePath).catch(() => "");
+    const current = await deps.fileSystem.readFile(logPath).catch((): string => {
       deps.logger.warn("Failed to read log file");
       return "";
-    }
+    });
+
+    const combined = archive ? `${archive}${current}` : current;
+    return combined.length > MAX_LOG_SIZE ? combined.slice(-MAX_LOG_SIZE) : combined;
   }
 
   function openDialog(): void {

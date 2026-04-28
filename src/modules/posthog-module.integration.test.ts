@@ -657,10 +657,46 @@ describe("PosthogModule Integration", () => {
       );
 
       const mock = getMock()!;
-      expect(mock).toHaveCaptured("$exception", {
-        $exception_list: [{ type: "BugReport", value: "App freezes on startup" }],
-        logs: "log line 1\nlog line 2",
+      const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
+      expect(captured).toBeDefined();
+      const props = captured!.properties as Record<string, unknown>;
+      expect(props["$exception_list"]).toEqual([
+        expect.objectContaining({ type: "BugReport", value: "App freezes on startup" }),
+      ]);
+      expect(props["logs_format"]).toBe("gzip+base64");
+      expect(props["logs_raw_bytes"]).toBe("log line 1\nlog line 2".length);
+      const decompressed = (await import("node:zlib"))
+        .gunzipSync(Buffer.from(props["logs"] as string, "base64"))
+        .toString();
+      expect(decompressed).toBe("log line 1\nlog line 2");
+    });
+
+    it("trims raw logs until compressed payload fits PostHog's 1MB limit", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "claude",
+        },
       });
+
+      // Truly random bytes don't compress, so 5MB of them blows past the 1MB
+      // cap even after gzip+base64, forcing the trim loop to drop bytes.
+      const { randomBytes } = await import("node:crypto");
+      const incompressible = randomBytes(5 * 1024 * 1024).toString("binary");
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(submitBugReportIntent("big report", incompressible));
+
+      const mock = getMock()!;
+      const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
+      expect(captured).toBeDefined();
+      const props = captured!.properties as Record<string, unknown>;
+      expect((props["logs"] as string).length).toBeLessThanOrEqual(1_000_000);
+      expect(props["logs_raw_bytes_dropped"]).toBeGreaterThan(0);
+      expect(
+        (props["logs_raw_bytes"] as number) + (props["logs_raw_bytes_dropped"] as number)
+      ).toBe(incompressible.length);
     });
 
     it("sends bug report even when telemetry is disabled", async () => {

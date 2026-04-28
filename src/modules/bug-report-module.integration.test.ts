@@ -103,7 +103,12 @@ function createMockDeps(
         routeEvent: vi.fn(),
       },
       fileSystem: {
-        readFile: vi.fn().mockResolvedValue("test log content\nline 2\nline 3"),
+        readFile: vi.fn().mockImplementation((path: string) => {
+          if (path === "/logs/test-session.log") {
+            return Promise.resolve("test log content\nline 2\nline 3");
+          }
+          return Promise.reject(new Error("ENOENT"));
+        }),
       },
       loggingService: {
         getLogFilePath: vi.fn().mockReturnValue("/logs/test-session.log"),
@@ -350,6 +355,31 @@ describe("BugReportModule", () => {
 
     expect(handle.close).toHaveBeenCalled();
     expect(deps.dispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("includes rotated archive log content alongside current log", async () => {
+    const { deps, handle } = createMockDeps();
+    (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/logs/test-session.log") return Promise.resolve("CURRENT");
+      if (path === "/logs/test-session.old.log") return Promise.resolve("ARCHIVE\n");
+      return Promise.reject(new Error("ENOENT"));
+    });
+    const module = createBugReportModule(deps);
+
+    await emitKeyEvent(module, "b");
+    handle._emitEvent({
+      dialogId: "dlg-test",
+      actionId: "send",
+      data: { inputs: { description: "rotated" } },
+    });
+
+    await vi.waitFor(() => {
+      expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({ logs: "ARCHIVE\nCURRENT" }),
+        })
+      );
+    });
   });
 
   it("handles log file read failure gracefully", async () => {
