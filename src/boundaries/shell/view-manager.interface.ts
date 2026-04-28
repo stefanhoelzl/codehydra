@@ -233,4 +233,15 @@ export interface IViewManager {
    * Called during application shutdown.
    */
   destroy(): void;
+
+  /**
+   * Capture a PNG screenshot of the workspace's current view content.
+   *
+   * Best-effort: returns null if the workspace has no view, the view has not
+   * been activated yet, or capture fails. Does not throw.
+   *
+   * @param workspacePath - Absolute path to the workspace directory
+   * @returns PNG-encoded bytes, or null
+   */
+  captureWorkspaceView(workspacePath: string): Promise<Buffer | null>;
 }

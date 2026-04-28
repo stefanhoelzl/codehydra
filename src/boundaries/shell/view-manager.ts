@@ -557,6 +557,12 @@ export class ViewManager implements IViewManager {
     return this.workspaceStates.get(workspacePath)?.handle;
   }
 
+  async captureWorkspaceView(workspacePath: string): Promise<Buffer | null> {
+    const state = this.workspaceStates.get(workspacePath);
+    if (!state) return null;
+    return this.viewLayer.capturePNG(state.handle);
+  }
+
   /**
    * Updates view bounds for UI layer and active workspace only.
    * Called on window resize.
@@ -756,8 +762,22 @@ export class ViewManager implements IViewManager {
       return;
     }
 
-    // Same workspace is no-op
+    // Same workspace is usually a no-op, except when the active path was kept
+    // in place across a destroy + recreate cycle (e.g. hibernate → wake) and
+    // the new view exists but isn't attached yet — in that case we must run
+    // through loadViewUrl + attachView once to bring the view onscreen.
     if (this.activeWorkspacePath === workspacePath) {
+      if (workspacePath === null) return;
+      const state = this.workspaceStates.get(workspacePath);
+      const needsAttach =
+        state !== undefined &&
+        this.attachedWorkspacePath !== workspacePath &&
+        !this.loadingWorkspaces.has(workspacePath);
+      if (!needsAttach) return;
+      this.loadViewUrl(workspacePath);
+      this.attachView(workspacePath);
+      this.updateBounds();
+      if (focus) this.focus();
       return;
     }
 

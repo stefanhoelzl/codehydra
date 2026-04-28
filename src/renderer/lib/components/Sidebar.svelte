@@ -197,6 +197,7 @@
                   ? extractTags(workspace.metadata).length > 0
                   : false}
                 {@const pending = isPending(workspace.path)}
+                {@const hibernated = workspace.metadata?.["hibernated"] === "true"}
                 {#if isExpanded}
                   <!-- Expanded layout: two-row when tags exist -->
                   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -204,6 +205,7 @@
                     class="workspace-item"
                     class:active={isActive}
                     class:has-tags={hasTags}
+                    class:hibernated
                     aria-current={isActive ? "true" : undefined}
                     onclick={() => {
                       if (!pending) onSwitchWorkspace(workspaceRef);
@@ -248,6 +250,10 @@
                         <span class="deletion-error" role="img" aria-label="Deletion failed">
                           <Icon name="warning" size={14} />
                         </span>
+                      {:else if hibernated}
+                        <span class="hibernation-indicator" role="img" aria-label="Hibernated">
+                          <Icon name="debug-pause" size={14} />
+                        </span>
                       {:else}
                         <AgentStatusIndicator
                           idleCount={agentCounts.idle}
@@ -270,7 +276,7 @@
                     <button
                       type="button"
                       class="status-indicator-btn"
-                      aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : statusText}`}
+                      aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : hibernated ? "Hibernated" : statusText}`}
                       aria-current={isActive ? "true" : undefined}
                       onclick={() => {
                         if (!pending) onSwitchWorkspace(workspaceRef);
@@ -283,6 +289,10 @@
                       {:else if deletionStatus === "error"}
                         <span class="deletion-error" role="img" aria-label="Deletion failed">
                           <Icon name="warning" size={14} />
+                        </span>
+                      {:else if hibernated}
+                        <span class="hibernation-indicator" role="img" aria-label="Hibernated">
+                          <Icon name="debug-pause" size={14} />
                         </span>
                       {:else}
                         <AgentStatusIndicator
@@ -617,5 +627,18 @@
     --vscode-icon-foreground: var(--ch-danger);
     font-size: 14px;
     flex-shrink: 0;
+  }
+
+  .hibernation-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.55;
+    flex-shrink: 0;
+  }
+
+  .workspace-item.hibernated .workspace-btn {
+    opacity: 0.55;
+    font-style: italic;
   }
 </style>

@@ -199,9 +199,11 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
   async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<OpenWorkspaceResult> {
     const { projectPath } = ctx.intent.payload;
 
-    // Show loading dialog for foreground workspace creations (not reopens, not background)
-    const showLoading =
-      ctx.intent.payload.stealFocus !== false && !ctx.intent.payload.existingWorkspace;
+    // Show loading dialog for foreground workspace creations.
+    // project:open passes stealFocus=false to suppress this during silent
+    // re-discovery on startup; the wake/reopen path leaves stealFocus
+    // unset so users see a spinner while the agent restarts.
+    const showLoading = ctx.intent.payload.stealFocus !== false;
 
     if (showLoading) {
       ctx.emit({ type: EVENT_WORKSPACE_LOADING, payload: {} } as WorkspaceLoadingEvent);

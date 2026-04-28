@@ -20,6 +20,7 @@
   import {
     projects,
     activeWorkspacePath,
+    activeWorkspace,
     loadingState,
     loadingError,
     getAllWorkspaces,
@@ -54,6 +55,7 @@
   import GitCloneDialog from "./GitCloneDialog.svelte";
   import OpenProjectErrorDialog from "./OpenProjectErrorDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
+  import HibernatedOverlay from "./HibernatedOverlay.svelte";
   import Logo from "./Logo.svelte";
 
   import { getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
@@ -182,6 +184,16 @@
   const idleWorkspaceCount = $derived(
     getAllWorkspaces().filter((ws) => getStatus(ws.path).type === "idle").length
   );
+
+  // The active workspace is hibernated when its metadata flag is set.
+  // Looked up against the workspace list because activeWorkspace is just a ref.
+  const activeHibernated = $derived.by(() => {
+    const ref = activeWorkspace.value;
+    if (!ref) return false;
+    const project = projects.value.find((p) => p.id === ref.projectId);
+    const workspace = project?.workspaces.find((w) => w.path === ref.path);
+    return workspace?.metadata?.["hibernated"] === "true";
+  });
 
   // Initialize and subscribe to events on mount
   onMount(() => {
@@ -317,6 +329,8 @@
         <Logo animated={false} />
       </div>
     </div>
+  {:else if activeHibernated && activeWorkspace.value}
+    <HibernatedOverlay workspaceRef={activeWorkspace.value} />
   {/if}
 </div>
 

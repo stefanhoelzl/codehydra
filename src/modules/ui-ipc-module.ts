@@ -85,6 +85,24 @@ import { INTENT_APP_READY } from "../intents/app-ready";
 import type { AppReadyIntent } from "../intents/app-ready";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { Path } from "../utils/path/path";
+import {
+  EVENT_WORKSPACE_HIBERNATED,
+  EVENT_WORKSPACE_HIBERNATE_FAILED,
+  INTENT_HIBERNATE_WORKSPACE,
+  type HibernateWorkspaceIntent,
+  type WorkspaceHibernatedEvent,
+  type WorkspaceHibernateFailedEvent,
+} from "../intents/hibernate-workspace";
+import {
+  EVENT_WORKSPACE_WOKEN,
+  EVENT_WORKSPACE_WAKE_FAILED,
+  INTENT_WAKE_WORKSPACE,
+  type WakeWorkspaceIntent,
+  type WorkspaceWokenEvent,
+  type WorkspaceWakeFailedEvent,
+} from "../intents/wake-workspace";
+import { buildScreenshotPath } from "./hibernation-screenshot-module";
+import type { PathProvider } from "../boundaries/platform/path-provider";
 
 /**
  * Dependencies for the UiIpc module.
@@ -97,6 +115,8 @@ export interface UiIpcModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
   readonly dialogManager?: DialogManager;
   readonly notificationManager?: NotificationManager;
+  /** Path provider used to resolve hibernation screenshot URLs. */
+  readonly pathProvider: PathProvider;
 }
 
 /**
@@ -240,6 +260,44 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
         }
       },
     },
+    [EVENT_WORKSPACE_HIBERNATED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as WorkspaceHibernatedEvent).payload;
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_HIBERNATED, {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          path: payload.workspacePath,
+        });
+      },
+    },
+    [EVENT_WORKSPACE_HIBERNATE_FAILED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as WorkspaceHibernateFailedEvent).payload;
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_HIBERNATE_FAILED, {
+          path: payload.workspacePath,
+          error: payload.error,
+        });
+      },
+    },
+    [EVENT_WORKSPACE_WOKEN]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as WorkspaceWokenEvent).payload;
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_WOKEN, {
+          projectId: payload.projectId,
+          workspaceName: payload.workspaceName,
+          path: payload.workspacePath,
+        });
+      },
+    },
+    [EVENT_WORKSPACE_WAKE_FAILED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const payload = (event as WorkspaceWakeFailedEvent).payload;
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_WAKE_FAILED, {
+          path: payload.workspacePath,
+          error: payload.error,
+        });
+      },
+    },
     [EVENT_AGENT_STATUS_UPDATED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const {
@@ -338,6 +396,72 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     }
     void handle.catch(() => {}); // Errors communicated via domain events
     return { started: true };
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_HIBERNATE, async (payload) => {
+    const p = payload as { workspacePath: string; skipSwitch?: boolean };
+    const intent: HibernateWorkspaceIntent = {
+      type: INTENT_HIBERNATE_WORKSPACE,
+      payload: {
+        workspacePath: p.workspacePath,
+        ...(p.skipSwitch !== undefined && { skipSwitch: p.skipSwitch }),
+      },
+    };
+    const handle = dispatcher.dispatch(intent);
+    if (!(await handle.accepted)) {
+      return { started: false };
+    }
+    void handle.catch(() => {}); // Errors communicated via domain events
+    return { started: true };
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_WAKE, async (payload) => {
+    const p = payload as { workspacePath: string };
+    const intent: WakeWorkspaceIntent = {
+      type: INTENT_WAKE_WORKSPACE,
+      payload: { workspacePath: p.workspacePath },
+    };
+    const handle = dispatcher.dispatch(intent);
+    if (!(await handle.accepted)) {
+      return { started: false };
+    }
+    void handle.catch(() => {});
+    return { started: true };
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_REOPEN, async (payload) => {
+    const p = payload as {
+      projectPath: string;
+      workspacePath: string;
+      workspaceName: string;
+      branch: string | null;
+      metadata: Readonly<Record<string, string>>;
+    };
+    const intent: OpenWorkspaceIntent = {
+      type: INTENT_OPEN_WORKSPACE,
+      payload: {
+        projectPath: p.projectPath,
+        workspaceName: p.workspaceName,
+        existingWorkspace: {
+          path: p.workspacePath,
+          name: p.workspaceName,
+          branch: p.branch,
+          metadata: p.metadata,
+        },
+        source: "ui-ipc",
+      },
+    };
+    const result = await dispatcher.dispatch(intent);
+    if (!result) {
+      throw new Error("Reopen workspace dispatch returned no result");
+    }
+    return result as Workspace;
+  });
+
+  registerIpc(ApiIpcChannels.WORKSPACE_GET_SCREENSHOT, async (payload) => {
+    const p = payload as { projectId: string; workspaceName: string };
+    const filePath = buildScreenshotPath(deps.pathProvider, p.projectId, p.workspaceName);
+    return { url: `file://${filePath.toNative()}` };
   });
 
   registerIpc(ApiIpcChannels.WORKSPACE_SET_METADATA, async (payload) => {

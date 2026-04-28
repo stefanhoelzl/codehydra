@@ -153,6 +153,7 @@ describe("shortcuts type guards", () => {
         "right",
         "enter",
         "delete",
+        "h",
         "0",
         "1",
         "2",

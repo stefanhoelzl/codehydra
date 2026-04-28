@@ -96,6 +96,21 @@ import {
 } from "./intents/delete-workspace";
 import type { DeleteWorkspaceIntent, DeleteWorkspacePayload } from "./intents/delete-workspace";
 import {
+  HibernateWorkspaceOperation,
+  INTENT_HIBERNATE_WORKSPACE,
+  EVENT_WORKSPACE_HIBERNATED,
+  EVENT_WORKSPACE_HIBERNATE_FAILED,
+} from "./intents/hibernate-workspace";
+import type { HibernateWorkspacePayload } from "./intents/hibernate-workspace";
+import {
+  WakeWorkspaceOperation,
+  INTENT_WAKE_WORKSPACE,
+  EVENT_WORKSPACE_WOKEN,
+  EVENT_WORKSPACE_WAKE_FAILED,
+} from "./intents/wake-workspace";
+import type { WakeWorkspacePayload } from "./intents/wake-workspace";
+import { createHibernationScreenshotModule } from "./modules/hibernation-screenshot-module";
+import {
   OpenProjectOperation,
   INTENT_OPEN_PROJECT,
   EVENT_PROJECT_OPENED,
@@ -341,6 +356,16 @@ const idempotencyModule = createIdempotencyModule([
     },
     resetOn: [EVENT_WORKSPACE_DELETED, EVENT_WORKSPACE_DELETE_FAILED],
     isForced: (intent) => (intent as DeleteWorkspaceIntent).payload.force,
+  },
+  {
+    intentType: INTENT_HIBERNATE_WORKSPACE,
+    getKey: (p) => (p as HibernateWorkspacePayload).workspacePath,
+    resetOn: [EVENT_WORKSPACE_HIBERNATED, EVENT_WORKSPACE_HIBERNATE_FAILED],
+  },
+  {
+    intentType: INTENT_WAKE_WORKSPACE,
+    getKey: (p) => (p as WakeWorkspacePayload).workspacePath,
+    resetOn: [EVENT_WORKSPACE_WOKEN, EVENT_WORKSPACE_WAKE_FAILED],
   },
   {
     intentType: INTENT_OPEN_PROJECT,
@@ -611,6 +636,8 @@ dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation()
 dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, new GetProjectBasesOperation());
 
 dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
+dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, new HibernateWorkspaceOperation());
+dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, new WakeWorkspaceOperation());
 
 dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
 dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
@@ -633,6 +660,14 @@ const uiIpcModule = createUiIpcModule({
   loggingService,
   dialogManager,
   notificationManager,
+  pathProvider,
+});
+
+const hibernationScreenshotModule = createHibernationScreenshotModule({
+  fileSystem: fileSystemLayer,
+  pathProvider,
+  viewManager,
+  logger: loggingService.createLogger("view"),
 });
 
 // 9. Register all modules
@@ -670,6 +705,7 @@ dispatcher.registerModule(bugReportModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
+dispatcher.registerModule(hibernationScreenshotModule);
 dispatcher.registerModule(uiIpcModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)

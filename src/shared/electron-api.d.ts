@@ -69,6 +69,40 @@ export interface Api {
     getAgentSession(workspacePath: string): Promise<unknown>;
     setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
     getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
+    /**
+     * Start hibernating a workspace (fire-and-forget).
+     * Tears down the view + agent server, persists `hibernated="true"` metadata,
+     * and emits workspace:hibernated. Returns { started: false } if blocked
+     * by idempotency.
+     */
+    hibernate(
+      workspacePath: string,
+      options?: { skipSwitch?: boolean }
+    ): Promise<{ started: boolean }>;
+    /**
+     * Wake a hibernated workspace (fire-and-forget).
+     * Clears the `hibernated` metadata flag and deletes the saved screenshot.
+     * The caller is responsible for re-opening the workspace afterwards.
+     */
+    wake(workspacePath: string): Promise<{ started: boolean }>;
+    /**
+     * Re-open a previously-existing workspace (e.g., after wake) without
+     * re-creating the worktree. Goes through the workspace:open flow with
+     * existingWorkspace populated.
+     */
+    reopen(
+      projectPath: string,
+      workspacePath: string,
+      workspaceName: string,
+      branch: string | null,
+      metadata: Readonly<Record<string, string>>
+    ): Promise<Workspace>;
+    /**
+     * Get a file:// URL pointing at the saved hibernation screenshot for a
+     * workspace. The returned URL may not exist on disk; consumers should
+     * handle <img> error events as a missing-screenshot fallback.
+     */
+    getScreenshot(projectId: string, workspaceName: string): Promise<{ url: string | null }>;
   };
   ui: {
     getActiveWorkspace(): Promise<WorkspaceRef | null>;

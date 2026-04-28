@@ -25,6 +25,7 @@ import {
 } from "./open-workspace";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
+import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { Path } from "../utils/path/path";
 
@@ -304,8 +305,11 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
 
       // When already open, register + discover ran (idempotent) but skip side effects
       if (!alreadyOpen) {
-        // Dispatch workspace:open per discovered workspace (best-effort)
+        // Dispatch workspace:open per discovered workspace (best-effort).
+        // Hibernated workspaces stay inert at startup — no view + agent init runs;
+        // they appear in the sidebar with the hibernation indicator.
         for (const workspace of workspaces) {
+          if (workspace.metadata[HIBERNATED_METADATA_KEY] === "true") continue;
           try {
             const existingWorkspace: ExistingWorkspaceData = {
               path: workspace.path.toString(),
@@ -349,14 +353,20 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
           } as GetActiveWorkspaceIntent);
 
           if (activeWorkspace === null) {
-            const firstWorkspace = project.workspaces[0]!;
-            try {
-              await ctx.dispatch({
-                type: INTENT_SWITCH_WORKSPACE,
-                payload: { workspacePath: firstWorkspace.path },
-              } as SwitchWorkspaceIntent);
-            } catch {
-              // Best-effort: switch failure doesn't fail the project open
+            // Pick the first non-hibernated workspace; if all are hibernated,
+            // leave no workspace active so the user lands on the empty backdrop.
+            const firstAwake = project.workspaces.find(
+              (w) => w.metadata[HIBERNATED_METADATA_KEY] !== "true"
+            );
+            if (firstAwake) {
+              try {
+                await ctx.dispatch({
+                  type: INTENT_SWITCH_WORKSPACE,
+                  payload: { workspacePath: firstAwake.path },
+                } as SwitchWorkspaceIntent);
+              } catch {
+                // Best-effort: switch failure doesn't fail the project open
+              }
             }
           }
         }
