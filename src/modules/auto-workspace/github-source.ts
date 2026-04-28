@@ -162,8 +162,6 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
     },
 
     async poll(trackedKeys: ReadonlySet<string>): Promise<PollResult> {
-      deps.logger.debug("Polling GitHub for review-requested PRs");
-
       const items = await fetchSearchResults();
 
       const activeKeys = new Set<string>();
