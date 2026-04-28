@@ -44,6 +44,10 @@ export function createMockApi(): Api {
       getAgentSession: vi.fn().mockResolvedValue(null),
       setMetadata: vi.fn().mockResolvedValue(undefined),
       getMetadata: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.metadata),
+      hibernate: vi.fn().mockResolvedValue({ started: true }),
+      wake: vi.fn().mockResolvedValue({ started: true }),
+      reopen: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
+      getScreenshot: vi.fn().mockResolvedValue({ url: null }),
     },
     ui: {
       getActiveWorkspace: vi.fn().mockResolvedValue(null),

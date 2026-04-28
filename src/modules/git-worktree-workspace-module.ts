@@ -48,6 +48,7 @@ import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import type { FindCandidatesHookResult } from "../intents/switch-workspace";
+import { HIBERNATED_METADATA_KEY } from "../intents/hibernate-workspace";
 import {
   RESOLVE_WORKSPACE_OPERATION_ID,
   type ResolveHookInput,
@@ -435,14 +436,17 @@ export function createGitWorktreeWorkspaceModule(
               projectPath: string;
               projectName: string;
               workspacePath: string;
+              hibernated?: boolean;
             }> = [];
             for (const [key, wsList] of getMergedWorkspaces()) {
               const projectName = new Path(key).basename;
               for (const ws of wsList) {
+                const hibernated = ws.metadata[HIBERNATED_METADATA_KEY] === "true";
                 candidates.push({
                   projectPath: key,
                   projectName,
                   workspacePath: ws.path.toString(),
+                  ...(hibernated && { hibernated: true }),
                 });
               }
             }

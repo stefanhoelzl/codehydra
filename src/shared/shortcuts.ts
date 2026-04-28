@@ -81,6 +81,7 @@ export const SHORTCUT_KEYS = [
   "right",
   "enter",
   "delete",
+  "h",
   "0",
   "1",
   "2",

@@ -35,6 +35,11 @@ import type {
   ShutdownHookResult,
   DeletePipelineHookInput,
 } from "../../intents/delete-workspace";
+import type {
+  HibernatePipelineHookInput,
+  HibernateShutdownHookResult,
+} from "../../intents/hibernate-workspace";
+import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../../intents/hibernate-workspace";
 import type { GetStatusHookInput, GetStatusHookResult } from "../../intents/get-workspace-status";
 import type {
   GetAgentSessionHookInput,
@@ -101,6 +106,29 @@ export function createAgentModule(
 
   /** Cleanup function for onStatusChange subscription. */
   let statusChangeCleanup: (() => void) | null = null;
+
+  /**
+   * Shared agent-server teardown used by delete + hibernate.
+   * Returns a structured outcome and never throws. Callers decide whether
+   * to propagate the error (delete in non-force mode does; hibernate doesn't).
+   */
+  async function stopAgentForWorkspace(
+    workspacePath: string,
+    logTag: string
+  ): Promise<{ error?: string }> {
+    try {
+      const stopResult = await provider.stopWorkspace(workspacePath);
+      provider.clearWorkspaceTracking(workspacePath as WorkspacePath);
+      if (!stopResult.success) {
+        return { error: stopResult.error ?? "Failed to stop server" };
+      }
+      return {};
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.warn(`${provider.type}AgentModule: ${logTag} error`, { error: message });
+      return { error: message };
+    }
+  }
 
   // =========================================================================
   // Build the IntentModule
@@ -261,34 +289,26 @@ export function createAgentModule(
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult | undefined> => {
             if (!isActive()) return undefined;
-
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            try {
-              let serverError: string | undefined;
-              const stopResult = await provider.stopWorkspace(workspacePath);
-              if (!stopResult.success) {
-                serverError = stopResult.error ?? "Failed to stop server";
-                if (!payload.force) {
-                  throw new Error(serverError);
-                }
-              }
-
-              provider.clearWorkspaceTracking(workspacePath as WorkspacePath);
-
-              return serverError
-                ? { serverName: provider.serverName, error: serverError }
-                : { serverName: provider.serverName };
-            } catch (error) {
-              if (payload.force) {
-                logger.warn(`${provider.type}AgentModule: error in force mode (ignored)`, {
-                  error: getErrorMessage(error),
-                });
-                return { serverName: provider.serverName, error: getErrorMessage(error) };
-              }
-              throw error;
+            const result = await stopAgentForWorkspace(workspacePath, "delete shutdown");
+            if (result.error && !payload.force) {
+              throw new Error(result.error);
             }
+            return result.error
+              ? { serverName: provider.serverName, error: result.error }
+              : { serverName: provider.serverName };
+          },
+        },
+      },
+
+      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
+        shutdown: {
+          handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult | undefined> => {
+            if (!isActive()) return undefined;
+            const { workspacePath } = ctx as HibernatePipelineHookInput;
+            await stopAgentForWorkspace(workspacePath, "hibernate shutdown");
+            return {};
           },
         },
       },

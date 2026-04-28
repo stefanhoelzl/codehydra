@@ -83,6 +83,26 @@ contextBridge.exposeInMainWorld("api", {
       }),
     getMetadata: (workspacePath: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_METADATA, { workspacePath }),
+    hibernate: (workspacePath: string, options?: { skipSwitch?: boolean }) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_HIBERNATE, { workspacePath, ...options }),
+    wake: (workspacePath: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_WAKE, { workspacePath }),
+    reopen: (
+      projectPath: string,
+      workspacePath: string,
+      workspaceName: string,
+      branch: string | null,
+      metadata: Readonly<Record<string, string>>
+    ) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_REOPEN, {
+        projectPath,
+        workspacePath,
+        workspaceName,
+        branch,
+        metadata,
+      }),
+    getScreenshot: (projectId: string, workspaceName: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_SCREENSHOT, { projectId, workspaceName }),
   },
   ui: {
     getActiveWorkspace: () => ipcRenderer.invoke(ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE),

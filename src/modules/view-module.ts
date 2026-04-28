@@ -45,6 +45,11 @@ import type {
   ShutdownHookResult,
   DeletePipelineHookInput,
 } from "../intents/delete-workspace";
+import type {
+  HibernatePipelineHookInput,
+  HibernateShutdownHookResult,
+} from "../intents/hibernate-workspace";
+import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
 import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
 import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
@@ -141,6 +146,26 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
   let capAgentType: LifecycleAgentType | undefined;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
   // loadOnResume is read from configService on demand
+
+  /**
+   * Shared shutdown logic for workspace teardown (used by delete + hibernate).
+   * Returns { wasActive, error } and never throws. Callers decide whether to
+   * propagate the error (delete in non-force mode does; hibernate doesn't).
+   */
+  async function tearDownWorkspaceView(
+    workspacePath: string,
+    logTag: string
+  ): Promise<{ wasActive: boolean; error?: string }> {
+    const wasActive = viewManager.getActiveWorkspacePath() === workspacePath;
+    try {
+      await viewManager.destroyWorkspaceView(workspacePath);
+      return { wasActive };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.warn(`ViewModule: ${logTag} error`, { error: message });
+      return { wasActive, error: message };
+    }
+  }
 
   /** Track which workspaces are loading (not necessarily showing a dialog). */
   const loadingPaths = new Set<string>();
@@ -489,24 +514,29 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            const isActive = viewManager.getActiveWorkspacePath() === workspacePath;
-
-            try {
-              await viewManager.destroyWorkspaceView(workspacePath);
-              return { ...(isActive && { wasActive: true }) };
-            } catch (error) {
-              if (payload.force) {
-                logger.warn("ViewModule: error in force mode (ignored)", {
-                  error: getErrorMessage(error),
-                });
-                return {
-                  ...(isActive && { wasActive: true }),
-                  error: getErrorMessage(error),
-                };
-              }
-              throw error;
+            const result = await tearDownWorkspaceView(workspacePath, "delete shutdown");
+            if (result.error && !payload.force) {
+              throw new Error(result.error);
             }
+            return {
+              ...(result.wasActive && { wasActive: true }),
+              ...(result.error && { error: result.error }),
+            };
+          },
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // hibernate-workspace → shutdown: destroy workspace view
+      // (Same teardown as delete-workspace shutdown, but errors never
+      // propagate — hibernation is best-effort silent.)
+      // -------------------------------------------------------------------
+      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
+        shutdown: {
+          handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult> => {
+            const { workspacePath } = ctx as HibernatePipelineHookInput;
+            const result = await tearDownWorkspaceView(workspacePath, "hibernate shutdown");
+            return result.wasActive ? { wasActive: true } : {};
           },
         },
       },

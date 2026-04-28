@@ -143,6 +143,9 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
     case "delete":
       handleDialog("Delete");
       break;
+    case "h":
+      await handleHibernateToggle();
+      break;
     default:
       // Digit keys: "0"-"9"
       if (/^[0-9]$/.test(key)) {
@@ -220,10 +223,12 @@ async function handleStatusNavigation(direction: -1 | 1): Promise<void> {
 
 /**
  * Find next workspace index matching the given status type in the given direction.
+ * Hibernated workspaces are always skipped — idle nav targets workspaces the
+ * user can immediately work in.
  * Returns -1 if no matching workspace exists.
  */
 function findNextByStatusType(
-  workspaces: { path: string }[],
+  workspaces: { path: string; metadata?: Readonly<Record<string, string>> }[],
   currentIndex: number,
   direction: -1 | 1,
   statusType: string
@@ -233,6 +238,7 @@ function findNextByStatusType(
     const index = wrapIndex(currentIndex + i * direction, count);
     const workspace = workspaces[index];
     if (!workspace) continue;
+    if (workspace.metadata?.["hibernated"] === "true") continue;
     const status = getStatus(workspace.path);
     if (status.type === statusType) {
       return index;
@@ -260,6 +266,42 @@ async function handleJump(key: JumpKey): Promise<void> {
     logWorkspaceSwitchError("jump to workspace", error);
   } finally {
     _switchingWorkspace = false;
+  }
+}
+
+/**
+ * Toggle hibernation on the currently-active workspace.
+ * Awake → hibernate (workspace stays in sidebar with sleeping indicator).
+ * Hibernated → wake + re-open via workspace:open existingWorkspace flow.
+ */
+async function handleHibernateToggle(): Promise<void> {
+  const ref = activeWorkspace.value;
+  if (!ref) return;
+
+  const project = projects.value.find((p) => p.id === ref.projectId);
+  const workspace = project?.workspaces.find((w) => w.path === ref.path);
+  if (!workspace) return;
+
+  const isHibernated = workspace.metadata?.["hibernated"] === "true";
+  try {
+    if (isHibernated) {
+      if (!project) return;
+      // Snapshot the reactive metadata into a plain object — Svelte 5 $state
+      // proxies can't traverse Electron's structured-clone boundary.
+      const metadataSnapshot: Record<string, string> = { ...(workspace.metadata ?? {}) };
+      await api.workspaces.wake(ref.path);
+      await api.workspaces.reopen(
+        project.path,
+        workspace.path,
+        workspace.name,
+        workspace.branch,
+        metadataSnapshot
+      );
+    } else {
+      await api.workspaces.hibernate(ref.path);
+    }
+  } catch (error) {
+    logWorkspaceSwitchError(isHibernated ? "wake workspace" : "hibernate workspace", error);
   }
 }
 

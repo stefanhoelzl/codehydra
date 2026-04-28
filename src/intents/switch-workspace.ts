@@ -41,6 +41,11 @@ export interface SwitchWorkspaceAutoPayload {
   readonly auto: true;
   readonly currentPath: string;
   readonly focus?: boolean;
+  /** When true, if no other candidate is selectable, switch to currentPath
+   *  instead of emitting workspace:switched(null). Used by hibernate so the
+   *  user lands on the hibernation overlay rather than the empty backdrop
+   *  when the only workspace was just hibernated. */
+  readonly fallbackToCurrent?: boolean;
 }
 
 export type SwitchWorkspacePayload = SwitchWorkspaceTargetPayload | SwitchWorkspaceAutoPayload;
@@ -107,6 +112,9 @@ export interface WorkspaceCandidate {
   readonly projectPath: string;
   readonly projectName: string;
   readonly workspacePath: string;
+  /** True when the candidate is hibernated. Hibernated candidates are excluded
+   *  from auto-switch — hibernation is always opt-in to wake. */
+  readonly hibernated?: boolean;
 }
 
 /** Per-handler result for the "find-candidates" hook point. */
@@ -149,6 +157,8 @@ export function selectNextWorkspace(
   extractName: (path: string) => string,
   scorer?: AgentStatusScorer
 ): WorkspaceCandidate | null {
+  // Hibernated workspaces are never auto-selected — wake must be deliberate.
+  candidates = candidates.filter((c) => !c.hibernated);
   if (candidates.length === 0) return null;
 
   // Build sorted list (projects alphabetically, workspaces alphabetically)
@@ -311,18 +321,19 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
       if (r.selected !== undefined) best = r.selected;
     }
 
-    if (best) {
-      // 3. Dispatch specific-target switch with workspacePath
+    const targetPath =
+      best?.workspacePath ?? (payload.fallbackToCurrent ? payload.currentPath : undefined);
+    if (targetPath !== undefined) {
       const switchIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
         payload: {
-          workspacePath: best.workspacePath,
+          workspacePath: targetPath,
           ...(payload.focus !== undefined && { focus: payload.focus }),
         },
       };
       await ctx.dispatch(switchIntent);
     } else {
-      // No candidate: emit workspace:switched(null)
+      // No candidate and no fallback: emit workspace:switched(null)
       const nullEvent: WorkspaceSwitchedEvent = {
         type: EVENT_WORKSPACE_SWITCHED,
         payload: null,

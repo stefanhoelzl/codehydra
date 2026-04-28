@@ -478,6 +478,12 @@ export function createViewBoundaryMock(): MockViewBoundary {
       return view.url ?? "";
     },
 
+    async capturePNG(handle: ViewHandle): Promise<Buffer | null> {
+      getView(handle); // Validate handle exists
+      // Return a tiny non-empty buffer to simulate a successful capture in tests.
+      return Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
+    },
+
     setBounds(handle: ViewHandle, bounds: Rectangle): void {
       const view = getView(handle);
       view.bounds = bounds;

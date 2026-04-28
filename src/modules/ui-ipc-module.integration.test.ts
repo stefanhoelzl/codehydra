@@ -144,6 +144,7 @@ function createBridgeDeps(
     logger: SILENT_LOGGER,
     dispatcher: {} as unknown as UiIpcModuleDeps["dispatcher"],
     loggingService: overrides?.loggingService ?? createMockLogging(),
+    pathProvider: overrides?.pathProvider ?? ({} as unknown as UiIpcModuleDeps["pathProvider"]),
     ...overrides,
   };
   return { ...base, ipcLayer, sendToUI };

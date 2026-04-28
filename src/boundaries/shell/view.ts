@@ -255,6 +255,17 @@ export interface ViewBoundary {
    */
   executeJavaScript(handle: ViewHandle, code: string): Promise<unknown>;
 
+  /**
+   * Capture a PNG screenshot of the view's current visual content.
+   *
+   * Best-effort: returns null if the view has no rendered content, is detached,
+   * or capture fails for any reason. Does not throw.
+   *
+   * @param handle - Handle to the view
+   * @returns PNG-encoded bytes, or null on failure / no content
+   */
+  capturePNG(handle: ViewHandle): Promise<Buffer | null>;
+
   // IPC
   /**
    * Send a message to the view's renderer process.
@@ -457,6 +468,23 @@ export class DefaultViewBoundary implements ViewBoundary {
   getURL(handle: ViewHandle): string {
     const state = this.getView(handle);
     return state.view.webContents.getURL();
+  }
+
+  async capturePNG(handle: ViewHandle): Promise<Buffer | null> {
+    try {
+      const state = this.getView(handle);
+      const wc = state.view.webContents;
+      if (!wc || wc.isDestroyed()) return null;
+      const image = await wc.capturePage();
+      if (image.isEmpty()) return null;
+      return image.toPNG();
+    } catch (error) {
+      this.logger.debug("capturePNG failed", {
+        id: handle.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 
   setBounds(handle: ViewHandle, bounds: Rectangle): void {

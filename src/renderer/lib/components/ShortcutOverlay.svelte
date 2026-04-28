@@ -68,6 +68,13 @@
   >
     <vscode-badge>⏎</vscode-badge> New
   </span>
+  <span
+    class="shortcut-hint"
+    class:shortcut-hint--hidden={!hasActiveWorkspace}
+    aria-label="H key to toggle hibernation on the active workspace"
+  >
+    <vscode-badge>H</vscode-badge> Hibernate
+  </span>
 </div>
 
 <style>
