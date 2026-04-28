@@ -20,6 +20,10 @@ import {
   type FlushHookResult,
   type FlushHookInput,
 } from "../intents/delete-workspace";
+import {
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+  type HibernateReleaseHookResult,
+} from "../intents/hibernate-workspace";
 import { createWindowsFileLockModule } from "./windows-file-lock-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createBehavioralLogger } from "../boundaries/platform/logging.test-utils";
@@ -354,6 +358,81 @@ describe("WindowsFileLockModule Integration", () => {
 
       // No processes spawned
       expect(() => runner.$.spawned(0)).toThrow();
+    });
+  });
+
+  describe("hibernate-workspace -> release", () => {
+    const hibernateReleaseOperation = createMinimalOperation<Intent, HibernateReleaseHookResult>(
+      HIBERNATE_WORKSPACE_OPERATION_ID,
+      "release",
+      {
+        hookContext: (ctx) => ({
+          intent: ctx.intent,
+          projectPath: "/projects/my-app",
+          workspacePath:
+            (ctx.intent as { payload: { workspacePath?: string } }).payload.workspacePath ?? "",
+          projectId: "proj-1",
+          workspaceName: "feature-1",
+        }),
+      }
+    );
+
+    function createHibernateReleaseSetup(r: MockProcessRunner) {
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        initialCapabilities: { platform: "win32" },
+      });
+      dispatcher.registerOperation("workspace:hibernate", hibernateReleaseOperation);
+      dispatcher.registerModule(
+        createWindowsFileLockModule({
+          processRunner: r,
+          scriptPath: SCRIPT_PATH,
+          logger: SILENT_LOGGER,
+        })
+      );
+      return dispatcher;
+    }
+
+    function makeHibernateIntent(): Intent {
+      return {
+        type: "workspace:hibernate",
+        payload: { workspacePath: "/workspaces/feature-1" },
+      } as unknown as Intent;
+    }
+
+    it("kills CWD-blocking processes (no force gate)", async () => {
+      let callIndex = 0;
+      runner = createMockProcessRunner({
+        onSpawn: () => {
+          callIndex++;
+          if (callIndex === 1) {
+            return {
+              stdout: createDetectJson([
+                { pid: 1234, name: "node.exe", commandLine: "node", cwd: "/workspaces/feature-1" },
+              ]),
+              exitCode: 0,
+            };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      const dispatcher = createHibernateReleaseSetup(runner);
+      await dispatcher.dispatch(makeHibernateIntent());
+
+      expect(runner.$.spawned(0).$.command).toBe("powershell");
+      expect(runner.$.spawned(1).$.command).toBe("taskkill");
+    });
+
+    it("swallows errors from detection during hibernation", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: () => ({ exitCode: 1, stderr: "boom" }),
+      });
+
+      const dispatcher = createHibernateReleaseSetup(runner);
+      const result = await dispatcher.dispatch(makeHibernateIntent());
+
+      expect(result).toEqual({});
     });
   });
 });

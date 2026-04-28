@@ -1,10 +1,11 @@
 /**
- * WindowsFileLockModule — Handles Windows file lock detection/removal during workspace deletion.
+ * WindowsFileLockModule — Handles Windows file lock detection/removal during workspace deletion or hibernation.
  *
  * Hooks:
  * - delete-workspace → release: CWD-only scan + kill blocking processes (best-effort)
  * - delete-workspace → detect: full handle detection
  * - delete-workspace → flush: kill PIDs collected by detect
+ * - hibernate-workspace → release: CWD-only scan + kill blocking processes (best-effort)
  *
  * Detection uses blocking-processes.ps1 with Restart Manager API, NtQuerySystemInformation,
  * and taskkill for process termination.
@@ -24,6 +25,11 @@ import {
   type FlushHookResult,
   type FlushHookInput,
 } from "../intents/delete-workspace";
+import {
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+  type HibernatePipelineHookInput,
+  type HibernateReleaseHookResult,
+} from "../intents/hibernate-workspace";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
 
@@ -334,29 +340,7 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
               return {};
             }
 
-            // CWD-only scan: find and kill processes whose CWD is under workspace
-            try {
-              const cwdProcesses = await runDetectAction(
-                deps.processRunner,
-                deps.scriptPath,
-                new Path(workspacePath),
-                "DetectCwd",
-                deps.logger
-              );
-              if (cwdProcesses.length > 0) {
-                deps.logger.info("Killing CWD-blocking processes before deletion", {
-                  workspacePath,
-                  pids: cwdProcesses.map((p) => p.pid).join(","),
-                });
-                await killBlockingProcesses(
-                  deps.processRunner,
-                  cwdProcesses.map((p) => p.pid),
-                  deps.logger
-                );
-              }
-            } catch {
-              // Non-fatal: CWD detection/kill failure shouldn't block deletion
-            }
+            await runCwdReleaseKill(deps, workspacePath, "deletion");
             return {};
           },
         },
@@ -396,6 +380,44 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
           },
         },
       },
+      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
+        release: {
+          handler: async (ctx: HookContext): Promise<HibernateReleaseHookResult> => {
+            const { workspacePath } = ctx as HibernatePipelineHookInput;
+            await runCwdReleaseKill(deps, workspacePath, "hibernation");
+            return {};
+          },
+        },
+      },
     },
   };
+}
+
+async function runCwdReleaseKill(
+  deps: WindowsFileLockModuleDeps,
+  workspacePath: string,
+  phase: "deletion" | "hibernation"
+): Promise<void> {
+  try {
+    const cwdProcesses = await runDetectAction(
+      deps.processRunner,
+      deps.scriptPath,
+      new Path(workspacePath),
+      "DetectCwd",
+      deps.logger
+    );
+    if (cwdProcesses.length > 0) {
+      deps.logger.info(`Killing CWD-blocking processes before ${phase}`, {
+        workspacePath,
+        pids: cwdProcesses.map((p) => p.pid).join(","),
+      });
+      await killBlockingProcesses(
+        deps.processRunner,
+        cwdProcesses.map((p) => p.pid),
+        deps.logger
+      );
+    }
+  } catch {
+    // Non-fatal: CWD detection/kill failure shouldn't block the operation
+  }
 }

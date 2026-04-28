@@ -23,6 +23,7 @@ import {
   type HibernateWorkspaceIntent,
   type CaptureHookResult,
   type HibernateShutdownHookResult,
+  type HibernateReleaseHookResult,
   type HibernatePipelineHookInput,
 } from "./hibernate-workspace";
 import {
@@ -63,7 +64,9 @@ const WORKSPACE_NAME = "feature-a" as WorkspaceName;
 interface Recorder {
   captureCalled: boolean;
   shutdownCalled: boolean;
+  releaseCalled: boolean;
   cleanupCalled: boolean;
+  callOrder: string[];
   metadataWrites: Array<{ key: string; value: string | null }>;
   events: DomainEvent[];
 }
@@ -72,7 +75,9 @@ function createRecorder(): Recorder {
   return {
     captureCalled: false,
     shutdownCalled: false,
+    releaseCalled: false,
     cleanupCalled: false,
+    callOrder: [],
     metadataWrites: [],
     events: [],
   };
@@ -123,7 +128,7 @@ function createMetadataModule(recorder: Recorder): IntentModule {
 
 function createHibernateHookModule(
   recorder: Recorder,
-  opts: { wasActive?: boolean } = {}
+  opts: { wasActive?: boolean; releaseThrows?: boolean } = {}
 ): IntentModule {
   return {
     name: "test-hibernate-hooks",
@@ -135,13 +140,27 @@ function createHibernateHookModule(
             expect(c.workspacePath).toBe(WORKSPACE_PATH);
             expect(c.projectId).toBe(PROJECT_ID);
             recorder.captureCalled = true;
+            recorder.callOrder.push("capture");
             return { captured: true };
           },
         },
         shutdown: {
           handler: async (): Promise<HibernateShutdownHookResult> => {
             recorder.shutdownCalled = true;
+            recorder.callOrder.push("shutdown");
             return opts.wasActive ? { wasActive: true } : {};
+          },
+        },
+        release: {
+          handler: async (ctx: HookContext): Promise<HibernateReleaseHookResult> => {
+            const c = ctx as HibernatePipelineHookInput;
+            expect(c.workspacePath).toBe(WORKSPACE_PATH);
+            recorder.releaseCalled = true;
+            recorder.callOrder.push("release");
+            if (opts.releaseThrows) {
+              throw new Error("release boom");
+            }
+            return {};
           },
         },
       },
@@ -199,7 +218,7 @@ function buildHarness(buildHookModules: (recorder: Recorder) => IntentModule[]):
 }
 
 describe("workspace:hibernate", () => {
-  it("runs capture + shutdown, persists hibernated metadata, emits hibernated event", async () => {
+  it("runs capture + shutdown + release, persists hibernated metadata, emits hibernated event", async () => {
     const { dispatcher, recorder } = buildHarness((r) => [createHibernateHookModule(r)]);
 
     const intent: HibernateWorkspaceIntent = {
@@ -210,6 +229,8 @@ describe("workspace:hibernate", () => {
 
     expect(recorder.captureCalled).toBe(true);
     expect(recorder.shutdownCalled).toBe(true);
+    expect(recorder.releaseCalled).toBe(true);
+    expect(recorder.callOrder).toEqual(["capture", "shutdown", "release"]);
     expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
 
     const hibernated = recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED);
@@ -255,6 +276,25 @@ describe("workspace:hibernate", () => {
       recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATE_FAILED)
     ).toBeUndefined();
     expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+  });
+
+  it("hibernate completes when release throws (best-effort)", async () => {
+    const { dispatcher, recorder } = buildHarness((r) => [
+      createHibernateHookModule(r, { releaseThrows: true }),
+    ]);
+
+    const intent: HibernateWorkspaceIntent = {
+      type: INTENT_HIBERNATE_WORKSPACE,
+      payload: { workspacePath: WORKSPACE_PATH },
+    };
+    await dispatcher.dispatch(intent);
+
+    expect(recorder.releaseCalled).toBe(true);
+    expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+    expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeDefined();
+    expect(
+      recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATE_FAILED)
+    ).toBeUndefined();
   });
 });
 

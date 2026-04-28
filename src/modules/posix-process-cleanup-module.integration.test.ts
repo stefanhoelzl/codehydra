@@ -17,6 +17,10 @@ import {
   type ReleaseHookResult,
 } from "../intents/delete-workspace";
 import {
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+  type HibernateReleaseHookResult,
+} from "../intents/hibernate-workspace";
+import {
   createPosixProcessCleanupModule,
   detectCwdProcesses,
   killPosixProcesses,
@@ -364,6 +368,76 @@ describe("PosixProcessCleanupModule Integration", () => {
       // Only detection was spawned, no kill
       expect(runner.$.spawned(0).$.command).toBe("lsof");
       expect(() => runner.$.spawned(1)).toThrow();
+    });
+  });
+
+  describe("hibernate-workspace -> release", () => {
+    const hibernateReleaseOperation = createMinimalOperation<Intent, HibernateReleaseHookResult>(
+      HIBERNATE_WORKSPACE_OPERATION_ID,
+      "release",
+      {
+        hookContext: (ctx) => ({
+          intent: ctx.intent,
+          projectPath: "/projects/my-app",
+          workspacePath:
+            (ctx.intent as { payload: { workspacePath?: string } }).payload.workspacePath ?? "",
+          projectId: "proj-1",
+          workspaceName: "feature-1",
+        }),
+      }
+    );
+
+    function createHibernateReleaseSetup(r: MockProcessRunner) {
+      const dispatcher = new Dispatcher({
+        logger: createMockLogger(),
+        initialCapabilities: { posix: true },
+      });
+      dispatcher.registerOperation("workspace:hibernate", hibernateReleaseOperation);
+      dispatcher.registerModule(
+        createPosixProcessCleanupModule({ processRunner: r, logger: SILENT_LOGGER })
+      );
+      return dispatcher;
+    }
+
+    function makeHibernateIntent(): Intent {
+      return {
+        type: "workspace:hibernate",
+        payload: { workspacePath: "/workspaces/feature-1" },
+      } as unknown as Intent;
+    }
+
+    it("detects and kills CWD-blocking processes (no force gate)", async () => {
+      let callIndex = 0;
+      runner = createMockProcessRunner({
+        onSpawn: () => {
+          callIndex++;
+          if (callIndex === 1) {
+            return {
+              stdout: "p1234\ncbash\nn/workspaces/feature-1\n",
+              exitCode: 0,
+            };
+          }
+          return { exitCode: 0 };
+        },
+      });
+
+      const dispatcher = createHibernateReleaseSetup(runner);
+      await dispatcher.dispatch(makeHibernateIntent());
+
+      expect(runner.$.spawned(0).$.command).toBe("lsof");
+      expect(runner.$.spawned(1).$.command).toBe("kill");
+      expect(runner.$.spawned(1).$.args).toEqual(["-TERM", "1234"]);
+    });
+
+    it("swallows errors from detection during hibernation", async () => {
+      runner = createMockProcessRunner({
+        onSpawn: () => ({ exitCode: null, running: true }),
+      });
+
+      const dispatcher = createHibernateReleaseSetup(runner);
+      const result = await dispatcher.dispatch(makeHibernateIntent());
+
+      expect(result).toEqual({});
     });
   });
 });

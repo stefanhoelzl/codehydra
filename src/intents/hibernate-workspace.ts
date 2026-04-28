@@ -101,6 +101,14 @@ export interface HibernateShutdownHookResult {
   readonly wasActive?: boolean;
 }
 
+/**
+ * Per-handler result for the "release" hook point.
+ * Best-effort CWD-rooted process kill before metadata persists.
+ */
+export interface HibernateReleaseHookResult {
+  readonly error?: string;
+}
+
 // =============================================================================
 // Operation
 // =============================================================================
@@ -147,6 +155,19 @@ export class HibernateWorkspaceOperation implements Operation<
       let wasActive = false;
       for (const r of shutdownResults) {
         if (r.wasActive) wasActive = true;
+      }
+
+      // Best-effort: kill processes whose CWD is rooted under the workspace.
+      // Errors here never block hibernation — the worktree stays on disk
+      // either way, so a stuck cleanup must not fail the operation.
+      const { results: releaseResults, errors: releaseCollectErrors } =
+        await ctx.hooks.collect<HibernateReleaseHookResult>("release", hookCtx);
+      for (const e of releaseCollectErrors) {
+        // collect errors are already logged by the dispatcher; nothing to do.
+        void e;
+      }
+      for (const r of releaseResults) {
+        void r;
       }
 
       // Persist hibernated flag via existing set-metadata pipeline
