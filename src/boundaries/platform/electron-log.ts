@@ -483,6 +483,11 @@ export class ElectronLog implements Logging {
     this.logPath = join(logsDir, filename);
     log.transports.file.resolvePathFn = (): string => this.logPath;
 
+    // 20 MB before rotation. Bug reports include the rotated archive plus the
+    // current file (gzip+base64 compressed), so a single rotation boundary fits
+    // inside one report; smaller caps would hide context across rotations.
+    log.transports.file.maxSize = 20 * 1024 * 1024;
+
     // Format: [timestamp] [level] [scope] message
     log.transports.file.format = TEXT_FORMAT;
     log.transports.console.format = TEXT_FORMAT;
