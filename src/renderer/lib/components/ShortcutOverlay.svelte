@@ -3,6 +3,7 @@
     active: boolean;
     workspaceCount?: number;
     hasActiveWorkspace?: boolean;
+    activeHibernated?: boolean;
     activeWorkspaceDeletionInProgress?: boolean;
     idleWorkspaceCount?: number;
   }
@@ -11,6 +12,7 @@
     active,
     workspaceCount = 0,
     hasActiveWorkspace = false,
+    activeHibernated = false,
     activeWorkspaceDeletionInProgress = false,
     idleWorkspaceCount = 0,
   }: Props = $props();
@@ -71,9 +73,12 @@
   <span
     class="shortcut-hint"
     class:shortcut-hint--hidden={!hasActiveWorkspace}
-    aria-label="H key to toggle hibernation on the active workspace"
+    aria-label={activeHibernated
+      ? "H key to wake the active workspace"
+      : "H key to toggle hibernation on the active workspace"}
   >
-    <vscode-badge>H</vscode-badge> Hibernate
+    <vscode-badge>H</vscode-badge>
+    {activeHibernated ? "Wake" : "Hibernate"}
   </span>
 </div>
 
