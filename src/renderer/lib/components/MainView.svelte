@@ -317,6 +317,7 @@
     active={shortcutModeActive.value}
     workspaceCount={getAllWorkspaces().length}
     hasActiveWorkspace={activeWorkspacePath.value !== null}
+    {activeHibernated}
     activeWorkspaceDeletionInProgress={activeWorkspacePath.value !== null &&
       getDeletionStatus(activeWorkspacePath.value) === "in-progress"}
     {idleWorkspaceCount}
