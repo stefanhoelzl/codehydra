@@ -162,7 +162,9 @@ export function addWorkspace(
     p.path === projectPath
       ? {
           ...p,
-          workspaces: [...p.workspaces, workspace],
+          workspaces: p.workspaces.some((w) => w.path === workspace.path)
+            ? p.workspaces
+            : [...p.workspaces, workspace],
           // Update defaultBaseBranch if provided (remembers last-used branch for next workspace creation)
           ...(defaultBaseBranch !== undefined ? { defaultBaseBranch } : {}),
         }

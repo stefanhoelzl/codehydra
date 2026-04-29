@@ -34,6 +34,7 @@ import {
   getAllWorkspaces,
   findWorkspaceIndex,
   wrapIndex,
+  getWorkspaceRefByIndex,
 } from "./projects.svelte.js";
 
 describe("projects store", () => {
@@ -237,6 +238,59 @@ describe("projects store", () => {
       addWorkspace("/test/project" as ProjectPath, newWorkspace, "feature/new-base");
 
       expect(projects.value[0]?.defaultBaseBranch).toBe("feature/new-base");
+    });
+
+    // Regression: wake/reopen path emits workspace:created for an already-known
+    // workspace, causing addWorkspace to be called for a path that already
+    // exists in the project's workspaces array. The duplicate entry produces
+    // phantom indices that break Alt+X arrow navigation (the duplicate sits
+    // adjacent to the original, so ↓ targets a ref whose path equals the
+    // current workspace, yielding a no-op switch).
+    it("does not duplicate workspace when added twice with the same path", () => {
+      const ws = createMockWorkspace({ path: "/test/project/.worktrees/ws1" });
+      const project = createMockProject({
+        path: "/test/project" as ProjectPath,
+        workspaces: [ws],
+      });
+      addProject(project);
+
+      addWorkspace("/test/project" as ProjectPath, ws);
+
+      expect(projects.value[0]?.workspaces).toHaveLength(1);
+    });
+
+    it("keeps arrow navigation consistent after a wake/reopen re-adds an existing workspace", () => {
+      // Reproduce the user-reported sidebar layout:
+      //   project A: ws-a
+      //   project B: ws-b (idle), ws-c (idle), ws-d (idle)
+      // Wake/reopen of ws-b re-adds it to project B, producing a duplicate
+      // entry between ws-b and ws-c. Arrow-down from ws-b would then target
+      // the duplicate (path === ws-b.path) instead of ws-c.
+      const wsA = createMockWorkspace({ path: "/A/.worktrees/ws-a" });
+      const wsB = createMockWorkspace({ path: "/B/.worktrees/ws-b" });
+      const wsC = createMockWorkspace({ path: "/B/.worktrees/ws-c" });
+      const wsD = createMockWorkspace({ path: "/B/.worktrees/ws-d" });
+      addProject(createMockProject({ path: "/A" as ProjectPath, workspaces: [wsA] }));
+      addProject(createMockProject({ path: "/B" as ProjectPath, workspaces: [wsB, wsC, wsD] }));
+
+      // Simulate the renderer-side handler of workspace:created with reopened=true
+      // (see src/renderer/lib/utils/domain-events.ts:120 — it calls addWorkspace
+      // unconditionally regardless of the reopened flag).
+      addWorkspace("/B" as ProjectPath, wsB);
+
+      // The flat workspace list backing both navigation and the sidebar's
+      // index-to-jump-key mapping must contain each path exactly once.
+      const all = getAllWorkspaces();
+      const paths = all.map((w) => w.path);
+      expect(new Set(paths).size).toBe(paths.length);
+      expect(all).toHaveLength(4);
+
+      // Concrete navigation symptom: from ws-b, ↓ must land on ws-c, not ws-b.
+      const currentIndex = findWorkspaceIndex(wsB.path);
+      expect(currentIndex).toBeGreaterThanOrEqual(0);
+      const nextIndex = wrapIndex(currentIndex + 1, all.length);
+      const nextRef = getWorkspaceRefByIndex(nextIndex);
+      expect(nextRef?.path).toBe(wsC.path);
     });
   });
 
