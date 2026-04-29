@@ -296,11 +296,21 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               } finally {
                 checkInProgress = false;
               }
-              deps.notificationManager.open({
+              const handle = deps.notificationManager.open({
                 type: "info",
                 title: "Update ready",
-                message: `Version ${version} will be installed on next restart.`,
-                dismissible: true,
+                message: `Version ${version} is ready to install.`,
+                dismissible: false,
+                actions: [{ id: "restart", label: "Restart Now" }],
+              });
+              handle.onEvent((evt) => {
+                if (evt.actionId === "restart") {
+                  handle.close();
+                  void deps.dispatcher.dispatch({
+                    type: INTENT_APP_SHUTDOWN,
+                    payload: { installUpdate: true },
+                  });
+                }
               });
             } else {
               deps.notificationManager.open({

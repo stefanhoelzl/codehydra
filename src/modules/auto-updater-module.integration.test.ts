@@ -279,25 +279,52 @@ function createMockDialogManager(): MockDialogManager {
 interface MockNotificationManager {
   manager: NotificationManager;
   opened: NotificationConfig[];
+  emitEvent: (notificationId: string, actionId: string) => void;
+  lastClosed: () => boolean;
 }
 
 function createMockNotificationManager(): MockNotificationManager {
   const opened: NotificationConfig[] = [];
+  const listeners = new Map<string, Set<(event: NotificationUserEvent) => void>>();
+  const closedFlags = new Map<string, boolean>();
   const manager = {
     open(config: NotificationConfig): NotificationHandle {
       opened.push(config);
+      const id = `ntf-${opened.length}`;
+      listeners.set(id, new Set());
+      closedFlags.set(id, false);
       return {
-        id: `ntf-${opened.length}`,
+        id,
         update: () => {},
-        close: () => {},
-        onEvent: () => () => {},
+        close: () => {
+          closedFlags.set(id, true);
+        },
+        onEvent: (handler) => {
+          listeners.get(id)!.add(handler);
+          return () => {
+            listeners.get(id)?.delete(handler);
+          };
+        },
         nextEvent: () => new Promise<NotificationUserEvent>(() => {}),
         closed: new Promise<void>(() => {}),
       } satisfies NotificationHandle;
     },
     routeEvent: () => {},
   } as unknown as NotificationManager;
-  return { manager, opened };
+  return {
+    manager,
+    opened,
+    emitEvent(notificationId, actionId) {
+      const event: NotificationUserEvent = { notificationId, actionId };
+      for (const handler of listeners.get(notificationId) ?? []) {
+        handler(event);
+      }
+    },
+    lastClosed() {
+      const id = `ntf-${opened.length}`;
+      return closedFlags.get(id) ?? false;
+    },
+  };
 }
 
 interface TestSetup {
@@ -562,7 +589,32 @@ describe("AutoUpdaterModule Integration", () => {
     expect(cfg.type).toBe("info");
     expect(cfg.title).toBe("Update ready");
     expect(cfg.message).toContain("2.0.0");
-    expect(cfg.message).toContain("next restart");
+    expect(cfg.message).toContain("ready to install");
+    expect(cfg.dismissible).toBe(false);
+    expect(cfg.actions).toEqual([{ id: "restart", label: "Restart Now" }]);
+  });
+
+  it("clicking 'Restart Now' on ready notification dispatches app:shutdown with installUpdate", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "auto-update": "always" },
+      checkReturns: false,
+    });
+    await dispatcher.dispatch(startIntent());
+
+    autoUpdater.setCheckResult(true);
+    const resumePromise = dispatcher.dispatch(resumeIntent());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    autoUpdater.resolveDownload!();
+    await resumePromise;
+
+    expect(notificationManager.opened).toHaveLength(1);
+    notificationManager.emitEvent("ntf-1", "restart");
+
+    // Allow the void dispatch to settle
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(notificationManager.lastClosed()).toBe(true);
+    expect(autoUpdater.quitAndInstallCalled).toBe(true);
   });
 
   it("app:resume with config=always and download failure — no notification", async () => {
