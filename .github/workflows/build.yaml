@@ -158,7 +158,7 @@ jobs:
           _CH_BUILD_VERSION: ${{ needs.prepare.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          pnpm pkg set "version=$_CH_BUILD_VERSION"
+          npm pkg set "version=$_CH_BUILD_VERSION"
           pnpm dist:${{ matrix.target }} -- --publish=never
 
       - name: Rename artifact
