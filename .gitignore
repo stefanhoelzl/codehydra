@@ -38,3 +38,6 @@ pnpm-debug.log*
 
 # Build artifacts
 *.vsix
+
+# Claude Code scheduler
+.claude/scheduled_tasks.lock

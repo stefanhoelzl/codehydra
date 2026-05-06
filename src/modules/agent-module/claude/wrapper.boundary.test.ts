@@ -223,7 +223,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args).toContain("--ide");
@@ -246,7 +249,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.env.CLAUDECODE).toBeNull();
@@ -290,7 +296,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args).toContain("Hello world");
@@ -335,7 +344,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       // Verify full multi-line prompt is received as a single argument
@@ -362,7 +374,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       // Without initial prompt, first non-continue arg should be a flag, not a prompt string
@@ -383,7 +398,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args).toContain("--dangerously-skip-permissions");
@@ -407,7 +425,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args).toContain("--allow-dangerously-skip-permissions");
@@ -429,7 +450,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args[0]).toBe("--continue");
@@ -450,7 +474,10 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const outputs = parseAllFakeClaudeOutputs(result.stdout);
       expect(outputs).toHaveLength(2);
       // First call has --continue
@@ -474,10 +501,139 @@ describe("ch-claude.cjs boundary tests", () => {
         tempDir.path
       );
 
-      expect(result.status).toBe(0);
+      expect(
+        result.status,
+        `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+      ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
       expect(output!.args[0]).not.toBe("--continue");
     });
+  });
+});
+
+/**
+ * Create a fake claude.cmd shim (mimics npm-installed claude on Windows).
+ * The .cmd forwards %* to a Node script — the same pattern npm uses for
+ * global bin shims when no native .exe is present.
+ */
+async function createFakeClaudeCmdShim(binDir: string): Promise<string> {
+  await mkdir(binDir, { recursive: true });
+
+  const fakeScriptPath = join(binDir, "fake-claude.cjs");
+  const fakeNodeContent = `#!/usr/bin/env node
+const fs = require("node:fs");
+
+if (process.argv.includes("--version")) {
+  console.log("fake-claude 1.0.0");
+  process.exit(0);
+}
+
+const output = {
+  args: process.argv.slice(2),
+  env: { CLAUDECODE: process.env.CLAUDECODE ?? null },
+};
+
+const counterFile = process.env.CLAUDE_COUNTER_FILE;
+let callIndex = 0;
+if (counterFile) {
+  try { callIndex = parseInt(fs.readFileSync(counterFile, "utf-8"), 10); } catch {}
+  fs.writeFileSync(counterFile, String(callIndex + 1));
+}
+
+const exitCodes = process.env.CLAUDE_EXIT_CODES;
+let exitCode = 0;
+if (exitCodes) {
+  const codes = exitCodes.split(",").map(Number);
+  exitCode = codes[callIndex] ?? codes[codes.length - 1] ?? 0;
+} else {
+  exitCode = parseInt(process.env.CLAUDE_EXIT_CODE || "0", 10);
+}
+
+console.log(JSON.stringify(output));
+process.exit(isNaN(exitCode) ? 0 : exitCode);
+`;
+  await writeFile(fakeScriptPath, fakeNodeContent);
+
+  // Embed the absolute path to fake-claude.cjs rather than relying on
+  // %~dp0 — when a .cmd is invoked through a PATH lookup, %~dp0 can
+  // resolve to the caller's CWD rather than the script's directory.
+  const cmdContent = `@echo off\r\nnode "${fakeScriptPath}" %*\r\n`;
+  await writeFile(join(binDir, "claude.cmd"), cmdContent);
+
+  return binDir;
+}
+
+describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () => {
+  let tempDir: { path: string; cleanup: () => Promise<void> };
+  let cmdBinDir: string;
+
+  beforeAll(async () => {
+    try {
+      await access(COMPILED_SCRIPT_PATH, constants.R_OK);
+    } catch {
+      throw new Error(
+        `Compiled script not found at ${COMPILED_SCRIPT_PATH}. Run 'pnpm build:wrappers' first.`
+      );
+    }
+  });
+
+  beforeEach(async () => {
+    tempDir = await createTempDir();
+    cmdBinDir = await createFakeClaudeCmdShim(join(tempDir.path, "bin"));
+  });
+
+  afterEach(async () => {
+    await tempDir.cleanup();
+  });
+
+  it("discovers and spawns claude.cmd when no claude.exe exists", async () => {
+    const result = await executeScript(
+      COMPILED_SCRIPT_PATH,
+      {
+        _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+        _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+        PATH: buildPath(cmdBinDir),
+      },
+      tempDir.path
+    );
+
+    expect(
+      result.status,
+      `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+    ).toBe(0);
+    const output = parseFakeClaudeOutput(result.stdout);
+    expect(output).not.toBeNull();
+    expect(output!.args).toContain("--ide");
+    expect(output!.args).toContain("--settings");
+    expect(output!.args).toContain("/tmp/settings.json");
+    expect(output!.args).toContain("--mcp-config");
+    expect(output!.args).toContain("/tmp/mcp.json");
+  });
+
+  it("forwards initial-prompt argument through .cmd shim intact", async () => {
+    const promptDir = join(tempDir.path, "prompt-dir");
+    await mkdir(promptDir, { recursive: true });
+    const promptFile = join(promptDir, "initial-prompt.json");
+    await writeFile(promptFile, JSON.stringify({ prompt: "hello world" }));
+
+    const result = await executeScript(
+      COMPILED_SCRIPT_PATH,
+      {
+        _CH_CLAUDE_SETTINGS: "/tmp/settings.json",
+        _CH_CLAUDE_MCP_CONFIG: "/tmp/mcp.json",
+        _CH_INITIAL_PROMPT_FILE: promptFile,
+        PATH: buildPath(cmdBinDir),
+      },
+      tempDir.path
+    );
+
+    expect(
+      result.status,
+      `wrapper exited ${result.status}\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`
+    ).toBe(0);
+    const output = parseFakeClaudeOutput(result.stdout);
+    expect(output).not.toBeNull();
+    expect(output!.args).toContain("hello world");
   });
 });

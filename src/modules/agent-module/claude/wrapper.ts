@@ -156,6 +156,8 @@ export interface SpawnResult {
 export interface RunClaudeOptions {
   /** Skip the automatic --continue attempt (new workspace with no prior session) */
   skipContinue?: boolean;
+  /** Spawn through a shell (required on Windows when invoking .cmd/.bat shims) */
+  useShell?: boolean;
 }
 
 /**
@@ -170,15 +172,43 @@ interface SpawnSyncResult {
  * Dependencies for runClaude that can be injected for testing.
  */
 export interface RunClaudeDeps {
-  spawnSync: (command: string, args: string[], options: { stdio: "inherit" }) => SpawnSyncResult;
+  spawnSync: (
+    command: string,
+    args: string[],
+    options: { stdio: "inherit"; shell: boolean }
+  ) => SpawnSyncResult;
+}
+
+/**
+ * Quote an argument for cmd.exe. Wraps in double quotes and doubles any
+ * embedded quotes so cmd.exe parses it as a single token. Used together
+ * with windowsVerbatimArguments to bypass Node's arg mangling.
+ */
+function quoteForCmd(arg: string): string {
+  return `"${arg.replace(/"/g, '""')}"`;
 }
 
 /**
  * Default dependencies using real implementations.
+ *
+ * Node's `shell: true` joins the file + args with single spaces and wraps the
+ * whole line in one outer pair of quotes — it does NOT quote individual args.
+ * Args containing spaces (like a prompt "hello world") therefore get split
+ * by cmd.exe's tokenizer. Pre-quote each arg ourselves so the inner tokens
+ * survive cmd.exe's parse after /S strips the outer pair.
  */
 const defaultDeps: RunClaudeDeps = {
   spawnSync: (command, args, options) => {
-    const result = spawnSync(command, args, { ...options, shell: false });
+    if (options.shell && process.platform === "win32") {
+      const quotedCommand = quoteForCmd(command);
+      const quotedArgs = args.map(quoteForCmd);
+      const result = spawnSync(quotedCommand, quotedArgs, {
+        stdio: "inherit",
+        shell: true,
+      });
+      return { status: result.status, error: result.error };
+    }
+    const result = spawnSync(command, args, options);
     return { status: result.status, error: result.error };
   },
 };
@@ -216,10 +246,13 @@ export function runClaude(
   options: RunClaudeOptions,
   deps: RunClaudeDeps = defaultDeps
 ): SpawnResult {
+  const shell = options.useShell ?? false;
+
   // Check if user already passed resume flags or skipContinue is set
   if (hasUserResumeFlag(baseArgs) || options.skipContinue) {
     const result = deps.spawnSync(claudeBinary, baseArgs, {
       stdio: "inherit",
+      shell,
     });
     return {
       exitCode: result.status,
@@ -231,6 +264,7 @@ export function runClaude(
   const continueArgs = ["--continue", ...baseArgs];
   const firstResult = deps.spawnSync(claudeBinary, continueArgs, {
     stdio: "inherit",
+    shell,
   });
 
   // If successful, return
@@ -244,6 +278,7 @@ export function runClaude(
   // Retry without --continue
   const retryResult = deps.spawnSync(claudeBinary, baseArgs, {
     stdio: "inherit",
+    shell,
   });
 
   return {
@@ -290,16 +325,35 @@ function getUserArgs(): string[] {
 
 /**
  * Find the system-installed claude binary.
- * Uses --version to verify the binary is executable and functional.
- * Returns the binary name (not full path) - spawn uses PATH resolution.
+ *
+ * On Windows we probe explicit extensions because npm-installed claude only
+ * drops a `claude.cmd` shim (no `.exe`), and `.cmd` files require `shell: true`
+ * for spawnSync (Node refuses direct execution since CVE-2024-27980).
+ *
+ * Returns the command name and whether spawn must go through a shell, or null
+ * when no working binary is found on PATH.
  */
-function findSystemClaude(): string | null {
-  try {
-    execSync("claude --version", { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
-    return "claude"; // Binary name, not full path - spawn will use PATH resolution
-  } catch {
-    return null;
+function findSystemClaude(): { command: string; useShell: boolean } | null {
+  const candidates =
+    process.platform === "win32"
+      ? [
+          { command: "claude.exe", useShell: false },
+          { command: "claude.cmd", useShell: true },
+        ]
+      : [{ command: "claude", useShell: false }];
+
+  for (const candidate of candidates) {
+    try {
+      execSync(`${candidate.command} --version`, {
+        encoding: "utf8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      return candidate;
+    } catch {
+      // Try next candidate
+    }
   }
+  return null;
 }
 
 /**
@@ -439,8 +493,9 @@ async function main(): Promise<never> {
 
   // 8. Spawn Claude with automatic session resume
   // Skip --continue attempt for new workspaces (no prior session to resume)
-  const result = runClaude(claudeBinary, args, {
+  const result = runClaude(claudeBinary.command, args, {
     skipContinue: consumeNoSessionMarker(),
+    useShell: claudeBinary.useShell,
   });
 
   // 9. Notify wrapper end (Claude has exited)
