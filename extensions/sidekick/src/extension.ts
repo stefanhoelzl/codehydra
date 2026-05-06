@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { io } from "socket.io-client";
 import cssColorNames from "color-name";
-import type { CodehydraApi } from "../api";
+import type { CodehydraApi, WorkspaceStatus } from "../api";
 import type {
   TypedSocket,
   PluginResult,
@@ -353,8 +353,11 @@ const codehydraApi = {
    * All methods require the connection to be established (use whenReady() first).
    */
   workspace: {
-    getStatus() {
-      return emitApiCall("api:workspace:getStatus");
+    getStatus(options?: { refresh?: boolean }) {
+      return emitApiCall<WorkspaceStatus>(
+        "api:workspace:getStatus",
+        options !== undefined ? options : undefined
+      );
     },
 
     getAgentSession() {

@@ -1,9 +1,9 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { projects, workspaces, type WorkspaceRef } from "$lib/api";
+  import { workspaces, type WorkspaceRef } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
-  import { getAllWorkspaces, getProjectById } from "$lib/stores/projects.svelte.js";
+  import { getAllWorkspaces } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
 
   const logger = createLogger("ui");
@@ -30,8 +30,8 @@
     return ws?.metadata?.base;
   });
 
-  // Check workspace status on mount: fetch remotes first so unmerged-commit
-  // counts reflect server-merged branches, then read status.
+  // Check workspace status on mount. refresh:true tells the operation to fetch
+  // remotes first so unmerged-commit counts reflect server-merged branches.
   $effect(() => {
     if (!open) return;
 
@@ -39,30 +39,22 @@
     isDirty = false;
     unmergedCommits = 0;
 
-    const projectPath = getProjectById(workspaceRef.projectId)?.path;
-
-    void (async () => {
-      if (projectPath !== undefined) {
-        try {
-          await projects.fetchBases(projectPath);
-        } catch {
-          // best-effort; fall through to status read with possibly stale data
-        }
-      }
-      try {
-        const status = await workspaces.getStatus(workspaceRef.path);
+    workspaces
+      .getStatus(workspaceRef.path, { refresh: true })
+      .then((status) => {
         isDirty = status.isDirty;
         unmergedCommits = status.unmergedCommits;
-      } catch {
+      })
+      .catch(() => {
         isDirty = false;
         unmergedCommits = 0;
-      } finally {
+      })
+      .finally(() => {
         isCheckingStatus = false;
         setTimeout(() => {
           document.querySelector<HTMLElement>(".dialog-actions vscode-button")?.focus();
         }, 0);
-      }
-    })();
+      });
   });
 
   // Handle form submission (fire-and-forget)

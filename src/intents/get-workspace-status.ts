@@ -14,6 +14,7 @@ import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "./get-project-bases";
 
 // =============================================================================
 // Intent Types
@@ -21,6 +22,12 @@ import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve
 
 export interface GetWorkspaceStatusPayload {
   readonly workspacePath: string;
+  /**
+   * If true, fetch remotes (via project:get-bases with refresh+wait) before
+   * reading status. Best-effort: fetch failures are swallowed and the status
+   * is read against possibly-stale local refs.
+   */
+  readonly refresh?: boolean;
 }
 
 export interface GetWorkspaceStatusIntent extends Intent<WorkspaceStatus> {
@@ -67,12 +74,25 @@ export class GetWorkspaceStatusOperation implements Operation<
     const { payload } = ctx.intent;
 
     // 1. Dispatch shared workspace resolution
-    await ctx.dispatch({
+    const { projectPath } = await ctx.dispatch({
       type: INTENT_RESOLVE_WORKSPACE,
       payload: { workspacePath: payload.workspacePath },
     } as ResolveWorkspaceIntent);
 
-    // 2. get — each handler contributes its piece
+    // 2. Optional refresh — fetch remotes so unmerged-commit counts reflect
+    // server-merged branches. Best-effort; errors are swallowed.
+    if (payload.refresh) {
+      try {
+        await ctx.dispatch({
+          type: INTENT_GET_PROJECT_BASES,
+          payload: { projectPath, refresh: true, wait: true },
+        } as GetProjectBasesIntent);
+      } catch {
+        // Fall through to status read with possibly-stale refs.
+      }
+    }
+
+    // 3. get — each handler contributes its piece
     const getCtx: GetStatusHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,

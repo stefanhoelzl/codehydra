@@ -24,7 +24,7 @@ import type { Logger } from "../boundaries/platform/logging-types";
 import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
 import { LogLevel } from "../boundaries/platform/logging-types";
 import type { PortManager } from "../boundaries/platform/network";
-import type { Workspace } from "../shared/api/types";
+import type { Workspace, WorkspaceStatus } from "../shared/api/types";
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
@@ -38,6 +38,7 @@ import type {
   DeleteWorkspaceResponse,
   ExecuteCommandRequest,
   WorkspaceCreateRequest,
+  GetWorkspaceStatusRequest,
   LogContext,
   ShowNotificationRequest,
   ShowNotificationResponse,
@@ -55,6 +56,7 @@ import {
   validateExecuteCommandRequest,
   validateOpenSystemPathRequest,
   validateWorkspaceCreateRequest,
+  validateGetWorkspaceStatusRequest,
   validateLogRequest,
 } from "../shared/plugin-protocol";
 import type { OpenSystemPathRequest } from "../shared/plugin-protocol";
@@ -565,17 +567,26 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     // No-arg handlers
     socket.on(
       "api:workspace:getStatus",
-      createNoArgHandler("api:workspace:getStatus", workspacePath, async () => {
-        const intent: GetWorkspaceStatusIntent = {
-          type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath },
-        };
-        const result = await dispatcher.dispatch(intent);
-        if (!result) {
-          throw new Error("Get workspace status dispatch returned no result");
-        }
-        return result;
-      })
+      createValidatedHandler<
+        GetWorkspaceStatusRequest | undefined,
+        GetWorkspaceStatusRequest,
+        WorkspaceStatus
+      >("api:workspace:getStatus", workspacePath, validateGetWorkspaceStatusRequest, (req) =>
+        handlePluginApiCall(workspacePath, "getStatus", async () => {
+          const intent: GetWorkspaceStatusIntent = {
+            type: INTENT_GET_WORKSPACE_STATUS,
+            payload: {
+              workspacePath,
+              ...(req.refresh !== undefined && { refresh: req.refresh }),
+            },
+          };
+          const result = await dispatcher.dispatch(intent);
+          if (!result) {
+            throw new Error("Get workspace status dispatch returned no result");
+          }
+          return result;
+        })
+      )
     );
 
     socket.on(

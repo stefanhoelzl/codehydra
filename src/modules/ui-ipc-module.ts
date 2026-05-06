@@ -19,6 +19,7 @@ import type {
   WorkspaceRemovePayload,
   WorkspaceSetMetadataPayload,
   WorkspaceGetPayload,
+  WorkspaceGetStatusPayload,
   UiSwitchWorkspacePayload,
   UiSetModePayload,
 } from "../shared/ipc";
@@ -491,10 +492,13 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
   });
 
   registerIpc(ApiIpcChannels.WORKSPACE_GET_STATUS, async (payload) => {
-    const p = payload as WorkspaceGetPayload;
+    const p = payload as WorkspaceGetStatusPayload;
     const intent: GetWorkspaceStatusIntent = {
       type: INTENT_GET_WORKSPACE_STATUS,
-      payload: { workspacePath: p.workspacePath },
+      payload: {
+        workspacePath: p.workspacePath,
+        ...(p.refresh !== undefined && { refresh: p.refresh }),
+      },
     };
     const result = await dispatcher.dispatch(intent);
     if (!result) {

@@ -480,16 +480,21 @@ export class McpServer implements IMcpServer {
       "workspace_get_status",
       {
         description: "Get the current workspace status including dirty flag and agent status",
-        inputSchema: z.object({}),
+        inputSchema: z.object({ refresh: z.boolean().optional() }),
       },
-      this.createWorkspaceHandler(async (workspacePath) => {
-        const result = await this.dispatcher.dispatch({
-          type: INTENT_GET_WORKSPACE_STATUS,
-          payload: { workspacePath },
-        } as GetWorkspaceStatusIntent);
-        if (!result) throw new Error("Get workspace status dispatch returned no result");
-        return result;
-      })
+      this.createWorkspaceHandler(
+        async (workspacePath, args: { refresh?: boolean | undefined }) => {
+          const result = await this.dispatcher.dispatch({
+            type: INTENT_GET_WORKSPACE_STATUS,
+            payload: {
+              workspacePath,
+              ...(typeof args.refresh === "boolean" && { refresh: args.refresh }),
+            },
+          } as GetWorkspaceStatusIntent);
+          if (!result) throw new Error("Get workspace status dispatch returned no result");
+          return result;
+        }
+      )
     );
 
     // workspace_get_metadata

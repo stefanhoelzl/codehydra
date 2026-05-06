@@ -20,7 +20,7 @@ import {
   type TestClientSocket,
 } from "./plugin-server.test-utils";
 import type { WorkspaceStatus } from "../shared/api/types";
-import type { PluginConfig } from "../shared/plugin-protocol";
+import type { PluginConfig, PluginResult } from "../shared/plugin-protocol";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
@@ -264,7 +264,9 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
         data?: WorkspaceStatus;
         error?: string;
       }>((resolve) => {
-        client.emit("api:workspace:getStatus", (res) => resolve(res));
+        client.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+          resolve(res)
+        );
       });
 
       expect(result.success).toBe(true);
@@ -431,7 +433,9 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await waitForConnect(client);
 
       await new Promise<{ success: boolean }>((resolve) => {
-        client.emit("api:workspace:getStatus", (res) => resolve(res));
+        client.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+          resolve(res)
+        );
       });
 
       expect(env.mockDispatch).toHaveBeenCalledWith(
@@ -458,10 +462,14 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       // Make concurrent calls
       const [result1, result2] = await Promise.all([
         new Promise<{ success: boolean }>((resolve) => {
-          client1.emit("api:workspace:getStatus", (res) => resolve(res));
+          client1.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+            resolve(res)
+          );
         }),
         new Promise<{ success: boolean }>((resolve) => {
-          client2.emit("api:workspace:getStatus", (res) => resolve(res));
+          client2.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+            resolve(res)
+          );
         }),
       ]);
 
@@ -486,13 +494,19 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       // Make rapid sequential calls
       const results = await Promise.all([
         new Promise<{ success: boolean }>((resolve) => {
-          client.emit("api:workspace:getStatus", (res) => resolve(res));
+          client.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+            resolve(res)
+          );
         }),
         new Promise<{ success: boolean }>((resolve) => {
-          client.emit("api:workspace:getStatus", (res) => resolve(res));
+          client.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+            resolve(res)
+          );
         }),
         new Promise<{ success: boolean }>((resolve) => {
-          client.emit("api:workspace:getStatus", (res) => resolve(res));
+          client.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+            resolve(res)
+          );
         }),
       ]);
 
@@ -512,7 +526,9 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
       await waitForConnect(client);
 
       const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-        client.emit("api:workspace:getStatus", (res) => resolve(res));
+        client.emit("api:workspace:getStatus", undefined, (res: PluginResult<WorkspaceStatus>) =>
+          resolve(res)
+        );
       });
 
       expect(result.success).toBe(false);
