@@ -42,6 +42,10 @@ export interface SetMetadataRequest {
   readonly value: string | null;
 }
 
+export interface GetWorkspaceStatusRequest {
+  readonly refresh?: boolean;
+}
+
 export interface LogRequest {
   readonly level: "silly" | "debug" | "info" | "warn" | "error";
   readonly message: string;
@@ -136,7 +140,10 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
-  "api:workspace:getStatus": (ack: (result: PluginResult<WorkspaceStatus>) => void) => void;
+  "api:workspace:getStatus": (
+    request: GetWorkspaceStatusRequest | undefined,
+    ack: (result: PluginResult<WorkspaceStatus>) => void
+  ) => void;
   "api:workspace:getMetadata": (
     ack: (result: PluginResult<Record<string, string>>) => void
   ) => void;

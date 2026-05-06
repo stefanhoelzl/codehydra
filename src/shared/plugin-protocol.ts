@@ -433,6 +433,44 @@ export function validateDeleteWorkspaceRequest(
   };
 }
 
+/**
+ * Request to get workspace status.
+ *
+ * Optional refresh flag triggers a remote fetch before reading status, so
+ * unmerged-commit counts reflect server-merged branches. Best-effort.
+ */
+export interface GetWorkspaceStatusRequest {
+  readonly refresh?: boolean;
+}
+
+/**
+ * Runtime validation for GetWorkspaceStatusRequest.
+ */
+export function validateGetWorkspaceStatusRequest(
+  payload: unknown
+): { valid: true; request: GetWorkspaceStatusRequest } | { valid: false; error: string } {
+  if (payload === undefined || payload === null) {
+    return { valid: true, request: {} };
+  }
+
+  if (typeof payload !== "object") {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if ("refresh" in request && typeof request.refresh !== "boolean") {
+    return { valid: false, error: "Field 'refresh' must be a boolean" };
+  }
+
+  return {
+    valid: true,
+    request: {
+      ...(typeof request.refresh === "boolean" && { refresh: request.refresh }),
+    },
+  };
+}
+
 // ============================================================================
 // UI Request/Response Types
 // ============================================================================
@@ -533,7 +571,10 @@ export interface ClientToServerEvents {
    *
    * @param ack - Acknowledgment callback with workspace status
    */
-  "api:workspace:getStatus": (ack: (result: PluginResult<WorkspaceStatus>) => void) => void;
+  "api:workspace:getStatus": (
+    request: GetWorkspaceStatusRequest | undefined,
+    ack: (result: PluginResult<WorkspaceStatus>) => void
+  ) => void;
 
   /**
    * Get the agent session info for the connected workspace.

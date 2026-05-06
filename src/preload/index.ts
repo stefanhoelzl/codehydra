@@ -71,8 +71,11 @@ contextBridge.exposeInMainWorld("api", {
         workspacePath,
         ...options,
       }),
-    getStatus: (workspacePath: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, { workspacePath }),
+    getStatus: (workspacePath: string, options?: { refresh?: boolean }) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, {
+        workspacePath,
+        ...(options?.refresh !== undefined && { refresh: options.refresh }),
+      }),
     getAgentSession: (workspacePath: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION, { workspacePath }),
     setMetadata: (workspacePath: string, key: string, value: string | null) =>

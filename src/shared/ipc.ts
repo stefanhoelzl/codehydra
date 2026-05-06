@@ -123,9 +123,17 @@ export interface WorkspaceRemovePayload {
   readonly blockingPids?: readonly number[];
 }
 
-/** workspaces.getStatus, workspaces.getAgentSession, workspaces.getMetadata, workspaces.restartAgentServer */
+/** workspaces.getAgentSession, workspaces.getMetadata, workspaces.restartAgentServer */
 export interface WorkspaceGetPayload {
   readonly workspacePath: string;
+}
+
+/** workspaces.getStatus */
+export interface WorkspaceGetStatusPayload {
+  readonly workspacePath: string;
+  /** If true, fetch remotes before reading status so unmerged-commit counts
+   * reflect server-merged branches. Best-effort. */
+  readonly refresh?: boolean;
 }
 
 /** workspaces.setMetadata */

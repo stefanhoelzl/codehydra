@@ -65,7 +65,7 @@ export interface Api {
         blockingPids?: readonly number[];
       }
     ): Promise<{ started: boolean }>;
-    getStatus(workspacePath: string): Promise<WorkspaceStatus>;
+    getStatus(workspacePath: string, options?: { refresh?: boolean }): Promise<WorkspaceStatus>;
     getAgentSession(workspacePath: string): Promise<unknown>;
     setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
     getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;

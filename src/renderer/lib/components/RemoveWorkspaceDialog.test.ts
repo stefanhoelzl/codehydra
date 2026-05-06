@@ -7,10 +7,9 @@ import { render, screen, fireEvent } from "@testing-library/svelte";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "@shared/api/types";
 
 // Create mock functions with vi.hoisted
-const { mockRemoveWorkspace, mockGetStatus, mockFetchBases, mockCloseDialog } = vi.hoisted(() => ({
+const { mockRemoveWorkspace, mockGetStatus, mockCloseDialog } = vi.hoisted(() => ({
   mockRemoveWorkspace: vi.fn(),
   mockGetStatus: vi.fn(),
-  mockFetchBases: vi.fn(),
   mockCloseDialog: vi.fn(),
 }));
 
@@ -34,9 +33,6 @@ vi.mock("$lib/api", () => ({
     remove: mockRemoveWorkspace,
     getStatus: mockGetStatus,
   },
-  projects: {
-    fetchBases: mockFetchBases,
-  },
 }));
 
 // Mock $lib/stores/dialogs.svelte.js
@@ -55,15 +51,6 @@ vi.mock("$lib/stores/projects.svelte.js", () => ({
       projectId: "test-project-12345678",
     },
   ],
-  getProjectById: (id: string) =>
-    id === "test-project-12345678"
-      ? {
-          id: "test-project-12345678",
-          name: "project",
-          path: "/test/project",
-          workspaces: [],
-        }
-      : undefined,
 }));
 
 // Import component after mocks
@@ -107,7 +94,6 @@ describe("RemoveWorkspaceDialog component", () => {
       unmergedCommits: 0,
       agent: { type: "none" },
     });
-    mockFetchBases.mockResolvedValue({ bases: [] });
   });
 
   afterEach(() => {
@@ -149,7 +135,7 @@ describe("RemoveWorkspaceDialog component", () => {
       render(RemoveWorkspaceDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
-      expect(workspaces.getStatus).toHaveBeenCalledWith(testWorkspaceRef.path);
+      expect(workspaces.getStatus).toHaveBeenCalledWith(testWorkspaceRef.path, { refresh: true });
     });
 
     it("shows spinner while checking status", async () => {

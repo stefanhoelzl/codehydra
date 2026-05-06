@@ -201,7 +201,7 @@ export interface WorkspaceApi {
    * }
    * ```
    */
-  getStatus(): Promise<WorkspaceStatus>;
+  getStatus(options?: { refresh?: boolean }): Promise<WorkspaceStatus>;
 
   /**
    * Get the agent session info for this workspace.
