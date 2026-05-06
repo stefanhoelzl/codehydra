@@ -245,8 +245,14 @@ export class AutoUpdater {
   private isPlatformSupported(): boolean {
     const platform = process.platform;
     const isAppImage = process.env.APPIMAGE !== undefined;
-    const isNsis = platform === "win32";
+    const isWindowsPortable = process.env.PORTABLE_EXECUTABLE_FILE !== undefined;
+    const isNsis = platform === "win32" && !isWindowsPortable;
     const isMac = platform === "darwin";
+
+    if (isWindowsPortable) {
+      this.logger.debug("Skipping update check (Windows portable build)");
+      return false;
+    }
 
     if (platform === "linux" && !isAppImage) {
       this.logger.debug("Skipping update check (Linux non-AppImage)");
