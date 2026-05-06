@@ -716,11 +716,18 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     // Special handling for compaction flow:
     // PreCompact while busy sets flag (automatic compaction mid-turn).
+    // Stop/StopFailure between PreCompact and SessionStart is suppressed so the
+    // workspace doesn't blip to idle while compaction is running.
     // SessionStart during compaction stays busy instead of going idle.
     // Manual /compact starts from idle, so flag is NOT set and SessionStart goes idle normally.
     // Terminal hooks (WrapperEnd, SessionEnd) clear the flag as defensive cleanup.
     if (hookName === "PreCompact" && state.status === "busy") {
       state.ignoreNextSessionStart = true;
+    } else if (
+      (hookName === "Stop" || hookName === "StopFailure") &&
+      state.ignoreNextSessionStart
+    ) {
+      newStatus = null;
     } else if (hookName === "SessionStart" && state.ignoreNextSessionStart) {
       state.ignoreNextSessionStart = false;
       newStatus = "busy";
