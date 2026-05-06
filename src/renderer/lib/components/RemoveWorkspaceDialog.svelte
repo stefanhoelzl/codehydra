@@ -1,9 +1,9 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { workspaces, type WorkspaceRef } from "$lib/api";
+  import { projects, workspaces, type WorkspaceRef } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
-  import { getAllWorkspaces } from "$lib/stores/projects.svelte.js";
+  import { getAllWorkspaces, getProjectById } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
 
   const logger = createLogger("ui");
@@ -30,7 +30,8 @@
     return ws?.metadata?.base;
   });
 
-  // Check workspace status on mount
+  // Check workspace status on mount: fetch remotes first so unmerged-commit
+  // counts reflect server-merged branches, then read status.
   $effect(() => {
     if (!open) return;
 
@@ -38,22 +39,30 @@
     isDirty = false;
     unmergedCommits = 0;
 
-    workspaces
-      .getStatus(workspaceRef.path)
-      .then((status) => {
+    const projectPath = getProjectById(workspaceRef.projectId)?.path;
+
+    void (async () => {
+      if (projectPath !== undefined) {
+        try {
+          await projects.fetchBases(projectPath);
+        } catch {
+          // best-effort; fall through to status read with possibly stale data
+        }
+      }
+      try {
+        const status = await workspaces.getStatus(workspaceRef.path);
         isDirty = status.isDirty;
         unmergedCommits = status.unmergedCommits;
-      })
-      .catch(() => {
+      } catch {
         isDirty = false;
         unmergedCommits = 0;
-      })
-      .finally(() => {
+      } finally {
         isCheckingStatus = false;
         setTimeout(() => {
           document.querySelector<HTMLElement>(".dialog-actions vscode-button")?.focus();
         }, 0);
-      });
+      }
+    })();
   });
 
   // Handle form submission (fire-and-forget)
@@ -63,7 +72,7 @@
     // Progress is shown via DeletionProgressView in MainView
     void workspaces.remove(workspaceRef.path, {
       keepBranch,
-      ignoreWarnings: isDirty || unmergedCommits > 0,
+      ignoreWarnings: true,
     });
     closeDialog();
   }
@@ -125,7 +134,7 @@
 
   {#snippet actions()}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <vscode-button disabled={isCheckingStatus} onclick={handleSubmit}>Remove</vscode-button>
+    <vscode-button onclick={handleSubmit}>Remove</vscode-button>
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <vscode-button secondary={true} onclick={handleCancel}>Cancel</vscode-button>
   {/snippet}
