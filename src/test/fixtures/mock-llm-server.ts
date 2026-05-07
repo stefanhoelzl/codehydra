@@ -353,8 +353,13 @@ export function createMockLlmServer(port = 0): MockLlmServer {
       req.on("end", () => resolve(data));
     });
 
-    const request = JSON.parse(body) as { stream?: boolean };
+    const request = JSON.parse(body) as { stream?: boolean; tools?: unknown[] };
     const isStreaming = request.stream === true;
+    // Tool-driven modes (tool-call, sub-agent) must only fire on requests that
+    // actually advertise tools. Opencode's title-generation agent calls the LLM
+    // without tools and would otherwise consume the first response slot, leaving
+    // the build agent with a plain completion and no permission flow.
+    const hasTools = Array.isArray(request.tools) && request.tools.length > 0;
 
     // Handle based on mode
     switch (currentMode) {
@@ -405,10 +410,26 @@ export function createMockLlmServer(port = 0): MockLlmServer {
       }
 
       case "tool-call": {
-        // Return tool call only on first request, then return completion
-        // This simulates a proper conversation flow:
-        // 1. First request: LLM returns tool call
-        // 2. Second request: OpenCode sends tool result, LLM responds with completion
+        // Return tool call only on first tool-bearing request, then return completion.
+        // Requests without tools (e.g. opencode's title-generation agent) get a
+        // plain completion and do not consume the tool-call slot.
+        if (!hasTools) {
+          if (isStreaming) {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            });
+            for (const chunk of createStreamChunks("ok")) {
+              res.write(chunk);
+            }
+            res.end();
+          } else {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(createInstantCompletion("ok")));
+          }
+          break;
+        }
         toolCallRequestCount++;
         if (toolCallRequestCount === 1) {
           if (isStreaming) {
@@ -458,7 +479,25 @@ export function createMockLlmServer(port = 0): MockLlmServer {
       }
 
       case "sub-agent": {
-        // Sub-agents are triggered via the `task` tool call, which creates a child session
+        // Sub-agents are triggered via the `task` tool call, which creates a child session.
+        // Skip non-tool requests (e.g. title generation) so they don't consume the slot.
+        if (!hasTools) {
+          if (isStreaming) {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            });
+            for (const chunk of createStreamChunks("ok")) {
+              res.write(chunk);
+            }
+            res.end();
+          } else {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(createInstantCompletion("ok")));
+          }
+          break;
+        }
         subAgentRequestCount++;
         if (subAgentRequestCount === 1) {
           // First call: Return task tool call to create child session
