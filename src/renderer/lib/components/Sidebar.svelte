@@ -217,7 +217,7 @@
                         class="workspace-btn"
                         aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
                       >
-                        {#if shortcutModeActive}
+                        {#if shortcutModeActive && !hibernated}
                           <vscode-badge
                             class="shortcut-badge"
                             class:badge-dimmed={displayIndex === null}

@@ -15,6 +15,7 @@ import { getDeletionStatus } from "./deletion.svelte";
 import {
   getAllWorkspaces,
   getWorkspaceRefByIndex,
+  getAwakeWorkspaceRefByIndex,
   findWorkspaceIndex,
   wrapIndex,
   activeWorkspacePath,
@@ -249,12 +250,13 @@ function findNextByStatusType(
 
 /**
  * Handle number key jump to specific workspace.
+ * Targets the Nth awake workspace (hibernated workspaces are unnumbered).
  * No-op if index out of range or switch in progress.
  * Does not focus workspace to keep shortcut mode active.
  */
 async function handleJump(key: JumpKey): Promise<void> {
   const index = jumpKeyToIndex(key);
-  const workspaceRef = getWorkspaceRefByIndex(index);
+  const workspaceRef = getAwakeWorkspaceRefByIndex(index);
   if (!workspaceRef) return;
   if (_switchingWorkspace) return;
 

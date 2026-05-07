@@ -247,6 +247,29 @@ export function getWorkspaceRefByIndex(index: number): WorkspaceRef | undefined 
 }
 
 /**
+ * Get WorkspaceRef by global index (0-based) over awake workspaces only.
+ * Hibernated workspaces are skipped, so index N targets the (N+1)-th awake
+ * workspace. Used by number-key shortcuts where hibernated rows have no badge.
+ */
+export function getAwakeWorkspaceRefByIndex(index: number): WorkspaceRef | undefined {
+  let currentIndex = 0;
+  for (const project of projects.value) {
+    for (const workspace of project.workspaces) {
+      if (workspace.metadata?.["hibernated"] === "true") continue;
+      if (currentIndex === index) {
+        return {
+          projectId: project.id,
+          workspaceName: workspace.name as WorkspaceName,
+          path: workspace.path,
+        };
+      }
+      currentIndex++;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Find the index of a workspace by its path.
  * @returns 0-based index, or -1 if not found.
  */
