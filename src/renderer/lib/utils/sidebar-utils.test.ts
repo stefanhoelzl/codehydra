@@ -54,6 +54,52 @@ describe("sidebar-utils", () => {
 
       expect(getWorkspaceGlobalIndex(projects, 2, 0)).toBe(3);
     });
+
+    it("returns null for hibernated workspace", () => {
+      const projects = [
+        createMockProject({
+          workspaces: [
+            { name: "w1" },
+            { name: "w2", metadata: { hibernated: "true" } },
+            { name: "w3" },
+          ],
+        }),
+      ];
+
+      expect(getWorkspaceGlobalIndex(projects, 0, 1)).toBe(null);
+    });
+
+    it("skips hibernated workspaces in numbering sequence", () => {
+      const projects = [
+        createMockProject({
+          workspaces: [
+            { name: "w1" },
+            { name: "w2", metadata: { hibernated: "true" } },
+            { name: "w3" },
+          ],
+        }),
+      ];
+
+      // w1 stays at 0; w3 takes index 1 (w2 is skipped)
+      expect(getWorkspaceGlobalIndex(projects, 0, 0)).toBe(0);
+      expect(getWorkspaceGlobalIndex(projects, 0, 2)).toBe(1);
+    });
+
+    it("skips hibernated across project boundaries", () => {
+      const projects = [
+        createMockProject({
+          id: "p1-12345678" as ProjectId,
+          workspaces: [{ name: "w1" }, { name: "w2", metadata: { hibernated: "true" } }],
+        }),
+        createMockProject({
+          id: "p2-12345678" as ProjectId,
+          workspaces: [{ name: "w3" }],
+        }),
+      ];
+
+      // p1 contributes only 1 awake workspace, so p2's first workspace is at index 1
+      expect(getWorkspaceGlobalIndex(projects, 1, 0)).toBe(1);
+    });
   });
 
   describe("formatIndexDisplay", () => {
@@ -71,6 +117,10 @@ describe("sidebar-utils", () => {
       expect(formatIndexDisplay(10)).toBe(null);
       expect(formatIndexDisplay(15)).toBe(null);
     });
+
+    it("returns null for null input (hibernated)", () => {
+      expect(formatIndexDisplay(null)).toBe(null);
+    });
   });
 
   describe("getShortcutHint", () => {
@@ -86,6 +136,10 @@ describe("sidebar-utils", () => {
     it("returns empty string for index > 9", () => {
       expect(getShortcutHint(10)).toBe("");
       expect(getShortcutHint(15)).toBe("");
+    });
+
+    it("returns empty string for null input (hibernated)", () => {
+      expect(getShortcutHint(null)).toBe("");
     });
   });
 

@@ -32,6 +32,7 @@ import {
   removeWorkspace,
   reset,
   getAllWorkspaces,
+  getAwakeWorkspaceRefByIndex,
   findWorkspaceIndex,
   wrapIndex,
   getWorkspaceRefByIndex,
@@ -384,6 +385,29 @@ describe("projects store", () => {
     it("should-return-empty-array-when-no-projects", () => {
       const result = getAllWorkspaces();
       expect(result).toEqual([]);
+    });
+  });
+
+  describe("getAwakeWorkspaceRefByIndex", () => {
+    it("skips hibernated workspaces in the index sequence", () => {
+      const ws1 = createMockWorkspace({ path: "/test/p1/ws1", name: "ws1" });
+      const ws2 = createMockWorkspace({
+        path: "/test/p1/ws2",
+        name: "ws2",
+        metadata: { hibernated: "true" },
+      });
+      const ws3 = createMockWorkspace({ path: "/test/p1/ws3", name: "ws3" });
+
+      addProject(
+        createMockProject({
+          path: "/test/p1" as ProjectPath,
+          workspaces: [ws1, ws2, ws3],
+        })
+      );
+
+      expect(getAwakeWorkspaceRefByIndex(0)?.path).toBe("/test/p1/ws1");
+      expect(getAwakeWorkspaceRefByIndex(1)?.path).toBe("/test/p1/ws3");
+      expect(getAwakeWorkspaceRefByIndex(2)).toBeUndefined();
     });
   });
 

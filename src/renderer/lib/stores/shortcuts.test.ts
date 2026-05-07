@@ -48,6 +48,10 @@ const mockProjectsStore = vi.hoisted(() => ({
     void index;
     return undefined;
   }),
+  getAwakeWorkspaceRefByIndex: vi.fn((index: number): MockWorkspaceRef | undefined => {
+    void index;
+    return undefined;
+  }),
   findWorkspaceIndex: vi.fn((path: string | null): number => {
     void path;
     return -1;
@@ -270,7 +274,9 @@ describe("shortcuts store", () => {
         { projectId: "test-project-12345678", workspaceName: "ws2", path: "/ws2" },
       ];
       mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-      mockProjectsStore.getWorkspaceRefByIndex.mockImplementation((i: number) => workspaceRefs[i]);
+      mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
+        (i: number) => workspaceRefs[i]
+      );
 
       // Make switchWorkspace slow so we can test blur during switch
       let resolveSwitch: () => void;
@@ -739,7 +745,7 @@ describe("shortcuts store", () => {
         const workspaces = createWorkspaces(9);
         const workspaceRefs = createWorkspaceRefs(9);
         mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
           (i: number) => workspaceRefs[i]
         );
 
@@ -758,7 +764,7 @@ describe("shortcuts store", () => {
         const workspaces = createWorkspaces(10);
         const workspaceRefs = createWorkspaceRefs(10);
         mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
           (i: number) => workspaceRefs[i]
         );
 
@@ -775,7 +781,7 @@ describe("shortcuts store", () => {
         const workspaces = createWorkspaces(3);
         const workspaceRefs = createWorkspaceRefs(3);
         mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
           (i: number) => workspaceRefs[i]
         );
 
@@ -784,6 +790,27 @@ describe("shortcuts store", () => {
         handleShortcutKey("5");
 
         expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
+      });
+
+      it("should-target-awake-list-skipping-hibernated", async () => {
+        // 4 workspaces in list; getAwakeWorkspaceRefByIndex resolves index 1
+        // to ws3 (the second awake workspace) — proves jump uses the awake-only mapping.
+        const workspaces = createWorkspaces(4);
+        const workspaceRefs = createWorkspaceRefs(4);
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation((i: number) => {
+          // index 0 -> ws1, index 1 -> ws3 (skipping hibernated ws2)
+          if (i === 0) return workspaceRefs[0];
+          if (i === 1) return workspaceRefs[2];
+          return undefined;
+        });
+
+        enableShortcutMode();
+        handleShortcutKey("2");
+
+        await vi.waitFor(() => {
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws3", false);
+        });
       });
     });
 
