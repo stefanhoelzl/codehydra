@@ -86,6 +86,7 @@
     queueMicrotask(() => {
       node.focus();
       node.setSelectionRange(offset, offset);
+      node.scrollTop = 0;
     });
   }
 
