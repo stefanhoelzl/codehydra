@@ -54,6 +54,7 @@ describe("createMockLlmServer", () => {
       body: JSON.stringify({
         model: "test",
         messages: [{ role: "user", content: "Run echo hello" }],
+        tools: [{ type: "function", function: { name: "bash" } }],
       }),
     });
 
@@ -98,6 +99,7 @@ describe("createMockLlmServer", () => {
       body: JSON.stringify({
         model: "test",
         messages: [{ role: "user", content: "Search files" }],
+        tools: [{ type: "function", function: { name: "task" } }],
       }),
     });
 
