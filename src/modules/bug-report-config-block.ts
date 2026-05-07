@@ -54,7 +54,7 @@ export function buildConfigBlock(config: BuildDeps): ConfigBlock {
 
   // Cursor sits on the empty line right after the header.
   const prefix = `${HEADER}\n`;
-  const value = [prefix, "", "", OPEN, body, CLOSE, ""].join("\n");
+  const value = [prefix, "", OPEN, body, CLOSE, ""].join("\n");
 
   return { value, cursorOffset: prefix.length };
 }
