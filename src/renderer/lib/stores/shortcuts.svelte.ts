@@ -276,7 +276,7 @@ async function handleJump(key: JumpKey): Promise<void> {
  * Awake → hibernate (workspace stays in sidebar with sleeping indicator).
  * Hibernated → wake + re-open via workspace:open existingWorkspace flow.
  */
-async function handleHibernateToggle(): Promise<void> {
+export async function handleHibernateToggle(): Promise<void> {
   const ref = activeWorkspace.value;
   if (!ref) return;
 

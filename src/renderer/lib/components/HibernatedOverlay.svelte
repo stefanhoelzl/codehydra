@@ -9,6 +9,7 @@
 <script lang="ts">
   import * as api from "$lib/api";
   import Icon from "./Icon.svelte";
+  import { handleHibernateToggle } from "$lib/stores/shortcuts.svelte";
   import type { WorkspaceRef } from "$lib/api";
 
   interface Props {
@@ -35,16 +36,21 @@
   });
 </script>
 
-<div class="hibernated-overlay" aria-label="Workspace hibernated" role="img">
+<div class="hibernated-overlay">
   {#if screenshotUrl && !imageBroken}
     <img class="screenshot" src={screenshotUrl} alt="" onerror={() => (imageBroken = true)} />
   {/if}
   <div class="dim" aria-hidden="true"></div>
-  <div class="indicator">
-    <Icon name="debug-pause" size={48} />
+  <button
+    class="indicator"
+    type="button"
+    aria-label="Wake workspace"
+    onclick={() => void handleHibernateToggle()}
+  >
+    <Icon name="debug-start" size={48} />
     <span class="label">Hibernated</span>
-    <span class="hint">Press Alt+X then H to wake</span>
-  </div>
+    <span class="hint">Click or press Alt+X H to wake up</span>
+  </button>
 </div>
 
 <style>
@@ -86,6 +92,16 @@
     color: var(--ch-foreground);
     opacity: 0.8;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    background: transparent;
+    border: none;
+    padding: 8px;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .indicator:hover,
+  .indicator:focus-visible {
+    opacity: 1;
   }
 
   .label {
