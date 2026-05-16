@@ -61,6 +61,17 @@ const NAVIGATION_TIMEOUT_MS = 2000;
 const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
 
 /**
+ * How long to wait for did-finish-load after a resume-triggered reload
+ * before assuming the renderer is wedged and recreating the view.
+ *
+ * Code-server is local (127.0.0.1) so a reload should complete in well
+ * under a second; 15s is generous enough to avoid false positives on
+ * heavily-loaded systems while still catching the zombie-renderer case
+ * we see on Windows after multiple suspend/resume cycles.
+ */
+const RELOAD_WATCHDOG_MS = 15000;
+
+/**
  * Z-index for the UI layer when positioned at the bottom of the view stack.
  * Index 0 is reserved for the background view, so the UI sits at index 1.
  */
@@ -116,6 +127,19 @@ interface WorkspaceState {
   retryCount: number;
   /** Timer handle for scheduled retry, if any */
   retryTimer: NodeJS.Timeout | null;
+  /**
+   * When true, the next attachView() will call viewLayer.reload() on this
+   * view's webContents before returning. Set by the render-process-gone
+   * handler so the user gets a fresh page on next attach instead of a
+   * dead renderer.
+   */
+  needsReloadOnAttach: boolean;
+  /**
+   * Watchdog timer armed after a resume-triggered loadURL. Cleared when
+   * did-finish-load fires. If it fires, the view is assumed wedged and is
+   * destroyed + recreated from scratch.
+   */
+  reloadWatchdogTimer: NodeJS.Timeout | null;
 }
 
 /**
@@ -367,6 +391,52 @@ export class ViewManager implements IViewManager {
       return modifiedHeaders;
     });
 
+    // Create + wire the WebContentsView. Extracted so recreateWorkspaceView()
+    // can rebuild a wedged view without duplicating event-handler setup.
+    const viewHandle = this.createAndWireView(workspacePath, workspaceName, partitionName);
+
+    // Store workspace state
+    this.workspaceStates.set(workspacePath, {
+      handle: viewHandle,
+      sessionHandle,
+      url,
+      urlLoaded: false,
+      partitionName,
+      retryCount: 0,
+      retryTimer: null,
+      needsReloadOnAttach: false,
+      reloadWatchdogTimer: null,
+    });
+
+    // Only mark as loading for newly created workspaces (not existing ones loaded on startup)
+    if (isNew) {
+      const timeout = setTimeout(
+        () => this.setWorkspaceLoaded(workspacePath),
+        WORKSPACE_LOADING_TIMEOUT_MS
+      );
+      this.loadingWorkspaces.set(workspacePath, timeout);
+      this.notifyLoadingChange(workspacePath, true);
+    }
+
+    // Note: No attachToWindow() - view starts detached
+    // Note: No loadURL() - URL is loaded on first activation
+
+    return viewHandle;
+  }
+
+  /**
+   * Creates a fresh WebContentsView for a workspace and wires all event
+   * handlers + initial bounds. Does NOT register the workspace in
+   * `workspaceStates` or change loading state — the caller owns that.
+   *
+   * Used by both initial creation (createWorkspaceView) and recovery
+   * (recreateWorkspaceView, after a wedged renderer is detected).
+   */
+  private createAndWireView(
+    workspacePath: string,
+    workspaceName: string,
+    partitionName: string
+  ): ViewHandle {
     // Create workspace view with security settings and partition for session isolation
     // Note: No preload script - keyboard capture is handled via main-process before-input-event
     const viewHandle = this.viewLayer.createView({
@@ -411,24 +481,37 @@ export class ViewManager implements IViewManager {
       return true; // Allow navigation within code-server
     });
 
-    // Store workspace state
-    this.workspaceStates.set(workspacePath, {
-      handle: viewHandle,
-      sessionHandle,
-      url,
-      urlLoaded: false,
-      partitionName,
-      retryCount: 0,
-      retryTimer: null,
-    });
-
     // Subscribe to load failures for retry with exponential backoff
     this.viewLayer.onDidFailLoad(viewHandle, (details: FailLoadDetails) => {
       this.handleLoadFailure(workspacePath, details);
     });
 
-    // Reset retry count on successful load
+    // Surface renderer crashes / hangs in the log.
+    this.viewLayer.onRenderProcessGone(viewHandle, (details) => {
+      this.logger.warn("Workspace renderer process gone", {
+        workspace: workspaceName,
+        reason: details.reason,
+        exitCode: details.exitCode,
+      });
+      // Force a reload next time the view is attached so the user gets a
+      // fresh page instead of a permanently dead WebContents.
+      const currentState = this.workspaceStates.get(workspacePath);
+      if (currentState) {
+        currentState.needsReloadOnAttach = true;
+      }
+    });
+    this.viewLayer.onUnresponsive(viewHandle, () => {
+      this.logger.warn("Workspace renderer unresponsive", { workspace: workspaceName });
+    });
+    this.viewLayer.onResponsive(viewHandle, () => {
+      this.logger.info("Workspace renderer responsive again", { workspace: workspaceName });
+    });
+
+    // did-finish-load handler: reset retry state, clear reload watchdog,
+    // and log so we can confirm in the field whether resume-triggered
+    // reloads on detached views actually complete.
     this.viewLayer.onDidFinishLoad(viewHandle, () => {
+      this.logger.debug("View did-finish-load", { workspace: workspaceName });
       const currentState = this.workspaceStates.get(workspacePath);
       if (currentState) {
         currentState.retryCount = 0;
@@ -436,21 +519,12 @@ export class ViewManager implements IViewManager {
           clearTimeout(currentState.retryTimer);
           currentState.retryTimer = null;
         }
+        if (currentState.reloadWatchdogTimer !== null) {
+          clearTimeout(currentState.reloadWatchdogTimer);
+          currentState.reloadWatchdogTimer = null;
+        }
       }
     });
-
-    // Only mark as loading for newly created workspaces (not existing ones loaded on startup)
-    if (isNew) {
-      const timeout = setTimeout(
-        () => this.setWorkspaceLoaded(workspacePath),
-        WORKSPACE_LOADING_TIMEOUT_MS
-      );
-      this.loadingWorkspaces.set(workspacePath, timeout);
-      this.notifyLoadingChange(workspacePath, true);
-    }
-
-    // Note: No attachToWindow() - view starts detached
-    // Note: No loadURL() - URL is loaded on first activation
 
     // Set workspace bounds on detached view so code-server renders at correct size.
     // Electron respects setBounds on detached WebContentsViews.
@@ -493,6 +567,9 @@ export class ViewManager implements IViewManager {
     // Clean up retry timer
     if (state.retryTimer !== null) {
       clearTimeout(state.retryTimer);
+    }
+    if (state.reloadWatchdogTimer !== null) {
+      clearTimeout(state.reloadWatchdogTimer);
     }
 
     // Clean up loading state
@@ -717,6 +794,16 @@ export class ViewManager implements IViewManager {
         this.attachedWorkspacePath = workspacePath;
         const workspaceName = basename(workspacePath);
         this.logger.debug("View attached", { workspace: workspaceName });
+
+        // Force a fresh paint if this view sat detached across a system
+        // suspend/resume (or its renderer crashed). On Windows, a detached
+        // WebContentsView whose URL was reloaded while invisible can come
+        // back unfocusable and blank; reload() recreates the renderer view.
+        if (state.needsReloadOnAttach) {
+          state.needsReloadOnAttach = false;
+          this.logger.debug("Reloading view on attach", { workspace: workspaceName });
+          this.viewLayer.reload(state.handle);
+        }
       }
     } catch {
       // Ignore errors during attach - window may be closing
@@ -1183,6 +1270,86 @@ export class ViewManager implements IViewManager {
         state.retryTimer = null;
       }
       void this.viewLayer.loadURL(state.handle, state.url);
+
+      // Arm a watchdog: if did-finish-load doesn't fire within
+      // RELOAD_WATCHDOG_MS the renderer is assumed wedged (the white-tab
+      // bug we see on Windows after multiple suspend/resume cycles when
+      // loadURL is called on a detached WebContentsView) and we recreate
+      // the view from scratch.
+      if (state.reloadWatchdogTimer !== null) {
+        clearTimeout(state.reloadWatchdogTimer);
+      }
+      state.reloadWatchdogTimer = setTimeout(() => {
+        const currentState = this.workspaceStates.get(workspacePath);
+        if (!currentState) return;
+        currentState.reloadWatchdogTimer = null;
+        this.logger.warn("Reload watchdog fired — recreating view", {
+          workspace: basename(workspacePath),
+          watchdogMs: RELOAD_WATCHDOG_MS,
+        });
+        this.recreateWorkspaceView(workspacePath);
+      }, RELOAD_WATCHDOG_MS);
+    }
+  }
+
+  /**
+   * Destroys the workspace's current WebContentsView and creates a fresh
+   * one in its place, then re-triggers loadURL. Used as the last-resort
+   * recovery when a renderer becomes wedged (e.g. detached loadURL after
+   * suspend/resume that never produces a did-finish-load).
+   *
+   * Preserves the workspace's logical identity (workspaceStates entry,
+   * url, session/partition) — only the underlying view handle changes.
+   */
+  private recreateWorkspaceView(workspacePath: string): void {
+    const state = this.workspaceStates.get(workspacePath);
+    if (!state) return;
+
+    const workspaceName = basename(workspacePath);
+    const wasAttached = this.attachedWorkspacePath === workspacePath;
+
+    // Clear any pending timers on the old state
+    if (state.retryTimer !== null) {
+      clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+    }
+    if (state.reloadWatchdogTimer !== null) {
+      clearTimeout(state.reloadWatchdogTimer);
+      state.reloadWatchdogTimer = null;
+    }
+
+    // Detach and destroy the old view. Best-effort: continue even on error.
+    try {
+      if (wasAttached) {
+        this.viewLayer.detachFromWindow(state.handle);
+        this.attachedWorkspacePath = null;
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      this.viewLayer.destroy(state.handle);
+    } catch (error) {
+      this.logger.warn("Failed to destroy view during recreate", {
+        workspace: workspaceName,
+        error: getErrorMessage(error),
+      });
+    }
+
+    // Build a fresh view + re-wire handlers and bounds.
+    const newHandle = this.createAndWireView(workspacePath, workspaceName, state.partitionName);
+    state.handle = newHandle;
+    state.urlLoaded = false;
+    state.retryCount = 0;
+    state.needsReloadOnAttach = false;
+
+    // Kick off the load on the new view.
+    state.urlLoaded = true;
+    void this.viewLayer.loadURL(newHandle, state.url);
+
+    // If the wedged view was visible, re-attach the fresh one in its place.
+    if (wasAttached) {
+      this.attachView(workspacePath);
     }
   }
 

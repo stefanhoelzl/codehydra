@@ -67,6 +67,16 @@ export interface FailLoadDetails {
 }
 
 /**
+ * Details about a render-process-gone event.
+ */
+export interface RenderProcessGoneDetails {
+  /** Reason as reported by Electron (e.g. "crashed", "killed", "oom"). */
+  readonly reason: string;
+  /** Process exit code, if known. */
+  readonly exitCode: number;
+}
+
+/**
  * Keyboard input descriptor (no Electron types).
  */
 export interface KeyboardInput {
@@ -131,6 +141,18 @@ export interface ViewBoundary {
    * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
    */
   getURL(handle: ViewHandle): string;
+
+  /**
+   * Reload the view's current page in the renderer process.
+   *
+   * Used to force a fresh paint when a detached view becomes visible after
+   * a long idle period (e.g. across system suspend/resume), where the
+   * existing renderer can end up unfocusable and showing nothing.
+   *
+   * @param handle - Handle to the view
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  reload(handle: ViewHandle): void;
 
   // Layout
   /**
@@ -302,6 +324,39 @@ export interface ViewBoundary {
   onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe;
 
   /**
+   * Subscribe to render-process-gone events (renderer crash / killed / OOM).
+   *
+   * @param handle - Handle to the view
+   * @param callback - Called with the reason and exit code
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onRenderProcessGone(
+    handle: ViewHandle,
+    callback: (details: RenderProcessGoneDetails) => void
+  ): Unsubscribe;
+
+  /**
+   * Subscribe to renderer unresponsive events (event loop hang).
+   *
+   * @param handle - Handle to the view
+   * @param callback - Called when the renderer stops responding
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onUnresponsive(handle: ViewHandle, callback: () => void): Unsubscribe;
+
+  /**
+   * Subscribe to renderer responsive events (recovered from a hang).
+   *
+   * @param handle - Handle to the view
+   * @param callback - Called when the renderer becomes responsive again
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onResponsive(handle: ViewHandle, callback: () => void): Unsubscribe;
+
+  /**
    * Check if a view handle refers to a valid, non-destroyed view.
    *
    * @param handle - Handle to the view
@@ -468,6 +523,13 @@ export class DefaultViewBoundary implements ViewBoundary {
   getURL(handle: ViewHandle): string {
     const state = this.getView(handle);
     return state.view.webContents.getURL();
+  }
+
+  reload(handle: ViewHandle): void {
+    const state = this.getView(handle);
+    const wc = state.view.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    wc.reload();
   }
 
   async capturePNG(handle: ViewHandle): Promise<Buffer | null> {
@@ -728,6 +790,45 @@ export class DefaultViewBoundary implements ViewBoundary {
       const wc = state.view.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.off("destroyed", callback);
+      }
+    };
+  }
+
+  onRenderProcessGone(
+    handle: ViewHandle,
+    callback: (details: RenderProcessGoneDetails) => void
+  ): Unsubscribe {
+    const state = this.getView(handle);
+    const handler = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) => {
+      callback({ reason: details.reason, exitCode: details.exitCode });
+    };
+    state.view.webContents.on("render-process-gone", handler);
+    return () => {
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("render-process-gone", handler);
+      }
+    };
+  }
+
+  onUnresponsive(handle: ViewHandle, callback: () => void): Unsubscribe {
+    const state = this.getView(handle);
+    state.view.webContents.on("unresponsive", callback);
+    return () => {
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("unresponsive", callback);
+      }
+    };
+  }
+
+  onResponsive(handle: ViewHandle, callback: () => void): Unsubscribe {
+    const state = this.getView(handle);
+    state.view.webContents.on("responsive", callback);
+    return () => {
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.off("responsive", callback);
       }
     };
   }
