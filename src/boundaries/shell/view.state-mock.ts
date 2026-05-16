@@ -25,6 +25,7 @@ import type {
   Unsubscribe,
   KeyboardInput,
   FailLoadDetails,
+  RenderProcessGoneDetails,
 } from "./view";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
@@ -478,6 +479,11 @@ export function createViewBoundaryMock(): MockViewBoundary {
       return view.url ?? "";
     },
 
+    reload(handle: ViewHandle): void {
+      getView(handle); // Validate handle exists
+      // No-op in mock - tests can observe via $.snapshot if needed
+    },
+
     async capturePNG(handle: ViewHandle): Promise<Buffer | null> {
       getView(handle); // Validate handle exists
       // Return a tiny non-empty buffer to simulate a successful capture in tests.
@@ -630,6 +636,25 @@ export function createViewBoundaryMock(): MockViewBoundary {
       return () => {
         callbacks?.delete(callback);
       };
+    },
+
+    onRenderProcessGone(
+      handle: ViewHandle,
+      _callback: (details: RenderProcessGoneDetails) => void
+    ): Unsubscribe {
+      getView(handle); // Validate handle exists
+      // Mock has no built-in crash simulation; tests can extend if needed.
+      return () => {};
+    },
+
+    onUnresponsive(handle: ViewHandle, _callback: () => void): Unsubscribe {
+      getView(handle); // Validate handle exists
+      return () => {};
+    },
+
+    onResponsive(handle: ViewHandle, _callback: () => void): Unsubscribe {
+      getView(handle); // Validate handle exists
+      return () => {};
     },
 
     isAvailable(handle: ViewHandle): boolean {
