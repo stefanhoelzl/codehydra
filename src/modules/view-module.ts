@@ -58,7 +58,9 @@ import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import { EVENT_APP_STARTED } from "../intents/app-ready";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import { WORKSPACE_LOADING_TIMEOUT_MS } from "../boundaries/shell/view-manager.interface";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
@@ -177,6 +179,35 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
   let loadingDialog: { path: string | null; handle: DialogHandle } | null = null;
   /** Track the setup dialog handle (for show-ui/hide-ui). */
   let setupDialogHandle: DialogHandle | null = null;
+  /**
+   * Startup splash state — the "CodeHydra is starting..." dialog is held open
+   * across renderer mount, project loading, and the first workspace becoming
+   * ready (first agent:status-updated), so the user sees one unified loading
+   * screen instead of starting → blank → projects-loading → workspace-loading.
+   *
+   * Closes on whichever fires first:
+   *  - first `agent:status-updated` for any workspace
+   *  - `app:started` event with no active workspace (empty-state path)
+   *  - 10s fallback timeout
+   *
+   * While active, per-workspace "Loading workspace..." dialogs are suppressed
+   * (the splash already covers the window). Subsequent workspace switches
+   * show their own loading dialog as before.
+   */
+  let startupSplashActive = false;
+  let startupSplashTimeout: ReturnType<typeof setTimeout> | null = null;
+  function closeStartupSplash(): void {
+    if (!startupSplashActive) return;
+    startupSplashActive = false;
+    if (startupSplashTimeout) {
+      clearTimeout(startupSplashTimeout);
+      startupSplashTimeout = null;
+    }
+    if (setupDialogHandle) {
+      setupDialogHandle.close();
+      setupDialogHandle = null;
+    }
+  }
   /** Accumulated setup row state (persists across progress events). */
   const setupRowState = new Map<
     string,
@@ -253,6 +284,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                 modal: true,
               };
               setupDialogHandle = deps.dialogManager.open(config);
+              startupSplashActive = true;
             }
             if (!deps.dialogManager) return {};
             return {
@@ -299,9 +331,10 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                 if (!deps.dialogManager) return;
                 if (loading) {
                   loadingPaths.add(path);
-                  // Show dialog only if this is the active workspace
+                  // Show dialog only if this is the active workspace AND the
+                  // startup splash isn't already covering the window.
                   const activePath = cachedActiveRef?.path ?? null;
-                  if (path === activePath) {
+                  if (path === activePath && !startupSplashActive) {
                     if (loadingDialog && loadingDialog.path === null) {
                       // Associate path with dialog opened early by workspace:loading event
                       loadingDialog = { path, handle: loadingDialog.handle };
@@ -342,10 +375,28 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               logger.warn("UI not available for mount");
               return;
             }
-            // Close starting/setup dialog before mounting
-            if (setupDialogHandle) {
-              setupDialogHandle.close();
-              setupDialogHandle = null;
+            // Keep the startup splash visible through renderer mount + project
+            // loading + first workspace ready. If setup ran, the splash was
+            // closed during setup/show-ui — reopen it for the workspace-loading
+            // phase. Closes via closeStartupSplash() from agent:status-updated,
+            // app:started (no active workspace), or the timeout below.
+            if (deps.dialogManager && !setupDialogHandle) {
+              setupDialogHandle = deps.dialogManager.open({
+                sections: [
+                  {
+                    type: "progress",
+                    items: [
+                      { id: "starting", label: "CodeHydra is starting...", status: "running" },
+                    ],
+                    style: "spinner",
+                  },
+                ],
+                modal: true,
+              });
+              startupSplashActive = true;
+            }
+            if (startupSplashActive) {
+              startupSplashTimeout = setTimeout(closeStartupSplash, WORKSPACE_LOADING_TIMEOUT_MS);
             }
 
             logger.debug("Mounting renderer");
@@ -363,9 +414,17 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
         "show-ui": {
           handler: async () => {
             if (deps.dialogManager) {
-              // Close any existing setup dialog and reset accumulated state
+              // Close any existing setup dialog and reset accumulated state.
+              // If the startup splash was open, this closes it — app-start/start
+              // will reopen the splash after setup completes (via hide-ui).
               if (setupDialogHandle) {
                 setupDialogHandle.close();
+                setupDialogHandle = null;
+              }
+              startupSplashActive = false;
+              if (startupSplashTimeout) {
+                clearTimeout(startupSplashTimeout);
+                startupSplashTimeout = null;
               }
               setupRowState.clear();
               const config: DialogConfig = {
@@ -605,6 +664,11 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               setupDialogHandle.close();
               setupDialogHandle = null;
             }
+            if (startupSplashTimeout) {
+              clearTimeout(startupSplashTimeout);
+              startupSplashTimeout = null;
+            }
+            startupSplashActive = false;
 
             // Destroy all views before disposing layers (uses viewLayer internally)
             viewManager.destroy();
@@ -630,7 +694,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [EVENT_WORKSPACE_LOADING]: {
         handler: async (): Promise<void> => {
-          if (deps.dialogManager && !loadingDialog) {
+          if (deps.dialogManager && !loadingDialog && !startupSplashActive) {
             const handle = deps.dialogManager.open({
               sections: [
                 {
@@ -819,11 +883,29 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
       // -------------------------------------------------------------------
       // agent:status-updated → clear loading screen (idempotent)
+      // Also closes the startup splash on the first such event — by the time
+      // any agent reports status, at least one workspace is far enough along
+      // to be visually meaningful.
       // -------------------------------------------------------------------
       [EVENT_AGENT_STATUS_UPDATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as AgentStatusUpdatedEvent).payload;
           viewManager.setWorkspaceLoaded(payload.workspacePath);
+          closeStartupSplash();
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // app:started → close startup splash if there's no workspace to wait
+      // for. With workspaces present, the splash stays up until the first
+      // agent:status-updated above (or the 10s timeout falls through).
+      // -------------------------------------------------------------------
+      [EVENT_APP_STARTED]: {
+        handler: async (): Promise<void> => {
+          if (!startupSplashActive) return;
+          if (cachedActiveRef === null) {
+            closeStartupSplash();
+          }
         },
       },
     },

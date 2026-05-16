@@ -24,8 +24,6 @@ import type { Project, Workspace, ProjectId, WorkspaceName, WorkspaceRef } from 
 
 let _projects = $state<Project[]>([]);
 let _activeWorkspacePath = $state<string | null>(null);
-let _loadingState = $state<"loading" | "loaded" | "error">("loading");
-let _loadingError = $state<string | null>(null);
 
 // ============ Derived ============
 
@@ -92,18 +90,6 @@ export const activeWorkspacePath = {
   },
 };
 
-export const loadingState = {
-  get value() {
-    return _loadingState;
-  },
-};
-
-export const loadingError = {
-  get value() {
-    return _loadingError;
-  },
-};
-
 export const activeProject = {
   get value() {
     return _activeProject;
@@ -142,15 +128,6 @@ export function removeProject(path: string): void {
 
 export function setActiveWorkspace(path: string | null): void {
   _activeWorkspacePath = path;
-}
-
-export function setLoaded(): void {
-  _loadingState = "loaded";
-}
-
-export function setError(message: string): void {
-  _loadingState = "error";
-  _loadingError = message;
 }
 
 export function addWorkspace(
@@ -210,8 +187,6 @@ export function updateWorkspaceMetadata(
 export function reset(): void {
   _projects = [];
   _activeWorkspacePath = null;
-  _loadingState = "loading";
-  _loadingError = null;
 }
 
 // ============ Helper Functions ============

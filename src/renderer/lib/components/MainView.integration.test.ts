@@ -72,6 +72,7 @@ vi.mock("$lib/services/agent-notifications", () => ({
 // Import after mock setup
 import MainView from "./MainView.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
+import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
@@ -109,6 +110,7 @@ describe("MainView close project integration", () => {
     vi.useFakeTimers();
     // Reset stores before each test
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     dialogsStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
@@ -140,7 +142,7 @@ describe("MainView close project integration", () => {
 
       // Wait for projects to load
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
       await vi.runAllTimersAsync();
 
@@ -168,7 +170,7 @@ describe("MainView close project integration", () => {
 
       // Wait for projects to load
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
       await vi.runAllTimersAsync();
 
@@ -193,7 +195,7 @@ describe("MainView close project integration", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
       await vi.runAllTimersAsync();
 
@@ -215,7 +217,7 @@ describe("MainView close project integration", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
       await vi.runAllTimersAsync();
 
@@ -237,7 +239,7 @@ describe("MainView close project integration", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
       await vi.runAllTimersAsync();
 
@@ -266,7 +268,7 @@ describe("MainView close project integration", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
       await vi.runAllTimersAsync();
 
@@ -317,7 +319,7 @@ describe("MainView close project integration", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
       await vi.runAllTimersAsync();
 

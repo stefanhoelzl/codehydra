@@ -22,8 +22,6 @@
   interface SidebarProps {
     projects: readonly Project[];
     activeWorkspacePath: string | null;
-    loadingState: "loading" | "loaded" | "error";
-    loadingError: string | null;
     shortcutModeActive?: boolean;
     totalWorkspaces: number;
     onCloseProject: (projectId: ProjectId) => void;
@@ -35,8 +33,6 @@
   let {
     projects,
     activeWorkspacePath,
-    loadingState,
-    loadingError,
     shortcutModeActive = false,
     totalWorkspaces,
     onCloseProject,
@@ -130,16 +126,7 @@
   </header>
 
   <div class="sidebar-content">
-    {#if loadingState === "loading"}
-      <div class="loading-state" role="status">
-        <vscode-progress-ring class="loading-spinner"></vscode-progress-ring>
-        Loading projects...
-      </div>
-    {:else if loadingState === "error"}
-      <div class="error-state" role="alert">
-        <p>{loadingError}</p>
-      </div>
-    {:else if projects.length === 0}
+    {#if projects.length === 0}
       <EmptyState />
     {:else}
       <ul class="project-list">
@@ -393,21 +380,6 @@
 
   .sidebar-header h2.visually-collapsed {
     visibility: hidden;
-  }
-
-  .loading-state,
-  .error-state {
-    padding: 20px;
-    text-align: center;
-  }
-
-  .loading-spinner {
-    margin-right: 8px;
-    vertical-align: middle;
-  }
-
-  .error-state {
-    color: var(--ch-error-fg);
   }
 
   .sidebar-content {

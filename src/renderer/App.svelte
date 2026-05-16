@@ -27,7 +27,6 @@
     handleWindowBlur,
     handleShortcutKey,
   } from "$lib/stores/shortcuts.svelte.js";
-  import { loadingState } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
   import MainView from "$lib/components/MainView.svelte";
   import DialogHost from "$lib/components/DialogHost.svelte";
@@ -96,12 +95,11 @@
     };
   });
 
-  // Announce "Application ready." once when projects finish loading
-  // (the startup overlay disappears at this point).
+  // Announce "Application ready." once when the main view becomes visible.
   // One-shot guard prevents re-announcing if reactive deps are re-read.
   let announcedReady = false;
   $effect(() => {
-    if (appMode.type === "ready" && loadingState.value === "loaded" && !announcedReady) {
+    if (appMode.type === "ready" && !announcedReady) {
       announcedReady = true;
       announceMessage = "Application ready.";
       setTimeout(() => {
@@ -115,10 +113,7 @@
 
   // Get aria-label for main element based on mode
   function getAriaLabel(): string {
-    if (appMode.type === "ready") {
-      return loadingState.value === "loading" ? "Loading projects" : "Application workspace";
-    }
-    return "Application starting";
+    return appMode.type === "ready" ? "Application workspace" : "Application starting";
   }
 </script>
 
@@ -134,9 +129,8 @@
     <!-- Minimal blank state while waiting for main process IPC -->
     <div class="initializing-container" aria-busy="true"></div>
   {:else}
-    <!-- Ready mode - MainView must mount to call lifecycle.ready() -->
-    <!-- Startup overlay stays visible until projects finish loading -->
-    <div class="main-view-container" inert={loadingState.value === "loading"}>
+    <!-- Ready mode - MainView mounts and calls lifecycle.ready() -->
+    <div class="main-view-container">
       <MainView />
     </div>
   {/if}

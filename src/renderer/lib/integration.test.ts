@@ -161,6 +161,7 @@ vi.mock("$lib/stores/ui-mode.svelte", () => mockUiModeStore);
 // Import after mock setup
 import App from "../App.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
+import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as uiModeStore from "$lib/stores/ui-mode.svelte.js";
@@ -199,6 +200,7 @@ describe("Integration tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     dialogsStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
@@ -522,20 +524,6 @@ describe("Integration tests", () => {
       expect(screen.getByText("existing")).toBeInTheDocument();
     });
 
-    it("API rejection during load → loadingState is 'error', loadingError has message", async () => {
-      mockApi.projects.list.mockRejectedValue(new Error("Database connection failed"));
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(screen.getByText(/database connection failed/i)).toBeInTheDocument();
-      });
-
-      expect(projectsStore.loadingState.value).toBe("error");
-      expect(projectsStore.loadingError.value).toBe("Database connection failed");
-    });
-
     it("createWorkspace API error handling is tested in CreateWorkspaceDialog.test.ts", async () => {
       // The full form validation and API error handling is tested in the component test
       // This integration test verifies the dialog opens and receives the project context
@@ -795,7 +783,7 @@ describe("Integration tests", () => {
 
       // Wait for load
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
 
       // Verify store and UI match

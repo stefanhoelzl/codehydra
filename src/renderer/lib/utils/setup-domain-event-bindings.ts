@@ -8,7 +8,6 @@
  */
 import {
   projects,
-  loadingState,
   activeWorkspacePath,
   addProject,
   removeProject,
@@ -17,6 +16,7 @@ import {
   removeWorkspace,
   updateWorkspaceMetadata,
 } from "$lib/stores/projects.svelte.js";
+import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
 import { dialogState, openCreateDialog } from "$lib/stores/dialogs.svelte.js";
 import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
@@ -124,7 +124,7 @@ export function setupDomainEventBindings(
         // The auto-show $effect in MainView.svelte handles the post-load case.
         // Skip when a background clone just completed — the project appears silently.
         if (
-          loadingState.value === "loaded" &&
+          bootstrap.initialized &&
           project.workspaces.length === 0 &&
           dialogState.value.type === "closed" &&
           !hasSpinnerNotifications.value
