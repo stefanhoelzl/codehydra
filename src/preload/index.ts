@@ -5,7 +5,7 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
-import type { UIModeChangedEvent, LogContext } from "../shared/ipc";
+import type { UIModeChangedEvent, LogContext, LifecycleAgentType } from "../shared/ipc";
 import type { DialogUserEvent } from "../shared/dialog-types";
 import type { NotificationUserEvent } from "../shared/notification-types";
 import type { ShortcutKey } from "../shared/shortcuts";
@@ -49,7 +49,11 @@ contextBridge.exposeInMainWorld("api", {
       projectPath: string,
       name: string,
       base: string,
-      options?: { initialPrompt?: InitialPrompt; stealFocus?: boolean }
+      options?: {
+        initialPrompt?: InitialPrompt;
+        stealFocus?: boolean;
+        agent?: LifecycleAgentType;
+      }
     ) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_CREATE, {
         projectPath,

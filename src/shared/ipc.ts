@@ -107,6 +107,8 @@ export interface WorkspaceCreatePayload {
   /** If true, steal focus from current workspace. If false, don't steal focus but still
    *  switch when no workspace is active. Default: switch (undefined treated as true). */
   readonly stealFocus?: boolean;
+  /** Optional per-workspace agent override. When omitted, falls back to the global default. */
+  readonly agent?: LifecycleAgentType;
 }
 
 /** workspaces.remove */

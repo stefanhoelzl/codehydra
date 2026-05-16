@@ -134,6 +134,7 @@ describe("App component", () => {
       }
       const activeRef = await mockApi.ui.getActiveWorkspace();
       projectsStore.setActiveWorkspace(activeRef?.path ?? null);
+      return { defaultAgent: null, availableAgents: [] };
     });
   });
 
@@ -1077,10 +1078,10 @@ describe("App component", () => {
 
     it("announces 'Application ready' only after loading completes", async () => {
       // Block lifecycle.ready() initially
-      let resolveReady!: () => void;
+      let resolveReady!: (value: { defaultAgent: null; availableAgents: readonly [] }) => void;
       mockApi.lifecycle.ready.mockImplementation(
         () =>
-          new Promise<void>((resolve) => {
+          new Promise<{ defaultAgent: null; availableAgents: readonly [] }>((resolve) => {
             resolveReady = resolve;
           })
       );
@@ -1097,7 +1098,7 @@ describe("App component", () => {
       expect(liveRegion).not.toHaveTextContent("Application ready");
 
       // Complete loading
-      resolveReady();
+      resolveReady({ defaultAgent: null, availableAgents: [] });
       await waitFor(() => {
         expect(projectsStore.loadingState.value).toBe("loaded");
       });

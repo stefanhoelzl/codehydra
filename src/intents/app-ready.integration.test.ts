@@ -23,6 +23,20 @@ import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "./lib/module";
 import type { Operation, OperationContext } from "./lib/operation";
 import type { Project } from "../shared/api/types";
+import type { Config } from "../boundaries/platform/config";
+
+function createStubConfig(): Config {
+  return {
+    register: () => {},
+    load: () => {},
+    get: () => null,
+    set: async () => {},
+    getDefinitions: () => new Map(),
+    getEffective: () => ({}),
+    getDefaults: () => ({}),
+    getHelpText: () => "",
+  };
+}
 
 // =============================================================================
 // Test Helpers
@@ -84,7 +98,7 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
-  dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation());
+  dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(createStubConfig()));
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, stub);
 
   for (const m of modules) dispatcher.registerModule(m);

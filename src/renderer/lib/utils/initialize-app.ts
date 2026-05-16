@@ -12,7 +12,9 @@
 import { tick } from "svelte";
 import { projects, setLoaded, setError } from "$lib/stores/projects.svelte.js";
 import { setAllStatuses } from "$lib/stores/agent-status.svelte.js";
+import { setBootstrap } from "$lib/stores/bootstrap.svelte.js";
 import type { Project, WorkspaceStatus, AgentStatus } from "@shared/api/types";
+import type { AgentInfo, LifecycleAgentType } from "@shared/ipc";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
 import * as api from "$lib/api";
 
@@ -24,7 +26,12 @@ export interface InitializeAppOptions {
 }
 
 export interface InitializeAppApi {
-  lifecycle: { ready(): Promise<void> };
+  lifecycle: {
+    ready(): Promise<{
+      defaultAgent: LifecycleAgentType | null;
+      availableAgents: readonly AgentInfo[];
+    }>;
+  };
   workspaces: { getStatus(workspacePath: string): Promise<WorkspaceStatus> };
 }
 
@@ -99,7 +106,8 @@ export async function initializeApp(
   try {
     // Signal ready — unblocks mount in app:start so project:open dispatches fire.
     // The renderer's event subscriptions (set up before this call) handle incoming events.
-    await apiImpl.lifecycle.ready();
+    const bootstrap = await apiImpl.lifecycle.ready();
+    setBootstrap(bootstrap);
 
     setLoaded();
 
