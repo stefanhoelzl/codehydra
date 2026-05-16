@@ -110,6 +110,10 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
                 deps.app.setPath(name, deps.pathProvider.dataPath(`electron/${name}`).toNative());
               }
             }
+            // Disable proxy lookups by default to avoid WPAD/wpad.dat probes.
+            // Users can override via electron.flags (e.g. --proxy-server=...).
+            deps.app.commandLine.appendSwitch("no-proxy-server");
+            deps.logger.info("Applied Electron flag", { flag: "no-proxy-server" });
             // Apply electron flags from config
             const flagsValue = deps.configService.get("electron.flags") as string | null;
             const flags = parseElectronFlags(flagsValue ?? undefined);
