@@ -20,6 +20,7 @@ import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdo
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import {
   createElectronLifecycleModule,
+  DEFAULT_DISABLED_FEATURES,
   type ElectronLifecycleModuleDeps,
 } from "./electron-lifecycle-module";
 import type { Config } from "../boundaries/platform/config";
@@ -332,6 +333,139 @@ describe("ElectronLifecycleModule Integration", () => {
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("no-proxy-server");
     });
+
+    it("applies curated default --disable-features when electron.disabled-features is unset", async () => {
+      const mockApp = createMockApp();
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        configService: createMockConfig(),
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      const expected = DEFAULT_DISABLED_FEATURES.join(",");
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-features", expected);
+    });
+
+    it("user-supplied electron.disabled-features fully replaces defaults", async () => {
+      const mockApp = createMockApp();
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        configService: createMockConfig({
+          "electron.disabled-features": "FeatureA, FeatureB",
+        }),
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith(
+        "disable-features",
+        "FeatureA,FeatureB"
+      );
+      // Defaults are NOT applied
+      const defaultExpected = DEFAULT_DISABLED_FEATURES.join(",");
+      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith(
+        "disable-features",
+        defaultExpected
+      );
+    });
+
+    it("empty string for electron.disabled-features disables nothing (no --disable-features switch)", async () => {
+      const mockApp = createMockApp();
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        configService: createMockConfig({ "electron.disabled-features": "" }),
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      const disableFeaturesCalls = (
+        mockApp.commandLine.appendSwitch as ReturnType<typeof vi.fn>
+      ).mock.calls.filter((call) => call[0] === "disable-features");
+      expect(disableFeaturesCalls).toEqual([]);
+    });
+
+    it("explicit null for electron.disabled-features still applies defaults", async () => {
+      const mockApp = createMockApp();
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger: SILENT_LOGGER,
+        configService: createMockConfig({ "electron.disabled-features": null }),
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      const expected = DEFAULT_DISABLED_FEATURES.join(",");
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("disable-features", expected);
+    });
+
+    it("logs the disabled features list at info level", async () => {
+      const mockApp = createMockApp();
+      const logger = createMockLogger();
+      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+
+      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
+
+      const module = createElectronLifecycleModule({
+        app: mockApp,
+        logger,
+        configService: createMockConfig({
+          "electron.disabled-features": "Foo,Bar",
+        }),
+      });
+
+      dispatcher.registerModule(module);
+
+      await dispatcher.dispatch({
+        type: INTENT_APP_START,
+        payload: {},
+      } as AppStartIntent);
+
+      expect(logger.info).toHaveBeenCalledWith(
+        "Disabled Chromium features",
+        expect.objectContaining({ count: 2, features: "Foo,Bar" })
+      );
+    });
+
   });
 
   // ---------------------------------------------------------------------------

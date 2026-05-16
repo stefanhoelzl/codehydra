@@ -61,6 +61,57 @@ export function parseElectronFlags(flags: string | undefined): { name: string; v
   return result;
 }
 
+/**
+ * Default Chromium features to disable. Curated for CodeHydra's use case:
+ * a desktop dev tool hosting code-server and agent UIs, with no media playback,
+ * autofill, translate, casting, ad-tech, or web device APIs.
+ *
+ * Excludes BackForwardCache, IsolateOrigins/SitePerProcess, NetworkService,
+ * GPU-pipeline features, Spellcheck, and the web Notifications API — those
+ * carry risk or have a real upside we want to keep.
+ */
+export const DEFAULT_DISABLED_FEATURES: readonly string[] = [
+  // Occlusion (Windows) — we manage view visibility ourselves
+  "CalculateNativeWinOcclusion",
+  // Media — no playback / casting / media-key hijacking
+  "MediaSessionService",
+  "HardwareMediaKeyHandling",
+  "GlobalMediaControls",
+  "MediaRouter",
+  "DialMediaRouteProvider",
+  // Autofill / Translate / SafeBrowsing — not useful in an IDE host
+  "AutofillServerCommunication",
+  "Translate",
+  "TranslateUI",
+  "TranslateSubFrames",
+  "SafeBrowsingEnhancedProtection",
+  "SafeBrowsingExtendedReportingOptInAllowed",
+  // Cloud-ML hints — phones home
+  "OptimizationHints",
+  "OptimizationGuideModelDownloading",
+  // Privacy Sandbox / ad-tech APIs — dead weight in Electron
+  "PrivacySandboxSettings4",
+  "BrowsingTopics",
+  "AttributionReporting",
+  "FedCm",
+  // Misc web platform we don't use
+  "AcceptCHFrame",
+  "WebOTP",
+  "IdleDetection",
+  // Service-worker background machinery — we use Electron native notifications
+  "BackgroundFetch",
+  "BackgroundSync",
+  "PushMessaging",
+  // Web device APIs — reduce attack surface
+  "WebBluetooth",
+  "WebUSB",
+  "WebSerial",
+  "WebHID",
+  // Chrome browser-UI features that don't apply to Electron
+  "LensOverlay",
+  "ReadAnything",
+];
+
 // =============================================================================
 // Dependency Interface
 // =============================================================================
@@ -86,11 +137,19 @@ export interface ElectronLifecycleModuleDeps {
 // =============================================================================
 
 export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps): IntentModule {
-  // Register config key
+  // Register config keys
   deps.configService.register("electron.flags", {
     name: "electron.flags",
     default: null,
     description: "Electron switches (e.g., --disable-gpu)",
+    ...configString({ nullable: true }),
+  });
+  deps.configService.register("electron.disabled-features", {
+    name: "electron.disabled-features",
+    default: null,
+    description:
+      "Comma-separated Chromium features to disable via --disable-features. " +
+      "null = use curated defaults; empty string = disable nothing; any value fully replaces defaults.",
     ...configString({ nullable: true }),
   });
 
@@ -114,6 +173,27 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             // Users can override via electron.flags (e.g. --proxy-server=...).
             deps.app.commandLine.appendSwitch("no-proxy-server");
             deps.logger.info("Applied Electron flag", { flag: "no-proxy-server" });
+            // Apply --disable-features from config (or curated defaults).
+            // null/undefined = use defaults; "" = disable nothing; any other value fully replaces defaults.
+            const disabledFeaturesValue = deps.configService.get("electron.disabled-features") as
+              | string
+              | null
+              | undefined;
+            const disabledFeatures =
+              disabledFeaturesValue === null || disabledFeaturesValue === undefined
+                ? [...DEFAULT_DISABLED_FEATURES]
+                : disabledFeaturesValue
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter((s) => s.length > 0);
+            if (disabledFeatures.length > 0) {
+              const joined = disabledFeatures.join(",");
+              deps.app.commandLine.appendSwitch("disable-features", joined);
+              deps.logger.info("Disabled Chromium features", {
+                count: disabledFeatures.length,
+                features: joined,
+              });
+            }
             // Apply electron flags from config
             const flagsValue = deps.configService.get("electron.flags") as string | null;
             const flags = parseElectronFlags(flagsValue ?? undefined);
