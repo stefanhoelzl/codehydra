@@ -20,6 +20,7 @@ vi.mock("$lib/api", () => ({
 
 import { initializeApp, type InitializeAppApi, type InitializeAppOptions } from "./initialize-app";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
+import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import { AgentNotificationService } from "$lib/services/agent-notifications";
 
@@ -125,11 +126,13 @@ describe("initializeApp", () => {
   beforeEach(() => {
     notificationService = new AgentNotificationService();
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     agentStatusStore.reset();
   });
 
   afterEach(() => {
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     agentStatusStore.reset();
     vi.restoreAllMocks();
     // Clean up any containers
@@ -147,7 +150,7 @@ describe("initializeApp", () => {
       await initializeApp(options, api);
 
       expect(projectsStore.projects.value).toContainEqual(TEST_PROJECT);
-      expect(projectsStore.loadingState.value).toBe("loaded");
+      expect(bootstrapStore.bootstrap.initialized).toBe(true);
     });
 
     it("sets active workspace from events", async () => {
@@ -181,21 +184,6 @@ describe("initializeApp", () => {
       await initializeApp(options, api);
 
       expect(projectsStore.activeWorkspacePath.value).toBeNull();
-    });
-
-    it("sets error state when lifecycle.ready() fails", async () => {
-      const api = createMockApi({
-        projectsError: new Error("Network error"),
-      });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
-
-      await initializeApp(options, api);
-
-      expect(projectsStore.loadingState.value).toBe("error");
-      expect(projectsStore.loadingError.value).toBe("Network error");
     });
   });
 
@@ -247,7 +235,7 @@ describe("initializeApp", () => {
 
       // Projects should still be loaded
       expect(projectsStore.projects.value).toContainEqual(TEST_PROJECT);
-      expect(projectsStore.loadingState.value).toBe("loaded");
+      expect(bootstrapStore.bootstrap.initialized).toBe(true);
     });
   });
 

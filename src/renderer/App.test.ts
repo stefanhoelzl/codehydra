@@ -96,6 +96,7 @@ vi.mock("$lib/api", () => mockApi);
 // Import after mock setup
 import App from "./App.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
+import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
@@ -104,6 +105,7 @@ describe("App component", () => {
     vi.clearAllMocks();
     // Reset stores before each test
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     dialogsStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
@@ -208,7 +210,7 @@ describe("App component", () => {
       });
     });
 
-    it("sets loadingState to 'loaded' after successful listProjects", async () => {
+    it("marks bootstrap initialized after successful listProjects", async () => {
       const mockProjects = [
         {
           id: asProjectId("test-project-12345678"),
@@ -225,20 +227,7 @@ describe("App component", () => {
 
       // Wait for loading to complete
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
-      });
-    });
-
-    it("sets loadingState to 'error' with message on listProjects failure", async () => {
-      // Now uses v2 API
-      mockApi.projects.list.mockRejectedValue(new Error("Network error"));
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("error");
-        expect(projectsStore.loadingError.value).toBe("Network error");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
     });
   });
@@ -578,7 +567,7 @@ describe("App component", () => {
       // This ensures the "Application ready." announcement has already fired
       // before we trigger shortcut mode.
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
         expect(getEventCallback("ui:mode-changed")).toBeDefined();
       });
 
@@ -1050,60 +1039,15 @@ describe("App component", () => {
   });
 
   describe("startup overlay", () => {
-    it("marks main-view-container as inert during loading", async () => {
-      // Block lifecycle.ready() to keep loading state
-      mockApi.lifecycle.ready.mockImplementation(() => new Promise(() => {}));
+    // The renderer's projects-loading overlay was removed; the main process
+    // now keeps a single startup splash visible until the first workspace's
+    // agent reports status. The renderer no longer marks the main-view
+    // container inert during loading.
 
+    it("announces 'Application ready' when the main view becomes visible", async () => {
       render(App);
       showMainView();
 
-      await waitFor(() => {
-        const container = document.querySelector(".main-view-container");
-        expect(container).toHaveAttribute("inert");
-      });
-    });
-
-    it("removes inert from main-view-container after loading completes", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for loading to complete (default mock resolves lifecycle.ready)
-      await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
-      });
-
-      const container = document.querySelector(".main-view-container");
-      expect(container).not.toHaveAttribute("inert");
-    });
-
-    it("announces 'Application ready' only after loading completes", async () => {
-      // Block lifecycle.ready() initially
-      let resolveReady!: (value: { defaultAgent: null; availableAgents: readonly [] }) => void;
-      mockApi.lifecycle.ready.mockImplementation(
-        () =>
-          new Promise<{ defaultAgent: null; availableAgents: readonly [] }>((resolve) => {
-            resolveReady = resolve;
-          })
-      );
-
-      render(App);
-      showMainView();
-
-      // During loading, should NOT announce "Application ready"
-      await waitFor(() => {
-        const container = document.querySelector(".main-view-container");
-        expect(container).toHaveAttribute("inert");
-      });
-      const liveRegion = document.querySelector('[aria-live="polite"]');
-      expect(liveRegion).not.toHaveTextContent("Application ready");
-
-      // Complete loading
-      resolveReady({ defaultAgent: null, availableAgents: [] });
-      await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
-      });
-
-      // Now should announce
       await waitFor(() => {
         const region = document.querySelector('[aria-live="polite"]');
         expect(region).toHaveTextContent("Application ready");

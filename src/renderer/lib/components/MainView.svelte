@@ -21,10 +21,9 @@
     projects,
     activeWorkspacePath,
     activeWorkspace,
-    loadingState,
-    loadingError,
     getAllWorkspaces,
   } from "$lib/stores/projects.svelte.js";
+  import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
   import {
     dialogState,
     openCreateDialog,
@@ -127,7 +126,7 @@
     // Read all reactive dependencies
     const effectiveCount = effectiveWorkspaceCount;
     const projectList = projects.value;
-    const loading = loadingState.value;
+    const initialized = bootstrap.initialized;
     const dialog = dialogState.value;
 
     // Reset dismissed state when effective workspaces exist (allows auto-show in future)
@@ -150,7 +149,7 @@
     const firstProject = projectList[0];
     if (
       effectiveCount === 0 &&
-      loading === "loaded" &&
+      initialized &&
       dialog.type === "closed" &&
       !autoShowDismissed &&
       !cloneRunning &&
@@ -282,8 +281,6 @@
   <Sidebar
     projects={projects.value}
     activeWorkspacePath={activeWorkspacePath.value}
-    loadingState={loadingState.value}
-    loadingError={loadingError.value}
     shortcutModeActive={shortcutModeActive.value}
     totalWorkspaces={getAllWorkspaces().length}
     onCloseProject={handleCloseProject}

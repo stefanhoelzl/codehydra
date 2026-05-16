@@ -97,6 +97,7 @@ vi.mock("$lib/services/agent-notifications", () => ({
 // Import after mock setup
 import MainView from "./MainView.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
+import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
@@ -109,6 +110,7 @@ describe("MainView component", () => {
     vi.clearAllMocks();
     // Reset stores before each test
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     dialogsStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
@@ -172,7 +174,7 @@ describe("MainView component", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
 
       // No active workspace = backdrop should be visible
@@ -184,7 +186,7 @@ describe("MainView component", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
 
       // Logo should be inside the backdrop
@@ -217,7 +219,7 @@ describe("MainView component", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
 
       // Simulate workspace switch to activate a workspace
@@ -283,7 +285,7 @@ describe("MainView component", () => {
       });
     });
 
-    it("sets loadingState to 'loaded' after successful projects.list", async () => {
+    it("marks bootstrap initialized after successful projects.list", async () => {
       const mockProjects = [
         {
           id: asProjectId("test-project-12345678"),
@@ -297,18 +299,7 @@ describe("MainView component", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
-      });
-    });
-
-    it("sets loadingState to 'error' on projects.list failure", async () => {
-      mockApi.projects.list.mockRejectedValue(new Error("Network error"));
-
-      render(MainView);
-
-      await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("error");
-        expect(projectsStore.loadingError.value).toBe("Network error");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
     });
   });
@@ -1305,7 +1296,7 @@ describe("MainView component", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
 
       // Manually open create dialog (user clicked +)
@@ -1343,7 +1334,7 @@ describe("MainView component", () => {
 
       // Wait for loading to complete
       await waitFor(() => {
-        expect(projectsStore.loadingState.value).toBe("loaded");
+        expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
 
       // Open a remove dialog (not create)

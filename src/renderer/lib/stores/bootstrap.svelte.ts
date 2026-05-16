@@ -7,6 +7,7 @@ import type { AgentInfo, LifecycleAgentType } from "@shared/ipc";
 
 let _defaultAgent = $state<LifecycleAgentType | null>(null);
 let _availableAgents = $state<readonly AgentInfo[]>([]);
+let _initialized = $state<boolean>(false);
 
 export const bootstrap = {
   get defaultAgent(): LifecycleAgentType | null {
@@ -14,6 +15,9 @@ export const bootstrap = {
   },
   get availableAgents(): readonly AgentInfo[] {
     return _availableAgents;
+  },
+  get initialized(): boolean {
+    return _initialized;
   },
 };
 
@@ -23,4 +27,12 @@ export function setBootstrap(value: {
 }): void {
   _defaultAgent = value.defaultAgent;
   _availableAgents = value.availableAgents;
+  _initialized = true;
+}
+
+/** Reset bootstrap state. Used for testing. */
+export function resetBootstrap(): void {
+  _defaultAgent = null;
+  _availableAgents = [];
+  _initialized = false;
 }

@@ -73,8 +73,6 @@ describe("Sidebar component", () => {
   const defaultProps = {
     projects: [],
     activeWorkspacePath: null,
-    loadingState: "loaded" as const,
-    loadingError: null,
     shortcutModeActive: false,
     totalWorkspaces: 0,
     onCloseProject: vi.fn(),
@@ -124,28 +122,10 @@ describe("Sidebar component", () => {
   });
 
   describe("state rendering", () => {
-    it("shows loading state when loadingState is 'loading'", () => {
-      render(Sidebar, { props: { ...defaultProps, loadingState: "loading" } });
-
-      expect(screen.getByText(/loading/i)).toBeInTheDocument();
-    });
-
     it("shows empty state when no projects", () => {
       render(Sidebar, { props: defaultProps });
 
       expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
-    });
-
-    it("shows error state with error message when loadingState is 'error'", () => {
-      render(Sidebar, {
-        props: {
-          ...defaultProps,
-          loadingState: "error",
-          loadingError: "Failed to load projects",
-        },
-      });
-
-      expect(screen.getByText(/failed to load projects/i)).toBeInTheDocument();
     });
   });
 

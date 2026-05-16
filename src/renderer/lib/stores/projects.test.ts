@@ -19,15 +19,11 @@ window.api = mockApi;
 import {
   projects,
   activeWorkspacePath,
-  loadingState,
-  loadingError,
   activeProject,
   setProjects,
   addProject,
   removeProject,
   setActiveWorkspace,
-  setLoaded,
-  setError,
   addWorkspace,
   removeWorkspace,
   reset,
@@ -47,14 +43,6 @@ describe("projects store", () => {
   describe("initial state", () => {
     it("initializes with empty projects array", () => {
       expect(projects.value).toEqual([]);
-    });
-
-    it("initializes with loadingState 'loading'", () => {
-      expect(loadingState.value).toBe("loading");
-    });
-
-    it("initializes with loadingError null", () => {
-      expect(loadingError.value).toBeNull();
     });
 
     it("initializes with activeWorkspacePath null", () => {
@@ -165,22 +153,6 @@ describe("projects store", () => {
       setActiveWorkspace("/nonexistent/path");
 
       expect(activeProject.value).toBeUndefined();
-    });
-  });
-
-  describe("setError", () => {
-    it("sets loadingState to 'error' and stores message", () => {
-      setError("Something went wrong");
-
-      expect(loadingState.value).toBe("error");
-      expect(loadingError.value).toBe("Something went wrong");
-    });
-  });
-
-  describe("setLoaded", () => {
-    it("sets loadingState to 'loaded'", () => {
-      setLoaded();
-      expect(loadingState.value).toBe("loaded");
     });
   });
 

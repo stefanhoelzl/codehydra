@@ -10,9 +10,12 @@
  * @returns Cleanup function (no-op for consistent composition pattern)
  */
 import { tick } from "svelte";
-import { projects, setLoaded, setError } from "$lib/stores/projects.svelte.js";
+import { projects } from "$lib/stores/projects.svelte.js";
 import { setAllStatuses } from "$lib/stores/agent-status.svelte.js";
 import { setBootstrap } from "$lib/stores/bootstrap.svelte.js";
+import { createLogger } from "$lib/logging";
+
+const logger = createLogger("ui");
 import type { Project, WorkspaceStatus, AgentStatus } from "@shared/api/types";
 import type { AgentInfo, LifecycleAgentType } from "@shared/ipc";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
@@ -109,8 +112,6 @@ export async function initializeApp(
     const bootstrap = await apiImpl.lifecycle.ready();
     setBootstrap(bootstrap);
 
-    setLoaded();
-
     // Focus first focusable element (including VSCode Elements)
     await tick();
     const firstFocusable = containerRef?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
@@ -135,7 +136,12 @@ export async function initializeApp(
       // Agent status is optional, don't fail initialization
     }
   } catch (err: unknown) {
-    setError(err instanceof Error ? err.message : "Failed to load projects");
+    // lifecycle.ready() failure leaves bootstrap.initialized=false; the main
+    // process's startup splash will fall through on its 10s timeout. Log so
+    // the failure is visible in the renderer console.
+    logger.error("Failed to initialize app", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   // Return no-op cleanup for consistent composition pattern

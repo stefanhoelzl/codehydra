@@ -21,6 +21,7 @@ vi.mock("$lib/api", () => ({
 import { setupDomainEventBindings } from "./setup-domain-event-bindings";
 import type { DomainEventApi, ApiEvents } from "./domain-events";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
+import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import { AgentNotificationService } from "$lib/services/agent-notifications";
@@ -101,12 +102,14 @@ describe("setupDomainEventBindings", () => {
     mockApi = createMockApi();
     notificationService = new AgentNotificationService();
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     agentStatusStore.reset();
     dialogsStore.reset();
   });
 
   afterEach(() => {
     projectsStore.reset();
+    bootstrapStore.resetBootstrap();
     agentStatusStore.reset();
     dialogsStore.reset();
     vi.restoreAllMocks();
@@ -135,7 +138,7 @@ describe("setupDomainEventBindings", () => {
 
     it("auto-opens create dialog when project with no workspaces is opened after loading", () => {
       // Simulate post-startup state (loading complete)
-      projectsStore.setLoaded();
+      bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
 
       setupDomainEventBindings(notificationService, mockApi.api);
 
@@ -148,8 +151,8 @@ describe("setupDomainEventBindings", () => {
     });
 
     it("does not auto-open create dialog during initial loading", () => {
-      // loadingState is "loading" by default after reset
-      expect(projectsStore.loadingState.value).toBe("loading");
+      // bootstrap.initialized is false by default after reset
+      expect(bootstrapStore.bootstrap.initialized).toBe(false);
 
       setupDomainEventBindings(notificationService, mockApi.api);
 
