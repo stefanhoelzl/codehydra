@@ -59,7 +59,6 @@ export interface ExtensionInstallEntry {
   readonly vsixPath: string;
 }
 import { INTENT_SETUP } from "./setup";
-import { INTENT_UPDATE_APPLY } from "./update-apply";
 
 // =============================================================================
 // Intent Types
@@ -93,8 +92,6 @@ export interface CheckDepsHookContext extends HookContext {
 export interface CheckDepsResult {
   readonly missingBinaries?: readonly BinaryType[];
   readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
-  /** True when auto-update config is "ask" and an update was detected. */
-  readonly updateNeedsChoice?: boolean;
 }
 
 /**
@@ -137,7 +134,6 @@ interface CheckResult {
   readonly missingBinaries: readonly BinaryType[];
   readonly needsExtensions: boolean;
   readonly extensionInstallPlan: readonly ExtensionInstallEntry[];
-  readonly updateNeedsChoice: boolean;
 }
 
 // =============================================================================
@@ -194,16 +190,6 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
 
     // Hook 4: "check-deps" (collect, isolated contexts)
     let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
-
-    // Dispatch app:update before setup (interceptor rejects if config="never" or no update)
-    try {
-      await ctx.dispatch({
-        type: INTENT_UPDATE_APPLY,
-        payload: { needsChoice: checkResult.updateNeedsChoice ?? false },
-      });
-    } catch {
-      // Update rejected by interceptor or failed — non-fatal, continue startup
-    }
 
     // Dispatch app:setup if needed (blocking sub-operation)
     // Setup manages its own UI (shows/hides setup screen)
@@ -279,12 +265,10 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // Merge dep results (concatenate arrays from all handlers)
     const missingBinaries: BinaryType[] = [];
     const extensionInstallPlan: ExtensionInstallEntry[] = [];
-    let updateNeedsChoice = false;
 
     for (const result of depsResults) {
       if (result.missingBinaries) missingBinaries.push(...result.missingBinaries);
       if (result.extensionInstallPlan) extensionInstallPlan.push(...result.extensionInstallPlan);
-      if (result.updateNeedsChoice) updateNeedsChoice = true;
     }
 
     // Derive booleans (dissolved from needsSetupModule)
@@ -301,7 +285,6 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       missingBinaries,
       needsExtensions,
       extensionInstallPlan,
-      updateNeedsChoice,
     };
   }
 }

@@ -13,14 +13,14 @@ import type { HookHandler, HookContext } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
 import type { CheckDepsResult } from "../intents/app-start";
 import type { SetupProgressReporter } from "../intents/setup";
-import type { UpdateDownloadResult } from "../intents/update-apply";
 import type { DeleteHookResult, DetectHookResult } from "../intents/delete-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../intents/resolve-workspace";
 import type { ResolveHookResult } from "../intents/resolve-workspace";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { SETUP_OPERATION_ID } from "../intents/setup";
-import { UPDATE_APPLY_OPERATION_ID } from "../intents/update-apply";
+import type { NotificationManager, NotificationHandle } from "./notification-manager";
+import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 
 // =============================================================================
 // Mock Config
@@ -39,6 +39,68 @@ function createMockConfig(values?: Record<string, unknown>): Config {
     getEffective: () => Object.fromEntries(store),
     getDefaults: () => ({}),
     getHelpText: () => "",
+  };
+}
+
+// =============================================================================
+// Mock NotificationManager
+// =============================================================================
+
+interface MockNotification {
+  opened: NotificationConfig;
+  updates: NotificationConfig[];
+  closed: boolean;
+  listeners: Set<(event: NotificationUserEvent) => void>;
+}
+
+function createMockNotificationManager(): {
+  manager: NotificationManager;
+  notifications: MockNotification[];
+  emitEvent: (index: number, actionId: string) => void;
+} {
+  const notifications: MockNotification[] = [];
+  const manager = {
+    open(config: NotificationConfig): NotificationHandle {
+      const slot: MockNotification = {
+        opened: config,
+        updates: [],
+        closed: false,
+        listeners: new Set(),
+      };
+      notifications.push(slot);
+      const id = `ntf-${notifications.length}`;
+      return {
+        id,
+        update: (next: NotificationConfig) => {
+          slot.updates.push(next);
+        },
+        close: () => {
+          slot.closed = true;
+        },
+        onEvent: (handler) => {
+          slot.listeners.add(handler);
+          return () => {
+            slot.listeners.delete(handler);
+          };
+        },
+        nextEvent: () => new Promise<NotificationUserEvent>(() => {}),
+        closed: new Promise<void>(() => {}),
+      } satisfies NotificationHandle;
+    },
+    routeEvent: () => {},
+  } as unknown as NotificationManager;
+  return {
+    manager,
+    notifications,
+    emitEvent(index, actionId) {
+      const slot = notifications[index];
+      if (!slot) throw new Error(`No notification at index ${index}`);
+      const event: NotificationUserEvent = {
+        notificationId: `ntf-${index + 1}`,
+        actionId,
+      };
+      for (const handler of slot.listeners) handler(event);
+    },
   };
 }
 
@@ -261,66 +323,57 @@ describe("DebugModule Integration", () => {
   });
 
   describe("update (inactive)", () => {
-    it("check-deps returns empty object", async () => {
-      const module = createDebugModule({ configService: createMockConfig() });
-      const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
-      const result = (await hook.handler(makeHookContext())) as CheckDepsResult;
-      expect(result).toEqual({});
-    });
-
-    it("download hook returns empty object without dialogManager", async () => {
-      const module = createDebugModule({ configService: createMockConfig() });
-      const hook = getHook(module, UPDATE_APPLY_OPERATION_ID, "download");
-      const result = (await hook.handler(makeHookContext())) as UpdateDownloadResult;
-      expect(result).toEqual({});
+    it("start hook opens nothing when debug.update is off", async () => {
+      const { manager, notifications } = createMockNotificationManager();
+      const module = createDebugModule({
+        configService: createMockConfig(),
+        notificationManager: manager,
+      });
+      const hook = getHook(module, APP_START_OPERATION_ID, "start");
+      await hook.handler(makeHookContext());
+      expect(notifications).toHaveLength(0);
     });
   });
 
   describe("update (active)", () => {
-    it("check-deps returns updateNeedsChoice", async () => {
+    it("start hook opens 'Update available' notification when debug.update is on", async () => {
+      const { manager, notifications } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig({ "debug.update": true }),
+        notificationManager: manager,
       });
-      const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
-      const result = (await hook.handler(makeHookContext())) as CheckDepsResult;
-      expect(result.updateNeedsChoice).toBe(true);
+      const hook = getHook(module, APP_START_OPERATION_ID, "start");
+      await hook.handler(makeHookContext());
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]!.opened.title).toBe("Update available");
+      expect(notifications[0]!.opened.actions).toEqual([{ id: "install", label: "Install" }]);
     });
 
-    it("download hook opens dialog, simulates progress, and returns cancelled", async () => {
+    it("clicking Install transitions to downloading then ready", async () => {
       vi.useFakeTimers();
       try {
-        const updateCalls: unknown[] = [];
-        const mockHandle = {
-          id: "dlg-test",
-          update: vi.fn((config: unknown) => updateCalls.push(config)),
-          close: vi.fn(),
-          onEvent: vi.fn(() => () => {}),
-          nextEvent: vi.fn(),
-          closed: new Promise<void>(() => {}),
-        };
-        const mockDialogManager = { open: vi.fn(() => mockHandle) };
+        const { manager, notifications, emitEvent } = createMockNotificationManager();
         const module = createDebugModule({
           configService: createMockConfig({ "debug.update": true }),
-          dialogManager: mockDialogManager as never,
+          notificationManager: manager,
         });
-        const hook = getHook(module, UPDATE_APPLY_OPERATION_ID, "download");
+        const hook = getHook(module, APP_START_OPERATION_ID, "start");
+        await hook.handler(makeHookContext());
 
-        const promise = hook.handler(makeHookContext());
+        emitEvent(0, "install");
 
-        // Dialog should be opened
-        expect(mockDialogManager.open).toHaveBeenCalledTimes(1);
-
-        // Advance through all 20 increments (150ms each, 5% to 100%)
+        // 20 increments of 150ms
         for (let i = 0; i < 20; i++) {
           await vi.advanceTimersByTimeAsync(150);
         }
+        await vi.runAllTimersAsync();
 
-        const result = (await promise) as UpdateDownloadResult;
-
-        // Should have updated dialog with progress increments
-        expect(updateCalls.length).toBeGreaterThan(0);
-        expect(mockHandle.close).toHaveBeenCalled();
-        expect(result).toEqual({ cancelled: true });
+        const slot = notifications[0]!;
+        expect(slot.updates.length).toBeGreaterThan(0);
+        const last = slot.updates[slot.updates.length - 1]!;
+        expect(last.title).toBe("Update ready");
+        expect(last.actions).toEqual([{ id: "restart", label: "Restart Now" }]);
       } finally {
         vi.useRealTimers();
       }
@@ -328,14 +381,13 @@ describe("DebugModule Integration", () => {
   });
 
   describe("combined setup + update", () => {
-    it("check-deps returns both missingBinaries and updateNeedsChoice", async () => {
+    it("check-deps returns missingBinaries when debug.setup is on", async () => {
       const module = createDebugModule({
         configService: createMockConfig({ "debug.setup": true, "debug.update": true }),
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
       const result = (await hook.handler(makeHookContext())) as CheckDepsResult;
       expect(result.missingBinaries).toEqual(["claude"]);
-      expect(result.updateNeedsChoice).toBe(true);
     });
   });
 });
