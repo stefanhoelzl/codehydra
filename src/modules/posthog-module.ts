@@ -32,6 +32,39 @@ import type { ConfigAgentType } from "../boundaries/platform/config-values";
 import type { Logger } from "../boundaries/platform/logging";
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/**
+ * Per-field compressed cap for log payloads on the bug_report event. With two
+ * log streams (app + electron) this gives ~900 KB combined, leaving ~148 KB
+ * under PostHog's 1 MB hard cap for description, metadata, and SDK overhead.
+ */
+const LOG_FIELD_COMPRESSED_CAP = 450_000;
+const COMPRESS_SAFETY_FACTOR = 0.95;
+
+/**
+ * Compress `raw` with gzip+base64 and, if the result exceeds the cap, trim
+ * the raw input from the front (keeping the most recent tail) and re-compress.
+ * Each iteration scales the raw size down by the observed overshoot ratio
+ * with a safety margin, so we usually converge in 1–2 passes.
+ */
+function compressAndTrim(raw: string): { compressed: string; rawBytesKept: number } {
+  let kept = raw;
+  let compressed = kept ? gzipSync(kept).toString("base64") : "";
+  while (compressed.length > LOG_FIELD_COMPRESSED_CAP && kept.length > 0) {
+    const scaled = Math.floor(
+      (kept.length * LOG_FIELD_COMPRESSED_CAP * COMPRESS_SAFETY_FACTOR) / compressed.length
+    );
+    // Guarantee progress even if rounding/SAFETY_FACTOR don't shrink enough
+    const nextLen = Math.max(0, Math.min(scaled, kept.length - 1));
+    kept = nextLen > 0 ? kept.slice(kept.length - nextLen) : "";
+    compressed = kept ? gzipSync(kept).toString("base64") : "";
+  }
+  return { compressed, rawBytesKept: kept.length };
+}
+
+// =============================================================================
 // Types
 // =============================================================================
 
@@ -204,7 +237,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
    * Bug reports are explicit user actions, not passive telemetry.
    * No-op only if API key is missing.
    */
-  function captureBugReport(description: string, logs: string): void {
+  function captureBugReport(description: string, logs: string, electronLogs: string): void {
     if (!deps.apiKey || deps.apiKey.trim() === "") return;
 
     // Lazily create client if telemetry was disabled
@@ -214,7 +247,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
         void result.then((c) => {
           client = c;
           // Retry after async client creation
-          captureBugReport(description, logs);
+          captureBugReport(description, logs, electronLogs);
         });
         return;
       }
@@ -231,31 +264,22 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
 
     deps.logger.info("Bug report captured");
 
-    // PostHog discards events larger than 1 MB. Compress logs (gzip+base64) and,
-    // if the payload overshoots, trim the raw input from the front (keeping the
-    // most recent tail). Each iteration scales the raw size down by the observed
-    // overshoot ratio with a safety margin, so we usually converge in 1–2 passes
-    // and keep close to the cap (vs. naive halving which would ship ~half on a
-    // small overshoot).
-    const POSTHOG_EVENT_LIMIT = 1_000_000;
-    const SAFETY_FACTOR = 0.95;
-    let rawLogs = logs;
-    let logsCompressed = rawLogs ? gzipSync(rawLogs).toString("base64") : "";
-    while (logsCompressed.length > POSTHOG_EVENT_LIMIT && rawLogs.length > 0) {
-      const scaled = Math.floor(
-        (rawLogs.length * POSTHOG_EVENT_LIMIT * SAFETY_FACTOR) / logsCompressed.length
-      );
-      // Guarantee progress even if rounding/SAFETY_FACTOR don't shrink enough
-      const nextLen = Math.max(0, Math.min(scaled, rawLogs.length - 1));
-      rawLogs = nextLen > 0 ? rawLogs.slice(rawLogs.length - nextLen) : "";
-      logsCompressed = rawLogs ? gzipSync(rawLogs).toString("base64") : "";
-    }
+    // PostHog discards events larger than 1 MB. We carry two log streams (app
+    // log + Chromium native log) and cap each independently at 450 KB
+    // compressed, leaving ~148 KB headroom under the 1 MB hard cap for
+    // description + metadata + SDK overhead.
+    const appLogs = compressAndTrim(logs);
+    const electronLogsBlob = compressAndTrim(electronLogs);
 
     client.captureException(bugError, id, {
-      logs: logsCompressed,
-      logs_format: logsCompressed ? "gzip+base64" : "none",
-      logs_raw_bytes: rawLogs.length,
-      logs_raw_bytes_dropped: logs.length - rawLogs.length,
+      logs: appLogs.compressed,
+      logs_format: appLogs.compressed ? "gzip+base64" : "none",
+      logs_raw_bytes: appLogs.rawBytesKept,
+      logs_raw_bytes_dropped: logs.length - appLogs.rawBytesKept,
+      electron_logs: electronLogsBlob.compressed,
+      electron_logs_format: electronLogsBlob.compressed ? "gzip+base64" : "none",
+      electron_logs_raw_bytes: electronLogsBlob.rawBytesKept,
+      electron_logs_raw_bytes_dropped: electronLogs.length - electronLogsBlob.rawBytesKept,
       ...eventProperties(),
       version: deps.buildInfo.version,
     });
@@ -370,8 +394,8 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
       },
       [EVENT_BUG_REPORT_SUBMITTED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { description, logs } = (event as BugReportSubmittedEvent).payload;
-          captureBugReport(description, logs);
+          const { description, logs, electronLogs } = (event as BugReportSubmittedEvent).payload;
+          captureBugReport(description, logs, electronLogs);
         },
       },
     },

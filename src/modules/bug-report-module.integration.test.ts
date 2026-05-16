@@ -107,11 +107,15 @@ function createMockDeps(
           if (path === "/logs/test-session.log") {
             return Promise.resolve("test log content\nline 2\nline 3");
           }
+          if (path === "/logs/electron.log") {
+            return Promise.resolve("electron log content");
+          }
           return Promise.reject(new Error("ENOENT"));
         }),
       },
       loggingService: {
         getLogFilePath: vi.fn().mockReturnValue("/logs/test-session.log"),
+        getElectronLogFilePath: vi.fn().mockReturnValue("/logs/electron.log"),
       },
       dispatcher: {
         dispatch: vi.fn().mockResolvedValue(undefined),
@@ -316,6 +320,7 @@ describe("BugReportModule", () => {
           payload: {
             description: "It crashed",
             logs: "test log content\nline 2\nline 3",
+            electronLogs: "electron log content",
           },
         })
       );
@@ -377,6 +382,58 @@ describe("BugReportModule", () => {
       expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           payload: expect.objectContaining({ logs: "ARCHIVE\nCURRENT" }),
+        })
+      );
+    });
+  });
+
+  it("attaches electron.log content alongside app log", async () => {
+    const { deps, handle } = createMockDeps();
+    (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/logs/test-session.log") return Promise.resolve("APP");
+      if (path === "/logs/electron.log") return Promise.resolve("CHROMIUM-NATIVE");
+      return Promise.reject(new Error("ENOENT"));
+    });
+    const module = createBugReportModule(deps);
+
+    await emitKeyEvent(module, "b");
+    handle._emitEvent({
+      dialogId: "dlg-test",
+      actionId: "send",
+      data: { inputs: { description: "both logs" } },
+    });
+
+    await vi.waitFor(() => {
+      expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            logs: "APP",
+            electronLogs: "CHROMIUM-NATIVE",
+          }),
+        })
+      );
+    });
+  });
+
+  it("uses empty electronLogs when electron.log is missing", async () => {
+    const { deps, handle } = createMockDeps();
+    (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockImplementation((path: string) => {
+      if (path === "/logs/test-session.log") return Promise.resolve("APP");
+      return Promise.reject(new Error("ENOENT"));
+    });
+    const module = createBugReportModule(deps);
+
+    await emitKeyEvent(module, "b");
+    handle._emitEvent({
+      dialogId: "dlg-test",
+      actionId: "send",
+      data: { inputs: { description: "no electron yet" } },
+    });
+
+    await vi.waitFor(() => {
+      expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({ logs: "APP", electronLogs: "" }),
         })
       );
     });

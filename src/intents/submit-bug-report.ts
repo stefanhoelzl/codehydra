@@ -15,6 +15,8 @@ import type { Operation, OperationContext } from "./lib/operation";
 export interface SubmitBugReportPayload {
   readonly description: string;
   readonly logs: string;
+  /** Chromium/Electron native log (--enable-logging=file output). */
+  readonly electronLogs: string;
 }
 
 export interface SubmitBugReportIntent extends Intent<void> {
@@ -31,6 +33,8 @@ export const INTENT_SUBMIT_BUG_REPORT = "bug-report:submit" as const;
 export interface BugReportSubmittedPayload {
   readonly description: string;
   readonly logs: string;
+  /** Chromium/Electron native log (--enable-logging=file output). */
+  readonly electronLogs: string;
 }
 
 export interface BugReportSubmittedEvent extends DomainEvent {
@@ -55,6 +59,7 @@ export class SubmitBugReportOperation implements Operation<SubmitBugReportIntent
       payload: {
         description: ctx.intent.payload.description,
         logs: ctx.intent.payload.logs,
+        electronLogs: ctx.intent.payload.electronLogs,
       },
     };
     ctx.emit(event);
