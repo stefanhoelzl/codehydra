@@ -49,7 +49,10 @@ import type {
   HibernatePipelineHookInput,
   HibernateShutdownHookResult,
 } from "../intents/hibernate-workspace";
-import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
+import {
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+  HIBERNATED_METADATA_KEY,
+} from "../intents/hibernate-workspace";
 import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
 import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
@@ -660,6 +663,12 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceCreatedEvent).payload;
+          // Hibernated workspaces re-discovered on startup must not have a
+          // view created — otherwise the live WebContentsView occludes
+          // HibernatedOverlay, masking the wake-on-click affordance and
+          // leaving the sidebar's hibernated indicator out of sync with
+          // what the user sees in the pane.
+          if (payload.metadata?.[HIBERNATED_METADATA_KEY] === "true") return;
           viewManager.createWorkspaceView(
             payload.workspacePath,
             payload.workspaceUrl,
