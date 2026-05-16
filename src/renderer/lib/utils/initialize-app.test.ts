@@ -4,29 +4,16 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type {
-  Project,
-  Workspace,
-  WorkspaceStatus,
-  ProjectId,
-  WorkspaceName,
-} from "@shared/api/types";
+import type { Project, Workspace, ProjectId, WorkspaceName } from "@shared/api/types";
 
-// Mock the API module before importing the setup function
 vi.mock("$lib/api", () => ({
   lifecycle: { ready: vi.fn() },
-  workspaces: { getStatus: vi.fn() },
 }));
 
 import { initializeApp, type InitializeAppApi, type InitializeAppOptions } from "./initialize-app";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
-import { AgentNotificationService } from "$lib/services/agent-notifications";
-
-// =============================================================================
-// Test Data
-// =============================================================================
 
 const TEST_PROJECT_ID = "my-project-a1b2c3d4" as ProjectId;
 const TEST_PROJECT_PATH = "/test/project";
@@ -48,20 +35,9 @@ const TEST_PROJECT: Project = {
   workspaces: [TEST_WORKSPACE],
 };
 
-const TEST_STATUS: WorkspaceStatus = {
-  isDirty: false,
-  unmergedCommits: 0,
-  agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
-};
-
-// =============================================================================
-// Mock API Factory
-// =============================================================================
-
 function createMockApi(config?: {
   projects?: Project[];
   activeWorkspace?: { path: string } | null;
-  statusError?: Error;
   projectsError?: Error;
 }): InitializeAppApi {
   const projectList = config?.projects ?? [TEST_PROJECT];
@@ -82,20 +58,8 @@ function createMockApi(config?: {
         return { defaultAgent: null, availableAgents: [] };
       }),
     },
-    workspaces: {
-      getStatus: vi.fn(async () => {
-        if (config?.statusError) {
-          throw config.statusError;
-        }
-        return TEST_STATUS;
-      }),
-    },
   };
 }
-
-// =============================================================================
-// Mock Container Factory
-// =============================================================================
 
 function createMockContainer(focusableElement?: string): HTMLElement {
   const container = document.createElement("div");
@@ -116,15 +80,8 @@ function createMockContainer(focusableElement?: string): HTMLElement {
   return container;
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 describe("initializeApp", () => {
-  let notificationService: AgentNotificationService;
-
   beforeEach(() => {
-    notificationService = new AgentNotificationService();
     projectsStore.reset();
     bootstrapStore.resetBootstrap();
     agentStatusStore.reset();
@@ -135,17 +92,13 @@ describe("initializeApp", () => {
     bootstrapStore.resetBootstrap();
     agentStatusStore.reset();
     vi.restoreAllMocks();
-    // Clean up any containers
     document.body.innerHTML = "";
   });
 
   describe("project loading", () => {
     it("loads projects into store via lifecycle.ready()", async () => {
       const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: undefined };
 
       await initializeApp(options, api);
 
@@ -158,10 +111,7 @@ describe("initializeApp", () => {
         projects: [TEST_PROJECT],
         activeWorkspace: { path: TEST_WORKSPACE_PATH },
       });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: undefined };
 
       await initializeApp(options, api);
 
@@ -169,17 +119,13 @@ describe("initializeApp", () => {
     });
 
     it("handles null active workspace", async () => {
-      // Explicitly reset to ensure clean state
       projectsStore.reset();
 
       const api = createMockApi({
         projects: [TEST_PROJECT],
         activeWorkspace: null,
       });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: undefined };
 
       await initializeApp(options, api);
 
@@ -187,66 +133,11 @@ describe("initializeApp", () => {
     });
   });
 
-  describe("agent status fetching", () => {
-    it("fetches and sets agent statuses for all workspaces", async () => {
-      const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
-
-      await initializeApp(options, api);
-
-      const status = agentStatusStore.getStatus(TEST_WORKSPACE_PATH);
-      expect(status).toEqual(TEST_STATUS.agent);
-    });
-
-    it("seeds notification service with initial counts", async () => {
-      const seedSpy = vi.spyOn(notificationService, "seedInitialCounts");
-      const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
-
-      await initializeApp(options, api);
-
-      // This tests integration behavior, not just call tracking:
-      // We verify the notification service was seeded with the correctly transformed
-      // agent status data (counts extracted from the status response). This ensures
-      // the initialization flow properly integrates the status fetch with the
-      // notification system's chime detection baseline.
-      expect(seedSpy).toHaveBeenCalledWith({
-        [TEST_WORKSPACE_PATH]: { idle: 1, busy: 0 },
-      });
-    });
-
-    it("continues initialization when status fetch fails", async () => {
-      const api = createMockApi({
-        projects: [TEST_PROJECT],
-        statusError: new Error("Status fetch failed"),
-      });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
-
-      await initializeApp(options, api);
-
-      // Projects should still be loaded
-      expect(projectsStore.projects.value).toContainEqual(TEST_PROJECT);
-      expect(bootstrapStore.bootstrap.initialized).toBe(true);
-    });
-  });
-
   describe("focus management", () => {
     it("focuses vscode-button element", async () => {
       const container = createMockContainer("vscode-button");
       const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: container,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: container };
 
       await initializeApp(options, api);
 
@@ -256,10 +147,7 @@ describe("initializeApp", () => {
     it("focuses native button element", async () => {
       const container = createMockContainer("button");
       const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: container,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: container };
 
       await initializeApp(options, api);
 
@@ -269,10 +157,7 @@ describe("initializeApp", () => {
     it("focuses input element", async () => {
       const container = createMockContainer("input");
       const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: container,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: container };
 
       await initializeApp(options, api);
 
@@ -281,10 +166,7 @@ describe("initializeApp", () => {
 
     it("handles missing container gracefully", async () => {
       const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: undefined };
 
       await expect(initializeApp(options, api)).resolves.not.toThrow();
     });
@@ -293,15 +175,11 @@ describe("initializeApp", () => {
   describe("cleanup", () => {
     it("returns cleanup function for consistent composition", async () => {
       const api = createMockApi({ projects: [TEST_PROJECT] });
-      const options: InitializeAppOptions = {
-        containerRef: undefined,
-        notificationService,
-      };
+      const options: InitializeAppOptions = { containerRef: undefined };
 
       const cleanup = await initializeApp(options, api);
 
       expect(typeof cleanup).toBe("function");
-      // Cleanup is no-op but should not throw
       expect(() => cleanup()).not.toThrow();
     });
   });
