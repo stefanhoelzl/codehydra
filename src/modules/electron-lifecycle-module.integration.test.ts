@@ -465,7 +465,6 @@ describe("ElectronLifecycleModule Integration", () => {
         expect.objectContaining({ count: 2, features: "Foo,Bar" })
       );
     });
-
   });
 
   // ---------------------------------------------------------------------------
