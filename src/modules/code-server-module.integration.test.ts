@@ -830,6 +830,16 @@ describe("CodeServerModule", () => {
         new Path("/test/project/.worktrees/feature-1.code-workspace"),
         expect.stringContaining('"claudeCode.useTerminal":')
       );
+      const writeCall = vi
+        .mocked(deps.fileSystemLayer.writeFile)
+        .mock.calls.find(
+          ([p]) => p.toString() === "/test/project/.worktrees/feature-1.code-workspace"
+        );
+      expect(writeCall).toBeDefined();
+      const written = writeCall![1] as string;
+      expect(written).toContain('"chat.agent.enabled": false');
+      expect(written).toContain('"extensions.autoUpdate": false');
+      expect(written).toContain('"extensions.autoCheckUpdates": false');
     });
 
     it("falls back to folder URL on workspace file error", async () => {

@@ -917,6 +917,9 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 "claudeCode.useTerminal": true,
                 "claudeCode.claudeProcessWrapper": deps.wrapperPath,
                 "claudeCode.environmentVariables": envVarsArray,
+                "chat.agent.enabled": false,
+                "extensions.autoUpdate": false,
+                "extensions.autoCheckUpdates": false,
               };
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
               capWorkspaceUrl = urlForWorkspace(codeServerPort, wsFilePath.toString());
