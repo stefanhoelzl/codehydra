@@ -471,6 +471,7 @@ export class ElectronLog implements Logging {
   private logFormat: LogFormat = "text";
   private allowedLoggers: Set<LoggerName> | undefined;
   private readonly logPath: string;
+  private readonly electronLogPath: string;
 
   constructor(pathProvider: PathProvider) {
     // Transports start silent — configure() enables them
@@ -481,6 +482,8 @@ export class ElectronLog implements Logging {
     const logsDir = pathProvider.dataPath("logs").toNative();
     const filename = generateSessionFilename();
     this.logPath = join(logsDir, filename);
+    // Fixed filename: Chromium overwrites on each launch with --log-file.
+    this.electronLogPath = join(logsDir, "electron.log");
     log.transports.file.resolvePathFn = (): string => this.logPath;
 
     // 20 MB before rotation. Bug reports include the rotated archive plus the
@@ -563,5 +566,9 @@ export class ElectronLog implements Logging {
 
   getLogFilePath(): string {
     return this.logPath;
+  }
+
+  getElectronLogFilePath(): string {
+    return this.electronLogPath;
   }
 }

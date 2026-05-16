@@ -29,7 +29,7 @@ const MAX_LOG_SIZE = 20 * 1024 * 1024;
 export interface BugReportModuleDeps {
   readonly dialogManager: DialogManager;
   readonly fileSystem: Pick<FileSystemBoundary, "readFile">;
-  readonly loggingService: Pick<Logging, "getLogFilePath">;
+  readonly loggingService: Pick<Logging, "getLogFilePath" | "getElectronLogFilePath">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
   readonly config: Pick<Config, "getDefinitions" | "getEffective" | "getDefaults">;
   readonly logger: Logger;
@@ -89,6 +89,18 @@ export function createBugReportModule(deps: BugReportModuleDeps): IntentModule {
     return combined.length > MAX_LOG_SIZE ? combined.slice(-MAX_LOG_SIZE) : combined;
   }
 
+  async function readElectronLogContent(): Promise<string> {
+    const path = deps.loggingService.getElectronLogFilePath();
+    // File is bounded by the truncation watcher in logging-module
+    // (ELECTRON_LOG_MAX_BYTES = 20 MB). May be missing if Chromium hasn't
+    // flushed yet on a very short session.
+    const content = await deps.fileSystem.readFile(path).catch(() => {
+      deps.logger.warn("Failed to read electron log file");
+      return "";
+    });
+    return content.length > MAX_LOG_SIZE ? content.slice(-MAX_LOG_SIZE) : content;
+  }
+
   function openDialog(): void {
     if (activeHandle) return;
 
@@ -99,13 +111,16 @@ export function createBugReportModule(deps: BugReportModuleDeps): IntentModule {
     handle.onEvent((event) => {
       if (event.actionId === "send") {
         void (async () => {
-          const logs = await readLogContent();
+          const [logs, electronLogs] = await Promise.all([
+            readLogContent(),
+            readElectronLogContent(),
+          ]);
           const inputs = (event.data?.inputs ?? {}) as Record<string, string>;
           const description = inputs["description"] ?? "";
 
           void deps.dispatcher.dispatch({
             type: INTENT_SUBMIT_BUG_REPORT,
-            payload: { description, logs },
+            payload: { description, logs, electronLogs },
           } as SubmitBugReportIntent);
 
           handle.close();

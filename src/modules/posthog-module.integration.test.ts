@@ -169,8 +169,12 @@ function appResumeIntent(): AppResumeIntent {
   return { type: INTENT_APP_RESUME, payload: {} as AppResumeIntent["payload"] };
 }
 
-function submitBugReportIntent(description: string, logs: string): SubmitBugReportIntent {
-  return { type: INTENT_SUBMIT_BUG_REPORT, payload: { description, logs } };
+function submitBugReportIntent(
+  description: string,
+  logs: string,
+  electronLogs = ""
+): SubmitBugReportIntent {
+  return { type: INTENT_SUBMIT_BUG_REPORT, payload: { description, logs, electronLogs } };
 }
 
 // =============================================================================
@@ -671,7 +675,7 @@ describe("PosthogModule Integration", () => {
       expect(decompressed).toBe("log line 1\nlog line 2");
     });
 
-    it("trims raw logs until compressed payload fits PostHog's 1MB limit", async () => {
+    it("trims each log field independently to the 450 KB per-field cap", async () => {
       const { dispatcher, getMock } = createTestSetup({
         configValues: {
           "telemetry.enabled": true,
@@ -680,23 +684,79 @@ describe("PosthogModule Integration", () => {
         },
       });
 
-      // Truly random bytes don't compress, so 5MB of them blows past the 1MB
-      // cap even after gzip+base64, forcing the trim loop to drop bytes.
+      // Truly random bytes don't compress, so each blob blows past the
+      // 450 KB per-field cap and forces the trim loop to drop bytes.
       const { randomBytes } = await import("node:crypto");
-      const incompressible = randomBytes(5 * 1024 * 1024).toString("binary");
+      const appRaw = randomBytes(3 * 1024 * 1024).toString("binary");
+      const electronRaw = randomBytes(3 * 1024 * 1024).toString("binary");
 
       await dispatcher.dispatch(startIntent());
-      await dispatcher.dispatch(submitBugReportIntent("big report", incompressible));
+      await dispatcher.dispatch(submitBugReportIntent("big report", appRaw, electronRaw));
 
       const mock = getMock()!;
       const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
       expect(captured).toBeDefined();
       const props = captured!.properties as Record<string, unknown>;
-      expect((props["logs"] as string).length).toBeLessThanOrEqual(1_000_000);
+
+      expect((props["logs"] as string).length).toBeLessThanOrEqual(450_000);
       expect(props["logs_raw_bytes_dropped"]).toBeGreaterThan(0);
       expect(
         (props["logs_raw_bytes"] as number) + (props["logs_raw_bytes_dropped"] as number)
-      ).toBe(incompressible.length);
+      ).toBe(appRaw.length);
+
+      expect((props["electron_logs"] as string).length).toBeLessThanOrEqual(450_000);
+      expect(props["electron_logs_format"]).toBe("gzip+base64");
+      expect(props["electron_logs_raw_bytes_dropped"]).toBeGreaterThan(0);
+      expect(
+        (props["electron_logs_raw_bytes"] as number) +
+          (props["electron_logs_raw_bytes_dropped"] as number)
+      ).toBe(electronRaw.length);
+    });
+
+    it("includes electron_logs alongside app logs when both are present", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "claude",
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(
+        submitBugReportIntent("two streams", "APP-LOG-CONTENT", "CHROMIUM-LOG-CONTENT")
+      );
+
+      const mock = getMock()!;
+      const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
+      const props = captured!.properties as Record<string, unknown>;
+      const { gunzipSync } = await import("node:zlib");
+      const decodedApp = gunzipSync(Buffer.from(props["logs"] as string, "base64")).toString();
+      const decodedElectron = gunzipSync(
+        Buffer.from(props["electron_logs"] as string, "base64")
+      ).toString();
+      expect(decodedApp).toBe("APP-LOG-CONTENT");
+      expect(decodedElectron).toBe("CHROMIUM-LOG-CONTENT");
+    });
+
+    it("encodes electron_logs format as 'none' when empty", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "claude",
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(submitBugReportIntent("no electron", "APP", ""));
+
+      const mock = getMock()!;
+      const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
+      const props = captured!.properties as Record<string, unknown>;
+      expect(props["electron_logs"]).toBe("");
+      expect(props["electron_logs_format"]).toBe("none");
+      expect(props["electron_logs_raw_bytes"]).toBe(0);
     });
 
     it("sends bug report even when telemetry is disabled", async () => {
