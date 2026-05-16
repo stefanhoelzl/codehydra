@@ -125,31 +125,12 @@ export interface WorkspaceRemovePayload {
   readonly blockingPids?: readonly number[];
 }
 
-/** workspaces.getAgentSession, workspaces.getMetadata, workspaces.restartAgentServer */
-export interface WorkspaceGetPayload {
-  readonly workspacePath: string;
-}
-
 /** workspaces.getStatus */
 export interface WorkspaceGetStatusPayload {
   readonly workspacePath: string;
   /** If true, fetch remotes before reading status so unmerged-commit counts
    * reflect server-merged branches. Best-effort. */
   readonly refresh?: boolean;
-}
-
-/** workspaces.setMetadata */
-export interface WorkspaceSetMetadataPayload {
-  readonly workspacePath: string;
-  readonly key: string;
-  readonly value: string | null;
-}
-
-/** workspaces.executeCommand */
-export interface WorkspaceExecuteCommandPayload {
-  readonly workspacePath: string;
-  readonly command: string;
-  readonly args?: readonly unknown[];
 }
 
 /** ui.switchWorkspace */
@@ -185,12 +166,7 @@ export const ApiIpcChannels = {
   WORKSPACE_REOPEN: "api:workspace:reopen",
   WORKSPACE_GET_SCREENSHOT: "api:workspace:get-screenshot",
   WORKSPACE_GET_STATUS: "api:workspace:get-status",
-  WORKSPACE_GET_AGENT_SESSION: "api:workspace:get-agent-session",
-  WORKSPACE_RESTART_AGENT_SERVER: "api:workspace:restart-agent-server",
-  WORKSPACE_SET_METADATA: "api:workspace:set-metadata",
-  WORKSPACE_GET_METADATA: "api:workspace:get-metadata",
   // UI commands
-  UI_GET_ACTIVE_WORKSPACE: "api:ui:get-active-workspace",
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
   UI_SET_MODE: "api:ui:set-mode",
   // Lifecycle commands

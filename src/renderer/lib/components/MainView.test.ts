@@ -252,39 +252,6 @@ describe("MainView component", () => {
       });
     });
 
-    it("calls workspaces.getStatus for each workspace on mount", async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: "/test/project",
-          name: "test-project",
-          workspaces: [
-            {
-              projectId: asProjectId("test-project-12345678"),
-              path: "/test/.worktrees/feature",
-              name: "feature",
-              branch: "feature",
-            },
-            {
-              projectId: asProjectId("test-project-12345678"),
-              path: "/test/.worktrees/bugfix",
-              name: "bugfix",
-              branch: "bugfix",
-            },
-          ],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(MainView);
-
-      await waitFor(() => {
-        // Should call getStatus for each workspace (using workspacePath)
-        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("/test/.worktrees/feature");
-        expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("/test/.worktrees/bugfix");
-      });
-    });
-
     it("marks bootstrap initialized after successful projects.list", async () => {
       const mockProjects = [
         {
@@ -398,55 +365,6 @@ describe("MainView component", () => {
       if (storedStatus.type !== "none") {
         expect(storedStatus.counts).toEqual({ idle: 0, busy: 3, total: 3 });
       }
-    });
-
-    it("seeds notification service with initial counts from workspaces.getStatus", async () => {
-      // Setup projects with workspaces
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: "/test/project",
-          name: "test-project",
-          workspaces: [
-            {
-              projectId: asProjectId("test-project-12345678"),
-              path: "/test/.worktrees/feature",
-              name: "feature",
-              branch: "feature",
-            },
-            {
-              projectId: asProjectId("test-project-12345678"),
-              path: "/test/.worktrees/bugfix",
-              name: "bugfix",
-              branch: "bugfix",
-            },
-          ],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      // Mock getStatus to return different statuses per workspace (uses workspacePath)
-      mockApi.workspaces.getStatus.mockImplementation(async (workspacePath: string) => {
-        if (workspacePath === "/test/.worktrees/feature") {
-          return {
-            isDirty: false,
-            agent: { type: "busy", counts: { idle: 0, busy: 2, total: 2 } },
-          };
-        }
-        return {
-          isDirty: false,
-          agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
-        };
-      });
-
-      render(MainView);
-
-      await waitFor(() => {
-        expect(mockSeedInitialCounts).toHaveBeenCalledWith({
-          "/test/.worktrees/feature": { idle: 0, busy: 2 },
-          "/test/.worktrees/bugfix": { idle: 1, busy: 0 },
-        });
-      });
     });
 
     it("notification service receives status changes for chime detection", async () => {

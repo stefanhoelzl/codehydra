@@ -17,8 +17,6 @@ import type {
   ProjectPathPayload,
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
-  WorkspaceSetMetadataPayload,
-  WorkspaceGetPayload,
   WorkspaceGetStatusPayload,
   UiSwitchWorkspacePayload,
   UiSetModePayload,
@@ -34,8 +32,7 @@ import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../intents/set-metadata";
-import { EVENT_METADATA_CHANGED, INTENT_SET_METADATA } from "../intents/set-metadata";
-import type { SetMetadataIntent } from "../intents/set-metadata";
+import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
 import type { ModeChangedPayload, ModeChangedEvent } from "../intents/set-mode";
 import { EVENT_MODE_CHANGED, INTENT_SET_MODE } from "../intents/set-mode";
 import type { SetModeIntent } from "../intents/set-mode";
@@ -70,16 +67,8 @@ import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { isShortcutKey } from "../shared/shortcuts";
 import type { GetProjectBasesIntent } from "../intents/get-project-bases";
 import type { WorkspaceStatus, Workspace } from "../shared/api/types";
-import { INTENT_GET_METADATA } from "../intents/get-metadata";
-import type { GetMetadataIntent } from "../intents/get-metadata";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
-import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
-import type { GetAgentSessionIntent } from "../intents/get-agent-session";
-import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
-import type { RestartAgentIntent } from "../intents/restart-agent";
-import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
-import type { GetActiveWorkspaceIntent } from "../intents/get-active-workspace";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { INTENT_APP_READY } from "../intents/app-ready";
@@ -466,32 +455,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     return { url: `file://${filePath.toNative()}` };
   });
 
-  registerIpc(ApiIpcChannels.WORKSPACE_SET_METADATA, async (payload) => {
-    const p = payload as WorkspaceSetMetadataPayload;
-    const intent: SetMetadataIntent = {
-      type: INTENT_SET_METADATA,
-      payload: {
-        workspacePath: p.workspacePath,
-        key: p.key,
-        value: p.value,
-      },
-    };
-    await dispatcher.dispatch(intent);
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_GET_METADATA, async (payload) => {
-    const p = payload as WorkspaceGetPayload;
-    const intent: GetMetadataIntent = {
-      type: INTENT_GET_METADATA,
-      payload: { workspacePath: p.workspacePath },
-    };
-    const result = await dispatcher.dispatch(intent);
-    if (!result) {
-      throw new Error("Get metadata dispatch returned no result");
-    }
-    return result;
-  });
-
   registerIpc(ApiIpcChannels.WORKSPACE_GET_STATUS, async (payload) => {
     const p = payload as WorkspaceGetStatusPayload;
     const intent: GetWorkspaceStatusIntent = {
@@ -508,28 +471,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     return result;
   });
 
-  registerIpc(ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION, async (payload) => {
-    const p = payload as WorkspaceGetPayload;
-    const intent: GetAgentSessionIntent = {
-      type: INTENT_GET_AGENT_SESSION,
-      payload: { workspacePath: p.workspacePath },
-    };
-    return dispatcher.dispatch(intent);
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_RESTART_AGENT_SERVER, async (payload) => {
-    const p = payload as WorkspaceGetPayload;
-    const intent: RestartAgentIntent = {
-      type: INTENT_RESTART_AGENT,
-      payload: { workspacePath: p.workspacePath },
-    };
-    const result = await dispatcher.dispatch(intent);
-    if (result === undefined) {
-      throw new Error("Restart agent dispatch returned no result");
-    }
-    return result;
-  });
-
   registerIpc(ApiIpcChannels.UI_SET_MODE, async (payload) => {
     const p = payload as UiSetModePayload;
     const intent: SetModeIntent = {
@@ -537,14 +478,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
       payload: { mode: p.mode },
     };
     await dispatcher.dispatch(intent);
-  });
-
-  registerIpc(ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE, async () => {
-    const intent: GetActiveWorkspaceIntent = {
-      type: INTENT_GET_ACTIVE_WORKSPACE,
-      payload: {} as Record<string, never>,
-    };
-    return dispatcher.dispatch(intent);
   });
 
   registerIpc(ApiIpcChannels.UI_SWITCH_WORKSPACE, async (payload) => {

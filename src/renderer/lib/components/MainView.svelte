@@ -206,7 +206,6 @@
     let cleanupInit = (): void => {};
     void initializeApp({
       containerRef,
-      notificationService,
     }).then((cleanup) => {
       cleanupInit = cleanup;
     });

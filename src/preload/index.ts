@@ -80,16 +80,6 @@ contextBridge.exposeInMainWorld("api", {
         workspacePath,
         ...(options?.refresh !== undefined && { refresh: options.refresh }),
       }),
-    getAgentSession: (workspacePath: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_AGENT_SESSION, { workspacePath }),
-    setMetadata: (workspacePath: string, key: string, value: string | null) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_SET_METADATA, {
-        workspacePath,
-        key,
-        value,
-      }),
-    getMetadata: (workspacePath: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_METADATA, { workspacePath }),
     hibernate: (workspacePath: string, options?: { skipSwitch?: boolean }) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_HIBERNATE, { workspacePath, ...options }),
     wake: (workspacePath: string) =>
@@ -112,7 +102,6 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_SCREENSHOT, { projectId, workspaceName }),
   },
   ui: {
-    getActiveWorkspace: () => ipcRenderer.invoke(ApiIpcChannels.UI_GET_ACTIVE_WORKSPACE),
     switchWorkspace: (workspacePath: string, focus?: boolean) =>
       ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { workspacePath, focus }),
     setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),

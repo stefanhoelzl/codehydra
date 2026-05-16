@@ -12,7 +12,6 @@ import type { NotificationUserEvent } from "./notification-types";
 import type {
   Project,
   Workspace,
-  WorkspaceRef,
   WorkspaceStatus,
   BaseInfo as ApiBaseInfo,
   InitialPrompt,
@@ -70,9 +69,6 @@ export interface Api {
       }
     ): Promise<{ started: boolean }>;
     getStatus(workspacePath: string, options?: { refresh?: boolean }): Promise<WorkspaceStatus>;
-    getAgentSession(workspacePath: string): Promise<unknown>;
-    setMetadata(workspacePath: string, key: string, value: string | null): Promise<void>;
-    getMetadata(workspacePath: string): Promise<Readonly<Record<string, string>>>;
     /**
      * Start hibernating a workspace (fire-and-forget).
      * Tears down the view + agent server, persists `hibernated="true"` metadata,
@@ -109,7 +105,6 @@ export interface Api {
     getScreenshot(projectId: string, workspaceName: string): Promise<{ url: string | null }>;
   };
   ui: {
-    getActiveWorkspace(): Promise<WorkspaceRef | null>;
     switchWorkspace(workspacePath: string, focus?: boolean): Promise<void>;
     setMode(mode: UIMode): Promise<void>;
   };
