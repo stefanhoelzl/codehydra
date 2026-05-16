@@ -311,7 +311,7 @@ describe("ElectronLifecycleModule Integration", () => {
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("use-gl", "swiftshader");
     });
 
-    it("does not apply flags when electron.flags is null", async () => {
+    it("applies --no-proxy-server by default to suppress WPAD probes", async () => {
       const mockApp = createMockApp();
       const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
@@ -330,7 +330,7 @@ describe("ElectronLifecycleModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalled();
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith("no-proxy-server");
     });
   });
 
