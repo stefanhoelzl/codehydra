@@ -4,15 +4,12 @@
  *
  * Tests verify the full pipeline:
  * dispatcher -> Operation -> hook point -> AutoUpdaterModule handler
- *
- * Uses minimal operations to test individual hook behaviors.
  */
 
 import { describe, it, expect } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
-import type { Operation, OperationContext } from "../intents/lib/operation";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
@@ -25,24 +22,9 @@ import {
   type AppShutdownIntent,
 } from "../intents/app-shutdown";
 import { AppResumeOperation, INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
-import { INTENT_UPDATE_AVAILABLE, type UpdateAvailableIntent } from "../intents/update-available";
-import {
-  UpdateApplyOperation,
-  INTENT_UPDATE_APPLY,
-  type UpdateApplyIntent,
-} from "../intents/update-apply";
 import { createAutoUpdaterModule } from "./auto-updater-module";
-import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type {
-  AutoUpdater,
-  UpdateDetectedCallback,
-  UpdateDownloadedCallback,
-  DownloadProgressCallback,
-} from "./auto-updater";
+import type { AutoUpdater, UpdateDetectedCallback, DownloadProgressCallback } from "./auto-updater";
 import type { Config } from "../boundaries/platform/config";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
-import type { DialogConfig, DialogUserEvent } from "../shared/dialog-types";
 import type { NotificationManager, NotificationHandle } from "./notification-manager";
 import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 
@@ -52,6 +34,7 @@ import type { NotificationConfig, NotificationUserEvent } from "../shared/notifi
 
 function createMockConfig(values?: Record<string, unknown>): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  if (!store.has("update.notification")) store.set("update.notification", true);
   return {
     register: () => {},
     load: () => {},
@@ -67,36 +50,21 @@ function createMockConfig(values?: Record<string, unknown>): Config {
 }
 
 // =============================================================================
-// Tracking Operations
-// =============================================================================
-
-class TrackingUpdateOperation implements Operation<UpdateAvailableIntent, void> {
-  readonly id = "update-available";
-  readonly dispatched: UpdateAvailableIntent[] = [];
-
-  async execute(ctx: OperationContext<UpdateAvailableIntent>): Promise<void> {
-    this.dispatched.push(ctx.intent);
-  }
-}
-
-// =============================================================================
-// Test Helpers
+// Mock AutoUpdater
 // =============================================================================
 
 interface MockAutoUpdater {
   mock: AutoUpdater;
   startCalled: boolean;
   disposeCalled: boolean;
-  checkForUpdatesCalled: boolean;
+  checkForUpdatesCallCount: number;
   downloadCalled: boolean;
-  cancelCalled: boolean;
   quitAndInstallCalled: boolean;
   capturedDetectedCb: UpdateDetectedCallback | null;
-  capturedDownloadedCb: UpdateDownloadedCallback | null;
   capturedProgressCb: DownloadProgressCallback | null;
   resolveDownload: (() => void) | null;
   rejectDownload: ((error: Error) => void) | null;
-  setCheckResult: (found: boolean) => void;
+  setCheckResult: (found: boolean, version?: string) => void;
 }
 
 function createMockAutoUpdater(overrides?: {
@@ -105,26 +73,24 @@ function createMockAutoUpdater(overrides?: {
 }): MockAutoUpdater {
   let startCalled = false;
   let disposeCalled = false;
-  let checkForUpdatesCalled = false;
+  let checkForUpdatesCallCount = 0;
   let downloadCalled = false;
-  let cancelCalled = false;
   let quitAndInstallCalled = false;
   let capturedDetectedCb: UpdateDetectedCallback | null = null;
-  let capturedDownloadedCb: UpdateDownloadedCallback | null = null;
   let capturedProgressCb: DownloadProgressCallback | null = null;
   let resolveDownload: (() => void) | null = null;
   let rejectDownload: ((error: Error) => void) | null = null;
   let checkResult = overrides?.checkReturns ?? false;
+  let detectedVersion = "2.0.0";
 
   const mock: AutoUpdater = {
     start() {
       startCalled = true;
     },
     async checkForUpdates() {
-      checkForUpdatesCalled = true;
-      // Simulate the update-available event firing synchronously
+      checkForUpdatesCallCount++;
       if (checkResult && capturedDetectedCb) {
-        capturedDetectedCb("2.0.0");
+        capturedDetectedCb(detectedVersion);
       }
       return checkResult;
     },
@@ -135,9 +101,7 @@ function createMockAutoUpdater(overrides?: {
         rejectDownload = reject;
       });
     },
-    cancelDownload() {
-      cancelCalled = true;
-    },
+    cancelDownload() {},
     quitAndInstall() {
       quitAndInstallCalled = true;
     },
@@ -147,11 +111,8 @@ function createMockAutoUpdater(overrides?: {
         capturedDetectedCb = null;
       };
     },
-    onUpdateDownloaded(callback: UpdateDownloadedCallback) {
-      capturedDownloadedCb = callback;
-      return () => {
-        capturedDownloadedCb = null;
-      };
+    onUpdateDownloaded() {
+      return () => {};
     },
     onDownloadProgress(callback: DownloadProgressCallback) {
       capturedProgressCb = callback;
@@ -165,7 +126,7 @@ function createMockAutoUpdater(overrides?: {
         throw overrides.disposeThrows;
       }
     },
-  } as AutoUpdater;
+  } as unknown as AutoUpdater;
 
   return {
     mock,
@@ -175,23 +136,17 @@ function createMockAutoUpdater(overrides?: {
     get disposeCalled() {
       return disposeCalled;
     },
-    get checkForUpdatesCalled() {
-      return checkForUpdatesCalled;
+    get checkForUpdatesCallCount() {
+      return checkForUpdatesCallCount;
     },
     get downloadCalled() {
       return downloadCalled;
-    },
-    get cancelCalled() {
-      return cancelCalled;
     },
     get quitAndInstallCalled() {
       return quitAndInstallCalled;
     },
     get capturedDetectedCb() {
       return capturedDetectedCb;
-    },
-    get capturedDownloadedCb() {
-      return capturedDownloadedCb;
     },
     get capturedProgressCb() {
       return capturedProgressCb;
@@ -202,107 +157,54 @@ function createMockAutoUpdater(overrides?: {
     get rejectDownload() {
       return rejectDownload;
     },
-    setCheckResult(found: boolean) {
+    setCheckResult(found: boolean, version?: string) {
       checkResult = found;
+      if (version) detectedVersion = version;
     },
   };
 }
 
-interface MockDialogManager {
-  manager: DialogManager;
-  lastHandle: MockDialogHandle | null;
-}
+// =============================================================================
+// Mock NotificationManager
+// =============================================================================
 
-interface MockDialogHandle {
-  config: DialogConfig;
+interface MockNotification {
+  opened: NotificationConfig;
+  updates: NotificationConfig[];
   closed: boolean;
-  eventListeners: Set<(event: DialogUserEvent) => void>;
-  nextEventResolvers: Array<(event: DialogUserEvent) => void>;
-  emitEvent: (event: DialogUserEvent) => void;
-}
-
-function createMockDialogManager(): MockDialogManager {
-  let lastHandle: MockDialogHandle | null = null;
-
-  const manager = {
-    open(config: DialogConfig): DialogHandle {
-      const handle: MockDialogHandle = {
-        config,
-        closed: false,
-        eventListeners: new Set(),
-        nextEventResolvers: [],
-        emitEvent(event: DialogUserEvent) {
-          for (const listener of handle.eventListeners) {
-            listener(event);
-          }
-          for (const resolver of handle.nextEventResolvers) {
-            resolver(event);
-          }
-          handle.nextEventResolvers = [];
-        },
-      };
-      lastHandle = handle;
-
-      return {
-        id: "dlg-test",
-        update(newConfig: DialogConfig) {
-          handle.config = newConfig;
-        },
-        close() {
-          handle.closed = true;
-        },
-        onEvent(handler: (event: DialogUserEvent) => void) {
-          handle.eventListeners.add(handler);
-          return () => {
-            handle.eventListeners.delete(handler);
-          };
-        },
-        nextEvent() {
-          return new Promise<DialogUserEvent>((resolve) => {
-            handle.nextEventResolvers.push(resolve);
-          });
-        },
-        closed: new Promise<void>(() => {}),
-      } as DialogHandle;
-    },
-    routeEvent() {},
-  } as unknown as DialogManager;
-
-  return {
-    manager,
-    get lastHandle() {
-      return lastHandle;
-    },
-  };
+  listeners: Set<(event: NotificationUserEvent) => void>;
 }
 
 interface MockNotificationManager {
   manager: NotificationManager;
-  opened: NotificationConfig[];
-  emitEvent: (notificationId: string, actionId: string) => void;
-  lastClosed: () => boolean;
+  notifications: MockNotification[];
+  emitEvent: (index: number, actionId: string) => void;
 }
 
 function createMockNotificationManager(): MockNotificationManager {
-  const opened: NotificationConfig[] = [];
-  const listeners = new Map<string, Set<(event: NotificationUserEvent) => void>>();
-  const closedFlags = new Map<string, boolean>();
+  const notifications: MockNotification[] = [];
   const manager = {
     open(config: NotificationConfig): NotificationHandle {
-      opened.push(config);
-      const id = `ntf-${opened.length}`;
-      listeners.set(id, new Set());
-      closedFlags.set(id, false);
+      const slot: MockNotification = {
+        opened: config,
+        updates: [],
+        closed: false,
+        listeners: new Set(),
+      };
+      notifications.push(slot);
+      const id = `ntf-${notifications.length}`;
       return {
         id,
-        update: () => {},
+        update: (next: NotificationConfig) => {
+          slot.updates.push(next);
+        },
         close: () => {
-          closedFlags.set(id, true);
+          slot.closed = true;
         },
         onEvent: (handler) => {
-          listeners.get(id)!.add(handler);
+          slot.listeners.add(handler);
           return () => {
-            listeners.get(id)?.delete(handler);
+            slot.listeners.delete(handler);
           };
         },
         nextEvent: () => new Promise<NotificationUserEvent>(() => {}),
@@ -313,16 +215,15 @@ function createMockNotificationManager(): MockNotificationManager {
   } as unknown as NotificationManager;
   return {
     manager,
-    opened,
-    emitEvent(notificationId, actionId) {
-      const event: NotificationUserEvent = { notificationId, actionId };
-      for (const handler of listeners.get(notificationId) ?? []) {
-        handler(event);
-      }
-    },
-    lastClosed() {
-      const id = `ntf-${opened.length}`;
-      return closedFlags.get(id) ?? false;
+    notifications,
+    emitEvent(index, actionId) {
+      const slot = notifications[index];
+      if (!slot) throw new Error(`No notification at index ${index}`);
+      const event: NotificationUserEvent = {
+        notificationId: `ntf-${index + 1}`,
+        actionId,
+      };
+      for (const handler of slot.listeners) handler(event);
     },
   };
 }
@@ -330,12 +231,8 @@ function createMockNotificationManager(): MockNotificationManager {
 interface TestSetup {
   dispatcher: Dispatcher;
   autoUpdater: MockAutoUpdater;
-  dialogManager: MockDialogManager;
   notificationManager: MockNotificationManager;
-  updateOperation: TrackingUpdateOperation;
   mockConfig: Config;
-  module: IntentModule;
-  emittedEvents: DomainEvent[];
 }
 
 function createTestSetup(overrides?: {
@@ -344,50 +241,28 @@ function createTestSetup(overrides?: {
   configValues?: Record<string, unknown>;
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
-  const dialogManager = createMockDialogManager();
   const notificationManager = createMockNotificationManager();
-  const updateOperation = new TrackingUpdateOperation();
-  const emittedEvents: DomainEvent[] = [];
-  const mockConfig = createMockConfig({
-    "auto-update": "ask",
-    ...overrides?.configValues,
-  });
+  const mockConfig = createMockConfig(overrides?.configValues);
 
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   const autoUpdaterModule = createAutoUpdaterModule({
     autoUpdater: autoUpdater.mock,
     dispatcher,
-    dialogManager: dialogManager.manager,
     configService: mockConfig,
     notificationManager: notificationManager.manager,
   });
 
-  // Register minimal operations for the hooks we test
   dispatcher.registerOperation(
     INTENT_APP_START,
     createMinimalOperation(APP_START_OPERATION_ID, "start")
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
-  dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, updateOperation);
-  dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(mockConfig));
 
   dispatcher.registerModule(autoUpdaterModule);
 
-  // Subscribe to all events for verification
-  dispatcher.subscribe("app:update:progress", (e) => emittedEvents.push(e));
-
-  return {
-    dispatcher,
-    autoUpdater,
-    dialogManager,
-    notificationManager,
-    updateOperation,
-    mockConfig,
-    module: autoUpdaterModule,
-    emittedEvents,
-  };
+  return { dispatcher, autoUpdater, notificationManager, mockConfig };
 }
 
 function startIntent(): AppStartIntent {
@@ -405,35 +280,170 @@ function resumeIntent(): AppResumeIntent {
   return { type: INTENT_APP_RESUME, payload: {} as AppResumeIntent["payload"] };
 }
 
+// Tiny helper to flush microtasks (and the void runCheck() chain).
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
 
 describe("AutoUpdaterModule Integration", () => {
-  it("dispatch app:start calls autoUpdater.start()", async () => {
+  it("app:start calls autoUpdater.start() and runs initial check", async () => {
     const { dispatcher, autoUpdater } = createTestSetup();
 
     await dispatcher.dispatch(startIntent());
+    await flush();
 
     expect(autoUpdater.startCalled).toBe(true);
+    expect(autoUpdater.checkForUpdatesCallCount).toBe(1);
   });
 
-  it("dispatch app:start wires onUpdateDownloaded to dispatch update:available", async () => {
-    const { dispatcher, autoUpdater, updateOperation } = createTestSetup();
+  it("app:start with update.notification=false skips check and timer", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      configValues: { "update.notification": false },
+      checkReturns: true,
+    });
 
     await dispatcher.dispatch(startIntent());
+    await flush();
 
-    // Simulate an update being downloaded
-    autoUpdater.capturedDownloadedCb!("2.0.0");
-
-    // Allow the void dispatch to settle
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(updateOperation.dispatched).toHaveLength(1);
-    expect(updateOperation.dispatched[0]!.payload).toEqual({ version: "2.0.0" });
+    expect(autoUpdater.checkForUpdatesCallCount).toBe(0);
+    expect(notificationManager.notifications).toHaveLength(0);
   });
 
-  it("dispatch app:shutdown calls autoUpdater.dispose()", async () => {
+  it("startup check finding an update opens 'Update available' notification", async () => {
+    const { dispatcher, notificationManager } = createTestSetup({ checkReturns: true });
+
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    expect(notificationManager.notifications).toHaveLength(1);
+    const cfg = notificationManager.notifications[0]!.opened;
+    expect(cfg.type).toBe("info");
+    expect(cfg.title).toBe("Update available");
+    expect(cfg.message).toContain("2.0.0");
+    expect(cfg.dismissible).toBe(true);
+    expect(cfg.actions).toEqual([{ id: "install", label: "Install" }]);
+  });
+
+  it("clicking Install triggers download and surfaces 'Update ready' on completion", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, "install");
+    await flush();
+
+    expect(autoUpdater.downloadCalled).toBe(true);
+    // Notification updated to downloading state
+    const slot = notificationManager.notifications[0]!;
+    expect(slot.updates[0]!.title).toBe("Downloading update");
+
+    // Download completes
+    autoUpdater.resolveDownload!();
+    await flush();
+
+    const last = slot.updates[slot.updates.length - 1]!;
+    expect(last.title).toBe("Update ready");
+    expect(last.actions).toEqual([{ id: "restart", label: "Restart Now" }]);
+    expect(last.dismissible).toBe(false);
+  });
+
+  it("download progress events update the notification with percent", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, "install");
+    await flush();
+
+    autoUpdater.capturedProgressCb!({ percent: 50 });
+    const slot = notificationManager.notifications[0]!;
+    const progressUpdate = slot.updates.find((u) => u.progress === 0.5);
+    expect(progressUpdate).toBeDefined();
+    expect(progressUpdate!.title).toBe("Downloading update");
+  });
+
+  it("download failure swaps to 'Update failed' notification with retry", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, "install");
+    await flush();
+
+    autoUpdater.rejectDownload!(new Error("network down"));
+    await flush();
+
+    const slot = notificationManager.notifications[0]!;
+    const last = slot.updates[slot.updates.length - 1]!;
+    expect(last.type).toBe("error");
+    expect(last.title).toBe("Update failed");
+    expect(last.actions).toEqual([{ id: "retry", label: "Retry" }]);
+  });
+
+  it("clicking Restart dispatches app:shutdown with installUpdate", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, "install");
+    await flush();
+    autoUpdater.resolveDownload!();
+    await flush();
+
+    notificationManager.emitEvent(0, "restart");
+    await flush();
+
+    expect(autoUpdater.quitAndInstallCalled).toBe(true);
+  });
+
+  it("app:resume runs an update check", async () => {
+    const { dispatcher, autoUpdater } = createTestSetup({ checkReturns: false });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+    const startupCount = autoUpdater.checkForUpdatesCallCount;
+
+    await dispatcher.dispatch(resumeIntent());
+
+    expect(autoUpdater.checkForUpdatesCallCount).toBe(startupCount + 1);
+  });
+
+  it("app:resume with update.notification=false does not check", async () => {
+    const { dispatcher, autoUpdater } = createTestSetup({
+      configValues: { "update.notification": false },
+    });
+    await dispatcher.dispatch(startIntent());
+
+    await dispatcher.dispatch(resumeIntent());
+
+    expect(autoUpdater.checkForUpdatesCallCount).toBe(0);
+  });
+
+  it("second check after a version was surfaced does not open another notification", async () => {
+    const { dispatcher, notificationManager } = createTestSetup({ checkReturns: true });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+    expect(notificationManager.notifications).toHaveLength(1);
+
+    await dispatcher.dispatch(resumeIntent());
+    await flush();
+
+    expect(notificationManager.notifications).toHaveLength(1);
+  });
+
+  it("app:shutdown calls autoUpdater.dispose()", async () => {
     const { dispatcher, autoUpdater } = createTestSetup();
 
     await dispatcher.dispatch(shutdownIntent());
@@ -447,44 +457,6 @@ describe("AutoUpdaterModule Integration", () => {
     });
 
     await expect(dispatcher.dispatch(shutdownIntent())).resolves.toBeUndefined();
-  });
-
-  it("auto-update=never skips autoUpdater via interceptor", async () => {
-    const { dispatcher } = createTestSetup({
-      configValues: { "auto-update": "never" },
-    });
-
-    // The interceptor should reject the app:update intent
-    const handle = dispatcher.dispatch({
-      type: INTENT_UPDATE_APPLY,
-      payload: { needsChoice: false },
-    } as UpdateApplyIntent);
-
-    const accepted = await handle.accepted;
-    expect(accepted).toBe(false);
-  });
-
-  it("hooks no-op when no update detected (detectedVersion is null)", async () => {
-    const { dispatcher, autoUpdater } = createTestSetup();
-
-    // detectedVersion is null by default — intent is accepted but hooks no-op
-    await dispatcher.dispatch({
-      type: INTENT_UPDATE_APPLY,
-      payload: { needsChoice: false },
-    } as UpdateApplyIntent);
-
-    expect(autoUpdater.downloadCalled).toBe(false);
-  });
-
-  it("auto-update=never still calls dispose() on shutdown", async () => {
-    const { dispatcher, autoUpdater } = createTestSetup({
-      configValues: { "auto-update": "never" },
-    });
-
-    await dispatcher.dispatch(startIntent());
-    await dispatcher.dispatch(shutdownIntent());
-
-    expect(autoUpdater.disposeCalled).toBe(true);
   });
 
   it("quit hook calls quitAndInstall when installUpdate is set", async () => {
@@ -501,196 +473,5 @@ describe("AutoUpdaterModule Integration", () => {
     await dispatcher.dispatch(shutdownIntent());
 
     expect(autoUpdater.quitAndInstallCalled).toBe(false);
-  });
-
-  it("registers auto-update config via configService", () => {
-    const { mockConfig } = createTestSetup();
-
-    // Factory registers "auto-update" via configService.register
-    // Verify the config service was provided and module created without error
-    expect(mockConfig).toBeDefined();
-  });
-
-  // ---------------------------------------------------------------------------
-  // app:resume -> resume hook
-  // ---------------------------------------------------------------------------
-
-  it("app:resume with config=never skips check and notification", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "never" },
-      checkReturns: true,
-    });
-    // App starts cleanly (never bypasses startup update flow too).
-    await dispatcher.dispatch(startIntent());
-    // Reset tracking: startup already called checkForUpdates via check-deps.
-    const startupChecks = autoUpdater.checkForUpdatesCalled;
-
-    await dispatcher.dispatch(resumeIntent());
-
-    // No additional check beyond startup's (which would be the same single flag).
-    // Concretely: config=never → resume handler returns early before checkForUpdates.
-    expect(autoUpdater.checkForUpdatesCalled).toBe(startupChecks);
-    expect(notificationManager.opened).toHaveLength(0);
-  });
-
-  it("app:resume with config=ask and update detected opens info notification", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "ask" },
-      checkReturns: false,
-    });
-    await dispatcher.dispatch(startIntent());
-
-    // Now simulate a new version being released during the session.
-    autoUpdater.setCheckResult(true);
-    await dispatcher.dispatch(resumeIntent());
-
-    expect(autoUpdater.downloadCalled).toBe(false);
-    expect(notificationManager.opened).toHaveLength(1);
-    const cfg = notificationManager.opened[0]!;
-    expect(cfg.type).toBe("info");
-    expect(cfg.title).toBe("Update available");
-    expect(cfg.message).toContain("2.0.0");
-    expect(cfg.dismissible).toBe(true);
-  });
-
-  it("app:resume with config=ask and no update — no notification", async () => {
-    const { dispatcher, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "ask" },
-      checkReturns: false,
-    });
-    await dispatcher.dispatch(startIntent());
-
-    await dispatcher.dispatch(resumeIntent());
-
-    expect(notificationManager.opened).toHaveLength(0);
-  });
-
-  it("app:resume with config=always downloads silently then opens ready notification", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "always" },
-      checkReturns: false,
-    });
-    await dispatcher.dispatch(startIntent());
-
-    autoUpdater.setCheckResult(true);
-    const resumePromise = dispatcher.dispatch(resumeIntent());
-
-    // Let the check complete and download start
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(autoUpdater.downloadCalled).toBe(true);
-    expect(notificationManager.opened).toHaveLength(0);
-
-    // Complete the download
-    autoUpdater.resolveDownload!();
-    await resumePromise;
-
-    expect(notificationManager.opened).toHaveLength(1);
-    const cfg = notificationManager.opened[0]!;
-    expect(cfg.type).toBe("info");
-    expect(cfg.title).toBe("Update ready");
-    expect(cfg.message).toContain("2.0.0");
-    expect(cfg.message).toContain("ready to install");
-    expect(cfg.dismissible).toBe(false);
-    expect(cfg.actions).toEqual([{ id: "restart", label: "Restart Now" }]);
-  });
-
-  it("clicking 'Restart Now' on ready notification dispatches app:shutdown with installUpdate", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "always" },
-      checkReturns: false,
-    });
-    await dispatcher.dispatch(startIntent());
-
-    autoUpdater.setCheckResult(true);
-    const resumePromise = dispatcher.dispatch(resumeIntent());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    autoUpdater.resolveDownload!();
-    await resumePromise;
-
-    expect(notificationManager.opened).toHaveLength(1);
-    notificationManager.emitEvent("ntf-1", "restart");
-
-    // Allow the void dispatch to settle
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(notificationManager.lastClosed()).toBe(true);
-    expect(autoUpdater.quitAndInstallCalled).toBe(true);
-  });
-
-  it("app:resume with config=always and download failure — no notification", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "always" },
-      checkReturns: false,
-    });
-    await dispatcher.dispatch(startIntent());
-
-    autoUpdater.setCheckResult(true);
-    const resumePromise = dispatcher.dispatch(resumeIntent());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    autoUpdater.rejectDownload!(new Error("network down"));
-    await resumePromise;
-
-    expect(notificationManager.opened).toHaveLength(0);
-  });
-
-  it("second app:resume with same detected version does not re-notify", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "ask" },
-      checkReturns: false,
-    });
-    await dispatcher.dispatch(startIntent());
-
-    autoUpdater.setCheckResult(true);
-    await dispatcher.dispatch(resumeIntent());
-    expect(notificationManager.opened).toHaveLength(1);
-
-    await dispatcher.dispatch(resumeIntent());
-    expect(notificationManager.opened).toHaveLength(1);
-  });
-
-  it("app:resume after startup already detected a version — no new notification", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "ask" },
-      checkReturns: false,
-    });
-
-    // Startup registers persistent onUpdateDetected callback.
-    await dispatcher.dispatch(startIntent());
-    // Simulate startup having detected a version (via the persistent callback).
-    autoUpdater.capturedDetectedCb!("1.9.0");
-
-    await dispatcher.dispatch(resumeIntent());
-
-    // detectedVersion !== null guard short-circuits resume.
-    expect(notificationManager.opened).toHaveLength(0);
-  });
-
-  it("app:resume skipped while startup download is in flight", async () => {
-    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
-      configValues: { "auto-update": "always" },
-      checkReturns: false,
-    });
-
-    await dispatcher.dispatch(startIntent());
-    // Simulate startup having detected a version.
-    autoUpdater.capturedDetectedCb!("2.0.0");
-
-    // Kick off the startup download (app:update → download hook) but don't resolve.
-    const updatePromise = dispatcher.dispatch({
-      type: INTENT_UPDATE_APPLY,
-      payload: { needsChoice: false },
-    } as UpdateApplyIntent);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(autoUpdater.downloadCalled).toBe(true);
-
-    // System resume fires mid-download.
-    await dispatcher.dispatch(resumeIntent());
-
-    // Resume saw detectedVersion already set + checkInProgress → no new notification.
-    expect(notificationManager.opened).toHaveLength(0);
-
-    // Clean up: complete the download.
-    autoUpdater.resolveDownload!();
-    await updatePromise;
   });
 });

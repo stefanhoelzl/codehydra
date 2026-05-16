@@ -22,14 +22,6 @@ import type { ConfigKeyDefinition } from "./config-definition";
  */
 export type ConfigAgentType = "claude" | "opencode" | null;
 
-/**
- * Auto-update behavior preference.
- * "always" = skip choice, show progress, download, restart.
- * "ask" = show choice overlay, user decides (default).
- * "never" = skip auto-update entirely.
- */
-export type AutoUpdatePreference = "always" | "ask" | "never";
-
 // =============================================================================
 // Name Derivation
 // =============================================================================

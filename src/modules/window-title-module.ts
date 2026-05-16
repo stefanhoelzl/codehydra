@@ -6,7 +6,6 @@
  *
  * Subscribes to:
  * - workspace:switched: updates internal project/workspace names, calls updateTitle()
- * - update:available: sets hasUpdate flag, calls updateTitle()
  *
  * Tracks its own state via domain events -- no external queries needed.
  */
@@ -15,36 +14,32 @@ import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import { EVENT_UPDATE_AVAILABLE } from "../intents/update-available";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { WindowManager } from "../boundaries/shell/window-manager";
 /**
  * Formats the window title based on current workspace.
  *
- * Format: "CodeHydra - <project> / <workspace> - (<version>) - (update available)"
+ * Format: "CodeHydra - <project> / <workspace> - (<version>)"
  * No workspace: "CodeHydra - (<version>)" or "CodeHydra"
  *
  * @param projectName - Name of the active project, or undefined
  * @param workspaceName - Name of the active workspace, or undefined
  * @param version - Version suffix (branch in dev mode, version in packaged mode), or undefined
- * @param hasUpdate - Whether an update is available
  * @returns Formatted window title
  */
 export function formatWindowTitle(
   projectName: string | undefined,
   workspaceName: string | undefined,
-  version?: string,
-  hasUpdate?: boolean
+  version?: string
 ): string {
   const base = "CodeHydra";
   const versionSuffix = version ? ` - (${version})` : "";
-  const updateSuffix = hasUpdate ? ` - (update available)` : "";
 
   if (projectName && workspaceName) {
-    return `${base} - ${projectName} / ${workspaceName}${versionSuffix}${updateSuffix}`;
+    return `${base} - ${projectName} / ${workspaceName}${versionSuffix}`;
   }
 
-  return `${base}${versionSuffix}${updateSuffix}`;
+  return `${base}${versionSuffix}`;
 }
 
 // =============================================================================
@@ -62,20 +57,14 @@ export interface WindowTitleModuleDeps {
 
 /**
  * Create a window title module that sets the initial title on startup and
- * subscribes to workspace switch and update-available events.
+ * subscribes to workspace switch events.
  */
 export function createWindowTitleModule(deps: WindowTitleModuleDeps): IntentModule {
   let currentProjectName: string | undefined;
   let currentWorkspaceName: string | undefined;
-  let hasUpdate = false;
 
   function updateTitle(): void {
-    const title = formatWindowTitle(
-      currentProjectName,
-      currentWorkspaceName,
-      deps.titleVersion,
-      hasUpdate
-    );
+    const title = formatWindowTitle(currentProjectName, currentWorkspaceName, deps.titleVersion);
     deps.windowManager.setTitle(title);
   }
 
@@ -103,12 +92,6 @@ export function createWindowTitleModule(deps: WindowTitleModuleDeps): IntentModu
             currentWorkspaceName = payload.workspaceName;
           }
 
-          updateTitle();
-        },
-      },
-      [EVENT_UPDATE_AVAILABLE]: {
-        handler: async (): Promise<void> => {
-          hasUpdate = true;
           updateTitle();
         },
       },

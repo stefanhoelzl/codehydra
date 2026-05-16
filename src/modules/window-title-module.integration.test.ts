@@ -5,16 +5,13 @@
  * Tests verify the full pipeline:
  * dispatcher -> operation -> domain event -> WindowTitleModule -> setTitle()
  *
- * Uses minimal operations that emit the required events
- * (workspace:switched and update:available).
+ * Uses minimal operations that emit workspace:switched.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
-import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "../intents/update-available";
-import type { UpdateAvailableIntent } from "../intents/update-available";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import type { Operation, OperationContext } from "../intents/lib/operation";
@@ -83,7 +80,6 @@ function createTestSetup(titleVersion?: string): TestSetup {
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
   dispatcher.registerOperation(INTENT_MINIMAL_SWITCH, new MinimalSwitchOperation());
-  dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
   dispatcher.registerOperation(
     INTENT_APP_START,
     createMinimalOperation(APP_START_OPERATION_ID, "start")
@@ -103,13 +99,6 @@ function switchIntent(payload: MinimalSwitchPayload | null): MinimalSwitchIntent
   return {
     type: INTENT_MINIMAL_SWITCH,
     payload,
-  };
-}
-
-function updateAvailableIntent(version = "1.2.3"): UpdateAvailableIntent {
-  return {
-    type: INTENT_UPDATE_AVAILABLE,
-    payload: { version },
   };
 }
 
@@ -146,71 +135,6 @@ describe("WindowTitleModule Integration", () => {
     await dispatcher.dispatch(switchIntent(null));
 
     expect(setTitle).toHaveBeenCalledWith("CodeHydra - (main)");
-  });
-
-  it("sets title with (update available) suffix after update:available event", async () => {
-    const { dispatcher, setTitle } = createTestSetup();
-
-    await dispatcher.dispatch(updateAvailableIntent());
-
-    expect(setTitle).toHaveBeenCalledWith("CodeHydra - (main) - (update available)");
-  });
-
-  it("persists hasUpdate flag across subsequent workspace switches", async () => {
-    const { dispatcher, setTitle } = createTestSetup();
-
-    // First: mark update available
-    await dispatcher.dispatch(updateAvailableIntent());
-    setTitle.mockClear();
-
-    // Then switch workspace -- should still show update suffix
-    await dispatcher.dispatch(
-      switchIntent({
-        projectId: "test-project" as ProjectId,
-        projectName: "MyProject",
-        workspaceName: "feature-branch" as WorkspaceName,
-        path: "/workspaces/feature-branch",
-      })
-    );
-
-    expect(setTitle).toHaveBeenCalledWith(
-      "CodeHydra - MyProject / feature-branch - (main) - (update available)"
-    );
-  });
-
-  it("includes workspace info when update arrives after workspace switch", async () => {
-    const { dispatcher, setTitle } = createTestSetup();
-
-    // First switch to a workspace
-    await dispatcher.dispatch(
-      switchIntent({
-        projectId: "test-project" as ProjectId,
-        projectName: "MyProject",
-        workspaceName: "feature-branch" as WorkspaceName,
-        path: "/workspaces/feature-branch",
-      })
-    );
-    setTitle.mockClear();
-
-    // Then receive update available
-    await dispatcher.dispatch(updateAvailableIntent());
-
-    expect(setTitle).toHaveBeenCalledWith(
-      "CodeHydra - MyProject / feature-branch - (main) - (update available)"
-    );
-  });
-
-  it("handles null workspace then update available", async () => {
-    const { dispatcher, setTitle } = createTestSetup();
-
-    // Switch to null (no active workspace)
-    await dispatcher.dispatch(switchIntent(null));
-    setTitle.mockClear();
-
-    // Then receive update available
-    await dispatcher.dispatch(updateAvailableIntent());
-
-    expect(setTitle).toHaveBeenCalledWith("CodeHydra - (main) - (update available)");
   });
 
   it("sets initial title with version during app:start", async () => {

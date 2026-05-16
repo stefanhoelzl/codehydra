@@ -125,8 +125,6 @@ import {
 } from "./intents/update-agent-status";
 import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/shortcut-key";
 import { SubmitBugReportOperation, INTENT_SUBMIT_BUG_REPORT } from "./intents/submit-bug-report";
-import { UpdateAvailableOperation, INTENT_UPDATE_AVAILABLE } from "./intents/update-available";
-import { UpdateApplyOperation, INTENT_UPDATE_APPLY } from "./intents/update-apply";
 import {
   VscodeShowMessageOperation,
   INTENT_VSCODE_SHOW_MESSAGE,
@@ -500,7 +498,6 @@ const posthogModule = createPosthogModule({
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
   dispatcher,
-  dialogManager,
   configService,
   notificationManager,
 });
@@ -609,7 +606,7 @@ const devtoolsModule = createDevtoolsModule({
   viewLayer,
 });
 
-const debugModule = createDebugModule({ configService, dialogManager });
+const debugModule = createDebugModule({ configService, notificationManager });
 
 const bugReportModule = createBugReportModule({
   dialogManager,
@@ -652,8 +649,6 @@ dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperati
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
 dispatcher.registerOperation(INTENT_SUBMIT_BUG_REPORT, new SubmitBugReportOperation());
-dispatcher.registerOperation(INTENT_UPDATE_AVAILABLE, new UpdateAvailableOperation());
-dispatcher.registerOperation(INTENT_UPDATE_APPLY, new UpdateApplyOperation(configService));
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
 dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
 

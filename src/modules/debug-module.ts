@@ -29,17 +29,12 @@ import {
 import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { WorkspaceName } from "../shared/api/types";
 import { SETUP_OPERATION_ID, type BinaryHookInput } from "../intents/setup";
-import {
-  UPDATE_APPLY_OPERATION_ID,
-  type UpdateChoiceResult,
-  type UpdateDownloadResult,
-} from "../intents/update-apply";
-import type { DialogManager } from "./dialog-manager";
-import type { DialogConfig, DialogAction } from "../shared/dialog-types";
+import type { NotificationManager, NotificationHandle } from "./notification-manager";
+import type { NotificationConfig } from "../shared/notification-types";
 
 interface DebugModuleDeps {
   readonly configService: Config;
-  readonly dialogManager?: DialogManager;
+  readonly notificationManager?: NotificationManager;
 }
 
 export function createDebugModule(deps: DebugModuleDeps): IntentModule {
@@ -122,17 +117,19 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         },
       },
 
-      // --- Setup + Update: check-deps hook ---
+      // --- Setup: check-deps + binary download simulation ---
       [APP_START_OPERATION_ID]: {
         "check-deps": {
           handler: async (): Promise<CheckDepsResult> => {
-            const debugSetup = isActive("debug.setup");
-            const debugUpdate = isActive("debug.update");
-            if (!debugSetup && !debugUpdate) return {};
-            return {
-              ...(debugSetup && { missingBinaries: ["claude" as BinaryType] }),
-              ...(debugUpdate && { updateNeedsChoice: true }),
-            };
+            if (!isActive("debug.setup")) return {};
+            return { missingBinaries: ["claude" as BinaryType] };
+          },
+        },
+        start: {
+          handler: async (): Promise<void> => {
+            if (!isActive("debug.update") || !deps.notificationManager) return;
+            const version = "99.0.0-debug";
+            simulateUpdateNotification(deps.notificationManager, version);
           },
         },
       },
@@ -152,88 +149,44 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
           },
         },
       },
-
-      // --- Update: choice + download simulation via DialogManager ---
-      [UPDATE_APPLY_OPERATION_ID]: {
-        "await-choice": {
-          handler: async (): Promise<UpdateChoiceResult> => {
-            if (!isActive("debug.update") || !deps.dialogManager) return {};
-            const version = "99.0.0-debug";
-            const config: DialogConfig = {
-              sections: [
-                { type: "text", content: "Update Available", style: "heading" },
-                { type: "text", content: `Version ${version} is ready to install.` },
-              ],
-              actions: [
-                { id: "always", label: "Always", variant: "secondary" },
-                { id: "yes", label: "Yes" },
-                { id: "skip", label: "Skip", variant: "secondary" },
-                { id: "never", label: "Never", variant: "secondary" },
-              ],
-              modal: true,
-            };
-            const handle = deps.dialogManager.open(config);
-            const event = await handle.nextEvent(5 * 60_000);
-            handle.close();
-            const choiceMap: Record<string, "always" | "yes" | "skip" | "never"> = {
-              always: "always",
-              yes: "yes",
-              skip: "skip",
-              never: "never",
-            };
-            const choice = choiceMap[event.actionId];
-            return choice ? { choice } : {};
-          },
-        },
-        download: {
-          handler: async (): Promise<UpdateDownloadResult> => {
-            if (!isActive("debug.update") || !deps.dialogManager) return {};
-            const version = "99.0.0-debug";
-            const buildConfig = (pct: number): DialogConfig => {
-              const actions: DialogAction[] = [
-                { id: "cancel", label: "Cancel", variant: "secondary" },
-              ];
-              return {
-                sections: [
-                  { type: "text", content: "Updating CodeHydra", style: "heading" },
-                  {
-                    type: "progress",
-                    items: [
-                      {
-                        id: "dl",
-                        label: `Downloading v${version}`,
-                        status: "running",
-                        ...(pct > 0 && { progress: pct }),
-                        ...(pct > 0 && { message: `${pct}%` }),
-                      },
-                    ],
-                  },
-                  {
-                    type: "text",
-                    content: "The app will restart automatically.",
-                    style: "subtitle",
-                  },
-                ],
-                actions,
-                modal: true,
-              };
-            };
-            const handle = deps.dialogManager.open(buildConfig(0));
-            let cancelled = false;
-            handle.onEvent((evt) => {
-              if (evt.actionId === "cancel") cancelled = true;
-            });
-            for (let percent = 5; percent <= 100 && !cancelled; percent += 5) {
-              await delay(150);
-              handle.update(buildConfig(percent));
-            }
-            handle.close();
-            return { cancelled: true }; // Don't actually install in debug mode
-          },
-        },
-      },
     },
   };
+}
+
+function simulateUpdateNotification(manager: NotificationManager, version: string): void {
+  const available: NotificationConfig = {
+    type: "info",
+    title: "Update available",
+    message: `Version ${version} is ready to download.`,
+    dismissible: true,
+    actions: [{ id: "install", label: "Install" }],
+  };
+  const handle: NotificationHandle = manager.open(available);
+  handle.onEvent((event) => {
+    if (event.actionId === "install") {
+      void simulateDownload(handle, version);
+    }
+  });
+}
+
+async function simulateDownload(handle: NotificationHandle, version: string): Promise<void> {
+  for (let percent = 5; percent <= 100; percent += 5) {
+    handle.update({
+      type: "spinner",
+      title: "Downloading update",
+      message: `Version ${version}`,
+      progress: percent / 100,
+      dismissible: false,
+    });
+    await delay(150);
+  }
+  handle.update({
+    type: "info",
+    title: "Update ready",
+    message: `Version ${version} is ready to install.`,
+    dismissible: false,
+    actions: [{ id: "restart", label: "Restart Now" }],
+  });
 }
 
 function delay(ms: number): Promise<void> {
