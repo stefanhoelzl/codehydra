@@ -254,9 +254,11 @@ class MinimalSetupOperation implements Operation<
 > {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
   private readonly hookInput: Partial<SetupHookInput>;
+  private readonly agentCapability: string | null;
 
-  constructor(hookInput: Partial<SetupHookInput> = {}) {
+  constructor(hookInput: Partial<SetupHookInput> = {}, agentCapability: string | null = "claude") {
     this.hookInput = hookInput;
+    this.agentCapability = agentCapability;
   }
 
   async execute(
@@ -269,6 +271,9 @@ class MinimalSetupOperation implements Operation<
         workspacePath: "/test/workspace",
         projectPath: "/test/project",
         ...this.hookInput,
+        ...(this.agentCapability !== null && {
+          capabilities: { agent: this.agentCapability },
+        }),
       }
     );
     if (errors.length > 0) throw errors[0]!;
@@ -286,6 +291,11 @@ class MinimalShutdownOperation implements Operation<
   ShutdownHookResult | undefined
 > {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
+  private readonly agentCapability: string | null;
+
+  constructor(agentCapability: string | null = "claude") {
+    this.agentCapability = agentCapability;
+  }
 
   async execute(
     ctx: OperationContext<DeleteWorkspaceIntent>
@@ -295,6 +305,9 @@ class MinimalShutdownOperation implements Operation<
       intent: ctx.intent,
       projectPath: "/test/project",
       workspacePath: payload.workspacePath ?? "/test/workspace",
+      ...(this.agentCapability !== null && {
+        capabilities: { agent: this.agentCapability },
+      }),
     };
     const { results, errors } = await ctx.hooks.collect<ShutdownHookResult | undefined>(
       "shutdown",
@@ -448,40 +461,118 @@ describe("createAgentModule", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // start
+  // start (mcpPort capture; provider.initialize is now deferred to first workspace:open)
   // ---------------------------------------------------------------------------
 
   describe("start", () => {
-    it("calls provider.initialize with mcpConfig when active and port provided", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "claude");
+    it("does not initialize provider during app:start (lazy init)", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
+      expect(mockProvider.initialize).not.toHaveBeenCalled();
+      expect(mockProvider.onStatusChange).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // lazy init via workspace:open setup
+  // ---------------------------------------------------------------------------
+
+  describe("lazy init", () => {
+    it("initializes provider with captured mcpPort on first workspace:open", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+        },
+      } as unknown as OpenWorkspaceIntent);
+
       expect(mockProvider.initialize).toHaveBeenCalledWith({ port: 9999 });
+      expect(mockProvider.onStatusChange).toHaveBeenCalled();
     });
 
-    it("calls provider.initialize with null when mcpPort is null", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "claude");
+    it("passes null mcpConfig when no mcpPort was captured", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(null));
-
       await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: {
+          projectId: "test-12345678",
+          workspaceName: "feature-1",
+          base: "main",
+        },
+      } as unknown as OpenWorkspaceIntent);
 
       expect(mockProvider.initialize).toHaveBeenCalledWith(null);
     });
 
-    it("subscribes to provider.onStatusChange when active", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+    it("only initializes once across multiple workspace:open calls", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(mockProvider.onStatusChange).toHaveBeenCalled();
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectId: "p1", workspaceName: "a", base: "main" },
+      } as unknown as OpenWorkspaceIntent);
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectId: "p1", workspaceName: "b", base: "main" },
+      } as unknown as OpenWorkspaceIntent);
+
+      expect(mockProvider.initialize).toHaveBeenCalledTimes(1);
     });
 
     it("dispatches INTENT_UPDATE_AGENT_STATUS when onStatusChange fires", async () => {
-      const { dispatcher, mockConfig, moduleDeps } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, moduleDeps } = createTestSetup();
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectId: "p1", workspaceName: "a", base: "main" },
+      } as unknown as OpenWorkspaceIntent);
 
       expect(capturedStatusCallback).not.toBeNull();
 
@@ -493,23 +584,31 @@ describe("createAgentModule", () => {
       expect(dispatchSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           type: INTENT_UPDATE_AGENT_STATUS,
-          payload: {
-            workspacePath: "/test/workspace",
-            status,
-          },
+          payload: { workspacePath: "/test/workspace", status },
         })
       );
     });
 
-    it("does not call initialize when inactive", async () => {
+    it("does not initialize when agent capability does not match provider type", async () => {
       const { dispatcher, mockProvider } = createTestSetup();
-      // No config:updated event -- module stays inactive
       dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation(
+          {
+            workspacePath: "/test/workspace",
+            projectPath: "/test/project",
+          },
+          "opencode"
+        )
+      );
 
       await dispatcher.dispatch({
-        type: "app:start",
-        payload: {},
-      });
+        type: "workspace:open",
+        payload: { projectId: "p1", workspaceName: "a", base: "main" },
+      } as unknown as OpenWorkspaceIntent);
 
       expect(mockProvider.initialize).not.toHaveBeenCalled();
     });
@@ -766,18 +865,18 @@ describe("createAgentModule", () => {
       });
     });
 
-    it("returns undefined when inactive", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "opencode");
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
 
       dispatcher.registerOperation(
         "workspace:open",
-        new MinimalSetupOperation({
-          workspacePath: "/test/workspace",
-          projectPath: "/test/project",
-        })
+        new MinimalSetupOperation(
+          {
+            workspacePath: "/test/workspace",
+            projectPath: "/test/project",
+          },
+          "opencode"
+        )
       );
 
       const result = (await dispatcher.dispatch({
@@ -882,13 +981,10 @@ describe("createAgentModule", () => {
       ).rejects.toThrow("server busy");
     });
 
-    it("returns undefined when inactive", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "opencode");
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
 
-      dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
+      dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation("opencode"));
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -925,7 +1021,13 @@ describe("createAgentModule", () => {
         createMinimalOperation<Intent, GetStatusHookResult | undefined>(
           GET_WORKSPACE_STATUS_OPERATION_ID,
           "get",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "claude" },
+            }),
+          }
         )
       );
 
@@ -938,18 +1040,21 @@ describe("createAgentModule", () => {
       expect(result!.agentStatus).toEqual(idleStatus);
     });
 
-    it("returns undefined when inactive", async () => {
-      const { dispatcher, mockConfig } = createTestSetup();
-      await mockConfig.set("agent", "opencode");
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher } = createTestSetup();
 
       dispatcher.registerOperation(
         "workspace:get-status",
         createMinimalOperation<Intent, GetStatusHookResult | undefined>(
           GET_WORKSPACE_STATUS_OPERATION_ID,
           "get",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "opencode" },
+            }),
+          }
         )
       );
 
@@ -976,7 +1081,13 @@ describe("createAgentModule", () => {
         createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
           "get",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "claude" },
+            }),
+          }
         )
       );
 
@@ -1000,7 +1111,13 @@ describe("createAgentModule", () => {
         createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
           "get",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "claude" },
+            }),
+          }
         )
       );
 
@@ -1013,18 +1130,21 @@ describe("createAgentModule", () => {
       expect(result!.session).toBeNull();
     });
 
-    it("returns undefined when inactive", async () => {
-      const { dispatcher, mockConfig } = createTestSetup();
-      await mockConfig.set("agent", "opencode");
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher } = createTestSetup();
 
       dispatcher.registerOperation(
         "agent:get-session",
         createMinimalOperation<Intent, GetAgentSessionHookResult | undefined>(
           GET_AGENT_SESSION_OPERATION_ID,
           "get",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "opencode" },
+            }),
+          }
         )
       );
 
@@ -1051,7 +1171,13 @@ describe("createAgentModule", () => {
         createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
           "restart",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "claude" },
+            }),
+          }
         )
       );
 
@@ -1080,7 +1206,13 @@ describe("createAgentModule", () => {
         createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
           "restart",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "claude" },
+            }),
+          }
         )
       );
 
@@ -1092,18 +1224,21 @@ describe("createAgentModule", () => {
       ).rejects.toThrow("restart failed");
     });
 
-    it("returns undefined when inactive", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "opencode");
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
 
       dispatcher.registerOperation(
         "agent:restart",
         createMinimalOperation<Intent, RestartAgentHookResult | undefined>(
           RESTART_AGENT_OPERATION_ID,
           "restart",
-          { hookContext: (ctx) => ({ intent: ctx.intent, workspacePath: "/test/workspace" }) }
+          {
+            hookContext: (ctx) => ({
+              intent: ctx.intent,
+              workspacePath: "/test/workspace",
+              capabilities: { agent: "opencode" },
+            }),
+          }
         )
       );
 
@@ -1124,10 +1259,23 @@ describe("createAgentModule", () => {
   describe("stop", () => {
     it("cleans up statusChange subscription and disposes provider", async () => {
       const cleanupFn = vi.fn();
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup({
+      const { dispatcher, mockProvider } = createTestSetup({
         onStatusChange: vi.fn().mockReturnValue(cleanupFn),
       });
-      await activateModule(dispatcher, mockConfig);
+      // Initialize provider via lazy path so dispose has something to clean up.
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectId: "p1", workspaceName: "a", base: "main" },
+      } as unknown as OpenWorkspaceIntent);
 
       dispatcher.registerOperation(
         "app:shutdown",
@@ -1140,10 +1288,9 @@ describe("createAgentModule", () => {
       expect(mockProvider.dispose).toHaveBeenCalled();
     });
 
-    it("disposes provider even when inactive (cleanup is unconditional)", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "opencode");
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+    it("skips dispose when provider was never initialized", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       dispatcher.registerOperation(
@@ -1153,14 +1300,27 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
-      expect(mockProvider.dispose).toHaveBeenCalled();
+      expect(mockProvider.dispose).not.toHaveBeenCalled();
     });
 
     it("collect catches stop error, dispatch still resolves", async () => {
-      const { dispatcher, mockConfig } = createTestSetup({
+      const { dispatcher } = createTestSetup({
         dispose: vi.fn().mockRejectedValue(new Error("dispose failed")),
       });
-      await activateModule(dispatcher, mockConfig);
+      // Initialize first so dispose runs
+      dispatcher.registerOperation("app:start", new MinimalStartWithMcpPortOperation(9999));
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+      dispatcher.registerOperation(
+        "workspace:open",
+        new MinimalSetupOperation({
+          workspacePath: "/test/workspace",
+          projectPath: "/test/project",
+        })
+      );
+      await dispatcher.dispatch({
+        type: "workspace:open",
+        payload: { projectId: "p1", workspaceName: "a", base: "main" },
+      } as unknown as OpenWorkspaceIntent);
 
       dispatcher.registerOperation(
         "app:shutdown",
@@ -1170,55 +1330,6 @@ describe("createAgentModule", () => {
       await expect(
         dispatcher.dispatch({ type: "app:shutdown", payload: {} })
       ).resolves.not.toThrow();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // config-based activation
-  // ---------------------------------------------------------------------------
-
-  describe("config-based activation", () => {
-    it("sets active=true when agent matches provider type", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "claude");
-
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      expect(mockProvider.initialize).toHaveBeenCalled();
-    });
-
-    it("sets active=false when agent does not match provider type", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", "opencode");
-
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      expect(mockProvider.initialize).not.toHaveBeenCalled();
-    });
-
-    it("does not activate claude module when agent is null", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await mockConfig.set("agent", null);
-
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      expect(mockProvider.initialize).not.toHaveBeenCalled();
-    });
-
-    it("does not activate opencode module when agent is null", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup({
-        type: "opencode",
-      });
-      await mockConfig.set("agent", null);
-
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      // null agent does not match any provider type
-      expect(mockProvider.initialize).not.toHaveBeenCalled();
     });
   });
 });

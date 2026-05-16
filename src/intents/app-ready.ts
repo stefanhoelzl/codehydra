@@ -16,6 +16,8 @@ import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
 import { Path } from "../utils/path/path";
+import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
+import type { Config } from "../boundaries/platform/config";
 
 // =============================================================================
 // Intent Types
@@ -26,7 +28,17 @@ export interface AppReadyPayload {
   readonly [key: string]: never;
 }
 
-export interface AppReadyIntent extends Intent<void> {
+/**
+ * Bootstrap data the renderer needs immediately after lifecycle.ready().
+ */
+export interface AppReadyResult {
+  /** Global default agent (config.agent). Null when not yet chosen (first-run pending). */
+  readonly defaultAgent: LifecycleAgentType | null;
+  /** Agents whose binaries are currently present on disk. */
+  readonly availableAgents: readonly AgentInfo[];
+}
+
+export interface AppReadyIntent extends Intent<AppReadyResult> {
   readonly type: "app:ready";
   readonly payload: AppReadyPayload;
 }
@@ -59,25 +71,46 @@ export interface LoadProjectsResult {
   readonly projectPaths?: readonly string[];
 }
 
+/**
+ * Per-handler result for the "available-agents" hook point.
+ * Each agent module returns its `AgentInfo` only if its binary is present.
+ */
+export interface AvailableAgentsResult {
+  readonly agent?: AgentInfo;
+}
+
 // =============================================================================
 // Operation
 // =============================================================================
 
-export class AppReadyOperation implements Operation<AppReadyIntent, void> {
+export class AppReadyOperation implements Operation<AppReadyIntent, AppReadyResult> {
   readonly id = APP_READY_OPERATION_ID;
 
-  async execute(ctx: OperationContext<AppReadyIntent>): Promise<void> {
+  constructor(private readonly configService: Config) {}
+
+  async execute(ctx: OperationContext<AppReadyIntent>): Promise<AppReadyResult> {
     const hookCtx: HookContext = { intent: ctx.intent };
 
-    // Collect saved project paths from modules
-    const { results, errors } = await ctx.hooks.collect<LoadProjectsResult>(
-      "load-projects",
-      hookCtx
-    );
-    if (errors.length > 0) throw errors[0]!;
+    // Collect bootstrap data: available agents + saved project paths in parallel.
+    const [agentsResult, projectsResult] = await Promise.all([
+      ctx.hooks.collect<AvailableAgentsResult>("available-agents", hookCtx),
+      ctx.hooks.collect<LoadProjectsResult>("load-projects", hookCtx),
+    ]);
+    if (projectsResult.errors.length > 0) throw projectsResult.errors[0]!;
+    // available-agents errors are best-effort: an agent that fails preflight just
+    // doesn't appear in the list.
+
+    const availableAgents: AgentInfo[] = [];
+    for (const result of agentsResult.results) {
+      if (result.agent) availableAgents.push(result.agent);
+    }
+
+    const defaultAgentRaw = this.configService.get("agent") as string | null;
+    const defaultAgent: LifecycleAgentType | null =
+      defaultAgentRaw === "claude" || defaultAgentRaw === "opencode" ? defaultAgentRaw : null;
 
     const projectPaths: string[] = [];
-    for (const result of results) {
+    for (const result of projectsResult.results) {
       if (result.projectPaths) projectPaths.push(...result.projectPaths);
     }
 
@@ -96,5 +129,7 @@ export class AppReadyOperation implements Operation<AppReadyIntent, void> {
 
     // Signal that initial project:open dispatches are complete.
     ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
+
+    return { defaultAgent, availableAgents };
   }
 }

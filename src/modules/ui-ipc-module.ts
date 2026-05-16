@@ -339,7 +339,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
   // ---------------------------------------------------------------------------
 
   registerIpc(ApiIpcChannels.LIFECYCLE_READY, async () => {
-    await dispatcher.dispatch({
+    return await dispatcher.dispatch({
       type: INTENT_APP_READY,
       payload: {},
     } as AppReadyIntent);
@@ -366,6 +366,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
         base: p.base,
         ...(p.initialPrompt !== undefined && { initialPrompt: p.initialPrompt }),
         ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
+        ...(p.agent !== undefined && { agent: p.agent }),
         source: "ui-ipc",
       },
     };

@@ -49,6 +49,7 @@ import type { RestartAgentHookInput, RestartAgentHookResult } from "../../intent
 import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
+import { APP_READY_OPERATION_ID, type AvailableAgentsResult } from "../../intents/app-ready";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
@@ -95,17 +96,30 @@ export function createAgentModule(
   // Internal closure state
   // =========================================================================
 
-  /** Check if this module is the active agent by reading config. */
-  function isActive(): boolean {
-    const agentType = deps.configService.get("agent") as string;
-    return agentType === provider.type;
-  }
-
   /** Capability: agentType provided by setup handler. */
   let capAgentType: AgentType | undefined;
 
+  /** MCP port captured during app:start; consumed on lazy initialize. */
+  let capturedMcpPort: number | null = null;
+
+  /** Whether the provider has been initialized (lazy on first workspace:open). */
+  let initialized = false;
+
   /** Cleanup function for onStatusChange subscription. */
   let statusChangeCleanup: (() => void) | null = null;
+
+  /** Initialize the provider on demand. Idempotent. */
+  function ensureInitialized(): void {
+    if (initialized) return;
+    provider.initialize(capturedMcpPort !== null ? { port: capturedMcpPort } : null);
+    statusChangeCleanup = provider.onStatusChange((workspacePath, status) => {
+      void deps.dispatcher.dispatch({
+        type: INTENT_UPDATE_AGENT_STATUS,
+        payload: { workspacePath, status },
+      } as UpdateAgentStatusIntent);
+    });
+    initialized = true;
+  }
 
   /**
    * Shared agent-server teardown used by delete + hibernate.
@@ -163,19 +177,30 @@ export function createAgentModule(
         start: {
           requires: { mcpPort: ANY_VALUE },
           handler: async (ctx: HookContext): Promise<void> => {
-            if (!isActive()) return;
+            const mcpPort = ctx.capabilities?.mcpPort as number | null | undefined;
+            capturedMcpPort = mcpPort !== null && mcpPort !== undefined ? mcpPort : null;
+            // Initialization is deferred until the first workspace using this
+            // agent is opened (see open-workspace setup hook).
+          },
+        },
+      },
 
-            const mcpPort = ctx.capabilities?.mcpPort as number | null;
-            provider.initialize(
-              mcpPort !== null && mcpPort !== undefined ? { port: mcpPort } : null
-            );
-
-            statusChangeCleanup = provider.onStatusChange((workspacePath, status) => {
-              void deps.dispatcher.dispatch({
-                type: INTENT_UPDATE_AGENT_STATUS,
-                payload: { workspacePath, status },
-              } as UpdateAgentStatusIntent);
-            });
+      [APP_READY_OPERATION_ID]: {
+        "available-agents": {
+          handler: async (): Promise<AvailableAgentsResult> => {
+            try {
+              const result = await provider.preflight();
+              if (!result.success || result.needsDownload) return {};
+              return {
+                agent: {
+                  agent: provider.type,
+                  label: provider.displayName,
+                  icon: provider.icon,
+                },
+              };
+            } catch {
+              return {};
+            }
           },
         },
       },
@@ -187,8 +212,10 @@ export function createAgentModule(
               statusChangeCleanup();
               statusChangeCleanup = null;
             }
-
-            await provider.dispose();
+            if (initialized) {
+              await provider.dispose();
+              initialized = false;
+            }
           },
         },
       },
@@ -258,12 +285,13 @@ export function createAgentModule(
 
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
+          requires: { agent: provider.type },
           provides: () => ({
             ...(capAgentType !== undefined && { agentType: capAgentType }),
           }),
           handler: async (ctx: HookContext): Promise<SetupHookResult | undefined> => {
             capAgentType = undefined;
-            if (!isActive()) return undefined;
+            ensureInitialized();
 
             const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as OpenWorkspaceIntent;
@@ -287,8 +315,8 @@ export function createAgentModule(
 
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
+          requires: { agent: provider.type },
           handler: async (ctx: HookContext): Promise<ShutdownHookResult | undefined> => {
-            if (!isActive()) return undefined;
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const result = await stopAgentForWorkspace(workspacePath, "delete shutdown");
@@ -304,8 +332,8 @@ export function createAgentModule(
 
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
+          requires: { agent: provider.type },
           handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult | undefined> => {
-            if (!isActive()) return undefined;
             const { workspacePath } = ctx as HibernatePipelineHookInput;
             await stopAgentForWorkspace(workspacePath, "hibernate shutdown");
             return {};
@@ -315,8 +343,8 @@ export function createAgentModule(
 
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
+          requires: { agent: provider.type },
           handler: async (ctx: HookContext): Promise<GetStatusHookResult | undefined> => {
-            if (!isActive()) return undefined;
             const { workspacePath } = ctx as GetStatusHookInput;
             return {
               agentStatus: provider.getStatus(workspacePath as WorkspacePath),
@@ -327,8 +355,8 @@ export function createAgentModule(
 
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
+          requires: { agent: provider.type },
           handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult | undefined> => {
-            if (!isActive()) return undefined;
             const { workspacePath } = ctx as GetAgentSessionHookInput;
             return {
               session: provider.getSession(workspacePath as WorkspacePath),
@@ -339,8 +367,8 @@ export function createAgentModule(
 
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
+          requires: { agent: provider.type },
           handler: async (ctx: HookContext): Promise<RestartAgentHookResult | undefined> => {
-            if (!isActive()) return undefined;
             const { workspacePath } = ctx as RestartAgentHookInput;
             const result = await provider.restartWorkspace(workspacePath);
             if (result.success) {

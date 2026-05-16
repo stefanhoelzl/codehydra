@@ -141,6 +141,7 @@ import { createCodeServerModule } from "./modules/code-server-module";
 import { createPluginServerModule } from "./modules/plugin-server-module";
 import { createAgentModule } from "./modules/agent-module/agent-module";
 import { createMetadataModule } from "./modules/metadata-module";
+import { createWorkspaceAgentResolverModule } from "./modules/workspace-agent-resolver-module";
 import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
@@ -466,6 +467,11 @@ const opencodeAgentModule = createAgentModule(
 const metadataModule = createMetadataModule({
   gitWorktreeProvider,
 });
+const workspaceAgentResolverModule = createWorkspaceAgentResolverModule({
+  gitWorktreeProvider,
+  configService,
+  logger: loggingService.createLogger("agent-resolver"),
+});
 const keepFilesModule = createKeepFilesModule({
   fileSystem: fileSystemLayer,
   logger: loggingService.createLogger("keepfiles"),
@@ -619,7 +625,7 @@ const bugReportModule = createBugReportModule({
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
 dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(configService));
-dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation());
+dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(configService));
 // config:set-values operation removed — config is now a plain service
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
@@ -677,6 +683,7 @@ dispatcher.registerModule(viewModule);
 dispatcher.registerModule(pluginServerModule);
 dispatcher.registerModule(extensionModule);
 dispatcher.registerModule(codeServerModule);
+dispatcher.registerModule(workspaceAgentResolverModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);

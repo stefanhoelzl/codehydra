@@ -12,6 +12,8 @@
     type Project,
   } from "$lib/api";
   import { validateWorkspaceName, type InitialPrompt } from "@shared/api/types";
+  import type { LifecycleAgentType } from "@shared/ipc";
+  import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
   import { closeDialog, openGitCloneDialog } from "$lib/stores/dialogs.svelte.js";
   import {
     getProjectById,
@@ -79,6 +81,28 @@
   let agentMode = $state<"" | "plan">("");
   let openInBackground = $state(false);
   let agentModeRef: HTMLElement | undefined = $state();
+  // Per-workspace agent override. Defaults to the global default; "" means
+  // "use the global default" (no override is sent to the IPC layer).
+  let selectedAgent = $state<LifecycleAgentType | "">("");
+  let agentSelectRef: HTMLElement | undefined = $state();
+
+  // Default agent dropdown when bootstrap data arrives.
+  $effect(() => {
+    if (selectedAgent === "" && bootstrap.defaultAgent) {
+      selectedAgent = bootstrap.defaultAgent;
+    }
+  });
+
+  // vscode-single-select's change event doesn't bubble — bind directly.
+  $effect(() => {
+    const el = agentSelectRef;
+    if (!el) return;
+    const handler = (e: Event) => {
+      selectedAgent = (e.target as HTMLSelectElement).value as LifecycleAgentType | "";
+    };
+    el.addEventListener("change", handler);
+    return () => el.removeEventListener("change", handler);
+  });
 
   // Direct event listener for vscode-single-select: its change event doesn't bubble,
   // but Svelte 5 delegates 'change' to the document root, so onchange= misses it.
@@ -180,7 +204,11 @@
     logger.debug("Dialog submitted", { type: "create-workspace" });
 
     // Build options from "More options" fields
-    const options: { initialPrompt?: InitialPrompt; stealFocus?: boolean } = {};
+    const options: {
+      initialPrompt?: InitialPrompt;
+      stealFocus?: boolean;
+      agent?: LifecycleAgentType;
+    } = {};
     const trimmedPrompt = initialPrompt.trim();
     if (trimmedPrompt || agentMode) {
       options.initialPrompt = agentMode
@@ -189,6 +217,10 @@
     }
     if (openInBackground) {
       options.stealFocus = false;
+    }
+    // Only send agent when the user picked one that differs from the global default.
+    if (selectedAgent !== "" && selectedAgent !== bootstrap.defaultAgent) {
+      options.agent = selectedAgent;
     }
 
     // Snapshot reactive state before closing dialog. closeDialog() sets
@@ -403,8 +435,24 @@
           ></vscode-textarea>
         </div>
 
+        {#if bootstrap.availableAgents.length > 1}
+          <div class="ch-form-field">
+            <label for="agent-select" class="ch-form-label">Agent</label>
+            <vscode-single-select
+              id="agent-select"
+              bind:this={agentSelectRef}
+              value={selectedAgent}
+              disabled={isSubmitting}
+            >
+              {#each bootstrap.availableAgents as info (info.agent)}
+                <vscode-option value={info.agent}>{info.label}</vscode-option>
+              {/each}
+            </vscode-single-select>
+          </div>
+        {/if}
+
         <div class="ch-form-field">
-          <label for="agent-mode" class="ch-form-label">Agent</label>
+          <label for="agent-mode" class="ch-form-label">Agent mode</label>
           <vscode-single-select
             id="agent-mode"
             bind:this={agentModeRef}

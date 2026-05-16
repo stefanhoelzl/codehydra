@@ -78,6 +78,7 @@ function createMockApi(config?: {
           projectsStore.addProject(p);
         }
         projectsStore.setActiveWorkspace(activeWorkspace?.path ?? null);
+        return { defaultAgent: null, availableAgents: [] };
       }),
     },
     workspaces: {

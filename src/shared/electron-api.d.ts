@@ -3,7 +3,7 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { UIModeChangedEvent, LogContext } from "./ipc";
+import type { UIModeChangedEvent, LogContext, LifecycleAgentType, AgentInfo } from "./ipc";
 import type { UIMode } from "./ipc";
 import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
@@ -45,7 +45,11 @@ export interface Api {
       projectPath: string,
       name: string,
       base: string,
-      options?: { initialPrompt?: InitialPrompt; stealFocus?: boolean }
+      options?: {
+        initialPrompt?: InitialPrompt;
+        stealFocus?: boolean;
+        agent?: LifecycleAgentType;
+      }
     ): Promise<Workspace>;
     /**
      * Start workspace removal (fire-and-forget).
@@ -113,8 +117,12 @@ export interface Api {
     /**
      * Signal that the renderer is ready to receive state.
      * The main process emits domain events for all current state before resolving.
+     * Returns app-wide bootstrap data (default agent + available agents).
      */
-    ready(): Promise<void>;
+    ready(): Promise<{
+      defaultAgent: LifecycleAgentType | null;
+      availableAgents: readonly AgentInfo[];
+    }>;
     /**
      * Quit the application.
      */

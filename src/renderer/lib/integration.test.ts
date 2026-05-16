@@ -230,6 +230,7 @@ describe("Integration tests", () => {
       }
       const activeRef = await mockApi.ui.getActiveWorkspace();
       projectsStore.setActiveWorkspace(activeRef?.path ?? null);
+      return { defaultAgent: null, availableAgents: [] };
     });
     // Legacy mocks that may still be used in some places
     mockApi.listBases.mockResolvedValue([

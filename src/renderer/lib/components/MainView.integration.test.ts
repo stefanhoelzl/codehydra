@@ -125,6 +125,7 @@ describe("MainView close project integration", () => {
       }
       const activeRef = await mockApi.ui.getActiveWorkspace();
       projectsStore.setActiveWorkspace(activeRef?.path ?? null);
+      return { defaultAgent: null, availableAgents: [] };
     });
   });
 

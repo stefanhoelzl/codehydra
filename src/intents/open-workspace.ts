@@ -69,6 +69,8 @@ export interface OpenWorkspacePayload {
   readonly projectPath: string;
   /** Which module dispatched this intent. Used by error-notification to skip non-interactive sources. */
   readonly source?: WorkspaceOpenSource;
+  /** Optional per-workspace agent override. When omitted, falls back to the global default. */
+  readonly agent?: AgentType;
 }
 
 export type OpenWorkspaceResult = Workspace;

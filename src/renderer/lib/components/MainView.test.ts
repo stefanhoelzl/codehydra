@@ -128,6 +128,7 @@ describe("MainView component", () => {
       }
       const activeRef = await mockApi.ui.getActiveWorkspace();
       projectsStore.setActiveWorkspace(activeRef?.path ?? null);
+      return { defaultAgent: null, availableAgents: [] };
     });
     // Agent statuses are fetched per-workspace via workspaces.getStatus (already mocked in mockApi)
     // Reset notification service mocks
