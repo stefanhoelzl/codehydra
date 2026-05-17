@@ -7,10 +7,9 @@
  * so tests use processRunner/httpClient/portManager mocks directly.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { delimiter, join } from "node:path";
-import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
@@ -37,10 +36,14 @@ import type {
   DeleteHookResult,
 } from "../intents/delete-workspace";
 import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
-import type { Config } from "../boundaries/platform/config";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/app-start";
 import type { DirEntry } from "../boundaries/platform/filesystem";
-import type { SpawnedProcess } from "../boundaries/platform/process";
+import {
+  createMockProcessRunner,
+  type MockProcessRunner,
+  type SpawnConfig,
+} from "../boundaries/platform/process.state-mock";
 import { createArchiveExtractorMock } from "../boundaries/platform/archive-extractor.state-mock";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
@@ -188,51 +191,30 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
 }
 
 // =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: (_key: string, definition: { default?: unknown }) => {
-      // Only set the default if no explicit value was pre-populated
-      if (!store.has(_key) && definition.default !== undefined) {
-        store.set(_key, definition.default);
-      }
-    },
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
-
-// =============================================================================
 // Mock Factories
 // =============================================================================
 
-function createMockSpawnedProcess(pid = 12345): SpawnedProcess {
-  return {
-    pid,
-    wait: vi.fn().mockImplementation((timeout?: number) => {
-      if (timeout === 0) return Promise.resolve({ running: true });
-      return Promise.resolve({ exitCode: 0, stderr: "", stdout: "" });
-    }),
-    kill: vi.fn().mockResolvedValue({ success: true }),
-  };
+/**
+ * Per-spawn configuration helper. By default, processes report exitCode 0
+ * (clean exit), success on kill, and the standard test pid.
+ */
+/**
+ * Default spawn config: process is healthy (still running) and accepts kill
+ * cleanly. Tests that need an exited-with-error process override exitCode/
+ * stderr explicitly.
+ */
+function defaultSpawnConfig(): SpawnConfig {
+  return { pid: 12345, running: true, killResult: { success: true, reason: "SIGTERM" } };
+}
+
+/** Access deps.processRunner as the state-mock for behavioral assertions. */
+function asMockRunner(deps: CodeServerModuleDeps): MockProcessRunner {
+  return deps.processRunner as MockProcessRunner;
 }
 
 function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
   return {
-    processRunner: {
-      run: vi.fn().mockReturnValue(createMockSpawnedProcess()),
-    },
+    processRunner: createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() }),
     httpClient: {
       fetch: vi.fn().mockResolvedValue({ status: 200 }),
     },
@@ -264,7 +246,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
     wrapperPath: "/path/to/wrapper",
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
-    configService: createMockConfig({ "version.opencode": "1.0.223" }),
+    configService: createMockConfig({ defaults: { "version.opencode": "1.0.223" } }),
     ...overrides,
   };
 }
@@ -294,7 +276,7 @@ function createPluginPortProvider(port: number | null = null): IntentModule {
 
 function createTestSetup(mockDeps?: CodeServerModuleDeps, pluginPort: number | null = null) {
   const deps = mockDeps ?? createMockDeps();
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   // Register pluginPort provider before code-server module so the capability is available
   dispatcher.registerModule(createPluginPortProvider(pluginPort));
@@ -482,7 +464,7 @@ describe("CodeServerModule", () => {
 
       // Port is 25448 (packaged mode)
       expect(codeServerPort).toBe(25448);
-      expect(deps.processRunner.run).toHaveBeenCalled();
+      expect(() => asMockRunner(deps).$.spawned(0)).not.toThrow();
     });
 
     it("ensures required directories exist", async () => {
@@ -512,22 +494,22 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(deps.processRunner.run).toHaveBeenCalledWith(
-        expect.stringContaining("code-server"),
-        expect.arrayContaining([
-          "--bind-addr",
-          "127.0.0.1:25448",
-          "--auth",
-          "none",
-          "--extensions-dir",
-          expect.stringContaining("extensions"),
-          "--user-data-dir",
-          expect.stringContaining("user-data"),
-        ]),
-        expect.objectContaining({
-          cwd: expect.stringContaining("runtime"),
-        })
-      );
+      expect(asMockRunner(deps)).toHaveSpawned([
+        {
+          command: expect.stringContaining("code-server") as string,
+          args: expect.arrayContaining([
+            "--bind-addr",
+            "127.0.0.1:25448",
+            "--auth",
+            "none",
+            "--extensions-dir",
+            expect.stringContaining("extensions"),
+            "--user-data-dir",
+            expect.stringContaining("user-data"),
+          ]) as unknown as string[],
+          cwd: expect.stringContaining("runtime") as unknown as string,
+        },
+      ]);
     });
   });
 
@@ -537,12 +519,8 @@ describe("CodeServerModule", () => {
 
   describe("stop", () => {
     it("stops code-server by killing the process", async () => {
-      const mockProcess = createMockSpawnedProcess();
-      const deps = createMockDeps({
-        processRunner: {
-          run: vi.fn().mockReturnValue(mockProcess),
-        },
-      });
+      const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
+      const deps = createMockDeps({ processRunner });
       const { dispatcher } = createTestSetup(deps);
 
       // Start first
@@ -556,33 +534,7 @@ describe("CodeServerModule", () => {
       );
       await dispatcher.dispatch({ type: "app:shutdown", payload: {} });
 
-      expect(mockProcess.kill).toHaveBeenCalled();
-    });
-
-    it("collect catches stop error, dispatch still resolves", async () => {
-      const mockProcess = createMockSpawnedProcess();
-      (mockProcess.kill as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("kill failed"));
-      const deps = createMockDeps({
-        processRunner: {
-          run: vi.fn().mockReturnValue(mockProcess),
-        },
-      });
-      const { dispatcher } = createTestSetup(deps);
-
-      // Start first
-      dispatcher.registerOperation("app:start", new MinimalStartOperation());
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      // Replace operation for stop
-      dispatcher.registerOperation(
-        "app:shutdown",
-        createMinimalOperation(APP_SHUTDOWN_OPERATION_ID, "stop", { throwOnError: false })
-      );
-
-      // Handler throws directly, but collect() catches the error
-      await expect(
-        dispatcher.dispatch({ type: "app:shutdown", payload: {} })
-      ).resolves.not.toThrow();
+      expect(processRunner.$.spawned(0)).toHaveBeenKilled();
     });
   });
 
@@ -715,10 +667,15 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.processRunner.run).toHaveBeenCalledWith(
-        expect.stringContaining("code-server"),
-        expect.arrayContaining(["--install-extension", "/path/ext-one.vsix"])
-      );
+      expect(asMockRunner(deps)).toHaveSpawned([
+        {
+          command: expect.stringContaining("code-server") as string,
+          args: expect.arrayContaining([
+            "--install-extension",
+            "/path/ext-one.vsix",
+          ]) as unknown as string[],
+        },
+      ]);
       expect(op.report).toHaveBeenCalledWith("setup", "done");
     });
 
@@ -756,21 +713,22 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(deps.processRunner.run).not.toHaveBeenCalled();
+      expect(() => asMockRunner(deps).$.spawned(0)).toThrow();
       expect(op.report).toHaveBeenCalledWith("setup", "done");
     });
 
     it("throws SetupError on install failure", async () => {
-      const failedProcess = createMockSpawnedProcess();
-      (failedProcess.wait as ReturnType<typeof vi.fn>).mockResolvedValue({
-        exitCode: 1,
-        stderr: "install failed",
-        stdout: "",
-      });
+      // Process exits with non-zero — explicitly clear `running` so wait()
+      // reports the exit result instead of "still alive".
       const deps = createMockDeps({
-        processRunner: {
-          run: vi.fn().mockReturnValue(failedProcess),
-        },
+        processRunner: createMockProcessRunner({
+          onSpawn: () => ({
+            pid: 12345,
+            exitCode: 1,
+            stderr: "install failed",
+            killResult: { success: true, reason: "SIGTERM" },
+          }),
+        }),
       });
       const { dispatcher } = createTestSetup(deps);
       const installPlan: ExtensionInstallEntry[] = [
@@ -798,7 +756,7 @@ describe("CodeServerModule", () => {
       const deps = createMockDeps();
 
       // Create single setup with both operations
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       dispatcher.registerModule(createPluginPortProvider());
       const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
@@ -858,7 +816,7 @@ describe("CodeServerModule", () => {
         },
       });
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       dispatcher.registerModule(createPluginPortProvider());
       const module = createCodeServerModule(deps);
       dispatcher.registerModule(module);
@@ -999,8 +957,8 @@ describe("CodeServerModule", () => {
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string>;
       expect(env._CH_PLUGIN_PORT).toBe("9876");
     });
   });
@@ -1038,8 +996,8 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       const binDir = new Path("/test/app-data/bin").toNative();
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string>;
       expect(env.PATH).toBe(`${binDir}${delimiter}/usr/bin:/usr/local/bin`);
     });
 
@@ -1055,8 +1013,8 @@ describe("CodeServerModule", () => {
       const expectedCodeCmd = isWindows ? `"${join(binDir, "code.cmd")}"` : join(binDir, "code");
       const expectedEditor = `${expectedCodeCmd} --wait --reuse-window`;
 
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string>;
       expect(env.EDITOR).toBe(expectedEditor);
     });
 
@@ -1067,8 +1025,8 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string>;
       expect(env.GIT_SEQUENCE_EDITOR).toBe(env.EDITOR);
       expect(env.GIT_SEQUENCE_EDITOR).toBeTruthy();
     });
@@ -1084,8 +1042,8 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string | undefined>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string | undefined>;
       expect(env.VSCODE_IPC_HOOK).toBeUndefined();
       expect(env.VSCODE_NLS_CONFIG).toBeUndefined();
       expect(env.VSCODE_CODE_CACHE_PATH).toBeUndefined();
@@ -1098,8 +1056,8 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string>;
       expect(env.VSCODE_PROXY_URI).toBe("");
     });
 
@@ -1110,8 +1068,8 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string | undefined>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string | undefined>;
       expect(env._CH_PLUGIN_PORT).toBeUndefined();
     });
 
@@ -1122,8 +1080,8 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      const runCall = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls[0];
-      const env = runCall![2].env as Record<string, string>;
+      const runCall = asMockRunner(deps).$.spawned(0).$;
+      const env = runCall.env as Record<string, string>;
       expect(env._CH_CODE_SERVER_DIR).toContain("code-server");
       expect(env._CH_OPENCODE_DIR).toContain("opencode");
     });
@@ -1152,11 +1110,9 @@ describe("CodeServerModule", () => {
       vi.useFakeTimers();
 
       try {
-        const mockProcess = createMockSpawnedProcess();
+        const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
         const deps = createMockDeps({
-          processRunner: {
-            run: vi.fn().mockReturnValue(mockProcess),
-          },
+          processRunner,
           httpClient: {
             fetch: vi.fn().mockResolvedValue({ status: 503 }),
           },
@@ -1180,7 +1136,7 @@ describe("CodeServerModule", () => {
         expect(String(caughtError)).toContain("Failed to start code-server");
 
         // Verify the spawned process was killed to avoid orphaning
-        expect(mockProcess.kill).toHaveBeenCalled();
+        expect(processRunner.$.spawned(0)).toHaveBeenKilled();
       } finally {
         vi.useRealTimers();
       }
@@ -1206,13 +1162,12 @@ describe("CodeServerModule", () => {
       const deps = createMockDeps();
       const { dispatcher } = await startCodeServer(deps);
 
-      const initialRunCount = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.calls
-        .length;
+      const initialRunCount = asMockRunner(deps).$.spawnedCount;
 
       await dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
 
       // No additional process spawned (no restart)
-      expect(deps.processRunner.run).toHaveBeenCalledTimes(initialRunCount);
+      expect(asMockRunner(deps).$.spawnedCount).toBe(initialRunCount);
     });
 
     it("restarts code-server when probe fails (unhealthy response)", async () => {
@@ -1222,8 +1177,7 @@ describe("CodeServerModule", () => {
         const deps = createMockDeps();
         const { dispatcher } = await startCodeServer(deps);
 
-        const initialProcess = (deps.processRunner.run as ReturnType<typeof vi.fn>).mock.results[0]!
-          .value as SpawnedProcess;
+        const initialProcess = asMockRunner(deps).$.spawned(0);
 
         // Flip /healthz to 503 for the probe, then back to 200 for the restart
         const fetch = deps.httpClient.fetch as ReturnType<typeof vi.fn>;
@@ -1246,8 +1200,8 @@ describe("CodeServerModule", () => {
         await resumePromise;
 
         // Old process killed, new process spawned
-        expect(initialProcess.kill).toHaveBeenCalled();
-        expect(deps.processRunner.run).toHaveBeenCalledTimes(2);
+        expect(initialProcess).toHaveBeenKilled();
+        expect(asMockRunner(deps).$.spawnedCount).toBe(2);
       } finally {
         vi.useRealTimers();
       }

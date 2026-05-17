@@ -10,6 +10,7 @@ import { McpServer, createDefaultMcpServer } from "./mcp-module";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { delay } from "@shared/test-fixtures";
 import { Dispatcher } from "../intents/lib/dispatcher";
+import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Intent } from "../intents/lib/types";
 import type { OperationContext, Operation } from "../intents/lib/operation";
 import {
@@ -76,7 +77,7 @@ function createCapturingOperation<TIntent extends Intent = Intent, TResult = voi
  * Returns the dispatcher and the captured intents array for assertions.
  */
 function createMockDispatcher(): { dispatcher: Dispatcher; capturedIntents: Intent[] } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createBaseMockDispatcher();
   const capturedIntents: Intent[] = [];
 
   dispatcher.registerOperation(

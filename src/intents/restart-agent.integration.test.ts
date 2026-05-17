@@ -11,8 +11,8 @@
  * #7: restart-agent emits agent:restarted event on success
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -89,7 +89,7 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
   const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());

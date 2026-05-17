@@ -698,6 +698,38 @@ describe("Dispatcher", () => {
     });
   });
 
+  describe("hooks.collect() error handling", () => {
+    it("collects thrown hook errors without aborting dispatch", async () => {
+      const dispatcher = createDispatcher();
+      let collected: ReadonlyArray<Error> = [];
+
+      dispatcher.registerModule({
+        name: "throws",
+        hooks: {
+          "action-op": {
+            stop: {
+              handler: async () => {
+                throw new Error("stop failed");
+              },
+            },
+          },
+        },
+      });
+
+      dispatcher.registerOperation("test:action", {
+        id: "action-op",
+        execute: async (ctx) => {
+          const { errors } = await ctx.hooks.collect("stop", { intent: ctx.intent });
+          collected = errors;
+        },
+      });
+
+      await expect(dispatcher.dispatch(createActionIntent())).resolves.toBeUndefined();
+      expect(collected).toHaveLength(1);
+      expect(collected[0]!.message).toBe("stop failed");
+    });
+  });
+
   describe("AsyncLocalStorage causation", () => {
     it("hook handler inherits causation via ALS when calling dispatcher.dispatch() directly", async () => {
       const logger = createMockLogger();

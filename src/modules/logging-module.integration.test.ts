@@ -5,8 +5,8 @@
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
@@ -16,28 +16,7 @@ import { INTENT_APP_SHUTDOWN, APP_SHUTDOWN_OPERATION_ID } from "../intents/app-s
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { createLoggingModule } from "./logging-module";
-import type { Config } from "../boundaries/platform/config";
-
-// =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 
 // =============================================================================
 // Minimal Test Operation
@@ -95,10 +74,12 @@ function createDeps(configValues?: Record<string, unknown>) {
   };
   const logger = createMockLogger();
   const configService = createMockConfig({
-    "log.level": "warn",
-    "log.output": "file",
-    "log.format": "text",
-    ...configValues,
+    defaults: {
+      "log.level": "warn",
+      "log.output": "file",
+      "log.format": "text",
+      ...configValues,
+    },
   });
   const app = {
     commandLine: { appendSwitch: vi.fn() },
@@ -146,7 +127,7 @@ function createDeps(configValues?: Record<string, unknown>) {
 describe("LoggingModule Integration", () => {
   it("logs build and platform info during before-ready hook", async () => {
     const deps = createDeps();
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -167,7 +148,7 @@ describe("LoggingModule Integration", () => {
 
   it("initializes logging service during init hook", async () => {
     const deps = createDeps();
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -182,7 +163,7 @@ describe("LoggingModule Integration", () => {
 
   it("logs startup info before initializing logging service", async () => {
     const deps = createDeps();
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -203,7 +184,7 @@ describe("LoggingModule Integration", () => {
       "log.output": "file,console",
       "log.format": "json",
     });
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -228,7 +209,7 @@ describe("LoggingModule Integration", () => {
       "log.output": "file",
       "log.format": "text",
     });
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -249,7 +230,7 @@ describe("LoggingModule Integration", () => {
 
   it("appends --enable-logging=file, --log-file, and --v=1 during before-ready", async () => {
     const deps = createDeps();
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -266,7 +247,7 @@ describe("LoggingModule Integration", () => {
 
   it("starts the truncation watcher during init", async () => {
     const deps = createDeps();
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
@@ -284,7 +265,7 @@ describe("LoggingModule Integration", () => {
     const oversize = "A".repeat(21 * 1024 * 1024);
     deps.files.set("/logs/electron.log", oversize);
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
@@ -303,7 +284,7 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     deps.files.set("/logs/electron.log", "small");
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
@@ -319,7 +300,7 @@ describe("LoggingModule Integration", () => {
     const deps = createDeps();
     // No file seeded — readFile rejects with ENOENT
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerModule(createLoggingModule(deps));
     await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
@@ -332,7 +313,7 @@ describe("LoggingModule Integration", () => {
 
   it("stops the truncation watcher on app:shutdown stop hook", async () => {
     const deps = createDeps();
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalAppStartOperation());
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new MinimalAppShutdownOperation());

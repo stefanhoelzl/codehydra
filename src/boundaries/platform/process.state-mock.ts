@@ -50,6 +50,9 @@ export interface SpawnedProcessMockState extends MockState {
  * Extends MockState for snapshot/toString support.
  */
 export interface ProcessRunnerMockState extends MockState {
+  /** Total number of processes spawned so far. */
+  readonly spawnedCount: number;
+
   /**
    * Get spawned process by index.
    * @throws Error if index out of bounds
@@ -170,6 +173,10 @@ class MockSpawnedProcessImpl implements MockSpawnedProcess {
  */
 class ProcessRunnerMockStateImpl implements ProcessRunnerMockState {
   private readonly processes: MockSpawnedProcess[] = [];
+
+  get spawnedCount(): number {
+    return this.processes.length;
+  }
 
   addProcess(process: MockSpawnedProcess): void {
     this.processes.push(process);

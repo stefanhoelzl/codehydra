@@ -7,8 +7,8 @@
  * project:open for each, and emits EVENT_APP_STARTED.
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -23,21 +23,7 @@ import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "./lib/module";
 import type { Operation, OperationContext } from "./lib/operation";
 import type { Project } from "../shared/api/types";
-import type { Config } from "../boundaries/platform/config";
-
-function createStubConfig(): Config {
-  return {
-    register: () => {},
-    load: () => {},
-    get: () => null,
-    set: async () => {},
-    getDefinitions: () => new Map(),
-    getEffective: () => ({}),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 
 // =============================================================================
 // Test Helpers
@@ -97,9 +83,9 @@ function createTestSetup(
   modules: IntentModule[],
   stub: Operation<OpenProjectIntent, Project>
 ): { dispatcher: Dispatcher } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(createStubConfig()));
+  dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(createMockConfig()));
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, stub);
 
   for (const m of modules) dispatcher.registerModule(m);

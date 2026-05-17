@@ -5,11 +5,11 @@
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Path } from "../utils/path/path";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
@@ -23,28 +23,7 @@ import {
   DEFAULT_DISABLED_FEATURES,
   type ElectronLifecycleModuleDeps,
 } from "./electron-lifecycle-module";
-import type { Config } from "../boundaries/platform/config";
-
-// =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 
 // =============================================================================
 // Minimal Test Operations
@@ -92,7 +71,7 @@ describe("ElectronLifecycleModule Integration", () => {
   it("calls whenReady during init hook and provides app-ready capability", async () => {
     const mockApp = createMockApp();
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(
       INTENT_APP_START,
@@ -118,7 +97,7 @@ describe("ElectronLifecycleModule Integration", () => {
     const mockApp = createMockApp();
     mockApp.whenReady = vi.fn().mockRejectedValue(new Error("app failed to initialize"));
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(
       INTENT_APP_START,
@@ -143,7 +122,7 @@ describe("ElectronLifecycleModule Integration", () => {
   it("calls app.quit() when dispatching app:shutdown", async () => {
     const mockApp = createMockApp();
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
@@ -168,7 +147,7 @@ describe("ElectronLifecycleModule Integration", () => {
   describe("app-start/before-ready", () => {
     it("sets process.noAsar when not packaged", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -196,7 +175,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("redirects electron data paths when pathProvider is available", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -238,7 +217,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("does not set process.noAsar when packaged", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -267,7 +246,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("skips when buildInfo and pathProvider are not provided", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -290,7 +269,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("applies electron flags from configService", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -298,7 +277,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         configService: createMockConfig({
-          "electron.flags": "--disable-gpu --use-gl=swiftshader",
+          defaults: { "electron.flags": "--disable-gpu --use-gl=swiftshader" },
         }),
       });
 
@@ -315,14 +294,14 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("applies --no-proxy-server by default to suppress WPAD probes", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
-        configService: createMockConfig({ "electron.flags": null }),
+        configService: createMockConfig({ defaults: { "electron.flags": null } }),
       });
 
       dispatcher.registerModule(module);
@@ -337,7 +316,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("applies curated default --disable-features when electron.disabled-features is unset", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -360,7 +339,7 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("user-supplied electron.disabled-features fully replaces defaults", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -368,7 +347,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger: SILENT_LOGGER,
         configService: createMockConfig({
-          "electron.disabled-features": "FeatureA, FeatureB",
+          defaults: { "electron.disabled-features": "FeatureA, FeatureB" },
         }),
       });
 
@@ -393,14 +372,14 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("empty string for electron.disabled-features disables nothing (no --disable-features switch)", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
-        configService: createMockConfig({ "electron.disabled-features": "" }),
+        configService: createMockConfig({ defaults: { "electron.disabled-features": "" } }),
       });
 
       dispatcher.registerModule(module);
@@ -418,14 +397,14 @@ describe("ElectronLifecycleModule Integration", () => {
 
     it("explicit null for electron.disabled-features still applies defaults", async () => {
       const mockApp = createMockApp();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
       const module = createElectronLifecycleModule({
         app: mockApp,
         logger: SILENT_LOGGER,
-        configService: createMockConfig({ "electron.disabled-features": null }),
+        configService: createMockConfig({ defaults: { "electron.disabled-features": null } }),
       });
 
       dispatcher.registerModule(module);
@@ -442,7 +421,7 @@ describe("ElectronLifecycleModule Integration", () => {
     it("logs the disabled features list at info level", async () => {
       const mockApp = createMockApp();
       const logger = createMockLogger();
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
@@ -450,7 +429,7 @@ describe("ElectronLifecycleModule Integration", () => {
         app: mockApp,
         logger,
         configService: createMockConfig({
-          "electron.disabled-features": "Foo,Bar",
+          defaults: { "electron.disabled-features": "Foo,Bar" },
         }),
       });
 
@@ -482,7 +461,7 @@ describe("ElectronLifecycleModule Integration", () => {
       };
       const mockDispatcher = { dispatch: vi.fn().mockResolvedValue(undefined) };
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(
         INTENT_APP_START,
@@ -513,7 +492,7 @@ describe("ElectronLifecycleModule Integration", () => {
     it("does not crash when powerMonitor is null", async () => {
       const mockApp = createMockApp();
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(
         INTENT_APP_START,
@@ -542,7 +521,7 @@ describe("ElectronLifecycleModule Integration", () => {
       const mockApp = createMockApp();
       const mockPowerMonitor = { on: vi.fn() };
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(
         INTENT_APP_START,

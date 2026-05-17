@@ -10,7 +10,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createDebugModule } from "./debug-module";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookHandler, HookContext } from "../intents/lib/operation";
-import type { Config } from "../boundaries/platform/config";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import type { CheckDepsResult } from "../intents/app-start";
 import type { SetupProgressReporter } from "../intents/setup";
 import type { DeleteHookResult, DetectHookResult } from "../intents/delete-workspace";
@@ -19,91 +19,7 @@ import { RESOLVE_WORKSPACE_OPERATION_ID } from "../intents/resolve-workspace";
 import type { ResolveHookResult } from "../intents/resolve-workspace";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { SETUP_OPERATION_ID } from "../intents/setup";
-import type { NotificationManager, NotificationHandle } from "./notification-manager";
-import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
-
-// =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
-
-// =============================================================================
-// Mock NotificationManager
-// =============================================================================
-
-interface MockNotification {
-  opened: NotificationConfig;
-  updates: NotificationConfig[];
-  closed: boolean;
-  listeners: Set<(event: NotificationUserEvent) => void>;
-}
-
-function createMockNotificationManager(): {
-  manager: NotificationManager;
-  notifications: MockNotification[];
-  emitEvent: (index: number, actionId: string) => void;
-} {
-  const notifications: MockNotification[] = [];
-  const manager = {
-    open(config: NotificationConfig): NotificationHandle {
-      const slot: MockNotification = {
-        opened: config,
-        updates: [],
-        closed: false,
-        listeners: new Set(),
-      };
-      notifications.push(slot);
-      const id = `ntf-${notifications.length}`;
-      return {
-        id,
-        update: (next: NotificationConfig) => {
-          slot.updates.push(next);
-        },
-        close: () => {
-          slot.closed = true;
-        },
-        onEvent: (handler) => {
-          slot.listeners.add(handler);
-          return () => {
-            slot.listeners.delete(handler);
-          };
-        },
-        nextEvent: () => new Promise<NotificationUserEvent>(() => {}),
-        closed: new Promise<void>(() => {}),
-      } satisfies NotificationHandle;
-    },
-    routeEvent: () => {},
-  } as unknown as NotificationManager;
-  return {
-    manager,
-    notifications,
-    emitEvent(index, actionId) {
-      const slot = notifications[index];
-      if (!slot) throw new Error(`No notification at index ${index}`);
-      const event: NotificationUserEvent = {
-        notificationId: `ntf-${index + 1}`,
-        actionId,
-      };
-      for (const handler of slot.listeners) handler(event);
-    },
-  };
-}
+import { createMockNotificationManager } from "./notification-manager.state-mock";
 
 // =============================================================================
 // Test Helpers
@@ -188,7 +104,7 @@ describe("DebugModule Integration", () => {
 
     it("delete hook returns simulated error and captures workspace identity", async () => {
       const module = createDebugModule({
-        configService: createMockConfig({ "debug.blocking-pids": true }),
+        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
       });
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
       const result = (await hook.handler(
@@ -199,7 +115,7 @@ describe("DebugModule Integration", () => {
 
     it("detect hook returns fake blocking processes", async () => {
       const module = createDebugModule({
-        configService: createMockConfig({ "debug.blocking-pids": true }),
+        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
       });
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "detect");
       const result = (await hook.handler(makeHookContext())) as DetectHookResult;
@@ -215,7 +131,7 @@ describe("DebugModule Integration", () => {
 
     it("resolve hook returns cached identity after delete captures it", async () => {
       const module = createDebugModule({
-        configService: createMockConfig({ "debug.blocking-pids": true }),
+        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
       });
 
       // Run delete hook to capture workspace identity
@@ -239,7 +155,7 @@ describe("DebugModule Integration", () => {
 
     it("resolve hook returns empty for unknown workspace", async () => {
       const module = createDebugModule({
-        configService: createMockConfig({ "debug.blocking-pids": true }),
+        configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
       });
       const resolveHook = getHook(module, RESOLVE_WORKSPACE_OPERATION_ID, "resolve");
       const ctx = {
@@ -272,7 +188,7 @@ describe("DebugModule Integration", () => {
   describe("setup (active)", () => {
     it("check-deps returns missingBinaries", async () => {
       const module = createDebugModule({
-        configService: createMockConfig({ "debug.setup": true }),
+        configService: createMockConfig({ defaults: { "debug.setup": true } }),
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
       const result = (await hook.handler(makeHookContext())) as CheckDepsResult;
@@ -283,7 +199,7 @@ describe("DebugModule Integration", () => {
       vi.useFakeTimers();
       try {
         const module = createDebugModule({
-          configService: createMockConfig({ "debug.setup": true }),
+          configService: createMockConfig({ defaults: { "debug.setup": true } }),
         });
         const hook = getHook(module, SETUP_OPERATION_ID, "binary");
         const { report, calls } = makeReportSpy();
@@ -340,7 +256,7 @@ describe("DebugModule Integration", () => {
     it("start hook opens 'Update available' notification when debug.update is on", async () => {
       const { manager, notifications } = createMockNotificationManager();
       const module = createDebugModule({
-        configService: createMockConfig({ "debug.update": true }),
+        configService: createMockConfig({ defaults: { "debug.update": true } }),
         notificationManager: manager,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
@@ -356,13 +272,13 @@ describe("DebugModule Integration", () => {
       try {
         const { manager, notifications, emitEvent } = createMockNotificationManager();
         const module = createDebugModule({
-          configService: createMockConfig({ "debug.update": true }),
+          configService: createMockConfig({ defaults: { "debug.update": true } }),
           notificationManager: manager,
         });
         const hook = getHook(module, APP_START_OPERATION_ID, "start");
         await hook.handler(makeHookContext());
 
-        emitEvent(0, "install");
+        emitEvent(0, { actionId: "install" });
 
         // 20 increments of 150ms
         for (let i = 0; i < 20; i++) {
@@ -384,7 +300,9 @@ describe("DebugModule Integration", () => {
   describe("combined setup + update", () => {
     it("check-deps returns missingBinaries when debug.setup is on", async () => {
       const module = createDebugModule({
-        configService: createMockConfig({ "debug.setup": true, "debug.update": true }),
+        configService: createMockConfig({
+          defaults: { "debug.setup": true, "debug.update": true },
+        }),
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
       const result = (await hook.handler(makeHookContext())) as CheckDepsResult;

@@ -12,8 +12,8 @@
  * - project:resolve failure propagates
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -74,7 +74,7 @@ interface TestSetup {
 }
 
 function createTestSetup(opts?: TestSetupOptions): TestSetup {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
   dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, new GetProjectBasesOperation());

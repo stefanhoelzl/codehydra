@@ -6,12 +6,11 @@
  * hook point, handle errors, and support custom hook contexts.
  */
 
+import { createMockDispatcher } from "./dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { Dispatcher } from "./dispatcher";
 import type { HookContext } from "./operation";
 import type { Intent } from "./types";
 import { createMinimalOperation } from "./operation.test-utils";
-import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 
 // =============================================================================
 // Test Constants
@@ -26,7 +25,7 @@ function testIntent(): Intent {
 }
 
 function createTestSetup() {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
   return { dispatcher };
 }
 

@@ -33,8 +33,8 @@
  * workspace:open setup hook.
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -210,7 +210,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   const keepFilesService = opts?.keepFilesService ?? createMockKeepFilesService();
   const workspaceUrl = opts?.workspaceUrl ?? WORKSPACE_URL;
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
@@ -878,7 +878,7 @@ describe("OpenWorkspace Operation", () => {
       };
 
       // Re-create setup with the extra module
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
       dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());

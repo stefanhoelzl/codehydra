@@ -16,8 +16,8 @@
  * #11: interceptor cancellation prevents operation and event
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -49,6 +49,8 @@ import {
   INTENT_RESOLVE_PROJECT,
 } from "./resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
+import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
@@ -58,27 +60,6 @@ import { extractWorkspaceName } from "../shared/api/id-utils";
 // =============================================================================
 // Behavioral Mocks
 // =============================================================================
-
-interface MockViewManager {
-  activeWorkspacePath: string | null;
-  focusState: boolean;
-  setActiveWorkspace(path: string | null, focus?: boolean): void;
-  getActiveWorkspacePath(): string | null;
-}
-
-function createMockViewManager(initialActive: string | null = null): MockViewManager {
-  return {
-    activeWorkspacePath: initialActive,
-    focusState: false,
-    setActiveWorkspace(path: string | null, focus: boolean = true): void {
-      this.activeWorkspacePath = path;
-      this.focusState = focus;
-    },
-    getActiveWorkspacePath(): string | null {
-      return this.activeWorkspacePath;
-    },
-  };
-}
 
 // =============================================================================
 // Mock state for workspace resolution
@@ -165,7 +146,7 @@ function createMultiWorkspaceProject(): ProjectEntry {
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  viewManager: MockViewManager;
+  viewManager: IViewManager;
   appState: MockAppState;
 }
 
@@ -175,10 +156,12 @@ function createTestSetup(opts?: {
   projects?: ProjectEntry[];
 }): TestSetup {
   const projects = opts?.projects ?? [createTestProject()];
-  const viewManager = createMockViewManager(opts?.initialActive ?? null);
+  const viewManager = createMockViewManager({
+    initialActiveWorkspace: opts?.initialActive ?? null,
+  });
   const appState = createMockAppState(projects);
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
@@ -350,7 +333,7 @@ describe("SwitchWorkspace Operation", () => {
 
       await dispatcher.dispatch(switchIntent());
 
-      expect(viewManager.activeWorkspacePath).toBe(TEST_WORKSPACE_PATH);
+      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH);
     });
   });
 
@@ -386,7 +369,7 @@ describe("SwitchWorkspace Operation", () => {
 
       await dispatcher.dispatch(switchIntent(undefined, undefined));
 
-      expect(viewManager.focusState).toBe(true);
+      expect(viewManager.setActiveWorkspace).toHaveBeenLastCalledWith(TEST_WORKSPACE_PATH, true);
     });
   });
 
@@ -397,7 +380,7 @@ describe("SwitchWorkspace Operation", () => {
 
       await dispatcher.dispatch(switchIntent(undefined, false));
 
-      expect(viewManager.focusState).toBe(false);
+      expect(viewManager.setActiveWorkspace).toHaveBeenLastCalledWith(TEST_WORKSPACE_PATH, false);
     });
   });
 
@@ -410,7 +393,7 @@ describe("SwitchWorkspace Operation", () => {
         dispatcher.dispatch(switchIntent("/projects/my-app/workspaces/nonexistent"))
       ).rejects.toThrow("Workspace not found: /projects/my-app/workspaces/nonexistent");
 
-      expect(viewManager.activeWorkspacePath).toBeNull();
+      expect(viewManager.getActiveWorkspacePath()).toBeNull();
     });
 
     it("rejects when project not found", async () => {
@@ -421,7 +404,7 @@ describe("SwitchWorkspace Operation", () => {
         dispatcher.dispatch(switchIntent("/nonexistent/workspaces/feature-login"))
       ).rejects.toThrow("Workspace not found: /nonexistent/workspaces/feature-login");
 
-      expect(viewManager.activeWorkspacePath).toBeNull();
+      expect(viewManager.getActiveWorkspacePath()).toBeNull();
     });
   });
 
@@ -437,7 +420,7 @@ describe("SwitchWorkspace Operation", () => {
 
       await dispatcher.dispatch(switchIntent());
 
-      expect(viewManager.activeWorkspacePath).toBe(TEST_WORKSPACE_PATH);
+      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH);
       expect(receivedEvents).toHaveLength(0);
     });
   });
@@ -456,8 +439,8 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(intent);
 
-      expect(viewManager.activeWorkspacePath).toBe(TEST_WORKSPACE_PATH);
-      expect(viewManager.focusState).toBe(true);
+      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH);
+      expect(viewManager.setActiveWorkspace).toHaveBeenLastCalledWith(TEST_WORKSPACE_PATH, true);
     });
   });
 
@@ -482,7 +465,7 @@ describe("SwitchWorkspace Operation", () => {
       const result = await dispatcher.dispatch(switchIntent());
 
       expect(result).toBeUndefined();
-      expect(viewManager.activeWorkspacePath).toBeNull();
+      expect(viewManager.getActiveWorkspacePath()).toBeNull();
       expect(receivedEvents).toHaveLength(0);
     });
   });
@@ -501,7 +484,7 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(autoIntent);
 
-      expect(viewManager.activeWorkspacePath).toBe(TEST_WORKSPACE_PATH_B);
+      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH_B);
     });
   });
 
@@ -524,7 +507,7 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(autoIntent);
 
-      expect(viewManager.activeWorkspacePath).toBeNull();
+      expect(viewManager.getActiveWorkspacePath()).toBeNull();
       expect(receivedEvents).toHaveLength(1);
       expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
     });
@@ -549,7 +532,7 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(autoIntent);
 
-      expect(viewManager.activeWorkspacePath).toBeNull();
+      expect(viewManager.getActiveWorkspacePath()).toBeNull();
       expect(receivedEvents).toHaveLength(1);
       expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
     });
@@ -571,7 +554,7 @@ describe("SwitchWorkspace Operation", () => {
       await dispatcher.dispatch(autoIntent);
 
       // Should still switch to a valid workspace instead of null
-      expect(viewManager.activeWorkspacePath).not.toBeNull();
+      expect(viewManager.getActiveWorkspacePath()).not.toBeNull();
     });
   });
 });

@@ -13,8 +13,8 @@
  * not call tracking. Windows behavior is tested via behavioral mocks on all platforms.
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import type { IntentModule } from "./lib/module";
@@ -337,7 +337,7 @@ function createTestHarness(options?: {
   isDirty?: boolean;
   unmergedCommits?: number;
 }): TestHarness {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   const progressCaptures: DeletionProgress[] = [];
 

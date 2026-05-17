@@ -6,9 +6,8 @@
  * extension requirements, or returns empty result on failure.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { InitResult } from "../intents/app-start";
@@ -42,7 +41,7 @@ function createMockDeps(overrides?: Partial<ExtensionModuleDeps>): ExtensionModu
 }
 
 function createTestSetup(deps: ExtensionModuleDeps) {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
   const module = createExtensionModule(deps);
   dispatcher.registerModule(module);
 

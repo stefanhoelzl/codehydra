@@ -11,8 +11,8 @@
  * #9: shutdown idempotency: second dispatch is no-op
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -201,7 +201,7 @@ function createTestSetup(
   modules: IntentModule[],
   options?: { withIdempotency?: boolean }
 ): { dispatcher: Dispatcher } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 

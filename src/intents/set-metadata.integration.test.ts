@@ -13,8 +13,8 @@
  * #15: Interceptor cancels metadata intent (no state change, no event)
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -68,7 +68,7 @@ function createTestSetup(): TestSetup {
   const metadataStore = new Map<string, Record<string, string>>();
 
   // Build dispatcher with hook registry
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   // Register operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());

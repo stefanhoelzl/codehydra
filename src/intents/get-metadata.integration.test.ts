@@ -10,8 +10,8 @@
  * #16: Hook data flows to operation
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -62,7 +62,7 @@ function createTestSetup(): TestSetup {
   const metadataStore = new Map<string, Record<string, string>>();
 
   // Build dispatcher with hook registry
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   // Register set-metadata and get-metadata operations
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());

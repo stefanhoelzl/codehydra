@@ -10,8 +10,8 @@
  * keyUp detection for exiting shortcut mode.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
@@ -159,7 +159,7 @@ interface TestHarness {
 }
 
 async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarness> {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
   const uiHandle = createViewHandle("ui-view");
   const callbacks = createMockCallbacks();
   const viewManager = createMockViewManager(uiHandle, callbacks, initialMode);

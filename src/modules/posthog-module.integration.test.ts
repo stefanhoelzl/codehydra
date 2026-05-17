@@ -10,8 +10,8 @@
  * before dispatching.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
@@ -45,36 +45,8 @@ import {
   type MockPostHogClient,
 } from "./posthog-client.state-mock";
 import type { Config } from "../boundaries/platform/config";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import type { Operation, OperationContext } from "../intents/lib/operation";
-
-// =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(
-  values?: Record<string, unknown>,
-  overrides?: Record<string, unknown>
-): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  let overridesValue: Record<string, unknown> = overrides ?? {};
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({ ...overridesValue }),
-    getHelpText: () => "",
-    /** Test-only: mutate the override snapshot returned by getOverrides(). */
-    __setOverrides(next: Record<string, unknown>) {
-      overridesValue = next;
-    },
-  } as Config & { __setOverrides(next: Record<string, unknown>): void };
-}
 
 /**
  * Minimal workspace:open operation that emits workspace:created with a given payload.
@@ -125,16 +97,16 @@ function createTestSetup(overrides?: {
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
   const logger = createBehavioralLogger();
   const { factory, getMock } = createMockPostHogClientFactory();
-  const mockConfig = createMockConfig(
-    {
+  const mockConfig = createMockConfig({
+    defaults: {
       "telemetry.enabled": false,
       "telemetry.distinct-id": null,
       ...overrides?.configValues,
     },
-    overrides?.configOverrides
-  );
+    ...(overrides?.configOverrides !== undefined && { overrides: overrides.configOverrides }),
+  });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   const posthogModule = createPosthogModule({
     platformInfo,

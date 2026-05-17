@@ -17,8 +17,8 @@
  * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
@@ -75,76 +75,16 @@ import {
   INTENT_APP_RESUME,
 } from "../intents/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import type { Config } from "../boundaries/platform/config";
+import { createMockConfig } from "../boundaries/platform/config.test-utils";
+import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 
 // =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
-
-// =============================================================================
 // Mock IViewManager
 // =============================================================================
-
-function createMockViewManager() {
-  let currentMode: "workspace" | "shortcut" | "dialog" = "workspace";
-  let activePath: string | null = null;
-
-  return {
-    getMode: vi.fn(() => currentMode),
-    setMode: vi.fn((mode: "workspace" | "shortcut" | "dialog") => {
-      currentMode = mode;
-    }),
-    isUIAvailable: vi.fn().mockReturnValue(true),
-    getActiveWorkspacePath: vi.fn(() => activePath),
-    setActiveWorkspace: vi.fn((path: string | null) => {
-      activePath = path;
-    }),
-    createWorkspaceView: vi.fn(),
-    preloadWorkspaceUrl: vi.fn(),
-    destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
-    onLoadingChange: vi.fn().mockReturnValue(vi.fn()),
-    sendToUI: vi.fn(),
-    loadUIContent: vi.fn().mockResolvedValue(undefined),
-    updateBounds: vi.fn(),
-    focus: vi.fn(),
-    onModeChange: vi.fn(),
-    onWorkspaceChange: vi.fn(),
-    updateCodeServerPort: vi.fn(),
-    isWorkspaceLoading: vi.fn(),
-    setWorkspaceLoaded: vi.fn(),
-    reloadAllViews: vi.fn(),
-    create: vi.fn(),
-    destroy: vi.fn(),
-    // Test accessors
-    _setActivePath: (p: string | null) => {
-      activePath = p;
-    },
-    _setCurrentMode: (m: "workspace" | "shortcut" | "dialog") => {
-      currentMode = m;
-    },
-  };
-}
 
 function createMockShellLayers() {
   return {
@@ -375,13 +315,15 @@ function createTestSetup(
     configValues?: Record<string, unknown>;
   }
 ): TestSetup {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   const viewManager = createMockViewManager();
   const layers = createMockShellLayers();
   const mockConfig = createMockConfig({
-    "experimental.load-on-resume": false,
-    ...options?.configValues,
+    defaults: {
+      "experimental.load-on-resume": false,
+      ...options?.configValues,
+    },
   });
 
   const deps: ViewModuleDeps = {
@@ -426,7 +368,7 @@ describe("ViewModule Integration", () => {
         operation: new MinimalSetModeOperation(),
       });
 
-      viewManager._setCurrentMode("workspace");
+      viewManager.setMode("workspace");
 
       await dispatcher.dispatch({
         type: INTENT_SET_MODE,
@@ -506,7 +448,7 @@ describe("ViewModule Integration", () => {
         { agent: "opencode", label: "OpenCode", icon: "terminal" },
       ];
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(
@@ -575,7 +517,7 @@ describe("ViewModule Integration", () => {
       });
 
       // Mark workspace as active
-      viewManager._setActivePath("/workspaces/ws1");
+      viewManager.setActiveWorkspace("/workspaces/ws1", false);
 
       const result = await dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
@@ -600,7 +542,9 @@ describe("ViewModule Integration", () => {
         operation: new MinimalDeleteOperation(),
       });
 
-      viewManager.destroyWorkspaceView.mockRejectedValue(new Error("view gone"));
+      (viewManager.destroyWorkspaceView as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("view gone")
+      );
 
       const result = await dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
@@ -645,8 +589,9 @@ describe("ViewModule Integration", () => {
         operation: new MinimalSwitchOperation(),
       });
 
-      // Set workspace as already active
-      viewManager._setActivePath("/workspaces/ws1");
+      // Set workspace as already active, then clear the spy's call history
+      viewManager.setActiveWorkspace("/workspaces/ws1", false);
+      (viewManager.setActiveWorkspace as ReturnType<typeof vi.fn>).mockClear();
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
@@ -918,7 +863,7 @@ describe("ViewModule Integration", () => {
         },
       };
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
@@ -963,12 +908,12 @@ describe("ViewModule Integration", () => {
         },
       };
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
       // onLoadingChange returns our trackable cleanup
-      viewManager.onLoadingChange.mockReturnValue(cleanupFn);
+      (viewManager.onLoadingChange as ReturnType<typeof vi.fn>).mockReturnValue(cleanupFn);
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation());
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
@@ -1015,7 +960,7 @@ describe("ViewModule Integration", () => {
         },
       };
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
@@ -1046,7 +991,7 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   describe("app-start/init", () => {
     it("calls menuLayer, windowManager, viewManager, and viewLayer in order", async () => {
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const viewManager = createMockViewManager();
       const layers = createMockShellLayers();
 
@@ -1093,7 +1038,7 @@ describe("ViewModule Integration", () => {
     });
 
     it("skips optional deps when not provided", async () => {
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const viewManager = createMockViewManager();
 
       dispatcher.registerOperation(

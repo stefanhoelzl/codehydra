@@ -3,28 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { createMockHttpClient } from "../../boundaries/platform/http-client.state-mock";
-import type { Config } from "../../boundaries/platform/config";
-import type { ConfigKeyDefinition } from "../../boundaries/platform/config-definition";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import { createYouTrackSource } from "./youtrack-source";
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
-      if (!store.has(def.name)) store.set(def.name, def.default);
-    },
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
 
 // =============================================================================
 // YouTrack API Response Helpers
@@ -72,7 +52,7 @@ const ISSUES_URL = `${BASE_URL}/api/issues?query=${encodeURIComponent(DEFAULT_QU
 describe("YouTrackSource", () => {
   function createSource(config?: Record<string, unknown>) {
     const httpClient = createMockHttpClient();
-    const configService = createMockConfig(config);
+    const configService = createMockConfig({ defaults: config });
     const source = createYouTrackSource({
       httpClient,
       logger: SILENT_LOGGER,

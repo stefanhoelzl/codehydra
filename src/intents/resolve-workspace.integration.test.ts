@@ -11,8 +11,8 @@
  * #4: propagates hook handler errors
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -40,7 +40,7 @@ const WORKSPACE_NAME = "feature-x" as WorkspaceName;
 function createTestSetup(resolveHandler?: (ctx: HookContext) => Promise<ResolveHookResult>): {
   dispatcher: Dispatcher;
 } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 
