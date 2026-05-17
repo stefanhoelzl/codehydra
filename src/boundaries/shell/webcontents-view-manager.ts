@@ -22,6 +22,8 @@ import { BaseViewManager, type CreatedWorkspaceView } from "./view-manager-base"
 import {
   Z_UI_BOTTOM,
   computeWorkspaceRect,
+  type DevtoolsTarget,
+  type KeyboardTarget,
   type Rect,
   type WorkspaceState,
 } from "./view-manager-types";
@@ -402,6 +404,30 @@ export class WebContentsViewManager extends BaseViewManager {
   protected bringUIToTop(): void {
     // No index = append to top
     this.viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
+  }
+
+  protected makeDevtoolsTarget(handle: ViewHandle): DevtoolsTarget {
+    const viewLayer = this.viewLayer;
+    return {
+      id: handle.id,
+      toggle: () => {
+        if (viewLayer.isDevToolsOpened(handle)) {
+          viewLayer.closeDevTools(handle);
+        } else {
+          viewLayer.openDevTools(handle, { mode: "detach" });
+        }
+      },
+      isOpen: () => viewLayer.isDevToolsOpened(handle),
+    };
+  }
+
+  protected makeKeyboardTarget(handle: ViewHandle): KeyboardTarget {
+    const viewLayer = this.viewLayer;
+    return {
+      id: handle.id,
+      onBeforeInput: (callback) => viewLayer.onBeforeInputEvent(handle, callback),
+      onDestroyed: (callback) => viewLayer.onDestroyed(handle, callback),
+    };
   }
 
   protected bringUIToBottom(forceRedraw: boolean): void {
