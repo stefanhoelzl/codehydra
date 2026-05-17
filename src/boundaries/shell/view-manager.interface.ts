@@ -1,6 +1,11 @@
 /**
- * Interface for ViewManager to enable testability.
- * Allows mocking in handler tests.
+ * Interface for ViewManager to enable testability and to allow alternative
+ * implementations (e.g. WebContents-based vs. iframe-based) to coexist behind
+ * a feature flag.
+ *
+ * Implementations MUST honor the invariants documented on each method.
+ * The conformance test suite (`view-manager.conformance.ts`) encodes most
+ * of them.
  */
 
 import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
@@ -25,10 +30,36 @@ export type Unsubscribe = () => void;
 export type LoadingChangeCallback = (path: string, loading: boolean) => void;
 
 /**
- * Interface for managing WebContentsViews.
- * Used for dependency injection and testability.
+ * Interface for managing per-workspace views and the UI layer.
+ *
+ * Lifecycle invariants:
+ * - Two-phase init: `new Impl(deps)` followed by `await create()` before any
+ *   other call. `create()` creates the UI view and wires resize listeners.
+ * - `destroy()` is idempotent and tears down all per-workspace state.
+ *
+ * Coordination invariants (apply to every implementation):
+ * - `setActiveWorkspace`: the new view MUST be attached BEFORE the previous
+ *   view is detached, so there is never a blank frame.
+ * - Z-order after `setActiveWorkspace`: if the current mode is `dialog`,
+ *   `shortcut`, or `hover`, the UI layer MUST end up on top again.
+ * - Idempotency: re-issuing `setMode(same)`, `setActiveWorkspace(samePath)`,
+ *   `setWorkspaceLoaded(same)`, and `destroyWorkspaceView(unknown)` is a no-op
+ *   and emits no events.
+ * - `onLoadingChange`: a subscriber registered after a workspace has already
+ *   finished loading MUST receive an immediate `(path, false)` replay for
+ *   that workspace, so late-binding consumers don't get stuck.
+ * - `focus()` routing is a function of mode + attachment state only; see the
+ *   method docstring.
+ * - During shutdown (after `destroy()` begins), focus operations are
+ *   suppressed; implementations must not reach into freed view handles.
  */
 export interface IViewManager {
+  /**
+   * Creates UI view and wires event subscriptions.
+   * MUST be called before any other method. Safe to call only once.
+   */
+  create(): void;
+
   /**
    * Returns the UI layer view handle.
    */
@@ -75,7 +106,8 @@ export interface IViewManager {
   ): ViewHandle;
 
   /**
-   * Destroys a workspace view.
+   * Destroys a workspace view. Idempotent: calling for an unknown path is a
+   * no-op.
    *
    * Navigates to about:blank before closing to ensure resources are released.
    * Uses a timeout to ensure destruction completes even if navigation hangs.
@@ -93,7 +125,12 @@ export interface IViewManager {
   getWorkspaceView(workspacePath: string): ViewHandle | undefined;
 
   /**
-   * Updates all view bounds (called on window resize).
+   * Updates view bounds (called on window resize).
+   *
+   * MUST be O(1) in the number of workspaces: only the UI layer and the
+   * active workspace are repositioned. Loading (detached) workspaces still
+   * receive bounds updates so the renderer re-layouts at the correct size
+   * before they are revealed.
    */
   updateBounds(): void;
 
@@ -104,7 +141,11 @@ export interface IViewManager {
    * Other workspaces are detached from contentView entirely (not attached, no GPU usage).
    *
    * On first activation, the workspace's URL is loaded (lazy loading).
-   * Attach happens BEFORE detach of previous view for visual continuity (no gap).
+   * The new view MUST be attached BEFORE the previous view is detached so
+   * there is no visual gap. If the current mode is `dialog`, `shortcut`, or
+   * `hover`, the UI layer MUST be re-raised to the top after the switch.
+   *
+   * Idempotent: calling with the same path twice has no observable effect.
    *
    * By default, focuses the workspace view so it receives keyboard input.
    *
@@ -127,6 +168,8 @@ export interface IViewManager {
    * - workspace mode: focuses workspace view if attached, else UI
    * - shortcut mode: focuses UI (keyboard events go to sidebar)
    * - dialog/hover mode: no-op (these modes manage their own focus)
+   *
+   * Implementations MUST treat focus as a no-op once `destroy()` has begun.
    */
   focus(): void;
 
@@ -135,8 +178,10 @@ export interface IViewManager {
    * - "workspace": UI at z-index 0, focus active workspace
    * - "shortcut": UI on top, focus UI layer
    * - "dialog": UI on top, no focus change
+   * - "hover": UI on top, no focus change
    *
-   * Mode transitions are idempotent - setting the same mode twice does not emit an event.
+   * Idempotent: setting the same mode twice does not emit an event and does
+   * not re-focus.
    *
    * @param mode - The new UI mode
    */
@@ -199,6 +244,11 @@ export interface IViewManager {
    * Subscribe to loading state changes.
    * Called when a workspace starts or finishes loading.
    *
+   * Late-binding guarantee: when a subscriber registers, it MUST receive an
+   * immediate `(path, false)` callback for every workspace that has already
+   * finished loading. This prevents consumers registered after startup
+   * (e.g. the splash-screen coordinator) from waiting forever.
+   *
    * @param callback - Called with (path, loading) when loading state changes
    * @returns Unsubscribe function
    */
@@ -230,7 +280,8 @@ export interface IViewManager {
 
   /**
    * Destroys all views and cleans up resources.
-   * Called during application shutdown.
+   * Called during application shutdown. Idempotent. After this returns,
+   * focus operations are no-ops and view handles must not be touched.
    */
   destroy(): void;
 
