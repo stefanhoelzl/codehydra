@@ -34,6 +34,7 @@ function createStubConfig(): Config {
     getDefinitions: () => new Map(),
     getEffective: () => ({}),
     getDefaults: () => ({}),
+    getOverrides: () => ({}),
     getHelpText: () => "",
   };
 }

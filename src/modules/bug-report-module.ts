@@ -17,25 +17,25 @@ import type { IDispatcher } from "../intents/lib/dispatcher";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logging, Logger } from "../boundaries/platform/logging";
-import type { Config } from "../boundaries/platform/config";
 import type { DialogConfig } from "../shared/dialog-types";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { INTENT_SUBMIT_BUG_REPORT, type SubmitBugReportIntent } from "../intents/submit-bug-report";
-import { buildConfigBlock } from "./bug-report-config-block";
 
 /** Maximum raw log bytes captured per bug report (compressed before send). */
 const MAX_LOG_SIZE = 20 * 1024 * 1024;
+
+const DESCRIPTION_HEADER = "# describe your issue\n";
+const DESCRIPTION_INITIAL = `${DESCRIPTION_HEADER}\n`;
 
 export interface BugReportModuleDeps {
   readonly dialogManager: DialogManager;
   readonly fileSystem: Pick<FileSystemBoundary, "readFile">;
   readonly loggingService: Pick<Logging, "getLogFilePath" | "getElectronLogFilePath">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
-  readonly config: Pick<Config, "getDefinitions" | "getEffective" | "getDefaults">;
   readonly logger: Logger;
 }
 
-function buildDialogConfig(initial: { value: string; cursorOffset: number }): DialogConfig {
+function buildDialogConfig(): DialogConfig {
   return {
     sections: [
       { type: "text", content: "Report a Bug", style: "heading", icon: "bug" },
@@ -44,18 +44,12 @@ function buildDialogConfig(initial: { value: string; cursorOffset: number }): Di
         id: "description",
         placeholder: "Describe the issue...",
         multiline: true,
-        initialValue: initial.value,
-        cursorOffset: initial.cursorOffset,
+        initialValue: DESCRIPTION_INITIAL,
+        cursorOffset: DESCRIPTION_HEADER.length,
       },
       {
         type: "text",
-        content:
-          "Your non-default config is included below — review for sensitive values before sending.",
-        style: "subtitle",
-      },
-      {
-        type: "text",
-        content: "Application logs will be included with your report.",
+        content: "Your current config and application logs will be included with your report.",
         style: "subtitle",
       },
     ],
@@ -104,8 +98,7 @@ export function createBugReportModule(deps: BugReportModuleDeps): IntentModule {
   function openDialog(): void {
     if (activeHandle) return;
 
-    const initial = buildConfigBlock(deps.config);
-    const handle = deps.dialogManager.open(buildDialogConfig(initial));
+    const handle = deps.dialogManager.open(buildDialogConfig());
     activeHandle = handle;
 
     handle.onEvent((event) => {

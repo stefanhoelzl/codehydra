@@ -85,6 +85,12 @@ export interface PostHogClient {
     additionalProperties?: Record<string | number, unknown>
   ): void;
 
+  /**
+   * Update person properties via PostHog's $set. `properties` is sent as the
+   * $set payload (this matches posthog-node's `identify` behavior).
+   */
+  identify(params: { distinctId: string; properties: Record<string, unknown> }): void;
+
   shutdown(): Promise<void>;
 }
 
@@ -280,6 +286,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
       electron_logs_format: electronLogsBlob.compressed ? "gzip+base64" : "none",
       electron_logs_raw_bytes: electronLogsBlob.rawBytesKept,
       electron_logs_raw_bytes_dropped: electronLogs.length - electronLogsBlob.rawBytesKept,
+      config: deps.configService.getOverrides(),
       ...eventProperties(),
       version: deps.buildInfo.version,
     });
@@ -362,6 +369,15 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
 
             if (configuredAgent !== undefined) {
               capture("app_launched", eventProperties());
+            }
+
+            // Sync current config overrides to PostHog as person properties.
+            // Only `agent` mutates post-launch today, and it lands on next launch.
+            if (enabled && client && distinctId) {
+              client.identify({
+                distinctId,
+                properties: { config: deps.configService.getOverrides() },
+              });
             }
           },
         },

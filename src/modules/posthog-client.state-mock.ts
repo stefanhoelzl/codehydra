@@ -40,9 +40,18 @@ export interface CapturedEvent {
 /**
  * State interface for the PostHog client mock.
  */
+export interface IdentifyCall {
+  readonly distinctId: string;
+  readonly properties: Record<string, unknown>;
+  readonly timestamp: number;
+}
+
 export interface PostHogClientMockState extends MockState {
   /** All captured events */
   readonly capturedEvents: readonly CapturedEvent[];
+
+  /** All identify() calls */
+  readonly identifyCalls: readonly IdentifyCall[];
 
   /** Whether shutdown() has been called */
   readonly shutdownCalled: boolean;
@@ -65,10 +74,15 @@ export type MockPostHogClient = PostHogClient & MockWithState<PostHogClientMockS
 
 class PostHogClientMockStateImpl implements PostHogClientMockState {
   private _capturedEvents: CapturedEvent[] = [];
+  private _identifyCalls: IdentifyCall[] = [];
   private _shutdownCalled: boolean = false;
 
   get capturedEvents(): readonly CapturedEvent[] {
     return [...this._capturedEvents];
+  }
+
+  get identifyCalls(): readonly IdentifyCall[] {
+    return [...this._identifyCalls];
   }
 
   get shutdownCalled(): boolean {
@@ -79,12 +93,17 @@ class PostHogClientMockStateImpl implements PostHogClientMockState {
     this._capturedEvents.push(event);
   }
 
+  addIdentify(call: IdentifyCall): void {
+    this._identifyCalls.push(call);
+  }
+
   markShutdown(): void {
     this._shutdownCalled = true;
   }
 
   reset(): void {
     this._capturedEvents = [];
+    this._identifyCalls = [];
     this._shutdownCalled = false;
   }
 
@@ -96,10 +115,15 @@ class PostHogClientMockStateImpl implements PostHogClientMockState {
     const events = this._capturedEvents
       .map((e) => `  ${e.event}: ${JSON.stringify(e.properties ?? {})}`)
       .join("\n");
+    const identifies = this._identifyCalls
+      .map((c) => `  ${c.distinctId}: ${JSON.stringify(c.properties)}`)
+      .join("\n");
     return [
       `PostHogClient (shutdown: ${this._shutdownCalled})`,
       `Events (${this._capturedEvents.length}):`,
       events || "  (none)",
+      `Identify (${this._identifyCalls.length}):`,
+      identifies || "  (none)",
     ].join("\n");
   }
 }
@@ -170,6 +194,14 @@ export function createMockPostHogClientFactory(): MockPostHogClientFactoryResult
             $exception_list: [{ type: err.name, value: err.message }],
             ...additionalProperties,
           },
+          timestamp: Date.now(),
+        });
+      },
+
+      identify(params: { distinctId: string; properties: Record<string, unknown> }): void {
+        state.addIdentify({
+          distinctId: params.distinctId,
+          properties: params.properties,
           timestamp: Date.now(),
         });
       },
