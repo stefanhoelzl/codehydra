@@ -19,12 +19,12 @@ import type { ViewBoundary, WindowOpenDetails, FailLoadDetails } from "./view";
 import type { SessionBoundary } from "./session";
 import type { WindowBoundaryInternal } from "./window";
 import type { ViewHandle, SessionHandle, WindowHandle } from "./types";
-
-/**
- * Sidebar minimized width in pixels.
- * Workspace views start at this offset, with expanded sidebar overlaying them.
- */
-export const SIDEBAR_MINIMIZED_WIDTH = 20;
+import {
+  Z_UI_BOTTOM,
+  computeUIRect,
+  computeWorkspaceRect,
+  type WorkspaceState,
+} from "./view-manager-types";
 
 /**
  * Global session partition name shared by all workspaces.
@@ -34,12 +34,6 @@ export const SIDEBAR_MINIMIZED_WIDTH = 20;
  * The `persist:` prefix ensures data survives app restarts.
  */
 const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
-
-/**
- * Minimum window dimensions.
- */
-const MIN_WIDTH = 800;
-const MIN_HEIGHT = 600;
 
 /**
  * Timeout for navigation to about:blank before closing a view.
@@ -63,12 +57,6 @@ const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
  * we see on Windows after multiple suspend/resume cycles.
  */
 const RELOAD_WATCHDOG_MS = 15000;
-
-/**
- * Z-index for the UI layer when positioned at the bottom of the view stack.
- * The window's own backgroundColor provides the backdrop, so the UI sits at index 0.
- */
-const Z_UI_BOTTOM = 0;
 
 /**
  * Configuration for creating a ViewManager.
@@ -98,39 +86,6 @@ export interface ViewManagerDeps {
   readonly config: ViewManagerConfig;
   /** Logger */
   readonly logger: Logger;
-}
-
-/**
- * Workspace state tracking.
- */
-interface WorkspaceState {
-  /** Handle to the view */
-  handle: ViewHandle;
-  /** Handle to the session */
-  sessionHandle: SessionHandle;
-  /** URL to load (stored for lazy loading) */
-  url: string;
-  /** Whether URL has been loaded */
-  urlLoaded: boolean;
-  /** Partition name for cleanup */
-  partitionName: string;
-  /** Current retry attempt count for load failures */
-  retryCount: number;
-  /** Timer handle for scheduled retry, if any */
-  retryTimer: NodeJS.Timeout | null;
-  /**
-   * When true, the next attachView() will call viewLayer.reload() on this
-   * view's webContents before returning. Set by the render-process-gone
-   * handler so the user gets a fresh page on next attach instead of a
-   * dead renderer.
-   */
-  needsReloadOnAttach: boolean;
-  /**
-   * Watchdog timer armed after a resume-triggered loadURL. Cleared when
-   * did-finish-load fires. If it fires, the view is assumed wedged and is
-   * destroyed + recreated from scratch.
-   */
-  reloadWatchdogTimer: NodeJS.Timeout | null;
 }
 
 /**
@@ -501,15 +456,7 @@ export class ViewManager implements IViewManager {
 
     // Set workspace bounds on detached view so code-server renders at correct size.
     // Electron respects setBounds on detached WebContentsViews.
-    const windowBounds = this.windowManager.getBounds();
-    const clampedWidth = Math.max(windowBounds.width, MIN_WIDTH);
-    const clampedHeight = Math.max(windowBounds.height, MIN_HEIGHT);
-    this.viewLayer.setBounds(viewHandle, {
-      x: SIDEBAR_MINIMIZED_WIDTH,
-      y: 0,
-      width: clampedWidth - SIDEBAR_MINIMIZED_WIDTH,
-      height: clampedHeight,
-    });
+    this.viewLayer.setBounds(viewHandle, computeWorkspaceRect(this.windowManager.getBounds()));
 
     this.logger.debug("View created", { workspace: workspaceName });
     return viewHandle;
@@ -628,17 +575,8 @@ export class ViewManager implements IViewManager {
 
     const bounds = this.windowManager.getBounds();
 
-    // Clamp to minimum dimensions
-    const width = Math.max(bounds.width, MIN_WIDTH);
-    const height = Math.max(bounds.height, MIN_HEIGHT);
-
     // UI layer: full window (so dialogs can overlay everything)
-    this.viewLayer.setBounds(this.uiViewHandle, {
-      x: 0,
-      y: 0,
-      width,
-      height,
-    });
+    this.viewLayer.setBounds(this.uiViewHandle, computeUIRect(bounds));
 
     // Only update active workspace bounds (O(1) - inactive views are detached).
     // Loading workspaces are also updated: they are detached but setBounds keeps
@@ -646,12 +584,7 @@ export class ViewManager implements IViewManager {
     if (this.activeWorkspacePath !== null) {
       const state = this.workspaceStates.get(this.activeWorkspacePath);
       if (state) {
-        this.viewLayer.setBounds(state.handle, {
-          x: SIDEBAR_MINIMIZED_WIDTH,
-          y: 0,
-          width: width - SIDEBAR_MINIMIZED_WIDTH,
-          height,
-        });
+        this.viewLayer.setBounds(state.handle, computeWorkspaceRect(bounds));
       }
     }
   }
