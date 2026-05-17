@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ViewManager, SIDEBAR_MINIMIZED_WIDTH, type ViewManagerDeps } from "./view-manager";
+import { ViewManager, type ViewManagerDeps } from "./view-manager";
+import { SIDEBAR_MINIMIZED_WIDTH } from "./view-manager-types";
 import type { WindowManager } from "./window-manager";
 import { SILENT_LOGGER } from "../platform/logging";
 import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
