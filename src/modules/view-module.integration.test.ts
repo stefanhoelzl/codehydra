@@ -124,8 +124,7 @@ function createMockViewManager() {
     destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
     onLoadingChange: vi.fn().mockReturnValue(vi.fn()),
     sendToUI: vi.fn(),
-    getUIViewHandle: vi.fn(),
-    getWorkspaceView: vi.fn(),
+    loadUIContent: vi.fn().mockResolvedValue(undefined),
     updateBounds: vi.fn(),
     focus: vi.fn(),
     onModeChange: vi.fn(),
@@ -1088,10 +1087,7 @@ describe("ViewModule Integration", () => {
       expect(viewManager.create).toHaveBeenCalled();
       expect(windowManager.maximizeAsync).toHaveBeenCalled();
       expect(windowManager.focus).toHaveBeenCalled();
-      expect(layers.viewLayer.loadURL).toHaveBeenCalledWith(
-        viewManager.getUIViewHandle(),
-        "file:///app/ui.html"
-      );
+      expect(viewManager.loadUIContent).toHaveBeenCalledWith("file:///app/ui.html");
       expect(viewManager.focus).toHaveBeenCalled();
     });
 

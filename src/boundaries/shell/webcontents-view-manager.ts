@@ -151,6 +151,10 @@ export class WebContentsViewManager extends BaseViewManager {
     this.viewLayer.send(this.uiViewHandle, channel, ...args);
   }
 
+  protected loadUIContentImpl(htmlPath: string): Promise<void> {
+    return this.viewLayer.loadURL(this.uiViewHandle, htmlPath);
+  }
+
   protected capturePNG(handle: ViewHandle): Promise<Buffer | null> {
     return this.viewLayer.capturePNG(handle);
   }

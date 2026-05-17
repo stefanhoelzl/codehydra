@@ -142,6 +142,10 @@ export abstract class BaseViewManager implements IViewManager {
     }
   }
 
+  loadUIContent(htmlPath: string): Promise<void> {
+    return this.loadUIContentImpl(htmlPath);
+  }
+
   // ---------------------------------------------------------------------------
   // Workspace lifecycle
   // ---------------------------------------------------------------------------
@@ -641,6 +645,9 @@ export abstract class BaseViewManager implements IViewManager {
   protected abstract isUIViewAvailable(): boolean;
 
   protected abstract sendToUIView(channel: string, args: unknown[]): void;
+
+  /** Load a URL/HTML path into the UI view. */
+  protected abstract loadUIContentImpl(htmlPath: string): Promise<void>;
 
   protected abstract capturePNG(handle: ViewHandle): Promise<Buffer | null>;
 
