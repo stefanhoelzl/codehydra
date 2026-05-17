@@ -62,14 +62,6 @@ export interface IViewManager {
   create(): void;
 
   /**
-   * Returns the UI layer view handle.
-   *
-   * @deprecated Prefer `getUIDevtoolsTarget()` / `getUIKeyboardTarget()`
-   *   to avoid coupling consumers to the underlying view technology.
-   */
-  getUIViewHandle(): ViewHandle;
-
-  /**
    * Returns a narrow capability for toggling devtools on the UI view.
    */
   getUIDevtoolsTarget(): DevtoolsTarget;
@@ -143,14 +135,6 @@ export interface IViewManager {
    * @param workspacePath - Absolute path to the workspace directory
    */
   destroyWorkspaceView(workspacePath: string): Promise<void>;
-
-  /**
-   * Gets a workspace view handle by path.
-   *
-   * @param workspacePath - Absolute path to the workspace directory
-   * @returns The ViewHandle or undefined if not found
-   */
-  getWorkspaceView(workspacePath: string): ViewHandle | undefined;
 
   /**
    * Updates view bounds (called on window resize).

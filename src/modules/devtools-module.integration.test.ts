@@ -8,38 +8,46 @@
 import { describe, it, expect, vi } from "vitest";
 import { createDevtoolsModule, type DevtoolsModuleDeps } from "./devtools-module";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
-import type { ViewHandle } from "../boundaries/shell/types";
+import type { DevtoolsTarget } from "../boundaries/shell/view-manager-types";
 
 // =============================================================================
 // Helpers
 // =============================================================================
 
-function createViewHandle(id: string): ViewHandle {
-  return { id, __brand: "ViewHandle" as const };
+function createDevtoolsTarget(id: string) {
+  let open = false;
+  const toggle = vi.fn(() => {
+    open = !open;
+  });
+  const isOpen = vi.fn(() => open);
+  const target: DevtoolsTarget & { _setOpen: (v: boolean) => void } = {
+    id,
+    toggle,
+    isOpen,
+    _setOpen: (v: boolean) => {
+      open = v;
+    },
+  };
+  return target;
 }
 
 function createMockDeps() {
-  const uiHandle = createViewHandle("ui-view");
-  const wsHandle = createViewHandle("ws-view");
+  const uiTarget = createDevtoolsTarget("ui-view");
+  const wsTarget = createDevtoolsTarget("ws-view");
   let activePath: string | null = "/test/workspace";
 
-  const viewLayer = {
-    openDevTools: vi.fn(),
-    closeDevTools: vi.fn(),
-    isDevToolsOpened: vi.fn().mockReturnValue(false),
-  };
-
   const viewManager = {
-    getUIViewHandle: vi.fn().mockReturnValue(uiHandle),
-    getWorkspaceView: vi.fn(() => wsHandle),
+    getUIDevtoolsTarget: vi.fn(() => uiTarget),
+    getWorkspaceDevtoolsTarget: vi.fn((path: string) =>
+      path === activePath ? wsTarget : undefined
+    ),
     getActiveWorkspacePath: vi.fn(() => activePath),
   };
 
   return {
-    viewLayer,
     viewManager: viewManager as unknown as DevtoolsModuleDeps["viewManager"],
-    uiHandle,
-    wsHandle,
+    uiTarget,
+    wsTarget,
     _setActivePath(path: string | null) {
       activePath = path;
     },
@@ -68,18 +76,19 @@ describe("DevtoolsModule", () => {
 
     await emitKeyEvent(module, "d");
 
-    expect(mock.viewLayer.openDevTools).toHaveBeenCalledWith(mock.uiHandle, { mode: "detach" });
+    expect(mock.uiTarget.toggle).toHaveBeenCalledTimes(1);
+    expect(mock.uiTarget.isOpen()).toBe(true);
   });
 
   it("D toggles UI DevTools closed when already open", async () => {
     const mock = createMockDeps();
-    mock.viewLayer.isDevToolsOpened.mockReturnValue(true);
+    mock.uiTarget._setOpen(true);
     const module = createDevtoolsModule(mock);
 
     await emitKeyEvent(module, "d");
 
-    expect(mock.viewLayer.closeDevTools).toHaveBeenCalledWith(mock.uiHandle);
-    expect(mock.viewLayer.openDevTools).not.toHaveBeenCalled();
+    expect(mock.uiTarget.toggle).toHaveBeenCalledTimes(1);
+    expect(mock.uiTarget.isOpen()).toBe(false);
   });
 
   it("W toggles active workspace DevTools open", async () => {
@@ -88,17 +97,19 @@ describe("DevtoolsModule", () => {
 
     await emitKeyEvent(module, "w");
 
-    expect(mock.viewLayer.openDevTools).toHaveBeenCalledWith(mock.wsHandle, { mode: "detach" });
+    expect(mock.wsTarget.toggle).toHaveBeenCalledTimes(1);
+    expect(mock.wsTarget.isOpen()).toBe(true);
   });
 
   it("W toggles workspace DevTools closed when already open", async () => {
     const mock = createMockDeps();
-    mock.viewLayer.isDevToolsOpened.mockReturnValue(true);
+    mock.wsTarget._setOpen(true);
     const module = createDevtoolsModule(mock);
 
     await emitKeyEvent(module, "w");
 
-    expect(mock.viewLayer.closeDevTools).toHaveBeenCalledWith(mock.wsHandle);
+    expect(mock.wsTarget.toggle).toHaveBeenCalledTimes(1);
+    expect(mock.wsTarget.isOpen()).toBe(false);
   });
 
   it("W does nothing when no active workspace", async () => {
@@ -108,8 +119,8 @@ describe("DevtoolsModule", () => {
 
     await emitKeyEvent(module, "w");
 
-    expect(mock.viewLayer.openDevTools).not.toHaveBeenCalled();
-    expect(mock.viewLayer.closeDevTools).not.toHaveBeenCalled();
+    expect(mock.wsTarget.toggle).not.toHaveBeenCalled();
+    expect(mock.uiTarget.toggle).not.toHaveBeenCalled();
   });
 
   it("ignores unrelated keys", async () => {
@@ -120,7 +131,7 @@ describe("DevtoolsModule", () => {
     await emitKeyEvent(module, "enter");
     await emitKeyEvent(module, "5");
 
-    expect(mock.viewLayer.openDevTools).not.toHaveBeenCalled();
-    expect(mock.viewLayer.closeDevTools).not.toHaveBeenCalled();
+    expect(mock.uiTarget.toggle).not.toHaveBeenCalled();
+    expect(mock.wsTarget.toggle).not.toHaveBeenCalled();
   });
 });
