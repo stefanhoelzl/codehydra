@@ -259,8 +259,8 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             }
 
             // Load UI HTML
-            if (deps.viewLayer && deps.uiHtmlPath) {
-              await deps.viewLayer.loadURL(viewManager.getUIViewHandle(), deps.uiHtmlPath);
+            if (deps.uiHtmlPath) {
+              await viewManager.loadUIContent(deps.uiHtmlPath);
             }
 
             // Focus UI

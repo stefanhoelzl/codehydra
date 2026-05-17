@@ -93,6 +93,14 @@ export interface IViewManager {
   isUIAvailable(): boolean;
 
   /**
+   * Loads the given HTML (or other) URL into the UI view. Called once by
+   * the composition root after `create()` to point the UI at its bundle.
+   *
+   * @param htmlPath - file:// URL of the UI HTML to load
+   */
+  loadUIContent(htmlPath: string): Promise<void>;
+
+  /**
    * Sends an IPC message to the UI layer.
    *
    * @param channel - IPC channel name
