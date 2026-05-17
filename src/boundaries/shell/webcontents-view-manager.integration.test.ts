@@ -8,6 +8,11 @@ import {
   type WebContentsViewManagerDeps,
 } from "./webcontents-view-manager";
 import { SIDEBAR_MINIMIZED_WIDTH } from "./view-manager-types";
+import {
+  runViewManagerConformance,
+  type ConformanceFactory,
+  type ConformanceProbe,
+} from "./view-manager.conformance";
 import type { WindowManager } from "./window-manager";
 import { SILENT_LOGGER } from "../platform/logging";
 import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
@@ -80,6 +85,78 @@ function createViewManager(deps: WebContentsViewManagerDeps): WebContentsViewMan
   manager.create();
   return manager;
 }
+
+/**
+ * Conformance-test factory: builds a WebContentsViewManager plus a probe
+ * that wraps viewLayer.attachToWindow / detachFromWindow to record per-
+ * workspace attach/detach order, and inspects window children to decide
+ * whether the UI is the top-most attached view.
+ */
+function makeWebContentsConformanceFactory(): ConformanceFactory {
+  return () => {
+    const deps = createViewManagerDeps();
+    const uiViewHandleId = { current: "" };
+    const handleToPath = new Map<string, string>();
+    const attachOrder: string[] = [];
+    const detachOrder: string[] = [];
+
+    const originalAttach = deps.viewLayer.attachToWindow.bind(deps.viewLayer);
+    deps.viewLayer.attachToWindow = (handle, windowHandle, index, options) => {
+      const path = handleToPath.get(handle.id);
+      if (path !== undefined && handle.id !== uiViewHandleId.current) {
+        attachOrder.push(path);
+      }
+      return originalAttach(handle, windowHandle, index, options);
+    };
+
+    const originalDetach = deps.viewLayer.detachFromWindow.bind(deps.viewLayer);
+    deps.viewLayer.detachFromWindow = (handle) => {
+      const path = handleToPath.get(handle.id);
+      if (path !== undefined && handle.id !== uiViewHandleId.current) {
+        detachOrder.push(path);
+      }
+      return originalDetach(handle);
+    };
+
+    const manager = new WebContentsViewManager(deps);
+    manager.create();
+    uiViewHandleId.current = manager.getUIViewHandle().id;
+
+    // Wrap createWorkspaceView so the probe can map handle IDs back to paths.
+    const originalCreate = manager.createWorkspaceView.bind(manager);
+    manager.createWorkspaceView = (path, url, projectPath, isNew) => {
+      const handle = originalCreate(path, url, projectPath, isNew);
+      handleToPath.set(handle.id, path);
+      return handle;
+    };
+
+    const windowId = deps.windowLayer._createdWindowHandle.id;
+    const probe: ConformanceProbe = {
+      get attachOrder() {
+        return attachOrder;
+      },
+      get detachOrder() {
+        return detachOrder;
+      },
+      uiIsTop() {
+        const children = deps.viewLayer.$.windowChildren.get(windowId) ?? [];
+        if (children.length === 0) return false;
+        return children[children.length - 1] === uiViewHandleId.current;
+      },
+      reset() {
+        attachOrder.length = 0;
+        detachOrder.length = 0;
+      },
+    };
+
+    return { manager, probe };
+  };
+}
+
+runViewManagerConformance({
+  name: "WebContentsViewManager",
+  makeFactory: () => makeWebContentsConformanceFactory(),
+});
 
 describe("WebContentsViewManager", () => {
   beforeEach(() => {
