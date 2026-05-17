@@ -30,6 +30,7 @@ export interface WindowOptions {
   readonly minHeight?: number;
   readonly title?: string;
   readonly show?: boolean;
+  readonly backgroundColor?: string;
 }
 
 /**
@@ -162,6 +163,18 @@ export interface WindowBoundary {
    * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
    */
   setTitle(handle: WindowHandle, title: string): void;
+
+  /**
+   * Set the window background color.
+   *
+   * Shows through transparent child views. Used to keep the backdrop in sync
+   * with the active OS theme without spinning up a dedicated backdrop view.
+   *
+   * @param handle - Handle to the window
+   * @param color - CSS hex color (e.g. "#16161a")
+   * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
+   */
+  setBackgroundColor(handle: WindowHandle, color: string): void;
 
   /**
    * Focus a window (request OS-level focus).
@@ -318,6 +331,7 @@ export class DefaultWindowBoundary implements WindowBoundaryInternal {
       minHeight?: number;
       title?: string;
       show: boolean;
+      backgroundColor?: string;
     } = {
       width: options.width ?? 800,
       height: options.height ?? 600,
@@ -332,6 +346,9 @@ export class DefaultWindowBoundary implements WindowBoundaryInternal {
     }
     if (options.title !== undefined) {
       windowOptions.title = options.title;
+    }
+    if (options.backgroundColor !== undefined) {
+      windowOptions.backgroundColor = options.backgroundColor;
     }
 
     const window = new ElectronBaseWindow(windowOptions);
@@ -441,6 +458,11 @@ export class DefaultWindowBoundary implements WindowBoundaryInternal {
   setTitle(handle: WindowHandle, title: string): void {
     const state = this.getWindowState(handle);
     state.window.setTitle(title);
+  }
+
+  setBackgroundColor(handle: WindowHandle, color: string): void {
+    const state = this.getWindowState(handle);
+    state.window.setBackgroundColor(color);
   }
 
   focus(handle: WindowHandle): void {

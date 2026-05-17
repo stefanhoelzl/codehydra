@@ -15,8 +15,25 @@ import type { PlatformInfo } from "../platform/platform-info";
 import type { ImageBoundary } from "./image";
 import type { ImageHandle } from "./image-types";
 import type { WindowBoundaryInternal } from "./window";
+import type { AppBoundary } from "./app";
 import type { WindowHandle } from "./types";
 import { getErrorMessage } from "../../shared/error-utils";
+
+/**
+ * Theme name reported to the renderer and used to pick a window backdrop color.
+ */
+export type Theme = "dark" | "light";
+
+/**
+ * Window backdrop colors. Match --ch-background fallbacks in variables.css so
+ * the native backdrop blends with the renderer's painted background.
+ */
+const BACKGROUND_COLOR_DARK = "#16161a";
+const BACKGROUND_COLOR_LIGHT = "#ffffff";
+
+function colorForTheme(theme: Theme): string {
+  return theme === "dark" ? BACKGROUND_COLOR_DARK : BACKGROUND_COLOR_LIGHT;
+}
 
 /**
  * Function to unsubscribe from an event.
@@ -37,6 +54,7 @@ export interface ContentBounds {
 export interface WindowManagerDeps {
   readonly windowLayer: WindowBoundaryInternal;
   readonly imageLayer: ImageBoundary;
+  readonly appLayer: Pick<AppBoundary, "shouldUseDarkColors" | "onThemeUpdated">;
   readonly logger: Logger;
   readonly platformInfo: PlatformInfo;
 }
@@ -47,16 +65,21 @@ export interface WindowManagerDeps {
 export class WindowManager {
   private readonly windowLayer: WindowBoundaryInternal;
   private readonly imageLayer: ImageBoundary;
+  private readonly appLayer: Pick<AppBoundary, "shouldUseDarkColors" | "onThemeUpdated">;
   private readonly logger: Logger;
   private readonly platformInfo: PlatformInfo;
   private readonly title: string;
   private readonly iconPath: string | undefined;
   private readonly resizeCallbacks: Set<() => void> = new Set();
+  private readonly themeChangeCallbacks: Set<(theme: Theme) => void> = new Set();
   private windowHandle!: WindowHandle;
+  private currentTheme: Theme = "dark";
+  private unsubscribeTheme: Unsubscribe | null = null;
 
   constructor(deps: WindowManagerDeps, title: string = "CodeHydra", iconPath?: string) {
     this.windowLayer = deps.windowLayer;
     this.imageLayer = deps.imageLayer;
+    this.appLayer = deps.appLayer;
     this.logger = deps.logger;
     this.platformInfo = deps.platformInfo;
     this.title = title;
@@ -68,12 +91,37 @@ export class WindowManager {
    * Must be called before using any window operations.
    */
   create(): void {
+    this.currentTheme = this.appLayer.shouldUseDarkColors() ? "dark" : "light";
+
     this.windowHandle = this.windowLayer.createWindow({
       width: 1200,
       height: 800,
       minWidth: 800,
       minHeight: 600,
       title: this.title,
+      backgroundColor: colorForTheme(this.currentTheme),
+    });
+
+    this.unsubscribeTheme = this.appLayer.onThemeUpdated(() => {
+      const next: Theme = this.appLayer.shouldUseDarkColors() ? "dark" : "light";
+      if (next === this.currentTheme) return;
+      this.currentTheme = next;
+      try {
+        if (!this.windowLayer.isDestroyed(this.windowHandle)) {
+          this.windowLayer.setBackgroundColor(this.windowHandle, colorForTheme(next));
+        }
+      } catch (error) {
+        this.logger.warn("Failed to update window background color", {
+          error: getErrorMessage(error),
+        });
+      }
+      for (const cb of this.themeChangeCallbacks) {
+        try {
+          cb(next);
+        } catch (error) {
+          this.logger.warn("Theme change callback failed", { error: getErrorMessage(error) });
+        }
+      }
     });
 
     // Set the window icon for taskbar/dock display
@@ -214,6 +262,30 @@ export class WindowManager {
    * Closes the window.
    */
   close(): void {
+    if (this.unsubscribeTheme) {
+      this.unsubscribeTheme();
+      this.unsubscribeTheme = null;
+    }
     this.windowLayer.close(this.windowHandle);
+  }
+
+  /**
+   * Returns the current resolved theme.
+   */
+  getTheme(): Theme {
+    return this.currentTheme;
+  }
+
+  /**
+   * Subscribe to theme changes (after the initial value).
+   *
+   * @param callback - Called with the new theme when the OS theme changes
+   * @returns Unsubscribe function
+   */
+  onThemeChange(callback: (theme: Theme) => void): Unsubscribe {
+    this.themeChangeCallbacks.add(callback);
+    return () => {
+      this.themeChangeCallbacks.delete(callback);
+    };
   }
 }

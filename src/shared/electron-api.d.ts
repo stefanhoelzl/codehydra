@@ -157,6 +157,12 @@ export interface Api {
   onShortcut(callback: (key: ShortcutKey) => void): Unsubscribe;
 
   /**
+   * Subscribe to theme change events from main process.
+   * Fired once on startup with the initial theme and again whenever the OS theme changes.
+   */
+  onTheme(callback: (theme: "dark" | "light") => void): Unsubscribe;
+
+  /**
    * Send dialog user event to main process.
    * Used when the user interacts with a declarative dialog (clicks an action button).
    * Fire-and-forget - does not return a promise.

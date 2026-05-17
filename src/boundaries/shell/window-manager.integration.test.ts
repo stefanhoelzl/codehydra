@@ -11,6 +11,7 @@ import {
   createWindowBoundaryInternalMock,
   type MockWindowBoundaryInternal,
 } from "./window.state-mock";
+import { createAppBoundaryMock, type MockAppBoundary } from "./app.state-mock";
 import type { ImageHandle } from "./image-types";
 
 /**
@@ -20,15 +21,18 @@ function createWindowManagerDeps(
   overrides: {
     platformInfo?: ReturnType<typeof createMockPlatformInfo>;
     imageLayer?: ReturnType<typeof createImageBoundaryMock>;
+    appLayer?: MockAppBoundary;
   } = {}
-): WindowManagerDeps & { windowLayer: MockWindowBoundaryInternal } {
+): WindowManagerDeps & { windowLayer: MockWindowBoundaryInternal; appLayer: MockAppBoundary } {
   const windowLayer = createWindowBoundaryInternalMock();
   const imageLayer = overrides.imageLayer ?? createImageBoundaryMock();
   const platformInfo = overrides.platformInfo ?? createMockPlatformInfo();
+  const appLayer = overrides.appLayer ?? createAppBoundaryMock();
 
   return {
     windowLayer,
     imageLayer,
+    appLayer,
     logger: SILENT_LOGGER,
     platformInfo,
   };

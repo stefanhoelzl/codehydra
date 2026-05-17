@@ -87,7 +87,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/renderer/index.html"),
-          background: resolve(__dirname, "src/renderer/background.html"),
         },
       },
     },

@@ -42,13 +42,6 @@ const MIN_WIDTH = 800;
 const MIN_HEIGHT = 600;
 
 /**
- * Default background color for views (VS Code dark theme).
- * Used to prevent white flash while content loads.
- * Matches --ch-background fallback in variables.css.
- */
-const VIEW_BACKGROUND_COLOR = "#1e1e1e";
-
-/**
  * Timeout for navigation to about:blank before closing a view.
  * If navigation doesn't complete within this time, we proceed with closing.
  */
@@ -73,9 +66,9 @@ const RELOAD_WATCHDOG_MS = 15000;
 
 /**
  * Z-index for the UI layer when positioned at the bottom of the view stack.
- * Index 0 is reserved for the background view, so the UI sits at index 1.
+ * The window's own backgroundColor provides the backdrop, so the UI sits at index 0.
  */
-const Z_UI_BOTTOM = 1;
+const Z_UI_BOTTOM = 0;
 
 /**
  * Configuration for creating a ViewManager.
@@ -85,8 +78,6 @@ export interface ViewManagerConfig {
   readonly uiPreloadPath: string;
   /** Code-server port number */
   readonly codeServerPort: number;
-  /** Path to the background HTML page (theme-colored backdrop) */
-  readonly backgroundHtmlPath: string;
 }
 
 /**
@@ -154,7 +145,6 @@ export class ViewManager implements IViewManager {
   private readonly appLayer: Pick<AppBoundary, "openUrl">;
   private readonly config: ViewManagerConfig;
   private uiViewHandle!: ViewHandle;
-  private backgroundViewHandle!: ViewHandle;
   private codeServerPort: number;
   private windowHandle!: WindowHandle;
   /**
@@ -239,32 +229,14 @@ export class ViewManager implements IViewManager {
       return { action: "deny" };
     });
 
-    // Set transparent background for UI layer
+    // Set transparent background for UI layer — the window's own backgroundColor
+    // shows through, keeping the backdrop in sync with the OS theme.
     viewLayer.setBackgroundColor(this.uiViewHandle, "#00000000");
-
-    // Create background view (theme-colored backdrop to prevent white flash)
-    this.backgroundViewHandle = viewLayer.createView({
-      label: "background",
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-      },
-    });
-
-    // Transparent Electron background — CSS handles the actual color via variables.css
-    viewLayer.setBackgroundColor(this.backgroundViewHandle, "#00000000");
 
     // Get window handle
     this.windowHandle = windowManager.getWindowHandle();
 
-    // Add background view at z-0 (bottom of all views)
-    viewLayer.attachToWindow(this.backgroundViewHandle, this.windowHandle, 0);
-
-    // Load the background HTML page (theme colors via CSS)
-    void viewLayer.loadURL(this.backgroundViewHandle, `file://${config.backgroundHtmlPath}`);
-
-    // Add UI layer to window (on top of background)
+    // Add UI layer to window
     viewLayer.attachToWindow(this.uiViewHandle, this.windowHandle);
 
     // Subscribe to resize events
@@ -452,8 +424,9 @@ export class ViewManager implements IViewManager {
       },
     });
 
-    // Set dark background to prevent white flash while VS Code loads
-    this.viewLayer.setBackgroundColor(viewHandle, VIEW_BACKGROUND_COLOR);
+    // Transparent background — the window's own backgroundColor shows through
+    // while code-server loads, keeping the backdrop in sync with the OS theme.
+    this.viewLayer.setBackgroundColor(viewHandle, "#00000000");
 
     // Configure window open handler to open external URLs
     this.viewLayer.setWindowOpenHandler(viewHandle, (details: WindowOpenDetails) => {
@@ -658,14 +631,6 @@ export class ViewManager implements IViewManager {
     // Clamp to minimum dimensions
     const width = Math.max(bounds.width, MIN_WIDTH);
     const height = Math.max(bounds.height, MIN_HEIGHT);
-
-    // Background view: full window (theme-colored backdrop)
-    this.viewLayer.setBounds(this.backgroundViewHandle, {
-      x: 0,
-      y: 0,
-      width,
-      height,
-    });
 
     // UI layer: full window (so dialogs can overlay everything)
     this.viewLayer.setBounds(this.uiViewHandle, {
@@ -1394,13 +1359,6 @@ export class ViewManager implements IViewManager {
     // Destroy all workspace views (fire-and-forget - app is shutting down)
     for (const path of this.workspaceStates.keys()) {
       void this.destroyWorkspaceView(path);
-    }
-
-    // Destroy background view
-    try {
-      this.viewLayer.destroy(this.backgroundViewHandle);
-    } catch {
-      // Ignore errors during cleanup - view may be in an inconsistent state
     }
 
     // Destroy UI view

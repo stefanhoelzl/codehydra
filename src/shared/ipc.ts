@@ -200,6 +200,7 @@ export const ApiIpcChannels = {
   WORKSPACE_METADATA_CHANGED: "api:workspace:metadata-changed",
   WORKSPACE_DELETION_PROGRESS: "api:workspace:deletion-progress",
   UI_MODE_CHANGED: "api:ui:mode-changed",
+  UI_THEME: "api:ui:theme",
   SHORTCUT_KEY: "api:shortcut:key",
 } as const satisfies Record<string, string>;
 

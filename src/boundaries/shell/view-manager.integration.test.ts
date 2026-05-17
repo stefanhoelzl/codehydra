@@ -12,7 +12,7 @@ import {
   createWindowBoundaryInternalMock,
   type MockWindowBoundaryInternal,
 } from "./window.state-mock";
-import { createViewHandle, type WindowHandle } from "./types";
+import type { WindowHandle } from "./types";
 import { createMockWindowManager } from "./window-manager.test-utils";
 
 // Mock openUrl for AppBoundary
@@ -63,7 +63,6 @@ function createViewManagerDeps(): ViewManagerDeps & {
     config: {
       uiPreloadPath: "/path/to/preload.js",
       codeServerPort: 8080,
-      backgroundHtmlPath: "/path/to/background.html",
     },
     logger: SILENT_LOGGER,
   };
@@ -136,62 +135,6 @@ describe("ViewManager", () => {
     });
   });
 
-  describe("background view", () => {
-    /**
-     * Helper to get the background view ID (always at index 0 in window children).
-     */
-    function getBackgroundViewId(deps: ReturnType<typeof createViewManagerDeps>): string {
-      const windowId = deps.windowLayer._createdWindowHandle.id;
-      const children = deps.viewLayer.$.windowChildren.get(windowId) ?? [];
-      expect(children.length).toBeGreaterThanOrEqual(2);
-      // Background view is always at index 0 (bottom of z-stack)
-      const id = children[0] as string;
-      return id;
-    }
-
-    it("is created and attached at z-0 during create()", () => {
-      const deps = createViewManagerDeps();
-      const manager = createViewManager(deps);
-
-      const uiHandle = manager.getUIViewHandle();
-      const backgroundViewId = getBackgroundViewId(deps);
-
-      // Background view should be at index 0 (bottom), not the UI view
-      expect(backgroundViewId).not.toBe(uiHandle.id);
-
-      // Background view should have transparent Electron bg (CSS handles color)
-      expect(deps.viewLayer).toHaveView(backgroundViewId, {
-        backgroundColor: "#00000000",
-      });
-    });
-
-    it("has its bounds updated on resize", () => {
-      const deps = createViewManagerDeps();
-      vi.mocked(deps.windowManager.getBounds).mockReturnValue({ width: 1400, height: 900 });
-      const manager = createViewManager(deps);
-
-      manager.updateBounds();
-
-      const backgroundViewId = getBackgroundViewId(deps);
-
-      expect(deps.viewLayer).toHaveView(backgroundViewId, {
-        bounds: { x: 0, y: 0, width: 1400, height: 900 },
-      });
-    });
-
-    it("is destroyed on destroy()", () => {
-      const deps = createViewManagerDeps();
-      const manager = createViewManager(deps);
-
-      const backgroundViewId = getBackgroundViewId(deps);
-
-      manager.destroy();
-
-      // Background view should no longer be available
-      expect(deps.viewLayer.isAvailable(createViewHandle(backgroundViewId))).toBe(false);
-    });
-  });
-
   describe("getUIViewHandle", () => {
     it("returns the UI layer ViewHandle", () => {
       const deps = createViewManagerDeps();
@@ -251,7 +194,7 @@ describe("ViewManager", () => {
       expect(retrievedHandle?.id).toBe(createdHandle.id);
     });
 
-    it("sets dark background color", () => {
+    it("sets transparent background so the window backdrop shows through", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
 
@@ -261,7 +204,7 @@ describe("ViewManager", () => {
         "/path/to/project"
       );
 
-      expect(deps.viewLayer).toHaveView(wsHandle.id, { backgroundColor: "#1e1e1e" });
+      expect(deps.viewLayer).toHaveView(wsHandle.id, { backgroundColor: "#00000000" });
     });
 
     it("sets full-size bounds on detached view at creation time", () => {
@@ -791,7 +734,7 @@ describe("ViewManager", () => {
       });
     });
 
-    it("keeps UI view at index 1 in workspace mode (above background view)", () => {
+    it("keeps UI view at index 0 in workspace mode (below workspace view)", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
       const windowId = deps.windowLayer._createdWindowHandle.id;
@@ -804,10 +747,10 @@ describe("ViewManager", () => {
       manager.setWorkspaceLoaded("/path/to/workspace");
       manager.setActiveWorkspace("/path/to/workspace");
 
-      // UI view should be at index 1 (above background view at 0)
+      // UI view sits at the bottom; the window's own backgroundColor is the backdrop.
       const uiHandle = manager.getUIViewHandle();
       const children = deps.viewLayer.$.windowChildren.get(windowId);
-      expect(children?.[1]).toBe(uiHandle.id);
+      expect(children?.[0]).toBe(uiHandle.id);
     });
 
     it("null workspace detaches current", () => {
@@ -1146,8 +1089,8 @@ describe("ViewManager", () => {
         bounds: { x: 20, y: 0, width: 1180, height: 800 },
       });
 
-      // Z-order: only background + UI (workspace is detached)
-      expect(children).toHaveLength(2);
+      // Z-order: only UI attached (workspace is detached)
+      expect(children).toHaveLength(1);
     });
 
     it("setMode to workspace during loading preserves z-order", () => {
@@ -1166,9 +1109,9 @@ describe("ViewManager", () => {
       manager.setActiveWorkspace("/path/to/workspace");
       manager.setMode("workspace");
 
-      // Loading workspace is detached — only background + UI in window
+      // Loading workspace is detached — only UI attached
       const children = deps.viewLayer.$.windowChildren.get(windowId);
-      expect(children).toHaveLength(2);
+      expect(children).toHaveLength(1);
     });
 
     it("background preload does not disrupt active workspace z-order", () => {
@@ -1249,10 +1192,10 @@ describe("ViewManager", () => {
 
       const children = deps.viewLayer.$.windowChildren.get(windowId);
 
-      // Both loading workspaces stay detached — only background + UI in window
+      // Both loading workspaces stay detached — only UI attached
       expect(children).not.toContain(ws1Handle.id);
       expect(children).not.toContain(ws2Handle.id);
-      expect(children).toHaveLength(2);
+      expect(children).toHaveLength(1);
     });
 
     it("restores focus to UI view when workspace finishes loading in dialog mode", () => {
