@@ -462,12 +462,15 @@ describe("Config", () => {
       svc.load();
 
       expect(svc.get("test.key")).toBe("fallback");
-      expect(renames).toEqual([{ from: "/app/config.json", to: "/app/config.json.broken" }]);
+      const backupPath = new Path(CONFIG_PATH.dirname, "config.json.broken");
+      expect(renames).toEqual([
+        { from: CONFIG_PATH.toNative(), to: backupPath.toNative() },
+      ]);
       expect(logger.warn).toHaveBeenCalledWith(
         "Invalid JSON in config.json, backed up to config.json.broken; using defaults",
         expect.objectContaining({
-          path: "/app/config.json",
-          backup: "/app/config.json.broken",
+          path: CONFIG_PATH.toString(),
+          backup: backupPath.toString(),
         })
       );
     });
