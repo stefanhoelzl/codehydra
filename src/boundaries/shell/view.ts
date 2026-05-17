@@ -391,6 +391,23 @@ export interface ViewBoundary {
    */
   isDevToolsOpened(handle: ViewHandle): boolean;
 
+  /**
+   * Install a script in every child frame (non-top) that finishes loading
+   * inside this view. The script runs same-origin inside each child frame.
+   *
+   * Used to inject in-frame helpers that can't be installed from the host
+   * document due to cross-origin restrictions (e.g., focus trackers that
+   * need to observe and call focus on elements inside the iframe).
+   *
+   * The subscription is established immediately and applies to every future
+   * frame load — call once during view setup.
+   *
+   * @param handle - Handle to the host view
+   * @param script - JavaScript source to execute in each child frame
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  installChildFrameScript(handle: ViewHandle, script: string): void;
+
   // Cleanup
   /**
    * Dispose of all resources.
@@ -746,7 +763,9 @@ export class DefaultViewBoundary implements ViewBoundary {
 
   executeJavaScript(handle: ViewHandle, code: string): Promise<unknown> {
     const state = this.getView(handle);
-    return state.view.webContents.executeJavaScript(code);
+    // userGesture=true so scripted cross-origin iframe focus
+    // (iframe.contentWindow.focus()) isn't silently blocked by Chromium.
+    return state.view.webContents.executeJavaScript(code, true);
   }
 
   send(handle: ViewHandle, channel: string, ...args: unknown[]): void {
@@ -857,6 +876,19 @@ export class DefaultViewBoundary implements ViewBoundary {
 
   async dispose(): Promise<void> {
     this.destroyAll();
+  }
+
+  installChildFrameScript(handle: ViewHandle, script: string): void {
+    const state = this.getView(handle);
+    const wc = state.view.webContents;
+    wc.on("did-frame-finish-load", (_event, isMainFrame, frameProcessId, frameRoutingId) => {
+      if (isMainFrame) return;
+      const frame = wc.mainFrame.framesInSubtree.find(
+        (f) => f.processId === frameProcessId && f.routingId === frameRoutingId
+      );
+      if (!frame) return;
+      void frame.executeJavaScript(script);
+    });
   }
 
   private getView(handle: ViewHandle): ViewState {
