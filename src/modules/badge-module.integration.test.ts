@@ -10,6 +10,7 @@
  * - Badge disposed on app shutdown
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
@@ -42,7 +43,7 @@ import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { BadgeManager, createBadgeModule } from "./badge-module";
 import { createMockPlatformInfo } from "../boundaries/platform/platform-info.test-utils";
-import { SILENT_LOGGER, createMockLogger } from "../boundaries/platform/logging";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createAppBoundaryMock, type MockAppBoundary } from "../boundaries/shell/app.state-mock";
 import {
   createImageBoundaryMock,
@@ -533,7 +534,7 @@ function createModuleTestSetup(): ModuleTestSetup {
   const imageLayer = createImageBoundaryMock();
   const windowManager = createSimpleMockWindowManager();
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());

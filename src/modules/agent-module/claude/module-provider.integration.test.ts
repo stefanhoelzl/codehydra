@@ -21,6 +21,8 @@ import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-downl
 import { createFileSystemMock } from "../../../boundaries/platform/filesystem.state-mock";
 import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
 import { createArchiveExtractorMock } from "../../../boundaries/platform/archive-extractor.state-mock";
+import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
+import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 
 // =============================================================================
 // Mock ClaudeCodeProvider via vi.mock
@@ -88,23 +90,7 @@ function createBinaryConfig() {
 }
 
 function createMockConfigService(version: string | null = null) {
-  return {
-    register: vi.fn(),
-    load: vi.fn(),
-    get: vi.fn().mockReturnValue(version),
-    set: vi.fn(),
-    getDefinitions: vi.fn().mockReturnValue(new Map()),
-    getEffective: vi.fn().mockReturnValue({}),
-    getDefaults: vi.fn().mockReturnValue({}),
-    getOverrides: vi.fn().mockReturnValue({}),
-    getHelpText: vi.fn().mockReturnValue(""),
-  };
-}
-
-function createMockPathProvider() {
-  return {
-    bundlePath: vi.fn().mockReturnValue({ toNative: () => "/mock/path" }),
-  };
+  return createMockConfig({ defaults: { "version.claude": version } });
 }
 
 const WS_PATH = "/workspace/feature-a" as WorkspacePath;

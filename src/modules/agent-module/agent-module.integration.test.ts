@@ -7,8 +7,8 @@
  * delegates all behavior to the provider interface.
  */
 
+import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../../intents/lib/dispatcher";
 import type { Operation, OperationContext, HookContext } from "../../intents/lib/operation";
 import type { Intent } from "../../intents/lib/types";
@@ -48,23 +48,7 @@ import { SetupError } from "../../shared/errors/service-errors";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
 import { configString } from "../../boundaries/platform/config-definition";
 import type { Config } from "../../boundaries/platform/config";
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 
 // =============================================================================
 // Mock AgentModuleProvider Factory
@@ -328,7 +312,7 @@ function createTestSetup(
   configValues?: Record<string, unknown>
 ) {
   const mockProvider = createMockProvider(providerOverrides);
-  const mockConfig = createMockConfig(configValues);
+  const mockConfig = createMockConfig({ defaults: configValues });
 
   const mockDispatcher = {
     dispatch: vi.fn().mockResolvedValue(undefined),
@@ -340,7 +324,7 @@ function createTestSetup(
     configService: mockConfig,
   };
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
   const agentModule = createAgentModule(mockProvider, moduleDeps);
 
   dispatcher.registerModule(agentModule);

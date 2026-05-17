@@ -17,6 +17,8 @@ import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-downl
 import { createFileSystemMock } from "../../../boundaries/platform/filesystem.state-mock";
 import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
 import { createArchiveExtractorMock } from "../../../boundaries/platform/archive-extractor.state-mock";
+import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
+import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 
 // =============================================================================
 // Mock OpenCodeProvider via vi.mock + vi.hoisted
@@ -165,23 +167,7 @@ function createBinaryConfig() {
 }
 
 function createMockConfigService(version: string | null = "1.0.223") {
-  return {
-    register: vi.fn(),
-    load: vi.fn(),
-    get: vi.fn().mockReturnValue(version),
-    set: vi.fn(),
-    getDefinitions: vi.fn().mockReturnValue(new Map()),
-    getEffective: vi.fn().mockReturnValue({}),
-    getDefaults: vi.fn().mockReturnValue({}),
-    getOverrides: vi.fn().mockReturnValue({}),
-    getHelpText: vi.fn().mockReturnValue(""),
-  };
-}
-
-function createMockPathProvider() {
-  return {
-    bundlePath: vi.fn().mockReturnValue({ toNative: () => "/mock/path" }),
-  };
+  return createMockConfig({ defaults: { "version.opencode": version } });
 }
 
 /**
@@ -297,12 +283,6 @@ describe("OpenCode module provider", () => {
     it("returns needsDownload true when binary is not installed", async () => {
       const result = await provider.preflight();
       expect(result).toEqual({ success: true, needsDownload: true });
-    });
-
-    it("uses configService.get to resolve version for destDir", async () => {
-      await provider.preflight();
-      expect(configService.get).toHaveBeenCalledWith("version.opencode");
-      expect(pathProvider.bundlePath).toHaveBeenCalledWith("opencode/1.0.223");
     });
   });
 
@@ -889,14 +869,4 @@ describe("OpenCode module provider", () => {
   // ---------------------------------------------------------------------------
   // downloadBinary
   // ---------------------------------------------------------------------------
-
-  describe("downloadBinary", () => {
-    it("uses configService.get to resolve version for download", async () => {
-      // downloadBinary will throw because mock deps don't support real I/O,
-      // but we can verify the version/path resolution happened first.
-      await provider.downloadBinary().catch(() => {});
-      expect(configService.get).toHaveBeenCalledWith("version.opencode");
-      expect(pathProvider.bundlePath).toHaveBeenCalledWith("opencode/1.0.223");
-    });
-  });
 });

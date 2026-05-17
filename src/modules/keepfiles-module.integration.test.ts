@@ -6,8 +6,8 @@
  * including best-effort error handling (errors are logged, not re-thrown).
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Intent } from "../intents/lib/types";
@@ -40,7 +40,7 @@ function createTestSetup(
 ): TestSetup {
   const mockFs = createFileSystemMock({ entries: fsEntries });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(
     "workspace:open",
@@ -106,7 +106,7 @@ describe("KeepFilesModule Integration", () => {
       // Override readFile to throw a generic error (not ENOENT)
       vi.spyOn(failingFs, "readFile").mockRejectedValue(new Error("disk full"));
 
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(
         "workspace:open",

@@ -15,8 +15,8 @@
  * log listeners delegate to LoggingService
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import {
@@ -160,7 +160,7 @@ interface StatusTestSetup {
 }
 
 function createStatusTestSetup(): StatusTestSetup {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
@@ -283,7 +283,7 @@ describe("UiIpcModule - agent:status-updated", () => {
 
 describe("UiIpcModule - workspace:deleted", () => {
   it("sends workspace:removed to UI on workspace:deleted event", async () => {
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(
       INTENT_DELETE_WORKSPACE,
@@ -402,7 +402,7 @@ describe("UiIpcModule - IPC handlers", () => {
 
 describe("UiIpcModule - shutdown", () => {
   it("removes all IPC handlers on app:shutdown", async () => {
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const ipcLayer = createBehavioralIpcBoundary();
@@ -440,7 +440,7 @@ describe("UiIpcModule - shutdown", () => {
   });
 
   it("shutdown with already-removed handler does not throw", async () => {
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const ipcLayer = createBehavioralIpcBoundary();
@@ -638,7 +638,7 @@ describe("UiIpcModule - log listeners", () => {
   });
 
   it("removes log listeners on app:shutdown", async () => {
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
     const ipcLayer = createBehavioralIpcBoundary();

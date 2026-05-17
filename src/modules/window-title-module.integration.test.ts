@@ -8,8 +8,8 @@
  * Uses minimal operations that emit workspace:switched.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
@@ -77,7 +77,7 @@ interface TestSetup {
 function createTestSetup(titleVersion?: string): TestSetup {
   const setTitle = vi.fn();
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_MINIMAL_SWITCH, new MinimalSwitchOperation());
   dispatcher.registerOperation(
@@ -155,7 +155,7 @@ describe("WindowTitleModule Integration", () => {
 
   it("sets initial title without version when titleVersion is undefined", async () => {
     const setTitle = vi.fn();
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(
       INTENT_APP_START,

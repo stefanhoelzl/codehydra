@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent } from "../intents/app-start";
@@ -30,10 +31,6 @@ import { createPortManagerMock } from "../boundaries/platform/network.test-utils
 // =============================================================================
 // Mock helpers
 // =============================================================================
-
-function createMockDispatcher(): Dispatcher {
-  return new Dispatcher({ logger: createMockLogger() });
-}
 
 function createMockMcpSdk(): McpServerSdk {
   return {
@@ -219,7 +216,7 @@ describe("McpServerManager", () => {
 describe("McpModule Integration", () => {
   describe("app:start / start hook", () => {
     it("starts MCP server and returns port", async () => {
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const portManager = createPortManagerMock([9999]);
       const mockSdkFactory: McpServerFactory = () => createMockMcpSdk();
 
@@ -248,7 +245,7 @@ describe("McpModule Integration", () => {
 
   describe("app:shutdown / stop hook", () => {
     it("disposes MCP server", async () => {
-      const shutdownDispatcher = new Dispatcher({ logger: createMockLogger() });
+      const shutdownDispatcher = createMockDispatcher();
       const portManager = createPortManagerMock([9999]);
       const mockSdkFactory: McpServerFactory = () => createMockMcpSdk();
 

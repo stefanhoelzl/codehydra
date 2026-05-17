@@ -9,9 +9,8 @@
  * plugin-server.boundary.test.ts.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
@@ -105,7 +104,7 @@ function createMockDeps(overrides?: Partial<PluginServerModuleDeps>): PluginServ
 
 function createTestSetup(mockDeps?: PluginServerModuleDeps) {
   const deps = mockDeps ?? createMockDeps();
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
   const module = createPluginServerModule(deps);
 
   dispatcher.registerModule(module);

@@ -23,7 +23,7 @@ import {
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import type { Config } from "../../../boundaries/platform/config";
+import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
 
 /**
  * Create a mock HttpClient with vitest spies.
@@ -48,26 +48,8 @@ function createTestPathProvider(): PathProvider {
   return createMockPathProvider();
 }
 
-/**
- * Create a mock Config for testing.
- * Returns "1.0.223" for "version.opencode" by default.
- */
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(
-    Object.entries(values ?? { "version.opencode": "1.0.223" })
-  );
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async () => {},
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
+/** Default config used by tests that don't pass an explicit override. */
+const DEFAULT_CONFIG_DEFAULTS = { "version.opencode": "1.0.223" };
 
 describe("OpenCodeServerManager", () => {
   // Common dependencies
@@ -97,7 +79,7 @@ describe("OpenCodeServerManager", () => {
       mockPortManager,
       mockHttpClient,
       mockPathProvider,
-      createMockConfig(),
+      createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
       SILENT_LOGGER
     );
   });
@@ -143,7 +125,7 @@ describe("OpenCodeServerManager", () => {
         failingPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER
       );
 
@@ -164,7 +146,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER
       );
 
@@ -183,7 +165,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER
       );
 
@@ -205,7 +187,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: 100 } // Short timeout for testing
       );
@@ -319,7 +301,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER
       );
 
@@ -356,7 +338,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         loggerWithSpy
       );
 
@@ -395,7 +377,7 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER
       );
 
@@ -427,7 +409,7 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER
       );
 
@@ -469,7 +451,7 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER
       );
 

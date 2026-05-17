@@ -9,8 +9,8 @@
  * mock GitWorktreeProvider and PathProvider dependencies.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 
@@ -18,6 +18,7 @@ import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent, DomainEvent } from "../intents/lib/types";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { PathProvider } from "../boundaries/platform/path-provider";
+import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
 import type { Workspace } from "../boundaries/platform/git-types";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import type { DiscoverHookResult } from "../intents/open-project";
@@ -67,12 +68,6 @@ function createMockGitWorktreeProvider() {
     validateRepository: vi.fn().mockResolvedValue(undefined),
     ensureWorkspaceRegistered: vi.fn(),
   };
-}
-
-function createMockPathProvider(): PathProvider {
-  return {
-    getProjectWorkspacesDir: vi.fn().mockReturnValue(new Path("/workspaces")),
-  } as unknown as PathProvider;
 }
 
 // =============================================================================
@@ -343,9 +338,11 @@ interface TestSetup {
 
 function createTestSetup(): TestSetup {
   const provider = createMockGitWorktreeProvider();
-  const pathProvider = createMockPathProvider();
+  const pathProvider = createMockPathProvider({
+    getProjectWorkspacesDir: () => new Path("/workspaces"),
+  });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   // Register operations
   dispatcher.registerOperation("project:open", openProjectOperation);
@@ -372,9 +369,11 @@ function createTestSetup(): TestSetup {
 
 function createPreflightTestSetup(): TestSetup {
   const provider = createMockGitWorktreeProvider();
-  const pathProvider = createMockPathProvider();
+  const pathProvider = createMockPathProvider({
+    getProjectWorkspacesDir: () => new Path("/workspaces"),
+  });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation("project:open", openProjectOperation);
   dispatcher.registerOperation("workspace:delete", new MinimalPreflightOperation());

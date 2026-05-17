@@ -8,8 +8,8 @@
  * #1: Status change produces domain event
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import {
@@ -81,7 +81,7 @@ function createMockResolveModules(): IntentModule[] {
 }
 
 function createTestSetup(): { dispatcher: Dispatcher } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
@@ -179,7 +179,7 @@ describe("UpdateAgentStatus Operation", () => {
     });
 
     it("silently returns when resolve hooks provide no projectPath", async () => {
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
       dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
       dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());

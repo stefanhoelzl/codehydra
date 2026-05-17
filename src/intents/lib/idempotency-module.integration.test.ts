@@ -5,12 +5,12 @@
  * Uses real Dispatcher with trivial no-op operations.
  */
 
+import { createMockDispatcher } from "./dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "./dispatcher";
 import { createIdempotencyModule } from "./idempotency-module";
 import type { Intent, DomainEvent } from "./types";
 import type { Operation, OperationContext } from "./operation";
-import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 
 // =============================================================================
 // Test Helpers
@@ -24,7 +24,7 @@ function noopOperation(id: string): Operation<Intent, void> {
 }
 
 function setup(...args: Parameters<typeof createIdempotencyModule>): { dispatcher: Dispatcher } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
   const mod = createIdempotencyModule(...args);
   dispatcher.registerModule(mod);
   return { dispatcher };

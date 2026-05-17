@@ -6,8 +6,8 @@
  * independently of GitHub/YouTrack API specifics.
  */
 
+import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createMockLogger } from "../../boundaries/platform/logging.test-utils";
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { Dispatcher } from "../../intents/lib/dispatcher";
 
@@ -52,35 +52,12 @@ import {
 } from "../../boundaries/platform/filesystem.state-mock";
 import { createAutoWorkspaceModule } from "./module";
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
-import type { ConfigKeyDefinition } from "../../boundaries/platform/config-definition";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import type { Config } from "../../boundaries/platform/config";
 
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
-
-// =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  return {
-    register: (_key: string, def: ConfigKeyDefinition<unknown>) => {
-      if (!store.has(def.name)) store.set(def.name, def.default);
-    },
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
 
 class MinimalActivateOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
@@ -357,7 +334,7 @@ function createTestSetup(options?: {
   }
   const fs = createFileSystemMock({ entries: fsEntries });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   const openProjectOp = new TrackingOpenProjectOperation();
   const openWorkspaceOp = new TrackingOpenWorkspaceOperation();
@@ -372,7 +349,7 @@ function createTestSetup(options?: {
     configValues[`experimental.${sourceName}.template-path`] = tplPath;
   }
 
-  const mockConfig = createMockConfig(configValues);
+  const mockConfig = createMockConfig({ defaults: configValues });
 
   dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation());
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());

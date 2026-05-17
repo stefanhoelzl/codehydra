@@ -5,9 +5,8 @@
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
-import { Dispatcher } from "../intents/lib/dispatcher";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
@@ -59,7 +58,7 @@ describe("ScriptModule Integration", () => {
       assetsRootDir: "/assets",
     });
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     const scripts = ["ch-claude", "ch-claude.cjs", "ch-claude.cmd", "code"];
     dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation(scripts));
@@ -120,7 +119,7 @@ describe("ScriptModule Integration", () => {
       assetsRootDir: "/assets",
     });
 
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_APP_START, new MinimalInitOperation([]));
 

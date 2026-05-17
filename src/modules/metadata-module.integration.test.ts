@@ -9,8 +9,8 @@
  * Resolve-project and resolve-workspace are inline stubs.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/set-metadata";
@@ -94,7 +94,7 @@ function createTestSetup(): TestSetup {
   const projectId = "project-ea0135bc" as ProjectId;
   const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());

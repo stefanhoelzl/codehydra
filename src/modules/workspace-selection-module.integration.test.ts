@@ -11,8 +11,8 @@
  * #3: Returns undefined when no candidates provided
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import {
   SwitchWorkspaceOperation,
@@ -86,7 +86,7 @@ interface TestSetup {
 }
 
 function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());

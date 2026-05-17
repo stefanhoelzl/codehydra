@@ -27,8 +27,8 @@
  * #18: ports available via capabilities in start hook
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
@@ -51,21 +51,12 @@ import {
 } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
 import type { BinaryType } from "./app-start";
+import { createMockConfig as createBaseMockConfig } from "../boundaries/platform/config.test-utils";
 import type { Config } from "../boundaries/platform/config";
 
-/** Minimal Config mock for tests. Returns configuredAgent value from get(). */
+/** Mock that seeds the configured agent. Pass null to leave it unset. */
 function createMockConfig(agent: ConfigAgentType | null = "opencode"): Config {
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => (key === "agent" ? agent : undefined),
-    set: async () => {},
-    getDefinitions: () => new Map(),
-    getEffective: () => ({}),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
+  return createBaseMockConfig({ defaults: { agent } });
 }
 
 // =============================================================================
@@ -232,7 +223,7 @@ function createTestSetup(
     skipDefaultChecks?: boolean;
   }
 ): { dispatcher: Dispatcher } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockConfig()));
 
@@ -446,7 +437,7 @@ describe("AppStart Operation", () => {
         configuredAgent?: ConfigAgentType | null;
       }
     ): { dispatcher: Dispatcher } {
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
 
       const agent = options?.configuredAgent !== undefined ? options.configuredAgent : "opencode";
       dispatcher.registerOperation(

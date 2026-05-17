@@ -6,8 +6,8 @@
  * dispatcher -> Operation -> hook point -> AutoUpdaterModule handler
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "../intents/lib/dispatcher";
 
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
@@ -24,30 +24,25 @@ import {
 import { AppResumeOperation, INTENT_APP_RESUME, type AppResumeIntent } from "../intents/app-resume";
 import { createAutoUpdaterModule } from "./auto-updater-module";
 import type { AutoUpdater, UpdateDetectedCallback, DownloadProgressCallback } from "./auto-updater";
+import {
+  createMockConfig as createBaseMockConfig,
+  type CreateMockConfigOptions,
+} from "../boundaries/platform/config.test-utils";
 import type { Config } from "../boundaries/platform/config";
-import type { NotificationManager, NotificationHandle } from "./notification-manager";
-import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
+import {
+  createMockNotificationManager,
+  type MockNotificationManager,
+} from "./notification-manager.state-mock";
 
-// =============================================================================
-// Mock Config
-// =============================================================================
-
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(Object.entries(values ?? {}));
-  if (!store.has("update.notification")) store.set("update.notification", true);
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async (key: string, value: unknown) => {
-      store.set(key, value);
-    },
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
+/**
+ * Auto-updater tests expect `update.notification` to default to true unless
+ * the test explicitly sets it. Seed it on top of the shared helper.
+ */
+function createMockConfig(options?: CreateMockConfigOptions): Config {
+  return createBaseMockConfig({
+    defaults: { "update.notification": true, ...(options?.defaults ?? {}) },
+    ...(options?.overrides !== undefined && { overrides: options.overrides }),
+  });
 }
 
 // =============================================================================
@@ -165,70 +160,6 @@ function createMockAutoUpdater(overrides?: {
   };
 }
 
-// =============================================================================
-// Mock NotificationManager
-// =============================================================================
-
-interface MockNotification {
-  opened: NotificationConfig;
-  updates: NotificationConfig[];
-  closed: boolean;
-  listeners: Set<(event: NotificationUserEvent) => void>;
-}
-
-interface MockNotificationManager {
-  manager: NotificationManager;
-  notifications: MockNotification[];
-  emitEvent: (index: number, actionId: string) => void;
-}
-
-function createMockNotificationManager(): MockNotificationManager {
-  const notifications: MockNotification[] = [];
-  const manager = {
-    open(config: NotificationConfig): NotificationHandle {
-      const slot: MockNotification = {
-        opened: config,
-        updates: [],
-        closed: false,
-        listeners: new Set(),
-      };
-      notifications.push(slot);
-      const id = `ntf-${notifications.length}`;
-      return {
-        id,
-        update: (next: NotificationConfig) => {
-          slot.updates.push(next);
-        },
-        close: () => {
-          slot.closed = true;
-        },
-        onEvent: (handler) => {
-          slot.listeners.add(handler);
-          return () => {
-            slot.listeners.delete(handler);
-          };
-        },
-        nextEvent: () => new Promise<NotificationUserEvent>(() => {}),
-        closed: new Promise<void>(() => {}),
-      } satisfies NotificationHandle;
-    },
-    routeEvent: () => {},
-  } as unknown as NotificationManager;
-  return {
-    manager,
-    notifications,
-    emitEvent(index, actionId) {
-      const slot = notifications[index];
-      if (!slot) throw new Error(`No notification at index ${index}`);
-      const event: NotificationUserEvent = {
-        notificationId: `ntf-${index + 1}`,
-        actionId,
-      };
-      for (const handler of slot.listeners) handler(event);
-    },
-  };
-}
-
 interface TestSetup {
   dispatcher: Dispatcher;
   autoUpdater: MockAutoUpdater;
@@ -243,9 +174,9 @@ function createTestSetup(overrides?: {
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
   const notificationManager = createMockNotificationManager();
-  const mockConfig = createMockConfig(overrides?.configValues);
+  const mockConfig = createMockConfig({ defaults: overrides?.configValues ?? {} });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   const autoUpdaterModule = createAutoUpdaterModule({
     autoUpdater: autoUpdater.mock,
@@ -337,7 +268,7 @@ describe("AutoUpdaterModule Integration", () => {
     await dispatcher.dispatch(startIntent());
     await flush();
 
-    notificationManager.emitEvent(0, "install");
+    notificationManager.emitEvent(0, { actionId: "install" });
     await flush();
 
     expect(autoUpdater.downloadCalled).toBe(true);
@@ -362,7 +293,7 @@ describe("AutoUpdaterModule Integration", () => {
     await dispatcher.dispatch(startIntent());
     await flush();
 
-    notificationManager.emitEvent(0, "install");
+    notificationManager.emitEvent(0, { actionId: "install" });
     await flush();
 
     autoUpdater.capturedProgressCb!({ percent: 50 });
@@ -379,7 +310,7 @@ describe("AutoUpdaterModule Integration", () => {
     await dispatcher.dispatch(startIntent());
     await flush();
 
-    notificationManager.emitEvent(0, "install");
+    notificationManager.emitEvent(0, { actionId: "install" });
     await flush();
 
     autoUpdater.rejectDownload!(new Error("network down"));
@@ -399,12 +330,12 @@ describe("AutoUpdaterModule Integration", () => {
     await dispatcher.dispatch(startIntent());
     await flush();
 
-    notificationManager.emitEvent(0, "install");
+    notificationManager.emitEvent(0, { actionId: "install" });
     await flush();
     autoUpdater.resolveDownload!();
     await flush();
 
-    notificationManager.emitEvent(0, "restart");
+    notificationManager.emitEvent(0, { actionId: "restart" });
     await flush();
 
     expect(autoUpdater.quitAndInstallCalled).toBe(true);

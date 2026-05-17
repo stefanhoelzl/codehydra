@@ -10,8 +10,8 @@
  * #9:  set-mode emits ui:mode-changed with mode and previousMode
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -26,28 +26,8 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { UIMode } from "../shared/ipc";
-
-// =============================================================================
-// Behavioral Mocks
-// =============================================================================
-
-interface MockViewManager {
-  currentMode: UIMode;
-  setMode(mode: UIMode): void;
-  getMode(): UIMode;
-}
-
-function createMockViewManager(initialMode: UIMode = "workspace"): MockViewManager {
-  return {
-    currentMode: initialMode,
-    setMode(mode: UIMode): void {
-      this.currentMode = mode;
-    },
-    getMode(): UIMode {
-      return this.currentMode;
-    },
-  };
-}
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
+import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 
 // =============================================================================
 // Test Setup
@@ -55,13 +35,13 @@ function createMockViewManager(initialMode: UIMode = "workspace"): MockViewManag
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  viewManager: MockViewManager;
+  viewManager: IViewManager;
 }
 
 function createTestSetup(opts?: { initialMode?: UIMode }): TestSetup {
-  const viewManager = createMockViewManager(opts?.initialMode ?? "workspace");
+  const viewManager = createMockViewManager({ initialMode: opts?.initialMode ?? "workspace" });
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
 
@@ -115,7 +95,7 @@ describe("SetMode Operation", () => {
 
       await dispatcher.dispatch(setModeIntent("shortcut"));
 
-      expect(viewManager.currentMode).toBe("shortcut");
+      expect(viewManager.getMode()).toBe("shortcut");
     });
 
     it("changes viewManager mode to dialog", async () => {
@@ -123,7 +103,7 @@ describe("SetMode Operation", () => {
 
       await dispatcher.dispatch(setModeIntent("dialog"));
 
-      expect(viewManager.currentMode).toBe("dialog");
+      expect(viewManager.getMode()).toBe("dialog");
     });
 
     it("changes viewManager mode to hover", async () => {
@@ -131,7 +111,7 @@ describe("SetMode Operation", () => {
 
       await dispatcher.dispatch(setModeIntent("hover"));
 
-      expect(viewManager.currentMode).toBe("hover");
+      expect(viewManager.getMode()).toBe("hover");
     });
   });
 
@@ -208,7 +188,7 @@ describe("SetMode Operation", () => {
       const result = await dispatcher.dispatch(setModeIntent("shortcut"));
 
       expect(result).toBeUndefined();
-      expect(viewManager.currentMode).toBe("workspace"); // Mode unchanged
+      expect(viewManager.getMode()).toBe("workspace"); // Mode unchanged
       expect(receivedEvents).toHaveLength(0); // No event emitted
     });
   });

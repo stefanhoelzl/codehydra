@@ -10,8 +10,8 @@
  * #2: get-workspace-status returns none agent when no manager
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, beforeEach } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -78,7 +78,7 @@ function createTestSetup(opts: {
 }): TestSetup {
   const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
@@ -239,7 +239,7 @@ describe("GetWorkspaceStatus Operation", () => {
 
   describe("unmerged commits (#3)", () => {
     it("returns unmergedCommits from hook result", async () => {
-      const dispatcher = new Dispatcher({ logger: createMockLogger() });
+      const dispatcher = createMockDispatcher();
       const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
 
       dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());

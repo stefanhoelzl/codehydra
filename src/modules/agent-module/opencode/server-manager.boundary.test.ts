@@ -20,28 +20,10 @@ import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import type { Config } from "../../../boundaries/platform/config";
+import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
 
-/**
- * Create a mock Config for testing.
- * Returns "1.0.223" for "version.opencode" by default.
- */
-function createMockConfig(values?: Record<string, unknown>): Config {
-  const store = new Map<string, unknown>(
-    Object.entries(values ?? { "version.opencode": "1.0.223" })
-  );
-  return {
-    register: () => {},
-    load: () => {},
-    get: (key: string) => store.get(key),
-    set: async () => {},
-    getDefinitions: () => new Map(),
-    getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
-    getOverrides: () => ({}),
-    getHelpText: () => "",
-  };
-}
+/** Default config used by tests that don't pass an explicit override. */
+const DEFAULT_CONFIG_DEFAULTS = { "version.opencode": "1.0.223" };
 
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;
@@ -92,7 +74,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -116,7 +98,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -139,7 +121,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -179,7 +161,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -207,7 +189,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig(),
+        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );

@@ -19,8 +19,8 @@
  * #8: Rejects invalid clone URL
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import type { IntentModule } from "./lib/module";
@@ -213,7 +213,7 @@ function createTestHarness(options?: {
   existingConfig?: { path: string; remoteUrl?: string };
   workspaceCreateThrowsForPath?: string;
 }): TestHarness {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
   const { viewManager, activeWorkspace, createdViews, preloadedPaths } = createTestViewManager();
 
   const discoverResult: TestHarness["discoverResult"] = options?.discoverResult ?? [
@@ -825,7 +825,7 @@ describe("OpenProjectOperation", () => {
 
   it("test 3b: alreadyOpen skips workspace:open and event emission", async () => {
     // Create harness where the resolve module signals alreadyOpen
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
     const { viewManager, createdViews, preloadedPaths } = createTestViewManager();
 
     const projectState: TestProjectState = {
@@ -1034,7 +1034,7 @@ describe("OpenProjectOperation", () => {
   });
 
   it("test 10: returns null when select-folder hook returns null (canceled)", async () => {
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
 
@@ -1132,7 +1132,7 @@ describe("OpenProjectOperation", () => {
 
   it("emits project:open-failed with already-open reason when project is already open", async () => {
     // Create harness where the resolve module signals alreadyOpen
-    const dispatcher = new Dispatcher({ logger: createMockLogger() });
+    const dispatcher = createMockDispatcher();
 
     dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
     dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());

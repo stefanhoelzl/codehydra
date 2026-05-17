@@ -9,8 +9,8 @@
  * handler registration without actually registering on the real process.
  */
 
+import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
-import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
@@ -36,7 +36,7 @@ function createTestSetup() {
     return process;
   }) as typeof process.on;
 
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   const errorHandlerModule = createErrorHandlerModule({ logger });
 

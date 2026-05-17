@@ -16,8 +16,8 @@
  * #14: skipSwitch prevents intermediate switches during close
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { Dispatcher } from "./lib/dispatcher";
 
 import type { IntentModule } from "./lib/module";
@@ -120,7 +120,7 @@ function createTestHarness(options?: {
   projectNotFound?: boolean;
   noRemoteUrl?: boolean;
 }): TestHarness {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   const state: TestState = {
     serversStoppedForWorkspaces: [],

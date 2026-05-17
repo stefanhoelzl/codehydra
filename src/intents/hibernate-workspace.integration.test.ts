@@ -7,12 +7,12 @@
  * modules that record interactions; no provider boundaries are exercised.
  */
 
+import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
 import type { DomainEvent } from "./lib/types";
 import type { HookContext } from "./lib/operation";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import {
   HibernateWorkspaceOperation,
   HIBERNATE_WORKSPACE_OPERATION_ID,
@@ -191,7 +191,7 @@ function buildHarness(buildHookModules: (recorder: Recorder) => IntentModule[]):
   recorder: Recorder;
 } {
   const recorder = createRecorder();
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());

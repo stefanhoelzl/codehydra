@@ -13,6 +13,7 @@ import {
 import { type ProjectId, initialPromptSchema } from "../shared/api/types";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";
+import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Intent } from "../intents/lib/types";
 import type { Operation } from "../intents/lib/operation";
 import {
@@ -77,7 +78,7 @@ function createMockDispatcher(): {
   dispatcher: Dispatcher;
   operations: Record<string, ReturnType<typeof vi.fn>>;
 } {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
+  const dispatcher = createBaseMockDispatcher();
 
   const getStatusOp = createMockOperation(GET_WORKSPACE_STATUS_OPERATION_ID, {
     isDirty: false,
