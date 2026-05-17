@@ -6,6 +6,8 @@
  */
 
 import type { SessionHandle, ViewHandle } from "./types";
+import type { KeyboardInput } from "./view";
+import type { Unsubscribe } from "./view-manager.interface";
 
 /**
  * Sidebar minimized width in pixels.
@@ -69,6 +71,35 @@ export interface WorkspaceState {
    * destroyed + recreated from scratch.
    */
   reloadWatchdogTimer: NodeJS.Timeout | null;
+}
+
+/**
+ * Narrow capability handle for opening/closing devtools on a view, without
+ * exposing the underlying ViewHandle to consumers. Returned by
+ * IViewManager.getUIDevtoolsTarget / getWorkspaceDevtoolsTarget.
+ */
+export interface DevtoolsTarget {
+  /** Stable identifier (handle id of the underlying view). */
+  readonly id: string;
+  /** Toggle devtools: open if closed, close if open. */
+  toggle(): void;
+  /** True if devtools are currently open on this view. */
+  isOpen(): boolean;
+}
+
+/**
+ * Narrow capability handle for keyboard input + lifecycle events on a view,
+ * without exposing the underlying ViewHandle. Returned by
+ * IViewManager.getUIKeyboardTarget / getWorkspaceKeyboardTarget.
+ */
+export interface KeyboardTarget {
+  /** Stable identifier (handle id of the underlying view). Used by consumers
+   *  as a map key for de-duplication across registrations. */
+  readonly id: string;
+  /** Subscribe to before-input-event on this view. */
+  onBeforeInput(callback: (input: KeyboardInput, preventDefault: () => void) => void): Unsubscribe;
+  /** Subscribe to the view-destroyed event. */
+  onDestroyed(callback: () => void): Unsubscribe;
 }
 
 /**

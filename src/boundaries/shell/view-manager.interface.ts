@@ -10,6 +10,7 @@
 
 import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
 import type { ViewHandle } from "./types";
+import type { DevtoolsTarget, KeyboardTarget } from "./view-manager-types";
 
 /**
  * Timeout for workspace loading in milliseconds.
@@ -62,8 +63,35 @@ export interface IViewManager {
 
   /**
    * Returns the UI layer view handle.
+   *
+   * @deprecated Prefer `getUIDevtoolsTarget()` / `getUIKeyboardTarget()`
+   *   to avoid coupling consumers to the underlying view technology.
    */
   getUIViewHandle(): ViewHandle;
+
+  /**
+   * Returns a narrow capability for toggling devtools on the UI view.
+   */
+  getUIDevtoolsTarget(): DevtoolsTarget;
+
+  /**
+   * Returns a narrow capability for toggling devtools on a workspace view.
+   * Returns undefined if the workspace doesn't exist.
+   */
+  getWorkspaceDevtoolsTarget(workspacePath: string): DevtoolsTarget | undefined;
+
+  /**
+   * Returns a narrow capability for subscribing to keyboard input and the
+   * destroyed lifecycle on the UI view.
+   */
+  getUIKeyboardTarget(): KeyboardTarget;
+
+  /**
+   * Returns a narrow capability for subscribing to keyboard input and the
+   * destroyed lifecycle on a workspace view. Returns undefined if the
+   * workspace doesn't exist.
+   */
+  getWorkspaceKeyboardTarget(workspacePath: string): KeyboardTarget | undefined;
 
   /**
    * Checks if the UI layer view is available (not destroyed).

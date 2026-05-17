@@ -19,7 +19,7 @@ import type { Logger } from "../platform/logging";
 import type { SessionHandle, ViewHandle } from "./types";
 import type { IViewManager, LoadingChangeCallback, Unsubscribe } from "./view-manager.interface";
 import { WORKSPACE_LOADING_TIMEOUT_MS } from "./view-manager.interface";
-import type { Rect, WorkspaceState } from "./view-manager-types";
+import type { DevtoolsTarget, KeyboardTarget, Rect, WorkspaceState } from "./view-manager-types";
 import { computeUIRect, computeWorkspaceRect } from "./view-manager-types";
 import type { WindowManager } from "./window-manager";
 
@@ -108,6 +108,26 @@ export abstract class BaseViewManager implements IViewManager {
 
   getUIViewHandle(): ViewHandle {
     return this.uiViewHandle;
+  }
+
+  getUIDevtoolsTarget(): DevtoolsTarget {
+    return this.makeDevtoolsTarget(this.uiViewHandle);
+  }
+
+  getWorkspaceDevtoolsTarget(workspacePath: string): DevtoolsTarget | undefined {
+    const state = this.workspaceStates.get(workspacePath);
+    if (!state) return undefined;
+    return this.makeDevtoolsTarget(state.handle);
+  }
+
+  getUIKeyboardTarget(): KeyboardTarget {
+    return this.makeKeyboardTarget(this.uiViewHandle);
+  }
+
+  getWorkspaceKeyboardTarget(workspacePath: string): KeyboardTarget | undefined {
+    const state = this.workspaceStates.get(workspacePath);
+    if (!state) return undefined;
+    return this.makeKeyboardTarget(state.handle);
   }
 
   isUIAvailable(): boolean {
@@ -675,4 +695,17 @@ export abstract class BaseViewManager implements IViewManager {
    * use this hook to add watchdog/recovery behavior.
    */
   protected abstract reloadWorkspaceView(state: WorkspaceState): void;
+
+  /**
+   * Build the narrow `DevtoolsTarget` capability for the given view handle.
+   * The returned object's `id` MUST equal `handle.id` so consumers can use
+   * it as a stable map key.
+   */
+  protected abstract makeDevtoolsTarget(handle: ViewHandle): DevtoolsTarget;
+
+  /**
+   * Build the narrow `KeyboardTarget` capability for the given view handle.
+   * The returned object's `id` MUST equal `handle.id`.
+   */
+  protected abstract makeKeyboardTarget(handle: ViewHandle): KeyboardTarget;
 }
