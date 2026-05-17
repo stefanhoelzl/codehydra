@@ -44,7 +44,7 @@ import { DefaultWindowBoundary } from "./boundaries/shell/window";
 import { DefaultViewBoundary } from "./boundaries/shell/view";
 import { DefaultSessionBoundary } from "./boundaries/shell/session";
 import { WindowManager } from "./boundaries/shell/window-manager";
-import { WebContentsViewManager } from "./boundaries/shell/webcontents-view-manager";
+import { ViewManager } from "./boundaries/shell/view-manager";
 // Services (stayed)
 import { AutoUpdater } from "./modules/auto-updater";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
@@ -118,11 +118,19 @@ import {
 } from "./intents/open-project";
 import type { OpenProjectPayload } from "./intents/open-project";
 import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./intents/close-project";
-import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./intents/switch-workspace";
+import {
+  SwitchWorkspaceOperation,
+  INTENT_SWITCH_WORKSPACE,
+  EVENT_WORKSPACE_SWITCHED,
+} from "./intents/switch-workspace";
+import type { WorkspaceSwitchedEvent } from "./intents/switch-workspace";
+import type { GetWorkspaceStatusIntent } from "./intents/get-workspace-status";
 import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
+  EVENT_AGENT_STATUS_UPDATED,
 } from "./intents/update-agent-status";
+import type { AgentStatusUpdatedEvent } from "./intents/update-agent-status";
 import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/shortcut-key";
 import { SubmitBugReportOperation, INTENT_SUBMIT_BUG_REPORT } from "./intents/submit-bug-report";
 import {
@@ -211,6 +219,15 @@ configService.register("help", {
   name: "help",
   default: false,
   description: "Print config help and exit",
+  ...configBoolean(),
+});
+configService.register("experimental.iframes", {
+  name: "experimental.iframes",
+  default: false,
+  description:
+    "Render workspaces as iframes inside a single host WebContentsView " +
+    "(experimental; requires app restart). Lower memory at the cost of " +
+    "per-workspace devtools, fail-load retry, and crash recovery.",
   ...configBoolean(),
 });
 
@@ -328,15 +345,20 @@ const windowManager = new WindowManager(
   pathProvider.appIconPath.toNative()
 );
 
-const viewManager = new WebContentsViewManager({
+// ViewManager construction is cheap (no backend yet). The backend is
+// chosen inside ViewManager.create() based on `experimental.iframes` —
+// which runs later, from the app-start/init hook, AFTER configService.load().
+const viewManager = new ViewManager({
   windowManager,
   windowLayer,
   viewLayer,
   sessionLayer,
   appLayer,
+  configService,
   config: {
     uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
     codeServerPort: 0,
+    workspaceHostHtmlPath: nodePath.join(__dirname, "../renderer/workspace-host.html"),
   },
   logger: loggingService.createLogger("view"),
 });
@@ -659,6 +681,67 @@ dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
 dispatcher.registerOperation(INTENT_SUBMIT_BUG_REPORT, new SubmitBugReportOperation());
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
 dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());
+
+// Initial terminal focus for a workspace, fired exactly once per session
+// per workspace (tracked in firstFocused). After the first focus, the
+// in-frame focus tracker (installed by view-manager via the boundary's
+// installChildFrameScript) preserves wherever the user left off (search
+// input, editor, terminal, file explorer, etc.) across subsequent switches.
+//
+// Triggers:
+//   1. agent:status-updated → "idle" for the active workspace (most common
+//      path: agent boots, becomes idle while its workspace is on screen).
+//   2. workspace:switched to a workspace not yet initially-focused, when
+//      its current status is idle (covers auto-switch after delete and
+//      switch-to-already-idle-workspace cases).
+//
+// Dispatches workbench.action.terminal.focus via sidekick, then refreshes
+// OS window focus and the in-window focus chain so keystrokes reach xterm.
+const firstFocused = new Set<string>();
+
+const focusTerminal = (workspacePath: string): void => {
+  void dispatcher
+    .dispatch({
+      type: INTENT_VSCODE_COMMAND,
+      payload: {
+        workspacePath,
+        command: "workbench.action.terminal.focus",
+      },
+    })
+    .then(() => {
+      firstFocused.add(workspacePath);
+      viewManager.focus();
+    })
+    .catch(() => {
+      /* sidekick not connected yet; will retry on next trigger */
+    });
+};
+
+dispatcher.subscribe(EVENT_AGENT_STATUS_UPDATED, (event) => {
+  const payload = (event as AgentStatusUpdatedEvent).payload;
+  if (firstFocused.has(payload.workspacePath)) return;
+  if (payload.status.status !== "idle") return;
+  if (viewManager.getActiveWorkspacePath() !== payload.workspacePath) return;
+  focusTerminal(payload.workspacePath);
+});
+
+dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+  const payload = (event as WorkspaceSwitchedEvent).payload;
+  if (!payload) return;
+  const path = payload.path;
+  if (firstFocused.has(path)) return;
+  void dispatcher
+    .dispatch({
+      type: INTENT_GET_WORKSPACE_STATUS,
+      payload: { workspacePath: path },
+    } as GetWorkspaceStatusIntent)
+    .then((status) => {
+      if (status.agent.type === "idle") focusTerminal(path);
+    })
+    .catch(() => {
+      /* status query failed; agent-idle event will handle it later */
+    });
+});
 
 // Create UI IPC module (handles all bidirectional IPC between main and renderer)
 const uiIpcModule = createUiIpcModule({

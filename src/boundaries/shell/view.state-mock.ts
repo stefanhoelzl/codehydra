@@ -612,6 +612,11 @@ export function createViewBoundaryMock(): MockViewBoundary {
       return undefined;
     },
 
+    installChildFrameScript(_handle: ViewHandle, _script: string): void {
+      getView(_handle); // Validate handle exists
+      // No-op in mock - did-frame-finish-load is not simulated
+    },
+
     send(_handle: ViewHandle, _channel: string, ..._args: unknown[]): void {
       getView(_handle); // Validate handle exists
       // No-op in mock - IPC is not simulated

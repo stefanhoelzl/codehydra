@@ -379,7 +379,20 @@ export class WebContentsViewManager extends BaseViewManager {
     void this.viewLayer.loadURL(state.handle, state.url);
   }
 
-  protected attachViewImpl(state: WorkspaceState): void {
+  protected swapActiveSurface(prev: WorkspaceState | null): void {
+    // Per-view backend: each workspace owns its own WebContentsView, so
+    // "swapping" means removing the previous one from the window. The
+    // incoming workspace's view is attached separately via attachSurface.
+    if (prev) {
+      try {
+        this.viewLayer.detachFromWindow(prev.handle);
+      } catch {
+        // Window may be closing
+      }
+    }
+  }
+
+  protected attachSurface(state: WorkspaceState): void {
     this.viewLayer.attachToWindow(state.handle, this.windowHandle);
 
     // Force a fresh paint if this view sat detached across a system
@@ -393,7 +406,7 @@ export class WebContentsViewManager extends BaseViewManager {
     }
   }
 
-  protected detachViewImpl(state: WorkspaceState): void {
+  protected detachSurface(state: WorkspaceState): void {
     this.viewLayer.detachFromWindow(state.handle);
   }
 

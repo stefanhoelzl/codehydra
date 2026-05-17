@@ -301,22 +301,32 @@ export abstract class BaseViewManager implements IViewManager {
     try {
       this.isChangingWorkspace = true;
       const previousPath = this.activeWorkspacePath;
+      const previousState =
+        previousPath !== null ? (this.workspaceStates.get(previousPath) ?? null) : null;
 
       this.activeWorkspacePath = workspacePath;
 
-      // Load URL and attach new view FIRST (visual continuity - no gap)
-      if (workspacePath !== null) {
-        this.loadViewUrl(workspacePath);
-        if (!this.loadingWorkspaces.has(workspacePath)) {
-          this.attachView(workspacePath);
-        }
-        // Loading workspaces stay detached with full-size bounds (set at creation).
-        // Alt+X works via the UI view's before-input-event (focus goes to UI).
-      }
+      // Load URL FIRST so the new workspace's render target exists before
+      // we try to make it the active surface (shared-surface backends
+      // need the child slot to exist before they can reveal it).
+      if (workspacePath !== null) this.loadViewUrl(workspacePath);
 
-      // Then detach previous
-      if (previousPath !== null && previousPath !== workspacePath) {
-        this.detachView(previousPath);
+      // Swap which workspace's content is the active surface. For per-view
+      // backends this hides the previous view; for shared-surface backends
+      // (iframe) this flips display:block on the matching child iframe.
+      // Does NOT change window attachment.
+      const newState = workspacePath !== null ? this.workspaceStates.get(workspacePath) : null;
+      this.swapActiveSurface(previousState, newState ?? null);
+
+      // Visibility (= window attachment of the surface) is gated on
+      // loading state. While loading, the surface is detached and the
+      // UI's loading overlay is visible underneath.
+      if (workspacePath !== null && !this.loadingWorkspaces.has(workspacePath)) {
+        this.attachView(workspacePath);
+      } else {
+        // Either no active workspace, or the new one is loading. Either
+        // way the previously-attached surface must come down.
+        if (previousPath !== null) this.detachView(previousPath);
       }
 
       // Maintain z-order: if we're in a mode where the UI should be on top
@@ -601,12 +611,16 @@ export abstract class BaseViewManager implements IViewManager {
     this.startLoadingUrl(state);
   }
 
+  /**
+   * Make the workspace's surface visible. Called when activating a loaded
+   * workspace, or when an active workspace transitions to loaded.
+   */
   protected attachView(workspacePath: string): void {
     const state = this.workspaceStates.get(workspacePath);
     if (!state) return;
     if (!this.isWindowAlive()) return;
     try {
-      this.attachViewImpl(state);
+      this.attachSurface(state);
       this.attachedWorkspacePath = workspacePath;
       this.logger.debug("View attached", { workspace: basename(workspacePath) });
     } catch {
@@ -614,11 +628,15 @@ export abstract class BaseViewManager implements IViewManager {
     }
   }
 
+  /**
+   * Hide the workspace's surface. Called when the active workspace is in
+   * the loading set so the UI's loading overlay is visible underneath.
+   */
   protected detachView(workspacePath: string): void {
     const state = this.workspaceStates.get(workspacePath);
     if (!state) return;
     try {
-      this.detachViewImpl(state);
+      this.detachSurface(state);
       this.logger.debug("View detached", { workspace: basename(workspacePath) });
     } catch {
       // Ignore errors during detach - window may be closing
@@ -674,13 +692,37 @@ export abstract class BaseViewManager implements IViewManager {
   protected abstract startLoadingUrl(state: WorkspaceState): void;
 
   /**
-   * Attach the workspace view to the window. Implementations are free to
-   * also perform impl-private cleanup (e.g. reload-on-attach for crashed
-   * renderers).
+   * Swap which workspace's content occupies the active surface position.
+   *
+   * For per-view backends this means detaching `prev`'s view from the
+   * window (its WCV IS the surface). For shared-surface backends (iframe)
+   * this hides `prev`'s child slot and reveals `new`'s — without touching
+   * the surface's window attachment. Either argument may be null.
+   *
+   * Called by the base on every active-workspace change BEFORE deciding
+   * whether to attach the surface to the window. Independent of loading
+   * state.
    */
-  protected abstract attachViewImpl(state: WorkspaceState): void;
+  protected abstract swapActiveSurface(
+    prev: WorkspaceState | null,
+    next: WorkspaceState | null
+  ): void;
 
-  protected abstract detachViewImpl(state: WorkspaceState): void;
+  /**
+   * Attach the active workspace's surface to the window so it becomes
+   * visible. The base calls this once the active workspace has finished
+   * loading (or immediately, if it wasn't loading to begin with).
+   * Implementations are free to also perform impl-private cleanup here
+   * (e.g. reload-on-attach for crashed renderers).
+   */
+  protected abstract attachSurface(state: WorkspaceState): void;
+
+  /**
+   * Detach the active workspace's surface from the window so the UI's
+   * loading overlay is visible. Called when the active workspace is in
+   * the loading set.
+   */
+  protected abstract detachSurface(state: WorkspaceState): void;
 
   protected abstract applyBounds(handle: ViewHandle, rect: Rect): void;
 

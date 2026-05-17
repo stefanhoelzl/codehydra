@@ -1,0 +1,255 @@
+/**
+ * Integration tests for IframeViewManager using behavioral mocks.
+ *
+ * Runs the shared IViewManager conformance suite against the iframe impl,
+ * then adds iframe-specific tests for behavior not covered by the suite
+ * (host-iframe lifecycle, shouldAttachWhileLoading semantics, child-frame
+ * focus tracker installation).
+ */
+
+import { describe, it, expect } from "vitest";
+import { IframeViewManager, type IframeViewManagerDeps } from "./iframe-view-manager";
+import {
+  runViewManagerConformance,
+  type ConformanceFactory,
+  type ConformanceProbe,
+} from "./view-manager.conformance";
+import type { WindowManager } from "./window-manager";
+import { SILENT_LOGGER } from "../platform/logging";
+import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
+import { createSessionBoundaryMock, type MockSessionBoundary } from "./session.state-mock";
+import {
+  createWindowBoundaryInternalMock,
+  type MockWindowBoundaryInternal,
+} from "./window.state-mock";
+import type { ViewHandle, WindowHandle } from "./types";
+import { createMockWindowManager } from "./window-manager.test-utils";
+
+function createViewManagerWindowBoundary(): MockWindowBoundaryInternal & {
+  _createdWindowHandle: WindowHandle;
+} {
+  const behavioralLayer = createWindowBoundaryInternalMock();
+  const windowHandle = behavioralLayer.createWindow({
+    width: 1200,
+    height: 800,
+    title: "Test Window",
+    show: false,
+  });
+  return Object.assign(behavioralLayer, {
+    _createdWindowHandle: windowHandle,
+  }) as unknown as MockWindowBoundaryInternal & { _createdWindowHandle: WindowHandle };
+}
+
+function createIframeDeps(): IframeViewManagerDeps & {
+  viewLayer: MockViewBoundary;
+  windowLayer: MockWindowBoundaryInternal & { _createdWindowHandle: WindowHandle };
+  sessionLayer: MockSessionBoundary;
+} {
+  const windowLayer = createViewManagerWindowBoundary();
+  const viewLayer = createViewBoundaryMock();
+  const sessionLayer = createSessionBoundaryMock();
+  const windowManager = createMockWindowManager({
+    windowHandle: windowLayer._createdWindowHandle,
+  }) as unknown as WindowManager;
+
+  return {
+    windowManager,
+    windowLayer,
+    viewLayer,
+    sessionLayer,
+    appLayer: { openUrl: () => Promise.resolve() },
+    config: {
+      uiPreloadPath: "/path/to/preload.js",
+      codeServerPort: 8080,
+      workspaceHostHtmlPath: "/path/to/workspace-host.html",
+    },
+    logger: SILENT_LOGGER,
+  };
+}
+
+/**
+ * Parses `window.__host.show('/path')` / `window.__host.hide('/path')`
+ * from an injected JS string, returning the kind and path. Returns null
+ * if the script isn't a show/hide call.
+ */
+function parseHostCall(code: string): { kind: "show" | "hide"; path: string } | null {
+  const m = code.match(/window\.__host\.(show|hide)\('((?:\\.|[^'\\])*)'\)/);
+  if (!m) return null;
+  const path = m[2]!.replace(/\\\\/g, "\\").replace(/\\'/g, "'");
+  return { kind: m[1] as "show" | "hide", path };
+}
+
+/**
+ * Fires the host view's did-finish-load callbacks so the iframe view
+ * manager's pending hostExec queue drains synchronously. Must be called
+ * AFTER manager.create() but before any setActiveWorkspace.
+ */
+function flushHostReady(viewLayer: MockViewBoundary, hostHandle: ViewHandle): void {
+  viewLayer.$.triggerDidFinishLoad(hostHandle);
+}
+
+function makeIframeConformanceFactory(): ConformanceFactory {
+  return () => {
+    const deps = createIframeDeps();
+    const attachOrder: string[] = [];
+    const detachOrder: string[] = [];
+
+    const manager = new IframeViewManager(deps);
+    manager.create();
+
+    const hostHandle = manager.getWorkspaceHostHandle();
+    const uiViewHandleId = manager.getUIViewHandle().id;
+
+    // Intercept executeJavaScript on the host handle to record show/hide
+    // calls into the probe's attach/detach order. The interception runs
+    // synchronously before the (mock-resolved) promise — hostExec is
+    // synchronous through to this call once the host is ready.
+    const originalExec = deps.viewLayer.executeJavaScript.bind(deps.viewLayer);
+    deps.viewLayer.executeJavaScript = (handle, code) => {
+      if (handle.id === hostHandle.id) {
+        const call = parseHostCall(code);
+        if (call?.kind === "show") attachOrder.push(call.path);
+        else if (call?.kind === "hide") detachOrder.push(call.path);
+      }
+      return originalExec(handle, code);
+    };
+
+    // Drain queued hostExec calls synchronously so subsequent test
+    // actions hit the executeJavaScript interceptor without microtask
+    // delay.
+    flushHostReady(deps.viewLayer, hostHandle);
+
+    const windowId = deps.windowLayer._createdWindowHandle.id;
+    const probe: ConformanceProbe = {
+      get attachOrder() {
+        return attachOrder;
+      },
+      get detachOrder() {
+        return detachOrder;
+      },
+      uiIsTop() {
+        const children = deps.viewLayer.$.windowChildren.get(windowId) ?? [];
+        if (children.length === 0) return false;
+        return children[children.length - 1] === uiViewHandleId;
+      },
+      reset() {
+        attachOrder.length = 0;
+        detachOrder.length = 0;
+      },
+    };
+
+    return { manager, probe };
+  };
+}
+
+runViewManagerConformance({
+  name: "IframeViewManager",
+  makeFactory: () => makeIframeConformanceFactory(),
+});
+
+describe("IframeViewManager", () => {
+  describe("host view lifecycle", () => {
+    it("creates a single workspace-host view and reuses its handle for every workspace", () => {
+      const deps = createIframeDeps();
+      const manager = new IframeViewManager(deps);
+      manager.create();
+      const host = manager.getWorkspaceHostHandle();
+      flushHostReady(deps.viewLayer, host);
+
+      // Track distinct view handles attached to the window across workspaces.
+      const seenHandles = new Set<string>([host.id]);
+      const originalAttach = deps.viewLayer.attachToWindow.bind(deps.viewLayer);
+      deps.viewLayer.attachToWindow = (handle, win, idx, opts) => {
+        seenHandles.add(handle.id);
+        return originalAttach(handle, win, idx, opts);
+      };
+
+      manager.createWorkspaceView("/a", "http://127.0.0.1/?a", "/p");
+      manager.createWorkspaceView("/b", "http://127.0.0.1/?b", "/p");
+      manager.createWorkspaceView("/c", "http://127.0.0.1/?c", "/p");
+
+      // Only host + UI view should ever be attached — workspaces are iframes
+      // inside the host, not separate WebContentsViews.
+      expect(seenHandles.size).toBeLessThanOrEqual(2);
+      expect(seenHandles.has(host.id)).toBe(true);
+    });
+
+    it("installs the child-frame focus tracker on the host view", () => {
+      const deps = createIframeDeps();
+      let installedOn: string | null = null;
+      let installedScript: string | null = null;
+      const originalInstall = deps.viewLayer.installChildFrameScript.bind(deps.viewLayer);
+      deps.viewLayer.installChildFrameScript = (handle, script) => {
+        installedOn = handle.id;
+        installedScript = script;
+        return originalInstall(handle, script);
+      };
+
+      const manager = new IframeViewManager(deps);
+      manager.create();
+
+      const host = manager.getWorkspaceHostHandle();
+      expect(installedOn).toBe(host.id);
+      expect(installedScript).toContain("__chFocusTracker");
+      expect(installedScript).toContain("focusin");
+    });
+  });
+
+  describe("shouldAttachWhileLoading", () => {
+    it("attaches new workspaces immediately even while they are loading", () => {
+      const deps = createIframeDeps();
+      const showCalls: string[] = [];
+      const manager = new IframeViewManager(deps);
+      manager.create();
+      const host = manager.getWorkspaceHostHandle();
+      flushHostReady(deps.viewLayer, host);
+
+      const originalExec = deps.viewLayer.executeJavaScript.bind(deps.viewLayer);
+      deps.viewLayer.executeJavaScript = (handle, code) => {
+        if (handle.id === host.id) {
+          const call = parseHostCall(code);
+          if (call?.kind === "show") showCalls.push(call.path);
+        }
+        return originalExec(handle, code);
+      };
+
+      manager.createWorkspaceView("/loading", "http://127.0.0.1/?l", "/p", /* isNew */ true);
+      expect(manager.isWorkspaceLoading("/loading")).toBe(true);
+
+      manager.setActiveWorkspace("/loading");
+
+      // Despite being in the loading set, the iframe was shown.
+      expect(showCalls).toContain("/loading");
+    });
+  });
+
+  describe("hostExec queue", () => {
+    it("queues calls made before host did-finish-load and drains them in order on ready", () => {
+      const deps = createIframeDeps();
+      const execCalls: string[] = [];
+      const manager = new IframeViewManager(deps);
+      manager.create();
+      const host = manager.getWorkspaceHostHandle();
+
+      const originalExec = deps.viewLayer.executeJavaScript.bind(deps.viewLayer);
+      deps.viewLayer.executeJavaScript = (handle, code) => {
+        if (handle.id === host.id) execCalls.push(code);
+        return originalExec(handle, code);
+      };
+
+      // Host hasn't fired did-finish-load yet — calls should queue.
+      manager.createWorkspaceView("/a", "http://127.0.0.1/?a", "/p");
+      manager.setActiveWorkspace("/a");
+      expect(execCalls).toHaveLength(0);
+
+      // Fire did-finish-load → queue drains in order.
+      flushHostReady(deps.viewLayer, host);
+      expect(execCalls.length).toBeGreaterThan(0);
+      // First two queued calls should be add + show for /a (in that order).
+      const firstAdd = execCalls.findIndex((c) => c.includes("__host.add") && c.includes("/a"));
+      const firstShow = execCalls.findIndex((c) => c.includes("__host.show") && c.includes("/a"));
+      expect(firstAdd).toBeGreaterThanOrEqual(0);
+      expect(firstShow).toBeGreaterThan(firstAdd);
+    });
+  });
+});

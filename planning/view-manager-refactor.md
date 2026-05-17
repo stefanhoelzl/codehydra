@@ -409,3 +409,64 @@ preserves.
 11. **Two-phase init (`new` + `create()`)** remains a contract; `create()` stays
     on `IViewManager`. `view-module.ts`'s `app-start/init` hook continues to own
     the timing.
+
+---
+
+## Phase 2: iframe integration
+
+The seam this refactor created is used by a second `IViewManager` implementation,
+`IframeViewManager` (`src/boundaries/shell/iframe-view-manager.ts`), gated behind
+the `experimental.iframes` config flag (default `false`, requires app restart).
+
+### Shape
+
+- One shared `WebContentsView` (`workspace-host`) loads `workspace-host.html`,
+  which holds one `<iframe>` per workspace keyed by path.
+- All workspaces share a single renderer process — the memory win.
+- Per-workspace state still flows through `BaseViewManager`; every state's
+  `handle` is the host view handle, and `attachViewImpl` / `detachViewImpl`
+  toggle `display: block` / `none` on the right iframe via injected JS
+  (`window.__host.show/hide/add/remove`).
+
+### One base hook added
+
+`BaseViewManager.shouldAttachWhileLoading(): boolean` (default `false`).
+`IframeViewManager` overrides it to `true` because iframes that are
+`display: none` don't lay out — VS Code's workbench needs to be visible so it
+renders, otherwise `terminal.focus` lands on an unmounted terminal at
+agent-idle time.
+
+### Composition
+
+`main.ts` reads the flag once at startup and picks the implementation:
+
+```ts
+const useIframes = configService.get("experimental.iframes") as boolean;
+const viewManager: IViewManager = useIframes
+  ? new IframeViewManager({ ... })
+  : new WebContentsViewManager({ ... });
+```
+
+### Stubbed in the iframe impl (matches "experimental" label)
+
+- Per-workspace `did-fail-load` retry — failures show as broken iframes.
+- Per-workspace `render-process-gone` recovery — host-renderer-wide.
+- Reload watchdog.
+- Per-workspace DevTools — routed to the host (all workspaces share).
+- Per-workspace keyboard input target — routed to the host.
+
+### Initial terminal focus
+
+`main.ts` subscribes to `agent:status-updated` (focuses terminal when the
+active workspace's agent becomes idle, once per session) and
+`workspace:switched` (queries status; if idle, focuses terminal). Tracked via
+a `firstFocused` set so subsequent switches let Chromium's native focus
+restoration take over. These subscriptions are registered unconditionally —
+harmless in WebContentsView mode (event fires, dispatch runs, no observable
+side effect).
+
+### Tests
+
+`src/boundaries/shell/iframe-view-manager.integration.test.ts` runs the
+same conformance suite as the WebContentsView impl, plus iframe-specific
+tests (host lifecycle, `shouldAttachWhileLoading`, hostExec queue draining).
