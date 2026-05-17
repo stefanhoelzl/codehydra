@@ -28,7 +28,7 @@ import { configBoolean, configString } from "../boundaries/platform/config-defin
 import type { Config } from "../boundaries/platform/config";
 import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { BuildInfo } from "../boundaries/platform/build-info";
-import type { ConfigAgentType } from "../boundaries/platform/config-values";
+import type { ConfigAgentType } from "../boundaries/platform/config-definition";
 import type { Logger } from "../boundaries/platform/logging";
 
 // =============================================================================

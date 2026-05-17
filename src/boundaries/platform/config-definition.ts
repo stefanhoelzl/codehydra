@@ -8,6 +8,16 @@
 
 import { Path } from "../../utils/path/path";
 
+// =============================================================================
+// Shared Type Aliases
+// =============================================================================
+
+/**
+ * Agent types that can be selected by the user.
+ * null indicates the user hasn't made a selection yet (first-run).
+ */
+export type ConfigAgentType = "claude" | "opencode" | null;
+
 /**
  * Context available to computedDefault callbacks for build-dependent defaults.
  */
@@ -39,6 +49,19 @@ export interface ConfigKeyDefinition<T> {
   readonly validValues?: string;
   /** When true, the value is redacted in contexts like bug reports. */
   readonly sensitive?: boolean;
+  /**
+   * When true, the key is recognized but its value is ignored at load time.
+   * Entries in config.json are preserved (so downgrade to a previous version
+   * doesn't lose the value). get()/set() throw. Hidden from help text.
+   */
+  readonly deprecated?: true;
+  /**
+   * Map of legacy config.json key -> translator that produces the new value
+   * from the raw legacy JSON value. Used to migrate renamed keys without
+   * crashing on the old name. Legacy entries are preserved in config.json.
+   * Applies to config.json only; env vars and CLI flags don't honor legacy names.
+   */
+  readonly legacyNames?: Record<string, (legacyValue: unknown) => T | undefined>;
 }
 
 /**
@@ -205,7 +228,7 @@ export function configCustom<T>(fns: {
 export interface ValidationErrorDetail {
   readonly key: string;
   readonly value: unknown;
-  readonly reason: "unknown" | "invalid";
+  readonly reason: "unknown" | "invalid" | "deprecated";
   readonly source: string;
   readonly description?: string;
   readonly validValues?: string;
@@ -222,7 +245,9 @@ export class ConfigValidationError extends Error {
     const msg =
       detail.reason === "unknown"
         ? `Unknown config key "${detail.key}"`
-        : `Invalid value ${JSON.stringify(detail.value)} for config key "${detail.key}"`;
+        : detail.reason === "deprecated"
+          ? `Deprecated config key "${detail.key}"`
+          : `Invalid value ${JSON.stringify(detail.value)} for config key "${detail.key}"`;
     const lines = [msg, `  Source: ${detail.source}`];
     if (detail.description) {
       lines.push(`  Description: ${detail.description}`);

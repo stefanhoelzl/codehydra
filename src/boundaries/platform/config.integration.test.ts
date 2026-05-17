@@ -250,16 +250,46 @@ describe("Config", () => {
   });
 
   describe("validation", () => {
-    it("throws on unknown key in config.json", () => {
+    it("strips unknown keys from config.json and warns (does not throw)", () => {
+      const writes: Array<{ path: string; content: string }> = [];
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
       const svc = createService({
         fileEntries: {
           "/app": directory(),
-          "/app/config.json": file(JSON.stringify({ "unknown.key": "value" })),
+          "/app/config.json": file(JSON.stringify({ "test.key": "kept", "unknown.key": "value" })),
+        },
+        logger,
+        writeFileSync: (path, content) => {
+          writes.push({ path, content });
         },
       });
       svc.register("test.key", stringDef("test.key"));
 
-      expect(() => svc.load()).toThrow(ConfigValidationError);
+      svc.load();
+
+      expect(svc.get("test.key")).toBe("kept");
+      expect(logger.warn).toHaveBeenCalledWith("Unknown config key in config.json (stripped)", {
+        key: "unknown.key",
+      });
+      expect(writes).toHaveLength(1);
+      expect(JSON.parse(writes[0]!.content)).toEqual({ "test.key": "kept" });
+    });
+
+    it("does not rewrite config.json when there is nothing to strip", () => {
+      const writes: Array<{ path: string; content: string }> = [];
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.key": "value" })),
+        },
+        writeFileSync: (path, content) => {
+          writes.push({ path, content });
+        },
+      });
+      svc.register("test.key", stringDef("test.key"));
+      svc.load();
+
+      expect(writes).toHaveLength(0);
     });
 
     it("throws on invalid value in config.json", () => {
@@ -411,6 +441,257 @@ describe("Config", () => {
       svc.load();
 
       await expect(svc.set("test.flag", "not-bool")).rejects.toThrow(ConfigValidationError);
+    });
+  });
+
+  describe("invalid JSON in config.json", () => {
+    it("load() renames the file to config.json.broken and uses defaults", () => {
+      const renames: Array<{ from: string; to: string }> = [];
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file("{ not valid json"),
+        },
+        logger,
+        renameSync: (from, to) => {
+          renames.push({ from, to });
+        },
+      });
+      svc.register("test.key", stringDef("test.key", "fallback"));
+      svc.load();
+
+      expect(svc.get("test.key")).toBe("fallback");
+      expect(renames).toEqual([{ from: "/app/config.json", to: "/app/config.json.broken" }]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Invalid JSON in config.json, backed up to config.json.broken; using defaults",
+        expect.objectContaining({
+          path: "/app/config.json",
+          backup: "/app/config.json.broken",
+        })
+      );
+    });
+
+    it("load() throws if the backup rename fails", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file("not json"),
+        },
+        renameSync: () => {
+          throw new Error("EACCES: rename forbidden");
+        },
+      });
+      svc.register("test.key", stringDef("test.key"));
+
+      expect(() => svc.load()).toThrow("EACCES: rename forbidden");
+    });
+
+    it("set() renames the broken file and writes a fresh single-key file", async () => {
+      const entries = {
+        "/app": directory(),
+        "/app/config.json": file("{{ broken"),
+      };
+      const fs = createFileSystemMock({ entries });
+      const svc = new DefaultConfig(
+        createDeps({
+          fileSystem: fs,
+          readFileSync: () => {
+            const err = new Error("ENOENT") as NodeJS.ErrnoException;
+            err.code = "ENOENT";
+            throw err;
+          },
+        })
+      );
+      svc.register("test.key", stringDef("test.key"));
+      svc.load();
+
+      await svc.set("test.key", "fresh");
+
+      const content = await fs.readFile(CONFIG_PATH);
+      expect(JSON.parse(content)).toEqual({ "test.key": "fresh" });
+      const backup = await fs.readFile(new Path("/app/config.json.broken"));
+      expect(backup).toBe("{{ broken");
+    });
+
+    it("set() throws when the backup rename fails and does not overwrite", async () => {
+      const entries = {
+        "/app": directory(),
+        "/app/config.json": file("{{ still broken"),
+      };
+      const fs = createFileSystemMock({ entries });
+      fs.rename = vi.fn(async () => {
+        throw new Error("EACCES: cannot rename");
+      });
+      const svc = new DefaultConfig(
+        createDeps({
+          fileSystem: fs,
+          readFileSync: () => {
+            const err = new Error("ENOENT") as NodeJS.ErrnoException;
+            err.code = "ENOENT";
+            throw err;
+          },
+        })
+      );
+      svc.register("test.key", stringDef("test.key"));
+      svc.load();
+
+      await expect(svc.set("test.key", "fresh")).rejects.toThrow("EACCES: cannot rename");
+
+      const content = await fs.readFile(CONFIG_PATH);
+      expect(content).toBe("{{ still broken");
+    });
+  });
+
+  describe("deprecated keys", () => {
+    it("preserves entry in config.json and does not rewrite", () => {
+      const writes: Array<{ path: string; content: string }> = [];
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.old": "value-from-old" })),
+        },
+        writeFileSync: (path, content) => {
+          writes.push({ path, content });
+        },
+      });
+      svc.register("test.old", { ...stringDef("test.old"), deprecated: true });
+      svc.load();
+
+      expect(writes).toHaveLength(0);
+    });
+
+    it("get() and set() throw with reason 'deprecated'", async () => {
+      const svc = createService();
+      svc.register("test.old", { ...stringDef("test.old"), deprecated: true });
+      svc.load();
+
+      expect(() => svc.get("test.old")).toThrow(ConfigValidationError);
+      try {
+        svc.get("test.old");
+      } catch (e) {
+        expect((e as ConfigValidationError).detail.reason).toBe("deprecated");
+      }
+      await expect(svc.set("test.old", "x")).rejects.toThrow(ConfigValidationError);
+    });
+
+    it("is hidden from help text and overrides", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.old": "value-from-old" })),
+        },
+      });
+      svc.register("test.active", stringDef("test.active", "active-default"));
+      svc.register("test.old", { ...stringDef("test.old"), deprecated: true });
+      svc.load();
+
+      expect(svc.getHelpText()).not.toContain("test.old");
+      expect(svc.getHelpText()).toContain("test.active");
+      expect(svc.getOverrides()).toEqual({});
+    });
+  });
+
+  describe("legacy names", () => {
+    function defWithLegacy(name: string): ConfigKeyDefinition<unknown> {
+      return {
+        ...stringDef(name, "default"),
+        legacyNames: {
+          "legacy.old-name": (v: unknown) => (typeof v === "string" ? `migrated:${v}` : undefined),
+        },
+      };
+    }
+
+    it("translates a legacy entry and applies it as the new key", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "legacy.old-name": "raw" })),
+        },
+      });
+      svc.register("test.new", defWithLegacy("test.new"));
+      svc.load();
+
+      expect(svc.get("test.new")).toBe("migrated:raw");
+    });
+
+    it("preserves the legacy entry in config.json (no rewrite)", () => {
+      const writes: Array<{ path: string; content: string }> = [];
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "legacy.old-name": "raw" })),
+        },
+        writeFileSync: (path, content) => {
+          writes.push({ path, content });
+        },
+      });
+      svc.register("test.new", defWithLegacy("test.new"));
+      svc.load();
+
+      expect(writes).toHaveLength(0);
+    });
+
+    it("new key wins on conflict; legacy ignored with warn", () => {
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(
+            JSON.stringify({ "legacy.old-name": "raw", "test.new": "explicit" })
+          ),
+        },
+        logger,
+      });
+      svc.register("test.new", defWithLegacy("test.new"));
+      svc.load();
+
+      expect(svc.get("test.new")).toBe("explicit");
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Legacy config key shadowed by new key (legacy ignored)",
+        { legacy: "legacy.old-name", newKey: "test.new" }
+      );
+    });
+
+    it("falls back to default when translator returns undefined", () => {
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "legacy.old-name": 42 })),
+        },
+        logger,
+      });
+      svc.register("test.new", defWithLegacy("test.new"));
+      svc.load();
+
+      expect(svc.get("test.new")).toBe("default");
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Legacy config key could not be translated (using default)",
+        { legacy: "legacy.old-name", newKey: "test.new", value: "42" }
+      );
+    });
+
+    it("env vars and CLI flags do not honor legacy names", () => {
+      const svc = createService({
+        env: { CH_LEGACY__OLD_NAME: "raw" },
+      });
+      svc.register("test.new", defWithLegacy("test.new"));
+
+      expect(() => svc.load()).toThrow(ConfigValidationError);
+    });
+
+    it("warns at register() on legacy-name collision (last writer wins)", () => {
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({ logger });
+      svc.register("test.first", defWithLegacy("test.first"));
+      svc.register("test.second", defWithLegacy("test.second"));
+
+      expect(logger.warn).toHaveBeenCalledWith("Legacy config name collision (last writer wins)", {
+        legacy: "legacy.old-name",
+        previousOwner: "test.first",
+        newOwner: "test.second",
+      });
     });
   });
 
