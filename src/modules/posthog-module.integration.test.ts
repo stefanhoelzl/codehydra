@@ -51,8 +51,12 @@ import type { Operation, OperationContext } from "../intents/lib/operation";
 // Mock Config
 // =============================================================================
 
-function createMockConfig(values?: Record<string, unknown>): Config {
+function createMockConfig(
+  values?: Record<string, unknown>,
+  overrides?: Record<string, unknown>
+): Config {
   const store = new Map<string, unknown>(Object.entries(values ?? {}));
+  let overridesValue: Record<string, unknown> = overrides ?? {};
   return {
     register: () => {},
     load: () => {},
@@ -63,8 +67,13 @@ function createMockConfig(values?: Record<string, unknown>): Config {
     getDefinitions: () => new Map(),
     getEffective: () => Object.fromEntries(store),
     getDefaults: () => ({}),
+    getOverrides: () => ({ ...overridesValue }),
     getHelpText: () => "",
-  };
+    /** Test-only: mutate the override snapshot returned by getOverrides(). */
+    __setOverrides(next: Record<string, unknown>) {
+      overridesValue = next;
+    },
+  } as Config & { __setOverrides(next: Record<string, unknown>): void };
 }
 
 /**
@@ -110,16 +119,20 @@ function createTestSetup(overrides?: {
   apiKey?: string | undefined;
   workspacePayload?: WorkspaceCreatedPayload;
   configValues?: Record<string, unknown>;
+  configOverrides?: Record<string, unknown>;
 }): TestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
   const logger = createBehavioralLogger();
   const { factory, getMock } = createMockPostHogClientFactory();
-  const mockConfig = createMockConfig({
-    "telemetry.enabled": false,
-    "telemetry.distinct-id": null,
-    ...overrides?.configValues,
-  });
+  const mockConfig = createMockConfig(
+    {
+      "telemetry.enabled": false,
+      "telemetry.distinct-id": null,
+      ...overrides?.configValues,
+    },
+    overrides?.configOverrides
+  );
 
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
 
@@ -494,6 +507,37 @@ describe("PosthogModule Integration", () => {
       // No client created because API key is empty
       expect(getMock()).toBeNull();
     });
+
+    it("identifies person with config overrides via $set", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "opencode",
+        },
+        configOverrides: { agent: "opencode", "log.level": "debug" },
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      const mock = getMock()!;
+      expect(mock.$.identifyCalls).toHaveLength(1);
+      expect(mock.$.identifyCalls[0]).toMatchObject({
+        distinctId: "test-id",
+        properties: { config: { agent: "opencode", "log.level": "debug" } },
+      });
+    });
+
+    it("does not identify when telemetry is disabled", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: { "telemetry.enabled": false },
+        configOverrides: { agent: "claude" },
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(getMock()).toBeNull();
+    });
   });
 
   describe("app:shutdown hook", () => {
@@ -757,6 +801,40 @@ describe("PosthogModule Integration", () => {
       expect(props["electron_logs"]).toBe("");
       expect(props["electron_logs_format"]).toBe("none");
       expect(props["electron_logs_raw_bytes"]).toBe(0);
+    });
+
+    it("includes config snapshot on the bug_report event", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: {
+          "telemetry.enabled": true,
+          "telemetry.distinct-id": "test-id",
+          agent: "claude",
+        },
+        configOverrides: { agent: "claude", "log.level": "debug" },
+      });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(submitBugReportIntent("issue", "logs"));
+
+      const mock = getMock()!;
+      const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
+      const props = captured!.properties as Record<string, unknown>;
+      expect(props["config"]).toEqual({ agent: "claude", "log.level": "debug" });
+    });
+
+    it("includes config snapshot on bug_report even when telemetry is disabled", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: { "telemetry.enabled": false, "telemetry.distinct-id": null },
+        configOverrides: { "log.level": "debug" },
+      });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(submitBugReportIntent("oops", "logs"));
+
+      const mock = getMock()!;
+      const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
+      const props = captured!.properties as Record<string, unknown>;
+      expect(props["config"]).toEqual({ "log.level": "debug" });
     });
 
     it("sends bug report even when telemetry is disabled", async () => {

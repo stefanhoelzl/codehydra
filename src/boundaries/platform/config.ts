@@ -57,6 +57,12 @@ export interface Config {
   /** Get the resolved defaults (static + computed) for all registered keys. */
   getDefaults(): Readonly<Record<string, unknown>>;
 
+  /**
+   * Get the subset of effective values that differ from their defaults,
+   * with values for keys marked `sensitive: true` replaced by "<redacted>".
+   */
+  getOverrides(): Record<string, unknown>;
+
   /** Generate human-readable config help text. */
   getHelpText(): string;
 }
@@ -270,6 +276,14 @@ export function buildDefaults(
   return defaults;
 }
 
+function overrideEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (typeof a !== typeof b) return false;
+  if (typeof a === "object") return JSON.stringify(a) === JSON.stringify(b);
+  return false;
+}
+
 // =============================================================================
 // Implementation
 // =============================================================================
@@ -420,6 +434,15 @@ export class DefaultConfig implements Config {
 
   getDefaults(): Readonly<Record<string, unknown>> {
     return this.defaults;
+  }
+
+  getOverrides(): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, def] of this.definitions) {
+      if (overrideEquals(this.effective[key], this.defaults[key])) continue;
+      out[key] = def.sensitive === true ? "<redacted>" : this.effective[key];
+    }
+    return out;
   }
 
   getHelpText(): string {

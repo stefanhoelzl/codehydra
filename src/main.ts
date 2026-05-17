@@ -643,7 +643,6 @@ const bugReportModule = createBugReportModule({
   fileSystem: fileSystemLayer,
   loggingService,
   dispatcher,
-  config: configService,
   logger: loggingService.createLogger("bug-report"),
 });
 
