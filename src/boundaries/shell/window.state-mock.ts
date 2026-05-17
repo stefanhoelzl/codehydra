@@ -48,6 +48,7 @@ export interface WindowMockState {
   readonly bounds: Rectangle;
   readonly contentBounds: Rectangle;
   readonly title: string;
+  readonly backgroundColor: string | null;
   readonly isMaximized: boolean;
   readonly isDestroyed: boolean;
   readonly attachedViews: ReadonlySet<string>;
@@ -146,6 +147,7 @@ interface WindowStateInternal {
   bounds: Rectangle;
   contentBounds: Rectangle;
   title: string;
+  backgroundColor: string | null;
   isMaximized: boolean;
   isDestroyed: boolean;
   attachedViews: Set<string>;
@@ -173,6 +175,7 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
         bounds: { ...state.bounds },
         contentBounds: { ...state.contentBounds },
         title: state.title,
+        backgroundColor: state.backgroundColor,
         isMaximized: state.isMaximized,
         isDestroyed: state.isDestroyed,
         attachedViews: new Set(state.attachedViews),
@@ -347,6 +350,7 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
         bounds,
         contentBounds: { ...bounds },
         title: options.title ?? "",
+        backgroundColor: options.backgroundColor ?? null,
         isMaximized: false,
         isDestroyed: false,
         attachedViews: new Set(),
@@ -452,6 +456,11 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
     setTitle(handle: WindowHandle, title: string): void {
       const window = getWindow(handle);
       window.title = title;
+    },
+
+    setBackgroundColor(handle: WindowHandle, color: string): void {
+      const window = getWindow(handle);
+      window.backgroundColor = color;
     },
 
     focus(handle: WindowHandle): void {

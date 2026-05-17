@@ -4,7 +4,7 @@
  */
 
 import { vi, type Mock } from "vitest";
-import type { WindowManager, ContentBounds, Unsubscribe } from "./window-manager";
+import type { WindowManager, ContentBounds, Unsubscribe, Theme } from "./window-manager";
 import type { WindowHandle } from "./types";
 import { createWindowHandle } from "./types";
 import type { ImageHandle } from "./image-types";
@@ -23,6 +23,12 @@ export interface MockWindowManager {
   setTitle: Mock<WindowManager["setTitle"]>;
   setOverlayIcon: Mock<WindowManager["setOverlayIcon"]>;
   close: Mock<WindowManager["close"]>;
+  getTheme: Mock<WindowManager["getTheme"]>;
+  onThemeChange: Mock<WindowManager["onThemeChange"]>;
+  /**
+   * Trigger a theme change for tests subscribed via onThemeChange().
+   */
+  triggerThemeChange(theme: Theme): void;
 
   /**
    * Get all calls to setOverlayIcon with their arguments.
@@ -39,6 +45,8 @@ export interface MockWindowManagerOptions {
   readonly windowHandle?: WindowHandle;
   /** Bounds returned by getBounds(). Defaults to { width: 1200, height: 800 }. */
   readonly bounds?: ContentBounds;
+  /** Theme returned by getTheme(). Defaults to "dark". */
+  readonly theme?: Theme;
 }
 
 /**
@@ -61,7 +69,9 @@ export interface MockWindowManagerOptions {
 export function createMockWindowManager(options?: MockWindowManagerOptions): MockWindowManager {
   const windowHandle = options?.windowHandle ?? createWindowHandle("test-window-1");
   const bounds = options?.bounds ?? { width: 1200, height: 800 };
+  let currentTheme: Theme = options?.theme ?? "dark";
   const overlayIconCalls: Array<{ image: ImageHandle | null; description: string }> = [];
+  const themeCallbacks = new Set<(theme: Theme) => void>();
 
   return {
     create: vi.fn(),
@@ -75,6 +85,16 @@ export function createMockWindowManager(options?: MockWindowManagerOptions): Moc
       overlayIconCalls.push({ image, description });
     }),
     close: vi.fn(),
+    getTheme: vi.fn(() => currentTheme),
+    onThemeChange: vi.fn((cb: (theme: Theme) => void): Unsubscribe => {
+      themeCallbacks.add(cb);
+      return () => themeCallbacks.delete(cb);
+    }),
+
+    triggerThemeChange(theme: Theme): void {
+      currentTheme = theme;
+      for (const cb of themeCallbacks) cb(theme);
+    },
 
     getOverlayIconCalls(): Array<{ image: ImageHandle | null; description: string }> {
       return overlayIconCalls;

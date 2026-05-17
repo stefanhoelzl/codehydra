@@ -158,6 +158,7 @@ import { createTempDirModule } from "./modules/temp-dir-module";
 import { createErrorHandlerModule } from "./modules/error-handler-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
+import { createThemeModule } from "./modules/theme-module";
 import { createDebugModule } from "./modules/debug-module";
 import { createUiIpcModule } from "./modules/ui-ipc-module";
 import { DialogManager } from "./modules/dialog-manager";
@@ -319,6 +320,7 @@ const windowManager = new WindowManager(
   {
     windowLayer,
     imageLayer,
+    appLayer,
     logger: loggingService.createLogger("window"),
     platformInfo,
   },
@@ -335,7 +337,6 @@ const viewManager = new ViewManager({
   config: {
     uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
     codeServerPort: 0,
-    backgroundHtmlPath: nodePath.join(__dirname, "../renderer/background.html"),
   },
   logger: loggingService.createLogger("view"),
 });
@@ -608,6 +609,11 @@ const devtoolsModule = createDevtoolsModule({
   viewLayer,
 });
 
+const themeModule = createThemeModule({
+  viewManager,
+  windowManager,
+});
+
 const debugModule = createDebugModule({ configService, notificationManager });
 
 const bugReportModule = createBugReportModule({
@@ -704,6 +710,7 @@ dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
+dispatcher.registerModule(themeModule);
 dispatcher.registerModule(debugModule);
 dispatcher.registerModule(bugReportModule);
 dispatcher.registerModule(autoWorkspaceModule);

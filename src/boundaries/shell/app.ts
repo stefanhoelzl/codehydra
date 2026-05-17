@@ -10,6 +10,11 @@
 import type { Logger } from "../platform/logging";
 import { pathToFileURL } from "node:url";
 
+/**
+ * Function to unsubscribe from an event.
+ */
+export type Unsubscribe = () => void;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -101,13 +106,26 @@ export interface AppBoundary {
    * @param filePath - Absolute path to the file or folder
    */
   openPath(filePath: string): Promise<void>;
+
+  /**
+   * Whether the OS is currently using a dark color scheme.
+   */
+  shouldUseDarkColors(): boolean;
+
+  /**
+   * Subscribe to OS theme change events.
+   *
+   * @param callback - Called whenever the OS theme changes
+   * @returns Unsubscribe function
+   */
+  onThemeUpdated(callback: () => void): Unsubscribe;
 }
 
 // ============================================================================
 // Default Implementation
 // ============================================================================
 
-import { app, shell } from "electron";
+import { app, shell, nativeTheme } from "electron";
 
 /**
  * Default implementation of AppBoundary using Electron's app module.
@@ -153,5 +171,16 @@ export class DefaultAppBoundary implements AppBoundary {
 
   async openPath(filePath: string): Promise<void> {
     await shell.openExternal(pathToFileURL(filePath).href);
+  }
+
+  shouldUseDarkColors(): boolean {
+    return nativeTheme.shouldUseDarkColors;
+  }
+
+  onThemeUpdated(callback: () => void): Unsubscribe {
+    nativeTheme.on("updated", callback);
+    return () => {
+      nativeTheme.off("updated", callback);
+    };
   }
 }

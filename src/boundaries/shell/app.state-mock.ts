@@ -38,7 +38,15 @@ interface CommandLineSwitch {
 class AppBoundaryMockStateImpl implements MockState {
   badgeCount = 0;
   dockBadge = "";
+  shouldUseDarkColors = true;
   readonly commandLineSwitches: CommandLineSwitch[] = [];
+  readonly themeUpdatedCallbacks: Set<() => void> = new Set();
+
+  triggerThemeUpdated(): void {
+    for (const cb of this.themeUpdatedCallbacks) {
+      cb();
+    }
+  }
 
   snapshot(): Snapshot {
     return {
@@ -90,6 +98,12 @@ export interface MockAppBoundaryOptions {
    * Unmapped paths return a placeholder.
    */
   paths?: Partial<Record<AppPathName, string>>;
+
+  /**
+   * Initial value reported by shouldUseDarkColors().
+   * @default true
+   */
+  shouldUseDarkColors?: boolean;
 }
 
 /**
@@ -135,9 +149,10 @@ export interface MockAppBoundaryOptions {
  * ```
  */
 export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): MockAppBoundary {
-  const { platform = "darwin", paths = {} } = options;
+  const { platform = "darwin", paths = {}, shouldUseDarkColors = true } = options;
 
   const state = new AppBoundaryMockStateImpl();
+  state.shouldUseDarkColors = shouldUseDarkColors;
 
   // Create dock only for macOS
   const dock: AppDock | undefined =
@@ -185,6 +200,17 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
 
     async openUrl(): Promise<void> {},
     async openPath(): Promise<void> {},
+
+    shouldUseDarkColors(): boolean {
+      return state.shouldUseDarkColors;
+    },
+
+    onThemeUpdated(callback: () => void) {
+      state.themeUpdatedCallbacks.add(callback);
+      return () => {
+        state.themeUpdatedCallbacks.delete(callback);
+      };
+    },
   };
 }
 

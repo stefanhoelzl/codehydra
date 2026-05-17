@@ -157,4 +157,12 @@ contextBridge.exposeInMainWorld("api", {
    * @returns Unsubscribe function to remove the listener
    */
   onShortcut: createEventSubscription<ShortcutKey>(ApiIpcChannels.SHORTCUT_KEY),
+
+  /**
+   * Subscribe to theme change events from main process.
+   * Fired once on startup with the initial theme and again whenever the OS theme changes.
+   * @param callback - Called with "dark" or "light"
+   * @returns Unsubscribe function to remove the listener
+   */
+  onTheme: createEventSubscription<"dark" | "light">(ApiIpcChannels.UI_THEME),
 });
