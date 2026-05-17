@@ -16,10 +16,10 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
+import type { KeyboardTarget } from "../boundaries/shell/view-manager-types";
 import type { Logger } from "../boundaries/platform/logging";
-import type { KeyboardInput, Unsubscribe, ViewBoundary } from "../boundaries/shell/view";
+import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
-import type { ViewHandle } from "../boundaries/shell/types";
 import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -60,8 +60,10 @@ export function normalizeKey(key: string): string {
 }
 
 export interface ShortcutModuleDeps {
-  readonly viewManager: Pick<IViewManager, "getUIViewHandle" | "getMode" | "getWorkspaceView">;
-  readonly viewLayer: Pick<ViewBoundary, "onBeforeInputEvent" | "onDestroyed">;
+  readonly viewManager: Pick<
+    IViewManager,
+    "getUIKeyboardTarget" | "getMode" | "getWorkspaceKeyboardTarget"
+  >;
   readonly windowLayer: Pick<WindowBoundary, "onBlur">;
   readonly windowManager: Pick<WindowManager, "getWindowHandle">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
@@ -87,30 +89,30 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     } as ShortcutKeyIntent);
   }
 
-  function registerView(handle: ViewHandle): void {
-    if (cleanups.has(handle.id)) return;
+  function registerView(target: KeyboardTarget): void {
+    if (cleanups.has(target.id)) return;
 
     const unsubs: Unsubscribe[] = [];
     unsubs.push(
-      deps.viewLayer.onBeforeInputEvent(handle, (input) => {
+      target.onBeforeInput((input) => {
         handleInput(input);
       })
     );
     unsubs.push(
-      deps.viewLayer.onDestroyed(handle, () => {
-        unregisterView(handle);
+      target.onDestroyed(() => {
+        unregisterView(target.id);
       })
     );
-    cleanups.set(handle.id, unsubs);
+    cleanups.set(target.id, unsubs);
   }
 
-  function unregisterView(handle: ViewHandle): void {
-    const unsubs = cleanups.get(handle.id);
+  function unregisterView(id: string): void {
+    const unsubs = cleanups.get(id);
     if (unsubs) {
       for (const unsub of unsubs) {
         unsub();
       }
-      cleanups.delete(handle.id);
+      cleanups.delete(id);
     }
   }
 
@@ -226,7 +228,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
               state = "NORMAL";
             });
 
-            registerView(deps.viewManager.getUIViewHandle());
+            registerView(deps.viewManager.getUIKeyboardTarget());
           },
         },
       },
@@ -248,9 +250,9 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceCreatedEvent).payload;
-          const handle = deps.viewManager.getWorkspaceView(payload.workspacePath);
-          if (handle) {
-            registerView(handle);
+          const target = deps.viewManager.getWorkspaceKeyboardTarget(payload.workspacePath);
+          if (target) {
+            registerView(target);
           }
         },
       },

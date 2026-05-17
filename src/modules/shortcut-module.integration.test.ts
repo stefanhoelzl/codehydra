@@ -28,6 +28,7 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";
 import type { ViewHandle, WindowHandle } from "../boundaries/shell/types";
 import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
+import type { KeyboardTarget } from "../boundaries/shell/view-manager-types";
 import type { UIMode } from "../shared/ipc";
 
 // =============================================================================
@@ -70,8 +71,8 @@ interface MockCallbacks {
   blurUnsubscribe: ReturnType<typeof vi.fn<() => void>>;
 }
 
-function createMockViewBoundary() {
-  const callbacks: MockCallbacks = {
+function createMockCallbacks(): MockCallbacks {
+  return {
     inputCallbacks: new Map(),
     destroyedCallbacks: new Map(),
     inputUnsubscribes: new Map(),
@@ -79,42 +80,48 @@ function createMockViewBoundary() {
     blurCallback: null,
     blurUnsubscribe: vi.fn<() => void>(),
   };
+}
 
-  const viewLayer = {
-    onBeforeInputEvent: vi.fn(
-      (
-        handle: ViewHandle,
-        callback: (input: KeyboardInput, preventDefault: () => void) => void
-      ): Unsubscribe => {
+function createKeyboardTarget(handle: ViewHandle, callbacks: MockCallbacks): KeyboardTarget {
+  return {
+    id: handle.id,
+    onBeforeInput: vi.fn(
+      (callback: (input: KeyboardInput, preventDefault: () => void) => void): Unsubscribe => {
         callbacks.inputCallbacks.set(handle.id, callback);
         const unsub = vi.fn<() => void>();
         callbacks.inputUnsubscribes.set(handle.id, unsub);
         return unsub;
       }
     ),
-    onDestroyed: vi.fn((handle: ViewHandle, callback: () => void): Unsubscribe => {
+    onDestroyed: vi.fn((callback: () => void): Unsubscribe => {
       callbacks.destroyedCallbacks.set(handle.id, callback);
       const unsub = vi.fn<() => void>();
       callbacks.destroyedUnsubscribes.set(handle.id, unsub);
       return unsub;
     }),
   };
-
-  return { viewLayer, callbacks };
 }
 
-function createMockViewManager(uiHandle: ViewHandle, initialMode: UIMode = "shortcut") {
+function createMockViewManager(
+  uiHandle: ViewHandle,
+  callbacks: MockCallbacks,
+  initialMode: UIMode = "shortcut"
+) {
   let currentMode: UIMode = initialMode;
   const wsHandle = createViewHandle("ws-view");
+  const uiTarget = createKeyboardTarget(uiHandle, callbacks);
+  const wsTarget = createKeyboardTarget(wsHandle, callbacks);
 
   return {
-    getUIViewHandle: vi.fn().mockReturnValue(uiHandle),
+    getUIKeyboardTarget: vi.fn(() => uiTarget),
     getMode: vi.fn(() => currentMode),
-    getWorkspaceView: vi.fn(() => wsHandle),
+    getWorkspaceKeyboardTarget: vi.fn(() => wsTarget),
     _setMode(mode: UIMode) {
       currentMode = mode;
     },
     _wsHandle: wsHandle,
+    _uiTarget: uiTarget,
+    _wsTarget: wsTarget,
   };
 }
 
@@ -154,8 +161,8 @@ interface TestHarness {
 async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarness> {
   const dispatcher = new Dispatcher({ logger: createMockLogger() });
   const uiHandle = createViewHandle("ui-view");
-  const { viewLayer, callbacks } = createMockViewBoundary();
-  const viewManager = createMockViewManager(uiHandle, initialMode);
+  const callbacks = createMockCallbacks();
+  const viewManager = createMockViewManager(uiHandle, callbacks, initialMode);
   const windowLayer = createMockWindowBoundary(callbacks);
 
   dispatcher.registerOperation(
@@ -181,7 +188,6 @@ async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarn
 
   const module = createShortcutModule({
     viewManager: viewManager as unknown as ShortcutModuleDeps["viewManager"],
-    viewLayer: viewLayer as unknown as ShortcutModuleDeps["viewLayer"],
     windowLayer,
     windowManager: { getWindowHandle: () => createWindowHandle() },
     dispatcher: { dispatch: dispatchSpy } as unknown as ShortcutModuleDeps["dispatcher"],

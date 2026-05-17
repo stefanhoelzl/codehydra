@@ -9,27 +9,13 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
-import type { ViewBoundary } from "../boundaries/shell/view";
-import type { ViewHandle } from "../boundaries/shell/types";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 
 export interface DevtoolsModuleDeps {
   readonly viewManager: Pick<
     IViewManager,
-    "getUIViewHandle" | "getWorkspaceView" | "getActiveWorkspacePath"
+    "getUIDevtoolsTarget" | "getWorkspaceDevtoolsTarget" | "getActiveWorkspacePath"
   >;
-  readonly viewLayer: Pick<ViewBoundary, "openDevTools" | "closeDevTools" | "isDevToolsOpened">;
-}
-
-function toggleDevTools(
-  viewLayer: Pick<ViewBoundary, "openDevTools" | "closeDevTools" | "isDevToolsOpened">,
-  handle: ViewHandle
-): void {
-  if (viewLayer.isDevToolsOpened(handle)) {
-    viewLayer.closeDevTools(handle);
-  } else {
-    viewLayer.openDevTools(handle, { mode: "detach" });
-  }
 }
 
 export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
@@ -42,17 +28,14 @@ export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
           const { key } = (event as ShortcutKeyPressedEvent).payload;
 
           if (key === "d") {
-            toggleDevTools(deps.viewLayer, deps.viewManager.getUIViewHandle());
+            deps.viewManager.getUIDevtoolsTarget().toggle();
             return;
           }
 
           if (key === "w") {
             const activePath = deps.viewManager.getActiveWorkspacePath();
             if (activePath) {
-              const wsHandle = deps.viewManager.getWorkspaceView(activePath);
-              if (wsHandle) {
-                toggleDevTools(deps.viewLayer, wsHandle);
-              }
+              deps.viewManager.getWorkspaceDevtoolsTarget(activePath)?.toggle();
             }
           }
         },
