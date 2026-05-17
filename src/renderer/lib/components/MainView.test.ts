@@ -517,7 +517,7 @@ describe("MainView component", () => {
       dialogsStore.closeDialog();
 
       // setMode("workspace") is still called even without active workspace
-      // ViewManager's setMode("workspace") gracefully handles null activeWorkspacePath
+      // WebContentsViewManager's setMode("workspace") gracefully handles null activeWorkspacePath
       await waitFor(() => {
         expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
       });

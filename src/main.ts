@@ -44,7 +44,7 @@ import { DefaultWindowBoundary } from "./boundaries/shell/window";
 import { DefaultViewBoundary } from "./boundaries/shell/view";
 import { DefaultSessionBoundary } from "./boundaries/shell/session";
 import { WindowManager } from "./boundaries/shell/window-manager";
-import { ViewManager } from "./boundaries/shell/view-manager";
+import { WebContentsViewManager } from "./boundaries/shell/webcontents-view-manager";
 // Services (stayed)
 import { AutoUpdater } from "./modules/auto-updater";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
@@ -328,7 +328,7 @@ const windowManager = new WindowManager(
   pathProvider.appIconPath.toNative()
 );
 
-const viewManager = new ViewManager({
+const viewManager = new WebContentsViewManager({
   windowManager,
   windowLayer,
   viewLayer,

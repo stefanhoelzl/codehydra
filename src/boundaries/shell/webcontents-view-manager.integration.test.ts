@@ -1,9 +1,12 @@
 /**
- * Integration tests for ViewManager using behavioral mocks.
+ * Integration tests for WebContentsViewManager using behavioral mocks.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ViewManager, type ViewManagerDeps } from "./view-manager";
+import {
+  WebContentsViewManager,
+  type WebContentsViewManagerDeps,
+} from "./webcontents-view-manager";
 import { SIDEBAR_MINIMIZED_WIDTH } from "./view-manager-types";
 import type { WindowManager } from "./window-manager";
 import { SILENT_LOGGER } from "../platform/logging";
@@ -20,7 +23,7 @@ import { createMockWindowManager } from "./window-manager.test-utils";
 const mockOpenUrl = vi.fn().mockResolvedValue(undefined);
 
 /**
- * Creates a test window layer with a pre-created window for ViewManager tests.
+ * Creates a test window layer with a pre-created window for WebContentsViewManager tests.
  */
 function createViewManagerWindowBoundary(): MockWindowBoundaryInternal & {
   _createdWindowHandle: WindowHandle;
@@ -41,9 +44,9 @@ function createViewManagerWindowBoundary(): MockWindowBoundaryInternal & {
 }
 
 /**
- * Creates ViewManager deps with behavioral mocks.
+ * Creates WebContentsViewManager deps with behavioral mocks.
  */
-function createViewManagerDeps(): ViewManagerDeps & {
+function createViewManagerDeps(): WebContentsViewManagerDeps & {
   viewLayer: MockViewBoundary;
   windowLayer: MockWindowBoundaryInternal & { _createdWindowHandle: WindowHandle };
   sessionLayer: MockSessionBoundary;
@@ -70,15 +73,15 @@ function createViewManagerDeps(): ViewManagerDeps & {
 }
 
 /**
- * Creates a ViewManager with two-phase init (constructor + create).
+ * Creates a WebContentsViewManager with two-phase init (constructor + create).
  */
-function createViewManager(deps: ViewManagerDeps): ViewManager {
-  const manager = new ViewManager(deps);
+function createViewManager(deps: WebContentsViewManagerDeps): WebContentsViewManager {
+  const manager = new WebContentsViewManager(deps);
   manager.create();
   return manager;
 }
 
-describe("ViewManager", () => {
+describe("WebContentsViewManager", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -94,11 +97,11 @@ describe("ViewManager", () => {
   });
 
   describe("create", () => {
-    it("creates a ViewManager instance", () => {
+    it("creates a WebContentsViewManager instance", () => {
       const deps = createViewManagerDeps();
       const manager = createViewManager(deps);
 
-      expect(manager).toBeInstanceOf(ViewManager);
+      expect(manager).toBeInstanceOf(WebContentsViewManager);
     });
 
     it("creates UI layer view with security settings", () => {
