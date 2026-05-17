@@ -1,7 +1,7 @@
 /**
- * Interface for ViewManager to enable testability and to allow alternative
- * implementations (e.g. WebContents-based vs. iframe-based) to coexist behind
- * a feature flag.
+ * Interface for view-manager implementations. Enables testability and allows
+ * alternative implementations (e.g. WebContents-based vs. iframe-based) to
+ * coexist behind a feature flag.
  *
  * Implementations MUST honor the invariants documented on each method.
  * The conformance test suite (`view-manager.conformance.ts`) encodes most

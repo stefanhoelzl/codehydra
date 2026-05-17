@@ -37,7 +37,7 @@ export type LoggerName =
   | "opencode-server" // OpenCodeServerManager - opencode server lifecycle
   | "api" // IPC handlers
   | "window" // WindowManager
-  | "view" // ViewManager
+  | "view" // WebContentsViewManager
   | "app" // Application lifecycle
   | "ui" // Renderer UI components
   | "binary-download" // Binary download operations

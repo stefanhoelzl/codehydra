@@ -18,7 +18,7 @@ import { getErrorMessage } from "../../shared/error-utils";
 import type { ViewBoundary, WindowOpenDetails, FailLoadDetails } from "./view";
 import type { SessionBoundary } from "./session";
 import type { WindowBoundaryInternal } from "./window";
-import type { ViewHandle, SessionHandle, WindowHandle } from "./types";
+import type { ViewHandle, WindowHandle } from "./types";
 import {
   Z_UI_BOTTOM,
   computeUIRect,
@@ -59,9 +59,9 @@ const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
 const RELOAD_WATCHDOG_MS = 15000;
 
 /**
- * Configuration for creating a ViewManager.
+ * Configuration for creating a WebContentsViewManager.
  */
-export interface ViewManagerConfig {
+export interface WebContentsViewManagerConfig {
   /** Path to the UI layer preload script */
   readonly uiPreloadPath: string;
   /** Code-server port number */
@@ -69,9 +69,9 @@ export interface ViewManagerConfig {
 }
 
 /**
- * Dependencies for ViewManager.
+ * Dependencies for WebContentsViewManager.
  */
-export interface ViewManagerDeps {
+export interface WebContentsViewManagerDeps {
   /** Window manager for the main window */
   readonly windowManager: WindowManager;
   /** Window layer for accessing raw window */
@@ -83,7 +83,7 @@ export interface ViewManagerDeps {
   /** App layer for opening URLs/paths externally */
   readonly appLayer: Pick<AppBoundary, "openUrl">;
   /** Configuration */
-  readonly config: ViewManagerConfig;
+  readonly config: WebContentsViewManagerConfig;
   /** Logger */
   readonly logger: Logger;
 }
@@ -92,13 +92,13 @@ export interface ViewManagerDeps {
  * Manages WebContentsViews for the application.
  * Implements the IViewManager interface.
  */
-export class ViewManager implements IViewManager {
+export class WebContentsViewManager implements IViewManager {
   private readonly windowManager: WindowManager;
   private readonly windowLayer: WindowBoundaryInternal;
   private readonly viewLayer: ViewBoundary;
   private readonly sessionLayer: SessionBoundary;
   private readonly appLayer: Pick<AppBoundary, "openUrl">;
-  private readonly config: ViewManagerConfig;
+  private readonly config: WebContentsViewManagerConfig;
   private uiViewHandle!: ViewHandle;
   private codeServerPort: number;
   private windowHandle!: WindowHandle;
@@ -144,7 +144,7 @@ export class ViewManager implements IViewManager {
    */
   private readonly loadingChangeCallbacks: Set<LoadingChangeCallback> = new Set();
 
-  constructor(deps: ViewManagerDeps) {
+  constructor(deps: WebContentsViewManagerDeps) {
     this.windowManager = deps.windowManager;
     this.windowLayer = deps.windowLayer;
     this.viewLayer = deps.viewLayer;
@@ -1279,7 +1279,7 @@ export class ViewManager implements IViewManager {
   }
 
   /**
-   * Destroys the ViewManager and cleans up all views.
+   * Destroys the WebContentsViewManager and cleans up all views.
    * Called on application shutdown.
    */
   destroy(): void {
