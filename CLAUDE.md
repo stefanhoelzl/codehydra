@@ -324,7 +324,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 
 Any key can appear in config.json, env vars, or CLI flags.
 
-Source of truth: Config definitions are registered by modules via `Config.register()` in their factory functions. The service lives at `src/services/config/config-service.ts`. Type aliases live in `src/services/config/config-values.ts`.
+Source of truth: Config definitions are registered by modules via `Config.register()` in their factory functions. The service lives at `src/boundaries/platform/config.ts`. Shared type aliases live in `src/boundaries/platform/config-definition.ts`.
 
 ### Log Files
 
