@@ -41,8 +41,6 @@ import type { WindowManager } from "./window-manager";
 
 const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
 
-const VIEW_BACKGROUND_COLOR = "#1e1e1e";
-
 /**
  * Script injected into every workspace iframe to preserve focus across
  * show/hide cycles. Records the last-focused element via `focusin` and
@@ -191,7 +189,7 @@ export class IframeViewManager extends BaseViewManager {
         backgroundThrottling: false,
       },
     });
-    viewLayer.setBackgroundColor(this.workspaceHostHandle, VIEW_BACKGROUND_COLOR);
+    viewLayer.setBackgroundColor(this.workspaceHostHandle, "#00000000");
 
     this.sharedSessionHandle = sessionLayer.fromPartition(GLOBAL_SESSION_PARTITION);
 
