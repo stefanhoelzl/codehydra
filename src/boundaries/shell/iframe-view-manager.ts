@@ -6,9 +6,10 @@
  * a single renderer process — the main memory win over per-view rendering.
  *
  * Trade-offs vs `WebContentsViewManager`:
- *   - Per-workspace `did-fail-load` retry, `render-process-gone` recovery,
- *     and the reload watchdog are not implemented. Failures show as broken
- *     iframes; recovery is host-renderer-wide.
+ *   - Per-iframe `did-fail-load` retry uses the host's webContents event
+ *     (filtered to subframes, mapped back to a workspace by URL). There
+ *     is no per-iframe `render-process-gone` — all iframes share the host
+ *     renderer.
  *   - DevTools and keyboard input are routed to the host view; workspaces
  *     share both.
  *
@@ -24,7 +25,7 @@ import { basename } from "node:path";
 import type { AppBoundary } from "./app";
 import type { Logger } from "../platform/logging";
 import { getErrorMessage } from "../../shared/error-utils";
-import type { ViewBoundary, WindowOpenDetails } from "./view";
+import type { FailLoadDetails, ViewBoundary, WindowOpenDetails } from "./view";
 import type { SessionBoundary } from "./session";
 import type { WindowBoundaryInternal } from "./window";
 import type { SessionHandle, ViewHandle, WindowHandle } from "./types";
@@ -242,6 +243,19 @@ export class IframeViewManager extends BaseViewManager {
       const pending = this.pendingHostScripts.splice(0);
       for (const code of pending) this.hostExec(code);
     });
+
+    // Subframe load failures: Electron's `did-fail-load` fires on the host's
+    // webContents for both the host page (isMainFrame=true) and any iframe
+    // inside it (isMainFrame=false). For subframes we map the failing URL
+    // back to a workspace and delegate to the shared backoff scheduler
+    // (`scheduleLoadRetry` in `BaseViewManager`).
+    viewLayer.onDidFailLoad(this.workspaceHostHandle, (details: FailLoadDetails) => {
+      if (details.isMainFrame) return;
+      const failingPath = this.findWorkspacePathByUrl(details.validatedURL);
+      if (failingPath === undefined) return;
+      this.scheduleLoadRetry(failingPath, details);
+    });
+
     void viewLayer.loadURL(this.workspaceHostHandle, `file://${config.workspaceHostHtmlPath}`);
   }
 
@@ -301,6 +315,27 @@ export class IframeViewManager extends BaseViewManager {
     if (path !== undefined) {
       this.hostExec(`window.__host.remove(${jsStr(path)})`);
     }
+
+    // Clear any pending retry timer for this iframe.
+    if (state.retryTimer !== null) {
+      clearTimeout(state.retryTimer);
+      state.retryTimer = null;
+    }
+
+    // If no workspaces remain (e.g. hibernating the last awake workspace),
+    // detach the host view so the UI overlay (HibernatedOverlay, empty
+    // backdrop) is visible. The base class deletes from `workspaceStates`
+    // BEFORE calling this, so an empty map means "no iframes left to show".
+    // Without this detach the host's dark `#1e1e1e` body would cover the
+    // UI view sitting at z-bottom — the symptom in PostHog issue 019e3bd1.
+    if (this.workspaceStates.size === 0 && this.hostAttachedToWindow) {
+      try {
+        this.viewLayer.detachFromWindow(this.workspaceHostHandle);
+      } catch {
+        // window may be closing
+      }
+      this.hostAttachedToWindow = false;
+    }
   }
 
   protected startLoadingUrl(state: WorkspaceState): void {
@@ -323,6 +358,18 @@ export class IframeViewManager extends BaseViewManager {
       const nextPath = this.findWorkspacePathByState(next);
       if (nextPath !== undefined) {
         this.hostExec(`window.__host.show(${jsStr(nextPath)})`);
+      }
+      // Force a host re-composite so the now-visible iframe repaints
+      // correctly on Windows — the same DirectComposition trick the UI
+      // view uses via `bringUIToBottom(true)`.
+      if (this.hostAttachedToWindow) {
+        try {
+          this.viewLayer.attachToWindow(this.workspaceHostHandle, this.windowHandle, undefined, {
+            force: true,
+          });
+        } catch {
+          // window may be closing
+        }
       }
     }
   }
@@ -435,6 +482,26 @@ export class IframeViewManager extends BaseViewManager {
       if (candidate === state) return path;
     }
     return undefined;
+  }
+
+  /** Reverse-lookup a workspace path from its iframe URL. */
+  private findWorkspacePathByUrl(url: string): string | undefined {
+    for (const [path, state] of this.workspaceStates) {
+      if (state.url === url) return path;
+    }
+    return undefined;
+  }
+
+  /**
+   * Re-issue the iframe's `src` via the host page. `__host.add` with
+   * `force: true` bounces through `about:blank` so Chromium actually
+   * re-requests the URL even when it matches the previous (failed)
+   * navigation.
+   */
+  protected retryLoad(state: WorkspaceState): void {
+    const path = this.findWorkspacePathByState(state);
+    if (path === undefined) return;
+    this.hostExec(`window.__host.add(${jsStr(path)}, ${jsStr(state.url)}, { force: true })`);
   }
 }
 

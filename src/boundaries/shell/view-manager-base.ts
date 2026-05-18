@@ -34,6 +34,13 @@ export interface BaseViewManagerDeps {
 }
 
 /**
+ * Exponential-backoff schedule for retrying a failed workspace load:
+ * 1s, 2s, 5s, then 10s forever. Shared across backends so behavior is
+ * uniform regardless of which view manager owns the surface.
+ */
+const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
+
+/**
  * Result of creating a workspace view's underlying primitives. Returned by
  * the `createWorkspaceViewImpl` subclass primitive and stored in the shared
  * `WorkspaceState`.
@@ -748,6 +755,70 @@ export abstract class BaseViewManager implements IViewManager {
    * use this hook to add watchdog/recovery behavior.
    */
   protected abstract reloadWorkspaceView(state: WorkspaceState): void;
+
+  /**
+   * Re-issue the underlying load for a workspace whose previous load
+   * failed. Called by `scheduleLoadRetry` after the backoff delay.
+   * Implementations decide HOW to re-load (per-view `loadURL` vs
+   * shared-surface iframe `src` bump).
+   */
+  protected abstract retryLoad(state: WorkspaceState): void;
+
+  // ---------------------------------------------------------------------------
+  // Shared retry scheduling
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Schedule an exponential-backoff retry for a workspace whose load
+   * failed. Delay schedule: 1s, 2s, 5s, then 10s forever. Per-workspace
+   * state (`retryCount`, `retryTimer`) lives on the shared
+   * `WorkspaceState`, so both backends keep independent retry chains.
+   *
+   * The actual re-load happens via `retryLoad(state)` inside the timer
+   * callback. Callers should perform any subscriber-specific gating
+   * (e.g. main-frame-only filter for WCV) BEFORE invoking this.
+   */
+  protected scheduleLoadRetry(
+    workspacePath: string,
+    context: { readonly errorCode: number; readonly errorDescription: string }
+  ): void {
+    const state = this.workspaceStates.get(workspacePath);
+    if (!state) return;
+    if (this.destroying) return;
+
+    const workspaceName = basename(workspacePath);
+    const delayIndex = Math.min(state.retryCount, RETRY_DELAYS_MS.length - 1);
+    // RETRY_DELAYS_MS is non-empty and delayIndex is clamped to valid range
+    const delay = RETRY_DELAYS_MS[delayIndex]!;
+    state.retryCount++;
+
+    this.logger.warn("Workspace load failed, scheduling retry", {
+      workspace: workspaceName,
+      errorCode: context.errorCode,
+      errorDescription: context.errorDescription,
+      retryAttempt: state.retryCount,
+      retryDelayMs: delay,
+    });
+
+    if (state.retryTimer !== null) {
+      clearTimeout(state.retryTimer);
+    }
+
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+
+      const currentState = this.workspaceStates.get(workspacePath);
+      if (!currentState) return;
+      if (this.destroying) return;
+
+      this.logger.debug("Retrying workspace load", {
+        workspace: workspaceName,
+        retryAttempt: currentState.retryCount,
+      });
+
+      this.retryLoad(currentState);
+    }, delay);
+  }
 
   /**
    * Build the narrow `DevtoolsTarget` capability for the given view handle.

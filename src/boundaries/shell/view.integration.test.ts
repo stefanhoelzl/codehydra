@@ -254,12 +254,14 @@ describe("ViewBoundary (integration)", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://example.test/",
       });
 
       expect(callback).toHaveBeenCalledWith({
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://example.test/",
       });
     });
 
@@ -273,6 +275,7 @@ describe("ViewBoundary (integration)", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://example.test/",
       });
 
       expect(callback).not.toHaveBeenCalled();
@@ -289,6 +292,7 @@ describe("ViewBoundary (integration)", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://example.test/",
       });
 
       expect(callback1).toHaveBeenCalled();
