@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Api } from "@shared/electron-api";
 import type { ProjectPath } from "@shared/ipc";
-import type { ProjectId, Workspace } from "@shared/api/types";
+import type { ProjectId, Workspace, WorkspaceName } from "@shared/api/types";
 import { createMockProject, createMockWorkspace } from "$lib/test-fixtures";
 import { createMockApi } from "../test-utils";
 
@@ -26,6 +26,7 @@ import {
   setActiveWorkspace,
   addWorkspace,
   removeWorkspace,
+  updateWorkspaceMetadata,
   reset,
   getAllWorkspaces,
   getAwakeWorkspaceRefByIndex,
@@ -232,6 +233,28 @@ describe("projects store", () => {
       expect(projects.value[0]?.workspaces).toHaveLength(1);
     });
 
+    // Regression: wake clears the `hibernated` flag server-side and emits
+    // workspace:metadata-changed; reopen subsequently emits workspace:created
+    // with clean metadata. If addWorkspace silently dedups (keeping the stale
+    // entry), the renderer is left depending entirely on metadata-changed.
+    // The most recent payload from main must win.
+    it("replaces metadata when re-added for an existing path", () => {
+      const ws = createMockWorkspace({
+        path: "/test/project/.worktrees/ws1",
+        metadata: { hibernated: "true" },
+      });
+      addProject(createMockProject({ path: "/test/project" as ProjectPath, workspaces: [ws] }));
+
+      const refreshed = createMockWorkspace({
+        path: "/test/project/.worktrees/ws1",
+        metadata: {},
+      });
+      addWorkspace("/test/project" as ProjectPath, refreshed);
+
+      expect(projects.value[0]?.workspaces).toHaveLength(1);
+      expect(projects.value[0]?.workspaces[0]?.metadata).not.toHaveProperty("hibernated");
+    });
+
     it("keeps arrow navigation consistent after a wake/reopen re-adds an existing workspace", () => {
       // Reproduce the user-reported sidebar layout:
       //   project A: ws-a
@@ -264,6 +287,61 @@ describe("projects store", () => {
       const nextIndex = wrapIndex(currentIndex + 1, all.length);
       const nextRef = getWorkspaceRefByIndex(nextIndex);
       expect(nextRef?.path).toBe(wsC.path);
+    });
+  });
+
+  describe("updateWorkspaceMetadata", () => {
+    it("clears the key and returns true when the workspace matches", () => {
+      const ws = createMockWorkspace({
+        path: "/test/project/.worktrees/ws1",
+        name: "ws1",
+        metadata: { hibernated: "true" },
+      });
+      const project = createMockProject({
+        path: "/test/project" as ProjectPath,
+        workspaces: [ws],
+      });
+      addProject(project);
+
+      const projectId = projects.value[0]!.id;
+      const matched = updateWorkspaceMetadata(
+        projectId,
+        "ws1" as WorkspaceName,
+        "hibernated",
+        null
+      );
+
+      expect(matched).toBe(true);
+      expect(projects.value[0]?.workspaces[0]?.metadata).not.toHaveProperty("hibernated");
+    });
+
+    it("returns false when projectId does not match any project", () => {
+      const ws = createMockWorkspace({ path: "/test/project/.worktrees/ws1", name: "ws1" });
+      addProject(createMockProject({ path: "/test/project" as ProjectPath, workspaces: [ws] }));
+
+      const matched = updateWorkspaceMetadata(
+        "nonexistent-id" as ProjectId,
+        "ws1" as WorkspaceName,
+        "hibernated",
+        null
+      );
+
+      expect(matched).toBe(false);
+    });
+
+    it("returns false when workspaceName does not match any workspace in the project", () => {
+      const ws = createMockWorkspace({ path: "/test/project/.worktrees/ws1", name: "ws1" });
+      addProject(createMockProject({ path: "/test/project" as ProjectPath, workspaces: [ws] }));
+      const projectId = projects.value[0]!.id;
+
+      const matched = updateWorkspaceMetadata(
+        projectId,
+        "unknown" as WorkspaceName,
+        "hibernated",
+        null
+      );
+
+      expect(matched).toBe(false);
     });
   });
 

@@ -416,7 +416,11 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     if (!(await handle.accepted)) {
       return { started: false };
     }
-    void handle.catch(() => {});
+    // Await full completion (not fire-and-forget): callers — notably the
+    // renderer's wake → reopen sequence in shortcuts.svelte.ts — rely on the
+    // `workspace:metadata-changed` event being processed before reopen runs,
+    // and on wake errors being surfaced rather than swallowed.
+    await handle;
     return { started: true };
   });
 

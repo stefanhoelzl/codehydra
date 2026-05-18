@@ -140,7 +140,7 @@ export function addWorkspace(
       ? {
           ...p,
           workspaces: p.workspaces.some((w) => w.path === workspace.path)
-            ? p.workspaces
+            ? p.workspaces.map((w) => (w.path === workspace.path ? workspace : w))
             : [...p.workspaces, workspace],
           // Update defaultBaseBranch if provided (remembers last-used branch for next workspace creation)
           ...(defaultBaseBranch !== undefined ? { defaultBaseBranch } : {}),
@@ -162,13 +162,15 @@ export function updateWorkspaceMetadata(
   workspaceName: WorkspaceName,
   key: string,
   value: string | null
-): void {
+): boolean {
+  let matched = false;
   _projects = _projects.map((p) => {
     if (p.id !== projectId) return p;
     return {
       ...p,
       workspaces: p.workspaces.map((w) => {
         if (w.name !== workspaceName) return w;
+        matched = true;
         const metadata = { ...w.metadata };
         if (value === null) {
           delete metadata[key];
@@ -179,6 +181,7 @@ export function updateWorkspaceMetadata(
       }),
     };
   });
+  return matched;
 }
 
 /**

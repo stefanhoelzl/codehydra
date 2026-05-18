@@ -114,7 +114,15 @@ export function setupDomainEventBindings(
         logger.debug("Store updated", { store: "agent-status" });
       },
       updateWorkspaceMetadata: (projectId, workspaceName, key, value) => {
-        updateWorkspaceMetadata(projectId, workspaceName, key, value);
+        const matched = updateWorkspaceMetadata(projectId, workspaceName, key, value);
+        if (!matched) {
+          logger.warn("Metadata update did not match any workspace", {
+            projectId,
+            workspaceName,
+            key,
+          });
+          return;
+        }
         logger.debug("Store updated", { store: "projects", key });
       },
     },
