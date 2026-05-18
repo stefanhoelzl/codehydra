@@ -163,6 +163,41 @@ describe("AppReady Operation", () => {
     });
   });
 
+  describe("parallel dispatch", () => {
+    it("dispatches project:open in parallel rather than sequentially", async () => {
+      // Each stub execute blocks on a shared latch until all have started.
+      // If dispatch were sequential, only one would ever start and the test
+      // would deadlock (the latch resolves only after all N start).
+      const paths = ["/p1", "/p2", "/p3", "/p4", "/p5"];
+      const started: string[] = [];
+      let resolveLatch!: () => void;
+      const latch = new Promise<void>((r) => {
+        resolveLatch = r;
+      });
+      const stub: Operation<OpenProjectIntent, Project> = {
+        id: "open-project",
+        async execute(ctx: OperationContext<OpenProjectIntent>): Promise<Project> {
+          const p = ctx.intent.payload.path?.toString() ?? "";
+          started.push(p);
+          if (started.length === paths.length) resolveLatch();
+          await latch;
+          return {
+            id: `id-${p}`,
+            path: p,
+            name: "test",
+            workspaces: [],
+          } as unknown as Project;
+        },
+      };
+      const { dispatcher } = createTestSetup([createProjectModule(paths)], stub);
+
+      await dispatcher.dispatch(appReadyIntent());
+
+      expect(started).toHaveLength(paths.length);
+      expect(new Set(started)).toEqual(new Set(paths));
+    });
+  });
+
   describe("app:started event", () => {
     it("emits app:started after project:open dispatches complete", async () => {
       const state = createTestState();

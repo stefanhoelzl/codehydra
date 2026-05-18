@@ -114,18 +114,18 @@ export class AppReadyOperation implements Operation<AppReadyIntent, AppReadyResu
       if (result.projectPaths) projectPaths.push(...result.projectPaths);
     }
 
-    // Dispatch project:open for each saved project (best-effort).
+    // Dispatch project:open for each saved project (best-effort, in parallel).
     // Each project:open dispatches workspace:create + workspace:switch internally.
-    for (const projectPath of projectPaths) {
-      try {
-        await ctx.dispatch({
+    // allSettled keeps best-effort semantics: invalid projects (no longer exist,
+    // not git repos, etc.) are silently dropped without aborting the rest.
+    await Promise.allSettled(
+      projectPaths.map((projectPath) =>
+        ctx.dispatch({
           type: INTENT_OPEN_PROJECT,
           payload: { path: new Path(projectPath) },
-        } as OpenProjectIntent);
-      } catch {
-        // Skip invalid projects (no longer exist, not git repos, etc.)
-      }
-    }
+        } as OpenProjectIntent)
+      )
+    );
 
     // Signal that initial project:open dispatches are complete.
     ctx.emit({ type: EVENT_APP_STARTED, payload: {} });
