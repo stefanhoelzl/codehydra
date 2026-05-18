@@ -319,13 +319,17 @@ export abstract class BaseViewManager implements IViewManager {
       this.swapActiveSurface(previousState, newState ?? null);
 
       // Visibility (= window attachment of the surface) is gated on
-      // loading state. While loading, the surface is detached and the
-      // UI's loading overlay is visible underneath.
-      if (workspacePath !== null && !this.loadingWorkspaces.has(workspacePath)) {
+      // loading state and on whether a backing view exists. Hibernated
+      // workspaces have no state (view-module skips createWorkspaceView
+      // for them); in shared-surface backends the host would otherwise
+      // stay attached over the UI's HibernatedOverlay.
+      const hasState = workspacePath !== null && this.workspaceStates.has(workspacePath);
+      if (hasState && !this.loadingWorkspaces.has(workspacePath)) {
         this.attachView(workspacePath);
       } else {
-        // Either no active workspace, or the new one is loading. Either
-        // way the previously-attached surface must come down.
+        // No active workspace, the new one is still loading, or it has
+        // no backing view (hibernated). The previously-attached surface
+        // must come down so the UI layer is visible underneath.
         if (previousPath !== null) this.detachView(previousPath);
       }
 
