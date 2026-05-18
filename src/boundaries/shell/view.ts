@@ -64,6 +64,12 @@ export interface FailLoadDetails {
   readonly errorCode: number;
   readonly errorDescription: string;
   readonly isMainFrame: boolean;
+  /**
+   * The URL whose load failed. For subframe failures, the iframe's `src`.
+   * Used by shared-surface backends (iframe-view-manager) to map a
+   * subframe failure back to a workspace by URL.
+   */
+  readonly validatedURL: string;
 }
 
 /**
@@ -703,10 +709,10 @@ export class DefaultViewBoundary implements ViewBoundary {
       _event: Electron.Event,
       errorCode: number,
       errorDescription: string,
-      _validatedURL: string,
+      validatedURL: string,
       isMainFrame: boolean
     ) => {
-      callback({ errorCode, errorDescription, isMainFrame });
+      callback({ errorCode, errorDescription, isMainFrame, validatedURL });
     };
     state.view.webContents.on("did-fail-load", handler);
     return () => {

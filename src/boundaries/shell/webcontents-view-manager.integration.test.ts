@@ -1526,6 +1526,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       // Advance past first retry delay (1s)
@@ -1558,6 +1559,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: false,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       await vi.advanceTimersByTimeAsync(5000);
@@ -1590,6 +1592,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       await vi.advanceTimersByTimeAsync(999);
@@ -1603,6 +1606,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       await vi.advanceTimersByTimeAsync(1999);
@@ -1616,6 +1620,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       await vi.advanceTimersByTimeAsync(4999);
@@ -1650,6 +1655,7 @@ describe("WebContentsViewManager", () => {
           errorCode: -21,
           errorDescription: "ERR_NETWORK_CHANGED",
           isMainFrame: true,
+          validatedURL: "http://127.0.0.1:8080/?folder=/path",
         });
         await vi.advanceTimersByTimeAsync(delay);
         expect(loadURLSpy).toHaveBeenCalledTimes(1);
@@ -1662,6 +1668,7 @@ describe("WebContentsViewManager", () => {
           errorCode: -21,
           errorDescription: "ERR_NETWORK_CHANGED",
           isMainFrame: true,
+          validatedURL: "http://127.0.0.1:8080/?folder=/path",
         });
         await vi.advanceTimersByTimeAsync(9999);
         expect(loadURLSpy).not.toHaveBeenCalled();
@@ -1693,6 +1700,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
       await vi.advanceTimersByTimeAsync(1000);
 
@@ -1705,6 +1713,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       await vi.advanceTimersByTimeAsync(999);
@@ -1736,6 +1745,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       // Destroy before retry fires
@@ -1770,12 +1780,14 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
       await vi.advanceTimersByTimeAsync(1000);
       deps.viewLayer.$.triggerDidFailLoad(wsHandle, {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
       await vi.advanceTimersByTimeAsync(2000);
 
@@ -1790,6 +1802,7 @@ describe("WebContentsViewManager", () => {
         errorCode: -21,
         errorDescription: "ERR_NETWORK_CHANGED",
         isMainFrame: true,
+        validatedURL: "http://127.0.0.1:8080/?folder=/path",
       });
 
       await vi.advanceTimersByTimeAsync(999);

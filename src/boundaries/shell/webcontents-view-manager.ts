@@ -44,12 +44,6 @@ const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
 const NAVIGATION_TIMEOUT_MS = 2000;
 
 /**
- * Retry delays for failed URL loads (in milliseconds).
- * Backs off to 10s then retries indefinitely at that interval.
- */
-const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
-
-/**
  * How long to wait for did-finish-load after a resume-triggered reload
  * before assuming the renderer is wedged and recreating the view.
  *
@@ -464,53 +458,24 @@ export class WebContentsViewManager extends BaseViewManager {
   // ---------------------------------------------------------------------------
 
   /**
-   * Handles a load failure for a workspace view.
-   * Only retries main-frame failures, with exponential backoff.
+   * Handles a load failure for a workspace view. Subframe failures are
+   * ignored — they're sub-resources (extensions, web workers) that
+   * Chromium will retry on its own. Main-frame failures schedule a
+   * backoff retry via the shared `scheduleLoadRetry` in the base class.
    */
   private handleLoadFailure(workspacePath: string, details: FailLoadDetails): void {
     if (!details.isMainFrame) return;
-
+    // Pre-emptively mark the URL as not-loaded so any concurrent attach/
+    // loadViewUrl path doesn't think it's still in flight while we wait
+    // for the retry. `retryLoad` re-sets it to true before re-issuing.
     const state = this.workspaceStates.get(workspacePath);
-    if (!state) return;
-    if (this.destroying) return;
+    if (state) state.urlLoaded = false;
+    this.scheduleLoadRetry(workspacePath, details);
+  }
 
-    const workspaceName = basename(workspacePath);
-
-    // Delay schedule: 1s, 2s, 5s, then 10s forever
-    const delayIndex = Math.min(state.retryCount, RETRY_DELAYS_MS.length - 1);
-    // RETRY_DELAYS_MS is non-empty and delayIndex is clamped to valid range
-    const delay = RETRY_DELAYS_MS[delayIndex]!;
-    state.retryCount++;
-
-    this.logger.warn("URL load failed, scheduling retry", {
-      workspace: workspaceName,
-      errorCode: details.errorCode,
-      errorDescription: details.errorDescription,
-      retryAttempt: state.retryCount,
-      retryDelayMs: delay,
-    });
-
-    if (state.retryTimer !== null) {
-      clearTimeout(state.retryTimer);
-    }
-
-    // Reset urlLoaded to allow retry
-    state.urlLoaded = false;
-
-    state.retryTimer = setTimeout(() => {
-      state.retryTimer = null;
-
-      const currentState = this.workspaceStates.get(workspacePath);
-      if (!currentState) return;
-
-      this.logger.debug("Retrying URL load", {
-        workspace: workspaceName,
-        retryAttempt: currentState.retryCount,
-      });
-
-      currentState.urlLoaded = true;
-      void this.viewLayer.loadURL(currentState.handle, currentState.url);
-    }, delay);
+  protected retryLoad(state: WorkspaceState): void {
+    state.urlLoaded = true;
+    void this.viewLayer.loadURL(state.handle, state.url);
   }
 
   protected reloadWorkspaceView(state: WorkspaceState): void {

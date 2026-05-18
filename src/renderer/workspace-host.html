@@ -48,10 +48,22 @@
       const frames = new Map(); // path -> HTMLIFrameElement
 
       window.__host = {
-        add(path, url) {
+        add(path, url, options) {
+          const force = options && options.force === true;
           if (frames.has(path)) {
             const existing = frames.get(path);
-            if (existing.src !== url) existing.src = url;
+            if (force) {
+              // Force a fresh navigation by bouncing through about:blank.
+              // Used by the manager's load-failure retry path: the URL
+              // hasn't changed, but the previous load ended in an error
+              // page and we need Chromium to actually re-request it.
+              try {
+                existing.src = "about:blank";
+              } catch (e) {}
+              existing.src = url;
+            } else if (existing.src !== url) {
+              existing.src = url;
+            }
             return;
           }
           const f = document.createElement("iframe");
@@ -81,12 +93,21 @@
             if (active) target = f;
           }
           if (target) {
+            // Force a paint-tree refresh of the now-visible iframe to work
+            // around Windows DirectComposition surfaces that can come back
+            // blank after a display:none → display:block toggle (the
+            // symptom in PostHog issue 019e3bd1). Reading `offsetHeight`
+            // flushes layout; the transient transform forces a compositor
+            // layer rebuild, which is cleared on the next frame.
+            void target.offsetHeight;
+            target.style.transform = "translateZ(0)";
             // display:none → block is async; defer focus past layout. The
             // contentWindow.focus() fires a window 'focus' event inside the
             // iframe, which the per-iframe tracker uses to restore the
             // last-focused element.
             requestAnimationFrame(() => {
               try {
+                target.style.transform = "";
                 target.focus();
                 target.contentWindow?.focus();
               } catch (e) {}
