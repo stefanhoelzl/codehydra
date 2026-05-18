@@ -612,9 +612,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult> => {
-            const { workspacePath, active } = ctx as HibernatePipelineHookInput;
+            const { workspacePath } = ctx as HibernatePipelineHookInput;
             await tearDownWorkspaceView(workspacePath, "hibernate shutdown");
-            return active ? { wasActive: true } : {};
+            return {};
           },
         },
       },

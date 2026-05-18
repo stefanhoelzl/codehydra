@@ -386,12 +386,11 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
   });
 
   registerIpc(ApiIpcChannels.WORKSPACE_HIBERNATE, async (payload) => {
-    const p = payload as { workspacePath: string; skipSwitch?: boolean };
+    const p = payload as { workspacePath: string };
     const intent: HibernateWorkspaceIntent = {
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: {
         workspacePath: p.workspacePath,
-        ...(p.skipSwitch !== undefined && { skipSwitch: p.skipSwitch }),
       },
     };
     const handle = dispatcher.dispatch(intent);
