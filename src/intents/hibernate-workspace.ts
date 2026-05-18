@@ -2,15 +2,33 @@
  * HibernateWorkspaceOperation - Tears down a workspace's view + agent server
  * while preserving the worktree, branch, and uncommitted changes.
  *
- * Steps:
- * 1. Dispatch workspace:resolve — workspacePath → projectPath + workspaceName
+ * Pipeline is split so the renderer flips to a pending hibernation overlay as
+ * soon as the screenshot is on disk; the slow teardown runs in the background:
+ *
+ * Foreground (awaited by callers, ~500 ms):
+ * 1. Dispatch workspace:resolve — yields projectPath, workspaceName, active
  * 2. Dispatch project:resolve — projectPath → projectId
- * 3. "capture" hook — best-effort screenshot capture (view-module + screenshot persistence)
- * 4. "shutdown" hook — same handlers as workspace:delete shutdown:
- *    view-module destroys the view, agent-module stops the agent server.
- * 5. Dispatch workspace:set-metadata to persist `hibernated="true"`
- * 6. Emit workspace:hibernated (NOT workspace:deleted — workspace stays in
- *    sidebar/state).
+ * 3. "capture" hook — best-effort screenshot capture
+ * 4. Dispatch workspace:set-metadata to persist `hibernated="true"` (this is
+ *    what makes the renderer show HibernatedOverlay; switch-workspace's
+ *    `c.hibernated` filter also begins excluding the workspace immediately)
+ * 5. If active, dispatch workspace:switch so the user is moved to an awake
+ *    sibling without waiting for the background teardown
+ *
+ * Background (fire-and-forget):
+ * 6. "shutdown" hook — view-module destroys the view, agent-module stops the
+ *    agent server
+ * 7. "release" hook — best-effort kill of CWD-rooted processes (Windows
+ *    file-lock cleanup; multi-second PowerShell scan)
+ * 8. Emit workspace:hibernated (always, via finally) so the dispatcher's
+ *    idempotency interceptor releases the per-workspace lock and the renderer
+ *    clears its pending entry
+ *
+ * Background failures are logged only — the user already saw the overlay
+ * flip and re-emitting workspace:hibernate-failed at this point would be
+ * misleading. The renderer's wake button is hidden while pending, so the
+ * teardown does not race a wake intent (only entry point for wake is the
+ * renderer's WORKSPACE_WAKE IPC).
  *
  * Intentionally does NOT emit workspace:deleted — consumers (sidebar,
  * workspace-selection-module, badge-module, etc.) should not evict the
@@ -32,8 +50,6 @@ import { getErrorMessage } from "../shared/error-utils";
 
 export interface HibernateWorkspacePayload {
   readonly workspacePath: string;
-  /** If true, do not auto-switch to another workspace when hibernating the active one. */
-  readonly skipSwitch?: boolean;
 }
 
 export interface HibernateWorkspaceIntent extends Intent<{ started: true }> {
@@ -82,7 +98,7 @@ export const EVENT_WORKSPACE_HIBERNATE_FAILED = "workspace:hibernate-failed" as 
 // Hook Types
 // =============================================================================
 
-/** Input for capture/shutdown hook handlers. */
+/** Input for capture/shutdown/release hook handlers. */
 export interface HibernatePipelineHookInput extends HookContext {
   readonly projectPath: string;
   readonly workspacePath: string;
@@ -98,13 +114,11 @@ export interface CaptureHookResult {
 }
 
 /** Per-handler result for the "shutdown" hook point. */
-export interface HibernateShutdownHookResult {
-  readonly wasActive?: boolean;
-}
+export type HibernateShutdownHookResult = Record<string, never>;
 
 /**
  * Per-handler result for the "release" hook point.
- * Best-effort CWD-rooted process kill before metadata persists.
+ * Best-effort CWD-rooted process kill.
  */
 export interface HibernateReleaseHookResult {
   readonly error?: string;
@@ -123,19 +137,25 @@ export class HibernateWorkspaceOperation implements Operation<
   async execute(ctx: OperationContext<HibernateWorkspaceIntent>): Promise<{ started: true }> {
     const { payload } = ctx.intent;
 
+    let hookCtx: HibernatePipelineHookInput;
+    let projectId: ProjectId;
+    let projectPath: string;
+    let workspaceName: WorkspaceName;
+
     try {
-      // Resolve workspace + project identity
-      const { projectPath, workspaceName, active } = await ctx.dispatch({
+      // ─── Foreground ──────────────────────────────────────────────────────
+      let active: boolean;
+      ({ projectPath, workspaceName, active } = await ctx.dispatch({
         type: INTENT_RESOLVE_WORKSPACE,
         payload: { workspacePath: payload.workspacePath },
-      } as ResolveWorkspaceIntent);
+      } as ResolveWorkspaceIntent));
 
-      const { projectId } = await ctx.dispatch({
+      ({ projectId } = await ctx.dispatch({
         type: INTENT_RESOLVE_PROJECT,
         payload: { projectPath },
-      } as ResolveProjectIntent);
+      } as ResolveProjectIntent));
 
-      const hookCtx: HibernatePipelineHookInput = {
+      hookCtx = {
         intent: ctx.intent,
         projectPath,
         workspacePath: payload.workspacePath,
@@ -144,35 +164,15 @@ export class HibernateWorkspaceOperation implements Operation<
         active,
       };
 
-      // Capture screenshot (best-effort, errors logged but not propagated)
+      // Capture screenshot (best-effort, errors logged but not propagated).
+      // Must complete in the foreground so the overlay has a file:// URL to
+      // load when the metadata flip below triggers the renderer.
       await ctx.hooks.collect<CaptureHookResult>("capture", hookCtx);
 
-      // Shutdown view + agent (reuses the handlers registered by view-module
-      // and agent-module; same semantics as workspace:delete shutdown).
-      const { results: shutdownResults } = await ctx.hooks.collect<HibernateShutdownHookResult>(
-        "shutdown",
-        hookCtx
-      );
-
-      let wasActive = false;
-      for (const r of shutdownResults) {
-        if (r.wasActive) wasActive = true;
-      }
-
-      // Best-effort: kill processes whose CWD is rooted under the workspace.
-      // Errors here never block hibernation — the worktree stays on disk
-      // either way, so a stuck cleanup must not fail the operation.
-      const { results: releaseResults, errors: releaseCollectErrors } =
-        await ctx.hooks.collect<HibernateReleaseHookResult>("release", hookCtx);
-      for (const e of releaseCollectErrors) {
-        // collect errors are already logged by the dispatcher; nothing to do.
-        void e;
-      }
-      for (const r of releaseResults) {
-        void r;
-      }
-
-      // Persist hibernated flag via existing set-metadata pipeline
+      // Persist hibernated flag via existing set-metadata pipeline. This is
+      // what makes the renderer swap in HibernatedOverlay via the
+      // workspace:metadata-changed → WORKSPACE_METADATA_CHANGED IPC, and
+      // makes switch-workspace's `c.hibernated` filter exclude us.
       await ctx.dispatch({
         type: INTENT_SET_METADATA,
         payload: {
@@ -182,10 +182,12 @@ export class HibernateWorkspaceOperation implements Operation<
         },
       } as SetMetadataIntent);
 
-      // If the hibernated workspace was active, auto-switch to an awake
-      // sibling; if none exist, fallbackToCurrent keeps the hibernated
-      // workspace as active so the renderer shows the hibernation overlay.
-      if (wasActive && !payload.skipSwitch) {
+      // If the hibernated workspace was active, switch to an awake sibling
+      // immediately so the user is moved away while the teardown runs in the
+      // background. fallbackToCurrent keeps the hibernated workspace as
+      // active when no awake sibling exists; the renderer then shows the
+      // pending hibernation overlay over it.
+      if (active) {
         try {
           await ctx.dispatch({
             type: INTENT_SWITCH_WORKSPACE,
@@ -197,22 +199,9 @@ export class HibernateWorkspaceOperation implements Operation<
             },
           } as SwitchWorkspaceIntent);
         } catch {
-          // Best-effort: switch failure doesn't fail hibernation
+          // Best-effort: switch failure doesn't fail hibernation.
         }
       }
-
-      const event: WorkspaceHibernatedEvent = {
-        type: EVENT_WORKSPACE_HIBERNATED,
-        payload: {
-          projectId,
-          workspaceName,
-          workspacePath: payload.workspacePath,
-          projectPath,
-        },
-      };
-      ctx.emit(event);
-
-      return { started: true };
     } catch (error) {
       const failedEvent: WorkspaceHibernateFailedEvent = {
         type: EVENT_WORKSPACE_HIBERNATE_FAILED,
@@ -224,5 +213,31 @@ export class HibernateWorkspaceOperation implements Operation<
       ctx.emit(failedEvent);
       throw error;
     }
+
+    // ─── Background ────────────────────────────────────────────────────────
+    // Fire-and-forget; failures are logged by the dispatcher's hook runner.
+    // The renderer's wake button is hidden until workspace:hibernated fires,
+    // so no wake intent can race the teardown.
+    void (async () => {
+      try {
+        await ctx.hooks.collect<HibernateShutdownHookResult>("shutdown", hookCtx);
+        await ctx.hooks.collect<HibernateReleaseHookResult>("release", hookCtx);
+      } finally {
+        // Always emit so the dispatcher's idempotency interceptor releases
+        // the per-workspace lock and the renderer clears its pending entry.
+        const event: WorkspaceHibernatedEvent = {
+          type: EVENT_WORKSPACE_HIBERNATED,
+          payload: {
+            projectId,
+            workspaceName,
+            workspacePath: payload.workspacePath,
+            projectPath,
+          },
+        };
+        void ctx.emit(event);
+      }
+    })();
+
+    return { started: true };
   }
 }

@@ -2,9 +2,10 @@
  * Smoke integration tests for HibernateWorkspaceOperation and
  * WakeWorkspaceOperation.
  *
- * Verifies the orchestration: resolve → capture → shutdown → set-metadata for
- * hibernate; resolve → set-metadata → cleanup for wake. Uses minimal stub
- * modules that record interactions; no provider boundaries are exercised.
+ * Hibernate splits foreground (resolve → capture → set-metadata → optional
+ * switch) from background (shutdown → release → emit hibernated). Uses
+ * minimal stub modules that record interactions; no provider boundaries
+ * are exercised.
  */
 
 import { createMockDispatcher } from "./lib/dispatcher.test-utils";
@@ -54,6 +55,11 @@ import {
   EVENT_METADATA_CHANGED,
   type MetadataChangedEvent,
 } from "./set-metadata";
+import {
+  SwitchWorkspaceOperation,
+  INTENT_SWITCH_WORKSPACE,
+  SWITCH_WORKSPACE_OPERATION_ID,
+} from "./switch-workspace";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
 const PROJECT_PATH = "/test/project";
@@ -66,6 +72,7 @@ interface Recorder {
   shutdownCalled: boolean;
   releaseCalled: boolean;
   cleanupCalled: boolean;
+  switchCalled: boolean;
   callOrder: string[];
   metadataWrites: Array<{ key: string; value: string | null }>;
   events: DomainEvent[];
@@ -77,13 +84,14 @@ function createRecorder(): Recorder {
     shutdownCalled: false,
     releaseCalled: false,
     cleanupCalled: false,
+    switchCalled: false,
     callOrder: [],
     metadataWrites: [],
     events: [],
   };
 }
 
-function createResolveModule(): IntentModule {
+function createResolveModule(active: boolean): IntentModule {
   return {
     name: "test-resolve",
     hooks: {
@@ -92,6 +100,7 @@ function createResolveModule(): IntentModule {
           handler: async (): Promise<ResolveWorkspaceHookResult> => ({
             projectPath: PROJECT_PATH,
             workspaceName: WORKSPACE_NAME,
+            active,
           }),
         },
       },
@@ -119,6 +128,24 @@ function createMetadataModule(recorder: Recorder): IntentModule {
               key: intent.payload.key,
               value: intent.payload.value,
             });
+            recorder.callOrder.push(`set-metadata:${intent.payload.value ?? "null"}`);
+          },
+        },
+      },
+    },
+  };
+}
+
+function createSwitchModule(recorder: Recorder): IntentModule {
+  return {
+    name: "test-switch",
+    hooks: {
+      [SWITCH_WORKSPACE_OPERATION_ID]: {
+        activate: {
+          handler: async (): Promise<Record<string, never>> => {
+            recorder.switchCalled = true;
+            recorder.callOrder.push("switch");
+            return {};
           },
         },
       },
@@ -128,7 +155,10 @@ function createMetadataModule(recorder: Recorder): IntentModule {
 
 function createHibernateHookModule(
   recorder: Recorder,
-  opts: { wasActive?: boolean; releaseThrows?: boolean } = {}
+  opts: {
+    releaseThrows?: boolean;
+    shutdownGate?: Promise<void>;
+  } = {}
 ): IntentModule {
   return {
     name: "test-hibernate-hooks",
@@ -146,9 +176,12 @@ function createHibernateHookModule(
         },
         shutdown: {
           handler: async (): Promise<HibernateShutdownHookResult> => {
+            if (opts.shutdownGate) {
+              await opts.shutdownGate;
+            }
             recorder.shutdownCalled = true;
             recorder.callOrder.push("shutdown");
-            return opts.wasActive ? { wasActive: true } : {};
+            return {};
           },
         },
         release: {
@@ -186,9 +219,17 @@ function createWakeHookModule(recorder: Recorder): IntentModule {
   };
 }
 
-function buildHarness(buildHookModules: (recorder: Recorder) => IntentModule[]): {
+interface HarnessOpts {
+  active?: boolean;
+}
+
+function buildHarness(
+  buildHookModules: (recorder: Recorder) => IntentModule[],
+  opts: HarnessOpts = {}
+): {
   dispatcher: Dispatcher;
   recorder: Recorder;
+  waitForBackground: () => Promise<void>;
 } {
   const recorder = createRecorder();
   const dispatcher = createMockDispatcher();
@@ -196,11 +237,13 @@ function buildHarness(buildHookModules: (recorder: Recorder) => IntentModule[]):
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
+  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
   dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, new HibernateWorkspaceOperation());
   dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, new WakeWorkspaceOperation());
 
-  dispatcher.registerModule(createResolveModule());
+  dispatcher.registerModule(createResolveModule(opts.active ?? false));
   dispatcher.registerModule(createMetadataModule(recorder));
+  dispatcher.registerModule(createSwitchModule(recorder));
   for (const m of buildHookModules(recorder)) dispatcher.registerModule(m);
 
   for (const t of [
@@ -214,23 +257,35 @@ function buildHarness(buildHookModules: (recorder: Recorder) => IntentModule[]):
     });
   }
 
-  return { dispatcher, recorder };
+  // Register the backgroundDone resolver AFTER the recorder subscriber so it
+  // fires last in the collect loop — guarantees recorder.events has the
+  // hibernated event by the time waitForBackground() resolves.
+  const backgroundDone = new Promise<void>((resolve) => {
+    dispatcher.subscribe(EVENT_WORKSPACE_HIBERNATED, () => resolve());
+  });
+
+  return { dispatcher, recorder, waitForBackground: () => backgroundDone };
 }
 
 describe("workspace:hibernate", () => {
-  it("runs capture + shutdown + release, persists hibernated metadata, emits hibernated event", async () => {
-    const { dispatcher, recorder } = buildHarness((r) => [createHibernateHookModule(r)]);
+  it("runs full pipeline, persists hibernated metadata, emits hibernated event", async () => {
+    const { dispatcher, recorder, waitForBackground } = buildHarness((r) => [
+      createHibernateHookModule(r),
+    ]);
 
     const intent: HibernateWorkspaceIntent = {
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
     };
     await dispatcher.dispatch(intent);
+    await waitForBackground();
 
     expect(recorder.captureCalled).toBe(true);
     expect(recorder.shutdownCalled).toBe(true);
     expect(recorder.releaseCalled).toBe(true);
-    expect(recorder.callOrder).toEqual(["capture", "shutdown", "release"]);
+    expect(recorder.switchCalled).toBe(false);
+    // Foreground: capture → set-metadata. Background: shutdown → release.
+    expect(recorder.callOrder).toEqual(["capture", "set-metadata:true", "shutdown", "release"]);
     expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
 
     const hibernated = recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED);
@@ -246,8 +301,59 @@ describe("workspace:hibernate", () => {
     expect(metadataChanged?.payload.value).toBe("true");
   });
 
-  it("tolerates shutdown errors (silent-on-busy semantics)", async () => {
-    const { dispatcher, recorder } = buildHarness(() => [
+  it("dispatches switch in foreground when the workspace was active", async () => {
+    const { dispatcher, recorder, waitForBackground } = buildHarness(
+      (r) => [createHibernateHookModule(r)],
+      { active: true }
+    );
+
+    await dispatcher.dispatch({
+      type: INTENT_HIBERNATE_WORKSPACE,
+      payload: { workspacePath: WORKSPACE_PATH },
+    } as HibernateWorkspaceIntent);
+    await waitForBackground();
+
+    // Switch happened in foreground, between set-metadata and shutdown.
+    expect(recorder.callOrder).toEqual([
+      "capture",
+      "set-metadata:true",
+      "switch",
+      "shutdown",
+      "release",
+    ]);
+  });
+
+  it("flips hibernated metadata before background shutdown runs", async () => {
+    let releaseShutdown: () => void = () => {};
+    const shutdownGate = new Promise<void>((resolve) => {
+      releaseShutdown = resolve;
+    });
+
+    const { dispatcher, recorder, waitForBackground } = buildHarness((r) => [
+      createHibernateHookModule(r, { shutdownGate }),
+    ]);
+
+    await dispatcher.dispatch({
+      type: INTENT_HIBERNATE_WORKSPACE,
+      payload: { workspacePath: WORKSPACE_PATH },
+    } as HibernateWorkspaceIntent);
+
+    // Foreground done: metadata flipped, no shutdown yet.
+    expect(recorder.callOrder).toEqual(["capture", "set-metadata:true"]);
+    expect(recorder.shutdownCalled).toBe(false);
+    expect(recorder.releaseCalled).toBe(false);
+    expect(recorder.events.find((e) => e.type === EVENT_METADATA_CHANGED)).toBeDefined();
+    expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeUndefined();
+
+    releaseShutdown();
+    await waitForBackground();
+
+    expect(recorder.callOrder).toEqual(["capture", "set-metadata:true", "shutdown", "release"]);
+    expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeDefined();
+  });
+
+  it("tolerates shutdown handlers that return empty", async () => {
+    const { dispatcher, recorder, waitForBackground } = buildHarness(() => [
       {
         name: "tolerant-hibernate-hooks",
         hooks: {
@@ -256,8 +362,6 @@ describe("workspace:hibernate", () => {
               handler: async (): Promise<CaptureHookResult> => ({ captured: false }),
             },
             shutdown: {
-              // Real shutdown handlers swallow errors and return wasActive only;
-              // simulate that here to confirm the operation still completes.
               handler: async (): Promise<HibernateShutdownHookResult> => ({}),
             },
           },
@@ -265,11 +369,11 @@ describe("workspace:hibernate", () => {
       },
     ]);
 
-    const intent: HibernateWorkspaceIntent = {
+    await dispatcher.dispatch({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    };
-    await dispatcher.dispatch(intent);
+    } as HibernateWorkspaceIntent);
+    await waitForBackground();
 
     expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeDefined();
     expect(
@@ -279,18 +383,21 @@ describe("workspace:hibernate", () => {
   });
 
   it("hibernate completes when release throws (best-effort)", async () => {
-    const { dispatcher, recorder } = buildHarness((r) => [
+    const { dispatcher, recorder, waitForBackground } = buildHarness((r) => [
       createHibernateHookModule(r, { releaseThrows: true }),
     ]);
 
-    const intent: HibernateWorkspaceIntent = {
+    await dispatcher.dispatch({
       type: INTENT_HIBERNATE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
-    };
-    await dispatcher.dispatch(intent);
+    } as HibernateWorkspaceIntent);
+    await waitForBackground();
 
     expect(recorder.releaseCalled).toBe(true);
     expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+    // Background failures no longer surface as hibernate-failed — the user
+    // already saw the overlay flip in the foreground. workspace:hibernated
+    // still fires so the dispatcher's idempotency lock is released.
     expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeDefined();
     expect(
       recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATE_FAILED)

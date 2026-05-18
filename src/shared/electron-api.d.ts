@@ -75,10 +75,7 @@ export interface Api {
      * and emits workspace:hibernated. Returns { started: false } if blocked
      * by idempotency.
      */
-    hibernate(
-      workspacePath: string,
-      options?: { skipSwitch?: boolean }
-    ): Promise<{ started: boolean }>;
+    hibernate(workspacePath: string): Promise<{ started: boolean }>;
     /**
      * Wake a hibernated workspace (fire-and-forget).
      * Clears the `hibernated` metadata flag and deletes the saved screenshot.

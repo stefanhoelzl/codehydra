@@ -80,8 +80,8 @@ contextBridge.exposeInMainWorld("api", {
         workspacePath,
         ...(options?.refresh !== undefined && { refresh: options.refresh }),
       }),
-    hibernate: (workspacePath: string, options?: { skipSwitch?: boolean }) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_HIBERNATE, { workspacePath, ...options }),
+    hibernate: (workspacePath: string) =>
+      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_HIBERNATE, { workspacePath }),
     wake: (workspacePath: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_WAKE, { workspacePath }),
     reopen: (
