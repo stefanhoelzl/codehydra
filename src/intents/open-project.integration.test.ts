@@ -630,6 +630,7 @@ function createTestHarness(options?: {
                 return {
                   projectPath: project.path,
                   workspaceName: workspaceName as WorkspaceName,
+                  active: viewManager.getActiveWorkspacePath() === wsPath,
                 };
               }
             }
@@ -661,10 +662,10 @@ function createTestHarness(options?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath } = ctx as ActivateHookInput;
+            const { workspacePath, active } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            if (viewManager.getActiveWorkspacePath() === workspacePath) {
+            if (active) {
               return {};
             }
 

@@ -55,8 +55,8 @@ export function createWorkspaceSelectionModule(): IntentModule {
     events: {
       [EVENT_AGENT_STATUS_UPDATED]: {
         handler: async (event: DomainEvent) => {
-          const { workspacePath, status } = (event as AgentStatusUpdatedEvent).payload;
-          workspaceStatuses.set(workspacePath, status);
+          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
+          workspaceStatuses.set(workspace.path, status);
         },
       },
       [EVENT_WORKSPACE_DELETED]: {

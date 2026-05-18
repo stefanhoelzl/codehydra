@@ -126,9 +126,10 @@ describe("UpdateAgentStatus Operation", () => {
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
       expect(event.type).toBe(EVENT_AGENT_STATUS_UPDATED);
-      expect(event.payload.workspacePath).toBe("/workspace/test");
-      expect(event.payload.projectId).toBe(TEST_PROJECT_ID);
-      expect(event.payload.workspaceName).toBe(TEST_WORKSPACE_NAME);
+      expect(event.payload.workspace.path).toBe("/workspace/test");
+      expect(event.payload.workspace.projectId).toBe(TEST_PROJECT_ID);
+      expect(event.payload.workspace.name).toBe(TEST_WORKSPACE_NAME);
+      expect(event.payload.workspace.active).toBe(false);
       expect(event.payload.status).toEqual(status);
     });
 
@@ -144,7 +145,7 @@ describe("UpdateAgentStatus Operation", () => {
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as AgentStatusUpdatedEvent;
-      expect(event.payload.workspacePath).toBe("/workspace/idle-test");
+      expect(event.payload.workspace.path).toBe("/workspace/idle-test");
       expect(event.payload.status).toEqual(status);
     });
 

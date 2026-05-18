@@ -99,8 +99,8 @@ export class ViewManager implements IViewManager {
   getUIDevtoolsTarget(): DevtoolsTarget {
     return this.vm.getUIDevtoolsTarget();
   }
-  getWorkspaceDevtoolsTarget(path: string): DevtoolsTarget | undefined {
-    return this.vm.getWorkspaceDevtoolsTarget(path);
+  getActiveWorkspaceDevtoolsTarget(): DevtoolsTarget | undefined {
+    return this.vm.getActiveWorkspaceDevtoolsTarget();
   }
   getUIKeyboardTarget(): KeyboardTarget {
     return this.vm.getUIKeyboardTarget();
@@ -129,9 +129,6 @@ export class ViewManager implements IViewManager {
   }
   setActiveWorkspace(path: string | null, focus?: boolean): void {
     this.vm.setActiveWorkspace(path, focus);
-  }
-  getActiveWorkspacePath(): string | null {
-    return this.impl?.getActiveWorkspacePath() ?? null;
   }
   focus(): void {
     this.impl?.focus();

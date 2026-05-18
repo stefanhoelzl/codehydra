@@ -290,6 +290,7 @@ class MinimalShutdownOperation implements Operation<
       intent: ctx.intent,
       projectPath: "/test/project",
       workspacePath: payload.workspacePath ?? "/test/workspace",
+      active: false,
       ...(this.agentCapability !== null && {
         capabilities: { agent: this.agentCapability },
       }),

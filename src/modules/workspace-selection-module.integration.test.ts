@@ -223,9 +223,12 @@ describe("WorkspaceSelectionModule", () => {
         const event: AgentStatusUpdatedEvent = {
           type: EVENT_AGENT_STATUS_UPDATED,
           payload: {
-            workspacePath: wsPath as WorkspacePath,
-            projectId,
-            workspaceName: extractWorkspaceName(wsPath) as WorkspaceName,
+            workspace: {
+              path: wsPath as WorkspacePath,
+              projectId,
+              name: extractWorkspaceName(wsPath) as WorkspaceName,
+              active: false,
+            },
             status,
           },
         };

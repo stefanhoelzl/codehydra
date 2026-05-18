@@ -17,7 +17,7 @@
  */
 
 import { createMockDispatcher } from "./lib/dispatcher.test-utils";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
@@ -148,6 +148,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
   viewManager: IViewManager;
   appState: MockAppState;
+  getActivePath: () => string | null;
 }
 
 function createTestSetup(opts?: {
@@ -156,8 +157,12 @@ function createTestSetup(opts?: {
   projects?: ProjectEntry[];
 }): TestSetup {
   const projects = opts?.projects ?? [createTestProject()];
+  let activePath: string | null = opts?.initialActive ?? null;
+  const setActiveWorkspace = vi.fn((path: string | null) => {
+    activePath = path;
+  });
   const viewManager = createMockViewManager({
-    initialActiveWorkspace: opts?.initialActive ?? null,
+    overrides: { setActiveWorkspace },
   });
   const appState = createMockAppState(projects);
 
@@ -167,7 +172,7 @@ function createTestSetup(opts?: {
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 
-  // ResolveModule: "resolve" hook -- resolves workspacePath → projectPath + workspaceName
+  // ResolveModule: "resolve" hook -- resolves workspacePath → projectPath + workspaceName + active
   const resolveModule: IntentModule = {
     name: "test",
     hooks: {
@@ -179,7 +184,11 @@ function createTestSetup(opts?: {
             for (const project of appState.projects) {
               const workspace = project.workspaces.find((w) => w.path === wsPath);
               if (workspace) {
-                return { projectPath: project.path, workspaceName: extractWorkspaceName(wsPath) };
+                return {
+                  projectPath: project.path,
+                  workspaceName: extractWorkspaceName(wsPath),
+                  active: activePath === wsPath,
+                };
               }
             }
             return {};
@@ -214,10 +223,10 @@ function createTestSetup(opts?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath } = ctx as ActivateHookInput;
+            const { workspacePath, active } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            if (viewManager.getActiveWorkspacePath() === workspacePath) {
+            if (active) {
               return {};
             }
 
@@ -294,6 +303,7 @@ function createTestSetup(opts?: {
     dispatcher,
     viewManager,
     appState,
+    getActivePath: () => activePath,
   };
 }
 
@@ -329,11 +339,11 @@ describe("SwitchWorkspace Operation", () => {
     });
 
     it("sets viewManager activeWorkspacePath to resolved path", async () => {
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       await dispatcher.dispatch(switchIntent());
 
-      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH);
+      expect(getActivePath()).toBe(TEST_WORKSPACE_PATH);
     });
   });
 
@@ -387,31 +397,31 @@ describe("SwitchWorkspace Operation", () => {
   describe("throws when workspace not found (#5)", () => {
     it("rejects with error and leaves activeWorkspacePath unchanged", async () => {
       const setup = createTestSetup();
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       await expect(
         dispatcher.dispatch(switchIntent("/projects/my-app/workspaces/nonexistent"))
       ).rejects.toThrow("Workspace not found: /projects/my-app/workspaces/nonexistent");
 
-      expect(viewManager.getActiveWorkspacePath()).toBeNull();
+      expect(getActivePath()).toBeNull();
     });
 
     it("rejects when project not found", async () => {
       const setup = createTestSetup();
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       await expect(
         dispatcher.dispatch(switchIntent("/nonexistent/workspaces/feature-login"))
       ).rejects.toThrow("Workspace not found: /nonexistent/workspaces/feature-login");
 
-      expect(viewManager.getActiveWorkspacePath()).toBeNull();
+      expect(getActivePath()).toBeNull();
     });
   });
 
   describe("no-op when switching to already-active workspace (#6)", () => {
     it("does not emit event and leaves activeWorkspacePath unchanged", async () => {
       const setup = createTestSetup({ initialActive: TEST_WORKSPACE_PATH });
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       const receivedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
@@ -420,7 +430,7 @@ describe("SwitchWorkspace Operation", () => {
 
       await dispatcher.dispatch(switchIntent());
 
-      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH);
+      expect(getActivePath()).toBe(TEST_WORKSPACE_PATH);
       expect(receivedEvents).toHaveLength(0);
     });
   });
@@ -428,7 +438,7 @@ describe("SwitchWorkspace Operation", () => {
   describe("bridge handler defaults focus (#7)", () => {
     it("dispatches with focus defaulting to true when omitted", async () => {
       const setup = createTestSetup();
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, viewManager, getActivePath } = setup;
 
       // Simulate what the bridge handler does: no focus field in payload
       const intent: SwitchWorkspaceIntent = {
@@ -439,7 +449,7 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(intent);
 
-      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH);
+      expect(getActivePath()).toBe(TEST_WORKSPACE_PATH);
       expect(viewManager.setActiveWorkspace).toHaveBeenLastCalledWith(TEST_WORKSPACE_PATH, true);
     });
   });
@@ -447,7 +457,7 @@ describe("SwitchWorkspace Operation", () => {
   describe("interceptor cancellation prevents operation and event (#11)", () => {
     it("does not run operation and does not emit event", async () => {
       const setup = createTestSetup();
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       const receivedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
@@ -465,7 +475,7 @@ describe("SwitchWorkspace Operation", () => {
       const result = await dispatcher.dispatch(switchIntent());
 
       expect(result).toBeUndefined();
-      expect(viewManager.getActiveWorkspacePath()).toBeNull();
+      expect(getActivePath()).toBeNull();
       expect(receivedEvents).toHaveLength(0);
     });
   });
@@ -476,7 +486,7 @@ describe("SwitchWorkspace Operation", () => {
         withAutoSelect: true,
         projects: [createMultiWorkspaceProject()],
       });
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       const autoIntent: SwitchWorkspaceIntent = {
         type: INTENT_SWITCH_WORKSPACE,
@@ -484,7 +494,7 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(autoIntent);
 
-      expect(viewManager.getActiveWorkspacePath()).toBe(TEST_WORKSPACE_PATH_B);
+      expect(getActivePath()).toBe(TEST_WORKSPACE_PATH_B);
     });
   });
 
@@ -494,7 +504,7 @@ describe("SwitchWorkspace Operation", () => {
         withAutoSelect: true,
         projects: [createTestProject()], // only one workspace (the current one)
       });
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       const receivedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
@@ -507,7 +517,7 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(autoIntent);
 
-      expect(viewManager.getActiveWorkspacePath()).toBeNull();
+      expect(getActivePath()).toBeNull();
       expect(receivedEvents).toHaveLength(1);
       expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
     });
@@ -519,7 +529,7 @@ describe("SwitchWorkspace Operation", () => {
         withAutoSelect: true,
         projects: [], // no projects at all
       });
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       const receivedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
@@ -532,7 +542,7 @@ describe("SwitchWorkspace Operation", () => {
       };
       await dispatcher.dispatch(autoIntent);
 
-      expect(viewManager.getActiveWorkspacePath()).toBeNull();
+      expect(getActivePath()).toBeNull();
       expect(receivedEvents).toHaveLength(1);
       expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
     });
@@ -544,7 +554,7 @@ describe("SwitchWorkspace Operation", () => {
         withAutoSelect: true,
         projects: [createMultiWorkspaceProject()],
       });
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       // currentPath doesn't match any candidate (workspace already de-registered)
       const autoIntent: SwitchWorkspaceIntent = {
@@ -554,7 +564,7 @@ describe("SwitchWorkspace Operation", () => {
       await dispatcher.dispatch(autoIntent);
 
       // Should still switch to a valid workspace instead of null
-      expect(viewManager.getActiveWorkspacePath()).not.toBeNull();
+      expect(getActivePath()).not.toBeNull();
     });
   });
 });

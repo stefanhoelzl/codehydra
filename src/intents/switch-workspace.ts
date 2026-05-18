@@ -92,6 +92,7 @@ export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
 /** Input context for the "activate" hook point. */
 export interface ActivateHookInput extends HookContext {
   readonly workspacePath: string;
+  readonly active: boolean;
 }
 
 /**
@@ -240,7 +241,7 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
     payload: SwitchWorkspaceTargetPayload
   ): Promise<void> {
     // 1. Dispatch shared workspace resolution
-    const { projectPath, workspaceName } = await ctx.dispatch({
+    const { projectPath, workspaceName, active } = await ctx.dispatch({
       type: INTENT_RESOLVE_WORKSPACE,
       payload: { workspacePath: payload.workspacePath },
     } as ResolveWorkspaceIntent);
@@ -255,6 +256,7 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
     const activateCtx: ActivateHookInput = {
       intent: ctx.intent,
       workspacePath: payload.workspacePath,
+      active,
     };
     const { results: activateResults, errors: activateErrors } =
       await ctx.hooks.collect<SwitchWorkspaceHookResult>("activate", activateCtx);

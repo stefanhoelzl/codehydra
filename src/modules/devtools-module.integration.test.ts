@@ -34,14 +34,11 @@ function createDevtoolsTarget(id: string) {
 function createMockDeps() {
   const uiTarget = createDevtoolsTarget("ui-view");
   const wsTarget = createDevtoolsTarget("ws-view");
-  let activePath: string | null = "/test/workspace";
+  let hasActive = true;
 
   const viewManager = {
     getUIDevtoolsTarget: vi.fn(() => uiTarget),
-    getWorkspaceDevtoolsTarget: vi.fn((path: string) =>
-      path === activePath ? wsTarget : undefined
-    ),
-    getActiveWorkspacePath: vi.fn(() => activePath),
+    getActiveWorkspaceDevtoolsTarget: vi.fn(() => (hasActive ? wsTarget : undefined)),
   };
 
   return {
@@ -49,7 +46,7 @@ function createMockDeps() {
     uiTarget,
     wsTarget,
     _setActivePath(path: string | null) {
-      activePath = path;
+      hasActive = path !== null;
     },
   };
 }

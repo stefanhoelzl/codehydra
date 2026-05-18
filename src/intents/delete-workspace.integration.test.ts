@@ -435,7 +435,11 @@ function createTestHarness(options?: {
             const project = appState.findProjectForWorkspace(wsPath);
             if (!project) return {};
             const workspaceName = extractWorkspaceName(wsPath);
-            return { projectPath: project.path, workspaceName: workspaceName as WorkspaceName };
+            return {
+              projectPath: project.path,
+              workspaceName: workspaceName as WorkspaceName,
+              active: viewManager.getActiveWorkspacePath() === wsPath,
+            };
           },
         },
       },
@@ -466,10 +470,8 @@ function createTestHarness(options?: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
-            const { workspacePath } = ctx as DeletePipelineHookInput;
+            const { workspacePath, active: isActive } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
-
-            const isActive = viewManager.getActiveWorkspacePath() === workspacePath;
 
             try {
               await viewManager.destroyWorkspaceView(workspacePath);
@@ -694,10 +696,10 @@ function createTestHarness(options?: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath } = ctx as ActivateHookInput;
+            const { workspacePath, active } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            if (viewManager.getActiveWorkspacePath() === workspacePath) {
+            if (active) {
               return {};
             }
             const focus = intent.payload.focus ?? true;

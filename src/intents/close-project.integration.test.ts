@@ -247,7 +247,11 @@ function createTestHarness(options?: {
               const workspace = p.workspaces?.find((w: { path: string }) => w.path === wsPath);
               if (workspace) {
                 const workspaceName = extractWorkspaceName(wsPath);
-                return { projectPath: p.path, workspaceName: workspaceName as WorkspaceName };
+                return {
+                  projectPath: p.path,
+                  workspaceName: workspaceName as WorkspaceName,
+                  active: viewManager.getActiveWorkspacePath() === wsPath,
+                };
               }
             }
             return {};

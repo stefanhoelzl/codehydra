@@ -425,8 +425,8 @@ export function createBadgeModule(deps: BadgeModuleDeps): IntentModule {
     events: {
       [EVENT_AGENT_STATUS_UPDATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath, status } = (event as AgentStatusUpdatedEvent).payload;
-          workspaceStatuses.set(workspacePath, status);
+          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
+          workspaceStatuses.set(workspace.path, status);
           updateBadge();
         },
       },

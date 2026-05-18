@@ -121,8 +121,9 @@ export abstract class BaseViewManager implements IViewManager {
     return this.makeDevtoolsTarget(this.uiViewHandle);
   }
 
-  getWorkspaceDevtoolsTarget(workspacePath: string): DevtoolsTarget | undefined {
-    const state = this.workspaceStates.get(workspacePath);
+  getActiveWorkspaceDevtoolsTarget(): DevtoolsTarget | undefined {
+    if (this.activeWorkspacePath === null) return undefined;
+    const state = this.workspaceStates.get(this.activeWorkspacePath);
     if (!state) return undefined;
     return this.makeDevtoolsTarget(state.handle);
   }
