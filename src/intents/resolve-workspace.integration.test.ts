@@ -85,6 +85,7 @@ describe("ResolveWorkspaceOperation Integration", () => {
       expect(result).toEqual({
         projectPath: PROJECT_PATH,
         workspaceName: WORKSPACE_NAME,
+        active: false,
       });
     });
   });

@@ -290,12 +290,8 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     },
     [EVENT_AGENT_STATUS_UPDATED]: {
       handler: async (event: DomainEvent): Promise<void> => {
-        const {
-          workspacePath,
-          projectId,
-          workspaceName,
-          status: aggregatedStatus,
-        } = (event as AgentStatusUpdatedEvent).payload;
+        const { workspace, status: aggregatedStatus } = (event as AgentStatusUpdatedEvent).payload;
+        const { path: workspacePath, projectId, name: workspaceName } = workspace;
 
         const status: WorkspaceStatus =
           aggregatedStatus.status === "none"

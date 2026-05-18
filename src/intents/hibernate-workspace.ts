@@ -88,6 +88,7 @@ export interface HibernatePipelineHookInput extends HookContext {
   readonly workspacePath: string;
   readonly projectId: ProjectId;
   readonly workspaceName: WorkspaceName;
+  readonly active: boolean;
 }
 
 /** Per-handler result for the "capture" hook point. */
@@ -124,7 +125,7 @@ export class HibernateWorkspaceOperation implements Operation<
 
     try {
       // Resolve workspace + project identity
-      const { projectPath, workspaceName } = await ctx.dispatch({
+      const { projectPath, workspaceName, active } = await ctx.dispatch({
         type: INTENT_RESOLVE_WORKSPACE,
         payload: { workspacePath: payload.workspacePath },
       } as ResolveWorkspaceIntent);
@@ -140,6 +141,7 @@ export class HibernateWorkspaceOperation implements Operation<
         workspacePath: payload.workspacePath,
         projectId,
         workspaceName,
+        active,
       };
 
       // Capture screenshot (best-effort, errors logged but not propagated)

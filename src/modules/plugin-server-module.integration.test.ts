@@ -75,6 +75,7 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteH
       intent: ctx.intent,
       projectPath: "/projects/test",
       workspacePath: payload.workspacePath ?? "",
+      active: false,
     };
     const { results, errors } = await ctx.hooks.collect<DeleteHookResult>("delete", hookCtx);
     if (errors.length > 0) throw errors[0]!;

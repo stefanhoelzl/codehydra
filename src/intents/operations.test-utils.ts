@@ -102,12 +102,17 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
   // -- resolve-workspace --
   if (config.workspaces) {
     const workspaces = config.workspaces;
+    const vm = config.viewManager;
     hooks[RESOLVE_WORKSPACE_OPERATION_ID] = {
       resolve: {
         handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
           const intent = ctx.intent as { payload: { workspacePath: string } };
           const entry = workspaces[intent.payload.workspacePath];
-          return entry ?? {};
+          if (!entry) return {};
+          return {
+            ...entry,
+            active: vm ? vm.getActiveWorkspacePath() === intent.payload.workspacePath : false,
+          };
         },
       },
     };
@@ -148,9 +153,9 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     hooks[SWITCH_WORKSPACE_OPERATION_ID] = {
       activate: {
         handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-          const { workspacePath } = ctx as ActivateHookInput;
+          const { workspacePath, active } = ctx as ActivateHookInput;
           const intent = ctx.intent as SwitchWorkspaceIntent;
-          if (vm.getActiveWorkspacePath() === workspacePath) {
+          if (active) {
             return {};
           }
           const focus = intent.payload.focus ?? true;

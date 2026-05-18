@@ -35,10 +35,15 @@ export const INTENT_UPDATE_AGENT_STATUS = "agent:update-status" as const;
 // Event Types
 // =============================================================================
 
-export interface AgentStatusUpdatedPayload {
-  readonly workspacePath: WorkspacePath;
+export interface AgentStatusUpdatedWorkspaceRef {
+  readonly path: WorkspacePath;
   readonly projectId: ProjectId;
-  readonly workspaceName: WorkspaceName;
+  readonly name: WorkspaceName;
+  readonly active: boolean;
+}
+
+export interface AgentStatusUpdatedPayload {
+  readonly workspace: AgentStatusUpdatedWorkspaceRef;
   readonly status: AggregatedAgentStatus;
 }
 
@@ -65,8 +70,9 @@ export class UpdateAgentStatusOperation implements Operation<UpdateAgentStatusIn
     let projectPath: string;
     let workspaceName: WorkspaceName;
     let projectId: ProjectId;
+    let active: boolean;
     try {
-      ({ projectPath, workspaceName } = await ctx.dispatch({
+      ({ projectPath, workspaceName, active } = await ctx.dispatch({
         type: INTENT_RESOLVE_WORKSPACE,
         payload: { workspacePath: payload.workspacePath },
       } as ResolveWorkspaceIntent));
@@ -82,9 +88,12 @@ export class UpdateAgentStatusOperation implements Operation<UpdateAgentStatusIn
     const event: AgentStatusUpdatedEvent = {
       type: EVENT_AGENT_STATUS_UPDATED,
       payload: {
-        workspacePath: payload.workspacePath,
-        projectId,
-        workspaceName,
+        workspace: {
+          path: payload.workspacePath,
+          projectId,
+          name: workspaceName,
+          active,
+        },
         status: payload.status,
       },
     };

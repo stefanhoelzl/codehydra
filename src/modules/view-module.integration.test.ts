@@ -172,11 +172,13 @@ class MinimalAgentSelectionOperation implements Operation<SetupIntent, AgentSele
 /** Runs "activate" hook point + emits workspace:switched event. */
 class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
   readonly id = SWITCH_WORKSPACE_OPERATION_ID;
+  constructor(private readonly active: boolean = false) {}
   async execute(ctx: OperationContext<SwitchWorkspaceIntent>): Promise<void> {
     const workspacePath = (ctx.intent.payload as { workspacePath: string }).workspacePath;
     const activateCtx: ActivateHookInput = {
       intent: ctx.intent,
       workspacePath,
+      active: this.active,
     };
     const { results, errors } = await ctx.hooks.collect<SwitchWorkspaceHookResult>(
       "activate",
@@ -208,12 +210,14 @@ class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
 /** Runs "shutdown" hook point only. */
 class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, ShutdownHookResult> {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
+  constructor(private readonly active: boolean = false) {}
   async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<ShutdownHookResult> {
     const { payload } = ctx.intent;
     const hookCtx: DeletePipelineHookInput = {
       intent: ctx.intent,
       projectPath: "/projects/test",
       workspacePath: payload.workspacePath,
+      active: this.active,
     };
     const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", hookCtx);
     if (errors.length > 0) throw errors[0]!;
@@ -513,11 +517,8 @@ describe("ViewModule Integration", () => {
     it("destroys workspace view and returns wasActive", async () => {
       const { dispatcher, viewManager } = createTestSetup({
         intentType: INTENT_DELETE_WORKSPACE,
-        operation: new MinimalDeleteOperation(),
+        operation: new MinimalDeleteOperation(true),
       });
-
-      // Mark workspace as active
-      viewManager.setActiveWorkspace("/workspaces/ws1", false);
 
       const result = await dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
@@ -586,12 +587,8 @@ describe("ViewModule Integration", () => {
     it("does not call setActiveWorkspace when already active", async () => {
       const { dispatcher, viewManager } = createTestSetup({
         intentType: INTENT_SWITCH_WORKSPACE,
-        operation: new MinimalSwitchOperation(),
+        operation: new MinimalSwitchOperation(true),
       });
-
-      // Set workspace as already active, then clear the spy's call history
-      viewManager.setActiveWorkspace("/workspaces/ws1", false);
-      (viewManager.setActiveWorkspace as ReturnType<typeof vi.fn>).mockClear();
 
       await dispatcher.dispatch({
         type: INTENT_SWITCH_WORKSPACE,
@@ -771,9 +768,12 @@ describe("ViewModule Integration", () => {
           const event: AgentStatusUpdatedEvent = {
             type: EVENT_AGENT_STATUS_UPDATED,
             payload: {
-              workspacePath: "/workspaces/ws1" as WorkspacePath,
-              projectId: "test-project" as ProjectId,
-              workspaceName: "ws1" as WorkspaceName,
+              workspace: {
+                path: "/workspaces/ws1" as WorkspacePath,
+                projectId: "test-project" as ProjectId,
+                name: "ws1" as WorkspaceName,
+                active: false,
+              },
               status: { status: "idle" } as AggregatedAgentStatus,
             },
           };

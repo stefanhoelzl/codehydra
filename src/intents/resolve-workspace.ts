@@ -26,6 +26,7 @@ export interface ResolveWorkspacePayload {
 export interface ResolveWorkspaceResult {
   readonly projectPath: string;
   readonly workspaceName: WorkspaceName;
+  readonly active: boolean;
 }
 
 export interface ResolveWorkspaceIntent extends Intent<ResolveWorkspaceResult> {
@@ -50,6 +51,7 @@ export interface ResolveHookInput extends HookContext {
 export interface ResolveHookResult {
   readonly projectPath?: string;
   readonly workspaceName?: WorkspaceName;
+  readonly active?: boolean;
 }
 
 // =============================================================================
@@ -79,15 +81,17 @@ export class ResolveWorkspaceOperation implements Operation<
 
     let projectPath: string | undefined;
     let workspaceName: WorkspaceName | undefined;
+    let active = false;
     for (const r of results) {
       if (r.projectPath !== undefined) projectPath = r.projectPath;
       if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
+      if (r.active === true) active = true;
     }
 
     if (!projectPath || !workspaceName) {
       throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
-    return { projectPath, workspaceName };
+    return { projectPath, workspaceName, active };
   }
 }

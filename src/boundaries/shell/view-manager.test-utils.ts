@@ -12,27 +12,24 @@ import type { UIMode } from "../../shared/ipc";
 export interface CreateMockViewManagerOptions {
   /** Initial mode. Default: "workspace". */
   initialMode?: UIMode;
-  /** Initial active workspace path. Default: null. */
-  initialActiveWorkspace?: string | null;
   /** Override any subset of the IViewManager API. */
   overrides?: Partial<IViewManager>;
 }
 
 /**
- * Create a mock ViewManager. State is held in closures; mode and active
- * workspace mutate in place when setMode / setActiveWorkspace are called.
+ * Create a mock ViewManager. State is held in closures; mode mutates in
+ * place when setMode is called.
  *
  * The returned object satisfies IViewManager. Pass `overrides` to plug in
  * specific behavior for methods your test exercises.
  */
 export function createMockViewManager(options?: CreateMockViewManagerOptions): IViewManager {
   let currentMode: UIMode = options?.initialMode ?? "workspace";
-  let activePath: string | null = options?.initialActiveWorkspace ?? null;
 
   const base: IViewManager = {
     create: vi.fn(),
     getUIDevtoolsTarget: vi.fn(),
-    getWorkspaceDevtoolsTarget: vi.fn(),
+    getActiveWorkspaceDevtoolsTarget: vi.fn(),
     getUIKeyboardTarget: vi.fn(),
     getWorkspaceKeyboardTarget: vi.fn(),
     isUIAvailable: vi.fn().mockReturnValue(true),
@@ -41,10 +38,7 @@ export function createMockViewManager(options?: CreateMockViewManagerOptions): I
     createWorkspaceView: vi.fn(),
     destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
     updateBounds: vi.fn(),
-    setActiveWorkspace: vi.fn((path: string | null) => {
-      activePath = path;
-    }),
-    getActiveWorkspacePath: vi.fn(() => activePath),
+    setActiveWorkspace: vi.fn(),
     focus: vi.fn(),
     setMode: vi.fn((mode: UIMode) => {
       currentMode = mode;

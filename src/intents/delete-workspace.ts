@@ -162,6 +162,7 @@ export interface FlushHookResult {
 export interface DeletePipelineHookInput extends HookContext {
   readonly projectPath: string;
   readonly workspacePath: string;
+  readonly active: boolean;
 }
 
 /** Input for flush hook (enriched with PIDs to kill). */
@@ -383,7 +384,7 @@ export class DeleteWorkspaceOperation implements Operation<
     const { payload } = ctx.intent;
 
     // --- Resolve (workspacePath → projectPath + workspaceName) via dispatch ---
-    const { projectPath, workspaceName } = await ctx.dispatch({
+    const { projectPath, workspaceName, active } = await ctx.dispatch({
       type: INTENT_RESOLVE_WORKSPACE,
       payload: { workspacePath: payload.workspacePath },
     } as ResolveWorkspaceIntent);
@@ -401,6 +402,7 @@ export class DeleteWorkspaceOperation implements Operation<
       intent: ctx.intent,
       projectPath,
       workspacePath: payload.workspacePath,
+      active,
     };
 
     // Safety net: catch unexpected errors after identity resolution to ensure

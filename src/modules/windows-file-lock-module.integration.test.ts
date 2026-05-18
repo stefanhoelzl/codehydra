@@ -115,6 +115,7 @@ class FlushOperation implements Operation<Intent, FlushHookResult> {
       intent: ctx.intent,
       projectPath: "/projects/my-app",
       workspacePath: "/workspaces/feature-1",
+      active: false,
       blockingPids: this.blockingPids,
     };
     const { results, errors } = await ctx.hooks.collect<FlushHookResult>("flush", flushCtx);

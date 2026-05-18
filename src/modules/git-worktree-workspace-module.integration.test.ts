@@ -139,6 +139,7 @@ class MinimalPreflightOperation implements Operation<DeleteWorkspaceIntent, Pref
       intent: ctx.intent,
       projectPath: resolvedProjectPath,
       workspacePath: payload.workspacePath,
+      active: false,
     };
     const { results, errors } = await ctx.hooks.collect<PreflightHookResult>(
       "preflight",
@@ -180,6 +181,7 @@ class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent
       intent: ctx.intent,
       projectPath: resolvedProjectPath,
       workspacePath: payload.workspacePath,
+      active: false,
     };
     const { results: deleteResults, errors: deleteErrors } =
       await ctx.hooks.collect<DeleteHookResult>("delete", deleteInput);

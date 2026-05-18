@@ -71,6 +71,11 @@ import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/get-active-workspa
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import {
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  type ResolveHookInput,
+  type ResolveHookResult,
+} from "../intents/resolve-workspace";
+import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
   EVENT_WORKSPACE_CREATE_FAILED,
@@ -154,21 +159,20 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
   /**
    * Shared shutdown logic for workspace teardown (used by delete + hibernate).
-   * Returns { wasActive, error } and never throws. Callers decide whether to
-   * propagate the error (delete in non-force mode does; hibernate doesn't).
+   * Returns { error } and never throws. Callers decide whether to propagate
+   * the error (delete in non-force mode does; hibernate doesn't).
    */
   async function tearDownWorkspaceView(
     workspacePath: string,
     logTag: string
-  ): Promise<{ wasActive: boolean; error?: string }> {
-    const wasActive = viewManager.getActiveWorkspacePath() === workspacePath;
+  ): Promise<{ error?: string }> {
     try {
       await viewManager.destroyWorkspaceView(workspacePath);
-      return { wasActive };
+      return {};
     } catch (error) {
       const message = getErrorMessage(error);
       logger.warn(`ViewModule: ${logTag} error`, { error: message });
-      return { wasActive, error: message };
+      return { error: message };
     }
   }
 
@@ -538,6 +542,18 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
+      // resolve-workspace → resolve: contribute `active` snapshot
+      // -------------------------------------------------------------------
+      [RESOLVE_WORKSPACE_OPERATION_ID]: {
+        resolve: {
+          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            const { workspacePath } = ctx as ResolveHookInput;
+            return { active: cachedActiveRef?.path === workspacePath };
+          },
+        },
+      },
+
+      // -------------------------------------------------------------------
       // get-active-workspace → get: return cached active ref
       // -------------------------------------------------------------------
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
@@ -554,10 +570,10 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath } = ctx as ActivateHookInput;
+            const { workspacePath, active } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            if (viewManager.getActiveWorkspacePath() === workspacePath) {
+            if (active) {
               return {};
             }
 
@@ -574,14 +590,14 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
-            const { workspacePath } = ctx as DeletePipelineHookInput;
+            const { workspacePath, active } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const result = await tearDownWorkspaceView(workspacePath, "delete shutdown");
             if (result.error && !payload.force) {
               throw new Error(result.error);
             }
             return {
-              ...(result.wasActive && { wasActive: true }),
+              ...(active && { wasActive: true }),
               ...(result.error && { error: result.error }),
             };
           },
@@ -596,9 +612,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult> => {
-            const { workspacePath } = ctx as HibernatePipelineHookInput;
-            const result = await tearDownWorkspaceView(workspacePath, "hibernate shutdown");
-            return result.wasActive ? { wasActive: true } : {};
+            const { workspacePath, active } = ctx as HibernatePipelineHookInput;
+            await tearDownWorkspaceView(workspacePath, "hibernate shutdown");
+            return active ? { wasActive: true } : {};
           },
         },
       },
@@ -890,7 +906,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [EVENT_AGENT_STATUS_UPDATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as AgentStatusUpdatedEvent).payload;
-          viewManager.setWorkspaceLoaded(payload.workspacePath);
+          viewManager.setWorkspaceLoaded(payload.workspace.path);
           closeStartupSplash();
         },
       },

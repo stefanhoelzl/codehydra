@@ -67,10 +67,10 @@ export interface IViewManager {
   getUIDevtoolsTarget(): DevtoolsTarget;
 
   /**
-   * Returns a narrow capability for toggling devtools on a workspace view.
-   * Returns undefined if the workspace doesn't exist.
+   * Returns a narrow capability for toggling devtools on the active
+   * workspace view. Returns undefined if no workspace is active.
    */
-  getWorkspaceDevtoolsTarget(workspacePath: string): DevtoolsTarget | undefined;
+  getActiveWorkspaceDevtoolsTarget(): DevtoolsTarget | undefined;
 
   /**
    * Returns a narrow capability for subscribing to keyboard input and the
@@ -173,13 +173,6 @@ export interface IViewManager {
    * @param focus - Whether to focus the workspace view (default: true)
    */
   setActiveWorkspace(workspacePath: string | null, focus?: boolean): void;
-
-  /**
-   * Gets the active workspace path.
-   *
-   * @returns The active workspace path or null if none
-   */
-  getActiveWorkspacePath(): string | null;
 
   /**
    * Focuses the correct view based on current mode and attachment state.

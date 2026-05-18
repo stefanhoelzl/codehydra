@@ -718,10 +718,10 @@ const focusTerminal = (workspacePath: string): void => {
 
 dispatcher.subscribe(EVENT_AGENT_STATUS_UPDATED, (event) => {
   const payload = (event as AgentStatusUpdatedEvent).payload;
-  if (firstFocused.has(payload.workspacePath)) return;
+  if (firstFocused.has(payload.workspace.path)) return;
   if (payload.status.status !== "idle") return;
-  if (viewManager.getActiveWorkspacePath() !== payload.workspacePath) return;
-  focusTerminal(payload.workspacePath);
+  if (!payload.workspace.active) return;
+  focusTerminal(payload.workspace.path);
 });
 
 dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {

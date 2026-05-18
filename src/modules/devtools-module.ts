@@ -14,7 +14,7 @@ import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../int
 export interface DevtoolsModuleDeps {
   readonly viewManager: Pick<
     IViewManager,
-    "getUIDevtoolsTarget" | "getWorkspaceDevtoolsTarget" | "getActiveWorkspacePath"
+    "getUIDevtoolsTarget" | "getActiveWorkspaceDevtoolsTarget"
   >;
 }
 
@@ -33,10 +33,7 @@ export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
           }
 
           if (key === "w") {
-            const activePath = deps.viewManager.getActiveWorkspacePath();
-            if (activePath) {
-              deps.viewManager.getWorkspaceDevtoolsTarget(activePath)?.toggle();
-            }
+            deps.viewManager.getActiveWorkspaceDevtoolsTarget()?.toggle();
           }
         },
       },
