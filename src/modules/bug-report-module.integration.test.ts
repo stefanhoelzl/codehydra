@@ -147,7 +147,7 @@ describe("BugReportModule", () => {
     expect(initial).not.toContain("{");
   });
 
-  it("places cursor on the empty line after the hint", async () => {
+  it("pre-selects the seed text so typing replaces it", async () => {
     const { deps } = createMockDeps();
     const module = createBugReportModule(deps);
 
@@ -158,7 +158,8 @@ describe("BugReportModule", () => {
     const input = config.sections.find(
       (s: DialogSection): s is DialogSection & { type: "input" } => s.type === "input"
     );
-    expect(input?.cursorOffset).toBe("# describe your issue\n".length);
+    expect(input?.selectInitialValue).toBe(true);
+    expect(input?.cursorOffset).toBeUndefined();
   });
 
   it("sends description verbatim on 'send'", async () => {

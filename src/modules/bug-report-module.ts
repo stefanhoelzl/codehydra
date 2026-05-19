@@ -24,8 +24,7 @@ import { INTENT_SUBMIT_BUG_REPORT, type SubmitBugReportIntent } from "../intents
 /** Maximum raw log bytes captured per bug report (compressed before send). */
 const MAX_LOG_SIZE = 20 * 1024 * 1024;
 
-const DESCRIPTION_HEADER = "# describe your issue\n";
-const DESCRIPTION_INITIAL = `${DESCRIPTION_HEADER}\n`;
+const DESCRIPTION_INITIAL = "# describe your issue";
 
 export interface BugReportModuleDeps {
   readonly dialogManager: DialogManager;
@@ -45,7 +44,7 @@ function buildDialogConfig(): DialogConfig {
         placeholder: "Describe the issue...",
         multiline: true,
         initialValue: DESCRIPTION_INITIAL,
-        cursorOffset: DESCRIPTION_HEADER.length,
+        selectInitialValue: true,
       },
       {
         type: "text",

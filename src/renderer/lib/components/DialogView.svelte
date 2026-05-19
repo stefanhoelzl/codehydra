@@ -76,18 +76,51 @@
     }, 0);
   });
 
-  /** Place the caret at `cursorOffset` and focus, once, after the textarea seeds itself. */
+  /**
+   * Focus the textarea and either select the seeded text or place the caret
+   * at `cursorOffset`. Also re-focuses the textarea when Alt is released:
+   * Chromium's default Alt-up handler activates the window menu and pulls
+   * focus out of the WebContents, which after Alt+X+B would otherwise leave
+   * the dialog with no caret. (Electron #37336 prevents us from suppressing
+   * Alt at the keyDown layer.)
+   */
   function seedCursor(
     node: HTMLTextAreaElement,
-    params: { initialValue: string | undefined; cursorOffset: number | undefined }
-  ): void {
-    if (params.initialValue === undefined || params.cursorOffset === undefined) return;
-    const offset = Math.max(0, Math.min(params.cursorOffset, params.initialValue.length));
+    params: {
+      initialValue: string | undefined;
+      cursorOffset: number | undefined;
+      selectInitialValue: boolean | undefined;
+    }
+  ): { destroy: () => void } | void {
+    if (params.initialValue === undefined) return;
+    const length = params.initialValue.length;
     queueMicrotask(() => {
       node.focus();
-      node.setSelectionRange(offset, offset);
+      if (params.selectInitialValue) {
+        node.setSelectionRange(0, length);
+      } else if (params.cursorOffset !== undefined) {
+        const offset = Math.max(0, Math.min(params.cursorOffset, length));
+        node.setSelectionRange(offset, offset);
+      }
       node.scrollTop = 0;
     });
+
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (e.key !== "Alt") return;
+      // Re-focus only if focus was stolen (active element is body / null).
+      const active = document.activeElement;
+      if (active === node) return;
+      if (active && active !== document.body) return;
+      queueMicrotask(() => {
+        node.focus();
+      });
+    };
+    window.addEventListener("keyup", onKeyUp, true);
+    return {
+      destroy(): void {
+        window.removeEventListener("keyup", onKeyUp, true);
+      },
+    };
   }
 
   /** Get the current selection data to include in events.
@@ -335,6 +368,7 @@
             use:seedCursor={{
               initialValue: s.initialValue,
               cursorOffset: s.cursorOffset,
+              selectInitialValue: s.selectInitialValue,
             }}
             oninput={(e) => {
               inputState = { ...inputState, [s.id]: e.currentTarget.value };

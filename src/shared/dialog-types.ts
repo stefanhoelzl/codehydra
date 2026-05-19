@@ -67,6 +67,8 @@ interface TableSection {
  * - initialValue seeds the field on first render only; later edits are preserved
  * - cursorOffset places the caret at this character offset after seeding
  *   (only applied when initialValue is set)
+ * - selectInitialValue selects the seeded text instead of placing a caret, so
+ *   the first keystroke replaces it (overrides cursorOffset)
  * - Input values are included in DialogUserEvent.data.inputs when actions fire
  */
 interface InputSection {
@@ -76,6 +78,7 @@ interface InputSection {
   readonly multiline?: boolean;
   readonly initialValue?: string;
   readonly cursorOffset?: number;
+  readonly selectInitialValue?: boolean;
 }
 
 export type DialogSection =

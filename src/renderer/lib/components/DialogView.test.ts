@@ -385,6 +385,86 @@ describe("DialogView component", () => {
     });
   });
 
+  // ---- Input sections ----
+
+  describe("input sections", () => {
+    it("selects the seeded text when selectInitialValue is true", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "input",
+            id: "desc",
+            multiline: true,
+            initialValue: "hello world",
+            selectInitialValue: true,
+          },
+        ],
+      };
+
+      renderDialog(config);
+
+      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+      expect(textarea).toBeInTheDocument();
+      await waitFor(() => {
+        expect(textarea.selectionStart).toBe(0);
+        expect(textarea.selectionEnd).toBe("hello world".length);
+      });
+    });
+
+    it("places caret at cursorOffset when selectInitialValue is not set", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "input",
+            id: "desc",
+            multiline: true,
+            initialValue: "hello world",
+            cursorOffset: 5,
+          },
+        ],
+      };
+
+      renderDialog(config);
+
+      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+      await waitFor(() => {
+        expect(textarea.selectionStart).toBe(5);
+        expect(textarea.selectionEnd).toBe(5);
+      });
+    });
+
+    it("re-focuses the textarea on Alt keyup when focus was lost to body", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "input",
+            id: "desc",
+            multiline: true,
+            initialValue: "hello",
+            selectInitialValue: true,
+          },
+        ],
+      };
+
+      renderDialog(config);
+
+      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+      await waitFor(() => {
+        expect(document.activeElement).toBe(textarea);
+      });
+
+      // Simulate Chromium's Alt-up stealing focus back to the document body
+      textarea.blur();
+      expect(document.activeElement).toBe(document.body);
+
+      window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt" }));
+
+      await waitFor(() => {
+        expect(document.activeElement).toBe(textarea);
+      });
+    });
+  });
+
   // ---- Accessibility ----
 
   describe("accessibility", () => {
