@@ -130,6 +130,9 @@ export class ViewManager implements IViewManager {
   setActiveWorkspace(path: string | null, focus?: boolean): void {
     this.vm.setActiveWorkspace(path, focus);
   }
+  getActiveWorkspacePath(): string | null {
+    return this.impl?.getActiveWorkspacePath() ?? null;
+  }
   focus(): void {
     this.impl?.focus();
   }
