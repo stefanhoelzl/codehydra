@@ -142,7 +142,7 @@ describe("BugReportModule", () => {
     const config = (deps.dialogManager.open as ReturnType<typeof vi.fn>).mock
       .calls[0]![0] as DialogConfig;
     const initial = getDescriptionInitialValue(config);
-    expect(initial).toBe("# describe your issue\n\n");
+    expect(initial).toBe("# describe your issue");
     expect(initial).not.toContain("config -----");
     expect(initial).not.toContain("{");
   });
