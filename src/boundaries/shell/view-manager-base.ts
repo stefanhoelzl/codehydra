@@ -171,6 +171,7 @@ export abstract class BaseViewManager implements IViewManager {
     );
 
     this.workspaceStates.set(workspacePath, {
+      workspacePath,
       handle,
       sessionHandle,
       url,

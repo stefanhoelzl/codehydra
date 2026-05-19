@@ -246,6 +246,40 @@ describe("IframeViewManager", () => {
       expect(deps.viewLayer.$.windowChildren.get(windowId)).not.toContain(host.id);
     });
 
+    it("removes the iframe from the host page on destroy, so wake re-adds a fresh iframe", async () => {
+      const deps = createIframeDeps();
+      const manager = new IframeViewManager(deps);
+      manager.create();
+      const host = manager.getWorkspaceHostHandle();
+      flushHostReady(deps.viewLayer, host);
+
+      const hostCalls: string[] = [];
+      const originalExec = deps.viewLayer.executeJavaScript.bind(deps.viewLayer);
+      deps.viewLayer.executeJavaScript = (handle, code) => {
+        if (handle.id === host.id) hostCalls.push(code);
+        return originalExec(handle, code);
+      };
+
+      manager.createWorkspaceView("/a", "http://127.0.0.1/?a", "/p");
+      manager.setActiveWorkspace("/a");
+
+      // Hibernation calls destroyWorkspaceView — the iframe must actually be
+      // removed from the host page (regression: previously the reverse-
+      // lookup failed because the base deleted the state from the map
+      // first, so __host.remove silently no-op'd and the iframe survived).
+      hostCalls.length = 0;
+      await manager.destroyWorkspaceView("/a");
+      expect(hostCalls.some((c) => c.includes("window.__host.remove('/a')"))).toBe(true);
+
+      // Wake: re-create + re-load — must add the iframe back via __host.add.
+      hostCalls.length = 0;
+      manager.createWorkspaceView("/a", "http://127.0.0.1/?a", "/p");
+      manager.setActiveWorkspace("/a");
+      expect(
+        hostCalls.some((c) => c.includes("window.__host.add('/a', 'http://127.0.0.1/?a')"))
+      ).toBe(true);
+    });
+
     it("keeps the workspace-host view attached when other workspaces remain", async () => {
       const deps = createIframeDeps();
       const manager = new IframeViewManager(deps);

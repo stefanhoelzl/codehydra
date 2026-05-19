@@ -311,10 +311,7 @@ export class IframeViewManager extends BaseViewManager {
   protected async destroyWorkspaceViewImpl(state: WorkspaceState): Promise<void> {
     // Remove the iframe from the host page. The host view itself is
     // shared and stays alive until UI shutdown.
-    const path = this.findWorkspacePathByState(state);
-    if (path !== undefined) {
-      this.hostExec(`window.__host.remove(${jsStr(path)})`);
-    }
+    this.hostExec(`window.__host.remove(${jsStr(state.workspacePath)})`);
 
     // Clear any pending retry timer for this iframe.
     if (state.retryTimer !== null) {
@@ -339,9 +336,7 @@ export class IframeViewManager extends BaseViewManager {
   }
 
   protected startLoadingUrl(state: WorkspaceState): void {
-    const path = this.findWorkspacePathByState(state);
-    if (path === undefined) return;
-    this.hostExec(`window.__host.add(${jsStr(path)}, ${jsStr(state.url)})`);
+    this.hostExec(`window.__host.add(${jsStr(state.workspacePath)}, ${jsStr(state.url)})`);
   }
 
   protected swapActiveSurface(prev: WorkspaceState | null, next: WorkspaceState | null): void {
@@ -349,16 +344,10 @@ export class IframeViewManager extends BaseViewManager {
     // incoming one. Host attachment is left as-is — attach/detachSurface
     // own that based on the new workspace's loading state.
     if (prev) {
-      const prevPath = this.findWorkspacePathByState(prev);
-      if (prevPath !== undefined) {
-        this.hostExec(`window.__host.hide(${jsStr(prevPath)})`);
-      }
+      this.hostExec(`window.__host.hide(${jsStr(prev.workspacePath)})`);
     }
     if (next) {
-      const nextPath = this.findWorkspacePathByState(next);
-      if (nextPath !== undefined) {
-        this.hostExec(`window.__host.show(${jsStr(nextPath)})`);
-      }
+      this.hostExec(`window.__host.show(${jsStr(next.workspacePath)})`);
       // Force a host re-composite so the now-visible iframe repaints
       // correctly on Windows — the same DirectComposition trick the UI
       // view uses via `bringUIToBottom(true)`.
@@ -374,7 +363,16 @@ export class IframeViewManager extends BaseViewManager {
     }
   }
 
-  protected attachSurface(): void {
+  protected attachSurface(state: WorkspaceState): void {
+    // Ensure the iframe for this workspace is the `.active` child in the host
+    // page. Normally swapActiveSurface has already done this; the defensive
+    // call here covers the case where the workspace's active path was set
+    // before its iframe existed (e.g. user navigated to a hibernated
+    // workspace via shortcut, then woke it — swap could only hide the
+    // outgoing iframe, and the resolve hook's later `active=true` made the
+    // wake's switch a no-op that never re-issued a show).
+    this.hostExec(`window.__host.show(${jsStr(state.workspacePath)})`);
+
     if (this.hostAttachedToWindow) return;
     this.viewLayer.attachToWindow(this.workspaceHostHandle, this.windowHandle);
     this.hostAttachedToWindow = true;
@@ -421,10 +419,7 @@ export class IframeViewManager extends BaseViewManager {
   protected reloadWorkspaceView(state: WorkspaceState): void {
     // No per-iframe reload primitive — reload the entire host renderer.
     // Cheap because all workspaces share it, but coarse (affects all).
-    const path = this.findWorkspacePathByState(state);
-    if (path !== undefined) {
-      this.hostExec(`window.__host.add(${jsStr(path)}, ${jsStr(state.url)})`);
-    }
+    this.hostExec(`window.__host.add(${jsStr(state.workspacePath)}, ${jsStr(state.url)})`);
   }
 
   protected makeDevtoolsTarget(handle: ViewHandle): DevtoolsTarget {
@@ -476,14 +471,6 @@ export class IframeViewManager extends BaseViewManager {
     });
   }
 
-  /** Reverse-lookup a workspace path from its state object. */
-  private findWorkspacePathByState(state: WorkspaceState): string | undefined {
-    for (const [path, candidate] of this.workspaceStates) {
-      if (candidate === state) return path;
-    }
-    return undefined;
-  }
-
   /** Reverse-lookup a workspace path from its iframe URL. */
   private findWorkspacePathByUrl(url: string): string | undefined {
     for (const [path, state] of this.workspaceStates) {
@@ -499,9 +486,9 @@ export class IframeViewManager extends BaseViewManager {
    * navigation.
    */
   protected retryLoad(state: WorkspaceState): void {
-    const path = this.findWorkspacePathByState(state);
-    if (path === undefined) return;
-    this.hostExec(`window.__host.add(${jsStr(path)}, ${jsStr(state.url)}, { force: true })`);
+    this.hostExec(
+      `window.__host.add(${jsStr(state.workspacePath)}, ${jsStr(state.url)}, { force: true })`
+    );
   }
 }
 

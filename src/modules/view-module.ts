@@ -543,12 +543,20 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
       // -------------------------------------------------------------------
       // resolve-workspace → resolve: contribute `active` snapshot
+      //
+      // Sourced from the view-manager (the actual active surface), not from
+      // `cachedActiveRef` (which is a UI-level cache that intentionally
+      // sticks to the hibernating workspace during the fallbackToCurrent
+      // overlay window — see hibernate-workspace.ts). The switch operation
+      // uses this flag to decide whether to short-circuit; that decision
+      // must reflect what's actually attached, otherwise wake never calls
+      // setActiveWorkspace and the woken iframe stays detached.
       // -------------------------------------------------------------------
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
             const { workspacePath } = ctx as ResolveHookInput;
-            return { active: cachedActiveRef?.path === workspacePath };
+            return { active: viewManager.getActiveWorkspacePath() === workspacePath };
           },
         },
       },

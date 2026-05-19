@@ -39,6 +39,7 @@ export function createMockViewManager(options?: CreateMockViewManagerOptions): I
     destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
     updateBounds: vi.fn(),
     setActiveWorkspace: vi.fn(),
+    getActiveWorkspacePath: vi.fn().mockReturnValue(null),
     focus: vi.fn(),
     setMode: vi.fn((mode: UIMode) => {
       currentMode = mode;

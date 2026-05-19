@@ -45,6 +45,8 @@ export interface Rect {
  * shared coordination layer needs to read.
  */
 export interface WorkspaceState {
+  /** Workspace path (POSIX-normalized) this state belongs to */
+  workspacePath: string;
   /** Handle to the view */
   handle: ViewHandle;
   /** Handle to the session */

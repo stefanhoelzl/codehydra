@@ -175,6 +175,17 @@ export interface IViewManager {
   setActiveWorkspace(workspacePath: string | null, focus?: boolean): void;
 
   /**
+   * Returns the workspace path that is currently the active surface (the one
+   * attached to or about to be attached to the window), or null if there is
+   * no active workspace.
+   *
+   * Reflects the live attachment state, not any higher-level UI cache. Callers
+   * that need a stable UI-level ref (e.g. for overlays that should remain
+   * visible while teardown runs) should track their own cached snapshot.
+   */
+  getActiveWorkspacePath(): string | null;
+
+  /**
    * Focuses the correct view based on current mode and attachment state.
    * Single source of truth for focus management.
    *
