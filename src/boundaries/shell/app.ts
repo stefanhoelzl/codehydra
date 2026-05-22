@@ -108,6 +108,21 @@ export interface AppBoundary {
   openPath(filePath: string): Promise<void>;
 
   /**
+   * Control whether the OS is allowed to enter power-saving / sleep.
+   *
+   * Wraps Electron's `powerSaveBlocker`, owning a single blocker internally:
+   * - `allow = false` starts a `prevent-display-sleep` blocker (if not already active),
+   *   keeping the system and display awake.
+   * - `allow = true` stops the active blocker (if any), letting the OS sleep normally.
+   *
+   * Idempotent: repeated calls with the same value are no-ops (never start a
+   * second blocker, never double-stop).
+   *
+   * @param allow - true to permit OS sleep, false to prevent it
+   */
+  allowPowerSaving(allow: boolean): void;
+
+  /**
    * Whether the OS is currently using a dark color scheme.
    */
   shouldUseDarkColors(): boolean;
@@ -125,13 +140,16 @@ export interface AppBoundary {
 // Default Implementation
 // ============================================================================
 
-import { app, shell, nativeTheme } from "electron";
+import { app, shell, nativeTheme, powerSaveBlocker } from "electron";
 
 /**
  * Default implementation of AppBoundary using Electron's app module.
  */
 export class DefaultAppBoundary implements AppBoundary {
   readonly dock: AppDock | undefined;
+
+  /** Id of the active power-save blocker, or null when sleep is allowed. */
+  private powerBlockerId: number | null = null;
 
   constructor(private readonly logger: Logger) {
     // app.dock is only available on macOS
@@ -171,6 +189,29 @@ export class DefaultAppBoundary implements AppBoundary {
 
   async openPath(filePath: string): Promise<void> {
     await shell.openExternal(pathToFileURL(filePath).href);
+  }
+
+  allowPowerSaving(allow: boolean): void {
+    if (allow) {
+      if (this.powerBlockerId !== null) {
+        if (powerSaveBlocker.isStarted(this.powerBlockerId)) {
+          powerSaveBlocker.stop(this.powerBlockerId);
+        }
+        this.logger.debug("Power saving allowed (sleep blocker released)", {
+          id: this.powerBlockerId,
+        });
+        this.powerBlockerId = null;
+      }
+      return;
+    }
+
+    if (this.powerBlockerId !== null && powerSaveBlocker.isStarted(this.powerBlockerId)) {
+      return; // Already preventing sleep
+    }
+    this.powerBlockerId = powerSaveBlocker.start("prevent-display-sleep");
+    this.logger.debug("Power saving prevented (display-sleep blocker started)", {
+      id: this.powerBlockerId,
+    });
   }
 
   shouldUseDarkColors(): boolean {
