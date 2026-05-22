@@ -158,6 +158,7 @@ import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
 import { createBadgeModule } from "./modules/badge-module";
+import { createPowerModule } from "./modules/power-module";
 import { createMcpModule } from "./modules/mcp-module";
 import { createElectronLifecycleModule } from "./modules/electron-lifecycle-module";
 import { createLoggingModule } from "./modules/logging-module";
@@ -549,6 +550,11 @@ const badgeModule = createBadgeModule({
   windowManager,
   logger: loggingService.createLogger("badge"),
 });
+const powerModule = createPowerModule({
+  appLayer,
+  configService,
+  logger: loggingService.createLogger("power"),
+});
 const deletionDialogModule = createDeletionDialogModule({
   dialogManager,
   dispatcher,
@@ -772,6 +778,7 @@ dispatcher.registerModule(workspaceAgentResolverModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
+dispatcher.registerModule(powerModule);
 dispatcher.registerModule(deletionDialogModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);

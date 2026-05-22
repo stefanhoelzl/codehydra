@@ -55,6 +55,7 @@ All external access MUST use abstraction interfaces:
 | Electron Dialog  | `DialogBoundary`                      | `dialog`                |
 | Electron Image   | `ImageBoundary`                       | `nativeImage`           |
 | Electron App     | `AppBoundary`                         | `app`                   |
+| Electron Power   | `AppBoundary.allowPowerSaving`        | `powerSaveBlocker`      |
 | Electron Menu    | `MenuBoundary`                        | `Menu`                  |
 
 **Acceptable exceptions**: Third-party libraries that encapsulate their own I/O (like `ignore`, `posthog-node`) do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
@@ -320,6 +321,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | `experimental.github.query`         | (below)   | GitHub search query; default: `is:open is:pr review-requested:@me`                                                                                                    |
 | `experimental.github.template-path` | `null`    | Path to Liquid template for GitHub auto-workspaces; set to enable (requires `gh` CLI)                                                                                 |
 | `experimental.iframes`              | `false`   | Render workspaces as iframes inside a single host WebContentsView (requires restart). Lower memory; stubs per-workspace devtools, fail-load retry, and crash recovery |
+| `experimental.prevent-sleep`        | `true`    | Prevent the OS from sleeping (display-sleep blocker) while any workspace's agent is busy. Releases when all workspaces are idle/offline                               |
 | `help`                              | `false`   | Print config help and exit                                                                                                                                            |
 
 Any key can appear in config.json, env vars, or CLI flags.
@@ -354,5 +356,6 @@ CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev
 | `[window]`          | WindowManager           |
 | `[view]`            | ViewManager             |
 | `[badge]`           | BadgeManager            |
+| `[power]`           | Sleep prevention        |
 | `[app]`             | Application lifecycle   |
 | `[ui]`              | Renderer UI components  |

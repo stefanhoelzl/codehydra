@@ -39,6 +39,12 @@ class AppBoundaryMockStateImpl implements MockState {
   badgeCount = 0;
   dockBadge = "";
   shouldUseDarkColors = true;
+  /** True when a sleep blocker is currently active (OS prevented from sleeping). */
+  preventingSleep = false;
+  /** Number of times a blocker transitioned from inactive → active. */
+  sleepBlockerStarts = 0;
+  /** Number of times a blocker transitioned from active → inactive. */
+  sleepBlockerStops = 0;
   readonly commandLineSwitches: CommandLineSwitch[] = [];
   readonly themeUpdatedCallbacks: Set<() => void> = new Set();
 
@@ -59,7 +65,7 @@ class AppBoundaryMockStateImpl implements MockState {
     const switches = this.commandLineSwitches
       .map((s) => (s.value !== undefined ? `${s.key}=${s.value}` : s.key))
       .join(", ");
-    return `AppBoundaryMockState { badgeCount: ${this.badgeCount}, dockBadge: "${this.dockBadge}", switches: [${switches}] }`;
+    return `AppBoundaryMockState { badgeCount: ${this.badgeCount}, dockBadge: "${this.dockBadge}", preventingSleep: ${this.preventingSleep}, switches: [${switches}] }`;
   }
 }
 
@@ -198,6 +204,21 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
       state.commandLineSwitches.push({ key, value });
     },
 
+    allowPowerSaving(allow: boolean): void {
+      // Mirror the real boundary's idempotent single-blocker semantics.
+      if (allow) {
+        if (state.preventingSleep) {
+          state.sleepBlockerStops += 1;
+        }
+        state.preventingSleep = false;
+      } else {
+        if (!state.preventingSleep) {
+          state.sleepBlockerStarts += 1;
+        }
+        state.preventingSleep = true;
+      }
+    },
+
     async openUrl(): Promise<void> {},
     async openPath(): Promise<void> {},
 
@@ -243,6 +264,19 @@ export interface AppBoundaryMatchers {
    * @param value - Optional expected value (if provided, checks exact match)
    */
   toHaveCommandLineSwitch(key: string, value?: string): void;
+
+  /**
+   * Assert that the OS is currently being prevented from sleeping
+   * (a sleep blocker is active). Use `.not` to assert sleep is allowed.
+   */
+  toBePreventingSleep(): void;
+
+  /**
+   * Assert how many times a sleep blocker has been started
+   * (inactive → active transitions). Useful for verifying idempotency.
+   * @param count - Expected number of blocker starts
+   */
+  toHaveSleepBlockerStartCount(count: number): void;
 }
 
 // Extend vitest's assertion interface
@@ -280,6 +314,29 @@ const appBoundaryMatchers: MatcherImplementationsFor<
         pass
           ? `Expected badge count NOT to be ${count}`
           : `Expected badge count to be ${count}, but got ${actual}`,
+    };
+  },
+
+  toBePreventingSleep(received) {
+    const actual = received.$.preventingSleep;
+    return {
+      pass: actual,
+      message: () =>
+        actual
+          ? `Expected OS NOT to be prevented from sleeping, but a sleep blocker is active`
+          : `Expected OS to be prevented from sleeping, but no sleep blocker is active`,
+    };
+  },
+
+  toHaveSleepBlockerStartCount(received, count) {
+    const actual = received.$.sleepBlockerStarts;
+    const pass = actual === count;
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected sleep blocker start count NOT to be ${count}`
+          : `Expected sleep blocker start count to be ${count}, but got ${actual}`,
     };
   },
 
