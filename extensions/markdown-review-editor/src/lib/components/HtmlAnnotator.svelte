@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import {
 		snapSelection as doSnapSelection,
 		wrapSelectionWithAnnotation,
@@ -35,8 +36,8 @@
 		resolvedTop: number; // Actual position after overlap resolution
 	}
 
-	let annotations = $state(new Map<string, AnnotationState>());
-	let editorHeights = $state(new Map<string, number>()); // Track actual CommentEditor heights
+	let annotations = new SvelteMap<string, AnnotationState>();
+	let editorHeights = new SvelteMap<string, number>(); // Track actual CommentEditor heights
 	let editorRefs: Record<string, CommentEditor | undefined> = {};
 	let activeAnnotationId = $state<string | null>(null);
 
@@ -129,7 +130,6 @@
 								messages,
 								resolvedTop: 0
 							});
-							annotations = annotations;
 
 							// Focus the editor after it's rendered
 							tick().then(() => {
@@ -148,8 +148,6 @@
 							annotations.delete(id);
 							editorHeights.delete(id);
 							delete editorRefs[id];
-							annotations = annotations;
-							editorHeights = editorHeights;
 						}
 					}
 				});
@@ -196,7 +194,7 @@
 
 		// 3. Resolve overlaps: each comment starts at max(idealTop, previousBottom + padding)
 		let nextAvailableTop = 0;
-		let hasChanges = false;
+		let _hasChanges = false;
 
 		for (const data of positionData) {
 			const resolvedTop = Math.max(data.idealTop, nextAvailableTop);
@@ -204,14 +202,12 @@
 			if (state && Math.abs(state.resolvedTop - resolvedTop) > 0.5) {
 				// IMPORTANT: Create a NEW object for Svelte 5 reactivity
 				annotations.set(data.id, { ...state, resolvedTop });
-				hasChanges = true;
+				_hasChanges = true;
 			}
 			nextAvailableTop = resolvedTop + data.height + COMMENT_PADDING;
 		}
 
-		if (hasChanges) {
-			annotations = annotations;
-		}
+		// SvelteMap automatically triggers reactivity on set()
 	}
 
 	// Effect to trigger overlap resolution when annotations or heights change
@@ -470,8 +466,6 @@
 		annotations.delete(id);
 		editorHeights.delete(id);
 		delete editorRefs[id];
-		annotations = annotations;
-		editorHeights = editorHeights;
 	}
 
 	function handleSetContent(id: string, newCommentContent: string) {
@@ -487,7 +481,6 @@
 				messages.push({ author: 'User', content: newCommentContent });
 			}
 			annotations.set(id, { ...state, messages });
-			annotations = annotations;
 		}
 
 		// Notify parent of content change
@@ -600,7 +593,6 @@
 					});
 				}
 			});
-			annotations = annotations;
 		}
 	}
 
@@ -775,8 +767,6 @@
 				}
 			}
 		});
-
-		annotations = annotations;
 	}
 
 	/**
@@ -830,7 +820,6 @@
 				...state,
 				messages: convertMessagesToHtml([...content.messages])
 			});
-			annotations = annotations;
 		}
 	}
 
@@ -853,7 +842,6 @@
 		// but we do it explicitly for safety)
 		annotations.delete(id);
 		editorHeights.delete(id);
-		annotations = annotations;
 	}
 </script>
 
@@ -879,7 +867,6 @@
 				onFocusPreviousEditor={() => focusPreviousEditor(annotation.id)}
 				onHeightChange={(height) => {
 					editorHeights.set(annotation.id, height);
-					editorHeights = editorHeights;
 				}}
 				isActive={activeAnnotationId === annotation.id}
 				onActiveChange={(active) => setActiveAnnotation(active ? annotation.id : null)}

@@ -16,10 +16,15 @@ import { initializeOpencodePort, resetOpencodeHandler } from './opencode-handler
  * Minimal type for the CodeHydra sidekick extension API.
  * Only includes the methods we need.
  */
+interface OpenCodeSession {
+	port: number;
+	sessionId: string;
+}
+
 interface CodehydraApi {
 	whenReady(): Promise<void>;
 	workspace: {
-		getOpencodePort(): Promise<number | null>;
+		getOpenCodeSession(): Promise<OpenCodeSession | null>;
 	};
 }
 
@@ -55,16 +60,16 @@ async function initializeOpencode(): Promise<void> {
 		logger.debug('Waiting for CodeHydra sidekick to be ready...');
 		await api.whenReady();
 
-		// Get the OpenCode port
-		const port = await api.workspace.getOpencodePort();
-		if (port === null) {
+		// Get the OpenCode session
+		const session = await api.workspace.getOpenCodeSession();
+		if (session === null) {
 			logger.warn('OpenCode server not running - OpenCode features will be unavailable');
 			return;
 		}
 
 		// Initialize the opencode handler with the port
-		initializeOpencodePort(port);
-		logger.info(`OpenCode initialized successfully on port ${port}`);
+		initializeOpencodePort(session.port);
+		logger.info(`OpenCode initialized successfully on port ${session.port}`);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		logger.error(`Failed to initialize OpenCode: ${message}`);
