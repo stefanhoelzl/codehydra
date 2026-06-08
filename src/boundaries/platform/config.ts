@@ -1,11 +1,12 @@
 /**
  * Config - Plain service for application configuration.
  *
- * Replaces the intent-based config module with a simple register/get/set API.
+ * register() returns a typed ConfigAccessor for each key; reads and writes go
+ * through that accessor (there is no string-keyed get/set on the service).
  * Config is fully resolved before any hooks run:
- *   1. Modules call register() to declare their keys
+ *   1. Modules call register() to declare their keys and capture an accessor
  *   2. load() reads config.json (sync), env vars, CLI args, and merges
- *   3. Modules call get() to read values, set() to persist changes
+ *   3. Modules call accessor.get() to read, accessor.set()/reset() to persist
  *
  * Precedence (highest wins): CLI flags > env vars > config.json > computed defaults > static defaults
  *
@@ -13,12 +14,17 @@
  * run before Electron app.ready, and the FileSystemBoundary interface is async-only.
  * The sync write fires only when unknown (no-longer-registered) keys are stripped from
  * config.json on load; the sync rename fires only when config.json contains invalid JSON
- * and is moved aside to config.json.broken. This is a documented exception. set() uses the
- * async FileSystemBoundary for writes (all callers are post-ready).
+ * and is moved aside to config.json.broken. This is a documented exception. accessor.set()
+ * uses the async FileSystemBoundary for writes (all callers are post-ready).
  */
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
-import type { ConfigKeyDefinition, ComputedDefaultContext } from "./config-definition";
+import type {
+  ConfigKeyDefinition,
+  ComputedDefaultContext,
+  ConfigAccessor,
+  DeprecatedConfigAccessor,
+} from "./config-definition";
 import { ConfigValidationError } from "./config-definition";
 import type { FileSystemBoundary } from "./filesystem";
 import { Path } from "../../utils/path/path";
@@ -97,8 +103,22 @@ export function generateHelpText(
 // =============================================================================
 
 export interface Config {
-  /** Register a config key definition. Must be called before load(). */
-  register(key: string, definition: ConfigKeyDefinition<unknown>): void;
+  /**
+   * Register a config key definition and return a typed accessor for it.
+   * Must be called before load(). Keys with `deprecated: true` return a
+   * DeprecatedConfigAccessor whose get()/set() are typed `never`.
+   */
+  register<T>(
+    key: string,
+    definition: Omit<ConfigKeyDefinition<T>, "default"> & {
+      default: NoInfer<T>;
+      deprecated?: undefined;
+    }
+  ): ConfigAccessor<T>;
+  register(
+    key: string,
+    definition: ConfigKeyDefinition<unknown> & { deprecated: true }
+  ): DeprecatedConfigAccessor;
 
   /**
    * Load config from all sources and merge with precedence:
@@ -108,15 +128,6 @@ export interface Config {
    * Throws on validation errors or duplicate keys.
    */
   load(): void;
-
-  /** Get the effective value for a registered config key. Throws if key is not registered. */
-  get(key: string): unknown;
-
-  /**
-   * Set a value at runtime. Validates against the registered definition.
-   * When persist is true (default), writes to config.json via FileSystemBoundary.
-   */
-  set(key: string, value: unknown, options?: { persist?: boolean }): Promise<void>;
 
   /** Get the full definition map (for help text generation). */
   getDefinitions(): ReadonlyMap<string, ConfigKeyDefinition<unknown>>;
@@ -412,7 +423,21 @@ export class DefaultConfig implements Config {
 
   constructor(private readonly deps: ConfigDeps) {}
 
-  register(key: string, definition: ConfigKeyDefinition<unknown>): void {
+  register<T>(
+    key: string,
+    definition: Omit<ConfigKeyDefinition<T>, "default"> & {
+      default: NoInfer<T>;
+      deprecated?: undefined;
+    }
+  ): ConfigAccessor<T>;
+  register(
+    key: string,
+    definition: ConfigKeyDefinition<unknown> & { deprecated: true }
+  ): DeprecatedConfigAccessor;
+  register(
+    key: string,
+    definition: ConfigKeyDefinition<unknown>
+  ): ConfigAccessor<unknown> | DeprecatedConfigAccessor {
     if (this.loaded) {
       throw new Error(`Cannot register config key "${key}" after load()`);
     }
@@ -433,6 +458,39 @@ export class DefaultConfig implements Config {
       }
     }
     this.definitions.set(key, definition);
+    return definition.deprecated ? this.createDeprecatedAccessor(key) : this.createAccessor(key);
+  }
+
+  private createAccessor(key: string): ConfigAccessor<unknown> {
+    // Arrow functions close over the DefaultConfig `this` directly (no aliasing).
+    const readDefault = (): unknown => this.defaults[key];
+    return {
+      name: key,
+      get default(): unknown {
+        return readDefault();
+      },
+      get: (): unknown => this.readValue(key),
+      set: (value: unknown, options?: { persist?: boolean }): Promise<void> =>
+        this.writeValue(key, value, options),
+      reset: (options?: { persist?: boolean }): Promise<void> => this.resetValue(key, options),
+      isDefault: (): boolean => this.isDefaultValue(key),
+    };
+  }
+
+  private createDeprecatedAccessor(key: string): DeprecatedConfigAccessor {
+    const throwDeprecated = (): never => {
+      throw new ConfigValidationError({
+        key,
+        value: undefined,
+        reason: "deprecated",
+        source: "accessor",
+      });
+    };
+    return {
+      name: key,
+      get: throwDeprecated,
+      set: throwDeprecated,
+    };
   }
 
   load(): void {
@@ -534,102 +592,107 @@ export class DefaultConfig implements Config {
     }
   }
 
-  get(key: string): unknown {
-    const def = this.definitions.get(key);
-    if (!def) {
-      throw new Error(`Unknown config key: "${key}"`);
-    }
-    if (def.deprecated) {
-      throw new ConfigValidationError({
-        key,
-        value: undefined,
-        reason: "deprecated",
-        source: "get",
-      });
-    }
+  /** Backs ConfigAccessor.get(). The accessor exists only for registered keys. */
+  private readValue(key: string): unknown {
     return this.effective[key];
   }
 
-  async set(key: string, value: unknown, options?: { persist?: boolean }): Promise<void> {
+  /** Backs ConfigAccessor.set(): validate, update effective, persist the value. */
+  private async writeValue(
+    key: string,
+    value: unknown,
+    options?: { persist?: boolean }
+  ): Promise<void> {
     const def = this.definitions.get(key);
     if (!def) {
+      throw new ConfigValidationError({ key, value, reason: "unknown", source: "set" });
+    }
+
+    const validated = def.validate(value);
+    if (validated === undefined) {
       throw new ConfigValidationError({
         key,
         value,
-        reason: "unknown",
+        reason: "invalid",
         source: "set",
+        ...(def.description !== undefined && { description: def.description }),
+        ...(def.validValues !== undefined && { validValues: def.validValues }),
       });
     }
-    if (def.deprecated) {
-      throw new ConfigValidationError({ key, value, reason: "deprecated", source: "set" });
+    this.effective[key] = validated;
+
+    if (options?.persist !== false) {
+      await this.persistMutation((fileContent) => {
+        fileContent[key] = validated;
+      });
     }
+  }
 
-    // Validate
-    if (value !== null) {
-      const validated = def.validate(value);
-      if (validated === undefined) {
-        throw new ConfigValidationError({
-          key,
-          value,
-          reason: "invalid",
-          source: "set",
-          ...(def.description !== undefined && { description: def.description }),
-          ...(def.validValues !== undefined && { validValues: def.validValues }),
-        });
-      }
-      this.effective[key] = validated;
-    } else {
-      // null means revert to default
-      this.effective[key] = value;
+  /** Backs ConfigAccessor.reset(): revert to default, delete the key from disk. */
+  private async resetValue(key: string, options?: { persist?: boolean }): Promise<void> {
+    if (!this.definitions.has(key)) {
+      throw new ConfigValidationError({
+        key,
+        value: undefined,
+        reason: "unknown",
+        source: "reset",
+      });
     }
+    this.effective[key] = this.defaults[key];
 
-    const persist = options?.persist !== false;
-    if (persist) {
-      const { configPath, fileSystem, logger } = this.deps;
-
-      // Read-modify-write config file
-      let fileContent: Record<string, unknown> = {};
-      let raw: string | null = null;
-      try {
-        raw = await fileSystem.readFile(configPath);
-      } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-          // File doesn't exist yet — start fresh.
-        } else {
-          throw error;
-        }
-      }
-      if (raw !== null) {
-        try {
-          fileContent = JSON.parse(raw) as Record<string, unknown>;
-        } catch (error) {
-          // Invalid JSON: move config.json aside, then write a fresh file with
-          // just the new key. If the rename fails, throw — silently overwriting
-          // would destroy the broken-but-recoverable file.
-          const backupPath = new Path(configPath.dirname, BROKEN_CONFIG_FILENAME);
-          await fileSystem.rename(configPath, backupPath);
-          logger.warn(
-            "Invalid JSON in config.json, backed up to config.json.broken; writing fresh",
-            {
-              path: configPath.toString(),
-              backup: backupPath.toString(),
-              error: error instanceof Error ? error.message : String(error),
-            }
-          );
-          fileContent = {};
-        }
-      }
-
-      if (value === null) {
+    if (options?.persist !== false) {
+      await this.persistMutation((fileContent) => {
         delete fileContent[key];
-      } else {
-        fileContent[key] = this.effective[key];
-      }
-
-      await fileSystem.mkdir(configPath.dirname);
-      await fileSystem.writeFile(configPath, JSON.stringify(fileContent, null, 2));
-      logger.debug("Config persisted", { path: configPath.toString() });
+      });
     }
+  }
+
+  /** Backs ConfigAccessor.isDefault(). */
+  private isDefaultValue(key: string): boolean {
+    return overrideEquals(this.effective[key], this.defaults[key]);
+  }
+
+  /**
+   * Read-modify-write config.json with the given mutator. Handles a missing
+   * file (start fresh) and invalid JSON (back up to config.json.broken, then
+   * write fresh — if the rename fails, throw rather than destroy the file).
+   */
+  private async persistMutation(
+    mutator: (fileContent: Record<string, unknown>) => void
+  ): Promise<void> {
+    const { configPath, fileSystem, logger } = this.deps;
+
+    let fileContent: Record<string, unknown> = {};
+    let raw: string | null = null;
+    try {
+      raw = await fileSystem.readFile(configPath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        // File doesn't exist yet — start fresh.
+      } else {
+        throw error;
+      }
+    }
+    if (raw !== null) {
+      try {
+        fileContent = JSON.parse(raw) as Record<string, unknown>;
+      } catch (error) {
+        const backupPath = new Path(configPath.dirname, BROKEN_CONFIG_FILENAME);
+        await fileSystem.rename(configPath, backupPath);
+        logger.warn("Invalid JSON in config.json, backed up to config.json.broken; writing fresh", {
+          path: configPath.toString(),
+          backup: backupPath.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        fileContent = {};
+      }
+    }
+
+    mutator(fileContent);
+
+    await fileSystem.mkdir(configPath.dirname);
+    await fileSystem.writeFile(configPath, JSON.stringify(fileContent, null, 2));
+    logger.debug("Config persisted", { path: configPath.toString() });
   }
 
   getDefinitions(): ReadonlyMap<string, ConfigKeyDefinition<unknown>> {

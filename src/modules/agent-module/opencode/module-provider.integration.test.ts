@@ -17,7 +17,7 @@ import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-downl
 import { createFileSystemMock } from "../../../boundaries/platform/filesystem.state-mock";
 import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
 import { createArchiveExtractorMock } from "../../../boundaries/platform/archive-extractor.state-mock";
-import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
+import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
 import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 
 // =============================================================================
@@ -166,8 +166,8 @@ function createBinaryConfig() {
   };
 }
 
-function createMockConfigService(version: string | null = "1.0.223") {
-  return createMockConfig({ defaults: { "version.opencode": version } });
+function createVersionConfig(version = "1.0.223") {
+  return createMockAccessor("version.opencode", version);
 }
 
 /**
@@ -201,7 +201,7 @@ describe("OpenCode module provider", () => {
   let serverManager: ReturnType<typeof createMockServerManager>;
   let downloadDeps: DownloadDeps;
   let binaryConfig: ReturnType<typeof createBinaryConfig>;
-  let configService: ReturnType<typeof createMockConfigService>;
+  let versionConfig: ReturnType<typeof createVersionConfig>;
   let pathProvider: ReturnType<typeof createMockPathProvider>;
   let provider: AgentModuleProvider;
 
@@ -212,14 +212,14 @@ describe("OpenCode module provider", () => {
     serverManager = createMockServerManager();
     downloadDeps = createDownloadDeps();
     binaryConfig = createBinaryConfig();
-    configService = createMockConfigService("1.0.223");
+    versionConfig = createVersionConfig("1.0.223");
     pathProvider = createMockPathProvider();
 
     const deps: OpenCodeModuleProviderDeps = {
       serverManager: serverManager as unknown as OpenCodeServerManager,
       downloadDeps,
       binaryConfig,
-      configService,
+      versionConfig,
       pathProvider,
       platform: "linux",
       arch: "x64",
@@ -259,19 +259,6 @@ describe("OpenCode module provider", () => {
 
     it("has correct binaryType", () => {
       expect(provider.binaryType).toBe("opencode");
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Config definition
-  // ---------------------------------------------------------------------------
-
-  describe("getConfigDefinition", () => {
-    it("returns config definition for version.opencode", () => {
-      const def = provider.getConfigDefinition();
-      expect(def.name).toBe("version.opencode");
-      expect(def.default).toBe("1.0.223");
-      expect(def.description).toBe("OpenCode agent version");
     });
   });
 

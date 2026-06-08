@@ -23,7 +23,7 @@ import type { PromptModel } from "../../../shared/api/types";
 import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
 import { getOpencodeBundleDir, getOpencodeExecutablePath } from "./setup-info";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
-import type { Config } from "../../../boundaries/platform/config";
+import type { ConfigAccessor } from "../../../boundaries/platform/config-definition";
 
 /**
  * Pending initial prompt to send when server becomes healthy.
@@ -110,7 +110,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   private readonly portManager: PortManager;
   private readonly httpClient: HttpClient;
   private readonly pathProvider: PathProvider;
-  private readonly configService: Config;
+  private readonly versionConfig: ConfigAccessor<string>;
   private readonly logger: Logger;
   private readonly config: Required<OpenCodeServerManagerConfig>;
 
@@ -142,7 +142,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     portManager: PortManager,
     httpClient: HttpClient,
     pathProvider: PathProvider,
-    configService: Config,
+    versionConfig: ConfigAccessor<string>,
     logger: Logger,
     config?: OpenCodeServerManagerConfig
   ) {
@@ -150,7 +150,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     this.portManager = portManager;
     this.httpClient = httpClient;
     this.pathProvider = pathProvider;
-    this.configService = configService;
+    this.versionConfig = versionConfig;
     this.logger = logger;
     this.config = {
       healthCheckTimeoutMs: config?.healthCheckTimeoutMs ?? 30000,
@@ -275,7 +275,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
     // Spawn opencode serve
     const platform = process.platform as SupportedPlatform;
-    const version = this.configService.get("version.opencode") as string;
+    const version = this.versionConfig.get();
     const opencodeCmd = new Path(
       getOpencodeBundleDir(this.pathProvider, version),
       getOpencodeExecutablePath(platform)

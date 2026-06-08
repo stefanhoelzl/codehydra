@@ -10,7 +10,8 @@ import { describe, it, expect, vi } from "vitest";
 import { createDebugModule } from "./debug-module";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookHandler, HookContext } from "../intents/lib/operation";
-import { createMockConfig } from "../boundaries/platform/config.test-utils";
+import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
+import type { Config } from "../boundaries/platform/config";
 import type { CheckDepsResult } from "../intents/app-start";
 import type { SetupProgressReporter } from "../intents/setup";
 import type { DeleteHookResult, DetectHookResult } from "../intents/delete-workspace";
@@ -69,9 +70,11 @@ describe("DebugModule Integration", () => {
     it("registers 3 config keys", () => {
       const registered: string[] = [];
       const config = createMockConfig();
-      config.register = (key: string) => {
+      config.register = ((key: string, _definition: unknown) => {
+        void _definition;
         registered.push(key);
-      };
+        return createMockAccessor(key, false);
+      }) as Config["register"];
       createDebugModule({ configService: config });
       expect(registered).toEqual(["debug.blocking-pids", "debug.setup", "debug.update"]);
     });

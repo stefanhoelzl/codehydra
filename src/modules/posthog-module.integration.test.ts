@@ -45,7 +45,8 @@ import {
   type MockPostHogClient,
 } from "./posthog-client.state-mock";
 import type { Config } from "../boundaries/platform/config";
-import { createMockConfig } from "../boundaries/platform/config.test-utils";
+import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
+import type { ConfigAgentType } from "../boundaries/platform/config-definition";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 
 /**
@@ -108,10 +109,17 @@ function createTestSetup(overrides?: {
 
   const dispatcher = createMockDispatcher();
 
+  // The module distinguishes a configured agent from "not configured" via
+  // `=== undefined`. When a test supplies no agent, the accessor reads as
+  // undefined (the unset signal); otherwise it reflects the configured value.
+  const agentValue = overrides?.configValues?.agent as ConfigAgentType;
+  const agentConfig = createMockAccessor<ConfigAgentType>("agent", agentValue);
+
   const posthogModule = createPosthogModule({
     platformInfo,
     buildInfo,
     configService: mockConfig,
+    agentConfig,
     logger,
     apiKey: overrides && "apiKey" in overrides ? overrides.apiKey : "test-api-key",
     host: "https://test.posthog.com",

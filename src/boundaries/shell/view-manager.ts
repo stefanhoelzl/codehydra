@@ -16,7 +16,7 @@
  * the concrete subclasses.
  */
 
-import type { Config } from "./../platform/config";
+import type { ConfigAccessor } from "../platform/config-definition";
 import type { Logger } from "../platform/logging";
 import type { AppBoundary } from "./app";
 import type { SessionBoundary } from "./session";
@@ -45,7 +45,8 @@ export interface ViewManagerDeps {
   readonly viewLayer: ViewBoundary;
   readonly sessionLayer: SessionBoundary;
   readonly appLayer: Pick<AppBoundary, "openUrl">;
-  readonly configService: Config;
+  /** Accessor for the iframe-rendering flag (registered in the composition root). */
+  readonly iframesConfig: ConfigAccessor<boolean>;
   readonly config: ViewManagerConfig;
   readonly logger: Logger;
 }
@@ -57,7 +58,7 @@ export class ViewManager implements IViewManager {
 
   create(): void {
     if (this.impl) return; // idempotent
-    const useIframes = this.deps.configService.get("experimental.iframes") as boolean;
+    const useIframes = this.deps.iframesConfig.get();
     this.impl = useIframes
       ? new IframeViewManager({
           windowManager: this.deps.windowManager,

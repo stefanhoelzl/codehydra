@@ -44,7 +44,7 @@ import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import type { Config } from "../../boundaries/platform/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import { configPath } from "../../boundaries/platform/config-definition";
+import { configPath, type ConfigAccessor } from "../../boundaries/platform/config-definition";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
@@ -115,14 +115,15 @@ function templatePathConfigKey(sourceName: string): string {
 
 export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): IntentModule {
   // Register template-path config keys (sources register their own keys)
+  const templatePathConfigs = new Map<string, ConfigAccessor<string | null>>();
   for (const source of deps.sources) {
-    deps.configService.register(templatePathConfigKey(source.name), {
-      name: templatePathConfigKey(source.name),
+    const tplConfig = deps.configService.register(templatePathConfigKey(source.name), {
       default: null,
       description: `Path to Liquid template for ${source.name} auto-workspaces`,
       sensitive: true,
       ...configPath({ nullable: true }),
     });
+    templatePathConfigs.set(source.name, tplConfig);
   }
 
   let state: AutoWorkspaceState = emptyState();
@@ -556,8 +557,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           handler: async (): Promise<void> => {
             // Read template paths from config
             for (const source of deps.sources) {
-              const tplKey = templatePathConfigKey(source.name);
-              const tplValue = deps.configService.get(tplKey) as string | null;
+              const tplValue = templatePathConfigs.get(source.name)?.get() ?? null;
               templatePaths.set(source.name, tplValue);
             }
           },

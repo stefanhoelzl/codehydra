@@ -138,14 +138,12 @@ export interface ElectronLifecycleModuleDeps {
 
 export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps): IntentModule {
   // Register config keys
-  deps.configService.register("electron.flags", {
-    name: "electron.flags",
+  const electronFlagsConfig = deps.configService.register("electron.flags", {
     default: null,
     description: "Electron switches (e.g., --disable-gpu)",
     ...configString({ nullable: true }),
   });
-  deps.configService.register("electron.disabled-features", {
-    name: "electron.disabled-features",
+  const electronDisabledFeaturesConfig = deps.configService.register("electron.disabled-features", {
     default: null,
     description:
       "Comma-separated Chromium features to disable via --disable-features. " +
@@ -175,12 +173,9 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
             deps.logger.info("Applied Electron flag", { flag: "no-proxy-server" });
             // Apply --disable-features from config (or curated defaults).
             // null/undefined = use defaults; "" = disable nothing; any other value fully replaces defaults.
-            const disabledFeaturesValue = deps.configService.get("electron.disabled-features") as
-              | string
-              | null
-              | undefined;
+            const disabledFeaturesValue = electronDisabledFeaturesConfig.get();
             const disabledFeatures =
-              disabledFeaturesValue === null || disabledFeaturesValue === undefined
+              disabledFeaturesValue === null
                 ? [...DEFAULT_DISABLED_FEATURES]
                 : disabledFeaturesValue
                     .split(",")
@@ -195,7 +190,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
               });
             }
             // Apply electron flags from config
-            const flagsValue = deps.configService.get("electron.flags") as string | null;
+            const flagsValue = electronFlagsConfig.get();
             const flags = parseElectronFlags(flagsValue ?? undefined);
             for (const flag of flags) {
               deps.app.commandLine.appendSwitch(

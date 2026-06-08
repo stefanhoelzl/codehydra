@@ -23,7 +23,7 @@ import {
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { HttpClient } from "../../../boundaries/platform/network";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
+import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
 
 /**
  * Create a mock HttpClient with vitest spies.
@@ -47,9 +47,6 @@ function createTestHttpClient(options?: {
 function createTestPathProvider(): PathProvider {
   return createMockPathProvider();
 }
-
-/** Default config used by tests that don't pass an explicit override. */
-const DEFAULT_CONFIG_DEFAULTS = { "version.opencode": "1.0.223" };
 
 describe("OpenCodeServerManager", () => {
   // Common dependencies
@@ -79,7 +76,7 @@ describe("OpenCodeServerManager", () => {
       mockPortManager,
       mockHttpClient,
       mockPathProvider,
-      createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+      createMockAccessor("version.opencode", "1.0.223"),
       SILENT_LOGGER
     );
   });
@@ -125,7 +122,7 @@ describe("OpenCodeServerManager", () => {
         failingPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
@@ -146,7 +143,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
@@ -165,7 +162,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
@@ -187,7 +184,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: 100 } // Short timeout for testing
       );
@@ -301,7 +298,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
@@ -338,7 +335,7 @@ describe("OpenCodeServerManager", () => {
         mockPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         loggerWithSpy
       );
 
@@ -377,7 +374,7 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
@@ -409,7 +406,7 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 
@@ -451,7 +448,7 @@ describe("OpenCodeServerManager", () => {
         multiPortManager,
         mockHttpClient,
         mockPathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER
       );
 

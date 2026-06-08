@@ -90,15 +90,14 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   let notification: NotificationHandle | null = null;
 
   // Register config key
-  deps.configService.register("update.notification", {
-    name: "update.notification",
+  const updateNotificationConfig = deps.configService.register("update.notification", {
     default: true,
     description: "Show a sidebar notification when an update is available",
     ...configBoolean(),
   });
 
   function isEnabled(): boolean {
-    return deps.configService.get("update.notification") === true;
+    return updateNotificationConfig.get();
   }
 
   function startDownload(version: string): void {

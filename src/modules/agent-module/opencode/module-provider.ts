@@ -30,15 +30,13 @@ import { downloadBinary, isBinaryInstalled } from "../../../utils/binary-downloa
 import type { DownloadDeps } from "../../../utils/binary-download";
 import type { BinaryType } from "../../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../../shared/errors/service-errors";
-import type { ConfigKeyDefinition } from "../../../boundaries/platform/config-definition";
+import type { ConfigAccessor } from "../../../boundaries/platform/config-definition";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { Unsubscribe } from "../../../shared/api/interfaces";
 import type { OpenCodeServerManager, PendingPrompt } from "./server-manager";
-import { configString } from "../../../boundaries/platform/config-definition";
-import type { Config } from "../../../boundaries/platform/config";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
-import { OPENCODE_VERSION, getOpencodeBundleDir, getOpencodeUrlForVersion } from "./setup-info";
+import { getOpencodeBundleDir, getOpencodeUrlForVersion } from "./setup-info";
 import { OpenCodeProvider } from "./provider";
 
 // =============================================================================
@@ -56,7 +54,7 @@ export interface OpenCodeModuleProviderDeps {
     readonly executablePath: string;
     readonly archiveExtension: ArchiveExtension;
   };
-  readonly configService: Config;
+  readonly versionConfig: ConfigAccessor<string>;
   readonly pathProvider: Pick<PathProvider, "bundlePath">;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
@@ -78,7 +76,7 @@ export function createOpenCodeModuleProvider(
     serverManager,
     downloadDeps,
     binaryConfig,
-    configService,
+    versionConfig,
     pathProvider,
     platform,
     arch,
@@ -340,7 +338,7 @@ export function createOpenCodeModuleProvider(
     binaryType: binaryConfig.name as BinaryType,
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
-      const version = configService.get("version.opencode") as string;
+      const version = versionConfig.get();
       try {
         const destDir = getOpencodeBundleDir(pathProvider, version).toNative();
         const installed = await isBinaryInstalled(destDir, downloadDeps);
@@ -351,7 +349,7 @@ export function createOpenCodeModuleProvider(
     },
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-      const version = configService.get("version.opencode") as string;
+      const version = versionConfig.get();
       const destDir = getOpencodeBundleDir(pathProvider, version).toNative();
       const request: DownloadRequest = {
         name: binaryConfig.name,
@@ -367,16 +365,6 @@ export function createOpenCodeModuleProvider(
           `Failed to download ${binaryConfig.name}: ${getErrorMessage(error)}`
         );
       }
-    },
-
-    // --- Config ---
-    getConfigDefinition(): ConfigKeyDefinition<string | null> {
-      return {
-        name: "version.opencode",
-        default: OPENCODE_VERSION,
-        description: "OpenCode agent version",
-        ...configString(),
-      };
     },
 
     // --- Lifecycle ---

@@ -17,7 +17,7 @@ import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
 import { Path } from "../utils/path/path";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
-import type { Config } from "../boundaries/platform/config";
+import type { ConfigAccessor, ConfigAgentType } from "../boundaries/platform/config-definition";
 
 // =============================================================================
 // Intent Types
@@ -86,7 +86,7 @@ export interface AvailableAgentsResult {
 export class AppReadyOperation implements Operation<AppReadyIntent, AppReadyResult> {
   readonly id = APP_READY_OPERATION_ID;
 
-  constructor(private readonly configService: Config) {}
+  constructor(private readonly agentConfig: ConfigAccessor<ConfigAgentType>) {}
 
   async execute(ctx: OperationContext<AppReadyIntent>): Promise<AppReadyResult> {
     const hookCtx: HookContext = { intent: ctx.intent };
@@ -105,7 +105,7 @@ export class AppReadyOperation implements Operation<AppReadyIntent, AppReadyResu
       if (result.agent) availableAgents.push(result.agent);
     }
 
-    const defaultAgentRaw = this.configService.get("agent") as string | null;
+    const defaultAgentRaw = this.agentConfig.get();
     const defaultAgent: LifecycleAgentType | null =
       defaultAgentRaw === "claude" || defaultAgentRaw === "opencode" ? defaultAgentRaw : null;
 

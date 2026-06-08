@@ -10,7 +10,6 @@ import type { AgentType } from "../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import type { AgentSessionInfo, McpConfig, StopServerResult, RestartServerResult } from "./types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
-import type { ConfigKeyDefinition } from "../../boundaries/platform/config-definition";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 import type { DownloadProgressCallback } from "../../utils/binary-download";
 
@@ -67,11 +66,6 @@ export interface AgentModuleProvider {
 
   /** Download the agent binary */
   downloadBinary(onProgress?: DownloadProgressCallback): Promise<void>;
-
-  // --- Config ---
-
-  /** Get the config key definition for version override */
-  getConfigDefinition(): ConfigKeyDefinition<string | null>;
 
   // --- Lifecycle ---
 

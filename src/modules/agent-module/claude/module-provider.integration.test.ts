@@ -21,7 +21,7 @@ import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-downl
 import { createFileSystemMock } from "../../../boundaries/platform/filesystem.state-mock";
 import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
 import { createArchiveExtractorMock } from "../../../boundaries/platform/archive-extractor.state-mock";
-import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
+import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
 import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 
 // =============================================================================
@@ -89,8 +89,8 @@ function createBinaryConfig() {
   };
 }
 
-function createMockConfigService(version: string | null = null) {
-  return createMockConfig({ defaults: { "version.claude": version } });
+function createVersionConfig(version: string | null = null) {
+  return createMockAccessor<string | null>("version.claude", version);
 }
 
 const WS_PATH = "/workspace/feature-a" as WorkspacePath;
@@ -104,7 +104,7 @@ describe("createClaudeModuleProvider", () => {
   let mockServerManager: ClaudeCodeServerManager;
   let downloadDeps: DownloadDeps;
   let binaryConfig: ReturnType<typeof createBinaryConfig>;
-  let configService: ReturnType<typeof createMockConfigService>;
+  let versionConfig: ReturnType<typeof createVersionConfig>;
   let pathProvider: ReturnType<typeof createMockPathProvider>;
 
   beforeEach(() => {
@@ -113,7 +113,7 @@ describe("createClaudeModuleProvider", () => {
     mockServerManager = createMockServerManager();
     downloadDeps = createDownloadDeps();
     binaryConfig = createBinaryConfig();
-    configService = createMockConfigService(null);
+    versionConfig = createVersionConfig(null);
     pathProvider = createMockPathProvider();
   });
 
@@ -122,7 +122,7 @@ describe("createClaudeModuleProvider", () => {
       serverManager: mockServerManager,
       downloadDeps,
       binaryConfig,
-      configService,
+      versionConfig,
       pathProvider,
       platform: "linux",
       arch: "x64",
@@ -182,21 +182,6 @@ describe("createClaudeModuleProvider", () => {
 
       // No HTTP requests should have been made since version is null
       expect(onProgress).not.toHaveBeenCalled();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Config
-  // ---------------------------------------------------------------------------
-
-  describe("getConfigDefinition", () => {
-    it("returns config definition with correct name and default", () => {
-      const provider = createProvider();
-      const config = provider.getConfigDefinition();
-
-      expect(config.name).toBe("version.claude");
-      expect(config.default).toBeNull();
-      expect(config.description).toBe("Claude agent version");
     });
   });
 

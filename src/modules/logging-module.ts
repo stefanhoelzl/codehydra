@@ -12,7 +12,7 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Logging } from "../boundaries/platform/logging";
-import type { Logger, LogFormat } from "../boundaries/platform/logging-types";
+import type { Logger } from "../boundaries/platform/logging-types";
 import type { BuildInfo } from "../boundaries/platform/build-info";
 import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { Config } from "../boundaries/platform/config";
@@ -68,8 +68,7 @@ export interface LoggingModuleDeps {
  */
 export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
   // Register config keys
-  deps.configService.register("log.level", {
-    name: "log.level",
+  const logLevelConfig = deps.configService.register("log.level", {
     default: "warn",
     description: "Level spec: <level> or <level>:<filter>",
     ...configCustom({
@@ -79,14 +78,12 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
     }),
     computedDefault: (ctx) => (ctx.isDevelopment ? "debug" : undefined),
   });
-  deps.configService.register("log.output", {
-    name: "log.output",
+  const logOutputConfig = deps.configService.register("log.output", {
     default: "file",
     description: "Output destinations (comma-separated)",
     ...configEnumList(["file", "console"]),
   });
-  deps.configService.register("log.format", {
-    name: "log.format",
+  const logFormatConfig = deps.configService.register("log.format", {
     default: "text",
     description: "Log output format",
     ...configEnum(["text", "json"]),
@@ -132,10 +129,10 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
             deps.app.commandLine.appendSwitch("v", "1");
 
             // Configure logging from loaded config
-            const levelSpec = deps.configService.get("log.level") as string;
+            const levelSpec = logLevelConfig.get();
             const { level, filter } = splitLogLevelSpec(levelSpec);
-            const output = deps.configService.get("log.output") as string;
-            const logFormat = deps.configService.get("log.format") as LogFormat;
+            const output = logOutputConfig.get();
+            const logFormat = logFormatConfig.get();
             deps.loggingService.configure({
               logLevel: level,
               logFile: output.includes("file"),

@@ -35,8 +35,8 @@
 import type { Intent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
+import type { ConfigAccessor } from "../boundaries/platform/config-definition";
 import type { BinaryType } from "../utils/binary-resolution/types";
-import type { Config } from "../boundaries/platform/config";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
 export type { BinaryType } from "../utils/binary-resolution/types";
@@ -143,7 +143,7 @@ interface CheckResult {
 export class AppStartOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
 
-  constructor(private readonly configService: Config) {}
+  constructor(private readonly agentConfig: ConfigAccessor<ConfigAgentType | null>) {}
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     const hookCtx: HookContext = {
@@ -175,7 +175,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     }
 
     // configuredAgent comes from Config (loaded before app:start)
-    const configuredAgent = this.configService.get("agent") as ConfigAgentType;
+    const configuredAgent = this.agentConfig.get();
 
     // Hook 3: "show-ui" -- Show starting screen, capture waitForRetry
     const { results: showUiResults, errors: showUiErrors } =

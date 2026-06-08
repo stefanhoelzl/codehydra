@@ -24,32 +24,33 @@ import { parseBool, ConfigValidationError } from "./config-definition";
 // Test Config Definitions
 // =============================================================================
 
-function stringDef(name: string, defaultValue = "default"): ConfigKeyDefinition<unknown> {
+/**
+ * Non-deprecated definition shape accepted by `register()`'s first overload.
+ * Helpers return this so the values flow through to a `ConfigAccessor`; the
+ * deprecated tests spread one of these and override `deprecated: true` to hit
+ * the second overload.
+ */
+type TestDef = Omit<ConfigKeyDefinition<unknown>, "deprecated">;
+
+function stringDef(_name: string, defaultValue = "default"): TestDef {
   return {
-    name,
     default: defaultValue,
     parse: (s: string) => (s === "" ? undefined : s),
     validate: (v: unknown) => (typeof v === "string" ? v : undefined),
   };
 }
 
-function boolDef(name: string, defaultValue = false): ConfigKeyDefinition<unknown> {
+function boolDef(_name: string, defaultValue = false): TestDef {
   return {
-    name,
     default: defaultValue,
     parse: parseBool,
     validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
   };
 }
 
-function enumDef(
-  name: string,
-  values: string[],
-  defaultValue: string | null = null
-): ConfigKeyDefinition<unknown> {
+function enumDef(_name: string, values: string[], defaultValue: string | null = null): TestDef {
   const set = new Set(values);
   return {
-    name,
     default: defaultValue,
     parse: (s: string) => (set.has(s) ? s : s === "" ? null : undefined),
     validate: (v: unknown) =>
@@ -134,21 +135,21 @@ describe("Config", () => {
   describe("register + load + get", () => {
     it("returns static defaults when no other sources exist", () => {
       const svc = createService();
-      svc.register("test.key", stringDef("test.key", "hello"));
+      const key = svc.register("test.key", stringDef("test.key", "hello"));
       svc.load();
 
-      expect(svc.get("test.key")).toBe("hello");
+      expect(key.get()).toBe("hello");
     });
 
     it("applies computed defaults over static defaults", () => {
       const svc = createService({ isDevelopment: true });
-      svc.register("test.key", {
+      const key = svc.register("test.key", {
         ...stringDef("test.key", "prod-default"),
         computedDefault: (ctx) => (ctx.isDevelopment ? "dev-default" : undefined),
       });
       svc.load();
 
-      expect(svc.get("test.key")).toBe("dev-default");
+      expect(key.get()).toBe("dev-default");
     });
 
     it("reads values from config.json", () => {
@@ -158,10 +159,10 @@ describe("Config", () => {
           "/app/config.json": file(JSON.stringify({ "test.key": "from-file" })),
         },
       });
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      expect(svc.get("test.key")).toBe("from-file");
+      expect(key.get()).toBe("from-file");
     });
 
     it("env vars override file values", () => {
@@ -172,10 +173,10 @@ describe("Config", () => {
         },
         env: { CH_TEST__KEY: "from-env" },
       });
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      expect(svc.get("test.key")).toBe("from-env");
+      expect(key.get()).toBe("from-env");
     });
 
     it("CLI flags override env vars", () => {
@@ -183,10 +184,10 @@ describe("Config", () => {
         env: { CH_TEST__KEY: "from-env" },
         argv: ["--test.key=from-cli"],
       });
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      expect(svc.get("test.key")).toBe("from-cli");
+      expect(key.get()).toBe("from-cli");
     });
 
     it("full precedence chain: CLI > env > file > computed > static", () => {
@@ -207,45 +208,45 @@ describe("Config", () => {
         argv: ["--test.c=cli-c"],
       });
 
-      const computedDef: ConfigKeyDefinition<unknown> = {
+      const computedDef: TestDef = {
         ...stringDef("test.d", "static-d"),
         computedDefault: () => "computed-d",
       };
 
-      svc.register("test.a", stringDef("test.a", "static-a"));
-      svc.register("test.b", stringDef("test.b", "static-b"));
-      svc.register("test.c", stringDef("test.c", "static-c"));
-      svc.register("test.d", computedDef);
+      const a = svc.register("test.a", stringDef("test.a", "static-a"));
+      const b = svc.register("test.b", stringDef("test.b", "static-b"));
+      const c = svc.register("test.c", stringDef("test.c", "static-c"));
+      const d = svc.register("test.d", computedDef);
       svc.load();
 
-      expect(svc.get("test.a")).toBe("file-a"); // file wins over static
-      expect(svc.get("test.b")).toBe("env-b"); // env wins over file
-      expect(svc.get("test.c")).toBe("cli-c"); // CLI wins over env
-      expect(svc.get("test.d")).toBe("file-d"); // file wins over computed
+      expect(a.get()).toBe("file-a"); // file wins over static
+      expect(b.get()).toBe("env-b"); // env wins over file
+      expect(c.get()).toBe("cli-c"); // CLI wins over env
+      expect(d.get()).toBe("file-d"); // file wins over computed
     });
 
     it("handles missing config.json gracefully", () => {
       const svc = createService(); // no file in mock fs
-      svc.register("test.key", stringDef("test.key", "fallback"));
+      const key = svc.register("test.key", stringDef("test.key", "fallback"));
       svc.load();
 
-      expect(svc.get("test.key")).toBe("fallback");
+      expect(key.get()).toBe("fallback");
     });
 
     it("supports boolean CLI flags without value", () => {
       const svc = createService({ argv: ["--test.flag"] });
-      svc.register("test.flag", boolDef("test.flag"));
+      const flag = svc.register("test.flag", boolDef("test.flag"));
       svc.load();
 
-      expect(svc.get("test.flag")).toBe(true);
+      expect(flag.get()).toBe(true);
     });
 
     it("supports --key value CLI format", () => {
       const svc = createService({ argv: ["--test.key", "value"] });
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      expect(svc.get("test.key")).toBe("value");
+      expect(key.get()).toBe("value");
     });
   });
 
@@ -263,11 +264,11 @@ describe("Config", () => {
           writes.push({ path, content });
         },
       });
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
 
       svc.load();
 
-      expect(svc.get("test.key")).toBe("kept");
+      expect(key.get()).toBe("kept");
       expect(logger.warn).toHaveBeenCalledWith("Unknown config key in config.json (stripped)", {
         key: "unknown.key",
       });
@@ -311,14 +312,6 @@ describe("Config", () => {
       expect(() => svc.load()).toThrow(ConfigValidationError);
     });
 
-    it("throws on get() with unregistered key", () => {
-      const svc = createService();
-      svc.register("test.key", stringDef("test.key"));
-      svc.load();
-
-      expect(() => svc.get("unknown.key")).toThrow('Unknown config key: "unknown.key"');
-    });
-
     it("throws on duplicate register()", () => {
       const svc = createService();
       svc.register("test.key", stringDef("test.key"));
@@ -348,11 +341,11 @@ describe("Config", () => {
   describe("set()", () => {
     it("updates effective value", async () => {
       const svc = createService();
-      svc.register("test.key", stringDef("test.key", "initial"));
+      const key = svc.register("test.key", stringDef("test.key", "initial"));
       svc.load();
 
-      await svc.set("test.key", "updated");
-      expect(svc.get("test.key")).toBe("updated");
+      await key.set("updated");
+      expect(key.get()).toBe("updated");
     });
 
     it("persists to config.json by default", async () => {
@@ -360,10 +353,10 @@ describe("Config", () => {
         entries: { "/app": directory() },
       });
       const svc = createService({ fileSystem: fs });
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      await svc.set("test.key", "persisted");
+      await key.set("persisted");
 
       const content = await fs.readFile(CONFIG_PATH);
       expect(JSON.parse(content)).toEqual({ "test.key": "persisted" });
@@ -374,11 +367,11 @@ describe("Config", () => {
         entries: { "/app": directory() },
       });
       const svc = createService({ fileSystem: fs });
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      await svc.set("test.key", "memory-only", { persist: false });
-      expect(svc.get("test.key")).toBe("memory-only");
+      await key.set("memory-only", { persist: false });
+      expect(key.get()).toBe("memory-only");
 
       // Config file should not exist
       await expect(fs.readFile(CONFIG_PATH)).rejects.toThrow();
@@ -397,16 +390,16 @@ describe("Config", () => {
         })
       );
       svc.register("test.a", stringDef("test.a"));
-      svc.register("test.b", stringDef("test.b"));
+      const b = svc.register("test.b", stringDef("test.b"));
       svc.load();
 
-      await svc.set("test.b", "new-value");
+      await b.set("new-value");
 
       const content = await fs.readFile(CONFIG_PATH);
       expect(JSON.parse(content)).toEqual({ "test.a": "existing", "test.b": "new-value" });
     });
 
-    it("removes key from file when set to null", async () => {
+    it("persists null to file when set to null", async () => {
       const entries = {
         "/app": directory(),
         "/app/config.json": file(JSON.stringify({ "test.key": "value" })),
@@ -418,29 +411,44 @@ describe("Config", () => {
           readFileSync: createSyncReader(entries),
         })
       );
-      svc.register("test.key", enumDef("test.key", ["value"], null));
+      const key = svc.register("test.key", enumDef("test.key", ["value"], null));
       svc.load();
 
-      await svc.set("test.key", null);
+      await key.set(null);
 
+      expect(key.get()).toBeNull();
+      const content = await fs.readFile(CONFIG_PATH);
+      expect(JSON.parse(content)).toEqual({ "test.key": null });
+    });
+
+    it("reset() reverts to default and removes key from file", async () => {
+      const entries = {
+        "/app": directory(),
+        "/app/config.json": file(JSON.stringify({ "test.key": "value" })),
+      };
+      const fs = createFileSystemMock({ entries });
+      const svc = new DefaultConfig(
+        createDeps({
+          fileSystem: fs,
+          readFileSync: createSyncReader(entries),
+        })
+      );
+      const key = svc.register("test.key", enumDef("test.key", ["value"], null));
+      svc.load();
+
+      await key.reset();
+
+      expect(key.get()).toBeNull();
       const content = await fs.readFile(CONFIG_PATH);
       expect(JSON.parse(content)).toEqual({});
     });
 
-    it("throws on unknown key", async () => {
-      const svc = createService();
-      svc.register("test.key", stringDef("test.key"));
-      svc.load();
-
-      await expect(svc.set("unknown.key", "value")).rejects.toThrow(ConfigValidationError);
-    });
-
     it("throws on invalid value", async () => {
       const svc = createService();
-      svc.register("test.flag", boolDef("test.flag"));
+      const flag = svc.register("test.flag", boolDef("test.flag"));
       svc.load();
 
-      await expect(svc.set("test.flag", "not-bool")).rejects.toThrow(ConfigValidationError);
+      await expect(flag.set("not-bool")).rejects.toThrow(ConfigValidationError);
     });
   });
 
@@ -458,10 +466,10 @@ describe("Config", () => {
           renames.push({ from, to });
         },
       });
-      svc.register("test.key", stringDef("test.key", "fallback"));
+      const key = svc.register("test.key", stringDef("test.key", "fallback"));
       svc.load();
 
-      expect(svc.get("test.key")).toBe("fallback");
+      expect(key.get()).toBe("fallback");
       const backupPath = new Path(CONFIG_PATH.dirname, "config.json.broken");
       expect(renames).toEqual([{ from: CONFIG_PATH.toNative(), to: backupPath.toNative() }]);
       expect(logger.warn).toHaveBeenCalledWith(
@@ -504,10 +512,10 @@ describe("Config", () => {
           },
         })
       );
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      await svc.set("test.key", "fresh");
+      await key.set("fresh");
 
       const content = await fs.readFile(CONFIG_PATH);
       expect(JSON.parse(content)).toEqual({ "test.key": "fresh" });
@@ -534,10 +542,10 @@ describe("Config", () => {
           },
         })
       );
-      svc.register("test.key", stringDef("test.key"));
+      const key = svc.register("test.key", stringDef("test.key"));
       svc.load();
 
-      await expect(svc.set("test.key", "fresh")).rejects.toThrow("EACCES: cannot rename");
+      await expect(key.set("fresh")).rejects.toThrow("EACCES: cannot rename");
 
       const content = await fs.readFile(CONFIG_PATH);
       expect(content).toBe("{{ still broken");
@@ -562,18 +570,19 @@ describe("Config", () => {
       expect(writes).toHaveLength(0);
     });
 
-    it("get() and set() throw with reason 'deprecated'", async () => {
+    it("accessor get() and set() throw with reason 'deprecated'", () => {
       const svc = createService();
-      svc.register("test.old", { ...stringDef("test.old"), deprecated: true });
+      const old = svc.register("test.old", { ...stringDef("test.old"), deprecated: true });
       svc.load();
 
-      expect(() => svc.get("test.old")).toThrow(ConfigValidationError);
+      expect(() => old.get()).toThrow(ConfigValidationError);
       try {
-        svc.get("test.old");
+        old.get();
       } catch (e) {
         expect((e as ConfigValidationError).detail.reason).toBe("deprecated");
       }
-      await expect(svc.set("test.old", "x")).rejects.toThrow(ConfigValidationError);
+      const setDeprecated = old.set as () => never;
+      expect(() => setDeprecated()).toThrow(ConfigValidationError);
     });
 
     it("is hidden from help text and overrides", () => {
@@ -594,9 +603,9 @@ describe("Config", () => {
   });
 
   describe("legacy names", () => {
-    function defWithLegacy(name: string): ConfigKeyDefinition<unknown> {
+    function defWithLegacy(name: string): TestDef {
       return {
-        ...stringDef(name, "default"),
+        ...stringDef(name),
         legacyNames: {
           "legacy.old-name": (v: unknown) => (typeof v === "string" ? `migrated:${v}` : undefined),
         },
@@ -610,10 +619,10 @@ describe("Config", () => {
           "/app/config.json": file(JSON.stringify({ "legacy.old-name": "raw" })),
         },
       });
-      svc.register("test.new", defWithLegacy("test.new"));
+      const newKey = svc.register("test.new", defWithLegacy("test.new"));
       svc.load();
 
-      expect(svc.get("test.new")).toBe("migrated:raw");
+      expect(newKey.get()).toBe("migrated:raw");
     });
 
     it("preserves the legacy entry in config.json (no rewrite)", () => {
@@ -644,10 +653,10 @@ describe("Config", () => {
         },
         logger,
       });
-      svc.register("test.new", defWithLegacy("test.new"));
+      const newKey = svc.register("test.new", defWithLegacy("test.new"));
       svc.load();
 
-      expect(svc.get("test.new")).toBe("explicit");
+      expect(newKey.get()).toBe("explicit");
       expect(logger.warn).toHaveBeenCalledWith(
         "Legacy config key shadowed by new key (legacy ignored)",
         { legacy: "legacy.old-name", newKey: "test.new" }
@@ -663,10 +672,10 @@ describe("Config", () => {
         },
         logger,
       });
-      svc.register("test.new", defWithLegacy("test.new"));
+      const newKey = svc.register("test.new", defWithLegacy("test.new"));
       svc.load();
 
-      expect(svc.get("test.new")).toBe("default");
+      expect(newKey.get()).toBe("default");
       expect(logger.warn).toHaveBeenCalledWith(
         "Legacy config key could not be translated (using default)",
         { legacy: "legacy.old-name", newKey: "test.new", value: "42" }

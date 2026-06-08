@@ -56,8 +56,7 @@ export interface GitHubSourceDeps {
 }
 
 export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource {
-  deps.configService.register(CONFIG_KEYS.query, {
-    name: CONFIG_KEYS.query,
+  const queryConfig = deps.configService.register(CONFIG_KEYS.query, {
     default: "is:open is:pr review-requested:@me",
     description: "GitHub search query (e.g. is:open is:pr review-requested:@me)",
     ...configString(),
@@ -74,7 +73,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
   }
 
   async function fetchSearchResults(): Promise<GitHubSearchItem[]> {
-    const query = encodeURIComponent(deps.configService.get(CONFIG_KEYS.query) as string);
+    const query = encodeURIComponent(queryConfig.get());
     const url = `${GITHUB_API_BASE}/search/issues?q=${query}&sort=created&order=desc&per_page=100`;
 
     const response = await deps.httpClient.fetch(url, {
@@ -137,7 +136,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
     fetchBasesBeforeDelete: true,
 
     isConfigured(): boolean {
-      return deps.configService.get(CONFIG_KEYS.query) !== null;
+      return queryConfig.get() !== null;
     },
 
     async initialize(): Promise<boolean> {

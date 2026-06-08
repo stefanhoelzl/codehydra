@@ -283,14 +283,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   const { processRunner, fileSystemLayer, logger } = deps;
 
   // Register config keys
-  deps.configService.register("version.code-server", {
-    name: "version.code-server",
+  const codeServerVersionConfig = deps.configService.register("version.code-server", {
     default: CODE_SERVER_VERSION,
     description: "Code-server version",
     ...configString(),
   });
-  deps.configService.register("code-server.port", {
-    name: "code-server.port",
+  const codeServerPortConfig = deps.configService.register("code-server.port", {
     default: getCodeServerPort(deps.buildInfo),
     description: "Code-server port",
     ...configCustom<number>({
@@ -318,7 +316,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
   /** Resolve version-derived paths from configService (call only after load()). */
   function resolveCodeServerPaths() {
-    const version = deps.configService.get("version.code-server") as string;
+    const version = codeServerVersionConfig.get();
     return {
       binaryPath: new Path(
         deps.pathProvider.bundlePath(`code-server/${version}`),
@@ -368,7 +366,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   /** Build download request from configService (call only after load()). */
   function getDownloadRequest(): DownloadRequest | null {
     if (!deps.archiveExtractor) return null;
-    const version = deps.configService.get("version.code-server") as string;
+    const version = codeServerVersionConfig.get();
     return {
       name: "code-server" as const,
       url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
@@ -435,7 +433,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   async function doStart(): Promise<number> {
     logger.info("Starting code-server");
 
-    const port = deps.configService.get("code-server.port") as number;
+    const port = codeServerPortConfig.get();
 
     const portAvailable = await deps.portManager.isPortAvailable(port);
     if (!portAvailable) {

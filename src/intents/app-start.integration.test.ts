@@ -51,12 +51,14 @@ import {
 } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
 import type { BinaryType } from "./app-start";
-import { createMockConfig as createBaseMockConfig } from "../boundaries/platform/config.test-utils";
-import type { Config } from "../boundaries/platform/config";
+import { createMockAccessor } from "../boundaries/platform/config.test-utils";
+import type { ConfigAccessor } from "../boundaries/platform/config-definition";
 
-/** Mock that seeds the configured agent. Pass null to leave it unset. */
-function createMockConfig(agent: ConfigAgentType | null = "opencode"): Config {
-  return createBaseMockConfig({ defaults: { agent } });
+/** Mock accessor that seeds the configured agent. Pass null to leave it unset. */
+function createMockAgentAccessor(
+  agent: ConfigAgentType | null = "opencode"
+): ConfigAccessor<ConfigAgentType | null> {
+  return createMockAccessor<ConfigAgentType | null>("agent", agent);
 }
 
 // =============================================================================
@@ -225,7 +227,7 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockConfig()));
+  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockAgentAccessor()));
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -442,7 +444,7 @@ describe("AppStart Operation", () => {
       const agent = options?.configuredAgent !== undefined ? options.configuredAgent : "opencode";
       dispatcher.registerOperation(
         INTENT_APP_START,
-        new AppStartOperation(createMockConfig(agent))
+        new AppStartOperation(createMockAgentAccessor(agent))
       );
       if (options?.setupStub) {
         dispatcher.registerOperation(INTENT_SETUP, options.setupStub);
