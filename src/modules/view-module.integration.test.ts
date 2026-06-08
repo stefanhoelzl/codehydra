@@ -325,7 +325,7 @@ function createTestSetup(
   const layers = createMockShellLayers();
   const mockConfig = createMockConfig({
     defaults: {
-      "experimental.load-on-resume": false,
+      "experimental.load-on-resume": true,
       ...options?.configValues,
     },
   });
@@ -1174,12 +1174,12 @@ describe("ViewModule Integration", () => {
       expect(viewManager.reloadAllViews).toHaveBeenCalledOnce();
     });
 
-    it("does NOT call reloadAllViews when config is false (default)", async () => {
+    it("calls reloadAllViews by default", async () => {
       const { viewManager, module } = createTestSetup();
 
       await module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!.handler(hookCtx);
 
-      expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
+      expect(viewManager.reloadAllViews).toHaveBeenCalledOnce();
     });
 
     it("does NOT call reloadAllViews when config is explicitly false", async () => {
