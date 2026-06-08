@@ -114,6 +114,7 @@ export function createGitWorktreeWorkspaceModule(
     | {
         projectPath: string;
         workspaceName: WorkspaceName;
+        branch: string | null;
       }
     | undefined {
     const normalizedPath = new Path(workspacePath).toString();
@@ -124,6 +125,7 @@ export function createGitWorktreeWorkspaceModule(
           return {
             projectPath: projectKey,
             workspaceName: extractWorkspaceName(ws.path.toString()),
+            branch: ws.branch,
           };
         }
       }

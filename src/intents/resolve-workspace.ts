@@ -27,6 +27,8 @@ export interface ResolveWorkspaceResult {
   readonly projectPath: string;
   readonly workspaceName: WorkspaceName;
   readonly active: boolean;
+  /** Current branch name, or null for detached HEAD. */
+  readonly branch: string | null;
 }
 
 export interface ResolveWorkspaceIntent extends Intent<ResolveWorkspaceResult> {
@@ -52,6 +54,7 @@ export interface ResolveHookResult {
   readonly projectPath?: string;
   readonly workspaceName?: WorkspaceName;
   readonly active?: boolean;
+  readonly branch?: string | null;
 }
 
 // =============================================================================
@@ -82,16 +85,20 @@ export class ResolveWorkspaceOperation implements Operation<
     let projectPath: string | undefined;
     let workspaceName: WorkspaceName | undefined;
     let active = false;
+    // branch can legitimately be null (detached HEAD), so track "provided"
+    // separately from the null value.
+    let branch: string | null = null;
     for (const r of results) {
       if (r.projectPath !== undefined) projectPath = r.projectPath;
       if (r.workspaceName !== undefined) workspaceName = r.workspaceName;
       if (r.active === true) active = true;
+      if (r.branch !== undefined) branch = r.branch;
     }
 
     if (!projectPath || !workspaceName) {
       throw new Error(`Workspace not found: ${payload.workspacePath}`);
     }
 
-    return { projectPath, workspaceName, active };
+    return { projectPath, workspaceName, active, branch };
   }
 }

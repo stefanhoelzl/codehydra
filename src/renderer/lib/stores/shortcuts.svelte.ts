@@ -287,21 +287,9 @@ export async function handleHibernateToggle(): Promise<void> {
   const isHibernated = workspace.metadata?.["hibernated"] === "true";
   try {
     if (isHibernated) {
-      if (!project) return;
-      // Snapshot the reactive metadata into a plain object — Svelte 5 $state
-      // proxies can't traverse Electron's structured-clone boundary. Drop the
-      // hibernated flag here: wake clears it server-side, and shipping a stale
-      // "true" through reopen would resurface it in the workspace:created event.
-      const metadataSnapshot: Record<string, string> = { ...(workspace.metadata ?? {}) };
-      delete metadataSnapshot["hibernated"];
+      // wake clears the hibernated flag AND brings the workspace back online
+      // (the operation reopens it internally), so a single call suffices.
       await api.workspaces.wake(ref.path);
-      await api.workspaces.reopen(
-        project.path,
-        workspace.path,
-        workspace.name,
-        workspace.branch,
-        metadataSnapshot
-      );
     } else {
       await api.workspaces.hibernate(ref.path);
     }

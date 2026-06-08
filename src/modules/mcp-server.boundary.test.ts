@@ -24,6 +24,15 @@ import {
   GET_AGENT_SESSION_OPERATION_ID,
 } from "../intents/get-agent-session";
 import { INTENT_RESTART_AGENT, RESTART_AGENT_OPERATION_ID } from "../intents/restart-agent";
+import {
+  INTENT_RESOLVE_WORKSPACE,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+} from "../intents/resolve-workspace";
+import {
+  INTENT_HIBERNATE_WORKSPACE,
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+} from "../intents/hibernate-workspace";
+import { INTENT_WAKE_WORKSPACE, WAKE_WORKSPACE_OPERATION_ID } from "../intents/wake-workspace";
 import { INTENT_LIST_PROJECTS, LIST_PROJECTS_OPERATION_ID } from "../intents/list-projects";
 import { INTENT_OPEN_WORKSPACE, OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import {
@@ -118,6 +127,27 @@ function createMockDispatcher(): { dispatcher: Dispatcher; capturedIntents: Inte
   dispatcher.registerOperation(
     INTENT_DELETE_WORKSPACE,
     createCapturingOperation(DELETE_WORKSPACE_OPERATION_ID, capturedIntents, { started: true })
+  );
+  dispatcher.registerOperation(
+    INTENT_RESOLVE_WORKSPACE,
+    createCapturingOperation(RESOLVE_WORKSPACE_OPERATION_ID, capturedIntents, {
+      projectPath: "/home/user/projects/my-app",
+      workspaceName: "feature-branch",
+      active: false,
+    })
+  );
+  dispatcher.registerOperation(
+    INTENT_HIBERNATE_WORKSPACE,
+    createCapturingOperation(HIBERNATE_WORKSPACE_OPERATION_ID, capturedIntents, { started: true })
+  );
+  dispatcher.registerOperation(
+    INTENT_WAKE_WORKSPACE,
+    createCapturingOperation(WAKE_WORKSPACE_OPERATION_ID, capturedIntents, {
+      name: "test",
+      path: "/path",
+      branch: "main",
+      metadata: {},
+    })
   );
   dispatcher.registerOperation(
     INTENT_VSCODE_COMMAND,
@@ -414,6 +444,65 @@ describe("McpServer Boundary Tests", () => {
       for (const response of responses) {
         expect(response.status).toBeLessThan(500);
       }
+    });
+  });
+
+  describe("hibernation tools", () => {
+    /** Initialize a session, send the initialized notification, and call a tool. */
+    async function callTool(workspacePath: string, toolName: string): Promise<{ status: number }> {
+      const { sessionId } = await initializeClient(port, workspacePath);
+      const sessionHeaders = {
+        ...mcpHeaders,
+        "Mcp-Session-Id": sessionId,
+        "Mcp-Protocol-Version": "2025-03-26",
+      };
+      await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: sessionHeaders,
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      });
+      const response = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: "POST",
+        headers: sessionHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: toolName, arguments: {} },
+          id: 30,
+        }),
+      });
+      return { status: response.status };
+    }
+
+    it("workspace_hibernate dispatches the hibernate intent for the session workspace", async () => {
+      const { status } = await callTool(workspacePathA, "workspace_hibernate");
+      expect(status).toBe(200);
+
+      const hibernateIntents = capturedIntents.filter((i) => i.type === INTENT_HIBERNATE_WORKSPACE);
+      expect(hibernateIntents).toHaveLength(1);
+      expect((hibernateIntents[0]!.payload as { workspacePath: string }).workspacePath).toBe(
+        workspacePathA
+      );
+    });
+
+    it("workspace_wake dispatches a single wake intent for the session workspace", async () => {
+      const { status } = await callTool(workspacePathB, "workspace_wake");
+      expect(status).toBe(200);
+
+      const wakeIntents = capturedIntents.filter((i) => i.type === INTENT_WAKE_WORKSPACE);
+      expect(wakeIntents).toHaveLength(1);
+      const payload = wakeIntents[0]!.payload as {
+        workspacePath: string;
+        stealFocus?: boolean;
+        source?: string;
+      };
+      expect(payload.workspacePath).toBe(workspacePathB);
+      expect(payload.stealFocus).toBe(false);
+      expect(payload.source).toBe("mcp");
+
+      // The tool no longer dispatches open itself — wake reopens internally.
+      const openIntents = capturedIntents.filter((i) => i.type === INTENT_OPEN_WORKSPACE);
+      expect(openIntents).toHaveLength(0);
     });
   });
 

@@ -77,23 +77,12 @@ export interface Api {
      */
     hibernate(workspacePath: string): Promise<{ started: boolean }>;
     /**
-     * Wake a hibernated workspace (fire-and-forget).
-     * Clears the `hibernated` metadata flag and deletes the saved screenshot.
-     * The caller is responsible for re-opening the workspace afterwards.
+     * Wake a hibernated workspace and bring it back online.
+     * Clears the `hibernated` metadata flag, deletes the saved screenshot, and
+     * re-runs the open pipeline (restarts the agent server, rebuilds the view).
+     * Returns the reopened Workspace, or null if a concurrent wake was deduped.
      */
-    wake(workspacePath: string): Promise<{ started: boolean }>;
-    /**
-     * Re-open a previously-existing workspace (e.g., after wake) without
-     * re-creating the worktree. Goes through the workspace:open flow with
-     * existingWorkspace populated.
-     */
-    reopen(
-      projectPath: string,
-      workspacePath: string,
-      workspaceName: string,
-      branch: string | null,
-      metadata: Readonly<Record<string, string>>
-    ): Promise<Workspace>;
+    wake(workspacePath: string): Promise<Workspace | null>;
     /**
      * Get a file:// URL pointing at the saved hibernation screenshot for a
      * workspace. The returned URL may not exist on disk; consumers should
