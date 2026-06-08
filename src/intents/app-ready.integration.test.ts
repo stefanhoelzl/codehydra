@@ -23,7 +23,8 @@ import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "./lib/module";
 import type { Operation, OperationContext } from "./lib/operation";
 import type { Project } from "../shared/api/types";
-import { createMockConfig } from "../boundaries/platform/config.test-utils";
+import { createMockAccessor } from "../boundaries/platform/config.test-utils";
+import type { ConfigAgentType } from "../boundaries/platform/config-definition";
 
 // =============================================================================
 // Test Helpers
@@ -85,7 +86,10 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(createMockConfig()));
+  dispatcher.registerOperation(
+    INTENT_APP_READY,
+    new AppReadyOperation(createMockAccessor<ConfigAgentType>("agent", null))
+  );
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, stub);
 
   for (const m of modules) dispatcher.registerModule(m);

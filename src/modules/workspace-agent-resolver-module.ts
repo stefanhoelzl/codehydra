@@ -11,7 +11,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookHandler } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
-import type { Config } from "../boundaries/platform/config";
+import type { ConfigAccessor, ConfigAgentType } from "../boundaries/platform/config-definition";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { AgentType } from "../shared/plugin-protocol";
 import { Path } from "../utils/path/path";
@@ -43,7 +43,8 @@ export const AGENT_METADATA_KEY = "agent";
 
 interface WorkspaceAgentResolverDeps {
   readonly gitWorktreeProvider: GitWorktreeProvider;
-  readonly configService: Config;
+  /** Accessor for the user's global agent selection (registered in the composition root). */
+  readonly agentConfig: ConfigAccessor<ConfigAgentType>;
   readonly logger: Logger;
 }
 
@@ -67,7 +68,7 @@ async function resolveAgent(
       error: error instanceof Error ? error.message : String(error),
     });
   }
-  const fromConfig = deps.configService.get("agent") as string | null;
+  const fromConfig = deps.agentConfig.get();
   if (fromConfig === "claude" || fromConfig === "opencode") {
     return fromConfig;
   }
@@ -107,7 +108,7 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
       const { workspacePath } = setupCtx;
       if (!workspacePath) return;
 
-      const defaultAgent = deps.configService.get("agent") as string | null;
+      const defaultAgent = deps.agentConfig.get();
       const requested = intent.payload.agent;
 
       if (requested !== undefined && requested !== defaultAgent) {

@@ -28,22 +28,19 @@ export interface YouTrackSourceDeps {
 }
 
 export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSource {
-  deps.configService.register(CONFIG_KEYS.baseUrl, {
-    name: CONFIG_KEYS.baseUrl,
+  const baseUrlConfig = deps.configService.register(CONFIG_KEYS.baseUrl, {
     default: null,
     description: "YouTrack instance URL (e.g. https://youtrack.example.com)",
     sensitive: true,
     ...configString({ nullable: true }),
   });
-  deps.configService.register(CONFIG_KEYS.token, {
-    name: CONFIG_KEYS.token,
+  const tokenConfig = deps.configService.register(CONFIG_KEYS.token, {
     default: null,
     description: "YouTrack API permanent token",
     sensitive: true,
     ...configString({ nullable: true }),
   });
-  deps.configService.register(CONFIG_KEYS.query, {
-    name: CONFIG_KEYS.query,
+  const queryConfig = deps.configService.register(CONFIG_KEYS.query, {
     default: null,
     description: "YouTrack search query (e.g. for:me State: {In Progress})",
     ...configString({ nullable: true }),
@@ -51,14 +48,14 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
 
   function youtrackHeaders(): Readonly<Record<string, string>> {
     return {
-      Authorization: `Bearer ${deps.configService.get(CONFIG_KEYS.token) as string}`,
+      Authorization: `Bearer ${tokenConfig.get()}`,
       Accept: "application/json",
     };
   }
 
   async function fetchIssues(): Promise<Record<string, unknown>[]> {
-    const baseUrl = deps.configService.get(CONFIG_KEYS.baseUrl) as string;
-    const query = encodeURIComponent(deps.configService.get(CONFIG_KEYS.query) as string);
+    const baseUrl = baseUrlConfig.get();
+    const query = encodeURIComponent(queryConfig.get() ?? "");
     const fields = encodeURIComponent(YOUTRACK_FIELDS);
     const url = `${baseUrl}/api/issues?query=${query}&fields=${fields}`;
 
@@ -75,7 +72,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
   }
 
   function issueStateKey(issueId: string): string {
-    const baseUrl = deps.configService.get(CONFIG_KEYS.baseUrl) as string;
+    const baseUrl = baseUrlConfig.get();
     return `${baseUrl}/api/issues/${issueId}`;
   }
 
@@ -85,9 +82,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
 
     isConfigured(): boolean {
       return (
-        deps.configService.get(CONFIG_KEYS.baseUrl) !== null &&
-        deps.configService.get(CONFIG_KEYS.token) !== null &&
-        deps.configService.get(CONFIG_KEYS.query) !== null
+        baseUrlConfig.get() !== null && tokenConfig.get() !== null && queryConfig.get() !== null
       );
     },
 
@@ -111,7 +106,7 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
 
         newItems.push({
           key,
-          url: `${deps.configService.get(CONFIG_KEYS.baseUrl) as string}/issue/${idReadable}`,
+          url: `${baseUrlConfig.get()}/issue/${idReadable}`,
           data: issue,
         });
       }

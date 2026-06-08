@@ -33,8 +33,6 @@ export interface ComputedDefaultContext {
  * their config keys, defaults, and parsing/validation logic.
  */
 export interface ConfigKeyDefinition<T> {
-  /** Config key name (dot-separated, kebab-case). */
-  readonly name: string;
   /** Static default value. */
   readonly default: T;
   /** Parse a raw CLI/env string into a typed value. undefined = invalid. */
@@ -72,6 +70,50 @@ type ConfigTypeBuilder<T> = Pick<ConfigKeyDefinition<T>, "parse" | "validate"> &
 };
 
 // =============================================================================
+// Config Accessors
+// =============================================================================
+
+/**
+ * Typed handle to a single config key, returned by `Config.register()`.
+ *
+ * The accessor carries the key's value type, so reads need no casts and writes
+ * are checked against the registered type. It closes over the owning Config
+ * instance; `get()` reflects the effective value (after `load()`), `set()`
+ * persists, and `reset()` reverts to the default.
+ */
+export interface ConfigAccessor<T> {
+  /** The config key name (dot-separated, kebab-case). */
+  readonly name: string;
+  /** The resolved default (static or computed) for this key. */
+  readonly default: T;
+  /** Get the effective value. */
+  get(): T;
+  /**
+   * Set a value at runtime. Validates against the registered definition.
+   * Always persists the given value (including `null` when `T` allows it)
+   * unless `persist: false`. Use `reset()` to revert to the default.
+   */
+  set(value: T, options?: { persist?: boolean }): Promise<void>;
+  /** Revert to the default value and delete the key from config.json. */
+  reset(options?: { persist?: boolean }): Promise<void>;
+  /** True when the effective value equals the resolved default. */
+  isDefault(): boolean;
+}
+
+/**
+ * Accessor returned for keys registered with `deprecated: true`. The key is
+ * recognized (its config.json entry is preserved) but unusable: `get()`/`set()`
+ * are typed `never`, so calling them is a compile error, with a runtime throw
+ * as a backstop.
+ */
+export interface DeprecatedConfigAccessor {
+  /** The config key name. */
+  readonly name: string;
+  get(): never;
+  set(value: never): never;
+}
+
+// =============================================================================
 // Type Builders
 // =============================================================================
 
@@ -91,12 +133,12 @@ export function configBoolean(): ConfigTypeBuilder<boolean> {
  * Builder for enum config values.
  * Parses/validates against a fixed set of allowed string values.
  */
-export function configEnum<T extends string>(values: readonly T[]): ConfigTypeBuilder<T>;
-export function configEnum<T extends string>(
+export function configEnum<const T extends string>(values: readonly T[]): ConfigTypeBuilder<T>;
+export function configEnum<const T extends string>(
   values: readonly T[],
   options: { nullable: true }
 ): ConfigTypeBuilder<T | null>;
-export function configEnum<T extends string>(
+export function configEnum<const T extends string>(
   values: readonly T[],
   options?: { nullable: true }
 ): ConfigTypeBuilder<T | null> {

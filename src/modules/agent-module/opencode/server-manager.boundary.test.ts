@@ -20,10 +20,7 @@ import { CI_TIMEOUT_MS } from "../../../boundaries/platform/network.test-utils";
 import { delay } from "@shared/test-fixtures";
 
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
-import { createMockConfig } from "../../../boundaries/platform/config.test-utils";
-
-/** Default config used by tests that don't pass an explicit override. */
-const DEFAULT_CONFIG_DEFAULTS = { "version.opencode": "1.0.223" };
+import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
 
 describe("OpenCodeServerManager Boundary Tests", () => {
   let testDir: string;
@@ -74,7 +71,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -98,7 +95,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -121,7 +118,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -161,7 +158,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );
@@ -189,7 +186,7 @@ describe("OpenCodeServerManager Boundary Tests", () => {
         networkLayer,
         networkLayer,
         pathProvider,
-        createMockConfig({ defaults: DEFAULT_CONFIG_DEFAULTS }),
+        createMockAccessor("version.opencode", "1.0.223"),
         SILENT_LOGGER,
         { healthCheckTimeoutMs: CI_TIMEOUT_MS }
       );

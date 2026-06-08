@@ -46,9 +46,8 @@ import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-p
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { SetupError } from "../../shared/errors/service-errors";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
-import { configString } from "../../boundaries/platform/config-definition";
-import type { Config } from "../../boundaries/platform/config";
-import { createMockConfig } from "../../boundaries/platform/config.test-utils";
+import type { ConfigAgentType, ConfigAccessor } from "../../boundaries/platform/config-definition";
+import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
 
 // =============================================================================
 // Mock AgentModuleProvider Factory
@@ -73,12 +72,6 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
 
     preflight: vi.fn().mockResolvedValue({ success: true, needsDownload: false }),
     downloadBinary: vi.fn().mockResolvedValue(undefined),
-    getConfigDefinition: vi.fn().mockReturnValue({
-      name: "version.claude",
-      default: null,
-      description: "Claude agent version",
-      ...configString({ nullable: true }),
-    }),
     initialize: vi.fn(),
     dispose: vi.fn().mockResolvedValue(undefined),
     startWorkspace: vi.fn().mockResolvedValue({
@@ -308,12 +301,9 @@ class MinimalShutdownOperation implements Operation<
 // Test Setup
 // =============================================================================
 
-function createTestSetup(
-  providerOverrides: Partial<AgentModuleProvider> = {},
-  configValues?: Record<string, unknown>
-) {
+function createTestSetup(providerOverrides: Partial<AgentModuleProvider> = {}) {
   const mockProvider = createMockProvider(providerOverrides);
-  const mockConfig = createMockConfig({ defaults: configValues });
+  const agentConfig = createMockAccessor<ConfigAgentType>("agent", null);
 
   const mockDispatcher = {
     dispatch: vi.fn().mockResolvedValue(undefined),
@@ -322,7 +312,7 @@ function createTestSetup(
   const moduleDeps: AgentModuleDeps = {
     dispatcher: mockDispatcher,
     logger: SILENT_LOGGER,
-    configService: mockConfig,
+    agentConfig,
   };
 
   const dispatcher = createMockDispatcher();
@@ -330,14 +320,17 @@ function createTestSetup(
 
   dispatcher.registerModule(agentModule);
 
-  return { mockProvider, mockConfig, moduleDeps, dispatcher, agentModule };
+  return { mockProvider, agentConfig, moduleDeps, dispatcher, agentModule };
 }
 
 /**
  * Set agent config value to activate the module, then run a start operation.
  */
-async function activateModule(dispatcher: Dispatcher, mockConfig: Config): Promise<void> {
-  await mockConfig.set("agent", "claude");
+async function activateModule(
+  dispatcher: Dispatcher,
+  agentConfig: ConfigAccessor<ConfigAgentType>
+): Promise<void> {
+  await agentConfig.set("claude");
   dispatcher.registerOperation("app:start", new MinimalStartOperation());
   await dispatcher.dispatch({ type: "app:start", payload: {} });
 }
@@ -394,11 +387,11 @@ describe("createAgentModule", () => {
 
   describe("config registration", () => {
     it("registers provider config definition via configService", () => {
-      const { mockConfig } = createTestSetup();
+      const { agentConfig } = createTestSetup();
       // The factory calls configService.register in the body, so
       // we just verify it was called. Since our mock is a no-op for register,
       // we verify that the module was created without errors.
-      expect(mockConfig).toBeDefined();
+      expect(agentConfig).toBeDefined();
     });
   });
 
@@ -629,18 +622,18 @@ describe("createAgentModule", () => {
 
   describe("save-agent", () => {
     it("calls configService.set when selectedAgent matches provider type", async () => {
-      const { dispatcher, mockConfig } = createTestSetup();
-      const setSpy = vi.spyOn(mockConfig, "set");
+      const { dispatcher, agentConfig } = createTestSetup();
+      const setSpy = vi.spyOn(agentConfig, "set");
       dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("claude"));
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(setSpy).toHaveBeenCalledWith("agent", "claude");
+      expect(setSpy).toHaveBeenCalledWith("claude");
     });
 
     it("skips when selectedAgent does not match provider type", async () => {
-      const { dispatcher, mockConfig } = createTestSetup();
-      const setSpy = vi.spyOn(mockConfig, "set");
+      const { dispatcher, agentConfig } = createTestSetup();
+      const setSpy = vi.spyOn(agentConfig, "set");
       dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("opencode"));
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
@@ -649,8 +642,8 @@ describe("createAgentModule", () => {
     });
 
     it("throws SetupError on config save failure", async () => {
-      const { dispatcher, mockConfig } = createTestSetup();
-      vi.spyOn(mockConfig, "set").mockRejectedValue(new Error("disk full"));
+      const { dispatcher, agentConfig } = createTestSetup();
+      vi.spyOn(agentConfig, "set").mockRejectedValue(new Error("disk full"));
       dispatcher.registerOperation("setup", new MinimalSaveAgentOperation("claude"));
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
@@ -763,8 +756,8 @@ describe("createAgentModule", () => {
 
   describe("workspace setup", () => {
     it("calls provider.startWorkspace and returns envVars when active", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "workspace:open",
@@ -792,8 +785,8 @@ describe("createAgentModule", () => {
     });
 
     it("passes initial prompt to startWorkspace when provided in intent", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "workspace:open",
@@ -820,8 +813,8 @@ describe("createAgentModule", () => {
     });
 
     it("passes isNewWorkspace=false for existing workspaces", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "workspace:open",
@@ -885,8 +878,8 @@ describe("createAgentModule", () => {
 
   describe("delete shutdown", () => {
     it("calls provider.stopWorkspace when active", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -906,8 +899,8 @@ describe("createAgentModule", () => {
     });
 
     it("calls clearWorkspaceTracking after successful stop", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -925,10 +918,10 @@ describe("createAgentModule", () => {
     });
 
     it("returns error in result when stop fails in force mode", async () => {
-      const { dispatcher, mockConfig } = createTestSetup({
+      const { dispatcher, agentConfig } = createTestSetup({
         stopWorkspace: vi.fn().mockResolvedValue({ success: false, error: "server busy" }),
       });
-      await activateModule(dispatcher, mockConfig);
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -947,10 +940,10 @@ describe("createAgentModule", () => {
     });
 
     it("throws when stop fails and not force mode", async () => {
-      const { dispatcher, mockConfig } = createTestSetup({
+      const { dispatcher, agentConfig } = createTestSetup({
         stopWorkspace: vi.fn().mockResolvedValue({ success: false, error: "server busy" }),
       });
-      await activateModule(dispatcher, mockConfig);
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation("workspace:delete", new MinimalShutdownOperation());
 
@@ -997,10 +990,10 @@ describe("createAgentModule", () => {
         status: "idle",
         counts: { idle: 1, busy: 0 },
       };
-      const { dispatcher, mockConfig } = createTestSetup({
+      const { dispatcher, agentConfig } = createTestSetup({
         getStatus: vi.fn().mockReturnValue(idleStatus),
       });
-      await activateModule(dispatcher, mockConfig);
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "workspace:get-status",
@@ -1059,8 +1052,8 @@ describe("createAgentModule", () => {
 
   describe("get-session", () => {
     it("returns session from provider when active", async () => {
-      const { dispatcher, mockConfig } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, agentConfig } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "agent:get-session",
@@ -1087,10 +1080,10 @@ describe("createAgentModule", () => {
     });
 
     it("returns null session when provider has no session", async () => {
-      const { dispatcher, mockConfig } = createTestSetup({
+      const { dispatcher, agentConfig } = createTestSetup({
         getSession: vi.fn().mockReturnValue(null),
       });
-      await activateModule(dispatcher, mockConfig);
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "agent:get-session",
@@ -1149,8 +1142,8 @@ describe("createAgentModule", () => {
 
   describe("restart", () => {
     it("restarts workspace via provider when active and returns port", async () => {
-      const { dispatcher, mockConfig, mockProvider } = createTestSetup();
-      await activateModule(dispatcher, mockConfig);
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "agent:restart",
@@ -1178,14 +1171,14 @@ describe("createAgentModule", () => {
     });
 
     it("throws when restart fails", async () => {
-      const { dispatcher, mockConfig } = createTestSetup({
+      const { dispatcher, agentConfig } = createTestSetup({
         restartWorkspace: vi.fn().mockResolvedValue({
           success: false,
           error: "restart failed",
           serverStopped: false,
         }),
       });
-      await activateModule(dispatcher, mockConfig);
+      await activateModule(dispatcher, agentConfig);
 
       dispatcher.registerOperation(
         "agent:restart",

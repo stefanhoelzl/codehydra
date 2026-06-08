@@ -16,7 +16,7 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { AgentType } from "../../shared/plugin-protocol";
 import type { WorkspacePath } from "../../shared/ipc";
-import type { Config } from "../../boundaries/platform/config";
+import type { ConfigAccessor, ConfigAgentType } from "../../boundaries/platform/config-definition";
 
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type {
@@ -71,7 +71,8 @@ import type { AgentModuleProvider } from "./agent-module-provider";
 export interface AgentModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
-  readonly configService: Config;
+  /** Accessor for the user's agent selection (registered in the composition root). */
+  readonly agentConfig: ConfigAccessor<ConfigAgentType>;
 }
 
 // =============================================================================
@@ -87,10 +88,6 @@ export function createAgentModule(
   deps: AgentModuleDeps
 ): IntentModule {
   const { logger } = deps;
-
-  // Register provider's config key (e.g. version.claude, version.opencode)
-  const configDef = provider.getConfigDefinition();
-  deps.configService.register(configDef.name, configDef);
 
   // =========================================================================
   // Internal closure state
@@ -237,7 +234,7 @@ export function createAgentModule(
             if (selectedAgent !== provider.type) return;
 
             try {
-              await deps.configService.set("agent", selectedAgent);
+              await deps.agentConfig.set(selectedAgent);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               throw new SetupError(

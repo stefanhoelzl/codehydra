@@ -26,16 +26,14 @@ import type {
 import { downloadBinary, isBinaryInstalled } from "../../../utils/binary-download";
 import type { BinaryType } from "../../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../../shared/errors/service-errors";
-import type { ConfigKeyDefinition } from "../../../boundaries/platform/config-definition";
+import type { ConfigAccessor } from "../../../boundaries/platform/config-definition";
 import type { StopServerResult, RestartServerResult } from "../types";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
-import { configString } from "../../../boundaries/platform/config-definition";
-import type { Config } from "../../../boundaries/platform/config";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
-import { CLAUDE_VERSION, getClaudeUrlForVersion, getClaudeSubPath } from "./setup-info";
+import { getClaudeUrlForVersion, getClaudeSubPath } from "./setup-info";
 
 // =============================================================================
 // Dependency Interface
@@ -52,7 +50,7 @@ export interface ClaudeModuleProviderDeps {
     readonly executablePath: string;
     readonly archiveExtension: ArchiveExtension;
   };
-  readonly configService: Config;
+  readonly versionConfig: ConfigAccessor<string | null>;
   readonly pathProvider: Pick<PathProvider, "bundlePath">;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
@@ -74,7 +72,7 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     serverManager,
     downloadDeps,
     binaryConfig,
-    configService,
+    versionConfig,
     pathProvider,
     platform,
     arch,
@@ -288,7 +286,7 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     },
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
-      const version = configService.get("version.claude") as string | null;
+      const version = versionConfig.get();
       if (version === null) {
         return { success: true, needsDownload: false };
       }
@@ -302,7 +300,7 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     },
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
-      const version = configService.get("version.claude") as string | null;
+      const version = versionConfig.get();
       if (version === null) return;
       const destDir = pathProvider.bundlePath(`claude/${version}`).toNative();
       const request: DownloadRequest = {
@@ -320,17 +318,6 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
           `Failed to download ${binaryConfig.name}: ${getErrorMessage(error)}`
         );
       }
-    },
-
-    // --- Config ---
-
-    getConfigDefinition(): ConfigKeyDefinition<string | null> {
-      return {
-        name: "version.claude",
-        default: CLAUDE_VERSION,
-        description: "Claude agent version",
-        ...configString({ nullable: true }),
-      };
     },
 
     // --- Lifecycle ---

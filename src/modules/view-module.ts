@@ -143,8 +143,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const { viewManager, logger } = deps;
 
   // Register config keys
-  deps.configService.register("experimental.load-on-resume", {
-    name: "experimental.load-on-resume",
+  const loadOnResumeConfig = deps.configService.register("experimental.load-on-resume", {
     default: true,
     description: "Reload workspace views when system resumes from sleep",
     ...configBoolean(),
@@ -656,8 +655,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
         [APP_RESUME_HOOK_RESUME]: {
           requires: { codeServerReady: ANY_VALUE },
           handler: async (): Promise<void> => {
-            const loadOnResume = deps.configService.get("experimental.load-on-resume") as boolean;
-            if (!loadOnResume) return;
+            if (!loadOnResumeConfig.get()) return;
             logger.info("Reloading workspace views after system resume");
             viewManager.reloadAllViews();
           },

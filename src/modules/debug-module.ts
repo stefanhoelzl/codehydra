@@ -12,7 +12,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
-import { configBoolean } from "../boundaries/platform/config-definition";
+import { configBoolean, type ConfigAccessor } from "../boundaries/platform/config-definition";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import {
@@ -41,27 +41,35 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
   const { configService } = deps;
 
   // Register debug config keys
-  configService.register("debug.blocking-pids", {
-    name: "debug.blocking-pids",
-    default: false,
-    description: "Simulate blocking processes during workspace deletion",
-    ...configBoolean(),
-  });
-  configService.register("debug.setup", {
-    name: "debug.setup",
-    default: false,
-    description: "Force setup flow with simulated binary download progress",
-    ...configBoolean(),
-  });
-  configService.register("debug.update", {
-    name: "debug.update",
-    default: false,
-    description: "Simulate available update with download progress",
-    ...configBoolean(),
-  });
+  const debugConfigs = new Map<string, ConfigAccessor<boolean>>([
+    [
+      "debug.blocking-pids",
+      configService.register("debug.blocking-pids", {
+        default: false,
+        description: "Simulate blocking processes during workspace deletion",
+        ...configBoolean(),
+      }),
+    ],
+    [
+      "debug.setup",
+      configService.register("debug.setup", {
+        default: false,
+        description: "Force setup flow with simulated binary download progress",
+        ...configBoolean(),
+      }),
+    ],
+    [
+      "debug.update",
+      configService.register("debug.update", {
+        default: false,
+        description: "Simulate available update with download progress",
+        ...configBoolean(),
+      }),
+    ],
+  ]);
 
   function isActive(key: string): boolean {
-    return configService.get(key) === true;
+    return debugConfigs.get(key)?.get() === true;
   }
 
   // Workspaces kept alive by debug.blocking-pids after deletion

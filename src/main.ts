@@ -32,6 +32,7 @@ import { DefaultConfig } from "./boundaries/platform/config";
 import {
   configBoolean,
   configEnum,
+  configString,
   ConfigValidationError,
 } from "./boundaries/platform/config-definition";
 // Boundaries - Shell
@@ -52,8 +53,9 @@ import type { DownloadDeps } from "./utils/binary-download";
 import {
   getOpencodeBundleDir,
   getOpencodeExecutablePath,
+  OPENCODE_VERSION,
 } from "./modules/agent-module/opencode/setup-info";
-import { getClaudeExecutablePath } from "./modules/agent-module/claude/setup-info";
+import { getClaudeExecutablePath, CLAUDE_VERSION } from "./modules/agent-module/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/platform-info";
 import { ClaudeCodeServerManager } from "./modules/agent-module/claude/server-manager";
 import { OpenCodeServerManager } from "./modules/agent-module/opencode/server-manager";
@@ -212,27 +214,39 @@ const configService = new DefaultConfig({
   argv: process.argv,
 });
 
-// Register core config keys (not owned by any module)
-configService.register("agent", {
-  name: "agent",
+// Register core config keys (not owned by any single module). Their accessors
+// are threaded into the modules/intents that read or write them, so those
+// consumers never reach into the config service by string key.
+const agentConfig = configService.register("agent", {
   default: null,
   description: "Agent selection",
   ...configEnum(["claude", "opencode"], { nullable: true }),
 });
-configService.register("help", {
-  name: "help",
+const helpConfig = configService.register("help", {
   default: false,
   description: "Print config help and exit",
   ...configBoolean(),
 });
-configService.register("experimental.iframes", {
-  name: "experimental.iframes",
+const iframesConfig = configService.register("experimental.iframes", {
   default: true,
   description:
     "Render workspaces as iframes inside a single host WebContentsView " +
     "(experimental; requires app restart). Lower memory at the cost of " +
     "per-workspace devtools and crash recovery.",
   ...configBoolean(),
+});
+// Agent version keys. Registered here (composition root) rather than inside the
+// agent module so the accessors exist before the server managers and providers
+// that read them are constructed (those are built below, before the modules).
+const claudeVersionConfig = configService.register("version.claude", {
+  default: CLAUDE_VERSION,
+  description: "Claude agent version",
+  ...configString({ nullable: true }),
+});
+const opencodeVersionConfig = configService.register("version.opencode", {
+  default: OPENCODE_VERSION,
+  description: "OpenCode agent version",
+  ...configString(),
 });
 
 // 3. Electron layers (all constructors are pure — just store deps)
@@ -326,7 +340,7 @@ const agentServerManagers = {
     serverManagerDeps.portManager,
     serverManagerDeps.httpClient,
     serverManagerDeps.pathProvider,
-    configService,
+    opencodeVersionConfig,
     serverManagerDeps.logger
   ),
 };
@@ -358,7 +372,7 @@ const viewManager = new ViewManager({
   viewLayer,
   sessionLayer,
   appLayer,
-  configService,
+  iframesConfig,
   config: {
     uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
     codeServerPort: 0,
@@ -443,7 +457,7 @@ const codeServerModule = createCodeServerModule({
   archiveExtractor,
   configService,
   resolveOpencodeBundleDir: (): string =>
-    getOpencodeBundleDir(pathProvider, configService.get("version.opencode") as string).toNative(),
+    getOpencodeBundleDir(pathProvider, opencodeVersionConfig.get()).toNative(),
 });
 
 const pluginServerModule = createPluginServerModule({
@@ -468,13 +482,13 @@ const claudeAgentModule = createAgentModule(
     serverManager: agentServerManagers.claude,
     downloadDeps,
     binaryConfig: claudeBinaryConfig,
-    configService,
+    versionConfig: claudeVersionConfig,
     pathProvider,
     platform,
     arch,
     logger: providerLogger,
   }),
-  { dispatcher, logger: apiLogger, configService }
+  { dispatcher, logger: apiLogger, agentConfig }
 );
 
 const opencodeAgentModule = createAgentModule(
@@ -482,13 +496,13 @@ const opencodeAgentModule = createAgentModule(
     serverManager: agentServerManagers.opencode,
     downloadDeps,
     binaryConfig: opencodeBinaryConfig,
-    configService,
+    versionConfig: opencodeVersionConfig,
     pathProvider,
     platform,
     arch,
     logger: providerLogger,
   }),
-  { dispatcher, logger: apiLogger, configService }
+  { dispatcher, logger: apiLogger, agentConfig }
 );
 
 const metadataModule = createMetadataModule({
@@ -496,7 +510,7 @@ const metadataModule = createMetadataModule({
 });
 const workspaceAgentResolverModule = createWorkspaceAgentResolverModule({
   gitWorktreeProvider,
-  configService,
+  agentConfig,
   logger: loggingService.createLogger("agent-resolver"),
 });
 const keepFilesModule = createKeepFilesModule({
@@ -520,6 +534,7 @@ const posthogModule = createPosthogModule({
   platformInfo,
   buildInfo,
   configService,
+  agentConfig,
   logger: loggingService.createLogger("telemetry"),
   apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
   host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
@@ -660,8 +675,8 @@ const bugReportModule = createBugReportModule({
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
-dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(configService));
-dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(configService));
+dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(agentConfig));
+dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(agentConfig));
 // config:set-values operation removed — config is now a plain service
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
@@ -826,7 +841,7 @@ try {
 }
 
 // Handle --help
-if (configService.get("help") === true) {
+if (helpConfig.get()) {
   process.stdout.write(configService.getHelpText());
   app.quit();
 }
