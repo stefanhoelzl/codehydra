@@ -224,11 +224,11 @@ configService.register("help", {
 });
 configService.register("experimental.iframes", {
   name: "experimental.iframes",
-  default: false,
+  default: true,
   description:
     "Render workspaces as iframes inside a single host WebContentsView " +
     "(experimental; requires app restart). Lower memory at the cost of " +
-    "per-workspace devtools, fail-load retry, and crash recovery.",
+    "per-workspace devtools and crash recovery.",
   ...configBoolean(),
 });
 
