@@ -7,7 +7,6 @@
  * - The OS sleep blocker engages while any workspace is busy/mixed.
  * - It releases when all workspaces are idle/none, deleted, or hibernated.
  * - Repeated busy updates don't thrash the blocker (idempotency).
- * - The `experimental.prevent-sleep` config gates the behavior.
  * - The blocker is released on app shutdown.
  */
 
@@ -45,7 +44,6 @@ import type { IntentModule } from "../intents/lib/module";
 import { createPowerModule } from "./power-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createAppBoundaryMock, type MockAppBoundary } from "../boundaries/shell/app.state-mock";
-import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
@@ -111,7 +109,7 @@ interface ModuleTestSetup {
   appLayer: MockAppBoundary;
 }
 
-function createModuleTestSetup(options?: { enabled?: boolean }): ModuleTestSetup {
+function createModuleTestSetup(): ModuleTestSetup {
   const appLayer = createAppBoundaryMock();
   const dispatcher = createMockDispatcher();
 
@@ -120,12 +118,7 @@ function createModuleTestSetup(options?: { enabled?: boolean }): ModuleTestSetup
   dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
   dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  const configService =
-    options?.enabled === false
-      ? createMockConfig({ defaults: { "experimental.prevent-sleep": false } })
-      : createMockConfig();
-
-  const powerModule = createPowerModule({ appLayer, configService, logger: SILENT_LOGGER });
+  const powerModule = createPowerModule({ appLayer, logger: SILENT_LOGGER });
   dispatcher.registerModule(powerModule);
   dispatcher.registerModule(createMockResolveModule());
 
@@ -255,16 +248,6 @@ describe("PowerModule Integration", () => {
 
       expect(appLayer).toBePreventingSleep();
       expect(appLayer).toHaveSleepBlockerStartCount(1);
-    });
-  });
-
-  describe("config gating", () => {
-    it("never engages the blocker when experimental.prevent-sleep is false", async () => {
-      const { dispatcher, appLayer } = createModuleTestSetup({ enabled: false });
-      await dispatcher.dispatch(updateStatusIntent("/workspace/1", busy()));
-
-      expect(appLayer).not.toBePreventingSleep();
-      expect(appLayer).toHaveSleepBlockerStartCount(0);
     });
   });
 

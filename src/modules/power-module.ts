@@ -19,11 +19,6 @@
  *
  * Hooks:
  * - app-shutdown/stop: releases the blocker (allowPowerSaving(true)).
- *
- * Gating: the feature is controlled by the `experimental.prevent-sleep` config key
- * (default true). When disabled, the module still tracks state but never toggles
- * the blocker — matching the always-register + internal-check pattern used by
- * debug-module / electron-lifecycle-module.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -35,15 +30,7 @@ import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { AppBoundary } from "../boundaries/shell/app";
-import type { Config } from "../boundaries/platform/config";
-import { configBoolean } from "../boundaries/platform/config-definition";
 import type { Logger } from "../boundaries/platform/logging";
-
-// =============================================================================
-// Config
-// =============================================================================
-
-export const PREVENT_SLEEP_CONFIG_KEY = "experimental.prevent-sleep";
 
 // =============================================================================
 // Aggregation (pure function)
@@ -76,7 +63,6 @@ export function shouldPreventSleep(
 
 export interface PowerModuleDeps {
   readonly appLayer: AppBoundary;
-  readonly configService: Config;
   readonly logger: Logger;
 }
 
@@ -87,27 +73,15 @@ export interface PowerModuleDeps {
 /**
  * Create a power module that prevents OS sleep while any workspace is busy.
  *
- * @param deps - AppBoundary (sleep blocker), config service, logger
+ * @param deps - AppBoundary (sleep blocker), logger
  * @returns IntentModule with event subscriptions and a shutdown hook
  */
 export function createPowerModule(deps: PowerModuleDeps): IntentModule {
-  const { appLayer, configService, logger } = deps;
-
-  configService.register(PREVENT_SLEEP_CONFIG_KEY, {
-    name: PREVENT_SLEEP_CONFIG_KEY,
-    default: true,
-    description: "Prevent the OS from sleeping while any workspace's agent is busy",
-    ...configBoolean(),
-  });
+  const { appLayer, logger } = deps;
 
   const workspaceStatuses = new Map<WorkspacePath, AggregatedAgentStatus>();
 
-  function isEnabled(): boolean {
-    return configService.get(PREVENT_SLEEP_CONFIG_KEY) === true;
-  }
-
   function applyBlocker(): void {
-    if (!isEnabled()) return;
     const prevent = shouldPreventSleep(workspaceStatuses);
     appLayer.allowPowerSaving(!prevent);
   }
