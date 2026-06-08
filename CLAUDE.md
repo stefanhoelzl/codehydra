@@ -319,7 +319,6 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | `electron.flags`                      | —         | Electron switches (e.g., `--disable-gpu`)                                                                                                           |
 | `electron.disabled-features`          | (curated) | Comma-separated Chromium features for `--disable-features`. `null` = curated defaults; `""` = nothing disabled; any value fully replaces defaults   |
 | `experimental.iframes`                | `true`    | Render workspaces as iframes inside a single host WebContentsView (requires restart). Lower memory; stubs per-workspace devtools and crash recovery |
-| `experimental.prevent-sleep`          | `true`    | Prevent the OS from sleeping (display-sleep blocker) while any workspace's agent is busy. Releases when all workspaces are idle/offline             |
 | `experimental.load-on-resume`         | `true`    | Reload all workspace views when the system resumes from sleep (gated on code-server being healthy)                                                  |
 | `experimental.github.query`           | (below)   | GitHub auto-workspace search query (requires `gh` CLI); default: `is:open is:pr review-requested:@me`                                               |
 | `experimental.github.template-path`   | `null`    | Path to Liquid template for GitHub auto-workspaces; set to enable. Sensitive                                                                        |

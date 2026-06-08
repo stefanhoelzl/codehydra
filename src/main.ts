@@ -552,7 +552,6 @@ const badgeModule = createBadgeModule({
 });
 const powerModule = createPowerModule({
   appLayer,
-  configService,
   logger: loggingService.createLogger("power"),
 });
 const deletionDialogModule = createDeletionDialogModule({
