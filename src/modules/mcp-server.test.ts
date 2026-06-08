@@ -27,6 +27,15 @@ import {
   GET_AGENT_SESSION_OPERATION_ID,
 } from "../intents/get-agent-session";
 import { INTENT_RESTART_AGENT, RESTART_AGENT_OPERATION_ID } from "../intents/restart-agent";
+import {
+  INTENT_RESOLVE_WORKSPACE,
+  RESOLVE_WORKSPACE_OPERATION_ID,
+} from "../intents/resolve-workspace";
+import {
+  INTENT_HIBERNATE_WORKSPACE,
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+} from "../intents/hibernate-workspace";
+import { INTENT_WAKE_WORKSPACE, WAKE_WORKSPACE_OPERATION_ID } from "../intents/wake-workspace";
 import { INTENT_LIST_PROJECTS, LIST_PROJECTS_OPERATION_ID } from "../intents/list-projects";
 import { INTENT_OPEN_WORKSPACE, OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import {
@@ -103,6 +112,19 @@ function createMockDispatcher(): {
   const deleteWorkspaceOp = createMockOperation(DELETE_WORKSPACE_OPERATION_ID, { started: true });
   const executeCommandOp = createMockOperation(VSCODE_COMMAND_OPERATION_ID, undefined);
   const showMessageOp = createMockOperation(VSCODE_SHOW_MESSAGE_OPERATION_ID, null);
+  const resolveWorkspaceOp = createMockOperation(RESOLVE_WORKSPACE_OPERATION_ID, {
+    projectPath: "/home/user/projects/my-app",
+    workspaceName: "feature-branch",
+    active: false,
+  });
+  const hibernateOp = createMockOperation(HIBERNATE_WORKSPACE_OPERATION_ID, { started: true });
+  const wakeOp = createMockOperation(WAKE_WORKSPACE_OPERATION_ID, {
+    name: "test",
+    path: "/path",
+    branch: "main",
+    metadata: { base: "main" },
+    projectId: "test-12345678" as ProjectId,
+  });
 
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, getStatusOp);
   dispatcher.registerOperation(INTENT_GET_METADATA, getMetadataOp);
@@ -114,6 +136,9 @@ function createMockDispatcher(): {
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
   dispatcher.registerOperation(INTENT_VSCODE_COMMAND, executeCommandOp);
   dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, showMessageOp);
+  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, resolveWorkspaceOp);
+  dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, hibernateOp);
+  dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, wakeOp);
 
   return {
     dispatcher,
@@ -128,6 +153,9 @@ function createMockDispatcher(): {
       deleteWorkspace: deleteWorkspaceOp.execute as ReturnType<typeof vi.fn>,
       executeCommand: executeCommandOp.execute as ReturnType<typeof vi.fn>,
       showMessage: showMessageOp.execute as ReturnType<typeof vi.fn>,
+      resolveWorkspace: resolveWorkspaceOp.execute as ReturnType<typeof vi.fn>,
+      hibernate: hibernateOp.execute as ReturnType<typeof vi.fn>,
+      wake: wakeOp.execute as ReturnType<typeof vi.fn>,
     },
   };
 }
@@ -246,13 +274,104 @@ describe("McpServer", () => {
       expect(toolNames).toContain("workspace_set_metadata");
       expect(toolNames).toContain("workspace_get_agent_session");
       expect(toolNames).toContain("workspace_restart_agent_server");
+      expect(toolNames).toContain("workspace_hibernate");
+      expect(toolNames).toContain("workspace_wake");
       expect(toolNames).toContain("workspace_delete");
       expect(toolNames).toContain("workspace_execute_command");
       expect(toolNames).toContain("project_list");
       expect(toolNames).toContain("workspace_create");
       expect(toolNames).toContain("ui_show_message");
       expect(toolNames).toContain("log");
-      expect(tools.length).toBe(11);
+      expect(tools.length).toBe(13);
+    });
+
+    it("workspace_hibernate tool dispatches the hibernate intent", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const hibernateTool = tools.find((t) => t.name === "workspace_hibernate");
+      expect(hibernateTool).toBeDefined();
+
+      const result = await hibernateTool!.handler(
+        {},
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      expect(mockDispatcher.operations.hibernate).toHaveBeenCalled();
+      const intent = mockDispatcher.operations.hibernate!.mock.calls[0]![0].intent as Intent;
+      expect(intent.type).toBe(INTENT_HIBERNATE_WORKSPACE);
+      expect((intent.payload as { workspacePath: string }).workspacePath).toBe(testWorkspacePath);
+      expect(result).toEqual({
+        content: [{ type: "text", text: JSON.stringify({ started: true }) }],
+      });
+    });
+
+    it("workspace_wake tool dispatches a single wake intent and returns the workspace", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const wakeTool = tools.find((t) => t.name === "workspace_wake");
+      expect(wakeTool).toBeDefined();
+
+      const result = await wakeTool!.handler(
+        {},
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      // Single dispatch: wake now reopens internally, so the tool does not
+      // dispatch resolve/get-metadata/open itself.
+      expect(mockDispatcher.operations.wake).toHaveBeenCalled();
+      expect(mockDispatcher.operations.openWorkspace).not.toHaveBeenCalled();
+      expect(mockDispatcher.operations.resolveWorkspace).not.toHaveBeenCalled();
+
+      const wakeIntent = mockDispatcher.operations.wake!.mock.calls[0]![0].intent as Intent;
+      expect(wakeIntent.type).toBe(INTENT_WAKE_WORKSPACE);
+      const payload = wakeIntent.payload as {
+        workspacePath: string;
+        stealFocus?: boolean;
+        source?: string;
+      };
+      expect(payload.workspacePath).toBe(testWorkspacePath);
+      expect(payload.stealFocus).toBe(false);
+      expect(payload.source).toBe("mcp");
+
+      // Returns the reopened workspace.
+      const parsed = JSON.parse(
+        (result as { content: Array<{ text: string }> }).content[0]!.text
+      ) as { name: string };
+      expect(parsed.name).toBe("test");
+    });
+
+    it("workspace_hibernate targets an explicit workspacePath argument", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const hibernateTool = tools.find((t) => t.name === "workspace_hibernate");
+      const otherWorkspacePath = "/home/user/projects/my-app/.worktrees/other-branch";
+
+      await hibernateTool!.handler(
+        { workspacePath: otherWorkspacePath },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.hibernate!.mock.calls[0]![0].intent as Intent;
+      expect((intent.payload as { workspacePath: string }).workspacePath).toBe(otherWorkspacePath);
+    });
+
+    it("workspace_wake targets an explicit workspacePath argument", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const wakeTool = tools.find((t) => t.name === "workspace_wake");
+      const otherWorkspacePath = "/home/user/projects/my-app/.worktrees/other-branch";
+
+      await wakeTool!.handler(
+        { workspacePath: otherWorkspacePath },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.wake!.mock.calls[0]![0].intent as Intent;
+      expect((intent.payload as { workspacePath: string }).workspacePath).toBe(otherWorkspacePath);
     });
 
     it("workspace_restart_agent_server tool calls handler and returns port", async () => {

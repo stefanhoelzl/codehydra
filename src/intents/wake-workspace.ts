@@ -1,25 +1,37 @@
 /**
- * WakeWorkspaceOperation - Marks a hibernated workspace as awake.
+ * WakeWorkspaceOperation - Wakes a hibernated workspace and brings it online.
  *
  * Steps:
- * 1. Dispatch workspace:resolve — workspacePath → projectPath + workspaceName
+ * 1. Dispatch workspace:resolve — workspacePath → projectPath + workspaceName + branch
  * 2. Dispatch project:resolve — projectPath → projectId
- * 3. Dispatch workspace:set-metadata — clear `hibernated` metadata
+ * 3. Dispatch workspace:set-metadata — clear `hibernated` metadata (emits
+ *    workspace:metadata-changed, which clears the renderer overlay)
  * 4. "cleanup" hook — delete the on-disk screenshot file (best-effort)
- * 5. Emit workspace:woken
+ * 5. Dispatch workspace:get-metadata — read back the now-clean metadata
+ * 6. Dispatch workspace:open (existingWorkspace branch) — re-run the canonical
+ *    open pipeline against the already-existing worktree to restart the agent
+ *    server, rebuild the workspace URL, and emit workspace:created (which mounts
+ *    the view). stealFocus/source are forwarded so callers control focus and
+ *    error-notification behavior, exactly like workspace_create.
+ * 7. Emit workspace:woken (releases the per-workspace wake idempotency lock)
  *
- * The operation intentionally does NOT recreate views or start the agent
- * server — the caller (typically the renderer) should follow up with a
- * workspace:open intent (using the existingWorkspace branch) to bring the
- * workspace fully online.
+ * Returns the reopened Workspace. The metadata-changed event (step 3) is
+ * emitted before workspace:created (step 6), so the overlay clears before the
+ * new view appears.
  */
 
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
+import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
+import {
+  INTENT_OPEN_WORKSPACE,
+  type OpenWorkspaceIntent,
+  type WorkspaceOpenSource,
+} from "./open-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { getErrorMessage } from "../shared/error-utils";
 
@@ -29,9 +41,16 @@ import { getErrorMessage } from "../shared/error-utils";
 
 export interface WakeWorkspacePayload {
   readonly workspacePath: string;
+  /** Forwarded to the internal workspace:open. If true, switch to the woken
+   *  workspace; if false, bring it online in the background. Default
+   *  (undefined): switch — matching the pre-fold renderer behavior. */
+  readonly stealFocus?: boolean;
+  /** Forwarded to the internal workspace:open. Identifies the originating
+   *  surface so error-notification can skip non-interactive sources (e.g. mcp). */
+  readonly source?: WorkspaceOpenSource;
 }
 
-export interface WakeWorkspaceIntent extends Intent<{ started: true }> {
+export interface WakeWorkspaceIntent extends Intent<Workspace> {
   readonly type: "workspace:wake";
   readonly payload: WakeWorkspacePayload;
 }
@@ -86,14 +105,14 @@ export type CleanupHookResult = Record<string, never>;
 // Operation
 // =============================================================================
 
-export class WakeWorkspaceOperation implements Operation<WakeWorkspaceIntent, { started: true }> {
+export class WakeWorkspaceOperation implements Operation<WakeWorkspaceIntent, Workspace> {
   readonly id = WAKE_WORKSPACE_OPERATION_ID;
 
-  async execute(ctx: OperationContext<WakeWorkspaceIntent>): Promise<{ started: true }> {
+  async execute(ctx: OperationContext<WakeWorkspaceIntent>): Promise<Workspace> {
     const { payload } = ctx.intent;
 
     try {
-      const { projectPath, workspaceName } = await ctx.dispatch({
+      const { projectPath, workspaceName, branch } = await ctx.dispatch({
         type: INTENT_RESOLVE_WORKSPACE,
         payload: { workspacePath: payload.workspacePath },
       } as ResolveWorkspaceIntent);
@@ -125,6 +144,32 @@ export class WakeWorkspaceOperation implements Operation<WakeWorkspaceIntent, { 
       // Best-effort screenshot file cleanup.
       await ctx.hooks.collect<CleanupHookResult>("cleanup", hookCtx);
 
+      // Read back the now-clean metadata (hibernated flag removed above) so the
+      // reopen — and the workspace:created event it emits — carry accurate
+      // metadata rather than reintroducing the stale flag.
+      const metadata = await ctx.dispatch({
+        type: INTENT_GET_METADATA,
+        payload: { workspacePath: payload.workspacePath },
+      } as GetMetadataIntent);
+
+      // Re-run the canonical open pipeline against the existing worktree to
+      // bring the workspace back online (agent server, workspace URL, view).
+      const workspace = await ctx.dispatch({
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          projectPath,
+          workspaceName,
+          existingWorkspace: {
+            path: payload.workspacePath,
+            name: workspaceName,
+            branch,
+            metadata,
+          },
+          ...(payload.stealFocus !== undefined && { stealFocus: payload.stealFocus }),
+          ...(payload.source !== undefined && { source: payload.source }),
+        },
+      } as OpenWorkspaceIntent);
+
       const event: WorkspaceWokenEvent = {
         type: EVENT_WORKSPACE_WOKEN,
         payload: {
@@ -136,7 +181,7 @@ export class WakeWorkspaceOperation implements Operation<WakeWorkspaceIntent, { 
       };
       ctx.emit(event);
 
-      return { started: true };
+      return workspace;
     } catch (error) {
       const failedEvent: WorkspaceWakeFailedEvent = {
         type: EVENT_WORKSPACE_WAKE_FAILED,

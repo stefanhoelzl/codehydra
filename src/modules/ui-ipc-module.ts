@@ -403,49 +403,18 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
 
   registerIpc(ApiIpcChannels.WORKSPACE_WAKE, async (payload) => {
     const p = payload as { workspacePath: string };
+    // wake now clears the hibernated flag AND reopens the workspace (restarts
+    // the agent server, rebuilds the view) by dispatching workspace:open
+    // internally. source "ui-ipc" makes open's failures surface as UI
+    // notifications; stealFocus is omitted so the woken workspace is focused.
     const intent: WakeWorkspaceIntent = {
       type: INTENT_WAKE_WORKSPACE,
-      payload: { workspacePath: p.workspacePath },
+      payload: { workspacePath: p.workspacePath, source: "ui-ipc" },
     };
-    const handle = dispatcher.dispatch(intent);
-    if (!(await handle.accepted)) {
-      return { started: false };
-    }
-    // Await full completion (not fire-and-forget): callers — notably the
-    // renderer's wake → reopen sequence in shortcuts.svelte.ts — rely on the
-    // `workspace:metadata-changed` event being processed before reopen runs,
-    // and on wake errors being surfaced rather than swallowed.
-    await handle;
-    return { started: true };
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_REOPEN, async (payload) => {
-    const p = payload as {
-      projectPath: string;
-      workspacePath: string;
-      workspaceName: string;
-      branch: string | null;
-      metadata: Readonly<Record<string, string>>;
-    };
-    const intent: OpenWorkspaceIntent = {
-      type: INTENT_OPEN_WORKSPACE,
-      payload: {
-        projectPath: p.projectPath,
-        workspaceName: p.workspaceName,
-        existingWorkspace: {
-          path: p.workspacePath,
-          name: p.workspaceName,
-          branch: p.branch,
-          metadata: p.metadata,
-        },
-        source: "ui-ipc",
-      },
-    };
+    // result is undefined only when a concurrent wake for the same workspace
+    // was deduped by the idempotency interceptor.
     const result = await dispatcher.dispatch(intent);
-    if (!result) {
-      throw new Error("Reopen workspace dispatch returned no result");
-    }
-    return result as Workspace;
+    return (result ?? null) as Workspace | null;
   });
 
   registerIpc(ApiIpcChannels.WORKSPACE_GET_SCREENSHOT, async (payload) => {

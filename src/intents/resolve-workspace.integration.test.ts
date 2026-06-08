@@ -86,7 +86,23 @@ describe("ResolveWorkspaceOperation Integration", () => {
         projectPath: PROJECT_PATH,
         workspaceName: WORKSPACE_NAME,
         active: false,
+        // Defaults to null when no handler provides a branch.
+        branch: null,
       });
+    });
+
+    it("returns the branch when a handler provides it", async () => {
+      const { dispatcher } = createTestSetup(
+        async (): Promise<ResolveHookResult> => ({
+          projectPath: PROJECT_PATH,
+          workspaceName: WORKSPACE_NAME,
+          branch: "feature-x",
+        })
+      );
+
+      const result = await dispatcher.dispatch(resolveIntent(WORKSPACE_PATH));
+
+      expect(result.branch).toBe("feature-x");
     });
   });
 

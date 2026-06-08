@@ -60,12 +60,27 @@ import {
   INTENT_SWITCH_WORKSPACE,
   SWITCH_WORKSPACE_OPERATION_ID,
 } from "./switch-workspace";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+import { INTENT_GET_METADATA, GET_METADATA_OPERATION_ID } from "./get-metadata";
+import {
+  INTENT_OPEN_WORKSPACE,
+  OPEN_WORKSPACE_OPERATION_ID,
+  type OpenWorkspacePayload,
+} from "./open-workspace";
+import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
 
 const PROJECT_PATH = "/test/project";
 const PROJECT_ID = Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId;
 const WORKSPACE_PATH = "/test/project/workspaces/feature-a";
 const WORKSPACE_NAME = "feature-a" as WorkspaceName;
+const BRANCH = "feature-a-branch";
+const CLEAN_METADATA: Readonly<Record<string, string>> = { base: "main" };
+const REOPENED_WORKSPACE: Workspace = {
+  projectId: PROJECT_ID,
+  name: WORKSPACE_NAME,
+  branch: BRANCH,
+  metadata: CLEAN_METADATA,
+  path: WORKSPACE_PATH,
+};
 
 interface Recorder {
   captureCalled: boolean;
@@ -76,6 +91,7 @@ interface Recorder {
   callOrder: string[];
   metadataWrites: Array<{ key: string; value: string | null }>;
   events: DomainEvent[];
+  openPayload?: OpenWorkspacePayload;
 }
 
 function createRecorder(): Recorder {
@@ -101,6 +117,7 @@ function createResolveModule(active: boolean): IntentModule {
             projectPath: PROJECT_PATH,
             workspaceName: WORKSPACE_NAME,
             active,
+            branch: BRANCH,
           }),
         },
       },
@@ -240,6 +257,22 @@ function buildHarness(
   dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
   dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, new HibernateWorkspaceOperation());
   dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, new WakeWorkspaceOperation());
+
+  // Mock the get-metadata + open-workspace operations that wake now dispatches
+  // internally to bring the workspace back online. (Hibernate never dispatches
+  // these, so registering them is harmless for those tests.)
+  dispatcher.registerOperation(INTENT_GET_METADATA, {
+    id: GET_METADATA_OPERATION_ID,
+    execute: async () => CLEAN_METADATA,
+  });
+  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, {
+    id: OPEN_WORKSPACE_OPERATION_ID,
+    execute: async (ctx) => {
+      recorder.openPayload = (ctx.intent as { payload: OpenWorkspacePayload }).payload;
+      recorder.callOrder.push("open");
+      return REOPENED_WORKSPACE;
+    },
+  });
 
   dispatcher.registerModule(createResolveModule(opts.active ?? false));
   dispatcher.registerModule(createMetadataModule(recorder));
@@ -406,19 +439,61 @@ describe("workspace:hibernate", () => {
 });
 
 describe("workspace:wake", () => {
-  it("clears hibernated metadata, runs cleanup, emits woken event", async () => {
+  it("clears hibernated metadata, runs cleanup, reopens, emits woken event", async () => {
     const { dispatcher, recorder } = buildHarness((r) => [createWakeHookModule(r)]);
 
     const intent: WakeWorkspaceIntent = {
       type: INTENT_WAKE_WORKSPACE,
       payload: { workspacePath: WORKSPACE_PATH },
     };
-    await dispatcher.dispatch(intent);
+    const result = await dispatcher.dispatch(intent);
 
     expect(recorder.cleanupCalled).toBe(true);
     expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: null }]);
 
+    // Reopen dispatched with the resolved branch and the clean (post-clear)
+    // metadata, via the existingWorkspace branch of workspace:open.
+    expect(recorder.openPayload).toBeDefined();
+    expect(recorder.openPayload?.projectPath).toBe(PROJECT_PATH);
+    expect(recorder.openPayload?.workspaceName).toBe(WORKSPACE_NAME);
+    expect(recorder.openPayload?.existingWorkspace).toEqual({
+      path: WORKSPACE_PATH,
+      name: WORKSPACE_NAME,
+      branch: BRANCH,
+      metadata: CLEAN_METADATA,
+    });
+    // Metadata is cleared before reopen runs.
+    expect(recorder.callOrder).toEqual(["set-metadata:null", "open"]);
+
+    // Returns the reopened workspace.
+    expect(result).toEqual(REOPENED_WORKSPACE);
+
     const woken = recorder.events.find((e) => e.type === EVENT_WORKSPACE_WOKEN);
     expect(woken).toBeDefined();
+  });
+
+  it("forwards stealFocus and source to the internal open", async () => {
+    const { dispatcher, recorder } = buildHarness((r) => [createWakeHookModule(r)]);
+
+    await dispatcher.dispatch({
+      type: INTENT_WAKE_WORKSPACE,
+      payload: { workspacePath: WORKSPACE_PATH, stealFocus: false, source: "mcp" },
+    } as WakeWorkspaceIntent);
+
+    expect(recorder.openPayload?.stealFocus).toBe(false);
+    expect(recorder.openPayload?.source).toBe("mcp");
+  });
+
+  it("omits stealFocus/source when the caller does not set them", async () => {
+    const { dispatcher, recorder } = buildHarness((r) => [createWakeHookModule(r)]);
+
+    await dispatcher.dispatch({
+      type: INTENT_WAKE_WORKSPACE,
+      payload: { workspacePath: WORKSPACE_PATH },
+    } as WakeWorkspaceIntent);
+
+    expect(recorder.openPayload).toBeDefined();
+    expect(recorder.openPayload).not.toHaveProperty("stealFocus");
+    expect(recorder.openPayload).not.toHaveProperty("source");
   });
 });

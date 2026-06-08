@@ -52,6 +52,10 @@ import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
 import type { GetAgentSessionIntent } from "../intents/get-agent-session";
 import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
 import type { RestartAgentIntent } from "../intents/restart-agent";
+import { INTENT_HIBERNATE_WORKSPACE } from "../intents/hibernate-workspace";
+import type { HibernateWorkspaceIntent } from "../intents/hibernate-workspace";
+import { INTENT_WAKE_WORKSPACE } from "../intents/wake-workspace";
+import type { WakeWorkspaceIntent } from "../intents/wake-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
@@ -62,6 +66,20 @@ import { INTENT_VSCODE_SHOW_MESSAGE } from "../intents/vscode-show-message";
 import type { VscodeShowMessageIntent } from "../intents/vscode-show-message";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import type { VscodeCommandIntent } from "../intents/vscode-command";
+
+/**
+ * Optional target workspace path for tools that can act on a workspace other
+ * than the session's own (hibernate/wake). Omit to target the current
+ * workspace; use project_list to discover other workspaces' paths.
+ */
+const targetWorkspacePathSchema = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    "Path of the workspace to act on. Omit to target the current workspace. " +
+      "Use project_list to discover other workspaces' paths."
+  );
 
 // =============================================================================
 // MCP Type Definitions
@@ -574,6 +592,67 @@ export class McpServer implements IMcpServer {
         if (result === undefined) throw new Error("Restart agent dispatch returned no result");
         return result;
       })
+    );
+
+    // workspace_hibernate
+    mcpServer.registerTool(
+      "workspace_hibernate",
+      {
+        description:
+          "Hibernate a workspace: tears down its view and agent server to free " +
+          "resources, while keeping the git worktree on disk. The workspace stays listed and " +
+          "can be brought back online with workspace_wake. Returns { started: true } once " +
+          "hibernation has begun — teardown completes in the background. " +
+          "Omit workspacePath to hibernate the current workspace.",
+        inputSchema: z.object({
+          workspacePath: targetWorkspacePathSchema,
+        }),
+      },
+      this.createWorkspaceHandler(
+        async (sessionWorkspacePath, args: { workspacePath?: string | undefined }) => {
+          const workspacePath = args.workspacePath ?? sessionWorkspacePath;
+          const intent: HibernateWorkspaceIntent = {
+            type: INTENT_HIBERNATE_WORKSPACE,
+            payload: { workspacePath },
+          };
+          const handle = this.dispatcher.dispatch(intent);
+          if (!(await handle.accepted)) {
+            return { started: false };
+          }
+          await handle;
+          return { started: true };
+        }
+      )
+    );
+
+    // workspace_wake
+    mcpServer.registerTool(
+      "workspace_wake",
+      {
+        description:
+          "Wake a hibernated workspace: clears the hibernated flag and brings " +
+          "the workspace back online (recreates its view and restarts its agent server). " +
+          "Returns the reopened workspace. Does not steal focus. " +
+          "Omit workspacePath to wake the current workspace.",
+        inputSchema: z.object({
+          workspacePath: targetWorkspacePathSchema,
+        }),
+      },
+      this.createWorkspaceHandler(
+        async (sessionWorkspacePath, args: { workspacePath?: string | undefined }) => {
+          const workspacePath = args.workspacePath ?? sessionWorkspacePath;
+          // The wake operation clears the hibernated flag AND reopens the
+          // workspace (restarts the agent server, rebuilds the view) in one step.
+          // stealFocus:false keeps it in the background for API callers; source
+          // "mcp" suppresses interactive error notifications.
+          const result = await this.dispatcher.dispatch({
+            type: INTENT_WAKE_WORKSPACE,
+            payload: { workspacePath, stealFocus: false, source: "mcp" },
+          } as WakeWorkspaceIntent);
+          if (!result) throw new Error("Wake workspace dispatch returned no result");
+          return result as Workspace;
+        }
+      )
     );
 
     // project_list
