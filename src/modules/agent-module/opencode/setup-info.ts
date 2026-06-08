@@ -4,11 +4,26 @@
  */
 
 import type { SupportedArch, SupportedPlatform } from "../types";
+import type { PathProvider } from "../../../boundaries/platform/path-provider";
+import { Path } from "../../../utils/path/path";
 
 /**
  * Current version of OpenCode to download.
  */
 export const OPENCODE_VERSION = "1.0.223";
+
+/**
+ * Resolve the bundle directory holding the extracted OpenCode binary for a
+ * given version. Single source of truth for the `opencode/<version>` path
+ * shape used by the agent server, binary download/preflight, and the
+ * code-server environment (`_CH_OPENCODE_DIR`).
+ */
+export function getOpencodeBundleDir(
+  pathProvider: Pick<PathProvider, "bundlePath">,
+  version: string
+): Path {
+  return pathProvider.bundlePath(`opencode/${version}`);
+}
 
 /**
  * Architecture name mappings for OpenCode releases.

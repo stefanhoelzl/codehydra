@@ -248,6 +248,7 @@ function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerMo
     logger: SILENT_LOGGER,
     archiveExtractor: createArchiveExtractorMock(),
     configService: createMockConfig({ defaults: { "version.opencode": "1.0.223" } }),
+    resolveOpencodeBundleDir: () => "/bundles/opencode/1.0.223",
     ...overrides,
   };
 }

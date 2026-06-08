@@ -21,7 +21,7 @@ import { waitForHealthy } from "../../../utils/health-check";
 import { Path } from "../../../utils/path/path";
 import type { PromptModel } from "../../../shared/api/types";
 import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
-import { getOpencodeExecutablePath } from "./setup-info";
+import { getOpencodeBundleDir, getOpencodeExecutablePath } from "./setup-info";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
 import type { Config } from "../../../boundaries/platform/config";
 
@@ -277,7 +277,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     const platform = process.platform as SupportedPlatform;
     const version = this.configService.get("version.opencode") as string;
     const opencodeCmd = new Path(
-      this.pathProvider.bundlePath(`opencode/${version}`),
+      getOpencodeBundleDir(this.pathProvider, version),
       getOpencodeExecutablePath(platform)
     ).toNative();
     const proc = this.processRunner.run(opencodeCmd, ["serve", "--port", String(port)], {

@@ -49,7 +49,10 @@ import { ViewManager } from "./boundaries/shell/view-manager";
 import { AutoUpdater } from "./modules/auto-updater";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
 import type { DownloadDeps } from "./utils/binary-download";
-import { getOpencodeExecutablePath } from "./modules/agent-module/opencode/setup-info";
+import {
+  getOpencodeBundleDir,
+  getOpencodeExecutablePath,
+} from "./modules/agent-module/opencode/setup-info";
 import { getClaudeExecutablePath } from "./modules/agent-module/claude/setup-info";
 import type { SupportedPlatform, SupportedArch } from "./boundaries/platform/platform-info";
 import { ClaudeCodeServerManager } from "./modules/agent-module/claude/server-manager";
@@ -439,6 +442,8 @@ const codeServerModule = createCodeServerModule({
   logger: apiLogger,
   archiveExtractor,
   configService,
+  resolveOpencodeBundleDir: (): string =>
+    getOpencodeBundleDir(pathProvider, configService.get("version.opencode") as string).toNative(),
 });
 
 const pluginServerModule = createPluginServerModule({
