@@ -12,7 +12,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
-import { configBoolean, type ConfigAccessor } from "../boundaries/platform/config-definition";
+import { configBoolean } from "../boundaries/platform/config-definition";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import {
@@ -40,33 +40,27 @@ interface DebugModuleDeps {
 export function createDebugModule(deps: DebugModuleDeps): IntentModule {
   const { configService } = deps;
 
-  // Register debug config keys
-  const debugConfigs = new Map<string, ConfigAccessor<boolean>>([
+  // Register debug config keys, then index the accessors by their key name so
+  // the key string isn't duplicated between registration and lookup.
+  const debugConfigs = new Map(
     [
-      "debug.blocking-pids",
       configService.register("debug.blocking-pids", {
         default: false,
         description: "Simulate blocking processes during workspace deletion",
         ...configBoolean(),
       }),
-    ],
-    [
-      "debug.setup",
       configService.register("debug.setup", {
         default: false,
         description: "Force setup flow with simulated binary download progress",
         ...configBoolean(),
       }),
-    ],
-    [
-      "debug.update",
       configService.register("debug.update", {
         default: false,
         description: "Simulate available update with download progress",
         ...configBoolean(),
       }),
-    ],
-  ]);
+    ].map((accessor) => [accessor.name, accessor] as const)
+  );
 
   function isActive(key: string): boolean {
     return debugConfigs.get(key)?.get() === true;

@@ -11,12 +11,6 @@ import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
 const YOUTRACK_FIELDS =
   "id,idReadable,summary,description,reporter(login,fullName),created,updated,resolved,project(id,name,shortName),customFields(name,value(name))";
 
-const CONFIG_KEYS = {
-  baseUrl: "experimental.youtrack.base-url",
-  token: "experimental.youtrack.token",
-  query: "experimental.youtrack.query",
-} as const;
-
 // =============================================================================
 // Source Factory
 // =============================================================================
@@ -28,19 +22,19 @@ export interface YouTrackSourceDeps {
 }
 
 export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSource {
-  const baseUrlConfig = deps.configService.register(CONFIG_KEYS.baseUrl, {
+  const baseUrlConfig = deps.configService.register("experimental.youtrack.base-url", {
     default: null,
     description: "YouTrack instance URL (e.g. https://youtrack.example.com)",
     sensitive: true,
     ...configString({ nullable: true }),
   });
-  const tokenConfig = deps.configService.register(CONFIG_KEYS.token, {
+  const tokenConfig = deps.configService.register("experimental.youtrack.token", {
     default: null,
     description: "YouTrack API permanent token",
     sensitive: true,
     ...configString({ nullable: true }),
   });
-  const queryConfig = deps.configService.register(CONFIG_KEYS.query, {
+  const queryConfig = deps.configService.register("experimental.youtrack.query", {
     default: null,
     description: "YouTrack search query (e.g. for:me State: {In Progress})",
     ...configString({ nullable: true }),

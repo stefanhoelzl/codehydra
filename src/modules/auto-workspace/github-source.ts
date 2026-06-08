@@ -31,10 +31,6 @@ interface GitHubRepoDetail {
 
 const GITHUB_API_BASE = "https://api.github.com";
 
-const CONFIG_KEYS = {
-  query: "experimental.github.query",
-} as const;
-
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -56,7 +52,7 @@ export interface GitHubSourceDeps {
 }
 
 export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource {
-  const queryConfig = deps.configService.register(CONFIG_KEYS.query, {
+  const queryConfig = deps.configService.register("experimental.github.query", {
     default: "is:open is:pr review-requested:@me",
     description: "GitHub search query (e.g. is:open is:pr review-requested:@me)",
     ...configString(),

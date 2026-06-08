@@ -105,10 +105,6 @@ function stateKey(sourceName: string, itemKey: string): string {
   return `${sourceName}/${itemKey}`;
 }
 
-function templatePathConfigKey(sourceName: string): string {
-  return `experimental.${sourceName}.template-path`;
-}
-
 // =============================================================================
 // Module Factory
 // =============================================================================
@@ -117,7 +113,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   // Register template-path config keys (sources register their own keys)
   const templatePathConfigs = new Map<string, ConfigAccessor<string | null>>();
   for (const source of deps.sources) {
-    const tplConfig = deps.configService.register(templatePathConfigKey(source.name), {
+    const tplConfig = deps.configService.register(`experimental.${source.name}.template-path`, {
       default: null,
       description: `Path to Liquid template for ${source.name} auto-workspaces`,
       sensitive: true,
