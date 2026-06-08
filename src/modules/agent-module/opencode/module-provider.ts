@@ -38,7 +38,7 @@ import { configString } from "../../../boundaries/platform/config-definition";
 import type { Config } from "../../../boundaries/platform/config";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
-import { OPENCODE_VERSION, getOpencodeUrlForVersion } from "./setup-info";
+import { OPENCODE_VERSION, getOpencodeBundleDir, getOpencodeUrlForVersion } from "./setup-info";
 import { OpenCodeProvider } from "./provider";
 
 // =============================================================================
@@ -342,7 +342,7 @@ export function createOpenCodeModuleProvider(
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
       const version = configService.get("version.opencode") as string;
       try {
-        const destDir = pathProvider.bundlePath(`opencode/${version}`).toNative();
+        const destDir = getOpencodeBundleDir(pathProvider, version).toNative();
         const installed = await isBinaryInstalled(destDir, downloadDeps);
         return { success: true, needsDownload: !installed };
       } catch {
@@ -352,7 +352,7 @@ export function createOpenCodeModuleProvider(
 
     async downloadBinary(onProgress?: DownloadProgressCallback): Promise<void> {
       const version = configService.get("version.opencode") as string;
-      const destDir = pathProvider.bundlePath(`opencode/${version}`).toNative();
+      const destDir = getOpencodeBundleDir(pathProvider, version).toNative();
       const request: DownloadRequest = {
         name: binaryConfig.name,
         url: getOpencodeUrlForVersion(version, platform, arch),

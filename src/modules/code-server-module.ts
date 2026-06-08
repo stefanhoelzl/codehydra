@@ -261,6 +261,12 @@ export interface CodeServerModuleDeps {
   readonly logger: Logger;
   readonly archiveExtractor?: ArchiveExtractor;
   readonly configService: Config;
+  /**
+   * Resolve the native path to the bundled OpenCode binary directory, injected
+   * into the code-server environment as `_CH_OPENCODE_DIR`. Owned by the
+   * OpenCode layer so code-server doesn't reach into agent-owned config.
+   */
+  readonly resolveOpencodeBundleDir: () => string;
 }
 
 // =============================================================================
@@ -489,11 +495,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
       // Set code-server and opencode directories for wrapper scripts
       const { binaryPath, codeServerDir } = resolveCodeServerPaths();
-      const opencodeVersion = deps.configService.get("version.opencode") as string;
       cleanEnv._CH_CODE_SERVER_DIR = codeServerDir;
-      cleanEnv._CH_OPENCODE_DIR = deps.pathProvider
-        .bundlePath(`opencode/${opencodeVersion}`)
-        .toNative();
+      cleanEnv._CH_OPENCODE_DIR = deps.resolveOpencodeBundleDir();
 
       serverProcess = processRunner.run(binaryPath, args, {
         cwd: config.runtimeDir,
