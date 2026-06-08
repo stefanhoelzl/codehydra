@@ -145,7 +145,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
   // Register config keys
   deps.configService.register("experimental.load-on-resume", {
     name: "experimental.load-on-resume",
-    default: false,
+    default: true,
     description: "Reload workspace views when system resumes from sleep",
     ...configBoolean(),
   });
