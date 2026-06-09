@@ -97,6 +97,9 @@ export class ViewManager implements IViewManager {
   // IViewManager — full delegation
   // ---------------------------------------------------------------------------
 
+  getUIViewHandle(): ViewHandle {
+    return this.vm.getUIViewHandle();
+  }
   getUIDevtoolsTarget(): DevtoolsTarget {
     return this.vm.getUIDevtoolsTarget();
   }

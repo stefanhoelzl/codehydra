@@ -83,6 +83,18 @@ export interface RenderProcessGoneDetails {
 }
 
 /**
+ * Details about an uncaught JavaScript exception in a view's page.
+ */
+export interface UncaughtExceptionDetails {
+  /** Human-readable message (e.g. "Error: boom"). */
+  readonly message: string;
+  /** Stack trace in V8 `error.stack` format; empty string when unavailable. */
+  readonly stack: string;
+  /** True when the exception came from an unhandled promise rejection. */
+  readonly isPromiseRejection: boolean;
+}
+
+/**
  * Keyboard input descriptor (no Electron types).
  */
 export interface KeyboardInput {
@@ -343,6 +355,28 @@ export interface ViewBoundary {
   ): Unsubscribe;
 
   /**
+   * Subscribe to uncaught JavaScript exceptions (and unhandled promise
+   * rejections) thrown inside the view's page.
+   *
+   * Implemented via the Chrome DevTools Protocol (webContents.debugger +
+   * Runtime.exceptionThrown), so it needs no code inside the page and fires
+   * even for errors thrown before the page's own handlers could register.
+   *
+   * Known limitation: opening DevTools for the view takes over the CDP
+   * session and detaches the debugger — exceptions thrown while DevTools is
+   * open are not delivered. The subscription re-attaches when DevTools closes.
+   *
+   * @param handle - Handle to the view
+   * @param callback - Called with exception details
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onUncaughtException(
+    handle: ViewHandle,
+    callback: (details: UncaughtExceptionDetails) => void
+  ): Unsubscribe;
+
+  /**
    * Subscribe to renderer unresponsive events (event loop hang).
    *
    * @param handle - Handle to the view
@@ -434,11 +468,61 @@ interface ViewState {
   label: string;
 }
 
+/** Minimal slice of CDP's Runtime.exceptionThrown payload. */
+interface CdpExceptionDetails {
+  readonly text?: string;
+  readonly exception?: { readonly description?: string; readonly value?: unknown };
+  readonly stackTrace?: {
+    readonly callFrames?: readonly {
+      readonly functionName: string;
+      readonly url: string;
+      readonly lineNumber: number;
+      readonly columnNumber: number;
+    }[];
+  };
+}
+
+/**
+ * Map a CDP exceptionDetails payload to UncaughtExceptionDetails.
+ *
+ * For thrown Error objects, `exception.description` is already in V8
+ * `error.stack` format (message line + frames). For non-Error throws the
+ * frames are synthesized from `stackTrace`.
+ */
+function toUncaughtExceptionDetails(
+  cdp: CdpExceptionDetails | undefined
+): UncaughtExceptionDetails {
+  const text = cdp?.text ?? "Uncaught";
+  const isPromiseRejection = text.includes("(in promise)");
+  const description = cdp?.exception?.description ?? "";
+  const firstLine = description.split("\n", 1)[0] ?? "";
+  const thrownValue = cdp?.exception?.value;
+  const message =
+    firstLine !== ""
+      ? firstLine
+      : thrownValue !== undefined
+        ? `${text} ${String(thrownValue)}`
+        : text;
+  const stack = description.includes("\n")
+    ? description
+    : (cdp?.stackTrace?.callFrames ?? [])
+        .map(
+          (f) =>
+            `    at ${f.functionName || "<anonymous>"} (${f.url}:${f.lineNumber + 1}:${f.columnNumber + 1})`
+        )
+        .join("\n");
+  return { message, stack, isPromiseRejection };
+}
+
 /**
  * Default implementation of ViewBoundary using Electron's WebContentsView.
  */
 export class DefaultViewBoundary implements ViewBoundary {
   private readonly views = new Map<string, ViewState>();
+  private readonly exceptionCallbacks = new Map<
+    string,
+    Set<(details: UncaughtExceptionDetails) => void>
+  >();
   private nextId = 1;
 
   constructor(
@@ -511,6 +595,7 @@ export class DefaultViewBoundary implements ViewBoundary {
     }
 
     this.views.delete(handle.id);
+    this.exceptionCallbacks.delete(handle.id);
 
     const wc = state.view.webContents;
     if (wc && !wc.isDestroyed()) {
@@ -834,6 +919,60 @@ export class DefaultViewBoundary implements ViewBoundary {
         wc.off("render-process-gone", handler);
       }
     };
+  }
+
+  onUncaughtException(
+    handle: ViewHandle,
+    callback: (details: UncaughtExceptionDetails) => void
+  ): Unsubscribe {
+    const state = this.getView(handle);
+    let callbacks = this.exceptionCallbacks.get(handle.id);
+    if (!callbacks) {
+      callbacks = new Set();
+      this.exceptionCallbacks.set(handle.id, callbacks);
+      this.wireExceptionDebugger(handle.id, state);
+    }
+    callbacks.add(callback);
+    return () => {
+      callbacks.delete(callback);
+    };
+  }
+
+  /**
+   * Attach the CDP debugger once per view and fan Runtime.exceptionThrown
+   * events out to the registered callbacks.
+   */
+  private wireExceptionDebugger(id: string, state: ViewState): void {
+    const wc = state.view.webContents;
+
+    const attach = (): void => {
+      if (wc.isDestroyed() || wc.debugger.isAttached()) return;
+      try {
+        wc.debugger.attach("1.3");
+        void wc.debugger.sendCommand("Runtime.enable");
+      } catch (error) {
+        this.logger.warn("Failed to attach exception debugger", {
+          id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
+    wc.debugger.on("message", (_event, method, params) => {
+      if (method !== "Runtime.exceptionThrown") return;
+      const cdp = (params as { exceptionDetails?: CdpExceptionDetails }).exceptionDetails;
+      const details = toUncaughtExceptionDetails(cdp);
+      for (const callback of this.exceptionCallbacks.get(id) ?? []) {
+        callback(details);
+      }
+    });
+
+    // Opening DevTools for this view takes over the CDP session and detaches
+    // the debugger (exceptions thrown while DevTools is open are lost) —
+    // re-attach once DevTools closes.
+    wc.on("devtools-closed", attach);
+
+    attach();
   }
 
   onUnresponsive(handle: ViewHandle, callback: () => void): Unsubscribe {

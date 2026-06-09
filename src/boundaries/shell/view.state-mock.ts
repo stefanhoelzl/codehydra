@@ -26,6 +26,7 @@ import type {
   KeyboardInput,
   FailLoadDetails,
   RenderProcessGoneDetails,
+  UncaughtExceptionDetails,
 } from "./view";
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
@@ -139,6 +140,22 @@ export interface ViewBoundaryMockState extends MockState {
    */
   triggerDestroyed(handle: ViewHandle): void;
 
+  /**
+   * Simulates an uncaught exception in the view's page (CDP
+   * Runtime.exceptionThrown). Invokes all registered handlers.
+   *
+   * @example
+   * mock.onUncaughtException(handle, (details) => console.log(details.message));
+   * mock.$.triggerUncaughtException(handle, { message: "Error: boom", stack: "", isPromiseRejection: false });
+   */
+  triggerUncaughtException(handle: ViewHandle, details: UncaughtExceptionDetails): void;
+
+  /**
+   * Simulates Electron's 'render-process-gone' event.
+   * Invokes all registered handlers for the specified view.
+   */
+  triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void;
+
   snapshot(): Snapshot;
   toString(): string;
 }
@@ -181,6 +198,14 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     Set<(input: KeyboardInput, preventDefault: () => void) => void>
   >;
   private readonly _destroyedCallbacks: Map<string, Set<() => void>>;
+  private readonly _uncaughtExceptionCallbacks: Map<
+    string,
+    Set<(details: UncaughtExceptionDetails) => void>
+  >;
+  private readonly _renderProcessGoneCallbacks: Map<
+    string,
+    Set<(details: RenderProcessGoneDetails) => void>
+  >;
   private readonly _devToolsOpen: Set<string>;
 
   constructor() {
@@ -192,6 +217,8 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     this._willNavigateCallbacks = new Map();
     this._beforeInputEventCallbacks = new Map();
     this._destroyedCallbacks = new Map();
+    this._uncaughtExceptionCallbacks = new Map();
+    this._renderProcessGoneCallbacks = new Map();
     this._devToolsOpen = new Set();
   }
 
@@ -229,6 +256,14 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   get destroyedCallbacks(): Map<string, Set<() => void>> {
     return this._destroyedCallbacks;
+  }
+
+  get uncaughtExceptionCallbacks(): Map<string, Set<(details: UncaughtExceptionDetails) => void>> {
+    return this._uncaughtExceptionCallbacks;
+  }
+
+  get renderProcessGoneCallbacks(): Map<string, Set<(details: RenderProcessGoneDetails) => void>> {
+    return this._renderProcessGoneCallbacks;
   }
 
   get devToolsOpen(): Set<string> {
@@ -299,6 +334,24 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     // Clean up callbacks for the destroyed view
     this._beforeInputEventCallbacks.delete(handle.id);
     this._destroyedCallbacks.delete(handle.id);
+  }
+
+  triggerUncaughtException(handle: ViewHandle, details: UncaughtExceptionDetails): void {
+    const callbacks = this._uncaughtExceptionCallbacks.get(handle.id);
+    if (callbacks) {
+      for (const callback of callbacks) {
+        callback(details);
+      }
+    }
+  }
+
+  triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void {
+    const callbacks = this._renderProcessGoneCallbacks.get(handle.id);
+    if (callbacks) {
+      for (const callback of callbacks) {
+        callback(details);
+      }
+    }
   }
 
   snapshot(): Snapshot {
@@ -431,6 +484,8 @@ export function createViewBoundaryMock(): MockViewBoundary {
       state.willNavigateCallbacks.set(id, new Set());
       state.beforeInputEventCallbacks.set(id, new Set());
       state.destroyedCallbacks.set(id, new Set());
+      state.uncaughtExceptionCallbacks.set(id, new Set());
+      state.renderProcessGoneCallbacks.set(id, new Set());
       return { id, __brand: "ViewHandle" };
     },
 
@@ -456,6 +511,8 @@ export function createViewBoundaryMock(): MockViewBoundary {
       state.willNavigateCallbacks.delete(handle.id);
       state.beforeInputEventCallbacks.delete(handle.id);
       state.destroyedCallbacks.delete(handle.id);
+      state.uncaughtExceptionCallbacks.delete(handle.id);
+      state.renderProcessGoneCallbacks.delete(handle.id);
     },
 
     destroyAll(): void {
@@ -466,6 +523,8 @@ export function createViewBoundaryMock(): MockViewBoundary {
       state.willNavigateCallbacks.clear();
       state.beforeInputEventCallbacks.clear();
       state.destroyedCallbacks.clear();
+      state.uncaughtExceptionCallbacks.clear();
+      state.renderProcessGoneCallbacks.clear();
       state.windowChildren.clear();
     },
 
@@ -643,13 +702,28 @@ export function createViewBoundaryMock(): MockViewBoundary {
       };
     },
 
-    onRenderProcessGone(
+    onUncaughtException(
       handle: ViewHandle,
-      _callback: (details: RenderProcessGoneDetails) => void
+      callback: (details: UncaughtExceptionDetails) => void
     ): Unsubscribe {
       getView(handle); // Validate handle exists
-      // Mock has no built-in crash simulation; tests can extend if needed.
-      return () => {};
+      const callbacks = state.uncaughtExceptionCallbacks.get(handle.id);
+      callbacks?.add(callback);
+      return () => {
+        callbacks?.delete(callback);
+      };
+    },
+
+    onRenderProcessGone(
+      handle: ViewHandle,
+      callback: (details: RenderProcessGoneDetails) => void
+    ): Unsubscribe {
+      getView(handle); // Validate handle exists
+      const callbacks = state.renderProcessGoneCallbacks.get(handle.id);
+      callbacks?.add(callback);
+      return () => {
+        callbacks?.delete(callback);
+      };
     },
 
     onUnresponsive(handle: ViewHandle, _callback: () => void): Unsubscribe {
@@ -689,6 +763,8 @@ export function createViewBoundaryMock(): MockViewBoundary {
       state.willNavigateCallbacks.clear();
       state.beforeInputEventCallbacks.clear();
       state.destroyedCallbacks.clear();
+      state.uncaughtExceptionCallbacks.clear();
+      state.renderProcessGoneCallbacks.clear();
       state.windowChildren.clear();
     },
   };

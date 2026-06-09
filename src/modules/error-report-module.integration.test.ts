@@ -27,6 +27,12 @@ import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { createMockPostHogBoundary } from "../boundaries/platform/posthog.state-mock";
 import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
 import { createMockState } from "../boundaries/platform/state.test-utils";
+import { createViewBoundaryMock } from "../boundaries/shell/view.state-mock";
+import { createBehavioralDialogBoundary } from "../boundaries/shell/dialog.test-utils";
+import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
+import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
+import type { DialogMessageBoxOptions } from "../boundaries/shell/dialog";
+import type { HookContext } from "../intents/lib/operation";
 import type { DialogHandle } from "./dialog-manager";
 import type { DialogUserEvent, DialogConfig } from "../shared/dialog-types";
 
@@ -75,6 +81,9 @@ function setup(overrides?: SetupOverrides) {
   const boundary = createMockPostHogBoundary();
   const logger = createMockLogger();
   const exits: number[] = [];
+  const viewLayer = createViewBoundaryMock();
+  const uiViewHandle = viewLayer.createView({ label: "ui" });
+  const dialogBoundary = createBehavioralDialogBoundary();
 
   const deps: ErrorReportModuleDeps = {
     dialogManager: {
@@ -100,12 +109,15 @@ function setup(overrides?: SetupOverrides) {
       "telemetry.enabled",
       overrides?.telemetryEnabled ?? true
     ),
+    dialogBoundary,
+    viewLayer,
+    viewManager: createMockViewManager({ overrides: { getUIViewHandle: () => uiViewHandle } }),
     logger,
     exit: (code: number) => exits.push(code),
   };
 
   const module = createErrorReportModule(deps);
-  return { module, deps, handle, boundary, logger, exits };
+  return { module, deps, handle, boundary, logger, exits, viewLayer, uiViewHandle, dialogBoundary };
 }
 
 async function emitKey(module: ReturnType<typeof setup>["module"], key: string): Promise<void> {
@@ -359,5 +371,129 @@ describe("ErrorReportModule — crash handlers", () => {
     await Promise.resolve();
 
     expect(boundary.$.capturedEvents).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// UI renderer crash guard
+// =============================================================================
+
+/** Run the app-start/init hook that subscribes the guard on the UI view. */
+async function subscribeUiCrashGuard(module: ReturnType<typeof setup>["module"]): Promise<void> {
+  const ctx: HookContext = {
+    intent: { type: INTENT_APP_START, payload: {} } as AppStartIntent,
+    capabilities: { "ui-ready": true },
+  };
+  await module.hooks![APP_START_OPERATION_ID]!["init"]!.handler(ctx);
+}
+
+const UI_EXCEPTION = {
+  message: "Error: effect_update_depth_exceeded",
+  stack: "Error: effect_update_depth_exceeded\n    at flush (file:///ui/main.js:1:1)",
+  isPromiseRejection: false,
+};
+
+describe("ErrorReportModule — UI renderer crash guard", () => {
+  it("requires the ui-ready capability before subscribing", () => {
+    const { module } = setup();
+    expect(module.hooks![APP_START_OPERATION_ID]!["init"]!.requires).toHaveProperty("ui-ready");
+  });
+
+  it("uncaught exception: logs, reports with crash_source + logs/config, shows the quit dialog", async () => {
+    const s = setup({ telemetryEnabled: true, configOverrides: { "log.level": "debug" } });
+    await subscribeUiCrashGuard(s.module);
+
+    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
+
+    expect(s.logger.error).toHaveBeenCalledWith(
+      "UI renderer crashed",
+      { source: "ui-renderer-exception" },
+      expect.any(Error)
+    );
+    await vi.waitFor(() => {
+      const captured = s.boundary.$.capturedEvents.find((e) => e.event === "$exception");
+      expect(captured).toBeDefined();
+      expect(captured!.properties["crash_source"]).toBe("ui-renderer-exception");
+      expect(captured!.properties["logs_format"]).toBe("gzip+base64");
+      expect(captured!.properties["config"]).toEqual({ "log.level": "debug" });
+    });
+
+    const state = s.dialogBoundary._getState();
+    expect(state.messageBoxCount).toBe(1);
+    const options = state.calls[0]!.options as DialogMessageBoxOptions;
+    expect(options.type).toBe("error");
+    expect(options.buttons).toEqual(["Quit CodeHydra"]);
+    expect(options.detail).toContain("effect_update_depth_exceeded");
+  });
+
+  it("dispatches app:shutdown once the quit dialog is dismissed", async () => {
+    const s = setup();
+    await subscribeUiCrashGuard(s.module);
+
+    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
+
+    await vi.waitFor(() => {
+      expect(s.deps.dispatcher.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_APP_SHUTDOWN })
+      );
+    });
+  });
+
+  it("still shows the dialog but does NOT report when telemetry is off", async () => {
+    const s = setup({ telemetryEnabled: false });
+    await subscribeUiCrashGuard(s.module);
+
+    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
+
+    expect(s.dialogBoundary._getState().messageBoxCount).toBe(1);
+    await Promise.resolve();
+    expect(s.boundary.$.capturedEvents).toHaveLength(0);
+  });
+
+  it("unhandled rejection: reports without a dialog", async () => {
+    const s = setup({ telemetryEnabled: true });
+    await subscribeUiCrashGuard(s.module);
+
+    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, {
+      message: "Error: lost in space",
+      stack: "",
+      isPromiseRejection: true,
+    });
+
+    await vi.waitFor(() => {
+      const captured = s.boundary.$.capturedEvents.find((e) => e.event === "$exception");
+      expect(captured).toBeDefined();
+      expect(captured!.properties["crash_source"]).toBe("ui-renderer-rejection");
+    });
+    expect(s.dialogBoundary._getState().messageBoxCount).toBe(0);
+    expect(s.deps.dispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("render-process-gone: shows the quit dialog and reports", async () => {
+    const s = setup({ telemetryEnabled: true });
+    await subscribeUiCrashGuard(s.module);
+
+    s.viewLayer.$.triggerRenderProcessGone(s.uiViewHandle, { reason: "oom", exitCode: 137 });
+
+    expect(s.dialogBoundary._getState().messageBoxCount).toBe(1);
+    await vi.waitFor(() => {
+      const captured = s.boundary.$.capturedEvents.find((e) => e.event === "$exception");
+      expect(captured).toBeDefined();
+      expect(captured!.properties["crash_source"]).toBe("ui-renderer-process-gone");
+      expect(captured!.properties["$exception_list"]).toEqual([
+        { type: "UIRendererProcessGone", value: "UI renderer process gone: oom (exit code 137)" },
+      ]);
+    });
+  });
+
+  it("does not stack dialogs on repeated crash signals", async () => {
+    const s = setup();
+    await subscribeUiCrashGuard(s.module);
+
+    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
+    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
+    s.viewLayer.$.triggerRenderProcessGone(s.uiViewHandle, { reason: "crashed", exitCode: 1 });
+
+    expect(s.dialogBoundary._getState().messageBoxCount).toBe(1);
   });
 });
