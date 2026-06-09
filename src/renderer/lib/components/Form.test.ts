@@ -667,4 +667,207 @@ describe("Form component", () => {
       expect(document.querySelector(".form")).toHaveClass("layout-form");
     });
   });
+
+  // ---- Field-change channel ----
+
+  describe("field-change channel", () => {
+    it("does not emit a change event for fields that did not opt in", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "selection",
+            id: "agent",
+            options: [
+              { id: "claude", label: "Claude" },
+              { id: "opencode", label: "OpenCode" },
+            ],
+          },
+          { type: "input", id: "note", multiline: true, placeholder: "Note" },
+        ],
+      };
+
+      renderForm(config);
+
+      await fireEvent.click(screen.getAllByRole("radio")[1]!);
+      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+      await fireEvent.input(textarea, { target: { value: "hi" } });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("emits a change event immediately when an opted-in selection changes", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "selection",
+            id: "agent",
+            changeEvent: true,
+            options: [
+              { id: "claude", label: "Claude" },
+              { id: "opencode", label: "OpenCode" },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config, { dialogId: "d1" });
+
+      await fireEvent.click(screen.getAllByRole("radio")[1]!);
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        kind: "change",
+        dialogId: "d1",
+        fieldId: "agent",
+        data: { agent: "opencode" },
+      });
+    });
+
+    it("debounces an opted-in input (default 200ms) and sends the full snapshot", async () => {
+      vi.useFakeTimers();
+      try {
+        const config: DialogConfig = {
+          sections: [
+            {
+              type: "selection",
+              id: "agent",
+              options: [
+                { id: "claude", label: "Claude" },
+                { id: "opencode", label: "OpenCode" },
+              ],
+            },
+            { type: "input", id: "name", multiline: true, changeEvent: true, placeholder: "Name" },
+          ],
+        };
+
+        renderForm(config, { dialogId: "d2" });
+
+        const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+        await fireEvent.input(textarea, { target: { value: "ab" } });
+
+        // Nothing emitted before the debounce window elapses.
+        expect(mockSendDialogEvent).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          kind: "change",
+          dialogId: "d2",
+          fieldId: "name",
+          data: { agent: "claude", name: "ab" },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("coalesces rapid typing into a single debounced emit (custom interval)", async () => {
+      vi.useFakeTimers();
+      try {
+        const config: DialogConfig = {
+          sections: [
+            {
+              type: "input",
+              id: "q",
+              multiline: true,
+              changeEvent: { debounceMs: 100 },
+              placeholder: "Q",
+            },
+          ],
+        };
+
+        renderForm(config, { dialogId: "d3" });
+
+        const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+        await fireEvent.input(textarea, { target: { value: "a" } });
+        await vi.advanceTimersByTimeAsync(50);
+        await fireEvent.input(textarea, { target: { value: "ab" } });
+        await vi.advanceTimersByTimeAsync(50);
+        await fireEvent.input(textarea, { target: { value: "abc" } });
+
+        // Still within the debounce window of the most recent keystroke.
+        expect(mockSendDialogEvent).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          kind: "change",
+          dialogId: "d3",
+          fieldId: "q",
+          data: { q: "abc" },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not emit a change when the backend updates the config (no feedback loop)", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "selection",
+            id: "agent",
+            changeEvent: true,
+            options: [
+              { id: "claude", label: "Claude" },
+              { id: "opencode", label: "OpenCode" },
+            ],
+          },
+        ],
+      };
+
+      const { rerender } = renderForm(config, { dialogId: "d4" });
+
+      // Backend-driven update drops the current option; reconcile re-picks the
+      // first option, but that value change must NOT emit a change event.
+      await rerender({
+        dialogId: "d4",
+        config: {
+          sections: [
+            {
+              type: "selection",
+              id: "agent",
+              changeEvent: true,
+              options: [
+                { id: "gemini", label: "Gemini" },
+                { id: "opencode", label: "OpenCode" },
+              ],
+            },
+          ],
+        },
+      });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("cancels a pending debounced change when an action is submitted", async () => {
+      vi.useFakeTimers();
+      try {
+        const config: DialogConfig = {
+          sections: [
+            { type: "input", id: "name", multiline: true, changeEvent: true, placeholder: "Name" },
+          ],
+          actions: [{ id: "go", label: "Go" }],
+        };
+
+        renderForm(config, { dialogId: "d5" });
+
+        const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+        await fireEvent.input(textarea, { target: { value: "abc" } });
+        await fireEvent.click(screen.getByText("Go"));
+
+        // Advancing past the debounce must not produce a late, redundant change
+        // event — the action already carried the snapshot.
+        await vi.advanceTimersByTimeAsync(500);
+
+        const events = mockSendDialogEvent.mock.calls.map((c) => c[0]);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ actionId: "go", data: { name: "abc" } });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

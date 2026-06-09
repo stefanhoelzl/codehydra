@@ -223,6 +223,73 @@ describe("DialogManager", () => {
     });
   });
 
+  describe("onChange", () => {
+    it("routes a change event to onChange listeners, not onEvent", () => {
+      const handle = manager.open(createConfig("Test"));
+      const onAction = vi.fn();
+      const onChange = vi.fn();
+      handle.onEvent(onAction);
+      handle.onChange(onChange);
+
+      const event: DialogUserEvent = {
+        kind: "change",
+        dialogId: handle.id,
+        fieldId: "name",
+        data: { name: "abc" },
+      };
+      manager.routeEvent(event);
+
+      expect(onChange).toHaveBeenCalledWith(event);
+      expect(onAction).not.toHaveBeenCalled();
+    });
+
+    it("routes an action event to onEvent listeners, not onChange", () => {
+      const handle = manager.open(createConfig("Test"));
+      const onAction = vi.fn();
+      const onChange = vi.fn();
+      handle.onEvent(onAction);
+      handle.onChange(onChange);
+
+      manager.routeEvent({ dialogId: handle.id, actionId: "ok" });
+
+      expect(onAction).toHaveBeenCalledWith({ dialogId: handle.id, actionId: "ok" });
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("supports unsubscribe", () => {
+      const handle = manager.open(createConfig("Test"));
+      const onChange = vi.fn();
+      const unsub = handle.onChange(onChange);
+
+      unsub();
+      manager.routeEvent({ kind: "change", dialogId: handle.id, fieldId: "f", data: {} });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("does not deliver change events after close", () => {
+      const handle = manager.open(createConfig("Test"));
+      const onChange = vi.fn();
+      handle.onChange(onChange);
+      handle.close();
+
+      manager.routeEvent({ kind: "change", dialogId: handle.id, fieldId: "f", data: {} });
+
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("nextEvent ignores change events and resolves on the next action", async () => {
+      const handle = manager.open(createConfig("Test"));
+
+      const promise = handle.nextEvent();
+      manager.routeEvent({ kind: "change", dialogId: handle.id, fieldId: "f", data: { f: "x" } });
+      manager.routeEvent({ dialogId: handle.id, actionId: "go" });
+
+      const result = await promise;
+      expect(result.actionId).toBe("go");
+    });
+  });
+
   describe("routeEvent with logger", () => {
     it("should log when event arrives for unknown dialog", () => {
       const logger = {
@@ -239,6 +306,29 @@ describe("DialogManager", () => {
       expect(logger.debug).toHaveBeenCalledWith(
         "Dialog event for unknown dialog",
         expect.objectContaining({ dialogId: "unknown-id", actionId: "click" })
+      );
+    });
+
+    it("should log fieldId when a change event arrives for unknown dialog", () => {
+      const logger = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        silly: vi.fn(),
+      };
+      const loggedManager = new DialogManager(sendToUI, logger);
+
+      loggedManager.routeEvent({
+        kind: "change",
+        dialogId: "unknown-id",
+        fieldId: "name",
+        data: { name: "x" },
+      });
+
+      expect(logger.debug).toHaveBeenCalledWith(
+        "Dialog event for unknown dialog",
+        expect.objectContaining({ dialogId: "unknown-id", kind: "change", fieldId: "name" })
       );
     });
   });

@@ -19,10 +19,11 @@
   import type {
     DialogConfig,
     DialogAction,
+    DialogSection,
     DialogUserEvent,
     ProgressItem,
   } from "@shared/dialog-types";
-  import { onMount, untrack } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import Icon from "./Icon.svelte";
   import { sendDialogEvent } from "$lib/api";
 
@@ -63,6 +64,84 @@
       }
     }
     fieldValues = next;
+  });
+
+  // ---- Field-change channel ----
+  // Per-field debounce timers, keyed by field id. A deliberately non-reactive
+  // plain record (never read in a reactive context). Emission is driven ONLY by
+  // user-interaction handlers (clicks, keystrokes), never by the reconcile
+  // effect above — so backend-driven config updates never re-emit (no loop).
+  const changeTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
+  /**
+   * Effective debounce (ms) for a field's change-event opt-in, or null when the
+   * field does not opt in. Default debounce per field type: input (continuous)
+   * 200ms, selection (discrete) 0ms (immediate).
+   */
+  function changeDebounceMs(section: DialogSection): number | null {
+    if (section.type !== "input" && section.type !== "selection") return null;
+    const cfg = section.changeEvent;
+    if (!cfg) return null;
+    const fallback = section.type === "input" ? 200 : 0;
+    if (cfg === true) return fallback;
+    return cfg.debounceMs ?? fallback;
+  }
+
+  /** Whether the dialog still has an input/selection field with this id. */
+  function hasField(fieldId: string): boolean {
+    return config.sections.some(
+      (s) => (s.type === "input" || s.type === "selection") && s.id === fieldId
+    );
+  }
+
+  /** Send a field-change event with the full keyed-values snapshot. */
+  function emitChange(fieldId: string): void {
+    // A config update may have removed the field while its timer was pending.
+    if (!hasField(fieldId)) return;
+    const event: DialogUserEvent = {
+      kind: "change",
+      dialogId,
+      fieldId,
+      data: getValues(),
+    };
+    sendDialogEvent(event);
+  }
+
+  /**
+   * Emit a change event for a field per its opt-in: immediately when the
+   * effective debounce is 0, otherwise on the trailing edge of a per-field
+   * timer. No-op for fields that did not opt in.
+   */
+  function scheduleChange(section: DialogSection): void {
+    if (section.type !== "input" && section.type !== "selection") return;
+    const debounce = changeDebounceMs(section);
+    if (debounce === null) return;
+    const fieldId = section.id;
+    const pending = changeTimers[fieldId];
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      delete changeTimers[fieldId];
+    }
+    if (debounce <= 0) {
+      emitChange(fieldId);
+      return;
+    }
+    changeTimers[fieldId] = setTimeout(() => {
+      delete changeTimers[fieldId];
+      emitChange(fieldId);
+    }, debounce);
+  }
+
+  /** Cancel all pending change timers (on submit or unmount). */
+  function cancelChangeTimers(): void {
+    for (const [fieldId, timer] of Object.entries(changeTimers)) {
+      clearTimeout(timer);
+      delete changeTimers[fieldId];
+    }
+  }
+
+  onDestroy(() => {
+    cancelChangeTimers();
   });
 
   // Auto-focus the selected card on mount (for keyboard navigation)
@@ -134,6 +213,9 @@
   /** Handle action button click. */
   function handleAction(action: DialogAction): void {
     if (action.disabled || action.busy) return;
+    // The action event carries the full snapshot, so any pending debounced
+    // change is redundant — cancel it to avoid a stray emit after submit.
+    cancelChangeTimers();
     const event: DialogUserEvent = {
       dialogId,
       actionId: action.id,
@@ -289,6 +371,7 @@
               data-option={option.id}
               onclick={() => {
                 fieldValues = { ...fieldValues, [s.id]: option.id };
+                scheduleChange(s);
               }}
               onkeydown={(e) => {
                 const opts = s.options;
@@ -308,11 +391,13 @@
                 } else if (e.key === " ") {
                   e.preventDefault();
                   fieldValues = { ...fieldValues, [s.id]: option.id };
+                  scheduleChange(s);
                   return;
                 }
                 if (targetIndex >= 0) {
                   const targetId = opts[targetIndex]!.id;
                   fieldValues = { ...fieldValues, [s.id]: targetId };
+                  scheduleChange(s);
                   const container = e.currentTarget.closest(".selection-cards");
                   setTimeout(() => {
                     const card = container?.querySelector(
@@ -367,6 +452,7 @@
             }}
             oninput={(e) => {
               fieldValues = { ...fieldValues, [s.id]: e.currentTarget.value };
+              scheduleChange(s);
             }}
           ></textarea>
         {:else}
@@ -381,6 +467,7 @@
             value={fieldValues[s.id] ?? ""}
             oninput={(e: Event) => {
               fieldValues = { ...fieldValues, [s.id]: (e.currentTarget as HTMLInputElement).value };
+              scheduleChange(s);
             }}
           ></vscode-textfield>
         {/if}
