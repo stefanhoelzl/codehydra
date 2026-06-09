@@ -54,10 +54,13 @@ export interface ConfigKeyDefinition<T> {
    */
   readonly deprecated?: true;
   /**
-   * Map of legacy config.json key -> translator that produces the new value
-   * from the raw legacy JSON value. Used to migrate renamed keys without
-   * crashing on the old name. Legacy entries are preserved in config.json.
-   * Applies to config.json only; env vars and CLI flags don't honor legacy names.
+   * Map of legacy key -> translator that produces the new value from the legacy
+   * JSON value. Used to migrate renamed keys without crashing on the old name.
+   *
+   * In config.json the translator runs on the typed legacy value, and the legacy
+   * entry is preserved on disk. Env vars and CLI flags honor legacy names too, but
+   * via pure-rename: the raw string is run through the new key's parse() (the
+   * translator is not invoked), since a string can't be fed to the typed translator.
    */
   readonly legacyNames?: Record<string, (legacyValue: unknown) => T | undefined>;
 }
@@ -300,6 +303,225 @@ export class ConfigValidationError extends Error {
     super(lines.join("\n"));
     this.name = "ConfigValidationError";
     this.detail = detail;
+  }
+}
+
+// =============================================================================
+// Config Issues
+// =============================================================================
+
+/**
+ * A diagnostic produced while parsing or validating config sources.
+ *
+ * The transform functions (ConfigDefinitions.parse / .validate, readConfigFile)
+ * are pure: they return issues instead of logging or throwing. `Config.load()`
+ * is the single place that interprets them — logging the benign kinds and
+ * throwing a ConfigValidationError on `invalid`.
+ */
+export type ConfigIssue =
+  | { kind: "invalid"; key: string; value: unknown; description?: string; validValues?: string }
+  | { kind: "unknown"; key: string }
+  | { kind: "deprecated"; key: string }
+  | { kind: "legacy-shadowed"; legacy: string; newKey: string }
+  | { kind: "legacy-untranslatable"; legacy: string; newKey: string; value: unknown }
+  | { kind: "broken-json"; path: string; backup: string; error: string };
+
+function invalidIssue(key: string, value: unknown, def: ConfigKeyDefinition<unknown>): ConfigIssue {
+  return {
+    kind: "invalid",
+    key,
+    value,
+    ...(def.description !== undefined && { description: def.description }),
+    ...(def.validValues !== undefined && { validValues: def.validValues }),
+  };
+}
+
+// =============================================================================
+// Config Definitions (schema object)
+// =============================================================================
+
+/**
+ * The set of registered config-key definitions, plus the record-level
+ * operations that run against them.
+ *
+ * Two input formats, two methods:
+ *  - parse():    raw strings (env/CLI) → typed values, using each def.parse.
+ *  - validate(): typed values (config.json, or parse() output) → validated,
+ *                using each def.validate. This is the shared-policy gate:
+ *                unknown keys, deprecated keys, and typed legacy translation
+ *                are all resolved here.
+ *
+ * Both are pure: they return { values, issues } and never log or throw.
+ * Raw legacy keys are resolved in parse() (pure-rename through the new key's
+ * parse) because validate() cannot coerce a string into a typed value.
+ */
+export class ConfigDefinitions {
+  private readonly map = new Map<string, ConfigKeyDefinition<unknown>>();
+
+  add(key: string, definition: ConfigKeyDefinition<unknown>): void {
+    this.map.set(key, definition);
+  }
+
+  has(key: string): boolean {
+    return this.map.has(key);
+  }
+
+  get(key: string): ConfigKeyDefinition<unknown> | undefined {
+    return this.map.get(key);
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+
+  entries(): IterableIterator<[string, ConfigKeyDefinition<unknown>]> {
+    return this.map.entries();
+  }
+
+  /** The underlying map as a ReadonlyMap, for help-text generation and the public getter. */
+  asReadonlyMap(): ReadonlyMap<string, ConfigKeyDefinition<unknown>> {
+    return this.map;
+  }
+
+  [Symbol.iterator](): IterableIterator<[string, ConfigKeyDefinition<unknown>]> {
+    return this.map[Symbol.iterator]();
+  }
+
+  /** Build legacyName -> { newKey, translator }. Last writer wins on collision. */
+  private buildLegacyLookup(): Map<
+    string,
+    { newKey: string; translator: (v: unknown) => unknown }
+  > {
+    const lookup = new Map<string, { newKey: string; translator: (v: unknown) => unknown }>();
+    for (const [newKey, def] of this.map) {
+      if (!def.legacyNames) continue;
+      for (const [legacyName, translator] of Object.entries(def.legacyNames)) {
+        lookup.set(legacyName, { newKey, translator });
+      }
+    }
+    return lookup;
+  }
+
+  /**
+   * Parse raw string values (env vars / CLI flags) into typed values.
+   *
+   * Per key:
+   *  - active known key → def.parse(string); won't parse → `invalid` issue.
+   *  - legacy name (new key absent) → rename, newDef.parse(string) (pure-rename).
+   *  - legacy name (new key present) → `legacy-shadowed` issue.
+   *  - unknown or deprecated key → pass the raw string through; validate() classifies it.
+   */
+  parse(rawValues: Record<string, string>): {
+    values: Record<string, unknown>;
+    issues: ConfigIssue[];
+  } {
+    const values: Record<string, unknown> = {};
+    const issues: ConfigIssue[] = [];
+    const legacyLookup = this.buildLegacyLookup();
+
+    for (const [key, raw] of Object.entries(rawValues)) {
+      const def = this.map.get(key);
+      if (def && !def.deprecated) {
+        const parsed = def.parse(raw);
+        if (parsed === undefined) {
+          issues.push(invalidIssue(key, raw, def));
+        } else {
+          values[key] = parsed;
+        }
+        continue;
+      }
+
+      if (!def) {
+        const legacy = legacyLookup.get(key);
+        if (legacy) {
+          if (Object.prototype.hasOwnProperty.call(rawValues, legacy.newKey)) {
+            issues.push({ kind: "legacy-shadowed", legacy: key, newKey: legacy.newKey });
+            continue;
+          }
+          const newDef = this.map.get(legacy.newKey)!;
+          const parsed = newDef.parse(raw);
+          if (parsed === undefined) {
+            issues.push(invalidIssue(key, raw, newDef));
+          } else {
+            values[legacy.newKey] = parsed;
+          }
+          continue;
+        }
+      }
+
+      // Unknown or deprecated: pass the raw string through. validate() emits the issue.
+      values[key] = raw;
+    }
+
+    return { values, issues };
+  }
+
+  /**
+   * Validate typed values (config.json, or the output of parse()). The shared-policy gate.
+   *
+   * Per key:
+   *  - active known key → def.validate(value); won't validate → `invalid` issue.
+   *  - deprecated key → `deprecated` issue (skipped).
+   *  - legacy name (new key absent) → translate; translator returns undefined → `legacy-untranslatable`.
+   *  - legacy name (new key present) → `legacy-shadowed` issue.
+   *  - unknown key → `unknown` issue.
+   */
+  validate(input: Record<string, unknown>): {
+    values: Record<string, unknown>;
+    issues: ConfigIssue[];
+  } {
+    const values: Record<string, unknown> = {};
+    const issues: ConfigIssue[] = [];
+    const legacyLookup = this.buildLegacyLookup();
+
+    for (const [key, value] of Object.entries(input)) {
+      const def = this.map.get(key);
+      if (def) {
+        if (def.deprecated) {
+          issues.push({ kind: "deprecated", key });
+          continue;
+        }
+        const validated = def.validate(value);
+        if (validated === undefined) {
+          issues.push(invalidIssue(key, value, def));
+        } else {
+          values[key] = validated;
+        }
+        continue;
+      }
+
+      const legacy = legacyLookup.get(key);
+      if (legacy) {
+        if (Object.prototype.hasOwnProperty.call(input, legacy.newKey)) {
+          issues.push({ kind: "legacy-shadowed", legacy: key, newKey: legacy.newKey });
+          continue;
+        }
+        const translated = legacy.translator(value);
+        if (translated === undefined) {
+          issues.push({ kind: "legacy-untranslatable", legacy: key, newKey: legacy.newKey, value });
+          continue;
+        }
+        values[legacy.newKey] = translated;
+        continue;
+      }
+
+      issues.push({ kind: "unknown", key });
+    }
+
+    return { values, issues };
+  }
+
+  /**
+   * Convenience for the raw-string sources: parse() then validate() the result,
+   * concatenating the issues from both passes. Used for env vars and CLI flags.
+   */
+  parseAndValidate(rawValues: Record<string, string>): {
+    values: Record<string, unknown>;
+    issues: ConfigIssue[];
+  } {
+    const parsed = this.parse(rawValues);
+    const validated = this.validate(parsed.values);
+    return { values: validated.values, issues: [...parsed.issues, ...validated.issues] };
   }
 }
 

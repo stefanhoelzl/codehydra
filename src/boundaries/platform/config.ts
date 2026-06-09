@@ -10,6 +10,14 @@
  *
  * Precedence (highest wins): CLI flags > env vars > config.json > computed defaults > static defaults
  *
+ * Two input formats flow through one schema (ConfigDefinitions):
+ *   - env vars / CLI flags are pure strings → tokenized here, then ConfigDefinitions.parse()
+ *   - config.json is typed JSON → readConfigFile() reads it, then ConfigDefinitions.validate()
+ * Both producers feed validate(), the shared-policy gate. parse(), validate(), and
+ * readConfigFile() are pure: they return { values, issues } and never log or throw.
+ * load() is the only place that interprets issues — logging the benign kinds and throwing
+ * a ConfigValidationError on `invalid`.
+ *
  * load() uses node:fs (readFileSync / writeFileSync / renameSync) directly because it must
  * run before Electron app.ready, and the FileSystemBoundary interface is async-only.
  * The sync write fires only when unknown (no-longer-registered) keys are stripped from
@@ -24,8 +32,9 @@ import type {
   ComputedDefaultContext,
   ConfigAccessor,
   DeprecatedConfigAccessor,
+  ConfigIssue,
 } from "./config-definition";
-import { ConfigValidationError } from "./config-definition";
+import { ConfigValidationError, ConfigDefinitions } from "./config-definition";
 import type { FileSystemBoundary } from "./filesystem";
 import { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
@@ -125,7 +134,7 @@ export interface Config {
    * static defaults < computed defaults < config.json < env vars < CLI flags.
    *
    * Uses sync filesystem I/O. Call once after all register() calls.
-   * Throws on validation errors or duplicate keys.
+   * Throws ConfigValidationError on an invalid value for a known key.
    */
   load(): void;
 
@@ -169,60 +178,15 @@ export interface ConfigDeps {
 }
 
 // =============================================================================
-// Validation Helpers
+// Source Tokenizers
 // =============================================================================
 
 /**
- * Validate and parse raw string values (from env vars or CLI flags).
- * Throws ConfigValidationError on unknown keys or invalid values.
+ * Scan an env object for CH_* keys (not _CH_*), convert to config keys, and
+ * collect their raw string values. Pure key extraction — no parsing, no validation.
+ * The result feeds ConfigDefinitions.parse().
  */
-export function validateAndParse(
-  rawValues: Record<string, string>,
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
-  source: string
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-
-  for (const [key, rawValue] of Object.entries(rawValues)) {
-    const def = definitions.get(key);
-    if (!def) {
-      throw new ConfigValidationError({
-        key,
-        value: rawValue,
-        reason: "unknown",
-        source,
-      });
-    }
-
-    const parsed = def.parse(rawValue);
-    if (parsed === undefined) {
-      throw new ConfigValidationError({
-        key,
-        value: rawValue,
-        reason: "invalid",
-        source,
-        ...(def.description !== undefined && { description: def.description }),
-        ...(def.validValues !== undefined && { validValues: def.validValues }),
-      });
-    }
-    result[key] = parsed;
-  }
-
-  return result;
-}
-
-// =============================================================================
-// Source Parsers
-// =============================================================================
-
-/**
- * Scan an env object for CH_* keys (not _CH_*), convert to config keys,
- * collect as raw string values for validation.
- */
-export function parseEnvVars(
-  env: Record<string, string | undefined>,
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>
-): Record<string, unknown> {
+export function parseEnvVars(env: Record<string, string | undefined>): Record<string, string> {
   const rawValues: Record<string, string> = {};
 
   for (const [envKey, rawValue] of Object.entries(env)) {
@@ -235,18 +199,16 @@ export function parseEnvVars(
     rawValues[configKey] = rawValue;
   }
 
-  return validateAndParse(rawValues, definitions, "env var");
+  return rawValues;
 }
 
 /**
- * Parse CLI args in the form --key=value or --key value.
- * Unknown flags (e.g. Electron's --inspect) are skipped with a warning.
+ * Tokenize CLI args of the form --key=value or --key value (bare --flag → "true").
+ * Pure tokenization — no parsing, no validation. Unrecognized flags (e.g. Electron's
+ * --inspect) are collected too and surface as `unknown` issues from validate(), which
+ * load() logs and ignores. The result feeds ConfigDefinitions.parse().
  */
-export function parseCliArgs(
-  argv: readonly string[],
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
-  logger: Logger
-): Record<string, unknown> {
+export function parseCliArgs(argv: readonly string[]): Record<string, string> {
   const rawValues: Record<string, string> = {};
 
   for (let i = 0; i < argv.length; i++) {
@@ -271,117 +233,70 @@ export function parseCliArgs(
       }
     }
 
-    if (!definitions.has(key)) {
-      logger.warn("Unknown CLI flag (ignored)", { flag: key });
-      continue;
-    }
-
     rawValues[key] = value;
   }
 
-  return validateAndParse(rawValues, definitions, "CLI flag");
+  return rawValues;
 }
 
-export interface ParseConfigFileResult {
-  /** Typed values to merge into the effective config (file precedence layer). */
-  readonly values: Record<string, unknown>;
-  /**
-   * Subset of original file entries to keep on disk. Non-null only when at least
-   * one unknown key was stripped; null means no rewrite needed.
-   */
-  readonly rewrite: Record<string, unknown> | null;
-}
+// =============================================================================
+// Config File Reader
+// =============================================================================
 
 /**
- * Parse a config.json object (flat kebab-case format) into typed config values.
+ * Read and JSON-parse config.json (sync). Pure of logging — returns the parsed
+ * object plus any issues for load() to log.
  *
- * Per-key behavior:
- *  - Active registered key: validated; throws ConfigValidationError on invalid value.
- *  - Deprecated registered key: entry preserved on disk, value ignored, debug-logged.
- *  - Legacy name (matches some def's `legacyNames`): translated to the new key's value.
- *    If the new key is also present, the new value wins and the legacy is ignored.
- *    If the translator returns undefined, the value is dropped (default applies).
- *    Legacy entries are preserved on disk.
- *  - Unknown key: warn-logged and stripped (triggers a rewrite).
+ * Behavior:
+ *  - missing or unreadable file → empty object (ENOENT is the common case).
+ *  - invalid JSON → move the file aside to config.json.broken (read-recovery I/O)
+ *    and return a `broken-json` issue. If the rename itself fails, it throws —
+ *    silently discarding would destroy a broken-but-recoverable file.
+ *  - non-object JSON (e.g. a bare number) → empty object.
+ *
+ * The returned `data` is the original parsed object (untransformed); load() passes
+ * it to ConfigDefinitions.validate() and also uses it to compute the on-disk rewrite.
  */
-export function parseConfigFile(
-  data: unknown,
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
-  logger: Logger
-): ParseConfigFileResult {
-  if (typeof data !== "object" || data === null) {
-    return { values: {}, rewrite: null };
+export function readConfigFile(
+  configPath: Path,
+  syncRead: (path: string) => string,
+  syncRename: (oldPath: string, newPath: string) => void
+): { data: Record<string, unknown>; issues: ConfigIssue[] } {
+  let content: string;
+  try {
+    content = syncRead(configPath.toNative());
+  } catch {
+    return { data: {}, issues: [] };
   }
 
-  const obj = data as Record<string, unknown>;
-
-  // Build legacy lookup: legacyName -> { newKey, translator }.
-  // Map.set overwrite gives last-writer-wins on collision (the register-time
-  // warning has already alerted the developer).
-  const legacyLookup = new Map<string, { newKey: string; translator: (v: unknown) => unknown }>();
-  for (const [newKey, def] of definitions) {
-    if (!def.legacyNames) continue;
-    for (const [legacyName, translator] of Object.entries(def.legacyNames)) {
-      legacyLookup.set(legacyName, { newKey, translator });
-    }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    const backupPath = new Path(configPath.dirname, BROKEN_CONFIG_FILENAME);
+    syncRename(configPath.toNative(), backupPath.toNative());
+    return {
+      data: {},
+      issues: [
+        {
+          kind: "broken-json",
+          path: configPath.toString(),
+          backup: backupPath.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
   }
 
-  const values: Record<string, unknown> = {};
-  const kept: Record<string, unknown> = {};
-  let stripped = false;
-
-  for (const [key, value] of Object.entries(obj)) {
-    const def = definitions.get(key);
-    if (def) {
-      kept[key] = value;
-      if (def.deprecated) {
-        logger.debug("Deprecated config key in config.json (ignored)", { key });
-        continue;
-      }
-      const validated = def.validate(value);
-      if (validated === undefined) {
-        throw new ConfigValidationError({
-          key,
-          value,
-          reason: "invalid",
-          source: "config.json",
-          ...(def.description !== undefined && { description: def.description }),
-          ...(def.validValues !== undefined && { validValues: def.validValues }),
-        });
-      }
-      values[key] = validated;
-      continue;
-    }
-
-    const legacy = legacyLookup.get(key);
-    if (legacy) {
-      kept[key] = value;
-      if (Object.prototype.hasOwnProperty.call(obj, legacy.newKey)) {
-        logger.warn("Legacy config key shadowed by new key (legacy ignored)", {
-          legacy: key,
-          newKey: legacy.newKey,
-        });
-        continue;
-      }
-      const translated = legacy.translator(value);
-      if (translated === undefined) {
-        logger.warn("Legacy config key could not be translated (using default)", {
-          legacy: key,
-          newKey: legacy.newKey,
-          value: JSON.stringify(value),
-        });
-        continue;
-      }
-      values[legacy.newKey] = translated;
-      continue;
-    }
-
-    logger.warn("Unknown config key in config.json (stripped)", { key });
-    stripped = true;
+  if (typeof parsed !== "object" || parsed === null) {
+    return { data: {}, issues: [] };
   }
-
-  return { values, rewrite: stripped ? kept : null };
+  return { data: parsed as Record<string, unknown>, issues: [] };
 }
+
+// =============================================================================
+// Defaults
+// =============================================================================
 
 /**
  * Build default values from definitions, applying computedDefault where available.
@@ -416,7 +331,7 @@ function overrideEquals(a: unknown, b: unknown): boolean {
 // =============================================================================
 
 export class DefaultConfig implements Config {
-  private readonly definitions = new Map<string, ConfigKeyDefinition<unknown>>();
+  private readonly definitions = new ConfigDefinitions();
   private readonly effective: Record<string, unknown> = {};
   private readonly defaults: Record<string, unknown> = {};
   private loaded = false;
@@ -457,7 +372,7 @@ export class DefaultConfig implements Config {
         }
       }
     }
-    this.definitions.set(key, definition);
+    this.definitions.add(key, definition);
     return definition.deprecated ? this.createDeprecatedAccessor(key) : this.createAccessor(key);
   }
 
@@ -499,96 +414,123 @@ export class DefaultConfig implements Config {
     }
     this.loaded = true;
 
-    const { configPath, logger, isDevelopment, isPackaged, env, argv } = this.deps;
+    const { configPath, isDevelopment, isPackaged, env, argv } = this.deps;
     const syncRead = this.deps.readFileSync ?? ((p: string) => readFileSync(p, "utf-8"));
+    const syncRename = this.deps.renameSync ?? renameSync;
     const computedDefaultCtx: ComputedDefaultContext = { isDevelopment, isPackaged };
 
     // 1. Build defaults (static + computed) and seed effective immediately
-    //    so getHelpText()/getEffective() work even if parsing throws below
-    const defaults = buildDefaults(this.definitions, computedDefaultCtx);
+    //    so getHelpText()/getEffective() work even if we throw below.
+    const defaults = buildDefaults(this.definitions.asReadonlyMap(), computedDefaultCtx);
     for (const [key, value] of Object.entries(defaults)) {
       this.effective[key] = value;
       this.defaults[key] = value;
     }
 
-    // 2. Read config.json from disk (sync)
-    let fileValues: Record<string, unknown> = {};
-    let rewrite: Record<string, unknown> | null = null;
-    let content: string | null = null;
-    try {
-      content = syncRead(configPath.toNative());
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        logger.debug("Config not found, using defaults", { path: configPath.toString() });
-      } else {
-        logger.warn("Config load failed, using defaults", {
-          path: configPath.toString(),
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
+    // 2. config.json: read (I/O) → validate (typed values).
+    const file = readConfigFile(configPath, syncRead, syncRename);
+    const fileResult = this.definitions.validate(file.data);
 
-    if (content !== null) {
-      let parsed: unknown = null;
-      let parseOk = false;
-      try {
-        parsed = JSON.parse(content);
-        parseOk = true;
-      } catch (error) {
-        // Invalid JSON: move config.json aside so the user can recover it,
-        // then proceed with defaults. If the rename itself fails, throw —
-        // silently writing fresh would destroy the broken-but-recoverable file.
-        const backupPath = new Path(configPath.dirname, BROKEN_CONFIG_FILENAME);
-        const syncRen = this.deps.renameSync ?? renameSync;
-        syncRen(configPath.toNative(), backupPath.toNative());
-        logger.warn(
-          "Invalid JSON in config.json, backed up to config.json.broken; using defaults",
-          {
-            path: configPath.toString(),
-            backup: backupPath.toString(),
-            error: error instanceof Error ? error.message : String(error),
-          }
-        );
-      }
-      if (parseOk) {
-        const result = parseConfigFile(parsed, this.definitions, logger);
-        fileValues = result.values;
-        rewrite = result.rewrite;
-        logger.debug("Config loaded from disk", { path: configPath.toString() });
-      }
-    }
+    // 3. env + CLI: tokenize → parse (strings → typed) → validate.
+    const envResult = this.definitions.parseAndValidate(parseEnvVars(env));
+    const cliResult = this.definitions.parseAndValidate(parseCliArgs(argv));
 
-    // 3. Parse env vars and CLI args
-    const envValues = parseEnvVars(env, this.definitions);
-    const cliValues = parseCliArgs(argv, this.definitions, logger);
+    // 4. Interpret issues per source (precedence order): log benign kinds, throw on invalid.
+    this.reportIssues("config.json", [...file.issues, ...fileResult.issues]);
+    this.reportIssues("env var", envResult.issues);
+    this.reportIssues("CLI flag", cliResult.issues);
 
-    // 4. Merge with precedence: defaults < file < env < CLI
+    // 5. Merge with precedence: defaults < file < env < CLI.
     const merged = {
       ...defaults,
-      ...fileValues,
-      ...envValues,
-      ...cliValues,
+      ...fileResult.values,
+      ...envResult.values,
+      ...cliResult.values,
     };
-
     for (const [key, value] of Object.entries(merged)) {
       this.effective[key] = value;
     }
 
-    // 5. If unknown keys were stripped, rewrite config.json (sync).
-    if (rewrite !== null) {
+    // 6. If config.json contained unknown keys, rewrite it with those stripped
+    //    (active, deprecated, and legacy entries are preserved).
+    const unknownFileKeys = fileResult.issues.flatMap((issue) =>
+      issue.kind === "unknown" ? [issue.key] : []
+    );
+    if (unknownFileKeys.length > 0) {
+      const stripped = new Set(unknownFileKeys);
+      const kept: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(file.data)) {
+        if (!stripped.has(key)) kept[key] = value;
+      }
       const syncWrite =
         this.deps.writeFileSync ?? ((p: string, c: string) => writeFileSync(p, c, "utf-8"));
       try {
-        syncWrite(configPath.toNative(), JSON.stringify(rewrite, null, 2));
-        logger.debug("Config rewritten (unknown keys stripped)", {
+        syncWrite(configPath.toNative(), JSON.stringify(kept, null, 2));
+        this.deps.logger.debug("Config rewritten (unknown keys stripped)", {
           path: configPath.toString(),
         });
       } catch (error) {
-        logger.warn("Config rewrite failed", {
+        this.deps.logger.warn("Config rewrite failed", {
           path: configPath.toString(),
           error: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+  }
+
+  /**
+   * Interpret the issues from one source: log the benign kinds, and throw a
+   * ConfigValidationError on the first `invalid` (which main.ts turns into exit(1)).
+   * Benign issues are logged first so they surface even when an invalid follows.
+   */
+  private reportIssues(source: string, issues: ConfigIssue[]): void {
+    const { logger } = this.deps;
+    for (const issue of issues) {
+      switch (issue.kind) {
+        case "unknown":
+          logger.warn("Unknown config key (ignored)", { source, key: issue.key });
+          break;
+        case "deprecated":
+          logger.debug("Deprecated config key (ignored)", { source, key: issue.key });
+          break;
+        case "legacy-shadowed":
+          logger.warn("Legacy config key shadowed by new key (ignored)", {
+            source,
+            legacy: issue.legacy,
+            newKey: issue.newKey,
+          });
+          break;
+        case "legacy-untranslatable":
+          logger.warn("Legacy config key could not be translated (using default)", {
+            source,
+            legacy: issue.legacy,
+            newKey: issue.newKey,
+            value: JSON.stringify(issue.value),
+          });
+          break;
+        case "broken-json":
+          logger.warn(
+            "Invalid JSON in config.json, backed up to config.json.broken; using defaults",
+            { path: issue.path, backup: issue.backup, error: issue.error }
+          );
+          break;
+        case "invalid":
+          break;
+      }
+    }
+
+    const invalid = issues.find(
+      (i): i is Extract<ConfigIssue, { kind: "invalid" }> => i.kind === "invalid"
+    );
+    if (invalid) {
+      throw new ConfigValidationError({
+        key: invalid.key,
+        value: invalid.value,
+        reason: "invalid",
+        source,
+        ...(invalid.description !== undefined && { description: invalid.description }),
+        ...(invalid.validValues !== undefined && { validValues: invalid.validValues }),
+      });
     }
   }
 
@@ -696,7 +638,7 @@ export class DefaultConfig implements Config {
   }
 
   getDefinitions(): ReadonlyMap<string, ConfigKeyDefinition<unknown>> {
-    return this.definitions;
+    return this.definitions.asReadonlyMap();
   }
 
   getEffective(): Readonly<Record<string, unknown>> {
@@ -718,6 +660,10 @@ export class DefaultConfig implements Config {
   }
 
   getHelpText(): string {
-    return generateHelpText(this.deps.configPath.toString(), this.definitions, this.effective);
+    return generateHelpText(
+      this.deps.configPath.toString(),
+      this.definitions.asReadonlyMap(),
+      this.effective
+    );
   }
 }
