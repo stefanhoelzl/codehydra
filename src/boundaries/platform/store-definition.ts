@@ -70,7 +70,7 @@ export interface PersistedKeyDefinition<T> {
 /**
  * Subset of PersistedKeyDefinition produced by type builders.
  */
-type PersistedTypeBuilder<T> = Pick<PersistedKeyDefinition<T>, "parse" | "validate"> & {
+export type PersistedTypeBuilder<T> = Pick<PersistedKeyDefinition<T>, "parse" | "validate"> & {
   readonly validValues?: string;
 };
 

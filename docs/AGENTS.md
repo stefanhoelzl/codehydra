@@ -331,6 +331,20 @@ For agents like OpenCode, sessions waiting for user permission are displayed as 
 - `session.deleted`: Clears pending permissions for that session
 - Connection disconnect: Clears all pending permissions (reconnection safety)
 
+### Background Shell Handling (Claude Code)
+
+With `experimental.busy-during-background-shell` enabled, the workspace stays busy while
+the agent has a qualifying background shell running (Bash with `run_in_background`),
+instead of going idle when the turn ends. The Stop/StopFailure hook payload carries
+`background_tasks` — the live list of still-running background tasks — which the bridge
+evaluates on every Stop: `true` keeps the workspace busy for any running shell task;
+an array of regexes (config.json only) keeps it busy only for shells whose command
+matches (e.g. `["ship-wait"]` for a CI-wait script), so dev servers don't pin the
+workspace busy. The decision is stashed to also suppress the `idle_prompt` notification
+that fires ~60s after Stop, and cleared when the agent is re-invoked (`UserPromptSubmit`,
+which happens automatically when a background shell exits) or the session ends.
+`PermissionRequest` → idle is never suppressed. Default: disabled.
+
 ---
 
 ## MCP Integration
