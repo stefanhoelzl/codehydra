@@ -375,6 +375,108 @@ describe("AutoUpdaterModule Integration", () => {
     expect(notificationManager.notifications).toHaveLength(1);
   });
 
+  it("a newer version on resume refreshes the existing notification in place", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+    expect(notificationManager.notifications).toHaveLength(1);
+    expect(notificationManager.notifications[0]!.opened.message).toContain("2.0.0");
+
+    autoUpdater.setCheckResult(true, "3.0.0");
+    await dispatcher.dispatch(resumeIntent());
+    await flush();
+
+    // Still a single notification, updated (not re-opened) to the newer version.
+    expect(notificationManager.notifications).toHaveLength(1);
+    const slot = notificationManager.notifications[0]!;
+    const last = slot.updates[slot.updates.length - 1]!;
+    expect(last.title).toBe("Update available");
+    expect(last.message).toContain("3.0.0");
+  });
+
+  it("a newer version reverts a 'ready' notification back to 'Update available'", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    // Download to completion → "Update ready".
+    notificationManager.emitEvent(0, { actionId: "install" });
+    await flush();
+    autoUpdater.resolveDownload!();
+    await flush();
+    const slot = notificationManager.notifications[0]!;
+    expect(slot.updates[slot.updates.length - 1]!.title).toBe("Update ready");
+
+    // Newer version detected on resume reverts to "Update available".
+    autoUpdater.setCheckResult(true, "3.0.0");
+    await dispatcher.dispatch(resumeIntent());
+    await flush();
+
+    expect(notificationManager.notifications).toHaveLength(1);
+    const last = slot.updates[slot.updates.length - 1]!;
+    expect(last.title).toBe("Update available");
+    expect(last.message).toContain("3.0.0");
+    expect(last.actions).toEqual([{ id: "install", label: "Install" }]);
+  });
+
+  it("Install after a version refresh downloads the newer version", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    autoUpdater.setCheckResult(true, "3.0.0");
+    await dispatcher.dispatch(resumeIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, { actionId: "install" });
+    await flush();
+
+    expect(autoUpdater.downloadCalled).toBe(true);
+    const slot = notificationManager.notifications[0]!;
+    const downloading = slot.updates.find((u) => u.title === "Downloading update");
+    expect(downloading!.message).toContain("3.0.0");
+  });
+
+  it("dismissing then re-checking the same version stays silent", async () => {
+    const { dispatcher, notificationManager } = createTestSetup({ checkReturns: true });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, { actionId: "dismiss" });
+
+    await dispatcher.dispatch(resumeIntent());
+    await flush();
+
+    // No second notification opened for the already-dismissed version.
+    expect(notificationManager.notifications).toHaveLength(1);
+  });
+
+  it("dismissing then a newer version re-surfaces the notification", async () => {
+    const { dispatcher, autoUpdater, notificationManager } = createTestSetup({
+      checkReturns: true,
+    });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, { actionId: "dismiss" });
+
+    autoUpdater.setCheckResult(true, "3.0.0");
+    await dispatcher.dispatch(resumeIntent());
+    await flush();
+
+    // A fresh notification opened for the genuinely newer version.
+    expect(notificationManager.notifications).toHaveLength(2);
+    const newest = notificationManager.notifications[1]!;
+    expect(newest.opened.title).toBe("Update available");
+    expect(newest.opened.message).toContain("3.0.0");
+  });
+
   it("app:shutdown calls autoUpdater.dispose()", async () => {
     const { dispatcher, autoUpdater } = createTestSetup();
 
