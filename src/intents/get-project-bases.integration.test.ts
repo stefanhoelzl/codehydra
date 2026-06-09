@@ -66,6 +66,8 @@ interface TestSetupOptions {
   refreshThrows?: boolean;
   freshBases?: readonly { name: string; isRemote: boolean }[];
   unknownProject?: boolean;
+  /** When true, the list hook reports no default base branch. */
+  noDefaultBaseBranch?: boolean;
 }
 
 interface TestSetup {
@@ -112,7 +114,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             listCallCount++;
             // First call returns cached, subsequent calls return fresh
             const bases = listCallCount === 1 ? [...CACHED_BASES] : [...freshBases];
-            return { bases, defaultBaseBranch: "main" };
+            return opts?.noDefaultBaseBranch ? { bases } : { bases, defaultBaseBranch: "main" };
           },
         },
         refresh: {
@@ -191,6 +193,24 @@ describe("GetProjectBases Operation", () => {
       expect(freshEvent.payload.projectId).toBe(PROJECT_ID);
       expect(freshEvent.payload.projectPath).toBe(PROJECT_ROOT);
       expect(freshEvent.payload.bases).toEqual(FRESH_BASES);
+      expect(freshEvent.payload.defaultBaseBranch).toBe("main");
+    });
+
+    it("omits defaultBaseBranch from the event when detection finds none", async () => {
+      const setup = createTestSetup({ noDefaultBaseBranch: true });
+      const events: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_BASES_UPDATED, (event) => {
+        events.push(event);
+      });
+
+      await setup.dispatcher.dispatch(createIntent(PROJECT_ROOT, { refresh: true }));
+
+      await vi.waitFor(() => {
+        expect(events.length).toBe(1);
+      });
+
+      const freshEvent = events[0] as BasesUpdatedEvent;
+      expect("defaultBaseBranch" in freshEvent.payload).toBe(false);
     });
   });
 

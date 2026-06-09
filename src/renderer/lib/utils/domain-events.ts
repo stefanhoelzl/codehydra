@@ -57,6 +57,11 @@ export interface DomainStores {
     key: string,
     value: string | null
   ) => void;
+  /** Set (or clear, when undefined) a project's default base branch */
+  setProjectDefaultBaseBranch: (
+    projectId: ProjectId,
+    defaultBaseBranch: string | undefined
+  ) => void;
 }
 
 /**
@@ -163,6 +168,14 @@ export function setupDomainEvents(
   unsubscribes.push(
     api.on("workspace:metadata-changed", (event) => {
       stores.updateWorkspaceMetadata(event.projectId, event.workspaceName, event.key, event.value);
+    })
+  );
+
+  // Project bases updated — refresh the project's default base branch so a
+  // default that went stale during the session heals (absent = no default found).
+  unsubscribes.push(
+    api.on("project:bases-updated", (event) => {
+      stores.setProjectDefaultBaseBranch(event.projectId, event.defaultBaseBranch);
     })
   );
 

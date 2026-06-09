@@ -10,16 +10,34 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { asProjectId } from "@shared/test-fixtures";
 
-// Mock the API used by the panel and its child dropdowns.
-const mockApi = vi.hoisted(() => ({
-  workspaces: { create: vi.fn().mockResolvedValue({}) },
-  projects: {
-    fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
-    open: vi.fn().mockResolvedValue(null),
-  },
-  on: vi.fn(() => () => {}),
-}));
+// Mock the API used by the panel and its child dropdowns. `on` keeps a real
+// handler registry so tests can push events (e.g. project:bases-updated) to
+// the mounted child dropdowns via emitApiEvent.
+const mockApi = vi.hoisted(() => {
+  const eventHandlers = new Map<string, Set<(event: unknown) => void>>();
+  return {
+    workspaces: { create: vi.fn().mockResolvedValue({}) },
+    projects: {
+      fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
+      open: vi.fn().mockResolvedValue(null),
+    },
+    on: vi.fn((event: string, handler: (e: unknown) => void) => {
+      let handlers = eventHandlers.get(event);
+      if (!handlers) {
+        handlers = new Set();
+        eventHandlers.set(event, handlers);
+      }
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    }),
+    eventHandlers,
+  };
+});
 vi.mock("$lib/api", () => mockApi);
+
+function emitApiEvent(event: string, payload: unknown): void {
+  mockApi.eventHandlers.get(event)?.forEach((handler) => handler(payload));
+}
 
 import NewWorkspaceView from "./NewWorkspaceView.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
@@ -51,6 +69,7 @@ async function typeName(value: string): Promise<void> {
 describe("NewWorkspaceView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockApi.eventHandlers.clear();
     projectsStore.reset();
     newWorkspaceViewStore.reset();
     pendingStore.reset();
@@ -133,6 +152,89 @@ describe("NewWorkspaceView", () => {
     await typeName("second");
     const createButton = screen.getByRole("button", { name: "Create" });
     await waitFor(() => expect(createButton).not.toBeDisabled());
+  });
+
+  it("survives a stale default branch and heals to the fresh one (no effect loop)", async () => {
+    // Regression: the project's defaultBaseBranch went stale during the session
+    // (remote default-branch rename master → main). The auto-fill effect and
+    // BranchDropdown's clear-invalid-value validation ping-ponged forever,
+    // crashing Svelte with effect_update_depth_exceeded and bricking the UI.
+    projectsStore.setProjectDefaultBaseBranch(PROJECT_PATH, "origin/master");
+    // Cached branch list still contains the stale branch.
+    mockApi.projects.fetchBases.mockResolvedValue({
+      bases: [{ name: "origin/master", isRemote: true }],
+    });
+
+    render(NewWorkspaceView, { props: { open: true } });
+
+    const branchInput = document.getElementById(
+      `branch-dropdown-${PROJECT_PATH}-input`
+    ) as HTMLInputElement;
+    await waitFor(() => expect(branchInput.value).toBe("origin/master"));
+
+    // Background refresh pruned the stale branch; the event heals the store
+    // default (as the domain-event binding does) and updates the dropdown.
+    emitApiEvent("project:bases-updated", {
+      projectId: PROJECT_ID,
+      projectPath: PROJECT_PATH,
+      bases: [{ name: "origin/main", isRemote: true }],
+      defaultBaseBranch: "origin/main",
+    });
+    projectsStore.setProjectDefaultBaseBranch(PROJECT_PATH, "origin/main");
+
+    // No crash, and the selection healed to the fresh default.
+    await waitFor(() => expect(branchInput.value).toBe("origin/main"));
+
+    // Form is fully usable: Create enables once a name is typed.
+    await typeName("snap");
+    const createButton = screen.getByRole("button", { name: "Create" });
+    await waitFor(() => expect(createButton).not.toBeDisabled());
+  });
+
+  it("does not override a manual branch pick when a fresh default arrives", async () => {
+    mockApi.projects.fetchBases.mockResolvedValue({
+      bases: [
+        { name: "develop", isRemote: false },
+        { name: "origin/main", isRemote: true },
+      ],
+    });
+
+    render(NewWorkspaceView, { props: { open: true } });
+
+    const branchInput = document.getElementById(
+      `branch-dropdown-${PROJECT_PATH}-input`
+    ) as HTMLInputElement;
+    // Default ("main" from makeProject) is not in the list; pick manually.
+    emitApiEvent("project:bases-updated", {
+      projectId: PROJECT_ID,
+      projectPath: PROJECT_PATH,
+      bases: [
+        { name: "develop", isRemote: false },
+        { name: "origin/main", isRemote: true },
+      ],
+      defaultBaseBranch: "origin/main",
+    });
+    await fireEvent.focus(branchInput);
+    await waitFor(() => {
+      const option = screen.getByText("develop");
+      expect(option).not.toBeNull();
+    });
+    await fireEvent.mouseDown(screen.getByText("develop"));
+    await waitFor(() => expect(branchInput.value).toBe("develop"));
+
+    // Fresh default arriving later must not clobber the manual pick.
+    projectsStore.setProjectDefaultBaseBranch(PROJECT_PATH, "origin/main");
+    emitApiEvent("project:bases-updated", {
+      projectId: PROJECT_ID,
+      projectPath: PROJECT_PATH,
+      bases: [
+        { name: "develop", isRemote: false },
+        { name: "origin/main", isRemote: true },
+      ],
+      defaultBaseBranch: "origin/main",
+    });
+
+    await waitFor(() => expect(branchInput.value).toBe("develop"));
   });
 
   it("clears the form on Escape", async () => {

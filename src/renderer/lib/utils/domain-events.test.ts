@@ -95,6 +95,7 @@ describe("setupDomainEvents", () => {
       setActiveWorkspace: vi.fn(),
       updateAgentStatus: vi.fn(),
       updateWorkspaceMetadata: vi.fn(),
+      setProjectDefaultBaseBranch: vi.fn(),
     };
   });
 
@@ -226,6 +227,39 @@ describe("setupDomainEvents", () => {
         TEST_WORKSPACE_NAME,
         "tags.bugfix",
         null
+      );
+    });
+  });
+
+  describe("bases-updated events", () => {
+    it("calls setProjectDefaultBaseBranch with the fresh default", () => {
+      setupDomainEvents(mockApi.api, mockStores);
+
+      mockApi.emit("project:bases-updated", {
+        projectId: TEST_PROJECT_ID,
+        projectPath: "/test/project",
+        bases: [{ name: "origin/main", isRemote: true }],
+        defaultBaseBranch: "origin/main",
+      });
+
+      expect(mockStores.setProjectDefaultBaseBranch).toHaveBeenCalledWith(
+        TEST_PROJECT_ID,
+        "origin/main"
+      );
+    });
+
+    it("calls setProjectDefaultBaseBranch with undefined when the event has no default", () => {
+      setupDomainEvents(mockApi.api, mockStores);
+
+      mockApi.emit("project:bases-updated", {
+        projectId: TEST_PROJECT_ID,
+        projectPath: "/test/project",
+        bases: [{ name: "develop", isRemote: false }],
+      });
+
+      expect(mockStores.setProjectDefaultBaseBranch).toHaveBeenCalledWith(
+        TEST_PROJECT_ID,
+        undefined
       );
     });
   });
