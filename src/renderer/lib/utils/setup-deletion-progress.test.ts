@@ -13,7 +13,7 @@ vi.mock("$lib/api", () => ({
 }));
 
 import { setupDeletionProgress, type DeletionProgressApi } from "./setup-deletion-progress";
-import * as deletionStore from "$lib/stores/deletion.svelte.js";
+import * as lifecycleStore from "$lib/stores/workspace-lifecycle.svelte.js";
 
 // =============================================================================
 // Test Data
@@ -73,11 +73,11 @@ function createMockApi(): {
 
 describe("setupDeletionProgress", () => {
   beforeEach(() => {
-    deletionStore.reset();
+    lifecycleStore.reset();
   });
 
   afterEach(() => {
-    deletionStore.reset();
+    lifecycleStore.reset();
   });
 
   it("updates store when deletion progress event is emitted", () => {
@@ -87,8 +87,11 @@ describe("setupDeletionProgress", () => {
 
     emit(TEST_PROGRESS);
 
-    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toEqual(TEST_PROGRESS);
-    expect(deletionStore.getDeletionStatus(TEST_WORKSPACE_PATH)).toBe("in-progress");
+    expect(lifecycleStore.lifecycleEntries.value.get(TEST_WORKSPACE_PATH)).toEqual({
+      kind: "deleting",
+      progress: TEST_PROGRESS,
+    });
+    expect(lifecycleStore.getLifecycle(TEST_WORKSPACE_PATH)).toBe("deleting");
   });
 
   it("auto-clears store on successful completion", () => {
@@ -98,7 +101,7 @@ describe("setupDeletionProgress", () => {
 
     // First emit a regular progress
     emit(TEST_PROGRESS);
-    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeDefined();
+    expect(lifecycleStore.lifecycleEntries.value.get(TEST_WORKSPACE_PATH)).toBeDefined();
 
     // Then emit completed without errors
     const completedProgress: DeletionProgress = {
@@ -109,8 +112,8 @@ describe("setupDeletionProgress", () => {
     emit(completedProgress);
 
     // Should be cleared
-    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeUndefined();
-    expect(deletionStore.getDeletionStatus(TEST_WORKSPACE_PATH)).toBe("none");
+    expect(lifecycleStore.lifecycleEntries.value.get(TEST_WORKSPACE_PATH)).toBeUndefined();
+    expect(lifecycleStore.getLifecycle(TEST_WORKSPACE_PATH)).toBe("none");
   });
 
   it("does not auto-clear on completion with errors", () => {
@@ -135,8 +138,11 @@ describe("setupDeletionProgress", () => {
     emit(errorProgress);
 
     // Should remain in store for retry/close anyway
-    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toEqual(errorProgress);
-    expect(deletionStore.getDeletionStatus(TEST_WORKSPACE_PATH)).toBe("error");
+    expect(lifecycleStore.lifecycleEntries.value.get(TEST_WORKSPACE_PATH)).toEqual({
+      kind: "deleting",
+      progress: errorProgress,
+    });
+    expect(lifecycleStore.getLifecycle(TEST_WORKSPACE_PATH)).toBe("delete-failed");
   });
 
   it("cleanup stops updates", () => {
@@ -146,10 +152,10 @@ describe("setupDeletionProgress", () => {
 
     // Emit before cleanup
     emit(TEST_PROGRESS);
-    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeDefined();
+    expect(lifecycleStore.lifecycleEntries.value.get(TEST_WORKSPACE_PATH)).toBeDefined();
 
     // Clear and cleanup
-    deletionStore.reset();
+    lifecycleStore.reset();
     cleanup();
 
     // Verify unsubscribe was called
@@ -157,7 +163,7 @@ describe("setupDeletionProgress", () => {
 
     // Emit after cleanup - should not update store
     emit(TEST_PROGRESS);
-    expect(deletionStore.deletionStates.value.get(TEST_WORKSPACE_PATH)).toBeUndefined();
+    expect(lifecycleStore.lifecycleEntries.value.get(TEST_WORKSPACE_PATH)).toBeUndefined();
   });
 
   it("handles multiple workspaces independently", () => {
@@ -181,14 +187,23 @@ describe("setupDeletionProgress", () => {
     emit(progress1);
     emit(progress2);
 
-    expect(deletionStore.deletionStates.value.get(workspace1Path)).toEqual(progress1);
-    expect(deletionStore.deletionStates.value.get(workspace2Path)).toEqual(progress2);
+    expect(lifecycleStore.lifecycleEntries.value.get(workspace1Path)).toEqual({
+      kind: "deleting",
+      progress: progress1,
+    });
+    expect(lifecycleStore.lifecycleEntries.value.get(workspace2Path)).toEqual({
+      kind: "deleting",
+      progress: progress2,
+    });
 
     // Complete workspace1
     emit({ ...progress1, completed: true, hasErrors: false });
 
     // Workspace1 cleared, workspace2 still exists
-    expect(deletionStore.deletionStates.value.get(workspace1Path)).toBeUndefined();
-    expect(deletionStore.deletionStates.value.get(workspace2Path)).toEqual(progress2);
+    expect(lifecycleStore.lifecycleEntries.value.get(workspace1Path)).toBeUndefined();
+    expect(lifecycleStore.lifecycleEntries.value.get(workspace2Path)).toEqual({
+      kind: "deleting",
+      progress: progress2,
+    });
   });
 });

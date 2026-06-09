@@ -43,7 +43,7 @@ import NewWorkspaceView from "./NewWorkspaceView.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
-import * as pendingStore from "$lib/stores/pending-workspaces.svelte.js";
+import * as lifecycleStore from "$lib/stores/workspace-lifecycle.svelte.js";
 import type { Project } from "@shared/api/types";
 
 const PROJECT_ID = asProjectId("test-project-12345678");
@@ -72,7 +72,7 @@ describe("NewWorkspaceView", () => {
     mockApi.eventHandlers.clear();
     projectsStore.reset();
     newWorkspaceViewStore.reset();
-    pendingStore.reset();
+    lifecycleStore.reset();
     bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
     projectsStore.setProjects([makeProject()]);
     newWorkspaceViewStore.openNewWorkspaceView();
@@ -105,7 +105,7 @@ describe("NewWorkspaceView", () => {
 
     // Switched to the placeholder workspace and left the view.
     expect(projectsStore.activeWorkspacePath.value).toBe(
-      pendingStore.createPendingPath(PROJECT_PATH, "feature-x")
+      lifecycleStore.createPendingPath(PROJECT_PATH, "feature-x")
     );
     expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
   });
@@ -126,7 +126,7 @@ describe("NewWorkspaceView", () => {
 
     // Switched to the placeholder workspace and left the view.
     expect(projectsStore.activeWorkspacePath.value).toBe(
-      pendingStore.createPendingPath(PROJECT_PATH, "feature-y")
+      lifecycleStore.createPendingPath(PROJECT_PATH, "feature-y")
     );
     expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
   });

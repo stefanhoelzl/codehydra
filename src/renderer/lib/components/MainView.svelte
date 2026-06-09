@@ -63,7 +63,7 @@
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
   import Logo from "./Logo.svelte";
 
-  import { getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
+  import { getLifecycle, lifecycleEntries } from "$lib/stores/workspace-lifecycle.svelte.js";
   import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
   import {
@@ -111,11 +111,11 @@
   // deletion begins, rather than waiting for the full deletion pipeline to complete.
   const effectiveWorkspaceCount = $derived.by(() => {
     const allWorkspaces = getAllWorkspaces();
-    const deletions = deletionStates.value;
+    const entries = lifecycleEntries.value;
     return allWorkspaces.filter((ws) => {
-      const deletion = deletions.get(ws.path);
-      if (!deletion) return true;
-      if (deletion.completed && deletion.hasErrors) return true;
+      const entry = entries.get(ws.path);
+      if (!entry || entry.kind === "creating") return true;
+      if (entry.progress.completed && entry.progress.hasErrors) return true;
       return false;
     }).length;
   });
@@ -320,7 +320,7 @@
     hasActiveWorkspace={activeWorkspacePath.value !== null}
     {activeHibernated}
     activeWorkspaceDeletionInProgress={activeWorkspacePath.value !== null &&
-      getDeletionStatus(activeWorkspacePath.value) === "in-progress"}
+      getLifecycle(activeWorkspacePath.value) === "deleting"}
     {idleWorkspaceCount}
   />
 

@@ -50,9 +50,9 @@
   } from "$lib/stores/projects.svelte.js";
   import {
     createPendingPath,
-    addPending,
-    removePending,
-  } from "$lib/stores/pending-workspaces.svelte.js";
+    setCreating,
+    clearLifecycle,
+  } from "$lib/stores/workspace-lifecycle.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -292,7 +292,7 @@
       path: pendingPath,
     };
     addWorkspace(project.path, placeholder);
-    addPending(pendingPath, project.path, workspaceName);
+    setCreating(pendingPath, project.path, workspaceName);
 
     // Always switch to the new workspace and leave the view — even when a
     // prompt is queued. Backgrounding the create made it unclear that the
@@ -313,7 +313,7 @@
       .catch((error: unknown) => {
         const message = getErrorMessage(error);
         logger.warn("Workspace creation failed", { name: workspaceName, error: message });
-        removePending(pendingPath);
+        clearLifecycle(pendingPath);
         removeWorkspace(project.path, pendingPath);
         if (activeWorkspacePath.value === pendingPath) {
           setActiveWorkspace(null);

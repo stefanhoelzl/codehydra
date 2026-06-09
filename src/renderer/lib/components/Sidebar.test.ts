@@ -36,7 +36,7 @@ import Sidebar from "./Sidebar.svelte";
 import { createMockProject, createMockWorkspace } from "$lib/test-fixtures";
 import type { ProjectPath, WorkspacePath } from "@shared/ipc";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
-import * as deletionStore from "$lib/stores/deletion.svelte.js";
+import * as lifecycleStore from "$lib/stores/workspace-lifecycle.svelte.js";
 import {
   desiredMode,
   setModeFromMain,
@@ -1343,7 +1343,7 @@ describe("Sidebar component", () => {
     });
 
     beforeEach(() => {
-      deletionStore.reset();
+      lifecycleStore.reset();
     });
 
     it("shows spinner when workspace is deleting (expanded)", async () => {
@@ -1354,7 +1354,7 @@ describe("Sidebar component", () => {
       });
 
       // Set deletion state
-      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+      lifecycleStore.setDeletionProgress(createDeletionProgress("/test/.worktrees/ws1"));
 
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
@@ -1372,7 +1372,7 @@ describe("Sidebar component", () => {
       });
 
       // Set deletion state
-      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+      lifecycleStore.setDeletionProgress(createDeletionProgress("/test/.worktrees/ws1"));
 
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
@@ -1411,7 +1411,7 @@ describe("Sidebar component", () => {
       });
 
       // Set deletion state
-      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+      lifecycleStore.setDeletionProgress(createDeletionProgress("/test/.worktrees/ws1"));
 
       render(Sidebar, {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
@@ -1431,7 +1431,7 @@ describe("Sidebar component", () => {
       });
 
       // Set deletion state only for ws1
-      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+      lifecycleStore.setDeletionProgress(createDeletionProgress("/test/.worktrees/ws1"));
 
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
@@ -1450,7 +1450,7 @@ describe("Sidebar component", () => {
       });
 
       // Set deletion state (in-progress: completed=false)
-      deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
+      lifecycleStore.setDeletionProgress(createDeletionProgress("/test/.worktrees/ws1"));
 
       render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
@@ -1471,7 +1471,7 @@ describe("Sidebar component", () => {
       const errorState = createDeletionProgress("/test/.worktrees/ws1");
       errorState.completed = true;
       errorState.hasErrors = true;
-      deletionStore.setDeletionState(errorState);
+      lifecycleStore.setDeletionProgress(errorState);
 
       render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
@@ -1492,7 +1492,7 @@ describe("Sidebar component", () => {
       const errorState = createDeletionProgress("/test/.worktrees/ws1");
       errorState.completed = true;
       errorState.hasErrors = true;
-      deletionStore.setDeletionState(errorState);
+      lifecycleStore.setDeletionProgress(errorState);
 
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
@@ -1515,7 +1515,7 @@ describe("Sidebar component", () => {
       const errorState = createDeletionProgress("/test/.worktrees/ws1");
       errorState.completed = true;
       errorState.hasErrors = true;
-      deletionStore.setDeletionState(errorState);
+      lifecycleStore.setDeletionProgress(errorState);
 
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
@@ -1539,7 +1539,7 @@ describe("Sidebar component", () => {
       const errorState = createDeletionProgress("/test/.worktrees/ws1");
       errorState.completed = true;
       errorState.hasErrors = true;
-      deletionStore.setDeletionState(errorState);
+      lifecycleStore.setDeletionProgress(errorState);
 
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
@@ -1570,7 +1570,7 @@ describe("Sidebar component", () => {
       const errorState = createDeletionProgress("/test/.worktrees/ws1");
       errorState.completed = true;
       errorState.hasErrors = true;
-      deletionStore.setDeletionState(errorState);
+      lifecycleStore.setDeletionProgress(errorState);
 
       render(Sidebar, {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
