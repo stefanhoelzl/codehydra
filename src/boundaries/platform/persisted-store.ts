@@ -83,6 +83,12 @@ export class PersistedStore {
   private readonly effective: Record<string, unknown> = {};
   private readonly defaults: Record<string, unknown> = {};
   private loaded = false;
+  // Tail of the write queue. Every persistMutation() chains off this so writes
+  // to the backing file run strictly one-at-a-time, even across owners that
+  // share one file (e.g. state.json's telemetry/update/auto-workspace keys).
+  // Without this, two concurrent read-modify-write cycles could interleave and
+  // silently drop one update.
+  private writeChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: PersistedStoreDeps) {}
 
@@ -274,11 +280,26 @@ export class PersistedStore {
   }
 
   /**
+   * Enqueue a read-modify-write so it runs after all earlier writes to this
+   * file have settled. Serializing here is what makes a single file shared by
+   * several owners safe: concurrent set()/reset() calls can no longer interleave
+   * their read-modify-write cycles and lose an update. The returned promise
+   * rejects to the caller on failure, while the chain itself advances through a
+   * swallowed branch so one failed write neither poisons subsequent writes nor
+   * surfaces as an unhandled rejection.
+   */
+  private persistMutation(mutator: (fileContent: Record<string, unknown>) => void): Promise<void> {
+    const result = this.writeChain.then(() => this.runPersistMutation(mutator));
+    this.writeChain = result.catch(() => {});
+    return result;
+  }
+
+  /**
    * Read-modify-write the store's JSON file with the given mutator. Handles a
    * missing file (start fresh) and invalid JSON (back up to <file>.broken, then
    * write fresh — if the rename fails, throw rather than destroy the file).
    */
-  private async persistMutation(
+  private async runPersistMutation(
     mutator: (fileContent: Record<string, unknown>) => void
   ): Promise<void> {
     const { filePath, fileSystem, logger } = this.deps;

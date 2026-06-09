@@ -44,7 +44,12 @@ import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import type { Config } from "../../boundaries/platform/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import { storePath, type PersistedAccessor } from "../../boundaries/platform/store-definition";
+import {
+  storePath,
+  storeCustom,
+  type PersistedAccessor,
+} from "../../boundaries/platform/store-definition";
+import type { StateService } from "../../boundaries/platform/state-service";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
@@ -64,9 +69,54 @@ interface StateEntry {
   readonly createdAt: string;
 }
 
-interface AutoWorkspaceState {
-  readonly version: 1;
-  readonly entries: Record<string, StateEntry | null>;
+/**
+ * Persisted tracking map: `${source}/${itemKey}` -> live workspace entry, or
+ * `null` for a dismissed item (don't re-create). Stored as the single
+ * `auto-workspaces` key in state.json.
+ */
+type AutoWorkspaceEntries = Record<string, StateEntry | null>;
+
+function isStateEntry(value: unknown): value is StateEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const o = value as Record<string, unknown>;
+  return (
+    typeof o.workspacePath === "string" &&
+    typeof o.workspaceName === "string" &&
+    typeof o.createdAt === "string"
+  );
+}
+
+/**
+ * Validate an unknown value as an entries map, dropping malformed entries
+ * (best-effort: one corrupt entry must not wipe all tracking). Returns
+ * undefined only when the value isn't a plain object.
+ */
+function validateEntries(value: unknown): AutoWorkspaceEntries | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const out: AutoWorkspaceEntries = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === null) {
+      out[key] = null;
+    } else if (isStateEntry(entry)) {
+      out[key] = {
+        workspacePath: entry.workspacePath,
+        workspaceName: entry.workspaceName,
+        createdAt: entry.createdAt,
+      };
+    }
+    // else: drop the malformed entry
+  }
+  return out;
+}
+
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 // =============================================================================
@@ -85,21 +135,23 @@ const TAG_DELETION_FAILED_VALUE = JSON.stringify({ color: "#e74c3c" });
 // =============================================================================
 
 export interface AutoWorkspaceModuleDeps {
-  readonly fs: Pick<FileSystemBoundary, "readFile" | "writeFile">;
+  readonly fs: Pick<FileSystemBoundary, "readFile" | "rm">;
   readonly logger: Logger;
-  readonly stateFilePath: string;
+  /**
+   * Path of the pre-state.json `auto-workspaces.json`. Read once on first launch
+   * to import its entries into state.json, then deleted. Kept only for that
+   * one-shot migration.
+   */
+  readonly legacyStateFilePath: string;
   readonly dispatcher: Dispatcher;
   readonly sources: readonly AutoWorkspaceSource[];
   readonly configService: Config;
+  readonly stateService: StateService;
 }
 
 // =============================================================================
 // Helpers
 // =============================================================================
-
-function emptyState(): AutoWorkspaceState {
-  return { version: 1, entries: {} };
-}
 
 function stateKey(sourceName: string, itemKey: string): string {
   return `${sourceName}/${itemKey}`;
@@ -122,7 +174,18 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     templatePathConfigs.set(source.name, tplConfig);
   }
 
-  let state: AutoWorkspaceState = emptyState();
+  // Persisted tracking map, owned in state.json under the `auto-workspaces` key.
+  const stateAccessor = deps.stateService.register("auto-workspaces", {
+    default: {} as AutoWorkspaceEntries,
+    description: "Auto-workspace tracking entries (app-managed)",
+    sensitive: true,
+    ...storeCustom<AutoWorkspaceEntries>({
+      parse: (raw) => validateEntries(safeJsonParse(raw)),
+      validate: validateEntries,
+    }),
+  });
+
+  let entries: AutoWorkspaceEntries = {};
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   // Per-source activation state
   const templatePaths = new Map<string, string | null>(); // sourceName → template path
@@ -131,26 +194,59 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
   // ------ State Persistence ------
 
-  async function loadState(): Promise<AutoWorkspaceState> {
+  // This module is the sole in-process owner of the entries map, so it writes
+  // the whole value rather than read-modify-writing it. Cross-key safety (the
+  // shared state.json) comes from PersistedStore serializing its writes.
+  async function persist(): Promise<void> {
     try {
-      const raw = await deps.fs.readFile(deps.stateFilePath);
-      const parsed = JSON.parse(raw) as AutoWorkspaceState;
-      if (parsed.version === 1 && typeof parsed.entries === "object") {
-        return parsed;
-      }
-      deps.logger.warn("Invalid auto-workspace state file, starting fresh");
-      return emptyState();
-    } catch {
-      return emptyState();
-    }
-  }
-
-  async function saveState(): Promise<void> {
-    try {
-      await deps.fs.writeFile(deps.stateFilePath, JSON.stringify(state, null, 2));
+      await stateAccessor.set(entries);
     } catch (error) {
       deps.logger.warn("Failed to save auto-workspace state", { error: getErrorMessage(error) });
     }
+  }
+
+  /**
+   * One-shot import of the pre-state.json `auto-workspaces.json` file. Runs once
+   * on first launch after upgrade: if state.json has no entries yet and the old
+   * file exists, import its `entries` and delete it. Guarding on isDefault()
+   * (not file-existence) makes a lingering file harmless — once the key is
+   * populated, it wins. Best-effort: failures retry next launch.
+   */
+  async function migrateLegacyStateFile(): Promise<void> {
+    if (!stateAccessor.isDefault()) return;
+
+    let raw: string;
+    try {
+      raw = await deps.fs.readFile(deps.legacyStateFilePath);
+    } catch {
+      return; // no legacy file — nothing to migrate
+    }
+
+    // Old shape was { version, entries }; tolerate a bare map too.
+    const parsed = safeJsonParse(raw);
+    const entriesValue =
+      typeof parsed === "object" && parsed !== null && "entries" in parsed
+        ? (parsed as { entries: unknown }).entries
+        : parsed;
+    const migrated = validateEntries(entriesValue);
+
+    if (migrated && Object.keys(migrated).length > 0) {
+      try {
+        await stateAccessor.set(migrated);
+        deps.logger.info("Migrated auto-workspaces.json into state.json", {
+          count: Object.keys(migrated).length,
+        });
+      } catch (error) {
+        // Leave the legacy file in place so the migration retries next launch.
+        deps.logger.warn("Failed to migrate auto-workspaces.json into state.json", {
+          error: getErrorMessage(error),
+        });
+        return;
+      }
+    }
+
+    // Best-effort cleanup of the superseded file (imported or empty/unusable).
+    await deps.fs.rm(deps.legacyStateFilePath, { force: true }).catch(() => {});
   }
 
   // ------ Tracked Paths (metadata-based) ------
@@ -194,7 +290,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       // Empty prompt → dismiss
       if (!config.prompt.trim()) {
         deps.logger.info("Skipping auto-workspace (template resolved to empty)", { key });
-        state = { ...state, entries: { ...state.entries, [key]: null } };
+        entries = { ...entries, [key]: null };
         return;
       }
 
@@ -209,14 +305,14 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       // No project source → dismiss
       if (!projectPayload) {
         deps.logger.info("Skipping auto-workspace (no project/git in template)", { key });
-        state = { ...state, entries: { ...state.entries, [key]: null } };
+        entries = { ...entries, [key]: null };
         return;
       }
 
       // No name → dismiss with warning
       if (!config.name) {
         deps.logger.warn("Skipping auto-workspace (no name in template)", { key });
-        state = { ...state, entries: { ...state.entries, [key]: null } };
+        entries = { ...entries, [key]: null };
         return;
       }
 
@@ -296,15 +392,12 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       }
 
       // Record in state
-      state = {
-        ...state,
-        entries: {
-          ...state.entries,
-          [key]: {
-            workspacePath,
-            workspaceName: config.name,
-            createdAt: new Date().toISOString(),
-          },
+      entries = {
+        ...entries,
+        [key]: {
+          workspacePath,
+          workspaceName: config.name,
+          createdAt: new Date().toISOString(),
         },
       };
 
@@ -319,7 +412,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         error: getErrorMessage(error),
       });
       // Dismiss to avoid re-evaluation every poll cycle
-      state = { ...state, entries: { ...state.entries, [key]: null } };
+      entries = { ...entries, [key]: null };
     }
   }
 
@@ -384,7 +477,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
     // Build trackedKeys from state entries for this source
     const trackedKeys = new Set<string>();
-    for (const key of Object.keys(state.entries)) {
+    for (const key of Object.keys(entries)) {
       if (key.startsWith(prefix)) {
         trackedKeys.add(key.slice(prefix.length));
       }
@@ -416,7 +509,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
 
     let stateChanged = false;
-    const stateBefore = state;
+    const entriesBefore = entries;
 
     // Build set of full state keys that are still active
     const activeStateKeys = new Set<string>();
@@ -426,7 +519,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
     // Detect disappeared items
     const trackedPaths = await buildTrackedPaths();
-    for (const [key, entry] of Object.entries(state.entries)) {
+    for (const [key, entry] of Object.entries(entries)) {
       if (!key.startsWith(prefix)) continue;
       if (activeStateKeys.has(key)) continue;
 
@@ -436,10 +529,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           source: source.name,
           key,
         });
-        const remaining = Object.fromEntries(
-          Object.entries(state.entries).filter(([k]) => k !== key)
-        );
-        state = { ...state, entries: remaining };
+        entries = Object.fromEntries(Object.entries(entries).filter(([k]) => k !== key));
       } else if (trackedPaths.has(entry.workspacePath)) {
         // Active entry with tracked metadata — auto-delete (deleteWorkspace logs)
         await deleteWorkspace(source, key, entry);
@@ -458,7 +548,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       await createWorkspace(source, item);
     }
 
-    if (state !== stateBefore) {
+    if (entries !== entriesBefore) {
       stateChanged = true;
     }
 
@@ -475,7 +565,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     }
 
     if (anyChanged) {
-      await saveState();
+      await persist();
     }
   }
 
@@ -522,7 +612,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   }
 
   async function activateAll(): Promise<void> {
-    state = await loadState();
+    await migrateLegacyStateFile();
+    entries = stateAccessor.get();
 
     for (const source of deps.sources) {
       await activateSource(source);
@@ -577,22 +668,16 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         handler: async (event: DomainEvent): Promise<void> => {
           const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
 
-          for (const [key, entry] of Object.entries(state.entries)) {
+          for (const [key, entry] of Object.entries(entries)) {
             if (entry?.workspacePath === workspacePath) {
               if (deletingKeys.has(key)) {
                 // Auto-deletion — remove entry entirely
-                const remaining = Object.fromEntries(
-                  Object.entries(state.entries).filter(([k]) => k !== key)
-                );
-                state = { ...state, entries: remaining };
+                entries = Object.fromEntries(Object.entries(entries).filter(([k]) => k !== key));
               } else {
                 // Manual deletion — set to null to prevent re-creation
-                state = {
-                  ...state,
-                  entries: { ...state.entries, [key]: null },
-                };
+                entries = { ...entries, [key]: null };
               }
-              void saveState();
+              await persist();
               deps.logger.info("Marked auto-workspace as dismissed", {
                 key,
                 workspaceName: entry.workspaceName,
@@ -606,12 +691,15 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         handler: async (event: DomainEvent): Promise<void> => {
           const { workspacePath } = (event as WorkspaceDeleteFailedEvent).payload;
 
+          // Runs inside the dispatch .catch() handlers below, so it can't be
+          // awaited here; PersistedStore serializes the write, so the
+          // fire-and-forget persist() stays race-safe.
           const dismissEntry = (key: string): void => {
-            state = { ...state, entries: { ...state.entries, [key]: null } };
-            void saveState();
+            entries = { ...entries, [key]: null };
+            void persist();
           };
 
-          for (const [key, entry] of Object.entries(state.entries)) {
+          for (const [key, entry] of Object.entries(entries)) {
             if (entry?.workspacePath === workspacePath && deletingKeys.has(key)) {
               void deps.dispatcher
                 .dispatch({

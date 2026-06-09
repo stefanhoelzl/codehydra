@@ -333,14 +333,15 @@ Source of truth: Config definitions are registered by modules via `Config.regist
 
 ### Persisted State (state.json)
 
-Values the **app writes at runtime** (not user-authored settings) live in `state.json` (data dir, alongside `auto-workspaces.json`), not `config.json`. `StateService` (`src/boundaries/platform/state-service.ts`) is the Config sibling for these: same `register()`/accessor API, but a minimal async single-file load — no env/CLI overrides, no precedence. Both services compose a shared `PersistedStore` (`persisted-store.ts`: register + accessor + read-modify-write persistence).
+Values the **app writes at runtime** (not user-authored settings) live in `state.json` (data dir), not `config.json`. `StateService` (`src/boundaries/platform/state-service.ts`) is the Config sibling for these: same `register()`/accessor API, but a minimal async single-file load — no env/CLI overrides, no precedence. Both services compose a shared `PersistedStore` (`persisted-store.ts`: register + accessor + read-modify-write persistence). `PersistedStore` **serializes its writes** (per-instance promise chain), so several owners sharing one file (state.json) can't lose an update to interleaved read-modify-writes.
 
-| State key (state.json)     | Owner               | Description                                                     |
-| -------------------------- | ------------------- | --------------------------------------------------------------- |
-| `telemetry.distinct-id`    | posthog-module      | Auto-generated telemetry user id (sensitive)                    |
-| `update.dismissed-version` | auto-updater-module | The update version the user last dismissed (silences re-notify) |
+| State key (state.json)     | Owner                 | Description                                                                                                               |
+| -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `telemetry.distinct-id`    | posthog-module        | Auto-generated telemetry user id (sensitive)                                                                              |
+| `update.dismissed-version` | auto-updater-module   | The update version the user last dismissed (silences re-notify)                                                           |
+| `auto-workspaces`          | auto-workspace-module | `Record<"${source}/${item}", {workspacePath,workspaceName,createdAt}\|null>` tracking map; `null` = dismissed (sensitive) |
 
-Each owning module registers the live key in `StateService` plus a read-only `deprecated` shadow in Config, and contributes a `{from, to}` pair to the migration registry. The `state` module (`src/modules/state-module.ts`) loads `state.json` and runs migrations in the `app:start` "init" hook: for a value still in `config.json` from an older build, it seeds `state.json` and strips it from `config.json` via the shadow's `reset()`.
+Two migration shapes feed `state.json`. (1) **config→state** (telemetry, update): the owning module registers the live key in `StateService` plus a read-only `deprecated` shadow in Config and contributes a `{from, to}` pair to the migration registry; the `state` module (`src/modules/state-module.ts`) drains it in the `app:start` "init" hook, seeding `state.json` from `config.json` and stripping the shadow via `reset()`. (2) **file→state** (auto-workspaces): the auto-workspace module does a one-shot import of the pre-state.json `auto-workspaces.json` at activation — if its key is still default and the old file exists, it imports the entries and deletes the file (guarded on `isDefault()`, so a lingering file is harmless).
 
 `deprecated: true` config keys are **readable** (`get()` returns the loaded value) but **not settable** (`set()` throws); `reset()` deletes the key from `config.json`. This makes a deprecated key a clean one-shot migration source.
 
