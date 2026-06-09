@@ -149,11 +149,13 @@ export function setupDomainEvents(
   unsubscribes.push(
     api.on("workspace:status-changed", (event) => {
       stores.updateAgentStatus(event, event.status);
-      // Play chime when idle count increases (agent finished work)
-      // Note: status uses AgentStatus type which has counts in the busy/idle/mixed variants
-      if (event.status.agent.type !== "none" && "counts" in event.status.agent) {
-        notificationService.handleStatusChange(event.path, event.status.agent.counts);
-      }
+      // Play chime when idle count increases (agent finished work).
+      // Treat "none" (agent gone — e.g. agent terminal closed) as zero idle so a
+      // later gray → green transition (reopening the terminal) registers as an
+      // idle increase and chimes. The "none" variant carries no counts.
+      const counts =
+        "counts" in event.status.agent ? event.status.agent.counts : { idle: 0, busy: 0 };
+      notificationService.handleStatusChange(event.path, counts);
     })
   );
 

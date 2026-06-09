@@ -169,7 +169,7 @@ describe("ClaudeCodeServerManager integration", () => {
       const port = await serverManager.startServer("/workspace/feature-a");
 
       // WrapperStart sets status to idle
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
       expect(readyCallback).toHaveBeenCalledTimes(1);
       expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
 
@@ -186,7 +186,7 @@ describe("ClaudeCodeServerManager integration", () => {
       const port = await serverManager.startServer("/workspace/feature-a");
 
       // WrapperStart sets status to idle, should trigger markActiveHandler
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
 
@@ -304,10 +304,16 @@ describe("ClaudeCodeServerManager integration", () => {
         for (const hook of setupHooks) {
           await sendHook(port, hook, { workspacePath: "/workspace/feature-a" });
         }
-        await sendHook(port, hookName, {
-          workspacePath: "/workspace/feature-a",
-          ...extraPayload,
-        });
+        if (hookName === "WrapperStart" || hookName === "WrapperEnd") {
+          // Wrapper lifecycle hooks are no longer accepted over HTTP — they are
+          // driven internally (via the sidekick's agent:lifecycle event).
+          serverManager.triggerWrapperLifecycle("/workspace/feature-a", hookName);
+        } else {
+          await sendHook(port, hookName, {
+            workspacePath: "/workspace/feature-a",
+            ...extraPayload,
+          });
+        }
 
         expect(statusChanges).toEqual(expectedChanges);
         expect(serverManager.getStatus("/workspace/feature-a")).toBe(finalStatus);
@@ -316,6 +322,42 @@ describe("ClaudeCodeServerManager integration", () => {
         }
       }
     );
+
+    it("rejects WrapperStart/WrapperEnd over HTTP (driven internally only)", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      const startRes = await sendHook(port, "WrapperStart", {
+        workspacePath: "/workspace/feature-a",
+      });
+      const endRes = await sendHook(port, "WrapperEnd", {
+        workspacePath: "/workspace/feature-a",
+      });
+
+      expect(startRes.status).toBe(404);
+      expect(endRes.status).toBe(404);
+      // No status changes — the HTTP path must not drive wrapper lifecycle.
+      expect(statusChanges).toEqual([]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
+    });
+
+    it("WrapperEnd is idempotent — a second call produces no extra transition", async () => {
+      await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperEnd");
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperEnd");
+
+      expect(statusChanges).toEqual(["idle", "none"]);
+      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
+    });
 
     it("SessionStart during automatic compaction stays busy", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
@@ -429,10 +471,10 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "PreCompact", { workspacePath: "/workspace/feature-a" });
 
       // Claude exits before SessionStart (abnormal exit clears flag)
-      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperEnd");
 
       // New session should go idle (flag was defensively cleared)
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
 
       expect(statusChanges).toEqual(["idle", "busy", "none", "idle"]);
@@ -938,7 +980,7 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("WrapperStart with non-plan initial prompt sets status to busy", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
+      await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
         statusChanges.push(status);
@@ -956,7 +998,7 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       // WrapperStart should set status to busy instead of idle
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["busy"]);
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
@@ -976,7 +1018,7 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       // Full startup sequence: WrapperStart → SessionStart → UserPromptSubmit
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
 
@@ -986,7 +1028,7 @@ describe("ClaudeCodeServerManager integration", () => {
     });
 
     it("WrapperStart with plan initial prompt sets status to idle", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
+      await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
         statusChanges.push(status);
@@ -999,14 +1041,14 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       // WrapperStart should set status to idle (normal behavior)
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["idle"]);
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("WrapperStart without initial prompt sets status to idle", async () => {
-      const port = await serverManager.startServer("/workspace/feature-a");
+      await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
         statusChanges.push(status);
@@ -1015,7 +1057,7 @@ describe("ClaudeCodeServerManager integration", () => {
       // No setInitialPrompt called
 
       // WrapperStart should set status to idle (normal behavior)
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["idle"]);
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
@@ -1033,14 +1075,14 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       // First session: flag consumed on SessionStart
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
-      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperEnd");
 
       // Second session: normal idle behavior
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["busy", "idle", "none", "idle"]);
       expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
@@ -1290,12 +1332,12 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
 
       // WrapperEnd — clears all tracking
-      await sendHook(port, "WrapperEnd", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperEnd");
 
       expect(statusChanges).toEqual(["idle", "busy", "none"]);
 
       // New session: Stop should go idle normally (sub-agent tracking was cleared)
-      await sendHook(port, "WrapperStart", { workspacePath: "/workspace/feature-a" });
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });

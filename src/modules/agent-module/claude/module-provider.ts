@@ -16,6 +16,7 @@ import type {
   WorkspaceStartResult,
 } from "../agent-module-provider";
 import type { AgentProvider, AgentSessionInfo, AgentStatus, McpConfig } from "../types";
+import type { AgentLifecycleEvent } from "../../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type {
   ArchiveExtension,
@@ -382,6 +383,13 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
 
     async restartWorkspace(workspacePath: string): Promise<RestartServerResult> {
       return serverManager.restartServer(workspacePath);
+    },
+
+    applyTerminalLifecycle(workspacePath: string, event: AgentLifecycleEvent): void {
+      serverManager.triggerWrapperLifecycle(
+        workspacePath,
+        event === "open" ? "WrapperStart" : "WrapperEnd"
+      );
     },
 
     // --- Query ---

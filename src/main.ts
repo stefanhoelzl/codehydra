@@ -86,6 +86,7 @@ import {
 } from "./intents/get-workspace-status";
 import { GetAgentSessionOperation, INTENT_GET_AGENT_SESSION } from "./intents/get-agent-session";
 import { RestartAgentOperation, INTENT_RESTART_AGENT } from "./intents/restart-agent";
+import { AgentLifecycleOperation, INTENT_AGENT_LIFECYCLE } from "./intents/agent-lifecycle";
 import {
   GetActiveWorkspaceOperation,
   INTENT_GET_ACTIVE_WORKSPACE,
@@ -687,6 +688,7 @@ dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
 dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
 dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
 dispatcher.registerOperation(INTENT_RESTART_AGENT, new RestartAgentOperation());
+dispatcher.registerOperation(INTENT_AGENT_LIFECYCLE, new AgentLifecycleOperation());
 dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_LIST_PROJECTS, new ListProjectsOperation());
 dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());

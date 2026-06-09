@@ -20,7 +20,9 @@ import type {
   RestartServerResult,
 } from "../types";
 import type { AgentSessionInfo } from "../types";
+import type { AgentLifecycleEvent } from "../../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
+import { Path } from "../../../utils/path/path";
 import type {
   ArchiveExtension,
   DownloadProgressCallback,
@@ -209,6 +211,14 @@ export function createOpenCodeModuleProvider(
     }
   }
 
+  function markProviderInactive(path: WorkspacePath): void {
+    tuiAttachedWorkspaces.delete(path);
+    const provider = providers.get(path);
+    if (provider) {
+      provider.detachTui?.();
+    }
+  }
+
   // ===========================================================================
   // Internal functions
   // ===========================================================================
@@ -251,12 +261,6 @@ export function createOpenCodeModuleProvider(
       try {
         await provider.connect(port);
         await provider.fetchStatus();
-
-        // Set bridge port so getEnvironmentVariables() includes it
-        const bridgePort = serverManager.getBridgePort();
-        if (bridgePort !== null) {
-          provider.setBridgePort(bridgePort);
-        }
 
         addProvider(workspacePath, provider);
 
@@ -426,6 +430,16 @@ export function createOpenCodeModuleProvider(
 
     async restartWorkspace(workspacePath: string): Promise<RestartServerResult> {
       return serverManager.restartServer(workspacePath);
+    },
+
+    applyTerminalLifecycle(workspacePath: string, event: AgentLifecycleEvent): void {
+      if (event === "open") {
+        // Clears the loading screen (workspace-ready) and marks active (TUI attached),
+        // mirroring the old WrapperStart bridge route.
+        serverManager.triggerWrapperStart(workspacePath);
+      } else {
+        markProviderInactive(new Path(workspacePath).toString() as WorkspacePath);
+      }
     },
 
     // --- Query ---

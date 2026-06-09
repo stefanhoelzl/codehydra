@@ -58,6 +58,7 @@ import {
   validateWorkspaceCreateRequest,
   validateGetWorkspaceStatusRequest,
   validateLogRequest,
+  validateAgentLifecycleRequest,
 } from "../shared/plugin-protocol";
 import type { OpenSystemPathRequest } from "../shared/plugin-protocol";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
@@ -83,6 +84,8 @@ import {
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
 import { INTENT_RESTART_AGENT } from "../intents/restart-agent";
+import type { AgentLifecycleIntent } from "../intents/agent-lifecycle";
+import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
 import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
 import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
@@ -778,6 +781,25 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
 
       const level = request.level as LogLevel;
       logAtLevel(extensionLogger, level, request.message, context);
+    });
+
+    // Handle api:workspace:agentLifecycle (fire-and-forget) — drives agent
+    // status open/close by dispatching the agent:lifecycle intent.
+    socket.on("api:workspace:agentLifecycle", (request) => {
+      const validation = validateAgentLifecycleRequest(request);
+      if (!validation.valid) {
+        logger.warn("Invalid agentLifecycle request", {
+          workspace: workspacePath,
+          error: validation.error,
+        });
+        return;
+      }
+
+      const intent: AgentLifecycleIntent = {
+        type: INTENT_AGENT_LIFECYCLE,
+        payload: { workspacePath, event: request.event },
+      };
+      void dispatcher.dispatch(intent);
     });
   }
 

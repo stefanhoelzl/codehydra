@@ -40,6 +40,7 @@ import { GET_AGENT_SESSION_OPERATION_ID } from "../../intents/get-agent-session"
 import type { GetAgentSessionHookResult } from "../../intents/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID } from "../../intents/restart-agent";
 import type { RestartAgentHookResult } from "../../intents/restart-agent";
+import { AGENT_LIFECYCLE_OPERATION_ID } from "../../intents/agent-lifecycle";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { createAgentModule, type AgentModuleDeps } from "./agent-module";
 import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-provider";
@@ -79,6 +80,7 @@ function createMockProvider(overrides: Partial<AgentModuleProvider> = {}): Agent
     } satisfies WorkspaceStartResult),
     stopWorkspace: vi.fn().mockResolvedValue({ success: true }),
     restartWorkspace: vi.fn().mockResolvedValue({ success: true, port: 8081 }),
+    applyTerminalLifecycle: vi.fn(),
     getStatus: vi.fn().mockReturnValue({
       status: "none",
       counts: { idle: 0, busy: 0 },
@@ -1228,6 +1230,64 @@ describe("createAgentModule", () => {
 
       expect(result).toBeUndefined();
       expect(mockProvider.restartWorkspace).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // lifecycle (agent:lifecycle)
+  // ---------------------------------------------------------------------------
+
+  describe("lifecycle", () => {
+    function registerLifecycleOp(dispatcher: Dispatcher, agent: string): void {
+      dispatcher.registerOperation(
+        "agent:lifecycle",
+        createMinimalOperation<Intent, void>(AGENT_LIFECYCLE_OPERATION_ID, "lifecycle", {
+          hookContext: (ctx) => ({
+            intent: ctx.intent,
+            workspacePath: (ctx.intent.payload as { workspacePath: string }).workspacePath,
+            event: (ctx.intent.payload as { event: "open" | "close" }).event,
+            capabilities: { agent },
+          }),
+        })
+      );
+    }
+
+    it("forwards open to provider.applyTerminalLifecycle when active", async () => {
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
+      registerLifecycleOp(dispatcher, "claude");
+
+      await dispatcher.dispatch({
+        type: "agent:lifecycle",
+        payload: { workspacePath: "/test/workspace", event: "open" },
+      });
+
+      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith("/test/workspace", "open");
+    });
+
+    it("forwards close to provider.applyTerminalLifecycle when active", async () => {
+      const { dispatcher, agentConfig, mockProvider } = createTestSetup();
+      await activateModule(dispatcher, agentConfig);
+      registerLifecycleOp(dispatcher, "claude");
+
+      await dispatcher.dispatch({
+        type: "agent:lifecycle",
+        payload: { workspacePath: "/test/workspace", event: "close" },
+      });
+
+      expect(mockProvider.applyTerminalLifecycle).toHaveBeenCalledWith("/test/workspace", "close");
+    });
+
+    it("does not run when agent capability does not match provider type", async () => {
+      const { dispatcher, mockProvider } = createTestSetup();
+      registerLifecycleOp(dispatcher, "opencode");
+
+      await dispatcher.dispatch({
+        type: "agent:lifecycle",
+        payload: { workspacePath: "/test/workspace", event: "open" },
+      });
+
+      expect(mockProvider.applyTerminalLifecycle).not.toHaveBeenCalled();
     });
   });
 

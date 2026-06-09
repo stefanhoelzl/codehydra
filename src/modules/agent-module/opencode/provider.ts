@@ -36,12 +36,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   private _port: number | null = null;
 
   /**
-   * Bridge server port for wrapper notifications.
-   * Set via setBridgePort() after server starts.
-   */
-  private _bridgePort: number | null = null;
-
-  /**
    * Primary session ID for this workspace.
    * Created or found during connect(), preserved during restart.
    */
@@ -100,18 +94,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       _CH_OPENCODE_SESSION_ID: session.sessionId,
       _CH_WORKSPACE_PATH: this.workspacePath,
     };
-    if (this._bridgePort !== null) {
-      envVars._CH_BRIDGE_PORT = String(this._bridgePort);
-    }
     return envVars;
-  }
-
-  /**
-   * Set the bridge server port for wrapper notifications.
-   * Called after the server starts when the bridge is known to be running.
-   */
-  setBridgePort(port: number): void {
-    this._bridgePort = port;
   }
 
   /**
@@ -128,6 +111,19 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   markActive(): void {
     if (!this.tuiAttached) {
       this.tuiAttached = true;
+      this.notifyStatusChange();
+    }
+  }
+
+  /**
+   * Detach the TUI without stopping the SDK server.
+   * Called when the agent terminal closes (sidekick "close" lifecycle): sets
+   * tuiAttached=false so status reports "none", while keeping the SDK server and
+   * session state alive so the user can re-attach. Idempotent.
+   */
+  detachTui(): void {
+    if (this.tuiAttached) {
+      this.tuiAttached = false;
       this.notifyStatusChange();
     }
   }
@@ -370,7 +366,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       this.client = null;
     }
     this._port = null;
-    this._bridgePort = null;
     this._primarySessionId = null;
     this.clientStatus = "idle";
     this.tuiAttached = false;

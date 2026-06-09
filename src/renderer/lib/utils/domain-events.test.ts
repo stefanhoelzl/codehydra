@@ -315,7 +315,7 @@ describe("setupDomainEvents", () => {
       });
     });
 
-    it("does not call notification service when agent type is none", () => {
+    it("resets notification tracking to zero idle when agent type is none", () => {
       const handleStatusChangeSpy = vi.spyOn(mockNotificationService, "handleStatusChange");
 
       setupDomainEvents(mockApi.api, mockStores, undefined, {
@@ -329,7 +329,11 @@ describe("setupDomainEvents", () => {
       };
       mockApi.emit("workspace:status-changed", { ...TEST_WORKSPACE_REF, status });
 
-      expect(handleStatusChangeSpy).not.toHaveBeenCalled();
+      // "none" carries no counts; we pass zero so a later idle counts as an increase.
+      expect(handleStatusChangeSpy).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, {
+        idle: 0,
+        busy: 0,
+      });
     });
 
     it("cleans up notification service when workspace is removed", () => {

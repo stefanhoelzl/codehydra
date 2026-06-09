@@ -122,6 +122,18 @@ let agentTerminal: vscode.Terminal | null = null;
 let terminalCloseListener: vscode.Disposable | null = null;
 
 /**
+ * Report an agent terminal lifecycle transition to the main process.
+ * Fire-and-forget; no-op when not connected. Drives agent status:
+ * "open" → WrapperStart, "close" → WrapperEnd / TUI detach. Replaces the
+ * wrapper-synthesized WrapperStart/WrapperEnd hooks.
+ */
+function emitAgentLifecycle(event: "open" | "close"): void {
+  if (!socket?.connected) return;
+  socket.emit("api:workspace:agentLifecycle", { event });
+  codehydraApi.log.debug("Agent lifecycle reported", { event });
+}
+
+/**
  * Open agent terminal in the editor area.
  * Creates a new terminal if none exists, otherwise focuses the existing one.
  * On reopened workspaces (show=false), disposes any stale restored terminals
@@ -174,6 +186,9 @@ function openAgentTerminal(
   agentTerminal.sendText(command);
   void extensionContext?.workspaceState.update("agentTerminalOpen", true);
 
+  // Agent terminal created → agent is starting (replaces wrapper's WrapperStart).
+  emitAgentLifecycle("open");
+
   codehydraApi.log.debug("Agent terminal opened", { agentType, command });
 }
 
@@ -189,6 +204,8 @@ function setupTerminalCloseListener(): void {
     if (terminal === agentTerminal) {
       agentTerminal = null;
       void extensionContext?.workspaceState.update("agentTerminalOpen", false);
+      // Agent terminal closed → agent gone (replaces wrapper's WrapperEnd).
+      emitAgentLifecycle("close");
       codehydraApi.log.debug("Agent terminal closed");
     }
   });

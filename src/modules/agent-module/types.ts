@@ -154,6 +154,13 @@ export interface AgentProvider {
   /** Mark agent as active (first MCP request received) */
   markActive(): void;
 
+  /**
+   * Detach the TUI without stopping the server (agent terminal closed).
+   * Optional — only providers with a TUI-attached status gate implement it
+   * (e.g. OpenCode). Claude drives terminal-close via its server-manager hook.
+   */
+  detachTui?(): void;
+
   /** Dispose the provider completely */
   dispose(): void;
 }

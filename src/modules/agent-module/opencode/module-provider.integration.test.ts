@@ -57,8 +57,8 @@ const {
     getSession = vi.fn().mockReturnValue({ port: 8080, sessionId: "s1" });
     getEnvironmentVariables = vi.fn().mockReturnValue({ _CH_OPENCODE_PORT: "8080" });
     markActive = vi.fn();
+    detachTui = vi.fn();
     fetchStatus = vi.fn().mockResolvedValue(undefined);
-    setBridgePort = vi.fn();
     getEffectiveCounts = vi.fn().mockReturnValue({ idle: 0, busy: 0 });
     createSession = vi.fn().mockResolvedValue({ ok: true, value: { id: "session-1" } });
     sendPrompt = vi.fn().mockResolvedValue({ ok: true, value: {} });
@@ -123,7 +123,7 @@ function createMockServerManager(): OpenCodeServerManager & {
     dispose: vi.fn().mockResolvedValue(undefined),
     setMcpConfig: vi.fn(),
     setMarkActiveHandler: vi.fn(),
-    getBridgePort: vi.fn().mockReturnValue(9090),
+    triggerWrapperStart: vi.fn(),
     onServerStarted: vi.fn((cb: ServerStartedHandler) => {
       startedHandler = cb;
       return vi.fn();
@@ -184,7 +184,7 @@ async function initializeAndStart(
   moduleProvider.initialize(null);
   serverManager._triggerStarted(workspacePath, port, pendingPrompt);
   // Wait for the full handleServerStarted chain to settle.
-  // addProvider is called after connect+fetchStatus+setBridgePort, and it calls onStatusChange.
+  // addProvider is called after connect+fetchStatus, and it calls onStatusChange.
   await vi.waitFor(() => {
     expect(getLatestMockProvider().onStatusChange).toHaveBeenCalled();
   });
@@ -307,19 +307,11 @@ describe("OpenCode module provider", () => {
   // ---------------------------------------------------------------------------
 
   describe("handleServerStarted", () => {
-    it("creates provider, connects, fetches status, and sets bridge port", async () => {
+    it("creates provider, connects, and fetches status", async () => {
       const mockProv = await initializeAndStart(provider, serverManager);
 
       expect(mockProv.connect).toHaveBeenCalledWith(8080);
       expect(mockProv.fetchStatus).toHaveBeenCalledOnce();
-      expect(mockProv.setBridgePort).toHaveBeenCalledWith(9090);
-    });
-
-    it("does not set bridge port when getBridgePort returns null", async () => {
-      vi.mocked(serverManager.getBridgePort).mockReturnValue(null);
-      const mockProv = await initializeAndStart(provider, serverManager);
-
-      expect(mockProv.setBridgePort).not.toHaveBeenCalled();
     });
 
     it("registers onStatusChange listener on new provider", async () => {
@@ -338,6 +330,35 @@ describe("OpenCode module provider", () => {
 
       // Should be the same provider (reconnect on existing, not a new MockOpenCodeProvider)
       expect(firstProvider.reconnect).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // applyTerminalLifecycle (open/close)
+  // ---------------------------------------------------------------------------
+
+  describe("applyTerminalLifecycle", () => {
+    it("open triggers wrapper-start (loading-screen clear + mark active)", async () => {
+      await initializeAndStart(provider, serverManager);
+
+      provider.applyTerminalLifecycle(WS_PATH, "open");
+
+      expect(serverManager.triggerWrapperStart).toHaveBeenCalledWith(WS_PATH);
+    });
+
+    it("close detaches the TUI on the provider (status → none)", async () => {
+      const mockProv = await initializeAndStart(provider, serverManager);
+
+      provider.applyTerminalLifecycle(WS_PATH, "close");
+
+      expect(mockProv.detachTui).toHaveBeenCalledOnce();
+    });
+
+    it("close is a no-op for an unknown workspace", async () => {
+      await initializeAndStart(provider, serverManager);
+
+      // Different workspace with no provider — must not throw.
+      expect(() => provider.applyTerminalLifecycle(WS_PATH_B, "close")).not.toThrow();
     });
   });
 
