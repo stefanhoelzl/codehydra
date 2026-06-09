@@ -328,11 +328,14 @@ Remember to recalculate position on window resize when the dropdown is open.
 **Features:**
 
 - Native `<input type="text">` for filtering (documented exception - `<vscode-textfield>` doesn't support combobox pattern)
-- Debounced filtering (200ms default)
-- Keyboard navigation (↑↓ navigate, Enter select, Escape close, Tab select + move focus)
+- Built-in filtering: case-insensitive substring on the label; headers are shown only while their group has a match (`filterOption` overrides the per-option matching)
+- Debounced filtering (200ms default; `debounceMs: 0` filters synchronously)
+- Keyboard navigation (↑↓ navigate, Enter selects the highlighted option — with no highlight it commits typed text/exact match and calls `onEnter`, Escape close, Tab select + move focus)
 - Fixed positioning to escape container overflow
 - ARIA combobox accessibility pattern
 - Snippet slot for custom option rendering
+- Invalid state (`invalid` + `describedBy`) for validation errors
+- Renders the declarative Form's `dropdown` (combobox) sections (see `src/shared/dialog-types.ts`)
 
 **displayText/filterText Separation:**
 
@@ -350,17 +353,19 @@ interface FilterableDropdownProps {
   options: DropdownOption[];
   value: string;
   onSelect: (value: string) => void;
-  filterOption: (option: DropdownOption, filterLowercase: string) => boolean;
+  filterOption?: (option: DropdownOption, filterLowercase: string) => boolean; // options only; header visibility is automatic
   disabled?: boolean;
   placeholder?: string;
   id?: string;
   debounceMs?: number;
   optionSnippet?: Snippet<[option: DropdownOption, highlighted: boolean]>;
   allowFreeText?: boolean; // Enter with no selection calls onSelect with typed text
-  onEnter?: () => void; // Called after Enter key is handled
+  onEnter?: () => void; // Called on Enter with no highlighted option (after any commit)
   onInput?: (value: string) => void; // Called on every input change
   openOnFocus?: boolean; // Open dropdown on focus (default: true)
   autofocus?: boolean; // Focus input on mount
+  invalid?: boolean; // Render as invalid (red border)
+  describedBy?: string; // id of the describing element (e.g. a validation error)
 }
 
 type DropdownOption = {
@@ -379,15 +384,13 @@ Domain-specific dropdowns (BranchDropdown, ProjectDropdown) wrap FilterableDropd
 <script>
   // 1. Fetch data (async loading, error handling)
   // 2. Transform to DropdownOption[] (add headers, normalize values)
-  // 3. Provide custom filterOption function
-  // 4. Optionally provide custom optionSnippet for rendering
+  // 3. Optionally provide custom optionSnippet for rendering
 </script>
 
 <FilterableDropdown
   options={transformedOptions}
   {value}
   {onSelect}
-  filterOption={filterBranch}
   optionSnippet={branchOptionSnippet}
 />
 ```
@@ -406,6 +409,7 @@ const options: DropdownOption[] = [
 ```
 
 - Headers are skipped during keyboard navigation
+- Headers are filtered automatically: shown only while at least one option in their group matches
 - Headers should be rendered differently (non-interactive styling) via `optionSnippet`
 
 ---

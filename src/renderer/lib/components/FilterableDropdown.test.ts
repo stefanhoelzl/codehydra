@@ -19,14 +19,6 @@ function createHeader(label: string): { type: "header"; label: string; value: st
   return { type: "header", label, value: `__header_${label}__` };
 }
 
-// Default filter function - filters by label
-function defaultFilter(
-  option: { type: "option" | "header"; label: string; value: string },
-  filterLowercase: string
-): boolean {
-  return option.type === "header" || option.label.toLowerCase().includes(filterLowercase);
-}
-
 describe("FilterableDropdown component", () => {
   const defaultOptions = [createOption("Apple"), createOption("Banana"), createOption("Cherry")];
 
@@ -34,7 +26,6 @@ describe("FilterableDropdown component", () => {
     options: defaultOptions,
     value: "",
     onSelect: vi.fn(),
-    filterOption: defaultFilter,
   };
 
   beforeEach(() => {
@@ -152,7 +143,7 @@ describe("FilterableDropdown component", () => {
       expect(screen.queryByText("Cherry")).not.toBeInTheDocument();
     });
 
-    it("filters options using callback", async () => {
+    it("filters options by case-insensitive label substring by default", async () => {
       render(FilterableDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
@@ -166,6 +157,64 @@ describe("FilterableDropdown component", () => {
       expect(screen.getByText("Apple")).toBeInTheDocument();
       expect(screen.queryByText("Banana")).not.toBeInTheDocument();
       expect(screen.queryByText("Cherry")).not.toBeInTheDocument();
+    });
+
+    it("uses a custom filterOption override when provided", async () => {
+      // Filter by VALUE prefix instead of label substring.
+      const filterOption = (opt: { label: string; value: string }, lower: string): boolean =>
+        opt.value.toLowerCase().startsWith(lower);
+      render(FilterableDropdown, {
+        props: {
+          ...defaultProps,
+          options: [createOption("Apple", "fruit-a"), createOption("Banana", "fruit-b")],
+          filterOption,
+        },
+      });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "fruit-b" } });
+
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      expect(screen.queryByText("Apple")).not.toBeInTheDocument();
+      expect(screen.getByText("Banana")).toBeInTheDocument();
+    });
+
+    it("filters synchronously when debounceMs is 0", async () => {
+      render(FilterableDropdown, { props: { ...defaultProps, debounceMs: 0 } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "ban" } });
+      await tick();
+
+      // No timer advance needed - the filter applies immediately.
+      expect(screen.queryByText("Apple")).not.toBeInTheDocument();
+      expect(screen.getByText("Banana")).toBeInTheDocument();
+    });
+
+    it("hides a header while its group has no matching option", async () => {
+      const optionsWithHeaders = [
+        createHeader("Fruits"),
+        createOption("Apple"),
+        createHeader("Vegetables"),
+        createOption("Carrot"),
+      ];
+      render(FilterableDropdown, { props: { ...defaultProps, options: optionsWithHeaders } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "carrot" } });
+
+      await vi.advanceTimersByTimeAsync(250);
+      await tick();
+
+      expect(screen.queryByText("Fruits")).not.toBeInTheDocument();
+      expect(screen.queryByText("Apple")).not.toBeInTheDocument();
+      expect(screen.getByText("Vegetables")).toBeInTheDocument();
+      expect(screen.getByText("Carrot")).toBeInTheDocument();
     });
 
     it("empty filter shows all options", async () => {
@@ -688,7 +737,7 @@ describe("FilterableDropdown component", () => {
   });
 
   describe("allowFreeText", () => {
-    it("Enter with no selection does nothing when allowFreeText is false", async () => {
+    it("Enter with no highlight selects nothing when text matches no option (allowFreeText false)", async () => {
       const onSelect = vi.fn();
       render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: false } });
 
@@ -698,6 +747,18 @@ describe("FilterableDropdown component", () => {
       await fireEvent.keyDown(input, { key: "Enter" });
 
       expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("Enter with no highlight selects the exact label match (allowFreeText false)", async () => {
+      const onSelect = vi.fn();
+      render(FilterableDropdown, { props: { ...defaultProps, onSelect, allowFreeText: false } });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "banana" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+
+      expect(onSelect).toHaveBeenCalledWith("Banana");
     });
 
     it("Enter with no selection calls onSelect with typed text when allowFreeText is true", async () => {
@@ -767,9 +828,10 @@ describe("FilterableDropdown component", () => {
       expect(input.value).toBe("Banana");
     });
 
-    it("keeps valid match on blur when allowFreeText is false", async () => {
+    it("selects and canonicalizes an exact match on blur when allowFreeText is false", async () => {
+      const onSelect = vi.fn();
       render(FilterableDropdown, {
-        props: { ...defaultProps, value: "Banana", allowFreeText: false },
+        props: { ...defaultProps, onSelect, value: "Banana", allowFreeText: false },
       });
 
       const input = screen.getByRole("combobox") as HTMLInputElement;
@@ -780,10 +842,11 @@ describe("FilterableDropdown component", () => {
       await fireEvent.input(input, { target: { value: "apple" } });
       expect(input.value).toBe("apple");
 
-      // Blur should keep the valid value
+      // Blur selects the matching option, canonicalizing the displayed label.
       await fireEvent.blur(input);
 
-      expect(input.value).toBe("apple");
+      expect(onSelect).toHaveBeenCalledWith("Apple");
+      expect(input.value).toBe("Apple");
     });
 
     it("does not revert on blur when allowFreeText is true", async () => {
@@ -851,8 +914,9 @@ describe("FilterableDropdown component", () => {
       expect(onEnter).toHaveBeenCalledTimes(1);
     });
 
-    it("does not call onEnter when allowFreeText is false", async () => {
-      // No free text allowed = Enter does nothing, no onEnter
+    it("calls onEnter on Enter with no highlighted option when allowFreeText is false", async () => {
+      // Enter with no highlight hands the key to the parent (e.g. to submit a
+      // form's primary action) regardless of free-text mode.
       const onEnter = vi.fn();
       render(FilterableDropdown, {
         props: { ...defaultProps, onEnter, allowFreeText: false },
@@ -863,7 +927,29 @@ describe("FilterableDropdown component", () => {
       await fireEvent.input(input, { target: { value: "custom-value" } });
       await fireEvent.keyDown(input, { key: "Enter" });
 
-      expect(onEnter).not.toHaveBeenCalled();
+      expect(onEnter).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("invalid state", () => {
+    it("marks the input invalid and wires the describing element", async () => {
+      render(FilterableDropdown, {
+        props: { ...defaultProps, invalid: true, describedBy: "name-error" },
+      });
+
+      const input = screen.getByRole("combobox");
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(input).toHaveAttribute("aria-describedby", "name-error");
+      expect(input).toHaveClass("invalid");
+    });
+
+    it("has no invalid markup by default", async () => {
+      render(FilterableDropdown, { props: defaultProps });
+
+      const input = screen.getByRole("combobox");
+      expect(input).not.toHaveAttribute("aria-invalid");
+      expect(input).not.toHaveAttribute("aria-describedby");
+      expect(input).not.toHaveClass("invalid");
     });
   });
 

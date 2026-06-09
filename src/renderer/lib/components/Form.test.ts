@@ -34,19 +34,6 @@ function renderForm(config: DialogConfig, options?: { dialogId?: string }) {
   });
 }
 
-// happy-dom does not wire vscode-single-select's slotted <vscode-option>s,
-// so the component's own value resolution is inert here (it runs in real
-// Electron). Stub the element's `value` to emulate a user picking an option,
-// then dispatch the change our action listens for directly on the element.
-function pickOption(select: Element, value: string): Promise<unknown> {
-  Object.defineProperty(select, "value", {
-    configurable: true,
-    get: () => value,
-    set: () => {},
-  });
-  return fireEvent.change(select);
-}
-
 describe("Form component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -250,7 +237,7 @@ describe("Form component", () => {
     });
   });
 
-  // ---- Dropdown sections ----
+  // ---- Dropdown (combobox) sections ----
 
   describe("dropdown sections", () => {
     const dropdownConfig: DialogConfig = {
@@ -258,29 +245,34 @@ describe("Form component", () => {
         {
           type: "dropdown",
           id: "region",
-          options: [
-            { value: "us-east", label: "US East" },
-            { value: "us-west", label: "US West" },
+          suggestions: [
+            {
+              items: [
+                { value: "us-east", label: "US East" },
+                { value: "us-west", label: "US West" },
+              ],
+            },
           ],
         },
       ],
       actions: [{ id: "confirm", label: "Confirm" }],
     };
 
-    it("renders a single-select with its option labels", () => {
+    it("renders a combobox whose list shows the suggestion labels on focus", async () => {
       renderForm(dropdownConfig);
 
-      const select = document.querySelector("vscode-single-select");
-      expect(select).toBeInTheDocument();
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
 
-      const options = document.querySelectorAll("vscode-option");
-      expect(options).toHaveLength(2);
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
       expect(screen.getByText("US East")).toBeInTheDocument();
       expect(screen.getByText("US West")).toBeInTheDocument();
     });
 
-    it("defaults to the first option's value", async () => {
+    it("defaults to the first suggestion's value and displays its label", async () => {
       renderForm(dropdownConfig, { dialogId: "dd" });
+
+      expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("US East");
 
       await fireEvent.click(screen.getByText("Confirm"));
 
@@ -291,11 +283,30 @@ describe("Form component", () => {
       });
     });
 
-    it("reports the chosen option value after a change event", async () => {
-      renderForm(dropdownConfig, { dialogId: "dd" });
+    it("starts at the suggestion matching initialValue", async () => {
+      renderForm(
+        {
+          sections: [
+            {
+              type: "dropdown",
+              id: "region",
+              initialValue: "us-west",
+              suggestions: [
+                {
+                  items: [
+                    { value: "us-east", label: "US East" },
+                    { value: "us-west", label: "US West" },
+                  ],
+                },
+              ],
+            },
+          ],
+          actions: [{ id: "confirm", label: "Confirm" }],
+        },
+        { dialogId: "dd" }
+      );
 
-      const select = document.querySelector("vscode-single-select")!;
-      await pickOption(select, "us-west");
+      expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("US West");
 
       await fireEvent.click(screen.getByText("Confirm"));
 
@@ -306,13 +317,33 @@ describe("Form component", () => {
       });
     });
 
-    it("keeps the selected value when the config updates with the same options", async () => {
+    it("reports a picked suggestion's value while displaying its label", async () => {
+      renderForm(dropdownConfig, { dialogId: "dd" });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+      await fireEvent.focus(input);
+      // Options select on mousedown (prevents the blur-before-click issue).
+      await fireEvent.mouseDown(screen.getByText("US West"));
+
+      expect(input.value).toBe("US West");
+
+      await fireEvent.click(screen.getByText("Confirm"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dd",
+        actionId: "confirm",
+        data: { region: "us-west" },
+      });
+    });
+
+    it("keeps the selected value when the config updates with the same suggestions", async () => {
       const { rerender } = renderForm(dropdownConfig, { dialogId: "dd" });
 
-      const select = document.querySelector("vscode-single-select")!;
-      await pickOption(select, "us-west");
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.mouseDown(screen.getByText("US West"));
 
-      // Re-render with a new config object carrying the same option values.
+      // Re-render with a new config object carrying the same suggestion values.
       await rerender({
         dialogId: "dd",
         config: {
@@ -320,9 +351,13 @@ describe("Form component", () => {
             {
               type: "dropdown",
               id: "region",
-              options: [
-                { value: "us-east", label: "US East" },
-                { value: "us-west", label: "US West (renamed)" },
+              suggestions: [
+                {
+                  items: [
+                    { value: "us-east", label: "US East" },
+                    { value: "us-west", label: "US West (renamed)" },
+                  ],
+                },
               ],
             },
           ],
@@ -339,10 +374,206 @@ describe("Form component", () => {
       });
     });
 
+    it("falls back to the first suggestion when the choice disappears from an update", async () => {
+      const { rerender } = renderForm(dropdownConfig, { dialogId: "dd" });
+
+      const input = screen.getByRole("combobox") as HTMLInputElement;
+      await fireEvent.focus(input);
+      await fireEvent.mouseDown(screen.getByText("US West"));
+
+      await rerender({
+        dialogId: "dd",
+        config: {
+          sections: [
+            {
+              type: "dropdown",
+              id: "region",
+              suggestions: [{ items: [{ value: "eu-central", label: "EU Central" }] }],
+            },
+          ],
+          actions: [{ id: "confirm", label: "Confirm" }],
+        },
+      });
+
+      expect(input.value).toBe("EU Central");
+
+      await fireEvent.click(screen.getByText("Confirm"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dd",
+        actionId: "confirm",
+        data: { region: "eu-central" },
+      });
+    });
+
+    it("filters the suggestion list client-side without emitting any event", async () => {
+      renderForm(dropdownConfig, { dialogId: "dd" });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "west" } });
+
+      expect(screen.queryByText("US East")).not.toBeInTheDocument();
+      expect(screen.getByText("US West")).toBeInTheDocument();
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("strict mode: typing does not change the reported value", async () => {
+      renderForm(dropdownConfig, { dialogId: "dd" });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      await fireEvent.input(input, { target: { value: "nonsense" } });
+
+      await fireEvent.click(screen.getByText("Confirm"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dd",
+        actionId: "confirm",
+        data: { region: "us-east" },
+      });
+    });
+
+    it("hides a group header while the group has no matching suggestion", async () => {
+      renderForm({
+        sections: [
+          {
+            type: "dropdown",
+            id: "branch",
+            suggestions: [
+              { header: "Local", items: [{ value: "main", label: "main" }] },
+              { header: "Remote", items: [{ value: "origin/feat", label: "feat" }] },
+            ],
+          },
+        ],
+      });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+
+      expect(screen.getByText("Local")).toBeInTheDocument();
+      expect(screen.getByText("Remote")).toBeInTheDocument();
+
+      await fireEvent.input(input, { target: { value: "feat" } });
+
+      expect(screen.queryByText("Local")).not.toBeInTheDocument();
+      expect(screen.getByText("Remote")).toBeInTheDocument();
+      expect(screen.getByText("feat")).toBeInTheDocument();
+    });
+
+    describe("free text", () => {
+      const freeTextConfig: DialogConfig = {
+        sections: [
+          {
+            type: "dropdown",
+            id: "name",
+            freeText: true,
+            suggestions: [
+              {
+                items: [
+                  { value: "refs/feature-x", label: "feature-x" },
+                  { value: "refs/feature-y", label: "feature-y" },
+                ],
+              },
+            ],
+          },
+        ],
+        actions: [{ id: "create", label: "Create" }],
+      };
+
+      it("starts empty and reports the typed text", async () => {
+        renderForm(freeTextConfig, { dialogId: "ft" });
+
+        const input = screen.getByRole("combobox") as HTMLInputElement;
+        expect(input.value).toBe("");
+
+        await fireEvent.input(input, { target: { value: "my-branch" } });
+        await fireEvent.click(screen.getByText("Create"));
+
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "ft",
+          actionId: "create",
+          data: { name: "my-branch" },
+        });
+      });
+
+      it("seeds from initialValue", () => {
+        renderForm({
+          sections: [
+            {
+              type: "dropdown",
+              id: "name",
+              freeText: true,
+              initialValue: "seeded",
+              suggestions: [{ items: [] }],
+            },
+          ],
+        });
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("seeded");
+      });
+
+      it("reports a picked suggestion's value, then the typed text after editing", async () => {
+        renderForm(freeTextConfig, { dialogId: "ft" });
+
+        const input = screen.getByRole("combobox") as HTMLInputElement;
+        await fireEvent.focus(input);
+        await fireEvent.keyDown(input, { key: "ArrowDown" });
+        await fireEvent.keyDown(input, { key: "Enter" });
+
+        // Picked: displays the label, reports the value.
+        expect(input.value).toBe("feature-x");
+        await fireEvent.click(screen.getByText("Create"));
+        expect(mockSendDialogEvent).toHaveBeenLastCalledWith({
+          dialogId: "ft",
+          actionId: "create",
+          data: { name: "refs/feature-x" },
+        });
+
+        // Editing the text reverts to reporting the typed text.
+        await fireEvent.input(input, { target: { value: "feature-x2" } });
+        await fireEvent.click(screen.getByText("Create"));
+        expect(mockSendDialogEvent).toHaveBeenLastCalledWith({
+          dialogId: "ft",
+          actionId: "create",
+          data: { name: "feature-x2" },
+        });
+      });
+    });
+
+    describe("keyboard", () => {
+      it("Enter picks the highlighted suggestion without submitting", async () => {
+        renderForm(dropdownConfig, { dialogId: "dd" });
+
+        const input = screen.getByRole("combobox") as HTMLInputElement;
+        await fireEvent.focus(input);
+        await fireEvent.keyDown(input, { key: "ArrowDown" });
+        await fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(input.value).toBe("US East");
+        expect(mockSendDialogEvent).not.toHaveBeenCalled();
+      });
+
+      it("Enter with no highlighted suggestion triggers the primary action", async () => {
+        renderForm(dropdownConfig, { dialogId: "dd" });
+
+        const input = screen.getByRole("combobox");
+        await fireEvent.focus(input);
+        await fireEvent.keyDown(input, { key: "Escape" });
+        await fireEvent.keyDown(input, { key: "Enter" });
+
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { region: "us-east" },
+        });
+      });
+    });
+
     describe("loading flag", () => {
       it("shows a loading spinner when loading is true", () => {
         const config: DialogConfig = {
-          sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+          sections: [{ type: "dropdown", id: "branch", suggestions: [], loading: true }],
         };
 
         renderForm(config);
@@ -359,18 +590,17 @@ describe("Form component", () => {
 
       it("keeps the control interactive while loading", () => {
         const config: DialogConfig = {
-          sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+          sections: [{ type: "dropdown", id: "branch", suggestions: [], loading: true }],
         };
 
         renderForm(config);
 
-        const select = document.querySelector("vscode-single-select")!;
-        expect(select).not.toHaveAttribute("disabled");
+        expect(screen.getByRole("combobox")).not.toBeDisabled();
       });
 
-      it("reports an empty value while loading with cleared options", async () => {
+      it("reports an empty value while loading with cleared suggestions", async () => {
         const config: DialogConfig = {
-          sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+          sections: [{ type: "dropdown", id: "branch", suggestions: [], loading: true }],
           actions: [{ id: "confirm", label: "Confirm" }],
         };
 
@@ -388,7 +618,7 @@ describe("Form component", () => {
       it("removes the spinner when an update sets loading false", async () => {
         const { rerender } = renderForm(
           {
-            sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+            sections: [{ type: "dropdown", id: "branch", suggestions: [], loading: true }],
           },
           { dialogId: "dd" }
         );
@@ -402,7 +632,7 @@ describe("Form component", () => {
               {
                 type: "dropdown",
                 id: "branch",
-                options: [{ value: "main", label: "main" }],
+                suggestions: [{ items: [{ value: "main", label: "main" }] }],
                 loading: false,
               },
             ],
@@ -411,6 +641,157 @@ describe("Form component", () => {
 
         expect(screen.queryByRole("status")).not.toBeInTheDocument();
       });
+    });
+
+    describe("change events", () => {
+      it("emits immediately when a suggestion is picked (opt-in)", async () => {
+        renderForm(
+          {
+            sections: [
+              {
+                type: "dropdown",
+                id: "region",
+                changeEvent: true,
+                suggestions: [
+                  {
+                    items: [
+                      { value: "us-east", label: "US East" },
+                      { value: "us-west", label: "US West" },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          { dialogId: "dc" }
+        );
+
+        const input = screen.getByRole("combobox");
+        await fireEvent.focus(input);
+        await fireEvent.mouseDown(screen.getByText("US West"));
+
+        expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          kind: "change",
+          dialogId: "dc",
+          fieldId: "region",
+          data: { region: "us-west" },
+        });
+      });
+
+      it("debounces free-text typing (default 200ms)", async () => {
+        vi.useFakeTimers();
+        try {
+          renderForm(
+            {
+              sections: [
+                {
+                  type: "dropdown",
+                  id: "name",
+                  freeText: true,
+                  changeEvent: true,
+                  suggestions: [{ items: [{ value: "main", label: "main" }] }],
+                },
+              ],
+            },
+            { dialogId: "dc2" }
+          );
+
+          const input = screen.getByRole("combobox");
+          await fireEvent.input(input, { target: { value: "ma" } });
+
+          expect(mockSendDialogEvent).not.toHaveBeenCalled();
+
+          await vi.advanceTimersByTimeAsync(200);
+
+          expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+          expect(mockSendDialogEvent).toHaveBeenCalledWith({
+            kind: "change",
+            dialogId: "dc2",
+            fieldId: "name",
+            data: { name: "ma" },
+          });
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("a pick cancels the pending typing debounce and emits once, immediately", async () => {
+        vi.useFakeTimers();
+        try {
+          renderForm(
+            {
+              sections: [
+                {
+                  type: "dropdown",
+                  id: "name",
+                  freeText: true,
+                  changeEvent: true,
+                  suggestions: [{ items: [{ value: "refs/main", label: "main" }] }],
+                },
+              ],
+            },
+            { dialogId: "dc3" }
+          );
+
+          const input = screen.getByRole("combobox");
+          await fireEvent.focus(input);
+          await fireEvent.input(input, { target: { value: "mai" } });
+          await fireEvent.mouseDown(screen.getByText("main"));
+
+          // The pick emitted immediately with the picked value...
+          expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+          expect(mockSendDialogEvent).toHaveBeenCalledWith({
+            kind: "change",
+            dialogId: "dc3",
+            fieldId: "name",
+            data: { name: "refs/main" },
+          });
+
+          // ...and the stale typing emit never fires.
+          await vi.advanceTimersByTimeAsync(500);
+          expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("does not emit for picks when the field did not opt in", async () => {
+        renderForm(dropdownConfig, { dialogId: "dd" });
+
+        const input = screen.getByRole("combobox");
+        await fireEvent.focus(input);
+        await fireEvent.mouseDown(screen.getByText("US West"));
+
+        expect(mockSendDialogEvent).not.toHaveBeenCalled();
+      });
+    });
+
+    it("renders label and error around the combobox", () => {
+      renderForm({
+        sections: [
+          {
+            type: "dropdown",
+            id: "region",
+            label: "Region",
+            error: "Unknown region",
+            suggestions: [{ items: [{ value: "us-east", label: "US East" }] }],
+          },
+        ],
+      });
+
+      const label = document.querySelector("vscode-label");
+      expect(label).toHaveTextContent("Region");
+      expect(label).toHaveAttribute("for", "region-input");
+
+      const input = screen.getByRole("combobox");
+      expect(input).toHaveAttribute("id", "region-input");
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(input).toHaveAttribute("aria-describedby", "region-error");
+
+      const helper = document.querySelector("vscode-form-helper");
+      expect(helper).toHaveAttribute("id", "region-error");
+      expect(helper?.querySelector(".field-error")).toHaveTextContent("Unknown region");
     });
   });
 
@@ -715,7 +1096,7 @@ describe("Form component", () => {
             type: "dropdown",
             id: "region",
             label: "Region",
-            options: [{ value: "us-east", label: "US East" }],
+            suggestions: [{ items: [{ value: "us-east", label: "US East" }] }],
           },
         ],
       };
@@ -725,12 +1106,9 @@ describe("Form component", () => {
       const label = document.querySelector("vscode-label");
       expect(label).toBeInTheDocument();
       expect(label).toHaveTextContent("Region");
-      expect(label).toHaveAttribute("for", "region");
+      expect(label).toHaveAttribute("for", "region-input");
 
-      const select = document.querySelector("vscode-single-select");
-      expect(select).toHaveAttribute("id", "region");
-      // The label names the control, so the aria-label fallback is dropped.
-      expect(select).not.toHaveAttribute("aria-label");
+      expect(screen.getByRole("combobox")).toHaveAttribute("id", "region-input");
     });
 
     it("names a selection group from its label via aria-label", () => {
@@ -829,7 +1207,7 @@ describe("Form component", () => {
             id: "region",
             label: "Region",
             error: "Region unavailable",
-            options: [{ value: "us-east", label: "US East" }],
+            suggestions: [{ items: [{ value: "us-east", label: "US East" }] }],
           },
         ],
       };
@@ -841,10 +1219,10 @@ describe("Form component", () => {
       expect(helper).toHaveAttribute("id", "region-error");
       expect(helper?.querySelector(".field-error")).toHaveTextContent("Region unavailable");
 
-      const select = document.querySelector("vscode-single-select");
-      expect(select).toHaveAttribute("aria-invalid", "true");
-      expect(select).toHaveAttribute("aria-describedby", "region-error");
-      expect((select as HTMLElement & { invalid?: boolean }).invalid).toBe(true);
+      const input = screen.getByRole("combobox");
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(input).toHaveAttribute("aria-describedby", "region-error");
+      expect(input).toHaveClass("invalid");
     });
 
     it("renders no error element and no invalid state when error is absent", () => {
@@ -915,9 +1293,13 @@ describe("Form component", () => {
           {
             type: "dropdown",
             id: "region",
-            options: [
-              { value: "us-east", label: "US East" },
-              { value: "us-west", label: "US West" },
+            suggestions: [
+              {
+                items: [
+                  { value: "us-east", label: "US East" },
+                  { value: "us-west", label: "US West" },
+                ],
+              },
             ],
           },
         ],
@@ -928,7 +1310,8 @@ describe("Form component", () => {
       await fireEvent.click(screen.getAllByRole("radio")[1]!);
       const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
       await fireEvent.input(textarea, { target: { value: "hi" } });
-      await pickOption(document.querySelector("vscode-single-select")!, "us-west");
+      await fireEvent.focus(screen.getByRole("combobox"));
+      await fireEvent.mouseDown(screen.getByText("US West"));
 
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
     });
@@ -968,9 +1351,13 @@ describe("Form component", () => {
             type: "dropdown",
             id: "region",
             changeEvent: true,
-            options: [
-              { value: "us-east", label: "US East" },
-              { value: "us-west", label: "US West" },
+            suggestions: [
+              {
+                items: [
+                  { value: "us-east", label: "US East" },
+                  { value: "us-west", label: "US West" },
+                ],
+              },
             ],
           },
         ],
@@ -978,8 +1365,8 @@ describe("Form component", () => {
 
       renderForm(config, { dialogId: "d1" });
 
-      const select = document.querySelector("vscode-single-select")!;
-      await pickOption(select, "us-west");
+      await fireEvent.focus(screen.getByRole("combobox"));
+      await fireEvent.mouseDown(screen.getByText("US West"));
 
       expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
       expect(mockSendDialogEvent).toHaveBeenCalledWith({
@@ -1116,9 +1503,13 @@ describe("Form component", () => {
             type: "dropdown",
             id: "region",
             changeEvent: true,
-            options: [
-              { value: "us-east", label: "US East" },
-              { value: "us-west", label: "US West" },
+            suggestions: [
+              {
+                items: [
+                  { value: "us-east", label: "US East" },
+                  { value: "us-west", label: "US West" },
+                ],
+              },
             ],
           },
         ],
@@ -1136,9 +1527,13 @@ describe("Form component", () => {
               type: "dropdown",
               id: "region",
               changeEvent: true,
-              options: [
-                { value: "eu-central", label: "EU Central" },
-                { value: "us-west", label: "US West" },
+              suggestions: [
+                {
+                  items: [
+                    { value: "eu-central", label: "EU Central" },
+                    { value: "us-west", label: "US West" },
+                  ],
+                },
               ],
             },
           ],

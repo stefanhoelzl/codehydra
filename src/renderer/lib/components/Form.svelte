@@ -10,15 +10,17 @@
   future panel shell) provides the chrome and text alignment. Form only lays the
   sections out in a vertical flow.
 
-  Field sections (input/radio/dropdown) support an optional `label` (rendered above
-  the control) and an optional `error` (red helper text below the control; the
-  control is also marked invalid). `config.layout` switches the section layout:
+  Field sections (input/radio/dropdown) support an optional `label` (rendered
+  above the control) and an optional `error` (red helper text below the
+  control; the control is also marked invalid). The dropdown section is a
+  combobox (FilterableDropdown): a text input with a filtered suggestion list,
+  optionally accepting free text. `config.layout` switches the section layout:
   "centered" (default) is the centered stack; "form" is left-aligned labeled
   rows with right-aligned actions.
 
   Dropdown sections support a `loading` flag: a spinner is overlaid at the
-  control's right edge while the backend fetches options. The control stays
-  interactive and reports its value as usual.
+  control's right edge while the backend fetches suggestions. The control
+  stays interactive and reports its value as usual.
 -->
 <script lang="ts">
   import type {
@@ -30,7 +32,12 @@
   } from "@shared/dialog-types";
   import { onMount, onDestroy, untrack } from "svelte";
   import Icon from "./Icon.svelte";
+  import FilterableDropdown, {
+    type DropdownOption as FilterableOption,
+  } from "./FilterableDropdown.svelte";
   import { sendDialogEvent } from "$lib/api";
+
+  type DropdownSection = Extract<DialogSection, { type: "dropdown" }>;
 
   let formRef: HTMLElement | undefined;
 
@@ -48,18 +55,39 @@
   // Track all field values (radio + dropdown + input) keyed by field id.
   let fieldValues = $state<Record<string, string>>({});
 
+  // Dropdown display text keyed by field id: what the combobox input shows,
+  // which can differ from the reported value after a suggestion pick (the
+  // input displays the suggestion's label while the field reports its value).
+  let dropdownDisplay = $state<Record<string, string>>({});
+
+  /** A dropdown section's suggestions flattened across groups. */
+  function flatSuggestions(section: DropdownSection): readonly { value: string; label: string }[] {
+    return section.suggestions.flatMap((group) => group.items);
+  }
+
+  /** The label of the suggestion with this value, or the value itself. */
+  function suggestionLabel(section: DropdownSection, value: string): string {
+    return flatSuggestions(section).find((o) => o.value === value)?.label ?? value;
+  }
+
   // Reconcile field values whenever the config changes: rebuild the map so it
   // mirrors the current field sections (dropping removed-field keys) while
   // preserving values for fields that remain.
   // - radio: keep the existing choice if still a valid option id, else the
   //   first option's id.
-  // - dropdown: keep the existing choice if still a valid option value, else
-  //   the first option's value.
+  // - dropdown (freeText): like input — keep existing edits/picks, else seed
+  //   from initialValue on first sight.
+  // - dropdown (strict): keep the existing choice if still a valid suggestion
+  //   value; on first sight start at initialValue when it names a suggestion;
+  //   else the first suggestion's value. Display text follows the value
+  //   (suggestion label) unless the value is unchanged (preserving what the
+  //   user sees, e.g. typed free text).
   // - input: keep existing edits/seeded value; otherwise seed from initialValue
   //   on first sight (a later initialValue change does not re-seed).
   // Existing values are read via untrack to avoid a write -> retrigger loop.
   $effect(() => {
     const next: Record<string, string> = {};
+    const nextDisplay: Record<string, string> = {};
     for (const section of config.sections) {
       if (section.type === "radio") {
         const existing = untrack(() => fieldValues[section.id]);
@@ -67,15 +95,29 @@
         next[section.id] = stillValid ? existing : (section.options[0]?.id ?? "");
       } else if (section.type === "dropdown") {
         const existing = untrack(() => fieldValues[section.id]);
-        const stillValid =
-          existing !== undefined && section.options.some((o) => o.value === existing);
-        next[section.id] = stillValid ? existing : (section.options[0]?.value ?? "");
+        if (section.freeText) {
+          next[section.id] = existing ?? section.initialValue ?? "";
+        } else {
+          const isValid = (v: string | undefined): v is string =>
+            v !== undefined && flatSuggestions(section).some((o) => o.value === v);
+          next[section.id] = isValid(existing)
+            ? existing
+            : existing === undefined && isValid(section.initialValue)
+              ? section.initialValue
+              : (flatSuggestions(section)[0]?.value ?? "");
+        }
+        const existingDisplay = untrack(() => dropdownDisplay[section.id]);
+        nextDisplay[section.id] =
+          next[section.id] === existing && existingDisplay !== undefined
+            ? existingDisplay
+            : suggestionLabel(section, next[section.id]!);
       } else if (section.type === "input") {
         const existing = untrack(() => fieldValues[section.id]);
         next[section.id] = existing ?? section.initialValue ?? "";
       }
     }
     fieldValues = next;
+    dropdownDisplay = nextDisplay;
   });
 
   // ---- Field-change channel ----
@@ -87,16 +129,16 @@
 
   /**
    * Effective debounce (ms) for a field's change-event opt-in, or null when the
-   * field does not opt in. Default debounce per field type: input (continuous)
-   * 200ms, radio/dropdown (discrete) 0ms (immediate).
+   * field does not opt in. Default debounce per field type: continuous editing
+   * (input, dropdown typing) 200ms, radio (discrete) 0ms (immediate).
+   * Dropdown suggestion picks bypass this entirely (see handleDropdownSelect).
    */
   function changeDebounceMs(section: DialogSection): number | null {
-    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown") {
+    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown")
       return null;
-    }
     const cfg = section.changeEvent;
     if (!cfg) return null;
-    const fallback = section.type === "input" ? 200 : 0;
+    const fallback = section.type === "radio" ? 0 : 200;
     if (cfg === true) return fallback;
     return cfg.debounceMs ?? fallback;
   }
@@ -127,9 +169,8 @@
    * timer. No-op for fields that did not opt in.
    */
   function scheduleChange(section: DialogSection): void {
-    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown") {
+    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown")
       return;
-    }
     const debounce = changeDebounceMs(section);
     if (debounce === null) return;
     const fieldId = section.id;
@@ -227,23 +268,57 @@
   }
 
   /**
-   * Attach a direct `change` listener to a vscode-single-select.
-   * vscode-single-select's `change` event does not bubble, so Svelte's
-   * (delegated) onchange would never fire — we bind directly on the node.
+   * Map a dropdown section's suggestion groups onto FilterableDropdown's flat
+   * option list (a group's header becomes a non-selectable header entry).
    */
-  function dropdownChange(
-    node: HTMLElement,
-    onChange: (value: string) => void
-  ): { destroy: () => void } {
-    const handler = (e: Event): void => {
-      onChange((e.target as HTMLSelectElement).value);
-    };
-    node.addEventListener("change", handler);
-    return {
-      destroy(): void {
-        node.removeEventListener("change", handler);
-      },
-    };
+  function toFilterableOptions(section: DropdownSection): FilterableOption[] {
+    const result: FilterableOption[] = [];
+    section.suggestions.forEach((group, groupIndex) => {
+      if (group.header !== undefined && group.items.length > 0) {
+        result.push({ type: "header", label: group.header, value: `__header_${groupIndex}__` });
+      }
+      for (const item of group.items) {
+        result.push({ type: "option", label: item.label, value: item.value });
+      }
+    });
+    return result;
+  }
+
+  /**
+   * A suggestion was picked (or free text committed via Enter/Tab): report the
+   * picked value, display its label, and emit immediately — a pick is a
+   * discrete action, so it bypasses the typing debounce (cancelling any
+   * pending typing emit so the backend never sees stale text after the pick).
+   */
+  function handleDropdownSelect(section: DropdownSection, value: string): void {
+    fieldValues = { ...fieldValues, [section.id]: value };
+    dropdownDisplay = { ...dropdownDisplay, [section.id]: suggestionLabel(section, value) };
+    if (!section.changeEvent) return;
+    const pending = changeTimers[section.id];
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      delete changeTimers[section.id];
+    }
+    emitChange(section.id);
+  }
+
+  /**
+   * The user typed in a dropdown. In free-text mode the typed text IS the
+   * field value (debounced change). In strict mode typing only filters the
+   * suggestion list — purely presentational, never reported.
+   */
+  function handleDropdownInput(section: DropdownSection, text: string): void {
+    if (!section.freeText) return;
+    fieldValues = { ...fieldValues, [section.id]: text };
+    dropdownDisplay = { ...dropdownDisplay, [section.id]: text };
+    scheduleChange(section);
+  }
+
+  /** Activate the form's primary action (first non-secondary, else first). */
+  function triggerPrimaryAction(): void {
+    const primaryAction =
+      config.actions?.find((a) => a.variant !== "secondary") ?? config.actions?.[0];
+    if (primaryAction) handleAction(primaryAction);
   }
 
   /** Handle action button click. */
@@ -420,9 +495,7 @@
                   targetIndex = optionIndex === opts.length - 1 ? 0 : optionIndex + 1;
                 } else if (e.key === "Enter") {
                   e.preventDefault();
-                  const primaryAction =
-                    config.actions?.find((a) => a.variant !== "secondary") ?? config.actions?.[0];
-                  if (primaryAction) handleAction(primaryAction);
+                  triggerPrimaryAction();
                   return;
                 } else if (e.key === " ") {
                   e.preventDefault();
@@ -469,26 +542,22 @@
     {:else if s.type === "dropdown"}
       <div class="form-field">
         {#if s.label}
-          <vscode-label for={s.id}>{s.label}</vscode-label>
+          <vscode-label for="{s.id}-input">{s.label}</vscode-label>
         {/if}
         <div class="dropdown-wrapper">
-          <vscode-single-select
-            class="input-dropdown"
+          <FilterableDropdown
             id={s.id}
-            invalid={s.error ? true : undefined}
-            value={fieldValues[s.id] ?? ""}
-            aria-label={s.label ? undefined : "Select an option"}
-            aria-invalid={s.error ? "true" : undefined}
-            aria-describedby={s.error ? `${s.id}-error` : undefined}
-            use:dropdownChange={(value) => {
-              fieldValues = { ...fieldValues, [s.id]: value };
-              scheduleChange(s);
-            }}
-          >
-            {#each s.options as option (option.value)}
-              <vscode-option value={option.value}>{option.label}</vscode-option>
-            {/each}
-          </vscode-single-select>
+            options={toFilterableOptions(s)}
+            value={dropdownDisplay[s.id] ?? ""}
+            placeholder={s.placeholder ?? ""}
+            allowFreeText={s.freeText ?? false}
+            debounceMs={0}
+            invalid={!!s.error}
+            describedBy={s.error ? `${s.id}-error` : undefined}
+            onSelect={(value) => handleDropdownSelect(s, value)}
+            onInput={(text) => handleDropdownInput(s, text)}
+            onEnter={() => triggerPrimaryAction()}
+          />
           {#if s.loading}
             <div class="dropdown-loading" role="status" aria-label="Loading options">
               <Icon name="loading" spin />
@@ -867,15 +936,11 @@
     width: 100%;
   }
 
-  .input-dropdown {
-    width: 100%;
-  }
-
-  /* Loading spinner overlaid at the control's right edge, left of the
-     select's chevron. The control stays interactive (pointer-events: none). */
+  /* Loading spinner overlaid at the combobox input's right edge. The control
+     stays interactive (pointer-events: none). */
   .dropdown-loading {
     position: absolute;
-    right: 28px;
+    right: 8px;
     top: 50%;
     transform: translateY(-50%);
     display: flex;

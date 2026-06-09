@@ -14,7 +14,12 @@
     options: DropdownOption[];
     value: string;
     onSelect: (value: string) => void;
-    filterOption: (option: DropdownOption, filterLowercase: string) => boolean;
+    /**
+     * Optional filter override, called only for "option" entries (never for
+     * headers — header visibility is computed automatically from the group's
+     * matches). Default: case-insensitive substring match on the label.
+     */
+    filterOption?: (option: DropdownOption, filterLowercase: string) => boolean;
     disabled?: boolean;
     placeholder?: string;
     id?: string;
@@ -22,7 +27,7 @@
     optionSnippet?: Snippet<[option: DropdownOption, highlighted: boolean]>;
     /** If true, pressing Enter with no selection calls onSelect with typed text */
     allowFreeText?: boolean;
-    /** Called after Enter key is handled (after selection or free text emit) */
+    /** Called when Enter is pressed with no highlighted option (after any free-text/exact-match commit) */
     onEnter?: (() => void) | undefined;
     /** Called on every input change with the current text */
     onInput?: ((value: string) => void) | undefined;
@@ -30,6 +35,10 @@
     openOnFocus?: boolean;
     /** Whether to focus the input on mount */
     autofocus?: boolean;
+    /** Render the input as invalid (red border), e.g. for a validation error */
+    invalid?: boolean;
+    /** id of the element describing this input (e.g. a validation error) */
+    describedBy?: string | undefined;
   }
 
   let {
@@ -47,6 +56,8 @@
     onInput: onInputCallback,
     openOnFocus = true,
     autofocus = false,
+    invalid = false,
+    describedBy = undefined,
   }: FilterableDropdownProps = $props();
 
   // Internal state
@@ -95,11 +106,30 @@
   // Derived: selectable options only (excludes headers)
   const selectableOptions = $derived(options.filter((opt) => opt.type === "option"));
 
-  // Derived: filtered options
+  // Derived: filtered options. The filter (custom or default substring on the
+  // label) only applies to "option" entries; a header is kept iff its group
+  // (the options that follow it, up to the next header) has at least one match.
   const filteredOptions = $derived.by(() => {
     if (debouncedFilter === "") return options;
     const lower = debouncedFilter.toLowerCase();
-    return options.filter((opt) => filterOption(opt, lower));
+    const matches = (opt: DropdownOption): boolean =>
+      filterOption ? filterOption(opt, lower) : opt.label.toLowerCase().includes(lower);
+    const result: DropdownOption[] = [];
+    let pendingHeader: DropdownOption | null = null;
+    for (const opt of options) {
+      if (opt.type === "header") {
+        pendingHeader = opt;
+        continue;
+      }
+      if (matches(opt)) {
+        if (pendingHeader !== null) {
+          result.push(pendingHeader);
+          pendingHeader = null;
+        }
+        result.push(opt);
+      }
+    }
+    return result;
   });
 
   // Derived: filtered selectable options for navigation
@@ -148,12 +178,17 @@
     };
   });
 
-  // Debounce filter input
+  // Debounce filter input (debounceMs <= 0 filters synchronously)
   $effect(() => {
     const currentFilter = filterText;
 
     if (debounceTimer !== null) {
       clearTimeout(debounceTimer);
+    }
+
+    if (debounceMs <= 0) {
+      debouncedFilter = currentFilter;
+      return;
     }
 
     debounceTimer = setTimeout(() => {
@@ -189,7 +224,8 @@
       return;
     }
 
-    // When allowFreeText is false, revert to prop value if typed text doesn't match a valid option
+    // When allowFreeText is false, resolve typed text: select the exact label
+    // match (canonicalizing case), otherwise revert to the prop value.
     if (!allowFreeText && localFilterOverride !== null) {
       const exactMatch = selectableOptions.find(
         (opt) => opt.label.toLowerCase() === localFilterOverride!.toLowerCase()
@@ -198,6 +234,8 @@
         // No valid match - revert to original prop value
         localFilterOverride = null;
         debouncedFilter = "";
+      } else {
+        selectOption(exactMatch.value);
       }
     }
 
@@ -248,10 +286,22 @@
           if (highlightedOption !== undefined) {
             selectOption(highlightedOption.value);
           }
-        } else if (allowFreeText && displayText.trim() !== "") {
-          // Free text mode: emit typed text as value when no option highlighted
-          // This is a "confirm custom value" action, so trigger onEnter
-          selectFreeText(displayText.trim());
+        } else {
+          // No option highlighted: commit the typed text (free text emits it
+          // as the value; otherwise an exact label match is selected), then
+          // hand Enter to the parent (e.g. to trigger a form's primary action).
+          if (allowFreeText) {
+            if (displayText.trim() !== "") {
+              selectFreeText(displayText.trim());
+            }
+          } else {
+            const exactMatch = selectableOptions.find(
+              (opt) => opt.label.toLowerCase() === filterText.toLowerCase()
+            );
+            if (exactMatch !== undefined) {
+              selectOption(exactMatch.value);
+            }
+          }
           onEnter?.();
         }
         break;
@@ -275,7 +325,9 @@
           }
         } else {
           // No highlighted option - check if typed text exactly matches an option
-          const exactMatch = selectableOptions.find((opt) => opt.label === filterText);
+          const exactMatch = selectableOptions.find(
+            (opt) => opt.label.toLowerCase() === filterText.toLowerCase()
+          );
           if (exactMatch !== undefined) {
             selectOption(exactMatch.value);
           }
@@ -343,6 +395,9 @@
     aria-activedescendant={highlightedId}
     aria-autocomplete="list"
     aria-haspopup="listbox"
+    aria-invalid={invalid ? "true" : undefined}
+    aria-describedby={describedBy}
+    class:invalid
     value={displayText}
     {disabled}
     {placeholder}
@@ -420,6 +475,10 @@
   input:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  input.invalid {
+    border-color: var(--ch-danger, #f14c4c);
   }
 
   .dropdown-listbox {
