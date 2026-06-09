@@ -45,6 +45,11 @@ export interface ApiEvents {
     /** If false, workspace should not steal focus (but still switches when nothing is active) */
     readonly stealFocus?: boolean;
   }) => void;
+  "workspace:create-failed": (event: {
+    readonly workspaceName: string;
+    readonly projectPath: string;
+    readonly error: string;
+  }) => void;
   "workspace:removed": (event: WorkspaceRef) => void;
   "workspace:switched": (event: WorkspaceRef | null) => void;
   "workspace:status-changed": (event: WorkspaceRef & { readonly status: WorkspaceStatus }) => void;

@@ -157,6 +157,22 @@ describe("setupDomainEvents", () => {
 
       expect(mockStores.setActiveWorkspace).toHaveBeenCalledWith(null);
     });
+
+    it("subscribes to workspace:create-failed without mutating stores (stub for #11)", () => {
+      setupDomainEvents(mockApi.api, mockStores);
+
+      expect(() =>
+        mockApi.emit("workspace:create-failed", {
+          workspaceName: TEST_WORKSPACE_NAME,
+          projectPath: TEST_PROJECT_PATH,
+          error: "boom",
+        })
+      ).not.toThrow();
+
+      // Delivery-only stub: no store mutation until #11 implements rollback.
+      expect(mockStores.removeWorkspace).not.toHaveBeenCalled();
+      expect(mockStores.addWorkspace).not.toHaveBeenCalled();
+    });
   });
 
   describe("status events", () => {

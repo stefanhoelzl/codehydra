@@ -58,6 +58,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../shared/ipc";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
@@ -354,6 +355,33 @@ describe("UiIpcModule - bases:updated", () => {
       projectId: TEST_PROJECT_ID,
       projectPath: TEST_PROJECT_PATH,
       bases,
+    });
+  });
+});
+
+// =============================================================================
+// Tests - workspace:create-failed event
+// =============================================================================
+
+describe("UiIpcModule - workspace:create-failed", () => {
+  it("forwards workspace:create-failed to the UI", async () => {
+    const deps = createBridgeDeps();
+    const uiIpcModule = createUiIpcModule(deps);
+
+    // Call the event handler directly (mirrors bases:updated test style)
+    await uiIpcModule.events![EVENT_WORKSPACE_CREATE_FAILED]!.handler({
+      type: EVENT_WORKSPACE_CREATE_FAILED,
+      payload: {
+        workspaceName: TEST_WORKSPACE_NAME,
+        projectPath: TEST_PROJECT_PATH,
+        error: "boom",
+      },
+    });
+
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_CREATE_FAILED, {
+      workspaceName: TEST_WORKSPACE_NAME,
+      projectPath: TEST_PROJECT_PATH,
+      error: "boom",
     });
   });
 });
