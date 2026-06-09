@@ -10,7 +10,7 @@
   future panel shell) provides the chrome and text alignment. Form only lays the
   sections out in a vertical flow.
 
-  Field sections (input/radio) support an optional `label` (rendered above
+  Field sections (input/radio/dropdown) support an optional `label` (rendered above
   the control) and an optional `error` (red helper text below the control; the
   control is also marked invalid). `config.layout` switches the section layout:
   "centered" (default) is the centered stack; "form" is left-aligned labeled
@@ -84,10 +84,12 @@
   /**
    * Effective debounce (ms) for a field's change-event opt-in, or null when the
    * field does not opt in. Default debounce per field type: input (continuous)
-   * 200ms, radio (discrete) 0ms (immediate).
+   * 200ms, radio/dropdown (discrete) 0ms (immediate).
    */
   function changeDebounceMs(section: DialogSection): number | null {
-    if (section.type !== "input" && section.type !== "radio") return null;
+    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown") {
+      return null;
+    }
     const cfg = section.changeEvent;
     if (!cfg) return null;
     const fallback = section.type === "input" ? 200 : 0;
@@ -95,10 +97,10 @@
     return cfg.debounceMs ?? fallback;
   }
 
-  /** Whether the dialog still has an input/radio field with this id. */
+  /** Whether the dialog still has an input/radio/dropdown field with this id. */
   function hasField(fieldId: string): boolean {
     return config.sections.some(
-      (s) => (s.type === "input" || s.type === "radio") && s.id === fieldId
+      (s) => (s.type === "input" || s.type === "radio" || s.type === "dropdown") && s.id === fieldId
     );
   }
 
@@ -121,7 +123,9 @@
    * timer. No-op for fields that did not opt in.
    */
   function scheduleChange(section: DialogSection): void {
-    if (section.type !== "input" && section.type !== "radio") return;
+    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown") {
+      return;
+    }
     const debounce = changeDebounceMs(section);
     if (debounce === null) return;
     const fieldId = section.id;
@@ -459,18 +463,33 @@
         {/if}
       </div>
     {:else if s.type === "dropdown"}
-      <vscode-single-select
-        class="input-dropdown"
-        value={fieldValues[s.id] ?? ""}
-        aria-label="Select an option"
-        use:dropdownChange={(value) => {
-          fieldValues = { ...fieldValues, [s.id]: value };
-        }}
-      >
-        {#each s.options as option (option.value)}
-          <vscode-option value={option.value}>{option.label}</vscode-option>
-        {/each}
-      </vscode-single-select>
+      <div class="form-field">
+        {#if s.label}
+          <vscode-label for={s.id}>{s.label}</vscode-label>
+        {/if}
+        <vscode-single-select
+          class="input-dropdown"
+          id={s.id}
+          invalid={s.error ? true : undefined}
+          value={fieldValues[s.id] ?? ""}
+          aria-label={s.label ? undefined : "Select an option"}
+          aria-invalid={s.error ? "true" : undefined}
+          aria-describedby={s.error ? `${s.id}-error` : undefined}
+          use:dropdownChange={(value) => {
+            fieldValues = { ...fieldValues, [s.id]: value };
+            scheduleChange(s);
+          }}
+        >
+          {#each s.options as option (option.value)}
+            <vscode-option value={option.value}>{option.label}</vscode-option>
+          {/each}
+        </vscode-single-select>
+        {#if s.error}
+          <vscode-form-helper id="{s.id}-error">
+            <span class="field-error">{s.error}</span>
+          </vscode-form-helper>
+        {/if}
+      </div>
     {:else if s.type === "input"}
       <div class="form-field">
         {#if s.label}
