@@ -1874,12 +1874,167 @@ describe("GitWorktreeProvider", () => {
   });
 
   describe("defaultBase", () => {
+    it("returns the remote default branch recorded in the origin HEAD symref", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: [],
+            remoteBranches: ["origin/develop", "origin/main"],
+            remotes: ["origin"],
+            remoteHeads: { origin: "develop" },
+            currentBranch: null,
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const result = await provider.defaultBase(PROJECT_ROOT);
+
+      expect(result).toBe("origin/develop");
+    });
+
+    it("returns the local branch when the symref default has no remote-tracking entry", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["develop", "feature"],
+            remotes: ["origin"],
+            remoteHeads: { origin: "develop" },
+            currentBranch: "feature",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const result = await provider.defaultBase(PROJECT_ROOT);
+
+      expect(result).toBe("develop");
+    });
+
+    it("skips a stale symref pointing at a branch missing from the base list", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: [],
+            remoteBranches: ["origin/main"],
+            remotes: ["origin"],
+            // Stale: remote renamed master -> main, symref not yet updated
+            remoteHeads: { origin: "master" },
+            currentBranch: null,
+            headBranch: null,
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const result = await provider.defaultBase(PROJECT_ROOT);
+
+      expect(result).toBe("origin/main");
+    });
+
+    it("falls back to the repo HEAD symref when no remote HEAD symref exists (bare clone)", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: [],
+            remoteBranches: ["origin/develop", "origin/feature"],
+            remotes: ["origin"],
+            // Bare clone predating set-head: HEAD dangles but names the clone-time default
+            currentBranch: null,
+            headBranch: "develop",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const result = await provider.defaultBase(PROJECT_ROOT);
+
+      expect(result).toBe("origin/develop");
+    });
+
+    it("falls back to the checked-out branch for a local-only repo without main/master", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["develop", "feature"],
+            currentBranch: "develop",
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      const result = await provider.defaultBase(PROJECT_ROOT);
+
+      expect(result).toBe("develop");
+    });
+
+    it("reflects the remote default after updateBases heals a missing symref", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: [],
+            remoteBranches: ["origin/develop", "origin/master"],
+            remotes: ["origin"],
+            serverDefaultBranch: "develop",
+            currentBranch: null,
+            headBranch: null,
+          },
+        },
+      });
+      const provider = await GitWorktreeProvider.create(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+
+      // Before refresh: no symref answer, legacy fallback picks origin/master
+      expect(await provider.defaultBase(PROJECT_ROOT)).toBe("origin/master");
+
+      // Refresh fetches and runs set-head, recording the server's actual default
+      await provider.updateBases(PROJECT_ROOT);
+
+      expect(await provider.defaultBase(PROJECT_ROOT)).toBe("origin/develop");
+    });
+
     it("prefers origin/main over local main", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["main", "feature"],
             remoteBranches: ["origin/main"],
+            remotes: ["origin"],
             currentBranch: "main",
           },
         },
@@ -1925,6 +2080,7 @@ describe("GitWorktreeProvider", () => {
           [PROJECT_ROOT.toString()]: {
             branches: ["master", "feature"],
             remoteBranches: ["origin/master"],
+            remotes: ["origin"],
             currentBranch: "master",
           },
         },
@@ -1970,6 +2126,7 @@ describe("GitWorktreeProvider", () => {
           [PROJECT_ROOT.toString()]: {
             branches: ["master", "main", "feature"],
             remoteBranches: ["origin/main", "origin/master"],
+            remotes: ["origin"],
             currentBranch: "main",
           },
         },
@@ -1987,12 +2144,13 @@ describe("GitWorktreeProvider", () => {
       expect(result).toBe("origin/main");
     });
 
-    it("returns undefined when neither main nor master exists", async () => {
+    it("returns undefined when no symref answer exists and neither main nor master exists", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
             branches: ["feature", "develop"],
             currentBranch: "feature",
+            headBranch: null,
           },
         },
       });
