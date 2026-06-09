@@ -21,7 +21,8 @@
  *   completes) keep running. When a newer version is detected, the single
  *   notification refreshes to "Update available" for that version — including
  *   reverting a "ready" notification so one restart always lands on newest.
- * - Dismiss = silent for that version. A genuinely newer version re-surfaces.
+ * - Dismiss = silent for that version, persisted via `update.dismissed-version`
+ *   so it stays silent across restarts. A genuinely newer version re-surfaces.
  * - A check is skipped while a download is in progress; the check fired right
  *   after the download completes catches anything released mid-download.
  */
@@ -32,7 +33,7 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../intents/app-shutdown";
 import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
-import { configBoolean } from "../boundaries/platform/config-definition";
+import { configBoolean, configString } from "../boundaries/platform/config-definition";
 import type { Config } from "../boundaries/platform/config";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -104,11 +105,19 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   let periodicTimer: NodeJS.Timeout | null = null;
   let notification: NotificationHandle | null = null;
 
-  // Register config key
+  // Register config keys
   const updateNotificationConfig = deps.configService.register("update.notification", {
     default: true,
     description: "Show a sidebar notification when an update is available",
     ...configBoolean(),
+  });
+  // Persisted so a dismissed update stays silent across restarts; a genuinely
+  // newer version still re-surfaces (reconcile compares against this value).
+  const dismissedVersionConfig = deps.configService.register("update.dismissed-version", {
+    default: null,
+    description:
+      "Internal: the update version the user last dismissed (silences re-notification across restarts)",
+    ...configString({ nullable: true }),
   });
 
   function isEnabled(): boolean {
@@ -131,9 +140,11 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       return;
     }
     if (event.actionId === "dismiss") {
-      dismissedVersion = targetVersion;
+      notification?.close();
       notification = null;
       notificationState = "none";
+      dismissedVersion = targetVersion;
+      void dismissedVersionConfig.set(targetVersion);
     }
   }
 
@@ -228,6 +239,10 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
+            // Restore the last dismissed version so an update the user already
+            // dismissed stays silent across restarts.
+            dismissedVersion = dismissedVersionConfig.get();
+
             // Persistent callback captures the version whenever electron-updater
             // fires `update-available`. checkForUpdates() also returns the
             // boolean result; the callback simply ensures we always have the

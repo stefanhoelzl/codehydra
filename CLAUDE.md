@@ -308,6 +308,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | ------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`                               | `null`    | Agent selection: claude\|opencode                                                                                                                   |
 | `update.notification`                 | `true`    | Show a sidebar notification when an update is available (also gates the periodic update check)                                                      |
+| `update.dismissed-version`            | `null`    | Internal: the update version the user last dismissed; persisted so it stays silent across restarts (a newer version still re-surfaces)              |
 | `version.claude`                      | `null`    | Claude agent version override                                                                                                                       |
 | `version.opencode`                    | `null`    | OpenCode agent version override                                                                                                                     |
 | `code-server.port`                    | (auto)    | Code-server port (auto = 25448 in prod, branch-derived in dev)                                                                                      |
