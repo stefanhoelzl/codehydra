@@ -26,6 +26,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk";
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
+import type { DomainEvent } from "../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { PortManager } from "../boundaries/platform/network";
@@ -39,6 +40,7 @@ import {
   normalizeInitialPrompt,
   type PromptModel,
   type Workspace,
+  type DeletionProgress,
 } from "../shared/api/types";
 
 // Intent types for direct dispatch
@@ -58,8 +60,14 @@ import { INTENT_WAKE_WORKSPACE } from "../intents/wake-workspace";
 import type { WakeWorkspaceIntent } from "../intents/wake-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
-import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
+import {
+  INTENT_DELETE_WORKSPACE,
+  EVENT_WORKSPACE_DELETION_PROGRESS,
+} from "../intents/delete-workspace";
+import type {
+  DeleteWorkspaceIntent,
+  WorkspaceDeletionProgressEvent,
+} from "../intents/delete-workspace";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import type { ListProjectsIntent } from "../intents/list-projects";
 import { INTENT_VSCODE_SHOW_MESSAGE } from "../intents/vscode-show-message";
@@ -69,7 +77,7 @@ import type { VscodeCommandIntent } from "../intents/vscode-command";
 
 /**
  * Optional target workspace path for tools that can act on a workspace other
- * than the session's own (hibernate/wake). Omit to target the current
+ * than the session's own (hibernate/wake/delete). Omit to target the current
  * workspace; use project_list to discover other workspaces' paths.
  */
 const targetWorkspacePathSchema = z
@@ -80,6 +88,26 @@ const targetWorkspacePathSchema = z
     "Path of the workspace to act on. Omit to target the current workspace. " +
       "Use project_list to discover other workspaces' paths."
   );
+
+/**
+ * Build a human-readable failure message from a terminal deletion-progress
+ * event, preferring blocking-process detail when present and otherwise
+ * summarizing the failed pipeline steps.
+ */
+function formatDeletionFailure(progress: DeletionProgress): string {
+  const blockers = progress.blockingProcesses;
+  if (blockers && blockers.length > 0) {
+    const list = blockers.map((p) => `pid ${p.pid} (${p.name})`).join(", ");
+    return `Workspace deletion blocked by ${blockers.length} process(es): ${list}`;
+  }
+  const stepErrors = progress.operations
+    .filter((op) => op.error)
+    .map((op) => `${op.label}: ${op.error}`);
+  if (stepErrors.length > 0) {
+    return `Workspace deletion failed: ${stepErrors.join("; ")}`;
+  }
+  return "Workspace deletion failed";
+}
 
 // =============================================================================
 // MCP Type Definitions
@@ -218,6 +246,16 @@ export class McpServer implements IMcpServer {
   /** Per-client MCP sessions, keyed by MCP session ID. */
   private sessions = new Map<string, McpSession>();
 
+  /**
+   * Resolvers awaiting a terminal deletion-progress event, keyed by workspace
+   * path. A single dispatcher subscription (set up in start()) routes terminal
+   * events to these waiters so workspace_delete can report the real outcome.
+   */
+  private deletionWaiters = new Map<string, Set<(progress: DeletionProgress) => void>>();
+
+  /** Unsubscribe handle for the deletion-progress subscription. */
+  private unsubscribeDeletionProgress: (() => void) | null = null;
+
   constructor(
     dispatcher: Dispatcher,
     serverFactory: McpServerFactory = createDefaultMcpServer,
@@ -236,6 +274,16 @@ export class McpServer implements IMcpServer {
     if (this.running) {
       this.logger.warn("Server already running");
       return;
+    }
+
+    // Subscribe once to terminal deletion-progress events so workspace_delete
+    // can surface the real outcome to callers (subscribe() leaks its handler on
+    // unsubscribe, so this must be per-server, not per-call).
+    if (!this.unsubscribeDeletionProgress) {
+      this.unsubscribeDeletionProgress = this.dispatcher.subscribe(
+        EVENT_WORKSPACE_DELETION_PROGRESS,
+        (event) => this.handleDeletionProgress(event)
+      );
     }
 
     // Create HTTP server to handle incoming requests
@@ -275,6 +323,11 @@ export class McpServer implements IMcpServer {
     }
 
     this.logger.info("Stopping");
+
+    // Stop routing deletion-progress events and drop any pending waiters.
+    this.unsubscribeDeletionProgress?.();
+    this.unsubscribeDeletionProgress = null;
+    this.deletionWaiters.clear();
 
     // Close all MCP sessions
     for (const [sessionId, session] of this.sessions) {
@@ -781,8 +834,15 @@ export class McpServer implements IMcpServer {
     mcpServer.registerTool(
       "workspace_delete",
       {
-        description: "Delete the current workspace. This will terminate the OpenCode session.",
+        description:
+          "Delete a workspace: terminates its agent session and removes the git worktree. " +
+          "Omit workspacePath to delete the current workspace, or pass a path to delete " +
+          "another workspace (use project_list to discover paths). Blocks until deletion " +
+          "finishes and returns { started: true } on success. Fails with an error if the " +
+          "target has uncommitted changes or unmerged commits (pass ignoreWarnings to " +
+          "override) or if processes block worktree removal.",
         inputSchema: z.object({
+          workspacePath: targetWorkspacePathSchema,
           keepBranch: z
             .boolean()
             .optional()
@@ -796,23 +856,54 @@ export class McpServer implements IMcpServer {
         }),
       },
       this.createWorkspaceHandler(
-        async (workspacePath, args: { keepBranch: boolean; ignoreWarnings: boolean }) => {
-          const intent: DeleteWorkspaceIntent = {
-            type: INTENT_DELETE_WORKSPACE,
-            payload: {
-              workspacePath,
-              keepBranch: args.keepBranch,
-              force: false,
-              removeWorktree: true,
-              ignoreWarnings: args.ignoreWarnings,
-            },
-          };
-          const handle = this.dispatcher.dispatch(intent);
-          if (!(await handle.accepted)) {
-            return { started: false };
+        async (
+          sessionWorkspacePath,
+          args: {
+            workspacePath?: string | undefined;
+            keepBranch: boolean;
+            ignoreWarnings: boolean;
           }
-          await handle;
-          return { started: true };
+        ) => {
+          const workspacePath = args.workspacePath ?? sessionWorkspacePath;
+
+          // Capture the terminal deletion-progress event so we can report the
+          // real outcome. ctx.emit is not awaited inside the delete operation,
+          // so we wait on this event explicitly rather than reading state after
+          // `await handle` (which would race the emit).
+          let resolveOutcome!: (progress: DeletionProgress) => void;
+          const outcome = new Promise<DeletionProgress>((resolve) => {
+            resolveOutcome = resolve;
+          });
+          const removeWaiter = this.registerDeletionWaiter(workspacePath, resolveOutcome);
+
+          try {
+            const intent: DeleteWorkspaceIntent = {
+              type: INTENT_DELETE_WORKSPACE,
+              payload: {
+                workspacePath,
+                keepBranch: args.keepBranch,
+                force: false,
+                removeWorktree: true,
+                ignoreWarnings: args.ignoreWarnings,
+              },
+            };
+            const handle = this.dispatcher.dispatch(intent);
+            if (!(await handle.accepted)) {
+              return { started: false };
+            }
+            // Preflight / unexpected failures reject the handle (no terminal
+            // event is emitted) and propagate to an isError result.
+            await handle;
+            // Blocker / shutdown failures resolve the handle but report
+            // hasErrors via the terminal event — surface them as an error.
+            const progress = await outcome;
+            if (progress.hasErrors) {
+              throw new Error(formatDeletionFailure(progress));
+            }
+            return { started: true };
+          } finally {
+            removeWaiter();
+          }
         }
       )
     );
@@ -985,6 +1076,42 @@ export class McpServer implements IMcpServer {
       }
     }
     return "";
+  }
+
+  /**
+   * Route a terminal deletion-progress event to any waiters for that workspace.
+   * Non-terminal (in-progress) events are ignored.
+   */
+  private handleDeletionProgress(event: DomainEvent): void {
+    const progress = (event as WorkspaceDeletionProgressEvent).payload;
+    if (!progress.completed) return;
+    const waiters = this.deletionWaiters.get(progress.workspacePath);
+    if (!waiters) return;
+    this.deletionWaiters.delete(progress.workspacePath);
+    for (const resolve of waiters) resolve(progress);
+  }
+
+  /**
+   * Register a resolver that fires when the next terminal deletion-progress
+   * event for the given workspace arrives. Returns a cleanup function that must
+   * be called once the caller no longer needs the resolver.
+   */
+  private registerDeletionWaiter(
+    workspacePath: string,
+    resolve: (progress: DeletionProgress) => void
+  ): () => void {
+    let waiters = this.deletionWaiters.get(workspacePath);
+    if (!waiters) {
+      waiters = new Set();
+      this.deletionWaiters.set(workspacePath, waiters);
+    }
+    waiters.add(resolve);
+    return () => {
+      const current = this.deletionWaiters.get(workspacePath);
+      if (!current) return;
+      current.delete(resolve);
+      if (current.size === 0) this.deletionWaiters.delete(workspacePath);
+    };
   }
 
   /**
