@@ -9,13 +9,21 @@
  * - app:shutdown -> "quit": quitAndInstall if installUpdate flag is set.
  *
  * Behavior:
- * - All update flow happens via a single mutating sidebar notification.
+ * - All update flow happens via a single mutating sidebar notification that
+ *   always reflects the latest pending version (electron-updater only ever
+ *   reports feed-latest, so any detected version that differs from the one we
+ *   are currently showing is treated as newer).
  * - First detected version surfaces "Update available" notification.
  * - User clicks "Install" → notification mutates into a progress bar while
  *   download runs → on completion mutates into "Update ready / Restart Now".
  * - Download failures swap to an error notification with a Retry action.
- * - Once a version was detected and surfaced, no further checks/notifications
- *   happen until the app is restarted (dismiss = silent for this session).
+ * - Re-checks (periodic timer, app:resume, immediately after a download
+ *   completes) keep running. When a newer version is detected, the single
+ *   notification refreshes to "Update available" for that version — including
+ *   reverting a "ready" notification so one restart always lands on newest.
+ * - Dismiss = silent for that version. A genuinely newer version re-surfaces.
+ * - A check is skipped while a download is in progress; the check fired right
+ *   after the download completes catches anything released mid-download.
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -29,7 +37,7 @@ import type { Config } from "../boundaries/platform/config";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { NotificationManager, NotificationHandle } from "./notification-manager";
-import type { NotificationConfig } from "../shared/notification-types";
+import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 
 /** How often to re-check for updates while the app is running. */
 const PERIODIC_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -81,9 +89,16 @@ function errorConfig(version: string): NotificationConfig {
   };
 }
 
+type NotificationState = "none" | "available" | "downloading" | "ready" | "error";
+
 export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModule {
-  let detectedVersion: string | null = null;
-  let surfaced = false;
+  // Latest version reported by electron-updater's update-detected callback.
+  let lastDetectedVersion: string | null = null;
+  // The version the current notification represents (read by action handlers).
+  let targetVersion: string | null = null;
+  // The version the user last dismissed; same-version re-checks stay silent.
+  let dismissedVersion: string | null = null;
+  let notificationState: NotificationState = "none";
   let checkInProgress = false;
   let downloadInProgress = false;
   let periodicTimer: NodeJS.Timeout | null = null;
@@ -100,12 +115,36 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     return updateNotificationConfig.get();
   }
 
+  function handleNotificationEvent(event: NotificationUserEvent): void {
+    if (event.actionId === "install" || event.actionId === "retry") {
+      if (targetVersion !== null) startDownload(targetVersion);
+      return;
+    }
+    if (event.actionId === "restart") {
+      notification?.close();
+      notification = null;
+      notificationState = "none";
+      void deps.dispatcher.dispatch({
+        type: INTENT_APP_SHUTDOWN,
+        payload: { installUpdate: true },
+      });
+      return;
+    }
+    if (event.actionId === "dismiss") {
+      dismissedVersion = targetVersion;
+      notification = null;
+      notificationState = "none";
+    }
+  }
+
   function startDownload(version: string): void {
     if (downloadInProgress) return;
     downloadInProgress = true;
+    notificationState = "downloading";
 
     if (notification === null) {
       notification = deps.notificationManager.open(downloadingConfig(version, 0));
+      notification.onEvent(handleNotificationEvent);
     } else {
       notification.update(downloadingConfig(version, 0));
     }
@@ -120,59 +159,66 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       () => {
         unsubProgress();
         downloadInProgress = false;
+        notificationState = "ready";
         handle.update(readyConfig(version));
+        // Catch a version released while this download was running.
+        void runCheck();
       },
       () => {
         unsubProgress();
         downloadInProgress = false;
+        notificationState = "error";
         handle.update(errorConfig(version));
       }
     );
   }
 
+  /**
+   * Open or update the single notification to surface `version` as available.
+   * Reverts a "ready"/"error" notification and refreshes an existing
+   * "available" one so the notification always reflects the latest version.
+   */
   function showAvailableNotification(version: string): void {
-    if (notification !== null) return;
+    notificationState = "available";
+    if (notification === null) {
+      notification = deps.notificationManager.open(availableConfig(version));
+      notification.onEvent(handleNotificationEvent);
+    } else {
+      notification.update(availableConfig(version));
+    }
+  }
 
-    notification = deps.notificationManager.open(availableConfig(version));
-    notification.onEvent((event) => {
-      if (event.actionId === "install") {
-        startDownload(version);
-        return;
-      }
-      if (event.actionId === "restart") {
-        notification?.close();
-        notification = null;
-        void deps.dispatcher.dispatch({
-          type: INTENT_APP_SHUTDOWN,
-          payload: { installUpdate: true },
-        });
-        return;
-      }
-      if (event.actionId === "retry") {
-        startDownload(version);
-        return;
-      }
-      if (event.actionId === "dismiss") {
-        notification = null;
-      }
-    });
+  /**
+   * Reconcile a freshly detected version against what we are currently showing.
+   * electron-updater only reports feed-latest, so a version that differs from
+   * the one on screen (or the one the user dismissed) is necessarily newer.
+   */
+  function reconcile(version: string): void {
+    // Already showing this exact version — nothing changed.
+    if (notificationState !== "none" && version === targetVersion) return;
+    // User dismissed this exact version and nothing newer has appeared.
+    if (notificationState === "none" && version === dismissedVersion) return;
+    // A download is running; the post-download check will reconcile.
+    if (notificationState === "downloading") return;
+
+    targetVersion = version;
+    showAvailableNotification(version);
   }
 
   async function runCheck(): Promise<void> {
     if (!isEnabled()) return;
     if (checkInProgress || downloadInProgress) return;
-    if (surfaced) return;
 
     checkInProgress = true;
+    let found: boolean;
     try {
-      await deps.autoUpdater.checkForUpdates();
+      found = await deps.autoUpdater.checkForUpdates();
     } finally {
       checkInProgress = false;
     }
 
-    if (detectedVersion !== null && !surfaced) {
-      surfaced = true;
-      showAvailableNotification(detectedVersion);
+    if (found && lastDetectedVersion !== null) {
+      reconcile(lastDetectedVersion);
     }
   }
 
@@ -187,7 +233,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
             // boolean result; the callback simply ensures we always have the
             // version string.
             deps.autoUpdater.onUpdateDetected((version: string) => {
-              detectedVersion = version;
+              lastDetectedVersion = version;
             });
 
             deps.autoUpdater.start();
