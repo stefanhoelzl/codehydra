@@ -14,7 +14,6 @@ import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type {
   DialogConfig,
   DialogSection,
-  DialogAction,
   ProgressItem,
   TableColumn,
   TableRow,
@@ -103,23 +102,30 @@ function buildConfig(progress: DeletionProgress): DialogConfig {
     });
   }
 
-  const actions: DialogAction[] = [];
   if (progress.completed && progress.hasErrors) {
     const hasBlockers = blockers && blockers.length > 0;
-    actions.push({
-      id: "retry",
-      label: hasBlockers ? "Kill & Retry" : "Retry",
-    });
-    actions.push({
-      id: "dismiss",
-      label: "Dismiss",
-      variant: "secondary",
-      title:
-        "Close dialog. Workspace will be removed from CodeHydra, but blocking processes and files may remain on disk.",
+    sections.push({
+      type: "group",
+      items: [
+        {
+          type: "button",
+          id: "retry",
+          label: hasBlockers ? "Kill & Retry" : "Retry",
+          variant: "primary",
+        },
+        {
+          type: "button",
+          id: "dismiss",
+          label: "Dismiss",
+          variant: "secondary",
+          title:
+            "Close dialog. Workspace will be removed from CodeHydra, but blocking processes and files may remain on disk.",
+        },
+      ],
     });
   }
 
-  return { sections, ...(actions.length > 0 && { actions }) };
+  return { sections };
 }
 
 function truncate(str: string, max: number): string {

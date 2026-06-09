@@ -8,7 +8,7 @@
  * The backend sends the full config; a generic renderer displays it.
  */
 
-import type { DialogAction } from "./dialog-types";
+import type { DialogButton } from "./dialog-types";
 
 // ---- Notification Config ----
 
@@ -33,7 +33,7 @@ export interface NotificationConfig {
   /** When true, a dismiss button is shown */
   readonly dismissible?: boolean;
   /** Action buttons rendered below the notification content */
-  readonly actions?: readonly DialogAction[];
+  readonly actions?: readonly DialogButton[];
 }
 
 // ---- IPC Protocol ----
@@ -59,6 +59,6 @@ export type NotificationCommand =
  */
 export interface NotificationUserEvent {
   readonly notificationId: string;
-  /** "dismiss" for the dismiss button, or a DialogAction.id for action buttons */
+  /** "dismiss" for the dismiss button, or a DialogButton.id for action buttons */
   readonly actionId: string;
 }

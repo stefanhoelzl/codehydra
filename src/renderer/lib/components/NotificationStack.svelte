@@ -12,7 +12,7 @@
   import { sendNotificationEvent } from "$lib/api";
   import { notifications } from "$lib/stores/notification-store.svelte.js";
   import type { NotificationConfig } from "@shared/notification-types";
-  import type { DialogAction } from "@shared/dialog-types";
+  import type { DialogButton } from "@shared/dialog-types";
 
   interface Props {
     isExpanded: boolean;
@@ -27,7 +27,7 @@
     sendNotificationEvent({ notificationId, actionId: "dismiss" });
   }
 
-  function handleAction(notificationId: string, action: DialogAction): void {
+  function handleAction(notificationId: string, action: DialogButton): void {
     if (action.disabled || action.busy) return;
     sendNotificationEvent({ notificationId, actionId: action.id });
   }

@@ -344,10 +344,13 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               sections: [
                 { type: "text", content: "Initialize Git Repository?", style: "heading" },
                 { type: "text", content: path.toString(), style: "subtitle" },
-              ],
-              actions: [
-                { id: "init", label: "Initialize" },
-                { id: "cancel", label: "Cancel", variant: "secondary" },
+                {
+                  type: "group",
+                  items: [
+                    { type: "button", id: "init", label: "Initialize", variant: "primary" },
+                    { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+                  ],
+                },
               ],
               modal: true,
             });

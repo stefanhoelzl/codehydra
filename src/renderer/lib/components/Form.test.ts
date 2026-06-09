@@ -254,8 +254,11 @@ describe("Form component", () => {
             },
           ],
         },
+        {
+          type: "group",
+          items: [{ type: "button", id: "confirm", label: "Confirm", variant: "primary" }],
+        },
       ],
-      actions: [{ id: "confirm", label: "Confirm" }],
     };
 
     it("renders a combobox whose list shows the suggestion labels on focus", async () => {
@@ -300,8 +303,8 @@ describe("Form component", () => {
                 },
               ],
             },
+            { type: "group", items: [{ type: "button", id: "confirm", label: "Confirm" }] },
           ],
-          actions: [{ id: "confirm", label: "Confirm" }],
         },
         { dialogId: "dd" }
       );
@@ -336,6 +339,35 @@ describe("Form component", () => {
       });
     });
 
+    it("renders a label and error on a dropdown (FieldSection support)", () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "dropdown",
+            id: "region",
+            label: "Region",
+            error: "Region unavailable",
+            suggestions: [{ items: [{ value: "us", label: "US" }] }],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      const label = document.querySelector("vscode-label");
+      expect(label).toHaveTextContent("Region");
+      expect(label).toHaveAttribute("for", "region-input");
+
+      const helper = document.querySelector("vscode-form-helper");
+      expect(helper).toHaveAttribute("id", "region-error");
+      expect(helper?.querySelector(".field-error")).toHaveTextContent("Region unavailable");
+
+      const input = screen.getByRole("combobox");
+      expect(input).toHaveAttribute("id", "region-input");
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(input).toHaveAttribute("aria-describedby", "region-error");
+    });
+
     it("keeps the selected value when the config updates with the same suggestions", async () => {
       const { rerender } = renderForm(dropdownConfig, { dialogId: "dd" });
 
@@ -360,8 +392,8 @@ describe("Form component", () => {
                 },
               ],
             },
+            { type: "group", items: [{ type: "button", id: "confirm", label: "Confirm" }] },
           ],
-          actions: [{ id: "confirm", label: "Confirm" }],
         },
       });
 
@@ -390,8 +422,8 @@ describe("Form component", () => {
               id: "region",
               suggestions: [{ items: [{ value: "eu-central", label: "EU Central" }] }],
             },
+            { type: "group", items: [{ type: "button", id: "confirm", label: "Confirm" }] },
           ],
-          actions: [{ id: "confirm", label: "Confirm" }],
         },
       });
 
@@ -477,8 +509,8 @@ describe("Form component", () => {
               },
             ],
           },
+          { type: "group", items: [{ type: "button", id: "create", label: "Create" }] },
         ],
-        actions: [{ id: "create", label: "Create" }],
       };
 
       it("starts empty and reports the typed text", async () => {
@@ -600,8 +632,10 @@ describe("Form component", () => {
 
       it("reports an empty value while loading with cleared suggestions", async () => {
         const config: DialogConfig = {
-          sections: [{ type: "dropdown", id: "branch", suggestions: [], loading: true }],
-          actions: [{ id: "confirm", label: "Confirm" }],
+          sections: [
+            { type: "dropdown", id: "branch", suggestions: [], loading: true },
+            { type: "group", items: [{ type: "button", id: "confirm", label: "Confirm" }] },
+          ],
         };
 
         renderForm(config, { dialogId: "dd" });
@@ -833,15 +867,20 @@ describe("Form component", () => {
     });
   });
 
-  // ---- Actions ----
+  // ---- Buttons (footer-style button groups) ----
 
-  describe("actions", () => {
-    it("renders action buttons", () => {
+  describe("buttons", () => {
+    it("renders buttons declared in a button-only group", () => {
       const config: DialogConfig = {
-        sections: [{ type: "text", content: "Confirm?", style: "heading" }],
-        actions: [
-          { id: "confirm", label: "OK" },
-          { id: "cancel", label: "Cancel", variant: "secondary" },
+        sections: [
+          { type: "text", content: "Confirm?", style: "heading" },
+          {
+            type: "group",
+            items: [
+              { type: "button", id: "confirm", label: "OK" },
+              { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+            ],
+          },
         ],
       };
 
@@ -851,10 +890,12 @@ describe("Form component", () => {
       expect(screen.getByText("Cancel")).toBeInTheDocument();
     });
 
-    it("clicking an action calls sendDialogEvent with correct dialogId and actionId", async () => {
+    it("clicking a button calls sendDialogEvent with correct dialogId and actionId", async () => {
       const config: DialogConfig = {
-        sections: [{ type: "text", content: "Proceed?", style: "heading" }],
-        actions: [{ id: "go", label: "Go" }],
+        sections: [
+          { type: "text", content: "Proceed?", style: "heading" },
+          { type: "group", items: [{ type: "button", id: "go", label: "Go" }] },
+        ],
       };
 
       renderForm(config, { dialogId: "my-dialog" });
@@ -870,10 +911,12 @@ describe("Form component", () => {
       });
     });
 
-    it("disabled actions do not fire events", async () => {
+    it("disabled buttons do not fire events", async () => {
       const config: DialogConfig = {
-        sections: [{ type: "text", content: "Wait", style: "heading" }],
-        actions: [{ id: "go", label: "Go", disabled: true }],
+        sections: [
+          { type: "text", content: "Wait", style: "heading" },
+          { type: "group", items: [{ type: "button", id: "go", label: "Go", disabled: true }] },
+        ],
       };
 
       renderForm(config);
@@ -884,10 +927,23 @@ describe("Form component", () => {
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
     });
 
-    it("busy actions show busyLabel", () => {
+    it("busy buttons show busyLabel", () => {
       const config: DialogConfig = {
-        sections: [{ type: "text", content: "Working", style: "heading" }],
-        actions: [{ id: "submit", label: "Submit", busy: true, busyLabel: "Submitting..." }],
+        sections: [
+          { type: "text", content: "Working", style: "heading" },
+          {
+            type: "group",
+            items: [
+              {
+                type: "button",
+                id: "submit",
+                label: "Submit",
+                busy: true,
+                busyLabel: "Submitting...",
+              },
+            ],
+          },
+        ],
       };
 
       renderForm(config);
@@ -896,10 +952,23 @@ describe("Form component", () => {
       expect(screen.queryByText("Submit")).not.toBeInTheDocument();
     });
 
-    it("busy actions do not fire events", async () => {
+    it("busy buttons do not fire events", async () => {
       const config: DialogConfig = {
-        sections: [{ type: "text", content: "Working", style: "heading" }],
-        actions: [{ id: "submit", label: "Submit", busy: true, busyLabel: "Submitting..." }],
+        sections: [
+          { type: "text", content: "Working", style: "heading" },
+          {
+            type: "group",
+            items: [
+              {
+                type: "button",
+                id: "submit",
+                label: "Submit",
+                busy: true,
+                busyLabel: "Submitting...",
+              },
+            ],
+          },
+        ],
       };
 
       renderForm(config);
@@ -910,7 +979,7 @@ describe("Form component", () => {
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
     });
 
-    it("clicking an action includes selection data", async () => {
+    it("clicking a button includes selection data", async () => {
       const config: DialogConfig = {
         sections: [
           { type: "text", content: "Pick one", style: "heading" },
@@ -922,8 +991,8 @@ describe("Form component", () => {
               { id: "opt-b", label: "Option B" },
             ],
           },
+          { type: "group", items: [{ type: "button", id: "confirm", label: "Confirm" }] },
         ],
-        actions: [{ id: "confirm", label: "Confirm" }],
       };
 
       renderForm(config, { dialogId: "sel-dialog" });
@@ -956,8 +1025,8 @@ describe("Form component", () => {
             ],
           },
           { type: "input", id: "note", multiline: true, placeholder: "Note" },
+          { type: "group", items: [{ type: "button", id: "confirm", label: "Confirm" }] },
         ],
-        actions: [{ id: "confirm", label: "Confirm" }],
       };
 
       renderForm(config, { dialogId: "multi-dialog" });
@@ -977,6 +1046,260 @@ describe("Form component", () => {
         actionId: "confirm",
         data: { agent: "opencode", note: "hello" },
       });
+    });
+  });
+
+  // ---- Group sections (field rows with attached buttons) ----
+
+  describe("group sections", () => {
+    const projectRow: DialogConfig = {
+      sections: [
+        {
+          type: "group",
+          label: "Project",
+          items: [
+            {
+              type: "dropdown",
+              id: "project",
+              suggestions: [
+                {
+                  items: [
+                    { value: "p1", label: "Project One" },
+                    { value: "p2", label: "Project Two" },
+                  ],
+                },
+              ],
+            },
+            {
+              type: "button",
+              id: "open-folder",
+              icon: "folder-opened",
+              title: "Open project folder",
+            },
+            { type: "button", id: "clone", icon: "source-control", title: "Clone from Git" },
+          ],
+        },
+      ],
+    };
+
+    it("renders the field control and buttons in declaration order", () => {
+      renderForm(projectRow);
+
+      const row = document.querySelector(".group-row");
+      expect(row).toBeInTheDocument();
+      const children = Array.from(row!.children);
+      expect(children).toHaveLength(3);
+      expect(children[0]!.querySelector("[role='combobox']")).toBeInTheDocument();
+      expect(children[1]!.tagName.toLowerCase()).toBe("vscode-button");
+      expect(children[2]!.tagName.toLowerCase()).toBe("vscode-button");
+    });
+
+    it("renders the group label pointing at the first field's input", () => {
+      renderForm(projectRow);
+
+      const label = document.querySelector("vscode-label");
+      expect(label).toHaveTextContent("Project");
+      expect(label).toHaveAttribute("for", "project-input");
+    });
+
+    it("renders icon-only buttons with title doubling as accessible name", () => {
+      renderForm(projectRow);
+
+      const button = document.querySelectorAll(".group-row vscode-button")[0];
+      expect(button).toHaveClass("icon-button");
+      expect(button).toHaveAttribute("title", "Open project folder");
+      expect(button).toHaveAttribute("aria-label", "Open project folder");
+    });
+
+    it("clicking a field-attached button emits an action event with the values snapshot", async () => {
+      renderForm(projectRow, { dialogId: "ws" });
+
+      const clone = document.querySelectorAll(".group-row vscode-button")[1]!;
+      await fireEvent.click(clone);
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "ws",
+        actionId: "clone",
+        data: { project: "p1" },
+      });
+    });
+
+    it("does not fire from a busy field-attached button", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "group",
+            items: [
+              { type: "input", id: "url" },
+              { type: "button", id: "fetch", icon: "cloud-download", title: "Fetch", busy: true },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      await fireEvent.click(document.querySelector(".group-row vscode-button")!);
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("renders a child field error below the row and marks the control invalid", () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "group",
+            label: "Clone URL",
+            items: [
+              { type: "input", id: "url", error: "Not a valid git URL" },
+              { type: "button", id: "clone", icon: "source-control", title: "Clone" },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      const helper = document.querySelector("vscode-form-helper");
+      expect(helper).toHaveAttribute("id", "url-error");
+      expect(helper?.querySelector(".field-error")).toHaveTextContent("Not a valid git URL");
+      const field = document.querySelector("vscode-textfield");
+      expect(field).toHaveAttribute("aria-invalid", "true");
+      expect(field).toHaveAttribute("aria-describedby", "url-error");
+    });
+
+    it("emits an immediate change event when an opted-in dropdown in a group changes", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "group",
+            label: "Project",
+            items: [
+              {
+                type: "dropdown",
+                id: "project",
+                changeEvent: true,
+                suggestions: [
+                  {
+                    items: [
+                      { value: "p1", label: "One" },
+                      { value: "p2", label: "Two" },
+                    ],
+                  },
+                ],
+              },
+              { type: "button", id: "open", icon: "folder-opened", title: "Open" },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config, { dialogId: "g1" });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      // Options select on mousedown (prevents the blur-before-click issue).
+      await fireEvent.mouseDown(screen.getByText("Two"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        kind: "change",
+        dialogId: "g1",
+        fieldId: "project",
+        data: { project: "p2" },
+      });
+    });
+
+    it("centers a button-only group by default in the centered layout", () => {
+      const config: DialogConfig = {
+        sections: [{ type: "group", items: [{ type: "button", id: "ok", label: "OK" }] }],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector(".group-row")).toHaveClass("align-center");
+    });
+
+    it("left-aligns groups by default in the form layout", () => {
+      const config: DialogConfig = {
+        layout: "form",
+        sections: [{ type: "group", items: [{ type: "button", id: "ok", label: "OK" }] }],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector(".group-row")).toHaveClass("align-left");
+    });
+
+    it("applies an explicit align over the layout default", () => {
+      const config: DialogConfig = {
+        layout: "form",
+        sections: [
+          { type: "group", align: "right", items: [{ type: "button", id: "ok", label: "OK" }] },
+        ],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector(".group-row")).toHaveClass("align-right");
+    });
+  });
+
+  // ---- Enter-key submit ----
+
+  describe("Enter-key submit", () => {
+    const radioSection = {
+      type: "radio",
+      id: "agent",
+      options: [
+        { id: "claude", label: "Claude" },
+        { id: "opencode", label: "OpenCode" },
+      ],
+    } as const;
+
+    it("activates the first variant 'primary' button on Enter in a radio group", async () => {
+      const config: DialogConfig = {
+        sections: [
+          radioSection,
+          {
+            type: "group",
+            items: [
+              { type: "button", id: "open", icon: "folder-opened", title: "Open" },
+              { type: "button", id: "select", label: "Continue", variant: "primary" },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config, { dialogId: "enter" });
+
+      await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "enter",
+        actionId: "select",
+        data: { agent: "claude" },
+      });
+    });
+
+    it("does nothing on Enter when no button declares variant 'primary'", async () => {
+      const config: DialogConfig = {
+        sections: [
+          radioSection,
+          {
+            type: "group",
+            items: [{ type: "button", id: "open", icon: "folder-opened", title: "Open" }],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter" });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
     });
   });
 
@@ -1549,8 +1872,8 @@ describe("Form component", () => {
         const config: DialogConfig = {
           sections: [
             { type: "input", id: "name", multiline: true, changeEvent: true, placeholder: "Name" },
+            { type: "group", items: [{ type: "button", id: "go", label: "Go" }] },
           ],
-          actions: [{ id: "go", label: "Go" }],
         };
 
         renderForm(config, { dialogId: "d5" });

@@ -116,10 +116,13 @@ function buildDialogConfig(): DialogConfig {
         content: "Your current config and application logs will be included with your report.",
         style: "subtitle",
       },
-    ],
-    actions: [
-      { id: "send", label: "Send", variant: "primary" },
-      { id: "cancel", label: "Cancel", variant: "secondary" },
+      {
+        type: "group",
+        items: [
+          { type: "button", id: "send", label: "Send", variant: "primary" },
+          { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+        ],
+      },
     ],
     modal: true,
   };

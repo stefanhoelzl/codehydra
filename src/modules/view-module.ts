@@ -490,8 +490,11 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                     icon: a.icon,
                   })),
                 },
+                {
+                  type: "group",
+                  items: [{ type: "button", id: "select", label: "Continue", variant: "primary" }],
+                },
               ],
-              actions: [{ id: "select", label: "Continue", variant: "primary" }],
               modal: true,
             };
 
@@ -860,15 +863,16 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             { type: "text", content: "Setting up CodeHydra", style: "heading" },
             { type: "progress", items },
           ];
-          const config: DialogConfig = {
-            sections,
-            ...(hasFailed && {
-              actions: [
-                { id: "retry", label: "Retry" },
-                { id: "quit", label: "Quit", variant: "secondary" },
+          if (hasFailed) {
+            sections.push({
+              type: "group",
+              items: [
+                { type: "button", id: "retry", label: "Retry", variant: "primary" },
+                { type: "button", id: "quit", label: "Quit", variant: "secondary" },
               ],
-            }),
-          };
+            });
+          }
+          const config: DialogConfig = { sections };
           setupDialogHandle.update(config);
         },
       },
@@ -891,10 +895,13 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             sections: [
               { type: "text", content: "Setup Failed", style: "heading", icon: "error" },
               { type: "text", content: message },
-            ],
-            actions: [
-              { id: "retry", label: "Retry", variant: "primary" },
-              { id: "quit", label: "Quit", variant: "secondary" },
+              {
+                type: "group",
+                items: [
+                  { type: "button", id: "retry", label: "Retry", variant: "primary" },
+                  { type: "button", id: "quit", label: "Quit", variant: "secondary" },
+                ],
+              },
             ],
             modal: true,
           };
