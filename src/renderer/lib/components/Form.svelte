@@ -15,6 +15,10 @@
   control is also marked invalid). `config.layout` switches the section layout:
   "centered" (default) is the centered stack; "form" is left-aligned labeled
   rows with right-aligned actions.
+
+  Dropdown sections support a `loading` flag: a spinner is overlaid at the
+  control's right edge while the backend fetches options. The control stays
+  interactive and reports its value as usual.
 -->
 <script lang="ts">
   import type {
@@ -467,23 +471,30 @@
         {#if s.label}
           <vscode-label for={s.id}>{s.label}</vscode-label>
         {/if}
-        <vscode-single-select
-          class="input-dropdown"
-          id={s.id}
-          invalid={s.error ? true : undefined}
-          value={fieldValues[s.id] ?? ""}
-          aria-label={s.label ? undefined : "Select an option"}
-          aria-invalid={s.error ? "true" : undefined}
-          aria-describedby={s.error ? `${s.id}-error` : undefined}
-          use:dropdownChange={(value) => {
-            fieldValues = { ...fieldValues, [s.id]: value };
-            scheduleChange(s);
-          }}
-        >
-          {#each s.options as option (option.value)}
-            <vscode-option value={option.value}>{option.label}</vscode-option>
-          {/each}
-        </vscode-single-select>
+        <div class="dropdown-wrapper">
+          <vscode-single-select
+            class="input-dropdown"
+            id={s.id}
+            invalid={s.error ? true : undefined}
+            value={fieldValues[s.id] ?? ""}
+            aria-label={s.label ? undefined : "Select an option"}
+            aria-invalid={s.error ? "true" : undefined}
+            aria-describedby={s.error ? `${s.id}-error` : undefined}
+            use:dropdownChange={(value) => {
+              fieldValues = { ...fieldValues, [s.id]: value };
+              scheduleChange(s);
+            }}
+          >
+            {#each s.options as option (option.value)}
+              <vscode-option value={option.value}>{option.label}</vscode-option>
+            {/each}
+          </vscode-single-select>
+          {#if s.loading}
+            <div class="dropdown-loading" role="status" aria-label="Loading options">
+              <Icon name="loading" spin />
+            </div>
+          {/if}
+        </div>
         {#if s.error}
           <vscode-form-helper id="{s.id}-error">
             <span class="field-error">{s.error}</span>
@@ -851,8 +862,27 @@
 
   /* ---- Dropdown sections ---- */
 
+  .dropdown-wrapper {
+    position: relative;
+    width: 100%;
+  }
+
   .input-dropdown {
     width: 100%;
+  }
+
+  /* Loading spinner overlaid at the control's right edge, left of the
+     select's chevron. The control stays interactive (pointer-events: none). */
+  .dropdown-loading {
+    position: absolute;
+    right: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+    color: var(--ch-foreground);
+    opacity: 0.7;
   }
 
   /* ---- Table sections ---- */
