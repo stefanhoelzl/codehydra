@@ -338,6 +338,80 @@ describe("Form component", () => {
         data: { region: "us-west" },
       });
     });
+
+    describe("loading flag", () => {
+      it("shows a loading spinner when loading is true", () => {
+        const config: DialogConfig = {
+          sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+        };
+
+        renderForm(config);
+
+        const spinner = screen.getByRole("status", { name: "Loading options" });
+        expect(spinner).toBeInTheDocument();
+      });
+
+      it("shows no spinner when loading is absent", () => {
+        renderForm(dropdownConfig);
+
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      });
+
+      it("keeps the control interactive while loading", () => {
+        const config: DialogConfig = {
+          sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+        };
+
+        renderForm(config);
+
+        const select = document.querySelector("vscode-single-select")!;
+        expect(select).not.toHaveAttribute("disabled");
+      });
+
+      it("reports an empty value while loading with cleared options", async () => {
+        const config: DialogConfig = {
+          sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+          actions: [{ id: "confirm", label: "Confirm" }],
+        };
+
+        renderForm(config, { dialogId: "dd" });
+
+        await fireEvent.click(screen.getByText("Confirm"));
+
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { branch: "" },
+        });
+      });
+
+      it("removes the spinner when an update sets loading false", async () => {
+        const { rerender } = renderForm(
+          {
+            sections: [{ type: "dropdown", id: "branch", options: [], loading: true }],
+          },
+          { dialogId: "dd" }
+        );
+
+        expect(screen.getByRole("status", { name: "Loading options" })).toBeInTheDocument();
+
+        await rerender({
+          dialogId: "dd",
+          config: {
+            sections: [
+              {
+                type: "dropdown",
+                id: "branch",
+                options: [{ value: "main", label: "main" }],
+                loading: false,
+              },
+            ],
+          },
+        });
+
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      });
+    });
   });
 
   // ---- Table sections ----

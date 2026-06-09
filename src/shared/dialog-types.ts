@@ -95,11 +95,18 @@ interface RadioSection extends FieldSection {
  * - Always starts on the first option, so it always reports a real value.
  * - changeEvent: opt in to emit a field-change event when the chosen option
  *   changes (immediate by default; see FieldChangeConfig).
+ * - loading: the backend is fetching this field's options. Two-phase update:
+ *   on the triggering change, push loading: true (typically with stale
+ *   options cleared), fetch, then push the real options with loading: false.
+ *   Renders a spinner overlaid at the control's right edge; the control stays
+ *   interactive and reports its current value as usual. Independent of any
+ *   error state (both may be shown at once).
  */
 interface DropdownSection extends FieldSection {
   readonly type: "dropdown";
   readonly options: readonly DropdownOption[];
   readonly changeEvent?: FieldChangeConfig;
+  readonly loading?: boolean;
 }
 
 /**
