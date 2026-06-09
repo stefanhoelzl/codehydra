@@ -710,6 +710,9 @@ const errorReportModule = createErrorReportModule({
   configService,
   stateService,
   telemetryEnabled: telemetryEnabledConfig,
+  dialogBoundary: dialogLayer,
+  viewLayer,
+  viewManager,
   logger: loggingService.createLogger("error-report"),
 });
 

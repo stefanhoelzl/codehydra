@@ -13,6 +13,15 @@
  *     uncaughtException  → log; report + flush (if telemetry on, with timeout);
  *       ALWAYS exit(1). Logging + exit are unconditional (crash behavior is
  *       preserved with telemetry off); only the telemetry report is gated.
+ * - app:start / init (after "ui-ready"): subscribe the UI renderer crash guard
+ *     on the UI view. An uncaught exception in the UI renderer (e.g. a Svelte
+ *     effect loop killing the effect runtime) bricks the UI silently, so:
+ *     uncaught exception / render-process-gone → log; report (if telemetry on);
+ *       show a quit-only native dialog (the UI itself can't be trusted to
+ *       render anything), then dispatch app:shutdown.
+ *     unhandled rejection → log; report (if telemetry on); no dialog —
+ *       rejections rarely brick the UI and may even be handled later.
+ *     unresponsive → log only.
  *
  * Events:
  * - shortcut:key-pressed "b": open the bug report dialog.
@@ -35,7 +44,12 @@ import type { PostHogBoundary } from "../boundaries/platform/posthog";
 import type { Config } from "../boundaries/platform/config";
 import type { StateService } from "../boundaries/platform/state-service";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+import type { DialogBoundary } from "../boundaries/shell/dialog";
+import type { ViewBoundary, UncaughtExceptionDetails } from "../boundaries/shell/view";
+import type { IViewManager } from "../boundaries/shell/view-manager.interface";
+import { ANY_VALUE } from "../intents/lib/operation";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
+import { INTENT_APP_SHUTDOWN, type AppShutdownIntent } from "../intents/app-shutdown";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { INTENT_SUBMIT_BUG_REPORT, type SubmitBugReportIntent } from "../intents/submit-bug-report";
 import {
@@ -126,6 +140,15 @@ export interface ErrorReportModuleDeps {
   readonly stateService: Pick<StateService, "getRedactedOverrides">;
   /** Accessor for telemetry.enabled (registered in the composition root). */
   readonly telemetryEnabled: PersistedAccessor<boolean>;
+  /** Native message box for the UI crash dialog (the UI itself may be dead). */
+  readonly dialogBoundary: Pick<DialogBoundary, "showMessageBox">;
+  /** View events the UI renderer crash guard subscribes to. */
+  readonly viewLayer: Pick<
+    ViewBoundary,
+    "onUncaughtException" | "onRenderProcessGone" | "onUnresponsive"
+  >;
+  /** Source of the UI view handle (valid once "ui-ready" is provided). */
+  readonly viewManager: Pick<IViewManager, "getUIViewHandle">;
   readonly logger: Logger;
   /** Terminate the process. Injected for tests; defaults to process.exit. */
   readonly exit?: (code: number) => void;
@@ -180,11 +203,17 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
    * Compress logs, attach redacted config + state, and send the exception
    * through the boundary. The boundary stamps version/platform/arch/agent.
    */
-  function captureIncident(error: Error, logs: string, electronLogs: string): void {
+  function captureIncident(
+    error: Error,
+    logs: string,
+    electronLogs: string,
+    extraProps?: Record<string, unknown>
+  ): void {
     const appLogs = compressAndTrim(logs);
     const electronLogsBlob = compressAndTrim(electronLogs);
 
     deps.boundary.captureException(error, {
+      ...extraProps,
       logs: appLogs.compressed,
       logs_format: appLogs.compressed ? "gzip+base64" : "none",
       logs_raw_bytes: appLogs.rawBytesKept,
@@ -199,9 +228,9 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
   }
 
   /** Read both log streams, then capture the crash. */
-  async function captureCrash(error: Error): Promise<void> {
+  async function captureCrash(error: Error, extraProps?: Record<string, unknown>): Promise<void> {
     const [logs, electronLogs] = await Promise.all([readLogContent(), readElectronLogContent()]);
-    captureIncident(error, logs, electronLogs);
+    captureIncident(error, logs, electronLogs, extraProps);
   }
 
   /** Flush (and close) the boundary, but never block the exit beyond the cap. */
@@ -262,6 +291,83 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
   }
 
   // ---------------------------------------------------------------------------
+  // UI renderer crash guard
+  // ---------------------------------------------------------------------------
+
+  /** True once the (single) UI crash dialog has been shown. */
+  let uiCrashDialogShown = false;
+
+  function reportUiError(error: Error, source: string): void {
+    if (deps.telemetryEnabled.get()) {
+      void captureCrash(error, { crash_source: source }).catch(() => {});
+    }
+  }
+
+  /**
+   * Log + report, then show the quit-only native dialog. The UI renderer
+   * can't be trusted to render anything at this point, and a reloaded UI
+   * can't re-bootstrap mid-session — so the only recovery is a restart.
+   * Further signals while the dialog is up are logged/reported, not stacked.
+   */
+  function handleUiCrash(error: Error, source: string): void {
+    deps.logger.error("UI renderer crashed", { source }, error);
+    reportUiError(error, source);
+
+    if (uiCrashDialogShown) return;
+    uiCrashDialogShown = true;
+    void deps.dialogBoundary
+      .showMessageBox({
+        type: "error",
+        title: "CodeHydra",
+        message: "The CodeHydra UI hit an unexpected error and cannot recover.",
+        detail: `${error.message}\n\nCodeHydra needs to quit. Please start it again.`,
+        buttons: ["Quit CodeHydra"],
+        defaultId: 0,
+      })
+      .then(() =>
+        deps.dispatcher.dispatch({
+          type: INTENT_APP_SHUTDOWN,
+          payload: {},
+        } as AppShutdownIntent)
+      )
+      .catch(() => {
+        // Dialog failure must not mask the crash; log + report already happened.
+      });
+  }
+
+  function toUiError(details: UncaughtExceptionDetails): Error {
+    const error = new Error(details.message);
+    error.name = details.isPromiseRejection ? "UIRendererRejection" : "UIRendererError";
+    error.stack = details.stack;
+    return error;
+  }
+
+  function subscribeUiCrashGuard(): void {
+    const uiViewHandle = deps.viewManager.getUIViewHandle();
+
+    deps.viewLayer.onUncaughtException(uiViewHandle, (details) => {
+      const error = toUiError(details);
+      if (details.isPromiseRejection) {
+        deps.logger.error("Unhandled promise rejection in UI renderer", {}, error);
+        reportUiError(error, "ui-renderer-rejection");
+        return;
+      }
+      handleUiCrash(error, "ui-renderer-exception");
+    });
+
+    deps.viewLayer.onRenderProcessGone(uiViewHandle, ({ reason, exitCode }) => {
+      const error = new Error(`UI renderer process gone: ${reason} (exit code ${exitCode})`);
+      error.name = "UIRendererProcessGone";
+      error.stack = "";
+      handleUiCrash(error, "ui-renderer-process-gone");
+    });
+
+    deps.viewLayer.onUnresponsive(uiViewHandle, () => {
+      deps.logger.warn("UI renderer unresponsive");
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Manual bug report dialog
   // ---------------------------------------------------------------------------
 
@@ -306,6 +412,16 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         "before-ready": {
           handler: async (): Promise<Record<string, never>> => {
             registerErrorHandlers();
+            return {};
+          },
+        },
+        // The UI view exists once the view module's init handler has run
+        // (it provides "ui-ready"); subscribe the crash guard right after,
+        // before show-main-view mounts the Svelte app.
+        init: {
+          requires: { "ui-ready": ANY_VALUE },
+          handler: async (): Promise<Record<string, never>> => {
+            subscribeUiCrashGuard();
             return {};
           },
         },

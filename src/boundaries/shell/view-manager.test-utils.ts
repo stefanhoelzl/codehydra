@@ -28,6 +28,7 @@ export function createMockViewManager(options?: CreateMockViewManagerOptions): I
 
   const base: IViewManager = {
     create: vi.fn(),
+    getUIViewHandle: vi.fn().mockReturnValue({ id: "ui-view", __brand: "ViewHandle" }),
     getUIDevtoolsTarget: vi.fn(),
     getActiveWorkspaceDevtoolsTarget: vi.fn(),
     getUIKeyboardTarget: vi.fn(),

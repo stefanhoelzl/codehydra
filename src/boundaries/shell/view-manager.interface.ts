@@ -62,6 +62,12 @@ export interface IViewManager {
   create(): void;
 
   /**
+   * Returns the handle of the UI layer view, for subscribing to view-level
+   * events (e.g. the renderer crash guard). Only valid after `create()`.
+   */
+  getUIViewHandle(): ViewHandle;
+
+  /**
    * Returns a narrow capability for toggling devtools on the UI view.
    */
   getUIDevtoolsTarget(): DevtoolsTarget;
