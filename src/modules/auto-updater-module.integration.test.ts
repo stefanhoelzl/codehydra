@@ -171,10 +171,12 @@ function createTestSetup(overrides?: {
   disposeThrows?: Error;
   checkReturns?: boolean;
   configValues?: Record<string, unknown>;
+  config?: Config;
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
   const notificationManager = createMockNotificationManager();
-  const mockConfig = createMockConfig({ defaults: overrides?.configValues ?? {} });
+  const mockConfig =
+    overrides?.config ?? createMockConfig({ defaults: overrides?.configValues ?? {} });
 
   const dispatcher = createMockDispatcher();
 
@@ -475,6 +477,45 @@ describe("AutoUpdaterModule Integration", () => {
     const newest = notificationManager.notifications[1]!;
     expect(newest.opened.title).toBe("Update available");
     expect(newest.opened.message).toContain("3.0.0");
+  });
+
+  it("dismissing closes the notification so the renderer removes it", async () => {
+    const { dispatcher, notificationManager } = createTestSetup({ checkReturns: true });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, { actionId: "dismiss" });
+
+    expect(notificationManager.notifications[0]!.closed).toBe(true);
+  });
+
+  it("dismissing persists the dismissed version to config", async () => {
+    const { dispatcher, notificationManager, mockConfig } = createTestSetup({ checkReturns: true });
+    await dispatcher.dispatch(startIntent());
+    await flush();
+
+    notificationManager.emitEvent(0, { actionId: "dismiss" });
+    await flush();
+
+    expect(mockConfig.getEffective()["update.dismissed-version"]).toBe("2.0.0");
+  });
+
+  it("a version dismissed in a previous run stays silent after restart", async () => {
+    // First run: dismiss the surfaced version, which persists to the shared config.
+    const config = createMockConfig();
+    const first = createTestSetup({ checkReturns: true, config });
+    await first.dispatcher.dispatch(startIntent());
+    await flush();
+    first.notificationManager.emitEvent(0, { actionId: "dismiss" });
+    await flush();
+
+    // Second run (fresh module + notifications) reusing the same persisted config.
+    const second = createTestSetup({ checkReturns: true, config });
+    await second.dispatcher.dispatch(startIntent());
+    await flush();
+
+    // The restored dismissed version silences the same-version notification.
+    expect(second.notificationManager.notifications).toHaveLength(0);
   });
 
   it("app:shutdown calls autoUpdater.dispose()", async () => {
