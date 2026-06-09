@@ -483,6 +483,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
                 { type: "text", content: "Choose Agent", style: "heading" },
                 {
                   type: "selection",
+                  id: "agent",
                   options: availableAgents.map((a) => ({
                     id: a.agent,
                     label: a.label,
@@ -498,8 +499,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             const event = await handle.nextEvent(5 * 60_000);
             handle.close();
 
-            const selectedAgent =
-              (event.data?.["selection"] as string) ?? availableAgents[0]?.agent;
+            const selectedAgent = event.data?.["agent"] ?? availableAgents[0]?.agent;
             capAgentType = selectedAgent as LifecycleAgentType;
             logger.info("Agent selected", { agent: capAgentType });
 

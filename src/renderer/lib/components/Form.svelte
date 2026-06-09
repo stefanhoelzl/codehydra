@@ -29,43 +29,30 @@
 
   const { dialogId, config }: Props = $props();
 
-  // Track selection state for selection sections
-  let selectionState = $state<Record<number, string>>({});
+  // Track all field values (selection + input) keyed by field id.
+  let fieldValues = $state<Record<string, string>>({});
 
-  // Track input values for input sections (keyed by input id)
-  let inputState = $state<Record<string, string>>({});
-
-  // Initialize selection state when config changes (not when selection changes)
+  // Reconcile field values whenever the config changes: rebuild the map so it
+  // mirrors the current field sections (dropping removed-field keys) while
+  // preserving values for fields that remain.
+  // - selection: keep the existing choice if still a valid option, else the
+  //   first option.
+  // - input: keep existing edits/seeded value; otherwise seed from initialValue
+  //   on first sight (a later initialValue change does not re-seed).
+  // Existing values are read via untrack to avoid a write -> retrigger loop.
   $effect(() => {
-    const newState: Record<number, string> = {};
-    config.sections.forEach((section, index) => {
-      if (section.type === "selection" && section.options.length > 0) {
-        // Read existing selection without tracking — avoid circular dependency
-        const existing = untrack(() => selectionState[index]);
-        const stillValid = existing && section.options.some((o) => o.id === existing);
-        newState[index] = stillValid ? existing : section.options[0]!.id;
-      }
-    });
-    selectionState = newState;
-  });
-
-  // Seed input state from initialValue on first sight of each input id.
-  // Existing edits are preserved; re-seeds would overwrite user content.
-  $effect(() => {
-    const seeded: Record<string, string> = {};
-    let changed = false;
+    const next: Record<string, string> = {};
     for (const section of config.sections) {
-      if (section.type !== "input") continue;
-      const existing = untrack(() => inputState[section.id]);
-      if (existing !== undefined) continue;
-      if (section.initialValue !== undefined) {
-        seeded[section.id] = section.initialValue;
-        changed = true;
+      if (section.type === "selection") {
+        const existing = untrack(() => fieldValues[section.id]);
+        const stillValid = existing !== undefined && section.options.some((o) => o.id === existing);
+        next[section.id] = stillValid ? existing : (section.options[0]?.id ?? "");
+      } else if (section.type === "input") {
+        const existing = untrack(() => fieldValues[section.id]);
+        next[section.id] = existing ?? section.initialValue ?? "";
       }
     }
-    if (changed) {
-      inputState = { ...untrack(() => inputState), ...seeded };
-    }
+    fieldValues = next;
   });
 
   // Auto-focus the selected card on mount (for keyboard navigation)
@@ -123,40 +110,24 @@
     };
   }
 
-  /** Get the current selection data to include in events.
-   * NOTE: Supports one selection section per dialog. If multiple exist, last wins. */
-  function getSelectionData(): Record<string, unknown> {
-    const data: Record<string, unknown> = {};
-    config.sections.forEach((section, index) => {
-      if (section.type === "selection" && selectionState[index]) {
-        data["selection"] = selectionState[index];
-      }
-    });
-    return data;
-  }
-
-  /** Get input values to include in events. */
-  function getInputData(): Record<string, string> {
-    const inputs: Record<string, string> = {};
+  /** Snapshot every field's current value, keyed by field id. */
+  function getValues(): Record<string, string> {
+    const values: Record<string, string> = {};
     for (const section of config.sections) {
-      if (section.type === "input") {
-        inputs[section.id] = inputState[section.id] ?? "";
+      if (section.type === "selection" || section.type === "input") {
+        values[section.id] = fieldValues[section.id] ?? "";
       }
     }
-    return inputs;
+    return values;
   }
 
   /** Handle action button click. */
   function handleAction(action: DialogAction): void {
     if (action.disabled || action.busy) return;
-    const inputs = getInputData();
     const event: DialogUserEvent = {
       dialogId,
       actionId: action.id,
-      data: {
-        ...getSelectionData(),
-        ...(Object.keys(inputs).length > 0 ? { inputs } : {}),
-      },
+      data: getValues(),
     };
     sendDialogEvent(event);
   }
@@ -291,13 +262,13 @@
           <button
             type="button"
             class="selection-card"
-            class:selected={selectionState[sectionIndex] === option.id}
+            class:selected={fieldValues[s.id] === option.id}
             role="radio"
-            aria-checked={selectionState[sectionIndex] === option.id}
-            tabindex={selectionState[sectionIndex] === option.id ? 0 : -1}
+            aria-checked={fieldValues[s.id] === option.id}
+            tabindex={fieldValues[s.id] === option.id ? 0 : -1}
             data-option={option.id}
             onclick={() => {
-              selectionState = { ...selectionState, [sectionIndex]: option.id };
+              fieldValues = { ...fieldValues, [s.id]: option.id };
             }}
             onkeydown={(e) => {
               const opts = s.options;
@@ -316,12 +287,12 @@
                 return;
               } else if (e.key === " ") {
                 e.preventDefault();
-                selectionState = { ...selectionState, [sectionIndex]: option.id };
+                fieldValues = { ...fieldValues, [s.id]: option.id };
                 return;
               }
               if (targetIndex >= 0) {
                 const targetId = opts[targetIndex]!.id;
-                selectionState = { ...selectionState, [sectionIndex]: targetId };
+                fieldValues = { ...fieldValues, [s.id]: targetId };
                 const container = e.currentTarget.closest(".selection-cards");
                 setTimeout(() => {
                   const card = container?.querySelector(
@@ -339,7 +310,7 @@
             {/if}
             <span class="selection-card-title">{option.label}</span>
             <div class="selection-card-indicator">
-              {#if selectionState[sectionIndex] === option.id}
+              {#if fieldValues[s.id] === option.id}
                 <Icon name="circle-filled" size={16} />
               {:else}
                 <Icon name="circle-outline" size={16} />
@@ -354,14 +325,14 @@
           class="input-textarea"
           placeholder={s.placeholder ?? ""}
           aria-label={s.placeholder ?? "Text input"}
-          value={inputState[s.id] ?? ""}
+          value={fieldValues[s.id] ?? ""}
           use:seedCursor={{
             initialValue: s.initialValue,
             cursorOffset: s.cursorOffset,
             selectInitialValue: s.selectInitialValue,
           }}
           oninput={(e) => {
-            inputState = { ...inputState, [s.id]: e.currentTarget.value };
+            fieldValues = { ...fieldValues, [s.id]: e.currentTarget.value };
           }}
         ></textarea>
       {:else}
@@ -369,9 +340,9 @@
           class="input-textfield"
           placeholder={s.placeholder ?? ""}
           aria-label={s.placeholder ?? "Text input"}
-          value={inputState[s.id] ?? ""}
+          value={fieldValues[s.id] ?? ""}
           oninput={(e: Event) => {
-            inputState = { ...inputState, [s.id]: (e.currentTarget as HTMLInputElement).value };
+            fieldValues = { ...fieldValues, [s.id]: (e.currentTarget as HTMLInputElement).value };
           }}
         ></vscode-textfield>
       {/if}

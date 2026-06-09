@@ -107,8 +107,7 @@ export function createBugReportModule(deps: BugReportModuleDeps): IntentModule {
             readLogContent(),
             readElectronLogContent(),
           ]);
-          const inputs = (event.data?.inputs ?? {}) as Record<string, string>;
-          const description = inputs["description"] ?? "";
+          const description = event.data?.["description"] ?? "";
 
           void deps.dispatcher.dispatch({
             type: INTENT_SUBMIT_BUG_REPORT,

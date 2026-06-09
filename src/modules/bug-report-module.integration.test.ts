@@ -170,7 +170,7 @@ describe("BugReportModule", () => {
     handle._emitEvent({
       dialogId: "dlg-test",
       actionId: "send",
-      data: { inputs: { description: "My edited report" } },
+      data: { description: "My edited report" },
     });
 
     await vi.waitFor(() => {
@@ -211,7 +211,7 @@ describe("BugReportModule", () => {
     handle._emitEvent({
       dialogId: "dlg-test",
       actionId: "send",
-      data: { inputs: { description: "It crashed" } },
+      data: { description: "It crashed" },
     });
 
     // Wait for async readFile + dispatch
@@ -277,7 +277,7 @@ describe("BugReportModule", () => {
     handle._emitEvent({
       dialogId: "dlg-test",
       actionId: "send",
-      data: { inputs: { description: "rotated" } },
+      data: { description: "rotated" },
     });
 
     await vi.waitFor(() => {
@@ -302,7 +302,7 @@ describe("BugReportModule", () => {
     handle._emitEvent({
       dialogId: "dlg-test",
       actionId: "send",
-      data: { inputs: { description: "both logs" } },
+      data: { description: "both logs" },
     });
 
     await vi.waitFor(() => {
@@ -329,7 +329,7 @@ describe("BugReportModule", () => {
     handle._emitEvent({
       dialogId: "dlg-test",
       actionId: "send",
-      data: { inputs: { description: "no electron yet" } },
+      data: { description: "no electron yet" },
     });
 
     await vi.waitFor(() => {
@@ -350,7 +350,7 @@ describe("BugReportModule", () => {
     handle._emitEvent({
       dialogId: "dlg-test",
       actionId: "send",
-      data: { inputs: { description: "crash" } },
+      data: { description: "crash" },
     });
 
     await vi.waitFor(() => {

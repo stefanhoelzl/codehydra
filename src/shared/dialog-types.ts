@@ -42,9 +42,14 @@ interface ProgressSection {
 
 /**
  * Selection section - displays radio-group cards with icon + label.
+ *
+ * - id: stable field id. The chosen option's id is reported in
+ *   DialogUserEvent.data keyed by this id. Must be unique among the field
+ *   sections (input/selection) of a DialogConfig.
  */
 interface SelectionSection {
   readonly type: "selection";
+  readonly id: string;
   readonly options: readonly SelectionOption[];
 }
 
@@ -69,7 +74,7 @@ interface TableSection {
  *   (only applied when initialValue is set)
  * - selectInitialValue selects the seeded text instead of placing a caret, so
  *   the first keystroke replaces it (overrides cursorOffset)
- * - Input values are included in DialogUserEvent.data.inputs when actions fire
+ * - Input values are included in DialogUserEvent.data keyed by field id when actions fire
  */
 interface InputSection {
   readonly type: "input";
@@ -155,9 +160,15 @@ export type DialogCommand =
 
 /**
  * Events sent from renderer -> main when user interacts with a dialog.
+ *
+ * `data` is a flat snapshot of the dialog's field values, keyed by each field's
+ * stable id (input.id, selection.id, ...). Field ids must be unique within a
+ * DialogConfig. Every field is present; an empty/unset field reports "" (a
+ * key being absent means the field is not part of this dialog). Values are
+ * strings; widening the value type is a shared-type change.
  */
 export interface DialogUserEvent {
   readonly dialogId: string;
   readonly actionId: string;
-  readonly data?: Readonly<Record<string, unknown>>;
+  readonly data?: Readonly<Record<string, string>>;
 }
