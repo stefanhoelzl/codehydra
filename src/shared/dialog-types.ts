@@ -41,15 +41,31 @@ interface ProgressSection {
 }
 
 /**
- * Selection section - displays radio-group cards with icon + label.
+ * Field section base — sections that hold a user-editable value reported in
+ * DialogUserEvent.data.
  *
- * - id: stable field id. The chosen option's id is reported in
- *   DialogUserEvent.data keyed by this id. Must be unique among the field
- *   sections (input/selection) of a DialogConfig.
+ * - id: stable field id. The field's value is reported in DialogUserEvent.data
+ *   keyed by this id. Must be unique among the field sections (input/selection)
+ *   of a DialogConfig.
+ * - label: optional field label rendered above the control. Shown whenever
+ *   present; the "form" layout (see DialogConfig.layout) lays fields out as
+ *   left-aligned labeled rows.
+ * - error: optional validation message rendered as red helper text below the
+ *   control, which is also marked invalid (red border). Set/cleared by the
+ *   backend via handle.update().
  */
-interface SelectionSection {
-  readonly type: "selection";
+interface FieldSection {
   readonly id: string;
+  readonly label?: string;
+  readonly error?: string;
+}
+
+/**
+ * Selection section - displays radio-group cards with icon + label.
+ * Extends FieldSection (id/label/error).
+ */
+interface SelectionSection extends FieldSection {
+  readonly type: "selection";
   readonly options: readonly SelectionOption[];
 }
 
@@ -65,7 +81,8 @@ interface TableSection {
 }
 
 /**
- * Input section - displays a text input field.
+ * Input section - displays a text input field. Extends FieldSection
+ * (id/label/error).
  *
  * - multiline false (default): single-line text field
  * - multiline true: multi-line textarea
@@ -76,9 +93,8 @@ interface TableSection {
  *   the first keystroke replaces it (overrides cursorOffset)
  * - Input values are included in DialogUserEvent.data keyed by field id when actions fire
  */
-interface InputSection {
+interface InputSection extends FieldSection {
   readonly type: "input";
-  readonly id: string;
   readonly placeholder?: string;
   readonly multiline?: boolean;
   readonly initialValue?: string;
@@ -146,6 +162,13 @@ export interface DialogConfig {
   readonly actions?: readonly DialogAction[];
   /** When true, the dialog is on top of everything and blocks keyboard shortcuts (Alt+X). Default: false. */
   readonly modal?: boolean;
+  /**
+   * Section layout (renderer hint; the modal shell is unaffected).
+   * - "centered" (default): centered stack, no field labels — today's behavior.
+   * - "form": left-aligned labeled rows (each field's label above its control,
+   *   actions right-aligned).
+   */
+  readonly layout?: "centered" | "form";
 }
 
 // ---- IPC Protocol ----

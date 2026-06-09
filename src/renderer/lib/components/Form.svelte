@@ -8,6 +8,12 @@
   Surface-agnostic: the wrapping surface (e.g. DialogView's modal card, or a
   future panel shell) provides the chrome and text alignment. Form only lays the
   sections out in a vertical flow.
+
+  Field sections (input/selection) support an optional `label` (rendered above
+  the control) and an optional `error` (red helper text below the control; the
+  control is also marked invalid). `config.layout` switches the section layout:
+  "centered" (default) is the centered stack; "form" is left-aligned labeled
+  rows with right-aligned actions.
 -->
 <script lang="ts">
   import type {
@@ -28,6 +34,10 @@
   }
 
   const { dialogId, config }: Props = $props();
+
+  // Section layout: "centered" (default) keeps the centered stack; "form" lays
+  // fields out as left-aligned labeled rows with right-aligned actions.
+  const layout = $derived(config.layout ?? "centered");
 
   // Track all field values (selection + input) keyed by field id.
   let fieldValues = $state<Record<string, string>>({});
@@ -179,7 +189,7 @@
   }
 </script>
 
-<div class="form" bind:this={formRef}>
+<div class="form" class:layout-form={layout === "form"} bind:this={formRef}>
   {#each config.sections as section, sectionIndex (sectionIndex)}
     {@const s = section}
     {#if s.type === "text"}
@@ -257,95 +267,129 @@
         {/each}
       </div>
     {:else if s.type === "selection"}
-      <div class="selection-cards" role="radiogroup" aria-label="Selection">
-        {#each s.options as option, optionIndex (option.id)}
-          <button
-            type="button"
-            class="selection-card"
-            class:selected={fieldValues[s.id] === option.id}
-            role="radio"
-            aria-checked={fieldValues[s.id] === option.id}
-            tabindex={fieldValues[s.id] === option.id ? 0 : -1}
-            data-option={option.id}
-            onclick={() => {
-              fieldValues = { ...fieldValues, [s.id]: option.id };
-            }}
-            onkeydown={(e) => {
-              const opts = s.options;
-              let targetIndex = -1;
-              if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-                e.preventDefault();
-                targetIndex = optionIndex === 0 ? opts.length - 1 : optionIndex - 1;
-              } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-                e.preventDefault();
-                targetIndex = optionIndex === opts.length - 1 ? 0 : optionIndex + 1;
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                const primaryAction =
-                  config.actions?.find((a) => a.variant !== "secondary") ?? config.actions?.[0];
-                if (primaryAction) handleAction(primaryAction);
-                return;
-              } else if (e.key === " ") {
-                e.preventDefault();
+      <div class="form-field">
+        {#if s.label}
+          <vscode-label>{s.label}</vscode-label>
+        {/if}
+        <div
+          class="selection-cards"
+          class:errored={!!s.error}
+          role="radiogroup"
+          aria-label={s.label ?? "Selection"}
+          aria-describedby={s.error ? `${s.id}-error` : undefined}
+        >
+          {#each s.options as option, optionIndex (option.id)}
+            <button
+              type="button"
+              class="selection-card"
+              class:selected={fieldValues[s.id] === option.id}
+              role="radio"
+              aria-checked={fieldValues[s.id] === option.id}
+              tabindex={fieldValues[s.id] === option.id ? 0 : -1}
+              data-option={option.id}
+              onclick={() => {
                 fieldValues = { ...fieldValues, [s.id]: option.id };
-                return;
-              }
-              if (targetIndex >= 0) {
-                const targetId = opts[targetIndex]!.id;
-                fieldValues = { ...fieldValues, [s.id]: targetId };
-                const container = e.currentTarget.closest(".selection-cards");
-                setTimeout(() => {
-                  const card = container?.querySelector(
-                    `[data-option="${targetId}"]`
-                  ) as HTMLElement | null;
-                  card?.focus();
-                }, 0);
-              }
-            }}
-          >
-            {#if option.icon}
-              <div class="selection-card-icon">
-                <Icon name={option.icon} size={32} />
-              </div>
-            {/if}
-            <span class="selection-card-title">{option.label}</span>
-            <div class="selection-card-indicator">
-              {#if fieldValues[s.id] === option.id}
-                <Icon name="circle-filled" size={16} />
-              {:else}
-                <Icon name="circle-outline" size={16} />
+              }}
+              onkeydown={(e) => {
+                const opts = s.options;
+                let targetIndex = -1;
+                if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  targetIndex = optionIndex === 0 ? opts.length - 1 : optionIndex - 1;
+                } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                  e.preventDefault();
+                  targetIndex = optionIndex === opts.length - 1 ? 0 : optionIndex + 1;
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  const primaryAction =
+                    config.actions?.find((a) => a.variant !== "secondary") ?? config.actions?.[0];
+                  if (primaryAction) handleAction(primaryAction);
+                  return;
+                } else if (e.key === " ") {
+                  e.preventDefault();
+                  fieldValues = { ...fieldValues, [s.id]: option.id };
+                  return;
+                }
+                if (targetIndex >= 0) {
+                  const targetId = opts[targetIndex]!.id;
+                  fieldValues = { ...fieldValues, [s.id]: targetId };
+                  const container = e.currentTarget.closest(".selection-cards");
+                  setTimeout(() => {
+                    const card = container?.querySelector(
+                      `[data-option="${targetId}"]`
+                    ) as HTMLElement | null;
+                    card?.focus();
+                  }, 0);
+                }
+              }}
+            >
+              {#if option.icon}
+                <div class="selection-card-icon">
+                  <Icon name={option.icon} size={32} />
+                </div>
               {/if}
-            </div>
-          </button>
-        {/each}
+              <span class="selection-card-title">{option.label}</span>
+              <div class="selection-card-indicator">
+                {#if fieldValues[s.id] === option.id}
+                  <Icon name="circle-filled" size={16} />
+                {:else}
+                  <Icon name="circle-outline" size={16} />
+                {/if}
+              </div>
+            </button>
+          {/each}
+        </div>
+        {#if s.error}
+          <vscode-form-helper id="{s.id}-error">
+            <span class="field-error">{s.error}</span>
+          </vscode-form-helper>
+        {/if}
       </div>
     {:else if s.type === "input"}
-      {#if s.multiline}
-        <textarea
-          class="input-textarea"
-          placeholder={s.placeholder ?? ""}
-          aria-label={s.placeholder ?? "Text input"}
-          value={fieldValues[s.id] ?? ""}
-          use:seedCursor={{
-            initialValue: s.initialValue,
-            cursorOffset: s.cursorOffset,
-            selectInitialValue: s.selectInitialValue,
-          }}
-          oninput={(e) => {
-            fieldValues = { ...fieldValues, [s.id]: e.currentTarget.value };
-          }}
-        ></textarea>
-      {:else}
-        <vscode-textfield
-          class="input-textfield"
-          placeholder={s.placeholder ?? ""}
-          aria-label={s.placeholder ?? "Text input"}
-          value={fieldValues[s.id] ?? ""}
-          oninput={(e: Event) => {
-            fieldValues = { ...fieldValues, [s.id]: (e.currentTarget as HTMLInputElement).value };
-          }}
-        ></vscode-textfield>
-      {/if}
+      <div class="form-field">
+        {#if s.label}
+          <vscode-label for={s.id}>{s.label}</vscode-label>
+        {/if}
+        {#if s.multiline}
+          <textarea
+            class="input-textarea"
+            class:errored={!!s.error}
+            id={s.id}
+            placeholder={s.placeholder ?? ""}
+            aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
+            aria-invalid={s.error ? "true" : undefined}
+            aria-describedby={s.error ? `${s.id}-error` : undefined}
+            value={fieldValues[s.id] ?? ""}
+            use:seedCursor={{
+              initialValue: s.initialValue,
+              cursorOffset: s.cursorOffset,
+              selectInitialValue: s.selectInitialValue,
+            }}
+            oninput={(e) => {
+              fieldValues = { ...fieldValues, [s.id]: e.currentTarget.value };
+            }}
+          ></textarea>
+        {:else}
+          <vscode-textfield
+            class="input-textfield"
+            id={s.id}
+            invalid={s.error ? true : undefined}
+            placeholder={s.placeholder ?? ""}
+            aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
+            aria-invalid={s.error ? "true" : undefined}
+            aria-describedby={s.error ? `${s.id}-error` : undefined}
+            value={fieldValues[s.id] ?? ""}
+            oninput={(e: Event) => {
+              fieldValues = { ...fieldValues, [s.id]: (e.currentTarget as HTMLInputElement).value };
+            }}
+          ></vscode-textfield>
+        {/if}
+        {#if s.error}
+          <vscode-form-helper id="{s.id}-error">
+            <span class="field-error">{s.error}</span>
+          </vscode-form-helper>
+        {/if}
+      </div>
     {:else if s.type === "table"}
       <div class="table-container">
         {#if s.header}
@@ -413,6 +457,33 @@
     align-items: center;
     gap: 0.75rem;
     width: 100%;
+  }
+
+  /* Form-layout mode: left-aligned labeled rows, right-aligned actions. */
+  .form.layout-form {
+    align-items: stretch;
+    text-align: left;
+  }
+
+  .form.layout-form .actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Field wrapper: groups a field's label, control, and error tightly so the
+     error sits directly under its control (the 0.75rem .form gap only applies
+     between fields/sections). */
+  .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    width: 100%;
+  }
+
+  /* Per-field validation error (slotted into <vscode-form-helper>). */
+  .field-error {
+    color: var(--ch-danger, #f14c4c);
+    font-size: 0.75rem;
   }
 
   /* ---- Text sections ---- */
@@ -567,6 +638,12 @@
     margin: 0.5rem 0;
   }
 
+  .selection-cards.errored {
+    outline: 1px solid var(--ch-danger, #f14c4c);
+    outline-offset: 6px;
+    border-radius: var(--ch-radius-md, 10px);
+  }
+
   .selection-card {
     display: flex;
     flex-direction: column;
@@ -699,6 +776,10 @@
   .input-textarea:focus {
     outline: none;
     border-color: var(--ch-focus-border);
+  }
+
+  .input-textarea.errored {
+    border-color: var(--ch-danger, #f14c4c);
   }
 
   .input-textarea::placeholder {

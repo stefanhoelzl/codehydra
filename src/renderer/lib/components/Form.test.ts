@@ -500,4 +500,171 @@ describe("Form component", () => {
       });
     });
   });
+
+  // ---- Field labels ----
+
+  describe("field labels", () => {
+    it("renders a vscode-label associated with an input via for/id", () => {
+      const config: DialogConfig = {
+        sections: [{ type: "input", id: "branch", label: "Branch name" }],
+      };
+
+      renderForm(config);
+
+      const label = document.querySelector("vscode-label");
+      expect(label).toBeInTheDocument();
+      expect(label).toHaveTextContent("Branch name");
+      expect(label).toHaveAttribute("for", "branch");
+
+      // The control carries the matching id the label points at.
+      expect(document.querySelector("vscode-textfield")).toHaveAttribute("id", "branch");
+    });
+
+    it("renders no label element when the field has none", () => {
+      const config: DialogConfig = {
+        sections: [{ type: "input", id: "branch" }],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector("vscode-label")).not.toBeInTheDocument();
+    });
+
+    it("names a selection group from its label via aria-label", () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "selection",
+            id: "agent",
+            label: "Agent",
+            options: [
+              { id: "claude", label: "Claude" },
+              { id: "opencode", label: "OpenCode" },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector("vscode-label")).toHaveTextContent("Agent");
+      expect(screen.getByRole("radiogroup")).toHaveAttribute("aria-label", "Agent");
+    });
+  });
+
+  // ---- Field errors ----
+
+  describe("field errors", () => {
+    it("renders the error below a single-line input and marks the control invalid", () => {
+      const config: DialogConfig = {
+        sections: [
+          { type: "input", id: "branch", label: "Branch", error: "Branch already exists" },
+        ],
+      };
+
+      renderForm(config);
+
+      // Error message lives in a vscode-form-helper, colored red via .field-error.
+      const helper = document.querySelector("vscode-form-helper");
+      expect(helper).toBeInTheDocument();
+      expect(helper).toHaveAttribute("id", "branch-error");
+      expect(helper?.querySelector(".field-error")).toHaveTextContent("Branch already exists");
+
+      // The control is wired to the error and marked invalid (red border).
+      const field = document.querySelector("vscode-textfield");
+      expect(field).toHaveAttribute("aria-invalid", "true");
+      expect(field).toHaveAttribute("aria-describedby", "branch-error");
+      expect((field as HTMLElement & { invalid?: boolean }).invalid).toBe(true);
+    });
+
+    it("renders the error below a multiline input with the errored border class", () => {
+      const config: DialogConfig = {
+        sections: [{ type: "input", id: "note", multiline: true, error: "Required" }],
+      };
+
+      renderForm(config);
+
+      const textarea = document.querySelector("textarea");
+      expect(textarea).toHaveClass("errored");
+      expect(textarea).toHaveAttribute("aria-invalid", "true");
+      expect(textarea).toHaveAttribute("aria-describedby", "note-error");
+      expect(document.querySelector("vscode-form-helper .field-error")).toHaveTextContent(
+        "Required"
+      );
+    });
+
+    it("renders the error below a selection and outlines the group", () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "selection",
+            id: "agent",
+            error: "Pick an agent",
+            options: [
+              { id: "claude", label: "Claude" },
+              { id: "opencode", label: "OpenCode" },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      const group = screen.getByRole("radiogroup");
+      expect(group).toHaveClass("errored");
+      expect(group).toHaveAttribute("aria-describedby", "agent-error");
+      const helper = document.querySelector("vscode-form-helper");
+      expect(helper).toHaveAttribute("id", "agent-error");
+      expect(helper?.querySelector(".field-error")).toHaveTextContent("Pick an agent");
+    });
+
+    it("renders no error element and no invalid state when error is absent", () => {
+      const config: DialogConfig = {
+        sections: [{ type: "input", id: "branch", label: "Branch" }],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector("vscode-form-helper")).not.toBeInTheDocument();
+      const field = document.querySelector("vscode-textfield");
+      expect(field).not.toHaveAttribute("aria-invalid");
+      expect(field).not.toHaveAttribute("aria-describedby");
+    });
+
+    it("treats an empty-string error as no error", () => {
+      const config: DialogConfig = {
+        sections: [{ type: "input", id: "branch", error: "" }],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector("vscode-form-helper")).not.toBeInTheDocument();
+      expect(document.querySelector("vscode-textfield")).not.toHaveAttribute("aria-invalid");
+    });
+  });
+
+  // ---- Layout ----
+
+  describe("layout", () => {
+    it("uses the centered layout by default", () => {
+      const config: DialogConfig = {
+        sections: [{ type: "input", id: "branch", label: "Branch" }],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector(".form")).not.toHaveClass("layout-form");
+    });
+
+    it("applies the form layout when config.layout is 'form'", () => {
+      const config: DialogConfig = {
+        layout: "form",
+        sections: [{ type: "input", id: "branch", label: "Branch" }],
+      };
+
+      renderForm(config);
+
+      expect(document.querySelector(".form")).toHaveClass("layout-form");
+    });
+  });
 });
