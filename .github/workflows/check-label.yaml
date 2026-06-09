@@ -14,11 +14,17 @@ jobs:
     steps:
       - name: Require changelog label
         env:
-          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Query live labels instead of the event payload. `gh pr create --label`
+          # applies labels in a separate API call ~1s after creating the PR, so the
+          # `opened` webhook snapshot (github.event.pull_request.labels) races the
+          # label and is intermittently empty. The live state is reliable by the time
+          # this job runs.
+          LABELS=$(gh pr view "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" --json labels --jq '.labels[].name')
           for label in enhancement bug internal; do
-            if echo "$LABELS" | grep -q "\"$label\""; then
+            if echo "$LABELS" | grep -qx "$label"; then
               echo "Found label: $label"
               exit 0
             fi
