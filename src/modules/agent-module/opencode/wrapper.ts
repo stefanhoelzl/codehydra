@@ -12,65 +12,18 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { request } from "node:http";
 
 // Exit codes
 const EXIT_ENV_ERROR = 1;
 const EXIT_SPAWN_FAILED = 2;
 
 /**
- * Send a hook notification to the bridge server.
- * Fire-and-forget: does not wait for response.
- * Silent on error - bridge server may not be available.
- *
- * @param hookName - Name of the hook
- */
-async function notifyHook(hookName: "WrapperStart"): Promise<void> {
-  const bridgePort = process.env._CH_BRIDGE_PORT;
-  const workspacePath = process.env._CH_WORKSPACE_PATH;
-
-  if (!bridgePort || !workspacePath) {
-    return;
-  }
-
-  const payload = JSON.stringify({ workspacePath });
-
-  return new Promise((resolve) => {
-    const req = request(
-      {
-        hostname: "127.0.0.1",
-        port: parseInt(bridgePort, 10),
-        path: `/hook/${hookName}`,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
-        },
-        timeout: 2000,
-      },
-      () => {
-        resolve();
-      }
-    );
-
-    req.on("error", () => {
-      resolve(); // Silent failure
-    });
-
-    req.on("timeout", () => {
-      req.destroy();
-      resolve();
-    });
-
-    req.write(payload);
-    req.end();
-  });
-}
-
-/**
  * Main entry point for the wrapper script.
+ *
+ * Agent status (the old WrapperStart notification) is driven by the sidekick via
+ * the agent terminal's open/close — this wrapper no longer posts hooks.
  */
-async function main(): Promise<never> {
+function main(): never {
   // 1. Read and validate _CH_OPENCODE_PORT
   const portStr = process.env._CH_OPENCODE_PORT;
   if (!portStr) {
@@ -118,17 +71,14 @@ async function main(): Promise<never> {
     args.push("--session", sessionId);
   }
 
-  // 7. Notify wrapper start (must complete before spawnSync blocks event loop)
-  await notifyHook("WrapperStart");
-
-  // 8. Spawn opencode binary
+  // 7. Spawn opencode binary
   // Note: .cmd files on Windows require shell:true to execute
   const result = spawnSync(binaryPath, args, {
     stdio: "inherit",
     shell: binaryPath.endsWith(".cmd"),
   });
 
-  // 9. Handle result
+  // 8. Handle result
   if (result.error) {
     console.error(`Error: Failed to start opencode: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
@@ -140,10 +90,10 @@ async function main(): Promise<never> {
 // Run main and handle any uncaught errors
 // Skip when running in test environment (Vitest sets VITEST env var)
 if (!process.env.VITEST) {
-  main().catch((error: unknown) => {
+  try {
+    main();
+  } catch (error: unknown) {
     console.error("Fatal error:", error instanceof Error ? error.message : error);
     process.exit(EXIT_ENV_ERROR);
-  });
+  }
 }
-
-export { notifyHook };

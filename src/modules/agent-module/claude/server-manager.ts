@@ -28,6 +28,7 @@ import {
   type ClaudeCodeBridgePayload,
   isValidHookName,
   getStatusChangeForHook,
+  WRAPPER_HOOK_NAMES,
 } from "./types";
 import hooksConfigTemplate from "./hooks.template.json";
 import mcpConfigTemplate from "./mcp.template.json";
@@ -638,6 +639,14 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       return;
     }
 
+    // WrapperStart/WrapperEnd are no longer accepted over HTTP — they are driven
+    // by the sidekick via triggerWrapperLifecycle(). Reject stray POSTs.
+    if (WRAPPER_HOOK_NAMES.has(hookName)) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `Hook not accepted over HTTP: ${hookName}` }));
+      return;
+    }
+
     // Read request body
     let body = "";
     req.on("data", (chunk: Buffer) => {
@@ -665,6 +674,19 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Internal error" }));
     });
+  }
+
+  /**
+   * Trigger a wrapper lifecycle transition for a workspace.
+   *
+   * Replaces the wrapper's HTTP POST of WrapperStart/WrapperEnd: invoked via the
+   * agent:lifecycle intent when the sidekick reports the agent terminal opening
+   * ("WrapperStart") or closing ("WrapperEnd"). Routes through the same state
+   * machine as all other hooks (status, markActive, workspace-ready, subagent
+   * cleanup). Idempotent and a no-op for unknown workspaces.
+   */
+  triggerWrapperLifecycle(workspacePath: string, hookName: "WrapperStart" | "WrapperEnd"): void {
+    this.handleHook(hookName, { workspacePath });
   }
 
   /**

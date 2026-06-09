@@ -6,7 +6,7 @@
  * keeping the module itself a thin adapter between the intent system and the provider.
  */
 
-import type { AgentType } from "../../shared/plugin-protocol";
+import type { AgentType, AgentLifecycleEvent } from "../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
 import type { AgentSessionInfo, McpConfig, StopServerResult, RestartServerResult } from "./types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
@@ -88,6 +88,16 @@ export interface AgentModuleProvider {
 
   /** Restart agent for a workspace */
   restartWorkspace(workspacePath: string): Promise<RestartServerResult>;
+
+  /**
+   * Apply an agent terminal lifecycle transition (reported by the sidekick).
+   * - "open": agent terminal created → WrapperStart (Claude) / markActive (OpenCode).
+   * - "close": agent terminal closed → WrapperEnd (Claude) / TUI detach (OpenCode).
+   *
+   * Replaces the wrapper-synthesized WrapperStart/WrapperEnd POSTs. Idempotent and
+   * a no-op for unknown/untracked workspaces.
+   */
+  applyTerminalLifecycle(workspacePath: string, event: AgentLifecycleEvent): void;
 
   // --- Query ---
 

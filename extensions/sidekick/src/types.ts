@@ -52,6 +52,13 @@ export interface LogRequest {
   readonly context?: LogContext;
 }
 
+/** Agent terminal lifecycle event reported to the main process. */
+export type AgentLifecycleEvent = "open" | "close";
+
+export interface AgentLifecycleRequest {
+  readonly event: AgentLifecycleEvent;
+}
+
 export interface WorkspaceCreateRequest {
   readonly name: string;
   readonly base: string;
@@ -168,6 +175,7 @@ export interface ClientToServerEvents {
     ack: (result: PluginResult<Workspace>) => void
   ) => void;
   "api:log": (request: LogRequest) => void;
+  "api:workspace:agentLifecycle": (request: AgentLifecycleRequest) => void;
 }
 
 export type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;

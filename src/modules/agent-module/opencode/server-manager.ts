@@ -7,7 +7,6 @@
  * and redirects to `opencode attach`.
  */
 
-import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http";
 import type { ProcessRunner, SpawnedProcess } from "../../../boundaries/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
@@ -126,15 +125,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
   private mcpConfig: McpConfig | null = null;
 
-  /** Bridge HTTP server for receiving wrapper notifications (shared across all workspaces) */
-  private bridgeServer: Server | null = null;
-  /** Port the bridge server is listening on */
-  private bridgePort: number | null = null;
-  /** Promise for the in-progress bridge server start (prevents concurrent double-start) */
-  private bridgeStartPromise: Promise<void> | null = null;
-  /** Callbacks for workspace ready events (wrapper started) */
+  /** Callbacks for workspace ready events (agent terminal opened) */
   private readonly workspaceReadyCallbacks = new Set<WorkspaceReadyCallback>();
-  /** Handler called when workspace becomes active (WrapperStart) */
+  /** Handler called when workspace becomes active (agent terminal opened) */
   private markActiveHandler: ((workspacePath: string) => void) | null = null;
 
   constructor(
@@ -187,9 +180,9 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       return existing.port;
     }
 
-    // Create the start promise (includes bridge initialization)
+    // Create the start promise.
     // Set entry BEFORE any async work so concurrent callers (e.g. restartServer) can see it
-    const startPromise = this.doStartWithBridge(workspacePath);
+    const startPromise = this.doStartServer(workspacePath);
     this.servers.set(workspacePath, { state: "starting", startPromise });
 
     try {
@@ -200,19 +193,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       this.servers.delete(workspacePath);
       throw error;
     }
-  }
-
-  /**
-   * Internal method that ensures bridge is running, then starts the server.
-   */
-  private async doStartWithBridge(workspacePath: string): Promise<number> {
-    // Start bridge server if not running (shared across all workspaces)
-    if (!this.bridgeStartPromise) {
-      this.bridgeStartPromise = this.startBridgeServer();
-    }
-    await this.bridgeStartPromise;
-
-    return this.doStartServer(workspacePath);
   }
 
   /**
@@ -545,17 +525,26 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   }
 
   /**
-   * Get the bridge server port.
-   * Returns null if bridge server is not running.
+   * Trigger the "agent terminal opened" transition for a workspace.
+   *
+   * Replaces the wrapper's WrapperStart HTTP POST: invoked via the
+   * agent:lifecycle intent when the sidekick reports the agent terminal opening.
+   * Clears the loading screen (workspace-ready) and marks the workspace active
+   * (TUI attached). Idempotent.
    */
-  getBridgePort(): number | null {
-    return this.bridgePort;
+  triggerWrapperStart(workspacePath: string): void {
+    const normalizedPath = new Path(workspacePath).toString();
+    this.logger.debug("Agent terminal opened", { workspacePath: normalizedPath });
+    for (const callback of this.workspaceReadyCallbacks) {
+      callback(normalizedPath);
+    }
+    this.markActiveHandler?.(normalizedPath);
   }
 
   /**
    * Subscribe to workspace ready events.
-   * Triggered when a wrapper start notification is received,
-   * indicating the loading screen should be cleared.
+   * Triggered when the agent terminal opens, indicating the loading screen
+   * should be cleared.
    *
    * @param callback - Callback invoked with workspace path
    * @returns Unsubscribe function
@@ -566,7 +555,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   }
 
   /**
-   * Set handler called when workspace becomes active (WrapperStart).
+   * Set handler called when the workspace becomes active (agent terminal opened).
    * The handler is invoked with the normalized workspace path.
    */
   setMarkActiveHandler(handler: (workspacePath: string) => void): void {
@@ -642,129 +631,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   }
 
   /**
-   * Start the bridge HTTP server for receiving wrapper notifications.
-   * Allocates a port and listens for POST /hook/WrapperStart requests.
-   */
-  private async startBridgeServer(): Promise<void> {
-    const server = createServer((req, res) => {
-      this.handleBridgeRequest(req, res);
-    });
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        // Use port 0 to let the OS assign a free port
-        server.listen(0, "127.0.0.1", () => {
-          server.removeListener("error", reject);
-          resolve();
-        });
-      });
-    } catch (error) {
-      // Reset promise so next attempt can retry
-      this.bridgeStartPromise = null;
-      throw error;
-    }
-
-    // Read the OS-assigned port from the listening server
-    const addr = server.address();
-    const port = typeof addr === "object" && addr !== null ? addr.port : null;
-    if (port === null) {
-      server.close();
-      this.bridgeStartPromise = null;
-      throw new Error("Bridge server started but could not determine port");
-    }
-
-    this.bridgeServer = server;
-    this.bridgePort = port;
-    this.logger.info("Bridge server started", { port });
-  }
-
-  /**
-   * Stop the bridge HTTP server.
-   */
-  private async stopBridgeServer(): Promise<void> {
-    if (this.bridgeServer === null) {
-      this.bridgeStartPromise = null;
-      return;
-    }
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        this.bridgeServer!.close((err) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
-      });
-    } catch (error) {
-      // Bridge server may not have been listening (e.g., listen failed)
-      this.logger.warn("Error closing bridge server", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    this.logger.info("Bridge server stopped", { port: this.bridgePort });
-    this.bridgeServer = null;
-    this.bridgePort = null;
-    this.bridgeStartPromise = null;
-  }
-
-  /**
-   * Handle an incoming bridge HTTP request.
-   */
-  private handleBridgeRequest(req: IncomingMessage, res: ServerResponse): void {
-    if (req.method !== "POST") {
-      res.writeHead(405, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Method not allowed" }));
-      return;
-    }
-
-    const url = new URL(req.url ?? "/", `http://127.0.0.1:${this.bridgePort}`);
-    if (url.pathname !== "/hook/WrapperStart") {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Not found" }));
-      return;
-    }
-
-    let body = "";
-    req.on("data", (chunk: Buffer) => {
-      body += chunk.toString();
-    });
-
-    req.on("end", () => {
-      try {
-        const payload = JSON.parse(body) as { workspacePath: string };
-        const normalizedPath = new Path(payload.workspacePath).toString();
-
-        this.logger.debug("WrapperStart received", { workspacePath: normalizedPath });
-
-        for (const callback of this.workspaceReadyCallbacks) {
-          callback(normalizedPath);
-        }
-
-        this.markActiveHandler?.(normalizedPath);
-
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ success: true }));
-      } catch (error) {
-        this.logger.warn("Failed to parse bridge payload", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Invalid JSON body" }));
-      }
-    });
-
-    req.on("error", (error) => {
-      this.logger.warn("Bridge request error", { error: error.message });
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Internal error" }));
-    });
-  }
-
-  /**
    * Dispose the manager, stopping all servers.
    */
   async dispose(): Promise<void> {
@@ -774,6 +640,5 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     this.stoppedCallbacks.clear();
     this.workspaceReadyCallbacks.clear();
     this.markActiveHandler = null;
-    await this.stopBridgeServer();
   }
 }

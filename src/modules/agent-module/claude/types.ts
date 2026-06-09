@@ -129,3 +129,14 @@ export function getStatusChangeForHook(hookName: ClaudeCodeHookName): HookStatus
 export function isValidHookName(name: string): name is ClaudeCodeHookName {
   return name in HOOK_STATUS_MAP;
 }
+
+/**
+ * Wrapper-synthesized hooks. These are NOT POSTed over HTTP anymore — they are
+ * triggered internally via ClaudeCodeServerManager.triggerWrapperLifecycle()
+ * (driven by the sidekick's agent:lifecycle event). The bridge HTTP server
+ * rejects them so a stray POST can't drive status out-of-band.
+ */
+export const WRAPPER_HOOK_NAMES: ReadonlySet<ClaudeCodeHookName> = new Set([
+  "WrapperStart",
+  "WrapperEnd",
+]);

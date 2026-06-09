@@ -557,6 +557,43 @@ export interface ShowInputBoxResponse {
   readonly value: string | null;
 }
 
+/**
+ * Agent terminal lifecycle event reported by the sidekick.
+ * - "open": the agent terminal was created (agent starting) → maps to WrapperStart.
+ * - "close": the agent terminal was closed (agent gone) → maps to WrapperEnd / TUI detach.
+ */
+export type AgentLifecycleEvent = "open" | "close";
+
+/**
+ * Request payload for the api:workspace:agentLifecycle event.
+ * The workspace is taken from the socket's auth, not this payload.
+ */
+export interface AgentLifecycleRequest {
+  readonly event: AgentLifecycleEvent;
+}
+
+/**
+ * Runtime validation for AgentLifecycleRequest.
+ *
+ * @param payload - The payload to validate
+ * @returns Object with valid boolean and optional error message
+ */
+export function validateAgentLifecycleRequest(
+  payload: unknown
+): { valid: true } | { valid: false; error: string } {
+  if (typeof payload !== "object" || payload === null) {
+    return { valid: false, error: "Request must be an object" };
+  }
+
+  const request = payload as Record<string, unknown>;
+
+  if (request.event !== "open" && request.event !== "close") {
+    return { valid: false, error: `Invalid agent lifecycle event: ${String(request.event)}` };
+  }
+
+  return { valid: true };
+}
+
 // ============================================================================
 // Socket.IO Event Types
 // ============================================================================
@@ -667,6 +704,16 @@ export interface ClientToServerEvents {
    * @param request - Log request with level, message, and optional context
    */
   "api:log": (request: LogRequest) => void;
+
+  /**
+   * Report an agent terminal lifecycle transition (open/close).
+   * Fire-and-forget (no acknowledgment callback). The workspace context is
+   * taken from the socket's auth. Drives agent status: "open" → WrapperStart,
+   * "close" → WrapperEnd / TUI detach.
+   *
+   * @param request - The lifecycle event ("open" | "close")
+   */
+  "api:workspace:agentLifecycle": (request: AgentLifecycleRequest) => void;
 }
 
 /**

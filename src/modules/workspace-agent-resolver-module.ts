@@ -38,6 +38,10 @@ import {
   type GetAgentSessionHookInput,
 } from "../intents/get-agent-session";
 import { RESTART_AGENT_OPERATION_ID, type RestartAgentHookInput } from "../intents/restart-agent";
+import {
+  AGENT_LIFECYCLE_OPERATION_ID,
+  type AgentLifecycleHookInput,
+} from "../intents/agent-lifecycle";
 
 export const AGENT_METADATA_KEY = "agent";
 
@@ -158,6 +162,12 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
       },
       [RESTART_AGENT_OPERATION_ID]: {
         restart: makeResolverHandler(deps, (ctx) => (ctx as RestartAgentHookInput).workspacePath),
+      },
+      [AGENT_LIFECYCLE_OPERATION_ID]: {
+        lifecycle: makeResolverHandler(
+          deps,
+          (ctx) => (ctx as AgentLifecycleHookInput).workspacePath
+        ),
       },
     },
   };

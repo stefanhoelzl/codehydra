@@ -6,7 +6,7 @@
  * through the mock dispatcher and return results via Socket.IO acks.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { io as ioClient } from "socket.io-client";
 import { IntentHandle } from "../intents/lib/dispatcher";
 import type { Intent } from "../intents/lib/types";
@@ -24,6 +24,7 @@ import type { PluginConfig, PluginResult } from "../shared/plugin-protocol";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_AGENT_SESSION } from "../intents/get-agent-session";
 import { INTENT_SET_METADATA } from "../intents/set-metadata";
+import { INTENT_AGENT_LIFECYCLE } from "../intents/agent-lifecycle";
 import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
 import { INTENT_VSCODE_COMMAND } from "../intents/vscode-command";
 import { INTENT_RESOLVE_WORKSPACE } from "../intents/resolve-workspace";
@@ -402,6 +403,69 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           type: INTENT_SET_METADATA,
           payload: { workspacePath: "/test/workspace", key: "note", value: "my note" },
         })
+      );
+    });
+
+    it("agentLifecycle open dispatches agent:lifecycle intent (fire-and-forget)", async () => {
+      env.mockDispatch.mockImplementation(() => {
+        const handle = new IntentHandle();
+        handle.signalAccepted(true);
+        handle.resolve(undefined);
+        return handle;
+      });
+
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      // Fire-and-forget: no ack callback.
+      client.emit("api:workspace:agentLifecycle", { event: "open" });
+
+      await vi.waitFor(() =>
+        expect(env.mockDispatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: INTENT_AGENT_LIFECYCLE,
+            payload: { workspacePath: "/test/workspace", event: "open" },
+          })
+        )
+      );
+    });
+
+    it("agentLifecycle close dispatches agent:lifecycle intent", async () => {
+      env.mockDispatch.mockImplementation(() => {
+        const handle = new IntentHandle();
+        handle.signalAccepted(true);
+        handle.resolve(undefined);
+        return handle;
+      });
+
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      client.emit("api:workspace:agentLifecycle", { event: "close" });
+
+      await vi.waitFor(() =>
+        expect(env.mockDispatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: INTENT_AGENT_LIFECYCLE,
+            payload: { workspacePath: "/test/workspace", event: "close" },
+          })
+        )
+      );
+    });
+
+    it("agentLifecycle ignores invalid event (no dispatch)", async () => {
+      const client = createClient("/test/workspace");
+      await waitForConnect(client);
+
+      // Invalid event value — handler validates and drops it.
+      client.emit("api:workspace:agentLifecycle", {
+        event: "bogus",
+      } as unknown as { event: "open" | "close" });
+
+      // Give the server a tick to (not) process it.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(env.mockDispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_AGENT_LIFECYCLE })
       );
     });
 

@@ -82,6 +82,19 @@ describe("AgentNotificationService", () => {
       expect(mockPlayChime).toHaveBeenCalledTimes(1);
     });
 
+    it("chimes again when an idle agent goes none then idle (close → reopen)", () => {
+      // Agent idle (green).
+      service.handleStatusChange("/test", { idle: 1, busy: 0 });
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+
+      // Terminal closed → none, delivered as zero idle by the status binding.
+      service.handleStatusChange("/test", { idle: 0, busy: 0 });
+      // Terminal reopened → idle again.
+      service.handleStatusChange("/test", { idle: 1, busy: 0 });
+
+      expect(mockPlayChime).toHaveBeenCalledTimes(2);
+    });
+
     it("does not trigger when idle count decreases", () => {
       // Seed to establish initial state without triggering first-report chime
       service.seedInitialCounts({ "/test": { idle: 2, busy: 0 } });

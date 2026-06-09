@@ -13,7 +13,6 @@
  * Environment variables (set by sidekick extension):
  * - _CH_CLAUDE_SETTINGS: Path to codehydra-hooks.json
  * - _CH_CLAUDE_MCP_CONFIG: Path to codehydra-mcp.json
- * - _CH_BRIDGE_PORT: Bridge server port (for hook notifications)
  * - _CH_MCP_PORT: Main MCP server port
  * - _CH_WORKSPACE_PATH: Workspace path for MCP header
  * - _CH_INITIAL_PROMPT_FILE: Path to initial prompt JSON file (optional)
@@ -23,7 +22,6 @@
 import { spawnSync, execSync } from "node:child_process";
 import { readFileSync, unlinkSync, rmdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
-import { request } from "node:http";
 
 /**
  * Config read from initial-prompt.json file.
@@ -357,85 +355,6 @@ function findSystemClaude(): { command: string; useShell: boolean } | null {
 }
 
 /**
- * Send a hook notification to the bridge server.
- * Waits for request to complete (or timeout) before returning.
- * Silent on error - fallback to 10-second timeout works.
- *
- * @param hookName - Name of the hook (WrapperStart or WrapperEnd)
- */
-async function notifyHook(hookName: "WrapperStart" | "WrapperEnd"): Promise<void> {
-  const bridgePort = process.env._CH_BRIDGE_PORT;
-  const workspacePath = process.env._CH_WORKSPACE_PATH;
-
-  // Not in CodeHydra context
-  if (!bridgePort || !workspacePath) {
-    return;
-  }
-
-  const payload = JSON.stringify({ workspacePath });
-
-  return new Promise((resolve) => {
-    const req = request(
-      {
-        hostname: "127.0.0.1",
-        port: parseInt(bridgePort, 10),
-        path: `/hook/${hookName}`,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(payload),
-        },
-        timeout: 2000, // 2 second timeout
-      },
-      () => {
-        resolve();
-      }
-    );
-
-    req.on("error", () => {
-      resolve(); // Silent failure
-    });
-
-    req.on("timeout", () => {
-      req.destroy();
-      resolve();
-    });
-
-    req.write(payload);
-    req.end();
-  });
-}
-
-/**
- * Signals to catch so the wrapper survives long enough to send WrapperEnd.
- *
- * - SIGHUP: PTY hangup when the terminal tab is closed.
- * - SIGTERM: Graceful termination from process managers (code-server may
- *   send this after SIGHUP if the process hasn't exited yet).
- *
- * Without these handlers Node.js terminates immediately on these signals,
- * preventing the async notifyHook("WrapperEnd") call from executing after
- * spawnSync returns.
- */
-const WRAPPER_SIGNALS: NodeJS.Signals[] = ["SIGHUP", "SIGTERM"];
-
-/**
- * Install no-op signal handlers to prevent default process termination.
- *
- * Must be called before spawnSync so the wrapper survives terminal-close
- * signals and can still send the WrapperEnd hook notification.
- * The process exits via the explicit process.exit() in main().
- *
- * @param proc - Process-like object for testability (defaults to global process)
- */
-function installSignalHandlers(proc: Pick<NodeJS.Process, "on"> = process): void {
-  const noop = (): void => {};
-  for (const signal of WRAPPER_SIGNALS) {
-    proc.on(signal, noop);
-  }
-}
-
-/**
  * Main entry point for the wrapper script.
  */
 async function main(): Promise<never> {
@@ -484,24 +403,16 @@ async function main(): Promise<never> {
   // 5. Clear CLAUDECODE to allow nested Claude Code sessions inside CodeHydra
   delete process.env.CLAUDECODE;
 
-  // 6. Catch SIGHUP/SIGTERM so the wrapper survives terminal-close signals
-  //    and can still send WrapperEnd after Claude exits.
-  installSignalHandlers();
-
-  // 7. Notify wrapper start (clears loading screen before Claude shows dialogs)
-  await notifyHook("WrapperStart");
-
-  // 8. Spawn Claude with automatic session resume
-  // Skip --continue attempt for new workspaces (no prior session to resume)
+  // 6. Spawn Claude with automatic session resume.
+  // Skip --continue attempt for new workspaces (no prior session to resume).
+  // Agent status (WrapperStart/WrapperEnd) is driven by the sidekick via the
+  // agent terminal's open/close — this wrapper no longer posts hooks.
   const result = runClaude(claudeBinary.command, args, {
     skipContinue: consumeNoSessionMarker(),
     useShell: claudeBinary.useShell,
   });
 
-  // 9. Notify wrapper end (Claude has exited)
-  await notifyHook("WrapperEnd");
-
-  // 10. Handle result
+  // 7. Handle result
   if (result.error) {
     console.error(`Error: Failed to start Claude: ${result.error.message}`);
     process.exit(EXIT_SPAWN_FAILED);
@@ -522,10 +433,8 @@ if (!process.env.VITEST) {
 // Export for testing
 export {
   findSystemClaude,
-  notifyHook,
   getInitialPromptConfig,
   buildInitialPromptArgs,
   buildPermissionArgs,
   consumeNoSessionMarker,
-  installSignalHandlers,
 };
