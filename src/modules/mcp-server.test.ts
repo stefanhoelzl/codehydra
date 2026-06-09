@@ -10,12 +10,12 @@ import {
   SERVER_INSTRUCTIONS,
   type McpServerFactory,
 } from "./mcp-module";
-import { type ProjectId, initialPromptSchema } from "../shared/api/types";
+import { type ProjectId, type DeletionProgress, initialPromptSchema } from "../shared/api/types";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Intent } from "../intents/lib/types";
-import type { Operation } from "../intents/lib/operation";
+import type { Operation, OperationContext } from "../intents/lib/operation";
 import {
   INTENT_GET_WORKSPACE_STATUS,
   GET_WORKSPACE_STATUS_OPERATION_ID,
@@ -41,6 +41,8 @@ import { INTENT_OPEN_WORKSPACE, OPEN_WORKSPACE_OPERATION_ID } from "../intents/o
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
+  EVENT_WORKSPACE_DELETION_PROGRESS,
+  type DeleteWorkspaceIntent,
 } from "../intents/delete-workspace";
 import { INTENT_VSCODE_COMMAND, VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
 import {
@@ -83,9 +85,15 @@ function createMockOperation<TIntent extends Intent = Intent, TResult = void>(
 /**
  * Create a Dispatcher with mock operations registered for all MCP tool intents.
  */
+interface DeleteControl {
+  mode: "success" | "blocked" | "reject";
+  blockingProcesses?: ReadonlyArray<{ pid: number; name: string }>;
+}
+
 function createMockDispatcher(): {
   dispatcher: Dispatcher;
   operations: Record<string, ReturnType<typeof vi.fn>>;
+  deleteControl: DeleteControl;
 } {
   const dispatcher = createBaseMockDispatcher();
 
@@ -109,7 +117,51 @@ function createMockDispatcher(): {
     metadata: { base: "main" },
     projectId: "test-12345678" as ProjectId,
   });
-  const deleteWorkspaceOp = createMockOperation(DELETE_WORKSPACE_OPERATION_ID, { started: true });
+  // workspace_delete waits for a terminal deletion-progress event to learn the
+  // real outcome, so the mock delete op emits one. deleteControl lets tests pick
+  // success / blocked / preflight-reject behavior.
+  const deleteControl: DeleteControl = { mode: "success" };
+  const deleteWorkspaceOp: Operation<DeleteWorkspaceIntent, { started: true }> = {
+    id: DELETE_WORKSPACE_OPERATION_ID,
+    execute: vi.fn(
+      async (ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> => {
+        if (deleteControl.mode === "reject") {
+          throw new Error("Preflight check failed: Workspace has uncommitted changes");
+        }
+        const { workspacePath, keepBranch } = ctx.intent.payload;
+        const hasErrors = deleteControl.mode === "blocked";
+        const progress: DeletionProgress = {
+          workspacePath: workspacePath as DeletionProgress["workspacePath"],
+          workspaceName: "feature-branch" as DeletionProgress["workspaceName"],
+          projectId: "test-12345678" as ProjectId,
+          keepBranch,
+          operations: [
+            {
+              id: "cleanup-workspace",
+              label: "Removing workspace",
+              status: hasErrors ? "error" : "done",
+              ...(hasErrors ? { error: "EBUSY: resource busy or locked" } : {}),
+            },
+          ],
+          completed: true,
+          hasErrors,
+          ...(deleteControl.blockingProcesses
+            ? {
+                blockingProcesses: deleteControl.blockingProcesses.map((p) => ({
+                  pid: p.pid,
+                  name: p.name,
+                  commandLine: p.name,
+                  files: [],
+                  cwd: null,
+                })),
+              }
+            : {}),
+        };
+        await ctx.emit({ type: EVENT_WORKSPACE_DELETION_PROGRESS, payload: progress });
+        return { started: true };
+      }
+    ),
+  };
   const executeCommandOp = createMockOperation(VSCODE_COMMAND_OPERATION_ID, undefined);
   const showMessageOp = createMockOperation(VSCODE_SHOW_MESSAGE_OPERATION_ID, null);
   const resolveWorkspaceOp = createMockOperation(RESOLVE_WORKSPACE_OPERATION_ID, {
@@ -157,6 +209,7 @@ function createMockDispatcher(): {
       hibernate: hibernateOp.execute as ReturnType<typeof vi.fn>,
       wake: wakeOp.execute as ReturnType<typeof vi.fn>,
     },
+    deleteControl,
   };
 }
 
@@ -372,6 +425,105 @@ describe("McpServer", () => {
 
       const intent = mockDispatcher.operations.wake!.mock.calls[0]![0].intent as Intent;
       expect((intent.payload as { workspacePath: string }).workspacePath).toBe(otherWorkspacePath);
+    });
+
+    it("workspace_delete deletes the session workspace and reports success", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const deleteTool = tools.find((t) => t.name === "workspace_delete");
+      expect(deleteTool).toBeDefined();
+
+      const result = await deleteTool!.handler(
+        {},
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.deleteWorkspace!.mock.calls[0]![0].intent as Intent;
+      expect(intent.type).toBe(INTENT_DELETE_WORKSPACE);
+      const payload = intent.payload as {
+        workspacePath: string;
+        force: boolean;
+        removeWorktree: boolean;
+      };
+      expect(payload.workspacePath).toBe(testWorkspacePath);
+      expect(payload.force).toBe(false);
+      expect(payload.removeWorktree).toBe(true);
+      expect(result).toEqual({
+        content: [{ type: "text", text: JSON.stringify({ started: true }) }],
+      });
+    });
+
+    it("workspace_delete targets an explicit workspacePath argument", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const deleteTool = tools.find((t) => t.name === "workspace_delete");
+      const otherWorkspacePath = "/home/user/projects/my-app/.worktrees/other-branch";
+
+      const result = await deleteTool!.handler(
+        { workspacePath: otherWorkspacePath },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.deleteWorkspace!.mock.calls[0]![0].intent as Intent;
+      expect((intent.payload as { workspacePath: string }).workspacePath).toBe(otherWorkspacePath);
+      expect(result).toEqual({
+        content: [{ type: "text", text: JSON.stringify({ started: true }) }],
+      });
+    });
+
+    it("workspace_delete forwards keepBranch and ignoreWarnings", async () => {
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const deleteTool = tools.find((t) => t.name === "workspace_delete");
+
+      await deleteTool!.handler(
+        { keepBranch: true, ignoreWarnings: true },
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      );
+
+      const intent = mockDispatcher.operations.deleteWorkspace!.mock.calls[0]![0].intent as Intent;
+      const payload = intent.payload as { keepBranch: boolean; ignoreWarnings: boolean };
+      expect(payload.keepBranch).toBe(true);
+      expect(payload.ignoreWarnings).toBe(true);
+    });
+
+    it("workspace_delete reports a blocked delete as an error", async () => {
+      mockDispatcher.deleteControl.mode = "blocked";
+      mockDispatcher.deleteControl.blockingProcesses = [{ pid: 1234, name: "node" }];
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const deleteTool = tools.find((t) => t.name === "workspace_delete");
+
+      const result = (await deleteTool!.handler(
+        {},
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      )) as { content: Array<{ text: string }>; isError?: true };
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0]!.text) as { error: { message: string } };
+      expect(parsed.error.message).toContain("blocked by 1 process");
+      expect(parsed.error.message).toContain("pid 1234 (node)");
+    });
+
+    it("workspace_delete surfaces a preflight failure as an error", async () => {
+      mockDispatcher.deleteControl.mode = "reject";
+      await sendInitialize(port);
+
+      const tools = mockMcpSdk.getRegisteredTools();
+      const deleteTool = tools.find((t) => t.name === "workspace_delete");
+
+      const result = (await deleteTool!.handler(
+        {},
+        { authInfo: { extra: { workspacePath: testWorkspacePath } } }
+      )) as { content: Array<{ text: string }>; isError?: true };
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0]!.text) as { error: { message: string } };
+      expect(parsed.error.message).toContain("Preflight check failed");
     });
 
     it("workspace_restart_agent_server tool calls handler and returns port", async () => {
