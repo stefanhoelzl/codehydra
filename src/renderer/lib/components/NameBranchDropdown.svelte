@@ -82,28 +82,6 @@
   });
 
   /**
-   * Filter function for branches - matches by label (derives value).
-   * Headers are shown only if there are matching branches in their group.
-   */
-  function filterBranch(option: DropdownOption, filterLowercase: string): boolean {
-    if (option.type === "header") {
-      // Keep headers if there are matching branches in their group
-      if (option.value === "__header_local__") {
-        return derivableBranches.some(
-          (b) => !b.isRemote && b.derives?.toLowerCase().includes(filterLowercase)
-        );
-      }
-      if (option.value === "__header_remote__") {
-        return derivableBranches.some(
-          (b) => b.isRemote && b.derives?.toLowerCase().includes(filterLowercase)
-        );
-      }
-      return false;
-    }
-    return option.label.toLowerCase().includes(filterLowercase);
-  }
-
-  /**
    * Handle selection from the dropdown.
    * Looks up the branch to get the suggested base.
    */
@@ -154,7 +132,6 @@
       onSelect={handleSelect}
       {disabled}
       placeholder="Enter name or select branch..."
-      filterOption={filterBranch}
       id={id ?? "name-branch-dropdown"}
       allowFreeText={true}
       {onEnter}

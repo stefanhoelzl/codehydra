@@ -48,8 +48,9 @@ interface ProgressSection {
  * - absent / false: the field never emits change events (default — existing
  *   dialogs stay silent).
  * - true / {}: emit, using the field type's default debounce. A discrete field
- *   (radio, dropdown) emits immediately (0ms); a continuous field (input)
- *   debounces 200ms.
+ *   (radio) emits immediately (0ms); a continuous field (input, dropdown
+ *   typing) debounces 200ms. Dropdown suggestion picks are discrete and always
+ *   emit immediately.
  * - { debounceMs }: emit with a custom debounce in ms (0 = immediate). Applies
  *   to any field type, so a radio can coalesce rapid keyboard navigation.
  */
@@ -89,22 +90,39 @@ interface RadioSection extends FieldSection {
 }
 
 /**
- * Dropdown section - displays a compact single-value dropdown (a select).
- * Extends FieldSection (id/label/error).
+ * Dropdown section - a combobox: a text input with a filtered suggestion
+ * list. Extends FieldSection (id/label/error).
  *
- * - Always starts on the first option, so it always reports a real value.
- * - changeEvent: opt in to emit a field-change event when the chosen option
- *   changes (immediate by default; see FieldChangeConfig).
- * - loading: the backend is fetching this field's options. Two-phase update:
- *   on the triggering change, push loading: true (typically with stale
- *   options cleared), fetch, then push the real options with loading: false.
- *   Renders a spinner overlaid at the control's right edge; the control stays
- *   interactive and reports its current value as usual. Independent of any
- *   error state (both may be shown at once).
+ * Suggestions are supplied in groups; a group's optional header renders as a
+ * non-selectable divider, shown only while the group has at least one match.
+ * Filtering is purely client-side/presentational (case-insensitive substring
+ * on the label) and never emits events. The list opens on focus.
+ *
+ * - freeText false (default): select-like. The field always reports a valid
+ *   option value: it starts at the option matching initialValue (else the
+ *   first option), typing only filters, and leaving the field with text that
+ *   matches no option label reverts to the current choice. A config update
+ *   keeps the choice while still valid, else falls back to the first option.
+ * - freeText true: the field reports the typed text, or a picked suggestion's
+ *   value (the input then displays its label); editing the text again reverts
+ *   to reporting the typed text. Seeds from initialValue on first sight.
+ * - changeEvent: opt in to field-change events. Picking a suggestion always
+ *   emits immediately (cancelling any pending typing debounce); typing (free
+ *   text only) debounces 200ms by default. A custom debounceMs applies to
+ *   typing only.
+ * - loading: the backend is fetching this field's suggestions. Two-phase
+ *   update: on the triggering change, push loading: true (typically with
+ *   stale suggestions cleared), fetch, then push the real suggestions with
+ *   loading: false. Renders a spinner overlaid at the control's right edge;
+ *   the control stays interactive and reports its current value as usual.
+ *   Independent of any error state (both may be shown at once).
  */
 interface DropdownSection extends FieldSection {
   readonly type: "dropdown";
-  readonly options: readonly DropdownOption[];
+  readonly suggestions: readonly DropdownSuggestionGroup[];
+  readonly freeText?: boolean;
+  readonly placeholder?: string;
+  readonly initialValue?: string;
   readonly changeEvent?: FieldChangeConfig;
   readonly loading?: boolean;
 }
@@ -178,6 +196,15 @@ export interface RadioOption {
 export interface DropdownOption {
   readonly value: string;
   readonly label: string;
+}
+
+/**
+ * A group of dropdown suggestions. The optional header is rendered as a
+ * non-selectable divider above the group's items (e.g. "Local Branches").
+ */
+export interface DropdownSuggestionGroup {
+  readonly header?: string;
+  readonly items: readonly DropdownOption[];
 }
 
 // ---- Table ----

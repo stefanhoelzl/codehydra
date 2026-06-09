@@ -54,24 +54,6 @@
   });
 
   /**
-   * Filter function for branches - matches by name.
-   * Headers are always included (handled by FilterableDropdown).
-   */
-  function filterBranch(option: DropdownOption, filterLowercase: string): boolean {
-    if (option.type === "header") {
-      // Keep headers if there are matching branches in their group
-      if (option.value === "__header_local__") {
-        return branches.some((b) => !b.isRemote && b.name.toLowerCase().includes(filterLowercase));
-      }
-      if (option.value === "__header_remote__") {
-        return branches.some((b) => b.isRemote && b.name.toLowerCase().includes(filterLowercase));
-      }
-      return false;
-    }
-    return option.label.toLowerCase().includes(filterLowercase);
-  }
-
-  /**
    * Get the display value for the input.
    * Shows the branch name if selected, otherwise empty.
    */
@@ -86,7 +68,6 @@
       {onSelect}
       {disabled}
       placeholder="Select branch..."
-      filterOption={filterBranch}
       {id}
     >
       {#snippet optionSnippet(option)}

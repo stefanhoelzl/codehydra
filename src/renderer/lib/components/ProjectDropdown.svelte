@@ -35,13 +35,6 @@
   });
 
   /**
-   * Filter function for projects - matches by name.
-   */
-  function filterProject(option: DropdownOption, filterLowercase: string): boolean {
-    return option.label.toLowerCase().includes(filterLowercase);
-  }
-
-  /**
    * Handle selection - cast to ProjectId for type safety.
    */
   function handleSelect(selectedValue: string): void {
@@ -56,7 +49,6 @@
     onSelect={handleSelect}
     {disabled}
     placeholder="Select project..."
-    filterOption={filterProject}
     id="project-dropdown"
     {autofocus}
   />
