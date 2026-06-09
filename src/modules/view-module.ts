@@ -482,7 +482,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               sections: [
                 { type: "text", content: "Choose Agent", style: "heading" },
                 {
-                  type: "selection",
+                  type: "radio",
                   id: "agent",
                   options: availableAgents.map((a) => ({
                     id: a.agent,
