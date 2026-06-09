@@ -307,7 +307,7 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | Key                                   | Default   | Description                                                                                                                                         |
 | ------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`                               | `null`    | Agent selection: claude\|opencode                                                                                                                   |
-| `auto-update`                         | `ask`     | Auto-update preference: always\|ask\|never                                                                                                          |
+| `update.notification`                 | `true`    | Show a sidebar notification when an update is available (also gates the periodic update check)                                                      |
 | `version.claude`                      | `null`    | Claude agent version override                                                                                                                       |
 | `version.opencode`                    | `null`    | OpenCode agent version override                                                                                                                     |
 | `code-server.port`                    | (auto)    | Code-server port (auto = 25448 in prod, branch-derived in dev)                                                                                      |
