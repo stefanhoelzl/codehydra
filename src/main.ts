@@ -624,10 +624,11 @@ const youtrackSource = createYouTrackSource({
 const autoWorkspaceModule = createAutoWorkspaceModule({
   fs: fileSystemLayer,
   logger: loggingService.createLogger("auto-workspace"),
-  stateFilePath: pathProvider.dataPath("auto-workspaces.json").toString(),
+  legacyStateFilePath: pathProvider.dataPath("auto-workspaces.json").toString(),
   dispatcher,
   sources: [githubSource, youtrackSource],
   configService,
+  stateService,
 });
 
 // 7. New modules

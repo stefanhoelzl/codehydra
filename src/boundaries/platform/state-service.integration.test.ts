@@ -107,6 +107,24 @@ describe("StateService", () => {
     expect(key.get()).toBeNull();
   });
 
+  it("serializes concurrent writes so no update is lost", async () => {
+    const { svc, fs } = createService({ "/app": directory() });
+    const distinctId = svc.register("telemetry.distinct-id", stringKeyDef());
+    const dismissed = svc.register("update.dismissed-version", stringKeyDef());
+    await svc.load();
+
+    // Two owners write the shared file at once. Without PersistedStore
+    // serializing its read-modify-write, the two cycles interleave and one
+    // key's write clobbers the other.
+    await Promise.all([distinctId.set("uuid-xyz"), dismissed.set("2.0.0")]);
+
+    const content = await fs.readFile(STATE_PATH);
+    expect(JSON.parse(content)).toEqual({
+      "telemetry.distinct-id": "uuid-xyz",
+      "update.dismissed-version": "2.0.0",
+    });
+  });
+
   it("throws on double load()", async () => {
     const { svc } = createService({ "/app": directory() });
     svc.register("telemetry.distinct-id", stringKeyDef());

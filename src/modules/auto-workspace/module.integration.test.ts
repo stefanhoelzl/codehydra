@@ -54,6 +54,14 @@ import { createAutoWorkspaceModule } from "./module";
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import type { Config } from "../../boundaries/platform/config";
+import { createMockState } from "../../boundaries/platform/state.test-utils";
+import type { StateService } from "../../boundaries/platform/state-service";
+
+// Entries currently persisted in the (mock) state.json `auto-workspaces` key.
+type StateEntry = { workspacePath: string; workspaceName: string; createdAt: string };
+function entriesOf(state: StateService): Record<string, StateEntry | null> {
+  return (state.getEffective()["auto-workspaces"] ?? {}) as Record<string, StateEntry | null>;
+}
 
 // =============================================================================
 // Minimal Test Operations
@@ -289,6 +297,7 @@ function trackedProject(workspacePath: string): Project {
 interface TestSetup {
   dispatcher: Dispatcher;
   fs: ReturnType<typeof createFileSystemMock>;
+  state: StateService;
   source: ReturnType<typeof createMockSource>;
   mockConfig: Config;
   openProjectOp: TrackingOpenProjectOperation;
@@ -303,7 +312,11 @@ interface TestSetup {
 function createTestSetup(options?: {
   disabled?: boolean;
   sourceOptions?: Parameters<typeof createMockSource>[1];
+  /** Seed the mock state.json `auto-workspaces` key. Accepts the old
+   * `{version, entries}` JSON (entries extracted) for call-site compatibility. */
   existingState?: string;
+  /** Seed the legacy on-disk auto-workspaces.json to exercise the one-shot migration. */
+  legacyStateFileContent?: string;
   templatePath?: string | null;
   templateContent?: string;
   sourceName?: string;
@@ -326,13 +339,21 @@ function createTestSetup(options?: {
   const fsEntries: Record<string, ReturnType<typeof file> | ReturnType<typeof directory>> = {
     "/data": directory(),
   };
-  if (options?.existingState) {
-    fsEntries["/data/auto-workspaces.json"] = file(options.existingState);
+  if (options?.legacyStateFileContent !== undefined) {
+    fsEntries["/data/auto-workspaces.json"] = file(options.legacyStateFileContent);
   }
   if (tplPath && tplContent !== undefined) {
     fsEntries[tplPath] = file(tplContent);
   }
   const fs = createFileSystemMock({ entries: fsEntries });
+
+  // Seed the mock state.json from the legacy {version, entries} shape.
+  const seededEntries = options?.existingState
+    ? ((JSON.parse(options.existingState) as { entries?: Record<string, unknown> }).entries ?? {})
+    : undefined;
+  const state = createMockState(
+    seededEntries ? { values: { "auto-workspaces": seededEntries } } : undefined
+  );
 
   const dispatcher = createMockDispatcher();
 
@@ -364,10 +385,11 @@ function createTestSetup(options?: {
   const module = createAutoWorkspaceModule({
     fs,
     logger: SILENT_LOGGER,
-    stateFilePath: "/data/auto-workspaces.json",
+    legacyStateFilePath: "/data/auto-workspaces.json",
     dispatcher,
     sources: [source],
     configService: mockConfig,
+    stateService: state,
   });
 
   dispatcher.registerModule(module);
@@ -375,6 +397,7 @@ function createTestSetup(options?: {
   return {
     dispatcher,
     fs,
+    state,
     source,
     mockConfig,
     openProjectOp,
@@ -520,7 +543,7 @@ describe("AutoWorkspaceModule Integration", () => {
     });
 
     it("dismisses item when template resolves to empty", async () => {
-      const { dispatcher, source, openProjectOp, fs } = createTestSetup({
+      const { dispatcher, source, openProjectOp, state } = createTestSetup({
         templateContent: "   \n  ",
       });
 
@@ -532,11 +555,11 @@ describe("AutoWorkspaceModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1": null');
+      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
     });
 
     it("dismisses item when no project/git in template", async () => {
-      const { dispatcher, source, openProjectOp, fs } = createTestSetup({
+      const { dispatcher, source, openProjectOp, state } = createTestSetup({
         templateContent: "---\nname: ws\n---\nDo stuff",
       });
 
@@ -548,11 +571,11 @@ describe("AutoWorkspaceModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1": null');
+      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
     });
 
     it("dismisses item when no name in template", async () => {
-      const { dispatcher, source, openProjectOp, fs } = createTestSetup({
+      const { dispatcher, source, openProjectOp, state } = createTestSetup({
         templateContent: "---\ngit: https://github.com/org/repo.git\n---\nDo stuff",
       });
 
@@ -564,7 +587,7 @@ describe("AutoWorkspaceModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1": null');
+      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
     });
 
     it("uses project front-matter key for local path projects", async () => {
@@ -742,14 +765,14 @@ describe("AutoWorkspaceModule Integration", () => {
         },
       });
 
-      const { dispatcher, source, fs, listProjectsOp } = createTestSetup({ existingState });
+      const { dispatcher, source, state, listProjectsOp } = createTestSetup({ existingState });
 
       listProjectsOp.projects = [trackedProject(wsPath)];
       source.pollResult = { activeKeys: new Set(), newItems: [] };
 
       await dispatcher.dispatch(startIntent());
 
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"entries": {}');
+      expect(entriesOf(state)).toEqual({});
     });
 
     it("cleans up null entry when item disappears", async () => {
@@ -758,14 +781,14 @@ describe("AutoWorkspaceModule Integration", () => {
         entries: { "test-source/item-1": null },
       });
 
-      const { dispatcher, source, deleteWorkspaceOp, fs } = createTestSetup({ existingState });
+      const { dispatcher, source, deleteWorkspaceOp, state } = createTestSetup({ existingState });
 
       source.pollResult = { activeKeys: new Set(), newItems: [] };
 
       await dispatcher.dispatch(startIntent());
 
       expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"entries": {}');
+      expect(entriesOf(state)).toEqual({});
     });
 
     it("tags workspace and clears tracked metadata when auto-deletion fails", async () => {
@@ -819,7 +842,7 @@ describe("AutoWorkspaceModule Integration", () => {
         },
       });
 
-      const { dispatcher, source, deleteWorkspaceOp, fs, listProjectsOp } = createTestSetup({
+      const { dispatcher, source, deleteWorkspaceOp, state, listProjectsOp } = createTestSetup({
         existingState,
       });
 
@@ -829,7 +852,7 @@ describe("AutoWorkspaceModule Integration", () => {
 
       await dispatcher.dispatch(startIntent());
 
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"workspaceName":"item-1"');
+      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspaceName: "item-1" });
     });
 
     it("does not retry deletion on subsequent polls after failure", async () => {
@@ -885,7 +908,7 @@ describe("AutoWorkspaceModule Integration", () => {
         },
       });
 
-      const { dispatcher, source, deleteWorkspaceOp, setMetadataOp, listProjectsOp, fs } =
+      const { dispatcher, source, deleteWorkspaceOp, setMetadataOp, listProjectsOp, state } =
         createTestSetup({ existingState });
 
       listProjectsOp.projects = [trackedProject(wsPath)];
@@ -900,7 +923,7 @@ describe("AutoWorkspaceModule Integration", () => {
 
       // State entry should be dismissed (null) so module stops retrying on restart
       await vi.waitFor(() => {
-        expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1": null');
+        expect(entriesOf(state)["test-source/item-1"]).toBeNull();
       });
     });
   });
@@ -1029,7 +1052,7 @@ describe("AutoWorkspaceModule Integration", () => {
     });
 
     it("skips workspace creation when fetch fails", async () => {
-      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp, fs } = createTestSetup();
+      const { dispatcher, source, getProjectBasesOp, openWorkspaceOp, state } = createTestSetup();
 
       getProjectBasesOp.shouldFail = true;
       source.pollResult = {
@@ -1040,11 +1063,8 @@ describe("AutoWorkspaceModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
-      // Item should NOT be dismissed (no null entry) — allows retry next poll
-      expect(fs).not.toHaveFileContaining(
-        "/data/auto-workspaces.json",
-        '"test-source/item-1": null'
-      );
+      // Item should NOT be dismissed (no entry) — allows retry next poll
+      expect(entriesOf(state)["test-source/item-1"]).toBeUndefined();
     });
 
     it("retries on next poll after fetch failure", async () => {
@@ -1127,7 +1147,7 @@ describe("AutoWorkspaceModule Integration", () => {
         },
       });
 
-      const { dispatcher, source, deleteWorkspaceOp, fs, listProjectsOp } = createTestSetup({
+      const { dispatcher, source, deleteWorkspaceOp, state, listProjectsOp } = createTestSetup({
         existingState,
       });
 
@@ -1137,10 +1157,10 @@ describe("AutoWorkspaceModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       // Null entry must be preserved (not removed)
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1":null');
+      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
       // Tracked entry must not be auto-deleted
       expect(deleteWorkspaceOp.dispatched).toHaveLength(0);
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"workspaceName":"item-2"');
+      expect(entriesOf(state)["test-source/item-2"]).toMatchObject({ workspaceName: "item-2" });
     });
 
     it("does not auto-delete workspaces when poll fails", async () => {
@@ -1171,7 +1191,7 @@ describe("AutoWorkspaceModule Integration", () => {
 
   describe("state persistence", () => {
     it("persists state after creating a workspace", async () => {
-      const { dispatcher, source, fs } = createTestSetup();
+      const { dispatcher, source, state } = createTestSetup();
 
       source.pollResult = {
         activeKeys: new Set(["item-1"]),
@@ -1180,7 +1200,7 @@ describe("AutoWorkspaceModule Integration", () => {
 
       await dispatcher.dispatch(startIntent());
 
-      expect(fs).toHaveFile("/data/auto-workspaces.json");
+      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspaceName: "item-1" });
     });
 
     it("loads existing state on startup", async () => {
@@ -1205,6 +1225,75 @@ describe("AutoWorkspaceModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openProjectOp.dispatched).toHaveLength(0);
+    });
+  });
+
+  describe("legacy state migration", () => {
+    it("imports legacy auto-workspaces.json into state.json and deletes the file", async () => {
+      const legacy = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: "/home/user/projects/repo/item-1",
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+          "test-source/item-2": null,
+        },
+      });
+
+      const { dispatcher, source, state, fs } = createTestSetup({ legacyStateFileContent: legacy });
+
+      // Both keys still active → no create/delete; just exercise the import.
+      source.pollResult = { activeKeys: new Set(["item-1", "item-2"]), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspaceName: "item-1" });
+      expect(entriesOf(state)["test-source/item-2"]).toBeNull();
+      // The superseded file is removed once imported.
+      expect(fs).not.toHaveFile("/data/auto-workspaces.json");
+    });
+
+    it("leaves state empty and removes an empty legacy file", async () => {
+      const legacy = JSON.stringify({ version: 1, entries: {} });
+
+      const { dispatcher, source, state, fs } = createTestSetup({ legacyStateFileContent: legacy });
+      source.pollResult = { activeKeys: new Set(), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(entriesOf(state)).toEqual({});
+      expect(fs).not.toHaveFile("/data/auto-workspaces.json");
+    });
+
+    it("does not import when state.json already has entries", async () => {
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: { "test-source/item-9": null },
+      });
+      const legacy = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: "/home/user/projects/repo/item-1",
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+
+      const { dispatcher, source, state } = createTestSetup({
+        existingState,
+        legacyStateFileContent: legacy,
+      });
+      source.pollResult = { activeKeys: new Set(["item-9"]), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      // state.json wins; legacy entries are not merged in.
+      expect(entriesOf(state)["test-source/item-1"]).toBeUndefined();
+      expect(entriesOf(state)["test-source/item-9"]).toBeNull();
     });
   });
 
@@ -1240,7 +1329,7 @@ describe("AutoWorkspaceModule Integration", () => {
 
   describe("error handling", () => {
     it("skips workspace when template file not found", async () => {
-      const { dispatcher, source, openProjectOp, fs } = createTestSetup({
+      const { dispatcher, source, openProjectOp, state } = createTestSetup({
         templatePath: "/data/nonexistent.liquid",
       });
 
@@ -1252,7 +1341,7 @@ describe("AutoWorkspaceModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(fs).toHaveFileContaining("/data/auto-workspaces.json", '"test-source/item-1": null');
+      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
     });
   });
 });
