@@ -15,6 +15,7 @@ import {
   addWorkspace,
   removeWorkspace,
   updateWorkspaceMetadata,
+  setProjectDefaultBaseBranch,
 } from "$lib/stores/projects.svelte.js";
 import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
@@ -125,6 +126,13 @@ export function setupDomainEventBindings(
           return;
         }
         logger.debug("Store updated", { store: "projects", key });
+      },
+      setProjectDefaultBaseBranch: (projectId, defaultBaseBranch) => {
+        const project = projects.value.find((p) => p.id === projectId);
+        if (project) {
+          setProjectDefaultBaseBranch(project.path, defaultBaseBranch);
+          logger.debug("Store updated", { store: "projects", key: "defaultBaseBranch" });
+        }
       },
     },
     {

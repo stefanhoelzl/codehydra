@@ -253,6 +253,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
           projectId: p.projectId,
           projectPath: p.projectPath,
           bases: p.bases,
+          ...(p.defaultBaseBranch !== undefined && { defaultBaseBranch: p.defaultBaseBranch }),
         });
       },
     },

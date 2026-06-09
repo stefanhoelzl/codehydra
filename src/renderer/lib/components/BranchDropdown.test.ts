@@ -421,6 +421,25 @@ describe("BranchDropdown component", () => {
       expect(onSelect).toHaveBeenCalledWith("");
     });
 
+    it("does not re-clear when the parent re-applies a value after the list loaded", async () => {
+      // Regression: clearing on every value change fed an infinite clear/re-apply
+      // loop with the parent's default auto-fill (effect_update_depth_exceeded).
+      // Validation must run once per arriving list, not on value changes.
+      const onSelect = vi.fn();
+      const { rerender } = render(BranchDropdown, {
+        props: { ...defaultProps, value: "deleted-branch", onSelect },
+      });
+
+      await completeLoading();
+      expect(onSelect).toHaveBeenCalledTimes(1);
+
+      // Parent stubbornly re-applies the invalid value (simulates a stale default).
+      await rerender({ ...defaultProps, value: "deleted-branch", onSelect });
+      await tick();
+
+      expect(onSelect).toHaveBeenCalledTimes(1);
+    });
+
     it("does not clear value when branches are still loading", async () => {
       const onSelect = vi.fn();
 

@@ -357,6 +357,30 @@ describe("UiIpcModule - bases:updated", () => {
       bases,
     });
   });
+
+  it("forwards defaultBaseBranch when the event carries one", async () => {
+    const deps = createBridgeDeps();
+    const uiIpcModule = createUiIpcModule(deps);
+
+    const bases = [{ name: "origin/main", isRemote: true }];
+
+    await uiIpcModule.events!["bases:updated"]!.handler({
+      type: "bases:updated",
+      payload: {
+        projectId: TEST_PROJECT_ID,
+        projectPath: TEST_PROJECT_PATH,
+        bases,
+        defaultBaseBranch: "origin/main",
+      },
+    });
+
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.PROJECT_BASES_UPDATED, {
+      projectId: TEST_PROJECT_ID,
+      projectPath: TEST_PROJECT_PATH,
+      bases,
+      defaultBaseBranch: "origin/main",
+    });
+  });
 });
 
 // =============================================================================

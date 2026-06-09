@@ -190,6 +190,35 @@ describe("setupDomainEventBindings", () => {
     });
   });
 
+  describe("bases-updated events", () => {
+    it("updates the project's defaultBaseBranch when project:bases-updated is emitted", () => {
+      projectsStore.setProjects([{ ...TEST_PROJECT, defaultBaseBranch: "origin/master" }]);
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("project:bases-updated", {
+        projectId: TEST_PROJECT_ID,
+        projectPath: TEST_PROJECT.path,
+        bases: [{ name: "origin/main", isRemote: true }],
+        defaultBaseBranch: "origin/main",
+      });
+
+      expect(projectsStore.projects.value[0]?.defaultBaseBranch).toBe("origin/main");
+    });
+
+    it("clears the project's defaultBaseBranch when the event carries none", () => {
+      projectsStore.setProjects([{ ...TEST_PROJECT, defaultBaseBranch: "origin/master" }]);
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("project:bases-updated", {
+        projectId: TEST_PROJECT_ID,
+        projectPath: TEST_PROJECT.path,
+        bases: [{ name: "develop", isRemote: false }],
+      });
+
+      expect(projectsStore.projects.value[0]?.defaultBaseBranch).toBeUndefined();
+    });
+  });
+
   describe("workspace events", () => {
     beforeEach(() => {
       // Setup: add project first so workspace events can find it

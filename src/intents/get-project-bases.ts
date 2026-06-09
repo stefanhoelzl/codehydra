@@ -54,6 +54,8 @@ export interface BasesUpdatedPayload {
   readonly projectId: ProjectId;
   readonly projectPath: string;
   readonly bases: readonly { name: string; isRemote: boolean }[];
+  /** Fresh default base branch; absent when detection found none (authoritative). */
+  readonly defaultBaseBranch?: string;
 }
 
 export interface BasesUpdatedEvent extends DomainEvent {
@@ -167,7 +169,14 @@ export class GetProjectBasesOperation implements Operation<
             if (freshResult) {
               const freshEvent: BasesUpdatedEvent = {
                 type: EVENT_BASES_UPDATED,
-                payload: { projectId, projectPath, bases: freshResult.bases },
+                payload: {
+                  projectId,
+                  projectPath,
+                  bases: freshResult.bases,
+                  ...(freshResult.defaultBaseBranch !== undefined && {
+                    defaultBaseBranch: freshResult.defaultBaseBranch,
+                  }),
+                },
               };
               ctx.emit(freshEvent);
             }

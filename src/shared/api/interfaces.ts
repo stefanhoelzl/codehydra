@@ -36,6 +36,8 @@ export interface ApiEvents {
     readonly projectId: ProjectId;
     readonly projectPath: string;
     readonly bases: readonly BaseInfo[];
+    /** Fresh default base branch; absent when detection found none (authoritative). */
+    readonly defaultBaseBranch?: string;
   }) => void;
   "workspace:created": (event: {
     readonly projectId: ProjectId;

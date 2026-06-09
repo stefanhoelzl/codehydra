@@ -16,7 +16,6 @@
   let branches = $state<readonly BaseInfo[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
-  let hasValidatedInitialValue = $state(false);
 
   // Load cached branches immediately, then wait for bases-updated event
   $effect(() => {
@@ -43,6 +42,13 @@
         if (event.projectPath === currentProjectPath) {
           branches = event.bases;
           loading = false;
+          // The fresh list is authoritative: clear a selection it no longer
+          // contains. Validation runs once per arriving list — never on value
+          // changes, which would re-clear a value the parent just re-applied
+          // and feed an infinite clear/re-apply loop.
+          if (value && !event.bases.some((b) => b.name === value)) {
+            onSelect("");
+          }
         }
       }
     );
@@ -50,27 +56,6 @@
     return () => {
       unsubscribe();
     };
-  });
-
-  // Reset validation flag when value prop changes from parent
-  // This allows re-validation if parent updates value dynamically
-  $effect(() => {
-    // Track value to create dependency
-    void value;
-    // Reset flag so validation runs again with new value
-    hasValidatedInitialValue = false;
-  });
-
-  // Validate initial value exists in branches after loading
-  $effect(() => {
-    // Only validate once after branches load
-    if (loading || hasValidatedInitialValue) return;
-    hasValidatedInitialValue = true;
-
-    // If value is set but doesn't exist in branches, clear it
-    if (value && !branches.some((b) => b.name === value)) {
-      onSelect(""); // Notify parent the value is invalid
-    }
   });
 
   /**

@@ -130,11 +130,7 @@ export function setActiveWorkspace(path: string | null): void {
   _activeWorkspacePath = path;
 }
 
-export function addWorkspace(
-  projectPath: string,
-  workspace: Workspace,
-  defaultBaseBranch?: string
-): void {
+export function addWorkspace(projectPath: string, workspace: Workspace): void {
   _projects = _projects.map((p) =>
     p.path === projectPath
       ? {
@@ -142,11 +138,27 @@ export function addWorkspace(
           workspaces: p.workspaces.some((w) => w.path === workspace.path)
             ? p.workspaces.map((w) => (w.path === workspace.path ? workspace : w))
             : [...p.workspaces, workspace],
-          // Update defaultBaseBranch if provided (remembers last-used branch for next workspace creation)
-          ...(defaultBaseBranch !== undefined ? { defaultBaseBranch } : {}),
         }
       : p
   );
+}
+
+/**
+ * Authoritatively set (or clear, when undefined) a project's default base branch.
+ * Fed by the project:bases-updated event so a default that went stale during the
+ * session (e.g. remote default-branch rename) heals after the next refresh.
+ */
+export function setProjectDefaultBaseBranch(
+  projectPath: string,
+  defaultBaseBranch: string | undefined
+): void {
+  _projects = _projects.map((p) => {
+    if (p.path !== projectPath) return p;
+    if (defaultBaseBranch !== undefined) return { ...p, defaultBaseBranch };
+    const cleared = { ...p };
+    delete cleared.defaultBaseBranch;
+    return cleared;
+  });
 }
 
 export function removeWorkspace(projectPath: string, workspacePath: string): void {

@@ -27,6 +27,7 @@ import {
   addWorkspace,
   removeWorkspace,
   updateWorkspaceMetadata,
+  setProjectDefaultBaseBranch,
   reset,
   getAllWorkspaces,
   getAwakeWorkspaceRefByIndex,
@@ -172,20 +173,7 @@ describe("projects store", () => {
       expect(projects.value[0]?.workspaces[0]).toEqual(newWorkspace);
     });
 
-    it("updates project defaultBaseBranch when provided", () => {
-      const project = createMockProject({
-        path: "/test/project" as ProjectPath,
-        workspaces: [],
-      });
-      addProject(project);
-
-      const newWorkspace = createMockWorkspace({ path: "/test/project/.worktrees/new" });
-      addWorkspace("/test/project" as ProjectPath, newWorkspace, "develop");
-
-      expect(projects.value[0]?.defaultBaseBranch).toBe("develop");
-    });
-
-    it("does not update defaultBaseBranch when not provided", () => {
+    it("does not touch defaultBaseBranch", () => {
       const project = createMockProject({
         path: "/test/project" as ProjectPath,
         workspaces: [],
@@ -196,22 +184,7 @@ describe("projects store", () => {
       const newWorkspace = createMockWorkspace({ path: "/test/project/.worktrees/new" });
       addWorkspace("/test/project" as ProjectPath, newWorkspace);
 
-      // Should preserve existing defaultBaseBranch
       expect(projects.value[0]?.defaultBaseBranch).toBe("main");
-    });
-
-    it("overwrites existing defaultBaseBranch when new value provided", () => {
-      const project = createMockProject({
-        path: "/test/project" as ProjectPath,
-        workspaces: [],
-        defaultBaseBranch: "main",
-      });
-      addProject(project);
-
-      const newWorkspace = createMockWorkspace({ path: "/test/project/.worktrees/new" });
-      addWorkspace("/test/project" as ProjectPath, newWorkspace, "feature/new-base");
-
-      expect(projects.value[0]?.defaultBaseBranch).toBe("feature/new-base");
     });
 
     // Regression: wake/reopen path emits workspace:created for an already-known
@@ -287,6 +260,53 @@ describe("projects store", () => {
       const nextIndex = wrapIndex(currentIndex + 1, all.length);
       const nextRef = getWorkspaceRefByIndex(nextIndex);
       expect(nextRef?.path).toBe(wsC.path);
+    });
+  });
+
+  describe("setProjectDefaultBaseBranch", () => {
+    it("sets the default base branch on the matching project", () => {
+      addProject(
+        createMockProject({
+          path: "/test/project" as ProjectPath,
+          defaultBaseBranch: "origin/master",
+        })
+      );
+
+      setProjectDefaultBaseBranch("/test/project", "origin/main");
+
+      expect(projects.value[0]?.defaultBaseBranch).toBe("origin/main");
+    });
+
+    it("clears the default base branch when undefined (authoritative)", () => {
+      addProject(
+        createMockProject({
+          path: "/test/project" as ProjectPath,
+          defaultBaseBranch: "origin/master",
+        })
+      );
+
+      setProjectDefaultBaseBranch("/test/project", undefined);
+
+      expect(projects.value[0]?.defaultBaseBranch).toBeUndefined();
+    });
+
+    it("leaves other projects untouched", () => {
+      addProject(
+        createMockProject({
+          path: "/test/project" as ProjectPath,
+          defaultBaseBranch: "main",
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/other" as ProjectPath,
+          defaultBaseBranch: "main",
+        })
+      );
+
+      setProjectDefaultBaseBranch("/test/project", "develop");
+
+      expect(projects.value[1]?.defaultBaseBranch).toBe("main");
     });
   });
 

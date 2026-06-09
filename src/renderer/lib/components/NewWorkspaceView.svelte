@@ -16,6 +16,7 @@
   store so git-clone / folder-open can populate it.
 -->
 <script lang="ts">
+  import { SvelteSet } from "svelte/reactivity";
   import BranchDropdown from "./BranchDropdown.svelte";
   import ProjectDropdown from "./ProjectDropdown.svelte";
   import NameBranchDropdown, { type NameBranchSelection } from "./NameBranchDropdown.svelte";
@@ -91,11 +92,24 @@
   // Section ref for focus-trap enumeration.
   let sectionRef: HTMLElement | undefined = $state();
 
-  // Initialize selectedBranch from the project's default when available.
-  // Runs when defaultBaseBranch arrives or after switching projects (branch cleared).
+  // Auto-fill the base branch from the project's default. Each distinct default
+  // value is applied at most once per project selection, and only into an empty
+  // field: re-applying after BranchDropdown cleared a stale default would
+  // ping-pong forever (effect_update_depth_exceeded bricked the whole renderer
+  // once), while a *fresh* default arriving later is a new value and still fills
+  // the empty field. Defined before the apply effect so the reset runs first on
+  // project switches.
+  const appliedDefaults = new SvelteSet<string>();
   $effect(() => {
-    if (selectedBranch === "" && defaultBranch) {
-      selectedBranch = defaultBranch;
+    void selectedProjectId;
+    appliedDefaults.clear();
+  });
+
+  $effect(() => {
+    const branch = defaultBranch;
+    if (selectedBranch === "" && branch && !appliedDefaults.has(branch)) {
+      appliedDefaults.add(branch);
+      selectedBranch = branch;
     }
   });
 
@@ -250,6 +264,9 @@
 
   // Reset the whole form to defaults (used after create and on Escape).
   function resetForm(): void {
+    // Re-arm the default auto-fill: a reset is a deliberate user action (submit
+    // or Escape), so re-applying the same default afterwards cannot loop.
+    appliedDefaults.clear();
     name = "";
     selectedBranch = "";
     initialPrompt = "";
