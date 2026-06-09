@@ -11,7 +11,8 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookHandler } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
-import type { ConfigAccessor, ConfigAgentType } from "../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+import type { ConfigAgentType } from "../boundaries/platform/config";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { AgentType } from "../shared/plugin-protocol";
 import { Path } from "../utils/path/path";
@@ -48,7 +49,7 @@ export const AGENT_METADATA_KEY = "agent";
 interface WorkspaceAgentResolverDeps {
   readonly gitWorktreeProvider: GitWorktreeProvider;
   /** Accessor for the user's global agent selection (registered in the composition root). */
-  readonly agentConfig: ConfigAccessor<ConfigAgentType>;
+  readonly agentConfig: PersistedAccessor<ConfigAgentType>;
   readonly logger: Logger;
 }
 

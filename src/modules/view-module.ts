@@ -85,7 +85,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { Config } from "../boundaries/platform/config";
-import { configBoolean } from "../boundaries/platform/config-definition";
+import { storeBoolean } from "../boundaries/platform/store-definition";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { LifecycleAgentType } from "../shared/ipc";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
@@ -146,7 +146,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const loadOnResumeConfig = deps.configService.register("experimental.load-on-resume", {
     default: true,
     description: "Reload workspace views when system resumes from sleep",
-    ...configBoolean(),
+    ...storeBoolean(),
   });
 
   // Internal state

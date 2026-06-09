@@ -52,7 +52,7 @@ import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
 import { Path } from "../utils/path/path";
 import { encodePathForUrl } from "../boundaries/platform/paths";
-import { configString, configCustom } from "../boundaries/platform/config-definition";
+import { storeString, storeCustom } from "../boundaries/platform/store-definition";
 import type { Config } from "../boundaries/platform/config";
 import { CodeServerError, SetupError, getErrorMessage } from "../shared/errors/service-errors";
 import { waitForHealthy } from "../utils/health-check";
@@ -286,12 +286,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   const codeServerVersionConfig = deps.configService.register("version.code-server", {
     default: CODE_SERVER_VERSION,
     description: "Code-server version",
-    ...configString(),
+    ...storeString(),
   });
   const codeServerPortConfig = deps.configService.register("code-server.port", {
     default: getCodeServerPort(deps.buildInfo),
     description: "Code-server port",
-    ...configCustom<number>({
+    ...storeCustom<number>({
       parse: (raw) => {
         const n = Number(raw);
         return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : undefined;

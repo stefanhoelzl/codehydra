@@ -16,7 +16,8 @@ import type { Logger } from "../../boundaries/platform/logging-types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { AgentType } from "../../shared/plugin-protocol";
 import type { WorkspacePath } from "../../shared/ipc";
-import type { ConfigAccessor, ConfigAgentType } from "../../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
+import type { ConfigAgentType } from "../../boundaries/platform/config";
 
 import type { Dispatcher } from "../../intents/lib/dispatcher";
 import type {
@@ -74,7 +75,7 @@ export interface AgentModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
   /** Accessor for the user's agent selection (registered in the composition root). */
-  readonly agentConfig: ConfigAccessor<ConfigAgentType>;
+  readonly agentConfig: PersistedAccessor<ConfigAgentType>;
 }
 
 // =============================================================================

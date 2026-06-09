@@ -52,12 +52,12 @@ import {
 import type { ConfigAgentType } from "../shared/api/types";
 import type { BinaryType } from "./app-start";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
-import type { ConfigAccessor } from "../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 
 /** Mock accessor that seeds the configured agent. Pass null to leave it unset. */
 function createMockAgentAccessor(
   agent: ConfigAgentType | null = "opencode"
-): ConfigAccessor<ConfigAgentType | null> {
+): PersistedAccessor<ConfigAgentType | null> {
   return createMockAccessor<ConfigAgentType | null>("agent", agent);
 }
 

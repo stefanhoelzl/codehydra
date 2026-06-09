@@ -44,7 +44,7 @@ import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "../../intents/open-
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/list-projects";
 import type { Config } from "../../boundaries/platform/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
-import { configPath, type ConfigAccessor } from "../../boundaries/platform/config-definition";
+import { storePath, type PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
@@ -111,13 +111,13 @@ function stateKey(sourceName: string, itemKey: string): string {
 
 export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): IntentModule {
   // Register template-path config keys (sources register their own keys)
-  const templatePathConfigs = new Map<string, ConfigAccessor<string | null>>();
+  const templatePathConfigs = new Map<string, PersistedAccessor<string | null>>();
   for (const source of deps.sources) {
     const tplConfig = deps.configService.register(`experimental.${source.name}.template-path`, {
       default: null,
       description: `Path to Liquid template for ${source.name} auto-workspaces`,
       sensitive: true,
-      ...configPath({ nullable: true }),
+      ...storePath({ nullable: true }),
     });
     templatePathConfigs.set(source.name, tplConfig);
   }

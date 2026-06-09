@@ -1,7 +1,7 @@
 import type { HttpClient } from "../../boundaries/platform/network";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { Config } from "../../boundaries/platform/config";
-import { configString } from "../../boundaries/platform/config-definition";
+import { storeString } from "../../boundaries/platform/store-definition";
 import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
 
 // =============================================================================
@@ -26,18 +26,18 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
     default: null,
     description: "YouTrack instance URL (e.g. https://youtrack.example.com)",
     sensitive: true,
-    ...configString({ nullable: true }),
+    ...storeString({ nullable: true }),
   });
   const tokenConfig = deps.configService.register("experimental.youtrack.token", {
     default: null,
     description: "YouTrack API permanent token",
     sensitive: true,
-    ...configString({ nullable: true }),
+    ...storeString({ nullable: true }),
   });
   const queryConfig = deps.configService.register("experimental.youtrack.query", {
     default: null,
     description: "YouTrack search query (e.g. for:me State: {In Progress})",
-    ...configString({ nullable: true }),
+    ...storeString({ nullable: true }),
   });
 
   function youtrackHeaders(): Readonly<Record<string, string>> {

@@ -22,7 +22,7 @@ import type { PromptModel } from "../../../shared/api/types";
 import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
 import { getOpencodeBundleDir, getOpencodeExecutablePath } from "./setup-info";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
-import type { ConfigAccessor } from "../../../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../../../boundaries/platform/store-definition";
 
 /**
  * Pending initial prompt to send when server becomes healthy.
@@ -109,7 +109,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   private readonly portManager: PortManager;
   private readonly httpClient: HttpClient;
   private readonly pathProvider: PathProvider;
-  private readonly versionConfig: ConfigAccessor<string>;
+  private readonly versionConfig: PersistedAccessor<string>;
   private readonly logger: Logger;
   private readonly config: Required<OpenCodeServerManagerConfig>;
 
@@ -135,7 +135,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     portManager: PortManager,
     httpClient: HttpClient,
     pathProvider: PathProvider,
-    versionConfig: ConfigAccessor<string>,
+    versionConfig: PersistedAccessor<string>,
     logger: Logger,
     config?: OpenCodeServerManagerConfig
   ) {

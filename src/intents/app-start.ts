@@ -35,7 +35,7 @@
 import type { Intent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { ConfigAgentType } from "../shared/api/types";
-import type { ConfigAccessor } from "../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { BinaryType } from "../utils/binary-resolution/types";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
@@ -143,7 +143,7 @@ interface CheckResult {
 export class AppStartOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
 
-  constructor(private readonly agentConfig: ConfigAccessor<ConfigAgentType | null>) {}
+  constructor(private readonly agentConfig: PersistedAccessor<ConfigAgentType | null>) {}
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     const hookCtx: HookContext = {

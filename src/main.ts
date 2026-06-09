@@ -30,11 +30,11 @@ import { GitWorktreeProvider } from "./boundaries/platform/git-worktree-provider
 import { SimpleGitClient } from "./boundaries/platform/simple-git-client";
 import { DefaultConfig } from "./boundaries/platform/config";
 import {
-  configBoolean,
-  configEnum,
-  configString,
-  ConfigValidationError,
-} from "./boundaries/platform/config-definition";
+  storeBoolean,
+  storeEnum,
+  storeString,
+  PersistedValidationError,
+} from "./boundaries/platform/store-definition";
 // Boundaries - Shell
 import { DefaultIpcBoundary } from "./boundaries/shell/ipc";
 import { DefaultAppBoundary } from "./boundaries/shell/app";
@@ -160,6 +160,8 @@ import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup
 import { createWindowTitleModule } from "./modules/window-title-module";
 import { createPosthogModule } from "./modules/posthog-module";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
+import { DefaultStateService } from "./boundaries/platform/state-service";
+import { createStateModule, createStateMigrationRegistry } from "./modules/state-module";
 import { createLocalProjectModule } from "./modules/local-project-module";
 import { createRemoteProjectModule } from "./modules/remote-project-module";
 import { createGitWorktreeWorkspaceModule } from "./modules/git-worktree-workspace-module";
@@ -215,18 +217,29 @@ const configService = new DefaultConfig({
   argv: process.argv,
 });
 
+// State — app-written persisted state (state.json), sibling of config. Loaded
+// asynchronously by the state module in app:start/init. The migration registry
+// is drained there to move keys that left config.json (telemetry.distinct-id,
+// update.dismissed-version) into state.json on first launch after upgrade.
+const stateService = new DefaultStateService({
+  statePath: pathProvider.dataPath("state.json"),
+  fileSystem: fileSystemLayer,
+  logger: loggingService.createLogger("state"),
+});
+const stateMigrations = createStateMigrationRegistry();
+
 // Register core config keys (not owned by any single module). Their accessors
 // are threaded into the modules/intents that read or write them, so those
 // consumers never reach into the config service by string key.
 const agentConfig = configService.register("agent", {
   default: null,
   description: "Agent selection",
-  ...configEnum(["claude", "opencode"], { nullable: true }),
+  ...storeEnum(["claude", "opencode"], { nullable: true }),
 });
 const helpConfig = configService.register("help", {
   default: false,
   description: "Print config help and exit",
-  ...configBoolean(),
+  ...storeBoolean(),
 });
 const iframesConfig = configService.register("experimental.iframes", {
   default: true,
@@ -234,7 +247,7 @@ const iframesConfig = configService.register("experimental.iframes", {
     "Render workspaces as iframes inside a single host WebContentsView " +
     "(experimental; requires app restart). Lower memory at the cost of " +
     "per-workspace devtools and crash recovery.",
-  ...configBoolean(),
+  ...storeBoolean(),
 });
 // Agent version keys. Registered here (composition root) rather than inside the
 // agent module so the accessors exist before the server managers and providers
@@ -242,12 +255,12 @@ const iframesConfig = configService.register("experimental.iframes", {
 const claudeVersionConfig = configService.register("version.claude", {
   default: CLAUDE_VERSION,
   description: "Claude agent version",
-  ...configString({ nullable: true }),
+  ...storeString({ nullable: true }),
 });
 const opencodeVersionConfig = configService.register("version.opencode", {
   default: OPENCODE_VERSION,
   description: "OpenCode agent version",
-  ...configString(),
+  ...storeString(),
 });
 
 // 3. Electron layers (all constructors are pure — just store deps)
@@ -535,6 +548,8 @@ const posthogModule = createPosthogModule({
   platformInfo,
   buildInfo,
   configService,
+  stateService,
+  stateMigrations,
   agentConfig,
   logger: loggingService.createLogger("telemetry"),
   apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
@@ -544,7 +559,16 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
   dispatcher,
   configService,
+  stateService,
+  stateMigrations,
   notificationManager,
+});
+// State module — loads state.json and drains the migration registry in
+// app:start/init. Constructed after the modules that contribute migrations.
+const stateModule = createStateModule({
+  stateService,
+  migrations: stateMigrations,
+  logger: loggingService.createLogger("state"),
 });
 const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
@@ -810,6 +834,7 @@ dispatcher.registerModule(remoteProjectModule);
 dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
 dispatcher.registerModule(windowTitleModule);
+dispatcher.registerModule(stateModule);
 dispatcher.registerModule(posthogModule);
 dispatcher.registerModule(autoUpdaterLifecycleModule);
 dispatcher.registerModule(mcpModule);
@@ -833,7 +858,7 @@ dispatcher.registerModule(uiIpcModule);
 try {
   configService.load();
 } catch (error) {
-  if (error instanceof ConfigValidationError) {
+  if (error instanceof PersistedValidationError) {
     appLogger.error("Config validation failed", { key: error.detail.key }, error);
     process.stderr.write(`\nConfiguration error:\n${error.message}\n\n`);
     process.stderr.write(configService.getHelpText());

@@ -17,8 +17,8 @@ import { SILENT_LOGGER } from "./logging";
 import { createFileSystemMock, file, directory } from "./filesystem.state-mock";
 import { DefaultConfig, parseEnvVars, parseCliArgs } from "./config";
 import type { Config, ConfigDeps } from "./config";
-import type { ConfigKeyDefinition } from "./config-definition";
-import { parseBool, ConfigValidationError } from "./config-definition";
+import type { PersistedKeyDefinition } from "./store-definition";
+import { parseBool, PersistedValidationError } from "./store-definition";
 
 // =============================================================================
 // Test Config Definitions
@@ -26,11 +26,11 @@ import { parseBool, ConfigValidationError } from "./config-definition";
 
 /**
  * Non-deprecated definition shape accepted by `register()`'s first overload.
- * Helpers return this so the values flow through to a `ConfigAccessor`; the
+ * Helpers return this so the values flow through to a `PersistedAccessor`; the
  * deprecated tests spread one of these and override `deprecated: true` to hit
  * the second overload.
  */
-type TestDef = Omit<ConfigKeyDefinition<unknown>, "deprecated">;
+type TestDef = Omit<PersistedKeyDefinition<unknown>, "deprecated">;
 
 function stringDef(_name: string, defaultValue = "default"): TestDef {
   return {
@@ -303,14 +303,14 @@ describe("Config", () => {
       });
       svc.register("test.flag", boolDef("test.flag"));
 
-      expect(() => svc.load()).toThrow(ConfigValidationError);
+      expect(() => svc.load()).toThrow(PersistedValidationError);
     });
 
     it("throws on invalid env var value", () => {
       const svc = createService({ env: { CH_TEST__FLAG: "invalid" } });
       svc.register("test.flag", boolDef("test.flag"));
 
-      expect(() => svc.load()).toThrow(ConfigValidationError);
+      expect(() => svc.load()).toThrow(PersistedValidationError);
     });
 
     it("warns and ignores unknown env vars instead of crashing", () => {
@@ -485,7 +485,7 @@ describe("Config", () => {
       const flag = svc.register("test.flag", boolDef("test.flag"));
       svc.load();
 
-      await expect(flag.set("not-bool")).rejects.toThrow(ConfigValidationError);
+      await expect(flag.set("not-bool")).rejects.toThrow(PersistedValidationError);
     });
   });
 
@@ -607,19 +607,52 @@ describe("Config", () => {
       expect(writes).toHaveLength(0);
     });
 
-    it("accessor get() and set() throw with reason 'deprecated'", () => {
-      const svc = createService();
+    it("accessor get() returns the loaded value (read-only) and set() throws", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.old": "value-from-old" })),
+        },
+      });
       const old = svc.register("test.old", { ...stringDef("test.old"), deprecated: true });
       svc.load();
 
-      expect(() => old.get()).toThrow(ConfigValidationError);
-      try {
-        old.get();
-      } catch (e) {
-        expect((e as ConfigValidationError).detail.reason).toBe("deprecated");
-      }
+      expect(old.get()).toBe("value-from-old");
       const setDeprecated = old.set as () => never;
-      expect(() => setDeprecated()).toThrow(ConfigValidationError);
+      expect(() => setDeprecated()).toThrow(PersistedValidationError);
+      try {
+        setDeprecated();
+      } catch (e) {
+        expect((e as PersistedValidationError).detail.reason).toBe("deprecated");
+      }
+    });
+
+    it("reset() strips the key from config.json (migration completion)", async () => {
+      const entries = {
+        "/app": directory(),
+        "/app/config.json": file(
+          JSON.stringify({ "test.old": "value-from-old", "test.a": "keep" })
+        ),
+      };
+      const fs = createFileSystemMock({ entries });
+      const svc = new DefaultConfig(
+        createDeps({
+          fileSystem: fs,
+          readFileSync: createSyncReader(entries),
+        })
+      );
+      svc.register("test.a", stringDef("test.a"));
+      const old = svc.register("test.old", { ...stringDef("test.old"), deprecated: true });
+      svc.load();
+
+      expect(old.get()).toBe("value-from-old");
+      await old.reset();
+
+      // The deprecated key is gone from config.json; other entries are preserved.
+      const content = await fs.readFile(CONFIG_PATH);
+      expect(JSON.parse(content)).toEqual({ "test.a": "keep" });
+      // In memory it falls back to the registered default.
+      expect(old.get()).toBe("default");
     });
 
     it("is hidden from help text and overrides", () => {
@@ -793,7 +826,7 @@ describe("Config", () => {
         validValues: "true|false",
       });
 
-      expect(() => svc.load()).toThrow(ConfigValidationError);
+      expect(() => svc.load()).toThrow(PersistedValidationError);
 
       const text = svc.getHelpText();
       expect(text).toContain("test.flag");

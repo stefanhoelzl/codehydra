@@ -17,7 +17,8 @@ import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
 import { Path } from "../utils/path/path";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
-import type { ConfigAccessor, ConfigAgentType } from "../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../boundaries/platform/store-definition";
+import type { ConfigAgentType } from "../boundaries/platform/config";
 
 // =============================================================================
 // Intent Types
@@ -86,7 +87,7 @@ export interface AvailableAgentsResult {
 export class AppReadyOperation implements Operation<AppReadyIntent, AppReadyResult> {
   readonly id = APP_READY_OPERATION_ID;
 
-  constructor(private readonly agentConfig: ConfigAccessor<ConfigAgentType>) {}
+  constructor(private readonly agentConfig: PersistedAccessor<ConfigAgentType>) {}
 
   async execute(ctx: OperationContext<AppReadyIntent>): Promise<AppReadyResult> {
     const hookCtx: HookContext = { intent: ctx.intent };

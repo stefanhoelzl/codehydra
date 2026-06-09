@@ -1,9 +1,10 @@
 /**
- * Config key definition types for module-owned config registration.
+ * Key-definition types and value-type builders shared by the persisted stores.
  *
- * Each module registers its own config keys via the "register-config" hook
- * in app:start. The config module collects all definitions and uses them
- * for parsing, validation, and help text generation.
+ * These back PersistedStore (see persisted-store.ts) and therefore both of its
+ * composers — Config (config.json) and StateService (state.json). Modules pass a
+ * PersistedKeyDefinition (usually via a store* builder) to register(), and the
+ * store uses it for parsing, validation, and (for Config) help-text generation.
  */
 
 import { Path } from "../../utils/path/path";
@@ -11,12 +12,6 @@ import { Path } from "../../utils/path/path";
 // =============================================================================
 // Shared Type Aliases
 // =============================================================================
-
-/**
- * Agent types that can be selected by the user.
- * null indicates the user hasn't made a selection yet (first-run).
- */
-export type ConfigAgentType = "claude" | "opencode" | null;
 
 /**
  * Context available to computedDefault callbacks for build-dependent defaults.
@@ -32,7 +27,7 @@ export interface ComputedDefaultContext {
  * Modules return these from the "register-config" hook to declare
  * their config keys, defaults, and parsing/validation logic.
  */
-export interface ConfigKeyDefinition<T> {
+export interface PersistedKeyDefinition<T> {
   /** Static default value. */
   readonly default: T;
   /** Parse a raw CLI/env string into a typed value. undefined = invalid. */
@@ -48,9 +43,10 @@ export interface ConfigKeyDefinition<T> {
   /** When true, the value is redacted in contexts like bug reports. */
   readonly sensitive?: boolean;
   /**
-   * When true, the key is recognized but its value is ignored at load time.
-   * Entries in config.json are preserved (so downgrade to a previous version
-   * doesn't lose the value). get()/set() throw. Hidden from help text.
+   * When true, the key is recognized and loaded read-only: its on-disk value is
+   * preserved (so a downgrade doesn't lose it) and readable via get(), but set()
+   * throws. reset() deletes it from the file. Hidden from help text and overrides.
+   * Used as a one-shot migration source (read old value, seed elsewhere, reset()).
    */
   readonly deprecated?: true;
   /**
@@ -66,26 +62,27 @@ export interface ConfigKeyDefinition<T> {
 }
 
 /**
- * Subset of ConfigKeyDefinition produced by type builders.
+ * Subset of PersistedKeyDefinition produced by type builders.
  */
-type ConfigTypeBuilder<T> = Pick<ConfigKeyDefinition<T>, "parse" | "validate"> & {
+type PersistedTypeBuilder<T> = Pick<PersistedKeyDefinition<T>, "parse" | "validate"> & {
   readonly validValues?: string;
 };
 
 // =============================================================================
-// Config Accessors
+// Accessors
 // =============================================================================
 
 /**
- * Typed handle to a single config key, returned by `Config.register()`.
+ * Typed handle to a single key, returned by `Config.register()` or
+ * `StateService.register()`.
  *
  * The accessor carries the key's value type, so reads need no casts and writes
- * are checked against the registered type. It closes over the owning Config
- * instance; `get()` reflects the effective value (after `load()`), `set()`
- * persists, and `reset()` reverts to the default.
+ * are checked against the registered type. It closes over the owning store;
+ * `get()` reflects the effective value (after `load()`), `set()` persists, and
+ * `reset()` reverts to the default.
  */
-export interface ConfigAccessor<T> {
-  /** The config key name (dot-separated, kebab-case). */
+export interface PersistedAccessor<T> {
+  /** The key name (dot-separated, kebab-case). */
   readonly name: string;
   /** The resolved default (static or computed) for this key. */
   readonly default: T;
@@ -97,7 +94,7 @@ export interface ConfigAccessor<T> {
    * unless `persist: false`. Use `reset()` to revert to the default.
    */
   set(value: T, options?: { persist?: boolean }): Promise<void>;
-  /** Revert to the default value and delete the key from config.json. */
+  /** Revert to the default value and delete the key from the backing file. */
   reset(options?: { persist?: boolean }): Promise<void>;
   /** True when the effective value equals the resolved default. */
   isDefault(): boolean;
@@ -105,15 +102,21 @@ export interface ConfigAccessor<T> {
 
 /**
  * Accessor returned for keys registered with `deprecated: true`. The key is
- * recognized (its config.json entry is preserved) but unusable: `get()`/`set()`
- * are typed `never`, so calling them is a compile error, with a runtime throw
- * as a backstop.
+ * recognized and its on-disk value is loaded read-only: `get()` returns the
+ * value (typed `unknown`), but `set()` throws — a deprecated key cannot be
+ * written. `reset()` deletes the key from the backing file. This makes a
+ * deprecated key a clean one-time migration source: read the old value, seed it
+ * elsewhere, then `reset()` to strip it. Hidden from help text and overrides.
  */
-export interface DeprecatedConfigAccessor {
+export interface DeprecatedPersistedAccessor {
   /** The config key name. */
   readonly name: string;
-  get(): never;
+  /** Read the loaded (read-only) value. */
+  get(): unknown;
+  /** Always throws — deprecated keys are not settable. */
   set(value: never): never;
+  /** Delete the key from the backing file (e.g. after migrating it elsewhere). */
+  reset(options?: { persist?: boolean }): Promise<void>;
 }
 
 // =============================================================================
@@ -124,7 +127,7 @@ export interface DeprecatedConfigAccessor {
  * Builder for boolean config values.
  * Parses "true"/"1" → true, "false"/"0" → false.
  */
-export function configBoolean(): ConfigTypeBuilder<boolean> {
+export function storeBoolean(): PersistedTypeBuilder<boolean> {
   return {
     parse: parseBool,
     validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
@@ -136,15 +139,15 @@ export function configBoolean(): ConfigTypeBuilder<boolean> {
  * Builder for enum config values.
  * Parses/validates against a fixed set of allowed string values.
  */
-export function configEnum<const T extends string>(values: readonly T[]): ConfigTypeBuilder<T>;
-export function configEnum<const T extends string>(
+export function storeEnum<const T extends string>(values: readonly T[]): PersistedTypeBuilder<T>;
+export function storeEnum<const T extends string>(
   values: readonly T[],
   options: { nullable: true }
-): ConfigTypeBuilder<T | null>;
-export function configEnum<const T extends string>(
+): PersistedTypeBuilder<T | null>;
+export function storeEnum<const T extends string>(
   values: readonly T[],
   options?: { nullable: true }
-): ConfigTypeBuilder<T | null> {
+): PersistedTypeBuilder<T | null> {
   const set = new Set<string>(values);
   const validValues = options?.nullable ? [...values, "null"].join("|") : values.join("|");
 
@@ -170,7 +173,7 @@ export function configEnum<const T extends string>(
  * Builder for comma-separated enum list config values.
  * Parses comma-separated tokens, deduplicates, sorts, validates each token.
  */
-export function configEnumList(values: readonly string[]): ConfigTypeBuilder<string> {
+export function storeEnumList(values: readonly string[]): PersistedTypeBuilder<string> {
   const set = new Set(values);
   const validValues = values.join(",");
 
@@ -200,9 +203,9 @@ export function configEnumList(values: readonly string[]): ConfigTypeBuilder<str
 /**
  * Builder for non-empty string config values.
  */
-export function configString(): ConfigTypeBuilder<string>;
-export function configString(options: { nullable: true }): ConfigTypeBuilder<string | null>;
-export function configString(options?: { nullable: true }): ConfigTypeBuilder<string | null> {
+export function storeString(): PersistedTypeBuilder<string>;
+export function storeString(options: { nullable: true }): PersistedTypeBuilder<string | null>;
+export function storeString(options?: { nullable: true }): PersistedTypeBuilder<string | null> {
   if (options?.nullable) {
     return {
       parse: (s: string): string | null | undefined => (s === "" ? null : s),
@@ -223,7 +226,7 @@ export function configString(options?: { nullable: true }): ConfigTypeBuilder<st
  * Builder for nullable path config values.
  * Validates that the string has no null bytes and is a valid path.
  */
-export function configPath(options: { nullable: true }): ConfigTypeBuilder<string | null> {
+export function storePath(options: { nullable: true }): PersistedTypeBuilder<string | null> {
   void options;
   return {
     parse: (s: string) => {
@@ -254,11 +257,11 @@ export function configPath(options: { nullable: true }): ConfigTypeBuilder<strin
 /**
  * Builder for custom config values with explicit parse/validate functions.
  */
-export function configCustom<T>(fns: {
+export function storeCustom<T>(fns: {
   parse: (raw: string) => T | undefined;
   validate: (value: unknown) => T | undefined;
   validValues?: string;
-}): ConfigTypeBuilder<T> {
+}): PersistedTypeBuilder<T> {
   return {
     parse: fns.parse,
     validate: fns.validate,
@@ -283,7 +286,7 @@ export interface ValidationErrorDetail {
  * Error thrown when config validation fails.
  * Contains structured details about what went wrong.
  */
-export class ConfigValidationError extends Error {
+export class PersistedValidationError extends Error {
   readonly detail: ValidationErrorDetail;
 
   constructor(detail: ValidationErrorDetail) {
@@ -301,7 +304,7 @@ export class ConfigValidationError extends Error {
       lines.push(`  Valid values: ${detail.validValues}`);
     }
     super(lines.join("\n"));
-    this.name = "ConfigValidationError";
+    this.name = "PersistedValidationError";
     this.detail = detail;
   }
 }
@@ -313,12 +316,12 @@ export class ConfigValidationError extends Error {
 /**
  * A diagnostic produced while parsing or validating config sources.
  *
- * The transform functions (ConfigDefinitions.parse / .validate, readConfigFile)
+ * The transform functions (PersistedDefinitions.parse / .validate, readConfigFile)
  * are pure: they return issues instead of logging or throwing. `Config.load()`
  * is the single place that interprets them — logging the benign kinds and
- * throwing a ConfigValidationError on `invalid`.
+ * throwing a PersistedValidationError on `invalid`.
  */
-export type ConfigIssue =
+export type PersistedIssue =
   | { kind: "invalid"; key: string; value: unknown; description?: string; validValues?: string }
   | { kind: "unknown"; key: string }
   | { kind: "deprecated"; key: string }
@@ -326,7 +329,11 @@ export type ConfigIssue =
   | { kind: "legacy-untranslatable"; legacy: string; newKey: string; value: unknown }
   | { kind: "broken-json"; path: string; backup: string; error: string };
 
-function invalidIssue(key: string, value: unknown, def: ConfigKeyDefinition<unknown>): ConfigIssue {
+function invalidIssue(
+  key: string,
+  value: unknown,
+  def: PersistedKeyDefinition<unknown>
+): PersistedIssue {
   return {
     kind: "invalid",
     key,
@@ -355,10 +362,10 @@ function invalidIssue(key: string, value: unknown, def: ConfigKeyDefinition<unkn
  * Raw legacy keys are resolved in parse() (pure-rename through the new key's
  * parse) because validate() cannot coerce a string into a typed value.
  */
-export class ConfigDefinitions {
-  private readonly map = new Map<string, ConfigKeyDefinition<unknown>>();
+export class PersistedDefinitions {
+  private readonly map = new Map<string, PersistedKeyDefinition<unknown>>();
 
-  add(key: string, definition: ConfigKeyDefinition<unknown>): void {
+  add(key: string, definition: PersistedKeyDefinition<unknown>): void {
     this.map.set(key, definition);
   }
 
@@ -366,7 +373,7 @@ export class ConfigDefinitions {
     return this.map.has(key);
   }
 
-  get(key: string): ConfigKeyDefinition<unknown> | undefined {
+  get(key: string): PersistedKeyDefinition<unknown> | undefined {
     return this.map.get(key);
   }
 
@@ -374,16 +381,16 @@ export class ConfigDefinitions {
     return this.map.size;
   }
 
-  entries(): IterableIterator<[string, ConfigKeyDefinition<unknown>]> {
+  entries(): IterableIterator<[string, PersistedKeyDefinition<unknown>]> {
     return this.map.entries();
   }
 
   /** The underlying map as a ReadonlyMap, for help-text generation and the public getter. */
-  asReadonlyMap(): ReadonlyMap<string, ConfigKeyDefinition<unknown>> {
+  asReadonlyMap(): ReadonlyMap<string, PersistedKeyDefinition<unknown>> {
     return this.map;
   }
 
-  [Symbol.iterator](): IterableIterator<[string, ConfigKeyDefinition<unknown>]> {
+  [Symbol.iterator](): IterableIterator<[string, PersistedKeyDefinition<unknown>]> {
     return this.map[Symbol.iterator]();
   }
 
@@ -413,10 +420,10 @@ export class ConfigDefinitions {
    */
   parse(rawValues: Record<string, string>): {
     values: Record<string, unknown>;
-    issues: ConfigIssue[];
+    issues: PersistedIssue[];
   } {
     const values: Record<string, unknown> = {};
-    const issues: ConfigIssue[] = [];
+    const issues: PersistedIssue[] = [];
     const legacyLookup = this.buildLegacyLookup();
 
     for (const [key, raw] of Object.entries(rawValues)) {
@@ -461,23 +468,28 @@ export class ConfigDefinitions {
    *
    * Per key:
    *  - active known key → def.validate(value); won't validate → `invalid` issue.
-   *  - deprecated key → `deprecated` issue (skipped).
+   *  - deprecated key → loaded read-only (value validated and included so get()
+   *    can read it) plus a benign `deprecated` issue; never `invalid`.
    *  - legacy name (new key absent) → translate; translator returns undefined → `legacy-untranslatable`.
    *  - legacy name (new key present) → `legacy-shadowed` issue.
    *  - unknown key → `unknown` issue.
    */
   validate(input: Record<string, unknown>): {
     values: Record<string, unknown>;
-    issues: ConfigIssue[];
+    issues: PersistedIssue[];
   } {
     const values: Record<string, unknown> = {};
-    const issues: ConfigIssue[] = [];
+    const issues: PersistedIssue[] = [];
     const legacyLookup = this.buildLegacyLookup();
 
     for (const [key, value] of Object.entries(input)) {
       const def = this.map.get(key);
       if (def) {
         if (def.deprecated) {
+          // Load the value read-only (so get() can read it for migration), but
+          // never fail: a stale/garbage value just stays unread (effective default).
+          const validated = def.validate(value);
+          if (validated !== undefined) values[key] = validated;
           issues.push({ kind: "deprecated", key });
           continue;
         }
@@ -517,7 +529,7 @@ export class ConfigDefinitions {
    */
   parseAndValidate(rawValues: Record<string, string>): {
     values: Record<string, unknown>;
-    issues: ConfigIssue[];
+    issues: PersistedIssue[];
   } {
     const parsed = this.parse(rawValues);
     const validated = this.validate(parsed.values);

@@ -18,7 +18,7 @@ import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { Config } from "../boundaries/platform/config";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import { parseLogLevelSpec, splitLogLevelSpec } from "../boundaries/platform/electron-log";
-import { configCustom, configEnum, configEnumList } from "../boundaries/platform/config-definition";
+import { storeCustom, storeEnum, storeEnumList } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 
@@ -71,7 +71,7 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
   const logLevelConfig = deps.configService.register("log.level", {
     default: "warn",
     description: "Level spec: <level> or <level>:<filter>",
-    ...configCustom({
+    ...storeCustom({
       parse: parseLogLevelSpec,
       validate: (v: unknown) => (typeof v === "string" ? parseLogLevelSpec(v) : undefined),
       validValues: "silly|debug|info|warn|error[:filter]",
@@ -81,12 +81,12 @@ export function createLoggingModule(deps: LoggingModuleDeps): IntentModule {
   const logOutputConfig = deps.configService.register("log.output", {
     default: "file",
     description: "Output destinations (comma-separated)",
-    ...configEnumList(["file", "console"]),
+    ...storeEnumList(["file", "console"]),
   });
   const logFormatConfig = deps.configService.register("log.format", {
     default: "text",
     description: "Log output format",
-    ...configEnum(["text", "json"]),
+    ...storeEnum(["text", "json"]),
   });
 
   const scheduler = deps.scheduler ?? {

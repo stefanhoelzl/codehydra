@@ -12,7 +12,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
-import { configBoolean } from "../boundaries/platform/config-definition";
+import { storeBoolean } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import {
@@ -47,17 +47,17 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
       configService.register("debug.blocking-pids", {
         default: false,
         description: "Simulate blocking processes during workspace deletion",
-        ...configBoolean(),
+        ...storeBoolean(),
       }),
       configService.register("debug.setup", {
         default: false,
         description: "Force setup flow with simulated binary download progress",
-        ...configBoolean(),
+        ...storeBoolean(),
       }),
       configService.register("debug.update", {
         default: false,
         description: "Simulate available update with download progress",
-        ...configBoolean(),
+        ...storeBoolean(),
       }),
     ].map((accessor) => [accessor.name, accessor] as const)
   );
