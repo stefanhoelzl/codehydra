@@ -368,6 +368,85 @@ describe("SimpleGitClient", () => {
         }
       });
     }, 30000);
+
+    it("creates the remote HEAD symref from the remote's default branch", async () => {
+      await withTempRepoWithRemote(async (path, remotePath) => {
+        // init+push repos have no refs/remotes/origin/HEAD
+        expect(await client.getDefaultBranch(new Path(path), "origin")).toBeNull();
+
+        await simpleGit(remotePath).raw(["symbolic-ref", "HEAD", "refs/heads/main"]);
+        await client.fetch(new Path(path), "origin");
+
+        expect(await client.getDefaultBranch(new Path(path), "origin")).toBe("main");
+      });
+    }, 15000);
+
+    it("updates a stale remote HEAD symref after the remote default changes", async () => {
+      await withTempRepoWithRemote(async (path, remotePath) => {
+        const remoteGit = simpleGit(remotePath);
+        await remoteGit.raw(["symbolic-ref", "HEAD", "refs/heads/main"]);
+        await client.fetch(new Path(path), "origin");
+        expect(await client.getDefaultBranch(new Path(path), "origin")).toBe("main");
+
+        // Simulate a default-branch rename on the server
+        await remoteGit.branch(["develop", "main"]);
+        await remoteGit.raw(["symbolic-ref", "HEAD", "refs/heads/develop"]);
+        await client.fetch(new Path(path), "origin");
+
+        expect(await client.getDefaultBranch(new Path(path), "origin")).toBe("develop");
+      });
+    }, 15000);
+
+    it("does not throw when the remote HEAD cannot be determined", async () => {
+      await withTempRepoWithRemote(async (path, remotePath) => {
+        // Dangling HEAD on the server: set-head --auto fails, fetch must still succeed
+        await simpleGit(remotePath).raw(["symbolic-ref", "HEAD", "refs/heads/nonexistent"]);
+
+        await expect(client.fetch(new Path(path), "origin")).resolves.not.toThrow();
+        expect(await client.getDefaultBranch(new Path(path), "origin")).toBeNull();
+      });
+    }, 15000);
+  });
+
+  describe("getDefaultBranch", () => {
+    it("returns the current branch via the repo HEAD symref", async () => {
+      expect(await client.getDefaultBranch(repoPath)).toBe("main");
+    });
+
+    it("returns null for detached HEAD", async () => {
+      const git = simpleGit(repoPath.toNative());
+      const log = await git.log();
+      await git.checkout(log.latest!.hash);
+
+      expect(await client.getDefaultBranch(repoPath)).toBeNull();
+    });
+
+    it("returns null for a non-git directory", async () => {
+      const tempDir = await createTempDir();
+      try {
+        expect(await client.getDefaultBranch(new Path(tempDir.path))).toBeNull();
+      } finally {
+        await tempDir.cleanup();
+      }
+    });
+
+    it("reads the HEAD symref of a bare clone even when it dangles", async () => {
+      const sourceRepo = await createTestGitRepo();
+      const targetDir = await createTempDir();
+      const targetPath = new Path(targetDir.path, "cloned.git");
+
+      try {
+        await client.clone(sourceRepo.path, targetPath);
+
+        // clone() deletes local branches, leaving HEAD dangling — but it still
+        // names the default branch, and getCurrentBranch() can't read it
+        expect(await client.getCurrentBranch(targetPath)).toBeNull();
+        expect(await client.getDefaultBranch(targetPath)).toBe("main");
+      } finally {
+        await sourceRepo.cleanup();
+        await targetDir.cleanup();
+      }
+    }, 15000);
   });
 
   describe("listRemotes", () => {
@@ -580,6 +659,21 @@ describe("SimpleGitClient", () => {
         await targetDir.cleanup();
       }
     });
+
+    it("records the remote default branch as refs/remotes/origin/HEAD", async () => {
+      const sourceRepo = await createTestGitRepo();
+      const targetDir = await createTempDir();
+      const targetPath = new Path(targetDir.path, "cloned.git");
+
+      try {
+        await client.clone(sourceRepo.path, targetPath);
+
+        expect(await client.getDefaultBranch(targetPath, "origin")).toBe("main");
+      } finally {
+        await sourceRepo.cleanup();
+        await targetDir.cleanup();
+      }
+    }, 15000);
 
     it("sets up remote-tracking branches and removes local branches", async () => {
       // Create a source repo with multiple branches

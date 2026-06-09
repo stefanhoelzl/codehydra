@@ -328,7 +328,43 @@ export class SimpleGitClient implements IGitClient {
       },
       `Failed to fetch${remote ? ` from ${remote}` : ""}`
     );
+    if (remote) {
+      await this.updateRemoteHead(repoPath, remote);
+    }
     this.logger.debug("Fetch", { path: repoPath.toString(), remote: remote ?? "all" });
+  }
+
+  /**
+   * Create/update the refs/remotes/<remote>/HEAD symref from the remote's actual HEAD.
+   * Backports git >= 2.47 followRemoteHEAD behavior; failures are tolerated because the
+   * symref is an optimization for default-branch detection, never a correctness requirement.
+   */
+  private async updateRemoteHead(repoPath: Path, remote: string): Promise<void> {
+    try {
+      const git = this.getGit(repoPath);
+      await git.raw(["remote", "set-head", remote, "--auto"]);
+    } catch (error: unknown) {
+      this.logger.warn("Failed to update remote HEAD", {
+        path: repoPath.toString(),
+        remote,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  async getDefaultBranch(repoPath: Path, remote?: string): Promise<string | null> {
+    try {
+      const git = this.getGit(repoPath);
+      const ref = remote ? `refs/remotes/${remote}/HEAD` : "HEAD";
+      // symbolic-ref (unlike rev-parse) resolves dangling symrefs, which is the normal
+      // HEAD state of bare clones after their local branches are deleted
+      const target = (await git.raw(["symbolic-ref", ref])).trim();
+      const prefix = remote ? `refs/remotes/${remote}/` : "refs/heads/";
+      return target.startsWith(prefix) ? target.substring(prefix.length) : null;
+    } catch {
+      // Missing symref, detached HEAD, or not a repository — no answer
+      return null;
+    }
   }
 
   async listRemotes(repoPath: Path): Promise<readonly string[]> {
@@ -462,6 +498,10 @@ export class SimpleGitClient implements IGitClient {
       const bareGit = this.getGit(targetPath);
       await bareGit.addConfig("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*");
       await bareGit.fetch(["origin"]);
+
+      // Record the remote's default branch as refs/remotes/origin/HEAD
+      // (bare clones don't get this symref; defaultBase() reads it)
+      await this.updateRemoteHead(targetPath, "origin");
 
       // Delete local branches - only keep remote-tracking branches
       // This prevents confusion: branches show under "Remote Branches" header in UI

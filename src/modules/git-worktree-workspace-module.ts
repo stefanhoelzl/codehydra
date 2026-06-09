@@ -311,7 +311,7 @@ export function createGitWorktreeWorkspaceModule(
             const base = payload.base ?? (await gitWorktreeProvider.defaultBase(projectPathObj));
             if (!base) {
               throw new WorkspaceError(
-                "No base branch specified and no default branch found (looked for origin/main, main, origin/master, master)"
+                "No base branch specified and no default branch could be detected"
               );
             }
 

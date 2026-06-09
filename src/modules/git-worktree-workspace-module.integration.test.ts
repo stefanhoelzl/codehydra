@@ -715,7 +715,7 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         };
 
         await expect(dispatchCreateWorkspace(dispatcher, createIntent)).rejects.toThrow(
-          "No base branch specified and no default branch found"
+          "No base branch specified and no default branch could be detected"
         );
       });
 

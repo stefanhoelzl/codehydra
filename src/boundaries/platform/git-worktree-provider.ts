@@ -691,8 +691,18 @@ export class GitWorktreeProvider {
 
   /**
    * Returns the default base branch for creating new workspaces.
-   * Prefers remote branches over local to ensure proper tracking.
-   * Check order: origin/main -> main -> origin/master -> master
+   *
+   * Detection order:
+   * 1. The remote's recorded default branch (refs/remotes/<remote>/HEAD symref,
+   *    maintained by clone/fetch) — covers repos whose default is develop/trunk/etc.
+   *    and self-heals after a remote default-branch rename on the next refresh.
+   * 2. The repository's own HEAD symref (clone-time default in bare clones,
+   *    checked-out branch in local repos).
+   * 3. Legacy hardcoded order: origin/main -> main -> origin/master -> master.
+   *
+   * Every candidate must exist in listBases() — the result is used as the dialog's
+   * preselected entry, so it must be selectable. Prefers remote-tracking entries
+   * over local ones to ensure proper tracking. Purely local: never hits the network.
    *
    * @param projectRoot Root of the git repository
    * @returns Promise resolving to the default base branch, or undefined if none found
@@ -702,18 +712,33 @@ export class GitWorktreeProvider {
       const bases = await this.listBases(projectRoot);
       const branchNames = new Set(bases.map((b) => b.name));
 
-      // Prefer remote branches for proper tracking
-      if (branchNames.has("origin/main")) {
-        return "origin/main";
+      // Resolve a detected branch name to a selectable base, preferring remote-tracking
+      const pick = (branchName: string | null, remote?: string): string | undefined => {
+        if (!branchName) return undefined;
+        if (remote !== undefined && branchNames.has(`${remote}/${branchName}`)) {
+          return `${remote}/${branchName}`;
+        }
+        return branchNames.has(branchName) ? branchName : undefined;
+      };
+
+      const remotes = await this.gitClient.listRemotes(projectRoot);
+      const remote = remotes.includes("origin") ? "origin" : remotes[0];
+
+      if (remote !== undefined) {
+        const remoteDefault = await this.gitClient.getDefaultBranch(projectRoot, remote);
+        const base = pick(remoteDefault, remote);
+        if (base !== undefined) return base;
       }
-      if (branchNames.has("main")) {
-        return "main";
-      }
-      if (branchNames.has("origin/master")) {
-        return "origin/master";
-      }
-      if (branchNames.has("master")) {
-        return "master";
+
+      const headDefault = await this.gitClient.getDefaultBranch(projectRoot);
+      const headBase = pick(headDefault, remote);
+      if (headBase !== undefined) return headBase;
+
+      // Legacy fallback for repos where no symref answer exists
+      for (const candidate of ["origin/main", "main", "origin/master", "master"]) {
+        if (branchNames.has(candidate)) {
+          return candidate;
+        }
       }
       return undefined;
     } catch (error: unknown) {

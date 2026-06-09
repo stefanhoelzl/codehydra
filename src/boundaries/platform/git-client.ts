@@ -130,6 +130,24 @@ export interface IGitClient {
   listRemotes(repoPath: Path): Promise<readonly string[]>;
 
   /**
+   * Get the default branch recorded locally.
+   *
+   * With `remote`, reads the `refs/remotes/<remote>/HEAD` symref — the local record of
+   * the remote's default branch. The symref is created/updated by clone() and fetch()
+   * (via `git remote set-head --auto`); it may be absent in repositories that predate
+   * this behavior or were set up without a full clone.
+   *
+   * Without `remote`, reads the repository's own HEAD symref. Unlike getCurrentBranch(),
+   * this also works when HEAD dangles (points at a deleted branch), which is the normal
+   * state of CodeHydra's bare clones — there it names the default branch at clone time.
+   *
+   * @param repoPath Absolute path to the git repository
+   * @param remote Optional remote name to read the remote HEAD symref for
+   * @returns Promise resolving to the short branch name, or null when no symref answer exists
+   */
+  getDefaultBranch(repoPath: Path, remote?: string): Promise<string | null>;
+
+  /**
    * Get a branch-specific configuration value.
    * @param repoPath Absolute path to the git repository
    * @param branch Name of the branch

@@ -63,6 +63,12 @@ interface RepositoryState {
   remoteBranches: Set<string>;
   /** Remote names (e.g., "origin") */
   remotes: Set<string>;
+  /** Remote HEAD symrefs: remote name -> default branch short name (refs/remotes/<remote>/HEAD) */
+  remoteHeads: Map<string, string>;
+  /** Default branch on the remote server; applied to remoteHeads on fetch (set-head simulation) */
+  serverDefaultBranch?: string;
+  /** The repository's own HEAD symref target (may dangle, unlike currentBranch) */
+  headBranch: string | null;
   /** Worktrees by normalized path */
   worktrees: Map<string, WorktreeState>;
   /** Branch configurations: branch -> key -> value */
@@ -109,6 +115,12 @@ export interface RepositoryInit {
   readonly remoteBranches?: readonly string[];
   /** Remote names (e.g., "origin") */
   readonly remotes?: readonly string[];
+  /** Remote HEAD symrefs: remote name -> default branch short name */
+  readonly remoteHeads?: Readonly<Record<string, string>>;
+  /** Default branch on the remote server; applied to remoteHeads on fetch (set-head simulation) */
+  readonly serverDefaultBranch?: string;
+  /** The repository's own HEAD symref target (defaults to currentBranch) */
+  readonly headBranch?: string | null;
   /** Worktrees in this repository (non-main) */
   readonly worktrees?: readonly WorktreeInit[];
   /** Branch configurations: branch -> { key: value } */
@@ -215,6 +227,15 @@ class GitClientMockStateImpl implements GitClientMockState {
       lines.push(`  branches: [${[...repo.branches].sort().join(", ")}]`);
       lines.push(`  remoteBranches: [${[...repo.remoteBranches].sort().join(", ")}]`);
       lines.push(`  remotes: [${[...repo.remotes].sort().join(", ")}]`);
+      if (repo.remoteHeads.size > 0) {
+        const heads = [...repo.remoteHeads.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([r, b]) => `${r}=${b}`);
+        lines.push(`  remoteHeads: [${heads.join(", ")}]`);
+      }
+      if (repo.headBranch !== repo.currentBranch) {
+        lines.push(`  headBranch: ${repo.headBranch ?? "(none)"}`);
+      }
 
       const worktreePaths = [...repo.worktrees.keys()].sort();
       for (const wtPath of worktreePaths) {
@@ -295,16 +316,22 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         }
       }
 
+      const currentBranch = init.currentBranch ?? init.branches?.[0] ?? null;
       const repoState: RepositoryState = {
         branches: new Set(init.branches ?? []),
         remoteBranches: new Set(init.remoteBranches ?? []),
         remotes: new Set(init.remotes ?? []),
+        remoteHeads: new Map(Object.entries(init.remoteHeads ?? {})),
+        headBranch: init.headBranch !== undefined ? init.headBranch : currentBranch,
         worktrees,
         branchConfigs,
         mainIsDirty: init.mainIsDirty ?? false,
-        currentBranch: init.currentBranch ?? init.branches?.[0] ?? null,
+        currentBranch,
         isBare: init.isBare ?? false,
       };
+      if (init.serverDefaultBranch !== undefined) {
+        repoState.serverDefaultBranch = init.serverDefaultBranch;
+      }
       if (init.remoteUrl !== undefined) {
         repoState.remoteUrl = init.remoteUrl;
       }
@@ -553,7 +580,19 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         throw new GitError(`Remote '${remote}' not found`);
       }
 
-      // No-op on success - mock doesn't actually fetch
+      // Simulate `remote set-head --auto`: record the server's default branch as the
+      // remote HEAD symref (mirrors SimpleGitClient.fetch)
+      if (remote !== undefined && repo.serverDefaultBranch !== undefined) {
+        repo.remoteHeads.set(remote, repo.serverDefaultBranch);
+      }
+    },
+
+    async getDefaultBranch(repoPath: Path, remote?: string): Promise<string | null> {
+      const repo = getRepoOrThrow(repoPath);
+      if (remote !== undefined) {
+        return repo.remoteHeads.get(remote) ?? null;
+      }
+      return repo.headBranch;
     },
 
     async listRemotes(repoPath: Path): Promise<readonly string[]> {
@@ -641,12 +680,14 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       }
 
       // Create a new bare repository at target
-      // Mirrors real behavior: after clone --bare + fetch + delete local branches,
+      // Mirrors real behavior: after clone --bare + fetch + set-head + delete local branches,
       // we only have remote-tracking branches, no local branches
       (state as GitClientMockStateImpl).addRepository(normalizedTarget, {
         branches: new Set(), // No local branches after clone (all deleted)
         remoteBranches: new Set(["origin/main"]), // Only remote-tracking branches
         remotes: new Set(["origin"]),
+        remoteHeads: new Map([["origin", "main"]]), // set-head records the remote default
+        headBranch: "main", // bare HEAD symref dangles but still names the default
         worktrees: new Map(),
         branchConfigs: new Map(),
         mainIsDirty: false,
@@ -681,6 +722,8 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         branches: hasCommit ? new Set(["main"]) : new Set(),
         remoteBranches: new Set(),
         remotes: new Set(),
+        remoteHeads: new Map(),
+        headBranch: "main", // git init points HEAD at the default branch even before any commit
         worktrees: new Map(),
         branchConfigs: new Map(),
         mainIsDirty: false,
