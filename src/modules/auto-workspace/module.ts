@@ -119,6 +119,25 @@ function safeJsonParse(raw: string): unknown {
   }
 }
 
+/**
+ * Redaction projection for the `auto-workspaces` state key (see the `redact`
+ * field on its definition). Scrubs only `workspacePath` — it leaks the user's
+ * home dir and on-disk layout — while keeping the map keys, `workspaceName`,
+ * `createdAt`, and null/active state so a bug report still shows what is
+ * tracked and in what state. Exported for focused testing.
+ */
+export function redactAutoWorkspaceEntries(
+  entries: AutoWorkspaceEntries,
+  redacted: string
+): Record<string, (Omit<StateEntry, "workspacePath"> & { workspacePath: string }) | null> {
+  return Object.fromEntries(
+    Object.entries(entries).map(([key, entry]) => [
+      key,
+      entry === null ? null : { ...entry, workspacePath: redacted },
+    ])
+  );
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -168,7 +187,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     const tplConfig = deps.configService.register(`experimental.${source.name}.template-path`, {
       default: null,
       description: `Path to Liquid template for ${source.name} auto-workspaces`,
-      sensitive: true,
+      redact: true,
       ...storePath({ nullable: true }),
     });
     templatePathConfigs.set(source.name, tplConfig);
@@ -178,7 +197,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   const stateAccessor = deps.stateService.register("auto-workspaces", {
     default: {} as AutoWorkspaceEntries,
     description: "Auto-workspace tracking entries (app-managed)",
-    sensitive: true,
+    redact: redactAutoWorkspaceEntries,
     ...storeCustom<AutoWorkspaceEntries>({
       parse: (raw) => validateEntries(safeJsonParse(raw)),
       validate: validateEntries,

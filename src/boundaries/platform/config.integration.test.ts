@@ -668,7 +668,7 @@ describe("Config", () => {
 
       expect(svc.getHelpText()).not.toContain("test.old");
       expect(svc.getHelpText()).toContain("test.active");
-      expect(svc.getOverrides()).toEqual({});
+      expect(svc.getRedactedOverrides()).toEqual({});
     });
   });
 
@@ -832,6 +832,68 @@ describe("Config", () => {
       expect(text).toContain("test.flag");
       expect(text).toContain("false");
       expect(text).toContain("A flag");
+    });
+  });
+
+  describe("getRedactedOverrides", () => {
+    it("applies redact: true, custom redactors, and passthrough", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(
+            JSON.stringify({
+              "test.secret": "s3cret",
+              "test.partial": "keep/this/path",
+              "test.plain": "visible",
+            })
+          ),
+        },
+      });
+      svc.register("test.secret", { ...stringDef("test.secret"), redact: true });
+      svc.register("test.partial", {
+        ...stringDef("test.partial"),
+        // Receives the effective value plus the injected redaction token.
+        redact: (value, redacted) => ({ shown: value, hidden: redacted }),
+      });
+      svc.register("test.plain", stringDef("test.plain"));
+      svc.load();
+
+      expect(svc.getRedactedOverrides()).toEqual({
+        "test.secret": "<redacted>",
+        "test.partial": { shown: "keep/this/path", hidden: "<redacted>" },
+        "test.plain": "visible",
+      });
+    });
+
+    it("omits keys still at their default, so the redactor never runs", () => {
+      const svc = createService();
+      svc.register("test.secret", {
+        ...stringDef("test.secret"),
+        redact: () => {
+          throw new Error("must not run for a default-valued key");
+        },
+      });
+      svc.load();
+
+      expect(svc.getRedactedOverrides()).toEqual({});
+    });
+
+    it("fails closed to the token when a redactor throws", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.boom": "value" })),
+        },
+      });
+      svc.register("test.boom", {
+        ...stringDef("test.boom"),
+        redact: () => {
+          throw new Error("redactor blew up");
+        },
+      });
+      svc.load();
+
+      expect(svc.getRedactedOverrides()).toEqual({ "test.boom": "<redacted>" });
     });
   });
 

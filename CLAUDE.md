@@ -345,6 +345,8 @@ Two migration shapes feed `state.json`. (1) **config→state** (telemetry, updat
 
 `deprecated: true` config keys are **readable** (`get()` returns the loaded value) but **not settable** (`set()` throws); `reset()` deletes the key from `config.json`. This makes a deprecated key a clean one-shot migration source.
 
+**Redaction.** A key definition may carry a `redact` field that scrubs its value in any payload that leaves the machine (e.g. bug reports). `getRedactedOverrides()` — on both `Config` and `StateService`, backed by `PersistedStore` — returns the non-default, non-deprecated values with each key's `redact` policy applied: `redact: true` replaces the whole value with `"<redacted>"`; `redact: (value, redacted) => …` returns a custom projection (the redaction token is passed in as the second arg), letting a key scrub only part of its value — e.g. `auto-workspaces` blanks just `workspacePath` and keeps the rest for diagnostics. A redactor must not throw; `getRedactedOverrides()` fails closed to the token if it does. `getEffective()` is **not** redacted — it's for local diagnostics only. posthog-module sends `getRedactedOverrides()` (config + state) on the bug-report event.
+
 ### Log Files
 
 - **Dev**: `./app-data/logs/`

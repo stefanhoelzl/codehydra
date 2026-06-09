@@ -55,8 +55,15 @@ export interface StateService {
   /** Load state.json (async). Call once after all register() calls. */
   load(): Promise<void>;
 
-  /** Get all effective state values (for debugging/diagnostics). */
+  /** Get all effective state values (for debugging/diagnostics; not redacted). */
   getEffective(): Readonly<Record<string, unknown>>;
+
+  /**
+   * Get the subset of effective values that differ from their defaults, with
+   * each key's `redact` policy applied. Use this (not getEffective) for any sink
+   * that leaves the machine, e.g. bug reports.
+   */
+  getRedactedOverrides(): Record<string, unknown>;
 }
 
 // =============================================================================
@@ -149,5 +156,9 @@ export class DefaultStateService implements StateService {
 
   getEffective(): Readonly<Record<string, unknown>> {
     return this.store.getEffective();
+  }
+
+  getRedactedOverrides(): Record<string, unknown> {
+    return this.store.getRedactedOverrides();
   }
 }

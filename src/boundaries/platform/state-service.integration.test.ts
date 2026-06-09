@@ -125,6 +125,32 @@ describe("StateService", () => {
     });
   });
 
+  it("redacts overrides per key, applying true and custom redactors", async () => {
+    const { svc } = createService({
+      "/app": directory(),
+      "/app/state.json": file(
+        JSON.stringify({
+          "telemetry.distinct-id": "uuid-secret",
+          "tracked.item": "keep/this/path",
+        })
+      ),
+    });
+    svc.register("telemetry.distinct-id", { ...stringKeyDef(), redact: true });
+    svc.register("tracked.item", {
+      ...stringKeyDef(),
+      redact: (value, redacted) => ({ value, token: redacted }),
+    });
+    await svc.load();
+
+    // distinct-id fully redacted; the custom redactor sees the value + token;
+    // getEffective stays raw (it never leaves the machine).
+    expect(svc.getRedactedOverrides()).toEqual({
+      "telemetry.distinct-id": "<redacted>",
+      "tracked.item": { value: "keep/this/path", token: "<redacted>" },
+    });
+    expect(svc.getEffective()).toMatchObject({ "telemetry.distinct-id": "uuid-secret" });
+  });
+
   it("throws on double load()", async () => {
     const { svc } = createService({ "/app": directory() });
     svc.register("telemetry.distinct-id", stringKeyDef());

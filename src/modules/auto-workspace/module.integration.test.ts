@@ -50,7 +50,7 @@ import {
   file,
   directory,
 } from "../../boundaries/platform/filesystem.state-mock";
-import { createAutoWorkspaceModule } from "./module";
+import { createAutoWorkspaceModule, redactAutoWorkspaceEntries } from "./module";
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import type { Config } from "../../boundaries/platform/config";
@@ -1342,6 +1342,31 @@ describe("AutoWorkspaceModule Integration", () => {
 
       expect(openProjectOp.dispatched).toHaveLength(0);
       expect(entriesOf(state)["test-source/item-1"]).toBeNull();
+    });
+  });
+});
+
+describe("redactAutoWorkspaceEntries", () => {
+  it("scrubs only workspacePath, preserving keys, names, timestamps, and dismissals", () => {
+    const redacted = redactAutoWorkspaceEntries(
+      {
+        "github/123": {
+          workspacePath: "/home/alice/ws/pr-123",
+          workspaceName: "pr-123-fix-foo",
+          createdAt: "2026-06-09T00:00:00Z",
+        },
+        "youtrack/PROJ-1": null,
+      },
+      "<redacted>"
+    );
+
+    expect(redacted).toEqual({
+      "github/123": {
+        workspacePath: "<redacted>",
+        workspaceName: "pr-123-fix-foo",
+        createdAt: "2026-06-09T00:00:00Z",
+      },
+      "youtrack/PROJ-1": null,
     });
   });
 });

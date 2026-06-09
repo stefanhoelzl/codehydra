@@ -11,6 +11,12 @@ import type { PersistedAccessor, DeprecatedPersistedAccessor } from "./store-def
 export interface CreateMockStateOptions {
   /** Seed the in-memory store. Mirrored by accessor get()/set() and getEffective(). */
   values?: Record<string, unknown> | undefined;
+  /**
+   * Snapshot returned by getRedactedOverrides(). Independent of `values`
+   * because overrides are computed against registered definitions
+   * the mock doesn't track.
+   */
+  overrides?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -20,6 +26,7 @@ export interface CreateMockStateOptions {
  */
 export function createMockState(options?: CreateMockStateOptions): StateService {
   const store = new Map<string, unknown>(Object.entries(options?.values ?? {}));
+  const overrides = { ...(options?.overrides ?? {}) };
   const defaultsByKey = new Map<string, unknown>();
 
   function makeAccessor(key: string): PersistedAccessor<unknown> {
@@ -56,5 +63,6 @@ export function createMockState(options?: CreateMockStateOptions): StateService 
     register,
     load: async () => {},
     getEffective: () => Object.fromEntries(store),
+    getRedactedOverrides: () => ({ ...overrides }),
   };
 }

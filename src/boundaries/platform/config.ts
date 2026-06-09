@@ -156,10 +156,11 @@ export interface Config {
   getDefaults(): Readonly<Record<string, unknown>>;
 
   /**
-   * Get the subset of effective values that differ from their defaults,
-   * with values for keys marked `sensitive: true` replaced by "<redacted>".
+   * Get the subset of effective values that differ from their defaults, with
+   * each key's `redact` policy applied (`true` → "<redacted>", a function → its
+   * projection).
    */
-  getOverrides(): Record<string, unknown>;
+  getRedactedOverrides(): Record<string, unknown>;
 
   /** Generate human-readable config help text. */
   getHelpText(): string;
@@ -465,8 +466,8 @@ export class DefaultConfig implements Config {
     return this.store.getDefaults();
   }
 
-  getOverrides(): Record<string, unknown> {
-    return this.store.getOverrides();
+  getRedactedOverrides(): Record<string, unknown> {
+    return this.store.getRedactedOverrides();
   }
 
   getHelpText(): string {
