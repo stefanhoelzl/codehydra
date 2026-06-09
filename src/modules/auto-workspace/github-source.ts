@@ -2,7 +2,7 @@ import type { ProcessRunner } from "../../boundaries/platform/process";
 import type { HttpClient } from "../../boundaries/platform/network";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { Config } from "../../boundaries/platform/config";
-import { configString } from "../../boundaries/platform/config-definition";
+import { storeString } from "../../boundaries/platform/store-definition";
 import type { AutoWorkspaceSource, PollResult, PollItem } from "./source";
 import { getErrorMessage } from "../../shared/error-utils";
 
@@ -55,7 +55,7 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
   const queryConfig = deps.configService.register("experimental.github.query", {
     default: "is:open is:pr review-requested:@me",
     description: "GitHub search query (e.g. is:open is:pr review-requested:@me)",
-    ...configString(),
+    ...storeString(),
   });
 
   let token: string | null = null;

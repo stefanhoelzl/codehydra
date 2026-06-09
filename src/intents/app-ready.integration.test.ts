@@ -24,7 +24,7 @@ import type { IntentModule } from "./lib/module";
 import type { Operation, OperationContext } from "./lib/operation";
 import type { Project } from "../shared/api/types";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
-import type { ConfigAgentType } from "../boundaries/platform/config-definition";
+import type { ConfigAgentType } from "../boundaries/platform/config";
 
 // =============================================================================
 // Test Helpers

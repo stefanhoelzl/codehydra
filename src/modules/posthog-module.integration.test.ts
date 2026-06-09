@@ -44,9 +44,10 @@ import {
   createMockPostHogClientFactory,
   type MockPostHogClient,
 } from "./posthog-client.state-mock";
-import type { Config } from "../boundaries/platform/config";
+import type { Config, ConfigAgentType } from "../boundaries/platform/config";
 import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
-import type { ConfigAgentType } from "../boundaries/platform/config-definition";
+import { createMockState } from "../boundaries/platform/state.test-utils";
+import { createStateMigrationRegistry } from "./state-module";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 
 /**
@@ -101,10 +102,14 @@ function createTestSetup(overrides?: {
   const mockConfig = createMockConfig({
     defaults: {
       "telemetry.enabled": false,
-      "telemetry.distinct-id": null,
       ...overrides?.configValues,
     },
     ...(overrides?.configOverrides !== undefined && { overrides: overrides.configOverrides }),
+  });
+
+  // telemetry.distinct-id now lives in state.json (StateService), not config.
+  const mockState = createMockState({
+    values: { "telemetry.distinct-id": overrides?.configValues?.["telemetry.distinct-id"] ?? null },
   });
 
   const dispatcher = createMockDispatcher();
@@ -119,6 +124,8 @@ function createTestSetup(overrides?: {
     platformInfo,
     buildInfo,
     configService: mockConfig,
+    stateService: mockState,
+    stateMigrations: createStateMigrationRegistry(),
     agentConfig,
     logger,
     apiKey: overrides && "apiKey" in overrides ? overrides.apiKey : "test-api-key",

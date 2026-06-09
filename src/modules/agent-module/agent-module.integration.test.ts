@@ -47,7 +47,8 @@ import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-p
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { SetupError } from "../../shared/errors/service-errors";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
-import type { ConfigAgentType, ConfigAccessor } from "../../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
+import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
 
 // =============================================================================
@@ -330,7 +331,7 @@ function createTestSetup(providerOverrides: Partial<AgentModuleProvider> = {}) {
  */
 async function activateModule(
   dispatcher: Dispatcher,
-  agentConfig: ConfigAccessor<ConfigAgentType>
+  agentConfig: PersistedAccessor<ConfigAgentType>
 ): Promise<void> {
   await agentConfig.set("claude");
   dispatcher.registerOperation("app:start", new MinimalStartOperation());

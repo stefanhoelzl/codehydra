@@ -14,6 +14,8 @@
 import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { PostHog } from "posthog-node";
+import type { StateService } from "../boundaries/platform/state-service";
+import type { StateMigrationRegistry } from "./state-module";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -24,11 +26,11 @@ import {
   EVENT_BUG_REPORT_SUBMITTED,
   type BugReportSubmittedEvent,
 } from "../intents/submit-bug-report";
-import { configBoolean, configString } from "../boundaries/platform/config-definition";
-import type { Config } from "../boundaries/platform/config";
+import { storeBoolean, storeString } from "../boundaries/platform/store-definition";
+import type { Config, ConfigAgentType } from "../boundaries/platform/config";
 import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { BuildInfo } from "../boundaries/platform/build-info";
-import type { ConfigAgentType, ConfigAccessor } from "../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { Logger } from "../boundaries/platform/logging";
 
 // =============================================================================
@@ -121,8 +123,12 @@ interface PosthogModuleDeps {
   readonly platformInfo: PlatformInfo;
   readonly buildInfo: BuildInfo;
   readonly configService: Config;
+  /** Persisted app state (state.json) — owns the auto-generated distinct-id. */
+  readonly stateService: StateService;
+  /** Registry the state module drains to migrate distinct-id out of config.json. */
+  readonly stateMigrations: StateMigrationRegistry;
   /** Accessor for the user's agent selection (registered in the composition root). */
-  readonly agentConfig: ConfigAccessor<ConfigAgentType>;
+  readonly agentConfig: PersistedAccessor<ConfigAgentType>;
   readonly logger: Logger;
   /** PostHog API key. If undefined/empty, telemetry is disabled. */
   readonly apiKey?: string | undefined;
@@ -140,15 +146,26 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
   const telemetryEnabledConfig = deps.configService.register("telemetry.enabled", {
     default: true,
     description: "Enable telemetry (false in dev/unpackaged)",
-    ...configBoolean(),
+    ...storeBoolean(),
     computedDefault: (ctx) => (ctx.isDevelopment || !ctx.isPackaged ? false : undefined),
   });
-  const telemetryDistinctIdConfig = deps.configService.register("telemetry.distinct-id", {
+  // The auto-generated telemetry id is app-written state, not user config: it
+  // lives in state.json. A read-only `deprecated` shadow in config.json lets the
+  // state module migrate an id written by an older build, then strip it.
+  const telemetryDistinctIdState = deps.stateService.register("telemetry.distinct-id", {
     default: null,
     description: "Telemetry user ID (auto-generated)",
     sensitive: true,
-    ...configString({ nullable: true }),
+    ...storeString({ nullable: true }),
   });
+  const telemetryDistinctIdLegacy = deps.configService.register("telemetry.distinct-id", {
+    default: null,
+    description: "Deprecated: telemetry user ID (migrated to state.json)",
+    sensitive: true,
+    deprecated: true,
+    ...storeString({ nullable: true }),
+  });
+  deps.stateMigrations.add({ from: telemetryDistinctIdLegacy, to: telemetryDistinctIdState });
 
   // PostHog client state
   let client: PostHogClient | null = null;
@@ -334,7 +351,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
           handler: async (): Promise<void> => {
             // Read config values
             const telemetryEnabled = telemetryEnabledConfig.get();
-            const storedDistinctId = telemetryDistinctIdConfig.get();
+            const storedDistinctId = telemetryDistinctIdState.get();
             const configuredAgent = deps.agentConfig.get();
 
             if (storedDistinctId) {
@@ -361,7 +378,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
                   distinctId: newId,
                   agent: configuredAgent ?? undefined,
                 });
-                await telemetryDistinctIdConfig.set(newId);
+                await telemetryDistinctIdState.set(newId);
               }
             }
 

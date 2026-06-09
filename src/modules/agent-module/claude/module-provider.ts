@@ -27,7 +27,7 @@ import type {
 import { downloadBinary, isBinaryInstalled } from "../../../utils/binary-download";
 import type { BinaryType } from "../../../utils/binary-resolution/types";
 import { AgentBinaryError, getErrorMessage } from "../../../shared/errors/service-errors";
-import type { ConfigAccessor } from "../../../boundaries/platform/config-definition";
+import type { PersistedAccessor } from "../../../boundaries/platform/store-definition";
 import type { StopServerResult, RestartServerResult } from "../types";
 import type { Logger } from "../../../boundaries/platform/logging";
 import type { ClaudeCodeServerManager } from "./server-manager";
@@ -51,7 +51,7 @@ export interface ClaudeModuleProviderDeps {
     readonly executablePath: string;
     readonly archiveExtension: ArchiveExtension;
   };
-  readonly versionConfig: ConfigAccessor<string | null>;
+  readonly versionConfig: PersistedAccessor<string | null>;
   readonly pathProvider: Pick<PathProvider, "bundlePath">;
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;

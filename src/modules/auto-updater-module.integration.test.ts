@@ -28,7 +28,10 @@ import {
   createMockConfig as createBaseMockConfig,
   type CreateMockConfigOptions,
 } from "../boundaries/platform/config.test-utils";
+import { createMockState } from "../boundaries/platform/state.test-utils";
+import { createStateMigrationRegistry } from "./state-module";
 import type { Config } from "../boundaries/platform/config";
+import type { StateService } from "../boundaries/platform/state-service";
 import {
   createMockNotificationManager,
   type MockNotificationManager,
@@ -165,6 +168,7 @@ interface TestSetup {
   autoUpdater: MockAutoUpdater;
   notificationManager: MockNotificationManager;
   mockConfig: Config;
+  mockState: StateService;
 }
 
 function createTestSetup(overrides?: {
@@ -172,11 +176,14 @@ function createTestSetup(overrides?: {
   checkReturns?: boolean;
   configValues?: Record<string, unknown>;
   config?: Config;
+  state?: StateService;
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
   const notificationManager = createMockNotificationManager();
   const mockConfig =
     overrides?.config ?? createMockConfig({ defaults: overrides?.configValues ?? {} });
+  // update.dismissed-version now lives in state.json (StateService), not config.
+  const mockState = overrides?.state ?? createMockState();
 
   const dispatcher = createMockDispatcher();
 
@@ -184,6 +191,8 @@ function createTestSetup(overrides?: {
     autoUpdater: autoUpdater.mock,
     dispatcher,
     configService: mockConfig,
+    stateService: mockState,
+    stateMigrations: createStateMigrationRegistry(),
     notificationManager: notificationManager.manager,
   });
 
@@ -196,7 +205,7 @@ function createTestSetup(overrides?: {
 
   dispatcher.registerModule(autoUpdaterModule);
 
-  return { dispatcher, autoUpdater, notificationManager, mockConfig };
+  return { dispatcher, autoUpdater, notificationManager, mockConfig, mockState };
 }
 
 function startIntent(): AppStartIntent {
@@ -489,28 +498,28 @@ describe("AutoUpdaterModule Integration", () => {
     expect(notificationManager.notifications[0]!.closed).toBe(true);
   });
 
-  it("dismissing persists the dismissed version to config", async () => {
-    const { dispatcher, notificationManager, mockConfig } = createTestSetup({ checkReturns: true });
+  it("dismissing persists the dismissed version to state", async () => {
+    const { dispatcher, notificationManager, mockState } = createTestSetup({ checkReturns: true });
     await dispatcher.dispatch(startIntent());
     await flush();
 
     notificationManager.emitEvent(0, { actionId: "dismiss" });
     await flush();
 
-    expect(mockConfig.getEffective()["update.dismissed-version"]).toBe("2.0.0");
+    expect(mockState.getEffective()["update.dismissed-version"]).toBe("2.0.0");
   });
 
   it("a version dismissed in a previous run stays silent after restart", async () => {
-    // First run: dismiss the surfaced version, which persists to the shared config.
-    const config = createMockConfig();
-    const first = createTestSetup({ checkReturns: true, config });
+    // First run: dismiss the surfaced version, which persists to the shared state.
+    const state = createMockState();
+    const first = createTestSetup({ checkReturns: true, state });
     await first.dispatcher.dispatch(startIntent());
     await flush();
     first.notificationManager.emitEvent(0, { actionId: "dismiss" });
     await flush();
 
-    // Second run (fresh module + notifications) reusing the same persisted config.
-    const second = createTestSetup({ checkReturns: true, config });
+    // Second run (fresh module + notifications) reusing the same persisted state.
+    const second = createTestSetup({ checkReturns: true, state });
     await second.dispatcher.dispatch(startIntent());
     await flush();
 

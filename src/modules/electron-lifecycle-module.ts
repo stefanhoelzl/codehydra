@@ -15,7 +15,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { ConfigureResult } from "../intents/app-start";
 import type { Config } from "../boundaries/platform/config";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import { configString } from "../boundaries/platform/config-definition";
+import { storeString } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { INTENT_APP_RESUME } from "../intents/app-resume";
@@ -141,14 +141,14 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
   const electronFlagsConfig = deps.configService.register("electron.flags", {
     default: null,
     description: "Electron switches (e.g., --disable-gpu)",
-    ...configString({ nullable: true }),
+    ...storeString({ nullable: true }),
   });
   const electronDisabledFeaturesConfig = deps.configService.register("electron.disabled-features", {
     default: null,
     description:
       "Comma-separated Chromium features to disable via --disable-features. " +
       "null = use curated defaults; empty string = disable nothing; any value fully replaces defaults.",
-    ...configString({ nullable: true }),
+    ...storeString({ nullable: true }),
   });
 
   return {

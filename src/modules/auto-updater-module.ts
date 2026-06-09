@@ -33,8 +33,10 @@ import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID, type AppShutdownIntent } from "../intents/app-shutdown";
 import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
-import { configBoolean, configString } from "../boundaries/platform/config-definition";
+import { storeBoolean, storeString } from "../boundaries/platform/store-definition";
 import type { Config } from "../boundaries/platform/config";
+import type { StateService } from "../boundaries/platform/state-service";
+import type { StateMigrationRegistry } from "./state-module";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { NotificationManager, NotificationHandle } from "./notification-manager";
@@ -47,6 +49,10 @@ interface AutoUpdaterModuleDeps {
   readonly autoUpdater: AutoUpdater;
   readonly dispatcher: Dispatcher;
   readonly configService: Config;
+  /** Persisted app state (state.json) — owns the dismissed-version bookkeeping. */
+  readonly stateService: StateService;
+  /** Registry the state module drains to migrate dismissed-version out of config.json. */
+  readonly stateMigrations: StateMigrationRegistry;
   readonly notificationManager: NotificationManager;
 }
 
@@ -109,16 +115,26 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   const updateNotificationConfig = deps.configService.register("update.notification", {
     default: true,
     description: "Show a sidebar notification when an update is available",
-    ...configBoolean(),
+    ...storeBoolean(),
   });
-  // Persisted so a dismissed update stays silent across restarts; a genuinely
-  // newer version still re-surfaces (reconcile compares against this value).
-  const dismissedVersionConfig = deps.configService.register("update.dismissed-version", {
+  // App-written bookkeeping (not user config): persisted in state.json so a
+  // dismissed update stays silent across restarts; a genuinely newer version
+  // still re-surfaces (reconcile compares against this value). A read-only
+  // `deprecated` shadow in config.json lets the state module migrate a value
+  // written by an older build, then strip it.
+  const dismissedVersionState = deps.stateService.register("update.dismissed-version", {
     default: null,
     description:
-      "Internal: the update version the user last dismissed (silences re-notification across restarts)",
-    ...configString({ nullable: true }),
+      "The update version the user last dismissed (silences re-notification across restarts)",
+    ...storeString({ nullable: true }),
   });
+  const dismissedVersionLegacy = deps.configService.register("update.dismissed-version", {
+    default: null,
+    description: "Deprecated: dismissed update version (migrated to state.json)",
+    deprecated: true,
+    ...storeString({ nullable: true }),
+  });
+  deps.stateMigrations.add({ from: dismissedVersionLegacy, to: dismissedVersionState });
 
   function isEnabled(): boolean {
     return updateNotificationConfig.get();
@@ -144,7 +160,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
       notification = null;
       notificationState = "none";
       dismissedVersion = targetVersion;
-      void dismissedVersionConfig.set(targetVersion);
+      void dismissedVersionState.set(targetVersion);
     }
   }
 
@@ -241,7 +257,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
           handler: async (): Promise<void> => {
             // Restore the last dismissed version so an update the user already
             // dismissed stays silent across restarts.
-            dismissedVersion = dismissedVersionConfig.get();
+            dismissedVersion = dismissedVersionState.get();
 
             // Persistent callback captures the version whenever electron-updater
             // fires `update-available`. checkForUpdates() also returns the

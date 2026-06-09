@@ -16,7 +16,7 @@
  * the concrete subclasses.
  */
 
-import type { ConfigAccessor } from "../platform/config-definition";
+import type { PersistedAccessor } from "../platform/store-definition";
 import type { Logger } from "../platform/logging";
 import type { AppBoundary } from "./app";
 import type { SessionBoundary } from "./session";
@@ -46,7 +46,7 @@ export interface ViewManagerDeps {
   readonly sessionLayer: SessionBoundary;
   readonly appLayer: Pick<AppBoundary, "openUrl">;
   /** Accessor for the iframe-rendering flag (registered in the composition root). */
-  readonly iframesConfig: ConfigAccessor<boolean>;
+  readonly iframesConfig: PersistedAccessor<boolean>;
   readonly config: ViewManagerConfig;
   readonly logger: Logger;
 }

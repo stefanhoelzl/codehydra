@@ -308,13 +308,11 @@ Precedence (highest wins): CLI flag > env var > config.json > computed defaults 
 | ------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`                               | `null`    | Agent selection: claude\|opencode                                                                                                                   |
 | `update.notification`                 | `true`    | Show a sidebar notification when an update is available (also gates the periodic update check)                                                      |
-| `update.dismissed-version`            | `null`    | Internal: the update version the user last dismissed; persisted so it stays silent across restarts (a newer version still re-surfaces)              |
 | `version.claude`                      | `null`    | Claude agent version override                                                                                                                       |
 | `version.opencode`                    | `null`    | OpenCode agent version override                                                                                                                     |
 | `code-server.port`                    | (auto)    | Code-server port (auto = 25448 in prod, branch-derived in dev)                                                                                      |
 | `version.code-server`                 | `null`    | Code-server version override (null = built-in)                                                                                                      |
 | `telemetry.enabled`                   | `true`    | Enable telemetry (false in dev/unpackaged)                                                                                                          |
-| `telemetry.distinct-id`               | —         | Telemetry user ID (auto-generated)                                                                                                                  |
 | `log.level`                           | `warn`    | Level spec: `<level>` or `<level>:<filter>` (e.g., `debug:git,process`)                                                                             |
 | `log.output`                          | `file`    | Output destinations: `file`, `console`, or `file,console`                                                                                           |
 | `electron.flags`                      | —         | Electron switches (e.g., `--disable-gpu`)                                                                                                           |
@@ -333,6 +331,19 @@ Any key can appear in config.json, env vars, or CLI flags.
 
 Source of truth: Config definitions are registered by modules via `Config.register()` in their factory functions. The service lives at `src/boundaries/platform/config.ts`. Shared type aliases live in `src/boundaries/platform/config-definition.ts`.
 
+### Persisted State (state.json)
+
+Values the **app writes at runtime** (not user-authored settings) live in `state.json` (data dir, alongside `auto-workspaces.json`), not `config.json`. `StateService` (`src/boundaries/platform/state-service.ts`) is the Config sibling for these: same `register()`/accessor API, but a minimal async single-file load — no env/CLI overrides, no precedence. Both services compose a shared `PersistedStore` (`persisted-store.ts`: register + accessor + read-modify-write persistence).
+
+| State key (state.json)     | Owner               | Description                                                     |
+| -------------------------- | ------------------- | --------------------------------------------------------------- |
+| `telemetry.distinct-id`    | posthog-module      | Auto-generated telemetry user id (sensitive)                    |
+| `update.dismissed-version` | auto-updater-module | The update version the user last dismissed (silences re-notify) |
+
+Each owning module registers the live key in `StateService` plus a read-only `deprecated` shadow in Config, and contributes a `{from, to}` pair to the migration registry. The `state` module (`src/modules/state-module.ts`) loads `state.json` and runs migrations in the `app:start` "init" hook: for a value still in `config.json` from an older build, it seeds `state.json` and strips it from `config.json` via the shadow's `reset()`.
+
+`deprecated: true` config keys are **readable** (`get()` returns the loaded value) but **not settable** (`set()` throws); `reset()` deletes the key from `config.json`. This makes a deprecated key a clean one-shot migration source.
+
 ### Log Files
 
 - **Dev**: `./app-data/logs/`
@@ -347,20 +358,21 @@ CH_LOG__LEVEL=debug CH_LOG__OUTPUT=console pnpm dev
 
 ### Logger Names
 
-| Logger              | Module                  |
-| ------------------- | ----------------------- |
-| `[process]`         | Process spawning        |
-| `[network]`         | HTTP requests, ports    |
-| `[fs]`              | Filesystem operations   |
-| `[git]`             | Git operations          |
-| `[opencode]`        | OpenCode SDK            |
-| `[opencode-server]` | OpenCode server manager |
-| `[code-server]`     | code-server process     |
-| `[keepfiles]`       | .keepfiles copying      |
-| `[api]`             | IPC handlers            |
-| `[window]`          | WindowManager           |
-| `[view]`            | ViewManager             |
-| `[badge]`           | BadgeManager            |
-| `[power]`           | Sleep prevention        |
-| `[app]`             | Application lifecycle   |
-| `[ui]`              | Renderer UI components  |
+| Logger              | Module                    |
+| ------------------- | ------------------------- |
+| `[process]`         | Process spawning          |
+| `[network]`         | HTTP requests, ports      |
+| `[fs]`              | Filesystem operations     |
+| `[git]`             | Git operations            |
+| `[opencode]`        | OpenCode SDK              |
+| `[opencode-server]` | OpenCode server manager   |
+| `[code-server]`     | code-server process       |
+| `[keepfiles]`       | .keepfiles copying        |
+| `[api]`             | IPC handlers              |
+| `[window]`          | WindowManager             |
+| `[view]`            | ViewManager               |
+| `[badge]`           | BadgeManager              |
+| `[power]`           | Sleep prevention          |
+| `[app]`             | Application lifecycle     |
+| `[state]`           | StateService (state.json) |
+| `[ui]`              | Renderer UI components    |

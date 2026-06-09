@@ -1,7 +1,7 @@
 /**
  * Config - Plain service for application configuration.
  *
- * register() returns a typed ConfigAccessor for each key; reads and writes go
+ * register() returns a typed PersistedAccessor for each key; reads and writes go
  * through that accessor (there is no string-keyed get/set on the service).
  * Config is fully resolved before any hooks run:
  *   1. Modules call register() to declare their keys and capture an accessor
@@ -10,13 +10,13 @@
  *
  * Precedence (highest wins): CLI flags > env vars > config.json > computed defaults > static defaults
  *
- * Two input formats flow through one schema (ConfigDefinitions):
- *   - env vars / CLI flags are pure strings → tokenized here, then ConfigDefinitions.parse()
- *   - config.json is typed JSON → readConfigFile() reads it, then ConfigDefinitions.validate()
+ * Two input formats flow through one schema (PersistedDefinitions):
+ *   - env vars / CLI flags are pure strings → tokenized here, then PersistedDefinitions.parse()
+ *   - config.json is typed JSON → readConfigFile() reads it, then PersistedDefinitions.validate()
  * Both producers feed validate(), the shared-policy gate. parse(), validate(), and
  * readConfigFile() are pure: they return { values, issues } and never log or throw.
  * load() is the only place that interprets issues — logging the benign kinds and throwing
- * a ConfigValidationError on `invalid`.
+ * a PersistedValidationError on `invalid`.
  *
  * load() uses node:fs (readFileSync / writeFileSync / renameSync) directly because it must
  * run before Electron app.ready, and the FileSystemBoundary interface is async-only.
@@ -28,18 +28,26 @@
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import type {
-  ConfigKeyDefinition,
+  PersistedKeyDefinition,
   ComputedDefaultContext,
-  ConfigAccessor,
-  DeprecatedConfigAccessor,
-  ConfigIssue,
-} from "./config-definition";
-import { ConfigValidationError, ConfigDefinitions } from "./config-definition";
+  PersistedAccessor,
+  DeprecatedPersistedAccessor,
+  PersistedIssue,
+} from "./store-definition";
+import { PersistedValidationError } from "./store-definition";
 import type { FileSystemBoundary } from "./filesystem";
 import { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
+import { PersistedStore } from "./persisted-store";
 
 const BROKEN_CONFIG_FILENAME = "config.json.broken";
+
+/**
+ * Agent types that can be selected by the user.
+ * null indicates the user hasn't made a selection yet (first-run).
+ * Config-specific (not a generic store type), so it lives with the Config service.
+ */
+export type ConfigAgentType = "claude" | "opencode" | null;
 
 // =============================================================================
 // Name Derivation
@@ -72,7 +80,7 @@ export function envVarToConfigKey(envVar: string): string | undefined {
  */
 export function generateHelpText(
   configFilePath: string,
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
+  definitions: ReadonlyMap<string, PersistedKeyDefinition<unknown>>,
   defaults: Readonly<Record<string, unknown>>
 ): string {
   const lines: string[] = [
@@ -115,31 +123,31 @@ export interface Config {
   /**
    * Register a config key definition and return a typed accessor for it.
    * Must be called before load(). Keys with `deprecated: true` return a
-   * DeprecatedConfigAccessor whose get()/set() are typed `never`.
+   * DeprecatedPersistedAccessor whose get()/set() are typed `never`.
    */
   register<T>(
     key: string,
-    definition: Omit<ConfigKeyDefinition<T>, "default"> & {
+    definition: Omit<PersistedKeyDefinition<T>, "default"> & {
       default: NoInfer<T>;
       deprecated?: undefined;
     }
-  ): ConfigAccessor<T>;
+  ): PersistedAccessor<T>;
   register(
     key: string,
-    definition: ConfigKeyDefinition<unknown> & { deprecated: true }
-  ): DeprecatedConfigAccessor;
+    definition: PersistedKeyDefinition<unknown> & { deprecated: true }
+  ): DeprecatedPersistedAccessor;
 
   /**
    * Load config from all sources and merge with precedence:
    * static defaults < computed defaults < config.json < env vars < CLI flags.
    *
    * Uses sync filesystem I/O. Call once after all register() calls.
-   * Throws ConfigValidationError on an invalid value for a known key.
+   * Throws PersistedValidationError on an invalid value for a known key.
    */
   load(): void;
 
   /** Get the full definition map (for help text generation). */
-  getDefinitions(): ReadonlyMap<string, ConfigKeyDefinition<unknown>>;
+  getDefinitions(): ReadonlyMap<string, PersistedKeyDefinition<unknown>>;
 
   /** Get all effective config values (for help text). */
   getEffective(): Readonly<Record<string, unknown>>;
@@ -184,7 +192,7 @@ export interface ConfigDeps {
 /**
  * Scan an env object for CH_* keys (not _CH_*), convert to config keys, and
  * collect their raw string values. Pure key extraction — no parsing, no validation.
- * The result feeds ConfigDefinitions.parse().
+ * The result feeds PersistedDefinitions.parse().
  */
 export function parseEnvVars(env: Record<string, string | undefined>): Record<string, string> {
   const rawValues: Record<string, string> = {};
@@ -206,7 +214,7 @@ export function parseEnvVars(env: Record<string, string | undefined>): Record<st
  * Tokenize CLI args of the form --key=value or --key value (bare --flag → "true").
  * Pure tokenization — no parsing, no validation. Unrecognized flags (e.g. Electron's
  * --inspect) are collected too and surface as `unknown` issues from validate(), which
- * load() logs and ignores. The result feeds ConfigDefinitions.parse().
+ * load() logs and ignores. The result feeds PersistedDefinitions.parse().
  */
 export function parseCliArgs(argv: readonly string[]): Record<string, string> {
   const rawValues: Record<string, string> = {};
@@ -255,13 +263,13 @@ export function parseCliArgs(argv: readonly string[]): Record<string, string> {
  *  - non-object JSON (e.g. a bare number) → empty object.
  *
  * The returned `data` is the original parsed object (untransformed); load() passes
- * it to ConfigDefinitions.validate() and also uses it to compute the on-disk rewrite.
+ * it to PersistedDefinitions.validate() and also uses it to compute the on-disk rewrite.
  */
 export function readConfigFile(
   configPath: Path,
   syncRead: (path: string) => string,
   syncRename: (oldPath: string, newPath: string) => void
-): { data: Record<string, unknown>; issues: ConfigIssue[] } {
+): { data: Record<string, unknown>; issues: PersistedIssue[] } {
   let content: string;
   try {
     content = syncRead(configPath.toNative());
@@ -295,145 +303,59 @@ export function readConfigFile(
 }
 
 // =============================================================================
-// Defaults
-// =============================================================================
-
-/**
- * Build default values from definitions, applying computedDefault where available.
- */
-export function buildDefaults(
-  definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>>,
-  ctx: ComputedDefaultContext
-): Record<string, unknown> {
-  const defaults: Record<string, unknown> = {};
-  for (const [key, def] of definitions) {
-    defaults[key] = def.default;
-    if (def.computedDefault) {
-      const computed = def.computedDefault(ctx);
-      if (computed !== undefined) {
-        defaults[key] = computed;
-      }
-    }
-  }
-  return defaults;
-}
-
-function overrideEquals(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a === null || b === null) return false;
-  if (typeof a !== typeof b) return false;
-  if (typeof a === "object") return JSON.stringify(a) === JSON.stringify(b);
-  return false;
-}
-
-// =============================================================================
 // Implementation
 // =============================================================================
 
 export class DefaultConfig implements Config {
-  private readonly definitions = new ConfigDefinitions();
-  private readonly effective: Record<string, unknown> = {};
-  private readonly defaults: Record<string, unknown> = {};
-  private loaded = false;
+  /** Generic typed key-value store backed by config.json. */
+  private readonly store: PersistedStore;
 
-  constructor(private readonly deps: ConfigDeps) {}
+  constructor(private readonly deps: ConfigDeps) {
+    this.store = new PersistedStore({
+      filePath: deps.configPath,
+      fileSystem: deps.fileSystem,
+      logger: deps.logger,
+    });
+  }
 
   register<T>(
     key: string,
-    definition: Omit<ConfigKeyDefinition<T>, "default"> & {
+    definition: Omit<PersistedKeyDefinition<T>, "default"> & {
       default: NoInfer<T>;
       deprecated?: undefined;
     }
-  ): ConfigAccessor<T>;
+  ): PersistedAccessor<T>;
   register(
     key: string,
-    definition: ConfigKeyDefinition<unknown> & { deprecated: true }
-  ): DeprecatedConfigAccessor;
+    definition: PersistedKeyDefinition<unknown> & { deprecated: true }
+  ): DeprecatedPersistedAccessor;
   register(
     key: string,
-    definition: ConfigKeyDefinition<unknown>
-  ): ConfigAccessor<unknown> | DeprecatedConfigAccessor {
-    if (this.loaded) {
-      throw new Error(`Cannot register config key "${key}" after load()`);
-    }
-    if (this.definitions.has(key)) {
-      throw new Error(`Duplicate config key definition: "${key}"`);
-    }
-    if (definition.legacyNames) {
-      for (const legacyName of Object.keys(definition.legacyNames)) {
-        for (const [otherKey, otherDef] of this.definitions) {
-          if (otherDef.legacyNames && legacyName in otherDef.legacyNames) {
-            this.deps.logger.warn("Legacy config name collision (last writer wins)", {
-              legacy: legacyName,
-              previousOwner: otherKey,
-              newOwner: key,
-            });
-          }
-        }
-      }
-    }
-    this.definitions.add(key, definition);
-    return definition.deprecated ? this.createDeprecatedAccessor(key) : this.createAccessor(key);
-  }
-
-  private createAccessor(key: string): ConfigAccessor<unknown> {
-    // Arrow functions close over the DefaultConfig `this` directly (no aliasing).
-    const readDefault = (): unknown => this.defaults[key];
-    return {
-      name: key,
-      get default(): unknown {
-        return readDefault();
-      },
-      get: (): unknown => this.readValue(key),
-      set: (value: unknown, options?: { persist?: boolean }): Promise<void> =>
-        this.writeValue(key, value, options),
-      reset: (options?: { persist?: boolean }): Promise<void> => this.resetValue(key, options),
-      isDefault: (): boolean => this.isDefaultValue(key),
-    };
-  }
-
-  private createDeprecatedAccessor(key: string): DeprecatedConfigAccessor {
-    const throwDeprecated = (): never => {
-      throw new ConfigValidationError({
-        key,
-        value: undefined,
-        reason: "deprecated",
-        source: "accessor",
-      });
-    };
-    return {
-      name: key,
-      get: throwDeprecated,
-      set: throwDeprecated,
-    };
+    definition: PersistedKeyDefinition<unknown>
+  ): PersistedAccessor<unknown> | DeprecatedPersistedAccessor {
+    return this.store.register(key, definition);
   }
 
   load(): void {
-    if (this.loaded) {
-      throw new Error("Config.load() has already been called");
-    }
-    this.loaded = true;
-
     const { configPath, isDevelopment, isPackaged, env, argv } = this.deps;
     const syncRead = this.deps.readFileSync ?? ((p: string) => readFileSync(p, "utf-8"));
     const syncRename = this.deps.renameSync ?? renameSync;
     const computedDefaultCtx: ComputedDefaultContext = { isDevelopment, isPackaged };
 
+    // beginLoad guards double-load and locks registration.
+    this.store.beginLoad("Config.load() has already been called");
+
     // 1. Build defaults (static + computed) and seed effective immediately
     //    so getHelpText()/getEffective() work even if we throw below.
-    const defaults = buildDefaults(this.definitions.asReadonlyMap(), computedDefaultCtx);
-    for (const [key, value] of Object.entries(defaults)) {
-      this.effective[key] = value;
-      this.defaults[key] = value;
-    }
+    const defaults = this.store.seedDefaults(computedDefaultCtx);
 
     // 2. config.json: read (I/O) → validate (typed values).
     const file = readConfigFile(configPath, syncRead, syncRename);
-    const fileResult = this.definitions.validate(file.data);
+    const fileResult = this.store.validate(file.data);
 
     // 3. env + CLI: tokenize → parse (strings → typed) → validate.
-    const envResult = this.definitions.parseAndValidate(parseEnvVars(env));
-    const cliResult = this.definitions.parseAndValidate(parseCliArgs(argv));
+    const envResult = this.store.parseAndValidate(parseEnvVars(env));
+    const cliResult = this.store.parseAndValidate(parseCliArgs(argv));
 
     // 4. Interpret issues per source (precedence order): log benign kinds, throw on invalid.
     this.reportIssues("config.json", [...file.issues, ...fileResult.issues]);
@@ -441,15 +363,12 @@ export class DefaultConfig implements Config {
     this.reportIssues("CLI flag", cliResult.issues);
 
     // 5. Merge with precedence: defaults < file < env < CLI.
-    const merged = {
+    this.store.applyValues({
       ...defaults,
       ...fileResult.values,
       ...envResult.values,
       ...cliResult.values,
-    };
-    for (const [key, value] of Object.entries(merged)) {
-      this.effective[key] = value;
-    }
+    });
 
     // 6. If config.json contained unknown keys, rewrite it with those stripped
     //    (active, deprecated, and legacy entries are preserved).
@@ -480,10 +399,10 @@ export class DefaultConfig implements Config {
 
   /**
    * Interpret the issues from one source: log the benign kinds, and throw a
-   * ConfigValidationError on the first `invalid` (which main.ts turns into exit(1)).
+   * PersistedValidationError on the first `invalid` (which main.ts turns into exit(1)).
    * Benign issues are logged first so they surface even when an invalid follows.
    */
-  private reportIssues(source: string, issues: ConfigIssue[]): void {
+  private reportIssues(source: string, issues: PersistedIssue[]): void {
     const { logger } = this.deps;
     for (const issue of issues) {
       switch (issue.kind) {
@@ -491,7 +410,7 @@ export class DefaultConfig implements Config {
           logger.warn("Unknown config key (ignored)", { source, key: issue.key });
           break;
         case "deprecated":
-          logger.debug("Deprecated config key (ignored)", { source, key: issue.key });
+          logger.debug("Deprecated config key (read-only)", { source, key: issue.key });
           break;
         case "legacy-shadowed":
           logger.warn("Legacy config key shadowed by new key (ignored)", {
@@ -520,10 +439,10 @@ export class DefaultConfig implements Config {
     }
 
     const invalid = issues.find(
-      (i): i is Extract<ConfigIssue, { kind: "invalid" }> => i.kind === "invalid"
+      (i): i is Extract<PersistedIssue, { kind: "invalid" }> => i.kind === "invalid"
     );
     if (invalid) {
-      throw new ConfigValidationError({
+      throw new PersistedValidationError({
         key: invalid.key,
         value: invalid.value,
         reason: "invalid",
@@ -534,136 +453,27 @@ export class DefaultConfig implements Config {
     }
   }
 
-  /** Backs ConfigAccessor.get(). The accessor exists only for registered keys. */
-  private readValue(key: string): unknown {
-    return this.effective[key];
-  }
-
-  /** Backs ConfigAccessor.set(): validate, update effective, persist the value. */
-  private async writeValue(
-    key: string,
-    value: unknown,
-    options?: { persist?: boolean }
-  ): Promise<void> {
-    const def = this.definitions.get(key);
-    if (!def) {
-      throw new ConfigValidationError({ key, value, reason: "unknown", source: "set" });
-    }
-
-    const validated = def.validate(value);
-    if (validated === undefined) {
-      throw new ConfigValidationError({
-        key,
-        value,
-        reason: "invalid",
-        source: "set",
-        ...(def.description !== undefined && { description: def.description }),
-        ...(def.validValues !== undefined && { validValues: def.validValues }),
-      });
-    }
-    this.effective[key] = validated;
-
-    if (options?.persist !== false) {
-      await this.persistMutation((fileContent) => {
-        fileContent[key] = validated;
-      });
-    }
-  }
-
-  /** Backs ConfigAccessor.reset(): revert to default, delete the key from disk. */
-  private async resetValue(key: string, options?: { persist?: boolean }): Promise<void> {
-    if (!this.definitions.has(key)) {
-      throw new ConfigValidationError({
-        key,
-        value: undefined,
-        reason: "unknown",
-        source: "reset",
-      });
-    }
-    this.effective[key] = this.defaults[key];
-
-    if (options?.persist !== false) {
-      await this.persistMutation((fileContent) => {
-        delete fileContent[key];
-      });
-    }
-  }
-
-  /** Backs ConfigAccessor.isDefault(). */
-  private isDefaultValue(key: string): boolean {
-    return overrideEquals(this.effective[key], this.defaults[key]);
-  }
-
-  /**
-   * Read-modify-write config.json with the given mutator. Handles a missing
-   * file (start fresh) and invalid JSON (back up to config.json.broken, then
-   * write fresh — if the rename fails, throw rather than destroy the file).
-   */
-  private async persistMutation(
-    mutator: (fileContent: Record<string, unknown>) => void
-  ): Promise<void> {
-    const { configPath, fileSystem, logger } = this.deps;
-
-    let fileContent: Record<string, unknown> = {};
-    let raw: string | null = null;
-    try {
-      raw = await fileSystem.readFile(configPath);
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        // File doesn't exist yet — start fresh.
-      } else {
-        throw error;
-      }
-    }
-    if (raw !== null) {
-      try {
-        fileContent = JSON.parse(raw) as Record<string, unknown>;
-      } catch (error) {
-        const backupPath = new Path(configPath.dirname, BROKEN_CONFIG_FILENAME);
-        await fileSystem.rename(configPath, backupPath);
-        logger.warn("Invalid JSON in config.json, backed up to config.json.broken; writing fresh", {
-          path: configPath.toString(),
-          backup: backupPath.toString(),
-          error: error instanceof Error ? error.message : String(error),
-        });
-        fileContent = {};
-      }
-    }
-
-    mutator(fileContent);
-
-    await fileSystem.mkdir(configPath.dirname);
-    await fileSystem.writeFile(configPath, JSON.stringify(fileContent, null, 2));
-    logger.debug("Config persisted", { path: configPath.toString() });
-  }
-
-  getDefinitions(): ReadonlyMap<string, ConfigKeyDefinition<unknown>> {
-    return this.definitions.asReadonlyMap();
+  getDefinitions(): ReadonlyMap<string, PersistedKeyDefinition<unknown>> {
+    return this.store.getDefinitions();
   }
 
   getEffective(): Readonly<Record<string, unknown>> {
-    return this.effective;
+    return this.store.getEffective();
   }
 
   getDefaults(): Readonly<Record<string, unknown>> {
-    return this.defaults;
+    return this.store.getDefaults();
   }
 
   getOverrides(): Record<string, unknown> {
-    const out: Record<string, unknown> = {};
-    for (const [key, def] of this.definitions) {
-      if (def.deprecated) continue;
-      if (overrideEquals(this.effective[key], this.defaults[key])) continue;
-      out[key] = def.sensitive === true ? "<redacted>" : this.effective[key];
-    }
-    return out;
+    return this.store.getOverrides();
   }
 
   getHelpText(): string {
     return generateHelpText(
       this.deps.configPath.toString(),
-      this.definitions.asReadonlyMap(),
-      this.effective
+      this.store.getDefinitions(),
+      this.store.getEffective()
     );
   }
 }

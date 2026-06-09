@@ -6,7 +6,7 @@
  * createMockAccessor() for injecting cross-module accessors into deps.
  */
 import type { Config } from "./config";
-import type { ConfigAccessor, DeprecatedConfigAccessor } from "./config-definition";
+import type { PersistedAccessor, DeprecatedPersistedAccessor } from "./store-definition";
 
 export interface CreateMockConfigOptions {
   /**
@@ -38,7 +38,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
   const overrides = { ...(options?.overrides ?? {}) };
   const defaultsByKey = new Map<string, unknown>();
 
-  function makeAccessor(key: string): ConfigAccessor<unknown> {
+  function makeAccessor(key: string): PersistedAccessor<unknown> {
     return {
       name: key,
       get default() {
@@ -58,7 +58,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
   const register = ((
     key: string,
     definition: { default?: unknown; deprecated?: true }
-  ): ConfigAccessor<unknown> | DeprecatedConfigAccessor => {
+  ): PersistedAccessor<unknown> | DeprecatedPersistedAccessor => {
     defaultsByKey.set(key, definition.default);
     // Mirror production: registered defaults seed the store for unset keys,
     // but never overwrite values pre-populated via the `defaults` option.
@@ -66,10 +66,18 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
       store.set(key, definition.default);
     }
     if (definition.deprecated) {
-      const throwDeprecated = (): never => {
-        throw new Error(`Deprecated config key "${key}"`);
+      // Mirror production: deprecated keys are readable, not settable, and
+      // reset() strips them from the store.
+      return {
+        name: key,
+        get: () => store.get(key),
+        set: (): never => {
+          throw new Error(`Deprecated config key "${key}"`);
+        },
+        reset: async () => {
+          store.delete(key);
+        },
       };
-      return { name: key, get: throwDeprecated, set: throwDeprecated };
     }
     return makeAccessor(key);
   }) as Config["register"];
@@ -86,7 +94,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
 }
 
 /**
- * Create a standalone, store-backed ConfigAccessor for tests that inject a
+ * Create a standalone, store-backed PersistedAccessor for tests that inject a
  * cross-module accessor (e.g. `agent`, `experimental.iframes`) into a module's
  * deps without constructing a full Config.
  *
@@ -98,7 +106,7 @@ export function createMockAccessor<T>(
   name: string,
   initial: T,
   defaultValue: T = initial
-): ConfigAccessor<T> {
+): PersistedAccessor<T> {
   let value = initial;
   return {
     name,
