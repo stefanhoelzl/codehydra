@@ -77,7 +77,7 @@ describe("Sidebar component", () => {
     totalWorkspaces: 0,
     onCloseProject: vi.fn(),
     onSwitchWorkspace: vi.fn(),
-    onOpenCreateDialog: vi.fn(),
+    onOpenNewWorkspace: vi.fn(),
     onOpenRemoveDialog: vi.fn(),
   };
 
@@ -122,10 +122,12 @@ describe("Sidebar component", () => {
   });
 
   describe("state rendering", () => {
-    it("shows empty state when no projects", () => {
+    it("shows the New workspace entry and no 'no projects' text when there are no projects", () => {
       render(Sidebar, { props: defaultProps });
 
-      expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
+      // The New workspace entry is the only affordance; the old empty-state text is gone.
+      expect(screen.getByRole("button", { name: /new workspace/i })).toBeInTheDocument();
+      expect(screen.queryByText(/No projects open\./)).not.toBeInTheDocument();
     });
   });
 
@@ -162,19 +164,19 @@ describe("Sidebar component", () => {
   });
 
   describe("interactions", () => {
-    it("[+] button opens create dialog with projectId", async () => {
-      const onOpenCreateDialog = vi.fn();
+    it("global 'New workspace' entry opens the New workspace view", async () => {
+      const onOpenNewWorkspace = vi.fn();
       const project = createMockProject({ path: "/test/project" as ProjectPath });
 
       render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onOpenCreateDialog },
+        props: { ...defaultProps, projects: [project], onOpenNewWorkspace },
       });
 
-      const addButton = screen.getByLabelText(/add workspace/i);
-      await fireEvent.click(addButton);
+      // Single global entry (no per-project add button); takes no projectId.
+      const newWorkspaceButton = screen.getByRole("button", { name: /new workspace/i });
+      await fireEvent.click(newWorkspaceButton);
 
-      // Now passes projectId instead of path
-      expect(onOpenCreateDialog).toHaveBeenCalledWith(project.id);
+      expect(onOpenNewWorkspace).toHaveBeenCalledWith();
     });
 
     it("[x] on project calls closeProject", async () => {

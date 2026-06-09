@@ -133,6 +133,9 @@ const mockUiModeStore = vi.hoisted(() => ({
   setSidebarExpanded: vi.fn((expanded: boolean) => {
     mockUiModeState._sidebarExpanded = expanded;
   }),
+  setNewWorkspaceViewOpen: vi.fn((open: boolean) => {
+    mockUiModeState._sidebarExpanded = open || mockUiModeState._sidebarExpanded;
+  }),
   // syncMode calls api.ui.setMode with deduplication (mimics real store behavior)
   syncMode: vi.fn(() => {
     const desired = computeDesiredModeFromState();
@@ -164,6 +167,7 @@ import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
+import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as uiModeStore from "$lib/stores/ui-mode.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 
@@ -203,6 +207,7 @@ describe("Integration tests", () => {
     bootstrapStore.resetBootstrap();
     dialogsStore.reset();
     shortcutsStore.reset();
+    newWorkspaceViewStore.reset();
     agentStatusStore.reset();
     // Reset ui-mode store state (the mock's reset function updates the mutable state)
     mockUiModeStore.reset();
@@ -266,11 +271,11 @@ describe("Integration tests", () => {
       });
 
       // Open Create Workspace dialog via the + button
-      const addButton = screen.getByLabelText(/add workspace/i);
+      const addButton = screen.getByRole("button", { name: /new workspace/i });
       await fireEvent.click(addButton);
 
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
       // Click the folder icon to open a new project
@@ -336,10 +341,10 @@ describe("Integration tests", () => {
       // Simulate project:closed event (v2 format uses projectId not path)
       fireApiEvent("project:closed", { projectId: actualProjectId });
 
-      // Verify project is removed from sidebar
+      // Verify project is removed from sidebar and the New workspace view (empty state) appears
       await waitFor(() => {
         expect(screen.queryByText("my-project")).not.toBeInTheDocument();
-        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
     });
 
@@ -358,16 +363,15 @@ describe("Integration tests", () => {
       });
 
       // Click add workspace button
-      const addButton = screen.getByLabelText(/add workspace/i);
+      const addButton = screen.getByRole("button", { name: /new workspace/i });
       await fireEvent.click(addButton);
 
-      // Verify dialog opens
+      // Verify the New workspace view opens
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Verify the dialog has project dropdown, name/branch dropdown, and base branch dropdown
+      // Verify the view has project dropdown, name/branch dropdown, and base branch dropdown
       // NameBranchDropdown is a filterable combobox, query its container
       expect(document.querySelector(".name-branch-dropdown")).toBeInTheDocument();
       // Should have 3 comboboxes: project dropdown, name dropdown, and branch dropdown
@@ -505,11 +509,11 @@ describe("Integration tests", () => {
       });
 
       // Open Create Workspace dialog via the + button
-      const addButton = screen.getByLabelText(/add workspace/i);
+      const addButton = screen.getByRole("button", { name: /new workspace/i });
       await fireEvent.click(addButton);
 
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
       // Click the folder icon
@@ -538,14 +542,14 @@ describe("Integration tests", () => {
       });
 
       // Open dialog
-      const addButton = screen.getByLabelText(/add workspace/i);
+      const addButton = screen.getByRole("button", { name: /new workspace/i });
       await fireEvent.click(addButton);
 
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Verify dialog opened with correct context (has project dropdown, name dropdown, and branch dropdown)
+      // Verify view opened with correct context (has project dropdown, name dropdown, and branch dropdown)
       // NameBranchDropdown is a filterable combobox, query its container
       expect(document.querySelector(".name-branch-dropdown")).toBeInTheDocument();
       // Should have 3 comboboxes: project dropdown, name dropdown, and branch dropdown
@@ -595,75 +599,68 @@ describe("Integration tests", () => {
     });
   });
 
-  describe("dialog z-order integration", () => {
-    // Note: These tests verify that MainView correctly notifies the ui-mode store
-    // when dialog state changes. The actual api.ui.setMode call happens inside
-    // the ui-mode store, which has its own unit tests for reactivity.
-    // Since the mock doesn't have Svelte's reactivity, we test the integration
-    // boundary (setDialogOpen calls) rather than the downstream IPC call.
+  describe("New workspace view z-order integration", () => {
+    // Note: These tests verify that MainView notifies the ui-mode store when the
+    // New workspace view opens/closes. The panel keeps the UI on top at hover
+    // level (so Alt+X still works), so it goes through setNewWorkspaceViewOpen,
+    // not setDialogOpen.
 
-    it("notifies ui-mode store when dialog opens", async () => {
+    it("notifies ui-mode store when the New workspace view opens", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
       showMainView();
 
-      // Wait for initial load
       await waitFor(() => {
         expect(screen.getByText("my-project")).toBeInTheDocument();
       });
 
-      // Clear any calls from initialization
-      mockUiModeStore.setDialogOpen.mockClear();
+      mockUiModeStore.setNewWorkspaceViewOpen.mockClear();
 
-      // Open create dialog
-      const addButton = screen.getByLabelText(/add workspace/i);
-      await fireEvent.click(addButton);
+      // Open the New workspace view
+      const newWorkspaceButton = screen.getByRole("button", { name: /new workspace/i });
+      await fireEvent.click(newWorkspaceButton);
 
-      // Wait for dialog to appear
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Verify setDialogOpen was called with true
-      expect(mockUiModeStore.setDialogOpen).toHaveBeenCalledWith(true);
+      expect(mockUiModeStore.setNewWorkspaceViewOpen).toHaveBeenCalledWith(true);
+      // It is NOT a modal dialog.
+      expect(mockUiModeStore.setDialogOpen).not.toHaveBeenCalledWith(true);
     });
 
-    it("notifies ui-mode store when dialog closes", async () => {
-      const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
+    it("notifies ui-mode store when leaving the view by switching workspace", async () => {
+      const workspace = createWorkspace("main", "/test/my-project");
+      const project = createProject("my-project", [workspace]);
       mockApi.projects.list.mockResolvedValue([project]);
 
       render(App);
       showMainView();
 
-      // Wait for initial load
       await waitFor(() => {
         expect(screen.getByText("my-project")).toBeInTheDocument();
       });
 
-      // Open create dialog
-      const addButton = screen.getByLabelText(/add workspace/i);
-      await fireEvent.click(addButton);
+      // Open the New workspace view
+      const newWorkspaceButton = screen.getByRole("button", { name: /new workspace/i });
+      await fireEvent.click(newWorkspaceButton);
 
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Clear calls and close dialog
-      mockUiModeStore.setDialogOpen.mockClear();
+      mockUiModeStore.setNewWorkspaceViewOpen.mockClear();
 
-      // Close dialog via Cancel button
-      const cancelButton = screen.getByRole("button", { name: /cancel/i });
-      await fireEvent.click(cancelButton);
+      // Leave by clicking a workspace
+      await fireEvent.click(screen.getByText("main"));
 
-      // Wait for dialog to close
       await waitFor(() => {
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: "New workspace" })).not.toBeInTheDocument();
       });
 
-      // Verify setDialogOpen was called with false
-      expect(mockUiModeStore.setDialogOpen).toHaveBeenCalledWith(false);
+      expect(mockUiModeStore.setNewWorkspaceViewOpen).toHaveBeenCalledWith(false);
     });
 
     it("handles api.setMode failure gracefully", async () => {
@@ -674,99 +671,18 @@ describe("Integration tests", () => {
       render(App);
       showMainView();
 
-      // Wait for initial load
       await waitFor(() => {
         expect(screen.getByText("my-project")).toBeInTheDocument();
       });
 
-      // Open create dialog - should not throw
-      const addButton = screen.getByLabelText(/add workspace/i);
-      await fireEvent.click(addButton);
+      // Open the view - should not throw
+      const newWorkspaceButton = screen.getByRole("button", { name: /new workspace/i });
+      await fireEvent.click(newWorkspaceButton);
 
-      // Dialog should still open in UI despite API failure
+      // View should still open in UI despite API failure
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
-    });
-
-    it("dialog close works with active workspace", async () => {
-      const workspace = createWorkspace("main", "/test/my-project");
-      const project = createProject("my-project", [workspace]);
-      mockApi.projects.list.mockResolvedValue([project]);
-      mockApi.ui.getActiveWorkspace.mockResolvedValue({
-        projectId: project.id,
-        workspaceName: workspace.name,
-        path: workspace.path,
-      });
-
-      render(App);
-      showMainView();
-
-      // Wait for initial load and active workspace to be set
-      await waitFor(() => {
-        expect(screen.getByText("my-project")).toBeInTheDocument();
-        expect(projectsStore.activeWorkspacePath.value).toBe(workspace.path);
-      });
-
-      // Open create dialog
-      const addButton = screen.getByLabelText(/add workspace/i);
-      await fireEvent.click(addButton);
-
-      await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-      });
-
-      // Clear calls
-      mockUiModeStore.setDialogOpen.mockClear();
-
-      // Close dialog via Cancel button
-      const cancelButton = screen.getByRole("button", { name: /cancel/i });
-      await fireEvent.click(cancelButton);
-
-      // Wait for dialog to close
-      await waitFor(() => {
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      });
-
-      // Verify setDialogOpen(false) was called - ui-mode store handles the actual setMode call
-      expect(mockUiModeStore.setDialogOpen).toHaveBeenCalledWith(false);
-    });
-
-    it("dialog close works with no active workspace", async () => {
-      const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
-      mockApi.projects.list.mockResolvedValue([project]);
-      mockApi.ui.getActiveWorkspace.mockResolvedValue(null); // No active workspace
-
-      render(App);
-      showMainView();
-
-      // Wait for initial load
-      await waitFor(() => {
-        expect(screen.getByText("my-project")).toBeInTheDocument();
-      });
-
-      // Open create dialog
-      const addButton = screen.getByLabelText(/add workspace/i);
-      await fireEvent.click(addButton);
-
-      await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-      });
-
-      // Clear calls
-      mockUiModeStore.setDialogOpen.mockClear();
-
-      // Close dialog via Cancel button
-      const cancelButton = screen.getByRole("button", { name: /cancel/i });
-      await fireEvent.click(cancelButton);
-
-      // Wait for dialog to close
-      await waitFor(() => {
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-      });
-
-      // Verify setDialogOpen(false) was called - ui-mode store handles the actual setMode call
-      expect(mockUiModeStore.setDialogOpen).toHaveBeenCalledWith(false);
     });
   });
 
@@ -868,9 +784,9 @@ describe("Integration tests", () => {
       render(App);
       showMainView();
 
-      // Wait for initial load
+      // Wait for initial load (New workspace entry is always present in the sidebar)
       await waitFor(() => {
-        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /new workspace/i })).toBeInTheDocument();
       });
 
       // Clear any calls from initialization
@@ -1031,13 +947,12 @@ describe("Integration tests", () => {
         expect(uiModeStore.shortcutModeActive.value).toBe(true);
       });
 
-      // Fire Enter shortcut key to open create dialog
+      // Fire Enter shortcut key to open the New workspace view
       fireApiEvent("shortcut:key", "enter");
 
-      // Verify dialog opens
+      // Verify the New workspace view opens
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
       // Verify shortcut mode deactivated
@@ -1090,7 +1005,7 @@ describe("Integration tests", () => {
       showMainView();
 
       await waitFor(() => {
-        expect(screen.getByText(/No projects open\./)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /new workspace/i })).toBeInTheDocument();
       });
 
       // Activate shortcut mode
@@ -1125,13 +1040,19 @@ describe("Integration tests", () => {
         expect(screen.getByText("only")).toBeInTheDocument();
       });
 
+      // With a single workspace, mark it as active so the overlay treats this
+      // as "already on the only workspace" (real-world scenario). Without an
+      // active workspace, navigation hints stay visible because Alt+X+↓ would
+      // land on the only workspace — meaningful from the New workspace view.
+      projectsStore.setActiveWorkspace(ws.path);
+
       // Activate shortcut mode
       fireApiEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(uiModeStore.shortcutModeActive.value).toBe(true);
       });
 
-      // Navigate hints should be hidden (single workspace)
+      // Navigate hints should be hidden (single workspace, already active)
       const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
       expect(navigateHint).toHaveClass("shortcut-hint--hidden");
 
@@ -1160,10 +1081,9 @@ describe("Integration tests", () => {
       render(App);
       showMainView();
 
-      // Wait for Create Workspace dialog to auto-open (new behavior)
+      // Wait for the New workspace view to auto-open (empty state)
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
       // Verify projects.open was NOT automatically triggered
@@ -1186,33 +1106,28 @@ describe("Integration tests", () => {
       // Simulate project:opened event with a project that has NO workspaces (v2 format)
       fireApiEvent("project:opened", { project: emptyProject });
 
-      // Verify dialog is still open with the project
+      // Verify the New workspace view is still open with the project
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
-
-      // Verify dialog type is still create
-      expect(dialogsStore.dialogState.value.type).toBe("create");
     });
 
-    it("auto-open-create-dialog-when-no-projects: empty state → Create Workspace dialog opens", async () => {
+    it("auto-open-when-no-projects: empty state → New workspace view opens", async () => {
       mockApi.projects.list.mockResolvedValue([]);
 
       render(App);
       showMainView();
 
-      // Wait for Create Workspace dialog to auto-open
+      // Wait for the New workspace view to auto-open
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
       // Verify projects.open was NOT called (user needs to click the button)
       expect(mockApi.projects.open).not.toHaveBeenCalled();
     });
 
-    it("project-with-workspaces-no-auto-dialog: opening project with workspaces does not auto-open dialog", async () => {
+    it("project-with-workspaces-no-auto-open: opening a project with workspaces does not auto-open the view", async () => {
       const existingProject = createProject("existing", [
         createWorkspace("main", "/test/existing"),
       ]);
@@ -1221,33 +1136,17 @@ describe("Integration tests", () => {
       const newProject = createProject("another-project", [
         createWorkspace("develop", "/test/another-project"),
       ]);
-      mockApi.projects.open.mockResolvedValue(newProject);
 
       render(App);
       showMainView();
 
-      // Wait for load
+      // Wait for load. Workspaces exist, so the New workspace view is NOT auto-opened.
       await waitFor(() => {
         expect(screen.getByText("existing")).toBeInTheDocument();
       });
+      expect(screen.queryByRole("heading", { name: "New workspace" })).not.toBeInTheDocument();
 
-      // Open Create Workspace dialog via the + button
-      const addButton = screen.getByLabelText(/add workspace/i);
-      await fireEvent.click(addButton);
-
-      await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-      });
-
-      // Click the folder icon to open another project
-      const folderButton = screen.getByRole("button", { name: /open project folder/i });
-      await fireEvent.click(folderButton);
-
-      await waitFor(() => {
-        expect(mockApi.projects.open).toHaveBeenCalledTimes(1);
-      });
-
-      // Simulate project:opened with workspaces (v2 format)
+      // Simulate opening another project that has workspaces.
       fireApiEvent("project:opened", { project: newProject });
 
       // Verify project is added
@@ -1255,15 +1154,11 @@ describe("Integration tests", () => {
         expect(screen.getByText("another-project")).toBeInTheDocument();
       });
 
-      // Close the dialog to verify we're back to normal state
-      const cancelButton = screen.getByRole("button", { name: /cancel/i });
-      await fireEvent.click(cancelButton);
-
       // Give time for any auto-open to trigger
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // Verify NO dialog opened (project has workspaces, so no auto-open)
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      // The New workspace view should NOT have auto-opened (the project has workspaces).
+      expect(screen.queryByRole("heading", { name: "New workspace" })).not.toBeInTheDocument();
     });
   });
 

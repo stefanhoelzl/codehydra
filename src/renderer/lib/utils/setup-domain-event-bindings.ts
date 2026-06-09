@@ -18,7 +18,8 @@ import {
 } from "$lib/stores/projects.svelte.js";
 import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
-import { dialogState, openCreateDialog } from "$lib/stores/dialogs.svelte.js";
+import { dialogState } from "$lib/stores/dialogs.svelte.js";
+import { newWorkspaceView, openNewWorkspaceView } from "$lib/stores/new-workspace-view.svelte.js";
 import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
 import {
   findPendingByName,
@@ -129,15 +130,17 @@ export function setupDomainEventBindings(
     {
       onProjectOpenedHook: (project) => {
         // Only auto-open during normal operation, not during initial startup loading.
-        // The auto-show $effect in MainView.svelte handles the post-load case.
+        // The auto-open $effect in MainView.svelte handles the post-load empty case.
         // Skip when a background clone just completed — the project appears silently.
         if (
           bootstrap.initialized &&
           project.workspaces.length === 0 &&
           dialogState.value.type === "closed" &&
+          !newWorkspaceView.isOpen &&
           !hasSpinnerNotifications.value
         ) {
-          openCreateDialog(project.id);
+          // Open the New workspace view with the freshly opened project selected.
+          openNewWorkspaceView(project.id);
         }
       },
     },

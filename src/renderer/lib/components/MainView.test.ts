@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { WorkspaceName } from "@shared/api/types";
 import type { WorkspacePath } from "@shared/ipc";
 import { createMockProject } from "$lib/test-fixtures";
@@ -99,6 +99,7 @@ import MainView from "./MainView.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
+import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as deletionStore from "$lib/stores/deletion.svelte.js";
@@ -112,6 +113,7 @@ describe("MainView component", () => {
     projectsStore.reset();
     bootstrapStore.resetBootstrap();
     dialogsStore.reset();
+    newWorkspaceViewStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
     deletionStore.reset();
@@ -170,31 +172,17 @@ describe("MainView component", () => {
       });
     });
 
-    it("renders empty-backdrop when no workspace is active", async () => {
+    it("auto-opens the New workspace view (empty state) when no workspaces exist", async () => {
       render(MainView);
 
+      // The New workspace view is the empty state: it auto-opens and replaces
+      // the old logo backdrop.
       await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // No active workspace = backdrop should be visible
-      const backdrop = document.querySelector(".empty-backdrop");
-      expect(backdrop).toBeInTheDocument();
-    });
-
-    it("renders Logo in empty-backdrop when no workspace is active", async () => {
-      render(MainView);
-
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-
-      // Logo should be inside the backdrop
-      const backdrop = document.querySelector(".empty-backdrop");
-      const logo = backdrop?.querySelector("img");
-      expect(logo).toBeInTheDocument();
-      // Logo should not be animated in backdrop
-      expect(logo).not.toHaveClass("animated");
+      // The logo backdrop is superseded by the panel.
+      expect(document.querySelector(".empty-backdrop")).not.toBeInTheDocument();
     });
 
     it("hides empty-backdrop and Logo when a workspace is active", async () => {
@@ -411,7 +399,7 @@ describe("MainView component", () => {
       mockApi.ui.setMode.mockClear();
 
       // Open a dialog
-      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+      dialogsStore.openCloseProjectDialog(asProjectId("test-project-12345678"));
 
       await waitFor(() => {
         expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
@@ -420,7 +408,7 @@ describe("MainView component", () => {
 
     it("calls setMode('workspace') when dialog closes", async () => {
       // Start with dialog open
-      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+      dialogsStore.openCloseProjectDialog(asProjectId("test-project-12345678"));
 
       render(MainView);
 
@@ -471,7 +459,7 @@ describe("MainView component", () => {
       });
 
       // Open a dialog
-      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+      dialogsStore.openCloseProjectDialog(asProjectId("test-project-12345678"));
 
       await waitFor(() => {
         expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
@@ -489,38 +477,49 @@ describe("MainView component", () => {
       });
     });
 
-    it("calls setMode('workspace') when dialog closes with no active workspace", async () => {
-      // Start with a project that has no workspaces
-      const project = createMockProject({
-        id: asProjectId("test-project-12345678"),
-        workspaces: [],
+    it("calls setMode('hover') when the New workspace view opens", async () => {
+      const projectWithWorkspace = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: "/test/project",
+          name: "test-project",
+          workspaces: [
+            {
+              projectId: asProjectId("test-project-12345678"),
+              path: "/test/.worktrees/feature",
+              name: "feature",
+              branch: "feature",
+            },
+          ],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(projectWithWorkspace);
+      mockApi.ui.getActiveWorkspace.mockResolvedValue({
+        projectId: asProjectId("test-project-12345678"),
+        workspaceName: "feature",
+        path: "/test/.worktrees/feature",
       });
-      mockApi.projects.list.mockResolvedValue([project]);
-      mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
 
       render(MainView);
 
-      // Wait for mount and auto-open create dialog to complete
       await waitFor(() => {
-        expect(mockApi.projects.list).toHaveBeenCalled();
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(projectsStore.activeWorkspacePath.value).toBe("/test/.worktrees/feature");
       });
 
-      await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
-      });
-
-      // Clear calls
       mockApi.ui.setMode.mockClear();
 
-      // Close dialog
-      dialogsStore.closeDialog();
+      // Opening the New workspace view keeps the UI on top at hover level
+      // (so Alt+X still works), not at dialog level. It also clears the
+      // active workspace — the panel IS the current tab, no workspace is
+      // selected behind it.
+      newWorkspaceViewStore.openNewWorkspaceView();
 
-      // setMode("workspace") is still called even without active workspace
-      // WebContentsViewManager's setMode("workspace") gracefully handles null activeWorkspacePath
+      expect(projectsStore.activeWorkspacePath.value).toBeNull();
+
       await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
+        expect(mockApi.ui.setMode).toHaveBeenCalledWith("hover");
       });
+      expect(mockApi.ui.setMode).not.toHaveBeenCalledWith("dialog");
     });
 
     it("does not call setMode('dialog') for non-modal framework dialog", async () => {
@@ -580,7 +579,24 @@ describe("MainView component", () => {
   });
 
   describe("dialogs", () => {
-    it("renders CreateWorkspaceDialog when dialog type is 'create'", async () => {
+    it("renders NewWorkspaceView when the New workspace view is open", async () => {
+      const projectWithWorkspace = [
+        {
+          id: asProjectId("test-project-12345678"),
+          path: "/test/project",
+          name: "test-project",
+          workspaces: [
+            {
+              projectId: asProjectId("test-project-12345678"),
+              path: "/test/.worktrees/feature",
+              name: "feature",
+              branch: "feature",
+            },
+          ],
+        },
+      ];
+      mockApi.projects.list.mockResolvedValue(projectWithWorkspace);
+
       render(MainView);
 
       // Wait for mount
@@ -588,13 +604,11 @@ describe("MainView component", () => {
         expect(mockApi.projects.list).toHaveBeenCalled();
       });
 
-      // Open create dialog
-      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+      // Open the New workspace view (panel, not a modal dialog)
+      newWorkspaceViewStore.openNewWorkspaceView();
 
       await waitFor(() => {
-        const dialog = screen.getByRole("dialog");
-        expect(dialog).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
     });
 
@@ -623,23 +637,22 @@ describe("MainView component", () => {
   // depends on the specific UI state (projects loaded, dialogs open, etc.). Focus
   // is managed by individual components like Sidebar and dialogs.
 
-  describe("auto-open create workspace dialog", () => {
-    it("auto-opens create dialog on mount when projects array is empty", async () => {
+  describe("auto-open New workspace view (empty state)", () => {
+    it("auto-opens the New workspace view on mount when projects array is empty", async () => {
       mockApi.projects.list.mockResolvedValue([]);
 
       render(MainView);
 
-      // Wait for create dialog to auto-open
+      // Wait for the New workspace view to auto-open
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
       // Verify projects.open was NOT automatically called (no folder picker)
       expect(mockApi.projects.open).not.toHaveBeenCalled();
     });
 
-    it("auto-opens create dialog when projects exist but no workspaces", async () => {
+    it("auto-opens the New workspace view when projects exist but no workspaces", async () => {
       const existingProject = {
         id: asProjectId("test-project-12345678"),
         path: "/test/project",
@@ -650,10 +663,9 @@ describe("MainView component", () => {
 
       render(MainView);
 
-      // Wait for create dialog to auto-open
+      // Wait for the New workspace view to auto-open
       await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
       // Verify projects.open was NOT automatically called (no folder picker)
@@ -661,8 +673,8 @@ describe("MainView component", () => {
     });
   });
 
-  describe("auto-open create dialog", () => {
-    it("auto-opens create dialog when project:opened event has no workspaces", async () => {
+  describe("auto-open New workspace view on project:opened", () => {
+    it("auto-opens the New workspace view when project:opened event has no workspaces", async () => {
       // Start with one project so auto-open picker doesn't trigger
       const existingProject = {
         id: asProjectId("test-project-12345678"),
@@ -696,15 +708,13 @@ describe("MainView component", () => {
       callback!({ project: emptyProject });
 
       await waitFor(() => {
-        expect(dialogsStore.dialogState.value.type).toBe("create");
-        if (dialogsStore.dialogState.value.type === "create") {
-          // API provides the project ID directly
-          expect(dialogsStore.dialogState.value.projectId).toBe(emptyProject.id);
-        }
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
+        // The freshly opened project is selected in the view.
+        expect(newWorkspaceViewStore.newWorkspaceView.selectedProjectId).toBe(emptyProject.id);
       });
     });
 
-    it("does NOT auto-open dialog when project has workspaces", async () => {
+    it("does NOT auto-open the view when project has workspaces", async () => {
       // Start with one project
       const existingProject = {
         id: asProjectId("test-project-12345678"),
@@ -737,13 +747,13 @@ describe("MainView component", () => {
       const callback = getEventCallback("project:opened");
       callback!({ project: projectWithWorkspaces });
 
-      // Give time for any auto-open to trigger
+      // Give time for any auto-open to trigger (under the 100ms empty-state debounce)
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(dialogsStore.dialogState.value.type).toBe("closed");
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
 
-    it("does NOT auto-open dialog when another dialog is already open", async () => {
+    it("does NOT auto-open the view when another dialog is already open", async () => {
       // Start with one project
       const existingProject = {
         id: asProjectId("test-project-12345678"),
@@ -833,14 +843,12 @@ describe("MainView component", () => {
       callback!({ project: emptyProject2 });
 
       await waitFor(() => {
-        expect(dialogsStore.dialogState.value.type).toBe("create");
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
       });
 
-      // Only the first project's dialog should be open (guard prevents second)
-      if (dialogsStore.dialogState.value.type === "create") {
-        // API provides the project ID directly - should be first project
-        expect(dialogsStore.dialogState.value.projectId).toBe(emptyProject1.id);
-      }
+      // Only the first project should be selected (guard prevents the second
+      // from overriding once the view is already open).
+      expect(newWorkspaceViewStore.newWorkspaceView.selectedProjectId).toBe(emptyProject1.id);
     });
   });
 
@@ -1015,7 +1023,7 @@ describe("MainView component", () => {
     // on the main process side, not in MainView
   });
 
-  describe("auto-open create dialog during last workspace deletion", () => {
+  describe("auto-open New workspace view during last workspace deletion", () => {
     // Helper to create deletion progress payload
     function createDeletionProgress(
       workspacePath: string,
@@ -1037,7 +1045,7 @@ describe("MainView component", () => {
       };
     }
 
-    it("auto-opens create dialog when last workspace deletion is in progress", async () => {
+    it("auto-opens the New workspace view when last workspace deletion is in progress", async () => {
       // Start with one workspace
       const project = createMockProject({
         id: asProjectId("test-project-12345678"),
@@ -1059,16 +1067,16 @@ describe("MainView component", () => {
         expect(getEventCallback("workspace:deletion-progress")).toBeDefined();
       });
 
-      // Dialog should NOT be open yet (workspace exists)
-      expect(dialogsStore.dialogState.value.type).not.toBe("create");
+      // View should NOT be open yet (workspace exists)
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
 
       // Simulate deletion-progress event (not completed — deletion just started)
       const callback = getEventCallback("workspace:deletion-progress");
       callback!(createDeletionProgress("/test/.worktrees/feature"));
 
-      // Create dialog should auto-open (effective count drops to 0)
+      // New workspace view should auto-open (effective count drops to 0)
       await waitFor(() => {
-        expect(dialogsStore.dialogState.value.type).toBe("create");
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
       });
     });
 
@@ -1107,11 +1115,11 @@ describe("MainView component", () => {
       // Give time for any auto-open to trigger
       await new Promise((resolve) => setTimeout(resolve, 150));
 
-      // Dialog should NOT open (one effective workspace remains)
-      expect(dialogsStore.dialogState.value.type).toBe("closed");
+      // View should NOT open (one effective workspace remains)
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
 
-    it("does NOT auto-close create dialog when deletion fails", async () => {
+    it("does NOT auto-close the New workspace view when deletion fails", async () => {
       // Start with one workspace
       const project = createMockProject({
         id: asProjectId("test-project-12345678"),
@@ -1138,7 +1146,7 @@ describe("MainView component", () => {
       callback!(createDeletionProgress("/test/.worktrees/feature"));
 
       await waitFor(() => {
-        expect(dialogsStore.dialogState.value.type).toBe("create");
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
       });
 
       // Simulate deletion failure (completed with errors)
@@ -1160,14 +1168,14 @@ describe("MainView component", () => {
       // Give time for any close to trigger
       await new Promise((resolve) => setTimeout(resolve, 150));
 
-      // Dialog should remain open — deletion failure should not close it
-      expect(dialogsStore.dialogState.value.type).toBe("create");
+      // View should remain open — deletion failure should not close it
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
     });
   });
 
-  describe("auto-close create dialog when first workspace appears", () => {
-    it("closes create dialog when workspace count transitions from 0 to >0", async () => {
-      // Start with no workspaces — auto-show opens the create dialog
+  describe("New workspace view stays open when a workspace appears", () => {
+    it("does NOT close the New workspace view when a workspace appears (create stays open)", async () => {
+      // Start with no workspaces — the New workspace view auto-opens (empty state)
       const project = createMockProject({
         id: asProjectId("test-project-12345678"),
         workspaces: [],
@@ -1176,12 +1184,12 @@ describe("MainView component", () => {
 
       render(MainView);
 
-      // Wait for create dialog to auto-open
+      // Wait for the New workspace view to auto-open
       await waitFor(() => {
-        expect(dialogsStore.dialogState.value.type).toBe("create");
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
       });
 
-      // Simulate a workspace appearing (e.g., created via MCP or auto-PR)
+      // Simulate a workspace appearing (background create — does NOT switch).
       projectsStore.addWorkspace("/test/project", {
         projectId: asProjectId("test-project-12345678"),
         path: "/test/.worktrees/new-ws",
@@ -1190,14 +1198,14 @@ describe("MainView component", () => {
         metadata: {},
       });
 
-      // Dialog should auto-close
-      await waitFor(() => {
-        expect(dialogsStore.dialogState.value.type).toBe("closed");
-      });
+      // Give time for any close to (not) trigger
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // The view stays open so the user can fire off another workspace.
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
     });
 
-    it("does NOT close create dialog when workspace count transitions from >0 to more", async () => {
-      // Start with one workspace
+    it("closes the New workspace view when navigating to a workspace (sidebar click)", async () => {
       const project = createMockProject({
         id: asProjectId("test-project-12345678"),
         workspaces: [
@@ -1214,34 +1222,24 @@ describe("MainView component", () => {
       render(MainView);
 
       await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
+        expect(screen.getByText("existing")).toBeInTheDocument();
       });
 
-      // Manually open create dialog (user clicked +)
-      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+      // Open the New workspace view over the workspace.
+      newWorkspaceViewStore.openNewWorkspaceView();
+      await waitFor(() => {
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
+      });
+
+      // Clicking a workspace navigates to it and closes the view.
+      await fireEvent.click(screen.getByText("existing"));
 
       await waitFor(() => {
-        expect(dialogsStore.dialogState.value.type).toBe("create");
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
       });
-
-      // Add another workspace (>0 → >0 transition)
-      projectsStore.addWorkspace("/test/project", {
-        projectId: asProjectId("test-project-12345678"),
-        path: "/test/.worktrees/second",
-        name: "second" as WorkspaceName,
-        branch: "second",
-        metadata: {},
-      });
-
-      // Give time for any close to trigger
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      // Dialog should still be open
-      expect(dialogsStore.dialogState.value.type).toBe("create");
     });
 
-    it("does NOT close non-create dialogs when workspace appears", async () => {
-      // Start with one workspace, then remove it to get to 0
+    it("does NOT close other dialogs when a workspace appears", async () => {
       const project = createMockProject({
         id: asProjectId("test-project-12345678"),
         workspaces: [],
@@ -1255,7 +1253,7 @@ describe("MainView component", () => {
         expect(bootstrapStore.bootstrap.initialized).toBe(true);
       });
 
-      // Open a remove dialog (not create)
+      // Open a remove dialog
       dialogsStore.openRemoveDialog(
         asWorkspaceRef("test-project-12345678", "feature", "/test/.worktrees/feature")
       );

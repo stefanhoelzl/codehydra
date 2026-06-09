@@ -10,7 +10,13 @@ import * as api from "$lib/api";
 import { createLogger } from "$lib/logging";
 import { getErrorMessage } from "@shared/error-utils";
 import type { UIModeChangedEvent } from "@shared/ipc";
-import { openCreateDialog, openRemoveDialog } from "./dialogs.svelte";
+import { openRemoveDialog } from "./dialogs.svelte";
+import {
+  newWorkspaceView,
+  openNewWorkspaceView,
+  closeNewWorkspaceView,
+  requestSubmit,
+} from "./new-workspace-view.svelte";
 import { getDeletionStatus } from "./deletion.svelte";
 import {
   getAllWorkspaces,
@@ -19,9 +25,9 @@ import {
   findWorkspaceIndex,
   wrapIndex,
   activeWorkspacePath,
-  activeProject,
   activeWorkspace,
   projects,
+  setActiveWorkspace,
 } from "./projects.svelte";
 import { getStatus } from "./agent-status.svelte";
 import {
@@ -162,15 +168,30 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
  */
 async function handleNavigation(key: NavigationKey): Promise<void> {
   const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return;
+  if (workspaces.length === 0) return;
   if (_switchingWorkspace) return;
 
   const direction = key === "ArrowUp" ? -1 : 1;
   const currentIndex = findWorkspaceIndex(activeWorkspacePath.value);
-  const nextIndex = wrapIndex(currentIndex + direction, workspaces.length);
+  // When the active workspace is null (e.g. coming from the New workspace
+  // view), Up → last and Down → first.
+  const nextIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : workspaces.length - 1
+      : wrapIndex(currentIndex + direction, workspaces.length);
+  // No-op when the only workspace is already current.
+  if (nextIndex === currentIndex) return;
   const targetWorkspaceRef = getWorkspaceRefByIndex(nextIndex);
 
   if (!targetWorkspaceRef) return;
+
+  // Leaving the New workspace view by navigating to a workspace.
+  // Set active eagerly so the sidebar/empty-backdrop don't flicker during the
+  // IPC round-trip to the main process.
+  closeNewWorkspaceView();
+  setActiveWorkspace(targetWorkspaceRef.path);
 
   _switchingWorkspace = true;
   try {
@@ -193,15 +214,16 @@ async function handleStatusNavigation(direction: -1 | 1): Promise<void> {
   if (_switchingWorkspace) return;
 
   const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return;
+  if (workspaces.length === 0) return;
 
   const currentIndex = findWorkspaceIndex(activeWorkspacePath.value);
-  if (currentIndex === -1) return;
 
-  // Try idle first, fall back to busy only when the current workspace is not idle
+  // Try idle first, fall back to busy only when the current workspace isn't
+  // already idle (or when there's no current workspace — e.g. from the New
+  // workspace view — in which case we always allow the busy fallback).
   let targetIndex = findNextByStatusType(workspaces, currentIndex, direction, "idle");
   if (targetIndex === -1) {
-    const currentPath = workspaces[currentIndex]?.path;
+    const currentPath = currentIndex === -1 ? undefined : workspaces[currentIndex]?.path;
     const currentStatus = currentPath ? getStatus(currentPath) : undefined;
     if (currentStatus?.type !== "idle") {
       targetIndex = findNextByStatusType(workspaces, currentIndex, direction, "busy");
@@ -211,6 +233,10 @@ async function handleStatusNavigation(direction: -1 | 1): Promise<void> {
 
   const targetWorkspaceRef = getWorkspaceRefByIndex(targetIndex);
   if (!targetWorkspaceRef) return;
+
+  // Leaving the New workspace view by navigating to a workspace.
+  closeNewWorkspaceView();
+  setActiveWorkspace(targetWorkspaceRef.path);
 
   _switchingWorkspace = true;
   try {
@@ -235,8 +261,18 @@ function findNextByStatusType(
   statusType: string
 ): number {
   const count = workspaces.length;
-  for (let i = 1; i < count; i++) {
-    const index = wrapIndex(currentIndex + i * direction, count);
+  // No active workspace: iterate ALL `count` indices starting from the end
+  // appropriate for the direction (Right → 0, Left → last).
+  // Active workspace: iterate the other `count - 1` indices, skipping current.
+  const startIndex =
+    currentIndex === -1
+      ? direction === 1
+        ? 0
+        : count - 1
+      : wrapIndex(currentIndex + direction, count);
+  const iterations = currentIndex === -1 ? count : count - 1;
+  for (let i = 0; i < iterations; i++) {
+    const index = wrapIndex(startIndex + i * direction, count);
     const workspace = workspaces[index];
     if (!workspace) continue;
     if (workspace.metadata?.["hibernated"] === "true") continue;
@@ -260,6 +296,10 @@ async function handleJump(key: JumpKey): Promise<void> {
   if (!workspaceRef) return;
   if (_switchingWorkspace) return;
 
+  // Leaving the New workspace view by jumping to a workspace.
+  closeNewWorkspaceView();
+  setActiveWorkspace(workspaceRef.path);
+
   _switchingWorkspace = true;
   try {
     // Pass false to keep UI focused (shortcut mode active)
@@ -277,6 +317,8 @@ async function handleJump(key: JumpKey): Promise<void> {
  * Hibernated → wake + re-open via workspace:open existingWorkspace flow.
  */
 export async function handleHibernateToggle(): Promise<void> {
+  // Opening the New workspace view clears the active workspace, so this is
+  // naturally inert while the panel is showing.
   const ref = activeWorkspace.value;
   if (!ref) return;
 
@@ -300,19 +342,32 @@ export async function handleHibernateToggle(): Promise<void> {
 
 /**
  * Handle dialog opening keys (Enter, Delete, Backspace).
- * Sets mode to "workspace" locally for immediate UI feedback before opening dialog.
- * The ui-mode store will compute desiredMode="dialog" when dialog opens.
+ * Sets mode to "workspace" locally for immediate UI feedback.
+ * - Enter opens the New workspace view, or creates the workspace if it's already open.
+ * - Delete/Backspace opens the remove dialog for the active workspace.
  */
 function handleDialog(key: DialogKey): void {
   if (key === "Enter") {
-    // Deactivate shortcut mode locally for immediate UI feedback
-    // The ui-mode store will compute desiredMode="dialog" when dialog opens
+    if (newWorkspaceView.isOpen) {
+      // Already on the New workspace view: Alt+X+Enter creates the workspace.
+      requestSubmit();
+      return;
+    }
+    // Deactivate shortcut mode locally for immediate UI feedback. The New
+    // workspace view forces hover-level z-order (UI on top) via ui-mode.
     setModeFromMain("workspace");
-    // Use active project, or fallback to first project if none active
-    const project = activeProject.value ?? projects.value[0];
-    openCreateDialog(project?.id);
+    openNewWorkspaceView();
+    // Push hover mode to main eagerly (don't wait for the syncMode microtask).
+    // Otherwise: when the user releases Alt, main's keyUp still sees
+    // currentMode === "shortcut" and dispatches setMode("workspace"), which
+    // sends the UI to the bottom AND focuses the workspace view — throttling
+    // the renderer so the follow-up setMode("hover") can be delayed until the
+    // workspace finishes loading, leaving the panel hidden behind a loading
+    // workspace view for seconds.
+    void api.ui.setMode("hover");
   } else {
-    // Delete or Backspace
+    // Delete or Backspace — opening the New workspace view clears the active
+    // workspace, so there's nothing to remove from there.
     const workspaceRef = activeWorkspace.value;
     if (!workspaceRef) return;
     // Skip if deletion already in progress for this workspace

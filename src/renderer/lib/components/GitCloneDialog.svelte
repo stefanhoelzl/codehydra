@@ -2,7 +2,11 @@
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
   import { projects } from "$lib/api";
-  import { openCreateDialog, closeDialog } from "$lib/stores/dialogs.svelte.js";
+  import { closeDialog } from "$lib/stores/dialogs.svelte.js";
+  import {
+    openNewWorkspaceView,
+    setNewWorkspaceProject,
+  } from "$lib/stores/new-workspace-view.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
   import { extractGitHubOwnerRepo, buildGitHubNewRepoUrl } from "@shared/github-utils";
@@ -68,9 +72,12 @@
     void projects.clone(trimmedUrl).then(
       (project) => {
         logger.info("Repository cloned successfully", { projectId: project.id });
-        // Only navigate if this dialog instance owns the clone and is still open
+        // Only navigate if this dialog instance owns the clone and is still open.
+        // Select the cloned project in the New workspace view (no dialog re-open).
         if (cloneUrl === trimmedUrl) {
-          openCreateDialog(project.id);
+          setNewWorkspaceProject(project.id);
+          openNewWorkspaceView(project.id);
+          closeDialog();
         }
       },
       (error: unknown) => {
@@ -109,8 +116,9 @@
   // Handle cancel (only available when not cloning)
   function handleCancel(): void {
     logger.debug("Dialog closed", { type: "git-clone" });
-    // Return to CreateWorkspaceDialog without selecting a project
-    openCreateDialog();
+    // Return to the New workspace view without selecting a project.
+    closeDialog();
+    openNewWorkspaceView();
   }
 
   // Handle URL input

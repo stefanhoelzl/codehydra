@@ -98,6 +98,7 @@ import App from "./App.svelte";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
+import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 describe("App component", () => {
@@ -107,6 +108,7 @@ describe("App component", () => {
     projectsStore.reset();
     bootstrapStore.resetBootstrap();
     dialogsStore.reset();
+    newWorkspaceViewStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
     // Reset v2 event callbacks
@@ -154,21 +156,17 @@ describe("App component", () => {
       expect(nav).toBeInTheDocument();
     });
 
-    it("renders CreateWorkspaceDialog when dialog type is 'create'", async () => {
+    it("renders NewWorkspaceView when the New workspace view opens", async () => {
       render(App);
       showMainView();
 
-      // Open create dialog
-      dialogsStore.openCreateDialog(asProjectId("test-project-12345678"));
+      // Open the New workspace view (panel, not a modal dialog)
+      newWorkspaceViewStore.openNewWorkspaceView();
 
-      // Wait for dialog to appear
+      // Wait for the panel heading to appear
       await waitFor(() => {
-        const dialog = screen.getByRole("dialog");
-        expect(dialog).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
-
-      // Verify it's the create dialog
-      expect(screen.getByText("Create Workspace")).toBeInTheDocument();
     });
 
     it("renders RemoveWorkspaceDialog when dialog type is 'remove'", async () => {
@@ -774,7 +772,7 @@ describe("App component", () => {
       expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
     });
 
-    it('shortcut "enter" opens create workspace dialog', async () => {
+    it('shortcut "enter" opens the New workspace view', async () => {
       const mockProjects = [
         {
           id: asProjectId("test-project-12345678"),
@@ -802,12 +800,11 @@ describe("App component", () => {
       // Fire shortcut:key event with "enter"
       fireEvent("shortcut:key", "enter");
 
-      // Should open create dialog
+      // Should open the New workspace view
       await waitFor(() => {
-        const dialog = screen.getByRole("dialog");
-        expect(dialog).toBeInTheDocument();
-        expect(screen.getByText("Create Workspace")).toBeInTheDocument();
+        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
       });
+      expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
     });
 
     it('shortcut "delete" opens remove workspace dialog', async () => {

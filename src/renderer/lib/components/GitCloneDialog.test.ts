@@ -7,11 +7,13 @@ import { render, screen, fireEvent } from "@testing-library/svelte";
 import type { Project, ProjectId } from "@shared/api/types";
 
 // Create mock functions with vi.hoisted
-const { mockCloneProject, mockOpenCreateDialog, mockCloseDialog } = vi.hoisted(() => ({
-  mockCloneProject: vi.fn(),
-  mockOpenCreateDialog: vi.fn(),
-  mockCloseDialog: vi.fn(),
-}));
+const { mockCloneProject, mockCloseDialog, mockOpenNewWorkspaceView, mockSetNewWorkspaceProject } =
+  vi.hoisted(() => ({
+    mockCloneProject: vi.fn(),
+    mockCloseDialog: vi.fn(),
+    mockOpenNewWorkspaceView: vi.fn(),
+    mockSetNewWorkspaceProject: vi.fn(),
+  }));
 
 // Mock $lib/api
 vi.mock("$lib/api", () => ({
@@ -23,8 +25,13 @@ vi.mock("$lib/api", () => ({
 
 // Mock $lib/stores/dialogs.svelte.js
 vi.mock("$lib/stores/dialogs.svelte.js", () => ({
-  openCreateDialog: mockOpenCreateDialog,
   closeDialog: mockCloseDialog,
+}));
+
+// Mock $lib/stores/new-workspace-view.svelte.js
+vi.mock("$lib/stores/new-workspace-view.svelte.js", () => ({
+  openNewWorkspaceView: mockOpenNewWorkspaceView,
+  setNewWorkspaceProject: mockSetNewWorkspaceProject,
 }));
 
 // Import component after mocks
@@ -235,7 +242,7 @@ describe("GitCloneDialog component", () => {
       await vi.runAllTimersAsync();
     });
 
-    it("opens CreateWorkspaceDialog with project ID on success", async () => {
+    it("selects the cloned project in the New workspace view on success", async () => {
       render(GitCloneDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
@@ -249,7 +256,10 @@ describe("GitCloneDialog component", () => {
       await vi.runAllTimersAsync();
       await Promise.resolve();
 
-      expect(mockOpenCreateDialog).toHaveBeenCalledWith(testProjectId);
+      // The cloned project is selected in the New workspace view (no dialog re-open).
+      expect(mockSetNewWorkspaceProject).toHaveBeenCalledWith(testProjectId);
+      expect(mockOpenNewWorkspaceView).toHaveBeenCalledWith(testProjectId);
+      expect(mockCloseDialog).toHaveBeenCalled();
     });
 
     it('closes dialog when "Continue in background" is clicked', async () => {
@@ -301,8 +311,8 @@ describe("GitCloneDialog component", () => {
       resolveClone!(createProject(testProjectId));
       await vi.runAllTimersAsync();
 
-      // openCreateDialog should NOT have been called (dialog was backgrounded)
-      expect(mockOpenCreateDialog).not.toHaveBeenCalled();
+      // The New workspace view should NOT have been opened (dialog was backgrounded)
+      expect(mockOpenNewWorkspaceView).not.toHaveBeenCalled();
     });
   });
 
@@ -374,14 +384,15 @@ describe("GitCloneDialog component", () => {
   });
 
   describe("cancel flow", () => {
-    it("calls openCreateDialog() without project ID on cancel", async () => {
+    it("returns to the New workspace view (no project) on cancel", async () => {
       render(GitCloneDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
 
       const cancelButton = screen.getByRole("button", { name: /cancel/i });
       await fireEvent.click(cancelButton);
 
-      expect(mockOpenCreateDialog).toHaveBeenCalledWith();
+      expect(mockCloseDialog).toHaveBeenCalled();
+      expect(mockOpenNewWorkspaceView).toHaveBeenCalledWith();
     });
 
     it("Escape key cancels dialog", async () => {
@@ -390,7 +401,8 @@ describe("GitCloneDialog component", () => {
 
       await fireEvent.keyDown(document.body, { key: "Escape" });
 
-      expect(mockOpenCreateDialog).toHaveBeenCalledWith();
+      expect(mockCloseDialog).toHaveBeenCalled();
+      expect(mockOpenNewWorkspaceView).toHaveBeenCalledWith();
     });
 
     it("Escape key does not close during clone", async () => {
@@ -411,7 +423,7 @@ describe("GitCloneDialog component", () => {
       // Clone is in progress — Escape should not close
       await fireEvent.keyDown(document.body, { key: "Escape" });
 
-      expect(mockOpenCreateDialog).not.toHaveBeenCalled();
+      expect(mockOpenNewWorkspaceView).not.toHaveBeenCalled();
 
       await vi.runAllTimersAsync();
     });

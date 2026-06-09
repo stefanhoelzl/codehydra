@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import type { ProjectId, WorkspaceRef, WorkspaceName } from "$lib/api";
-  import EmptyState from "./EmptyState.svelte";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
   import Icon from "./Icon.svelte";
@@ -24,9 +23,11 @@
     activeWorkspacePath: string | null;
     shortcutModeActive?: boolean;
     totalWorkspaces: number;
+    /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
+    newWorkspaceViewOpen?: boolean;
     onCloseProject: (projectId: ProjectId) => void;
     onSwitchWorkspace: (workspaceRef: WorkspaceRef) => void;
-    onOpenCreateDialog: (projectId: ProjectId) => void;
+    onOpenNewWorkspace: () => void;
     onOpenRemoveDialog: (workspaceRef: WorkspaceRef) => void;
   }
 
@@ -35,9 +36,10 @@
     activeWorkspacePath,
     shortcutModeActive = false,
     totalWorkspaces,
+    newWorkspaceViewOpen = false,
     onCloseProject,
     onSwitchWorkspace,
-    onOpenCreateDialog,
+    onOpenNewWorkspace,
     onOpenRemoveDialog,
   }: SidebarProps = $props();
 
@@ -100,10 +102,6 @@
 
   // ============ Actions ============
 
-  function handleAddWorkspace(projectId: ProjectId): void {
-    onOpenCreateDialog(projectId);
-  }
-
   function handleRemoveWorkspace(workspaceRef: WorkspaceRef): void {
     onOpenRemoveDialog(workspaceRef);
   }
@@ -126,177 +124,187 @@
   </header>
 
   <div class="sidebar-content">
-    {#if projects.length === 0}
-      <EmptyState />
+    <!-- Global "New workspace" entry, pinned above the projects. -->
+    {#if isExpanded}
+      <button
+        type="button"
+        class="new-workspace-entry"
+        class:active={newWorkspaceViewOpen}
+        aria-current={newWorkspaceViewOpen ? "true" : undefined}
+        onclick={() => onOpenNewWorkspace()}
+      >
+        <span class="new-workspace-icon"><Icon name="add" size={14} /></span>
+        <span class="new-workspace-label">New workspace</span>
+      </button>
     {:else}
-      <ul class="project-list">
-        {#each projects as project, projectIndex (project.path)}
-          {#if projectIndex > 0}
-            <vscode-divider inert={!isExpanded}></vscode-divider>
-          {/if}
-          {@const projectTitle = project.remoteUrl ?? project.path}
-          <li class="project-item">
-            <div class="project-header" inert={!isExpanded}>
-              <span class="project-icon" title={projectTitle}>
-                <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
-              </span>
-              <span class="project-name" title={projectTitle}>{project.name}</span>
-              <div class="project-actions">
-                <button
-                  type="button"
-                  class="action-btn"
-                  id={`add-ws-${project.id}`}
-                  aria-label="Add workspace"
-                  onclick={() => handleAddWorkspace(project.id)}
-                >
-                  <Icon name="add" size={14} />
-                </button>
-                <button
-                  type="button"
-                  class="action-btn"
-                  id={`close-project-${project.id}`}
-                  aria-label="Close project"
-                  onclick={() => onCloseProject(project.id)}
-                >
-                  <Icon name="trash" size={14} />
-                </button>
-              </div>
+      <button
+        type="button"
+        class="new-workspace-entry-minimized"
+        class:active={newWorkspaceViewOpen}
+        aria-label="New workspace"
+        aria-current={newWorkspaceViewOpen ? "true" : undefined}
+        onclick={() => onOpenNewWorkspace()}
+      >
+        <Icon name="add" size={14} />
+      </button>
+    {/if}
+
+    <ul class="project-list">
+      {#each projects as project, projectIndex (project.path)}
+        {#if projectIndex > 0}
+          <vscode-divider inert={!isExpanded}></vscode-divider>
+        {/if}
+        {@const projectTitle = project.remoteUrl ?? project.path}
+        <li class="project-item">
+          <div class="project-header" inert={!isExpanded}>
+            <span class="project-icon" title={projectTitle}>
+              <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
+            </span>
+            <span class="project-name" title={projectTitle}>{project.name}</span>
+            <div class="project-actions">
+              <button
+                type="button"
+                class="action-btn"
+                id={`close-project-${project.id}`}
+                aria-label="Close project"
+                onclick={() => onCloseProject(project.id)}
+              >
+                <Icon name="trash" size={14} />
+              </button>
             </div>
-            <ul class="workspace-list">
-              {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
-                {@const globalIndex = getWorkspaceGlobalIndex(
-                  projects,
-                  projectIndex,
-                  workspaceIndex
-                )}
-                {@const displayIndex = formatIndexDisplay(globalIndex)}
-                {@const shortcutHint = getShortcutHint(globalIndex)}
-                {@const agentCounts = getCounts(workspace.path)}
-                {@const statusText = getStatusText(agentCounts.idle, agentCounts.busy)}
-                {@const isActive = workspace.path === activeWorkspacePath}
-                {@const deletionStatus = getDeletionStatus(workspace.path)}
-                {@const workspaceRef = {
-                  projectId: project.id,
-                  workspaceName: workspace.name as WorkspaceName,
-                  path: workspace.path,
-                }}
-                {@const hasTags = workspace.metadata
-                  ? extractTags(workspace.metadata).length > 0
-                  : false}
-                {@const pending = isPending(workspace.path)}
-                {@const hibernated = workspace.metadata?.["hibernated"] === "true"}
-                {#if isExpanded}
-                  <!-- Expanded layout: two-row when tags exist -->
-                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-                  <li
-                    class="workspace-item"
-                    class:active={isActive}
-                    class:has-tags={hasTags}
-                    class:hibernated
+          </div>
+          <ul class="workspace-list">
+            {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
+              {@const globalIndex = getWorkspaceGlobalIndex(projects, projectIndex, workspaceIndex)}
+              {@const displayIndex = formatIndexDisplay(globalIndex)}
+              {@const shortcutHint = getShortcutHint(globalIndex)}
+              {@const agentCounts = getCounts(workspace.path)}
+              {@const statusText = getStatusText(agentCounts.idle, agentCounts.busy)}
+              {@const isActive = workspace.path === activeWorkspacePath}
+              {@const deletionStatus = getDeletionStatus(workspace.path)}
+              {@const workspaceRef = {
+                projectId: project.id,
+                workspaceName: workspace.name as WorkspaceName,
+                path: workspace.path,
+              }}
+              {@const hasTags = workspace.metadata
+                ? extractTags(workspace.metadata).length > 0
+                : false}
+              {@const pending = isPending(workspace.path)}
+              {@const hibernated = workspace.metadata?.["hibernated"] === "true"}
+              {#if isExpanded}
+                <!-- Expanded layout: two-row when tags exist -->
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+                <li
+                  class="workspace-item"
+                  class:active={isActive}
+                  class:has-tags={hasTags}
+                  class:hibernated
+                  aria-current={isActive ? "true" : undefined}
+                  onclick={() => {
+                    if (!pending) onSwitchWorkspace(workspaceRef);
+                  }}
+                >
+                  <div class="workspace-row">
+                    <button
+                      type="button"
+                      class="workspace-btn"
+                      aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
+                    >
+                      {#if shortcutModeActive && !hibernated}
+                        <vscode-badge
+                          class="shortcut-badge"
+                          class:badge-dimmed={displayIndex === null}
+                          aria-hidden="true"
+                        >
+                          {displayIndex ?? "·"}
+                        </vscode-badge>
+                      {/if}
+                      {workspace.name}
+                    </button>
+                    {#if !pending && deletionStatus === "none"}
+                      <button
+                        type="button"
+                        class="action-btn remove-btn"
+                        id={`remove-ws-${workspace.path}`}
+                        aria-label="Remove workspace"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveWorkspace(workspaceRef);
+                        }}
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    {/if}
+                    {#if pending}
+                      <!-- Creating: show red "busy" immediately (work is queued) -->
+                      <AgentStatusIndicator idleCount={0} busyCount={1} />
+                    {:else if deletionStatus === "in-progress"}
+                      <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                    {:else if deletionStatus === "error"}
+                      <span class="deletion-error" role="img" aria-label="Deletion failed">
+                        <Icon name="warning" size={14} />
+                      </span>
+                    {:else if hibernated}
+                      <span class="hibernation-indicator" role="img" aria-label="Hibernated">
+                        <Icon name="debug-pause" size={14} />
+                      </span>
+                    {:else}
+                      <AgentStatusIndicator
+                        idleCount={agentCounts.idle}
+                        busyCount={agentCounts.busy}
+                      />
+                    {/if}
+                  </div>
+                  {#if hasTags}
+                    <WorkspaceTags metadata={workspace.metadata} />
+                  {/if}
+                </li>
+              {:else}
+                <!-- Minimized layout: clickable status indicators -->
+                <!-- Workspace name kept in DOM (visually hidden) for accessibility -->
+                <li
+                  class="workspace-item-minimized"
+                  class:active={isActive}
+                  aria-current={isActive ? "true" : undefined}
+                >
+                  <button
+                    type="button"
+                    class="status-indicator-btn"
+                    aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : hibernated ? "Hibernated" : statusText}`}
                     aria-current={isActive ? "true" : undefined}
                     onclick={() => {
                       if (!pending) onSwitchWorkspace(workspaceRef);
                     }}
                   >
-                    <div class="workspace-row">
-                      <button
-                        type="button"
-                        class="workspace-btn"
-                        aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
-                      >
-                        {#if shortcutModeActive && !hibernated}
-                          <vscode-badge
-                            class="shortcut-badge"
-                            class:badge-dimmed={displayIndex === null}
-                            aria-hidden="true"
-                          >
-                            {displayIndex ?? "·"}
-                          </vscode-badge>
-                        {/if}
-                        {workspace.name}
-                      </button>
-                      {#if !pending && deletionStatus === "none"}
-                        <button
-                          type="button"
-                          class="action-btn remove-btn"
-                          id={`remove-ws-${workspace.path}`}
-                          aria-label="Remove workspace"
-                          onclick={(e) => {
-                            e.stopPropagation();
-                            handleRemoveWorkspace(workspaceRef);
-                          }}
-                        >
-                          <Icon name="trash" size={14} />
-                        </button>
-                      {/if}
-                      {#if pending}
-                        <vscode-progress-ring class="creation-spinner"></vscode-progress-ring>
-                      {:else if deletionStatus === "in-progress"}
-                        <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
-                      {:else if deletionStatus === "error"}
-                        <span class="deletion-error" role="img" aria-label="Deletion failed">
-                          <Icon name="warning" size={14} />
-                        </span>
-                      {:else if hibernated}
-                        <span class="hibernation-indicator" role="img" aria-label="Hibernated">
-                          <Icon name="debug-pause" size={14} />
-                        </span>
-                      {:else}
-                        <AgentStatusIndicator
-                          idleCount={agentCounts.idle}
-                          busyCount={agentCounts.busy}
-                        />
-                      {/if}
-                    </div>
-                    {#if hasTags}
-                      <WorkspaceTags metadata={workspace.metadata} />
+                    {#if pending}
+                      <!-- Creating: show red "busy" immediately (work is queued) -->
+                      <AgentStatusIndicator idleCount={0} busyCount={1} />
+                    {:else if deletionStatus === "in-progress"}
+                      <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
+                    {:else if deletionStatus === "error"}
+                      <span class="deletion-error" role="img" aria-label="Deletion failed">
+                        <Icon name="warning" size={14} />
+                      </span>
+                    {:else if hibernated}
+                      <span class="hibernation-indicator" role="img" aria-label="Hibernated">
+                        <Icon name="debug-pause" size={14} />
+                      </span>
+                    {:else}
+                      <AgentStatusIndicator
+                        idleCount={agentCounts.idle}
+                        busyCount={agentCounts.busy}
+                      />
                     {/if}
-                  </li>
-                {:else}
-                  <!-- Minimized layout: clickable status indicators -->
-                  <!-- Workspace name kept in DOM (visually hidden) for accessibility -->
-                  <li
-                    class="workspace-item-minimized"
-                    class:active={isActive}
-                    aria-current={isActive ? "true" : undefined}
-                  >
-                    <button
-                      type="button"
-                      class="status-indicator-btn"
-                      aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : hibernated ? "Hibernated" : statusText}`}
-                      aria-current={isActive ? "true" : undefined}
-                      onclick={() => {
-                        if (!pending) onSwitchWorkspace(workspaceRef);
-                      }}
-                    >
-                      {#if pending}
-                        <vscode-progress-ring class="creation-spinner"></vscode-progress-ring>
-                      {:else if deletionStatus === "in-progress"}
-                        <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
-                      {:else if deletionStatus === "error"}
-                        <span class="deletion-error" role="img" aria-label="Deletion failed">
-                          <Icon name="warning" size={14} />
-                        </span>
-                      {:else if hibernated}
-                        <span class="hibernation-indicator" role="img" aria-label="Hibernated">
-                          <Icon name="debug-pause" size={14} />
-                        </span>
-                      {:else}
-                        <AgentStatusIndicator
-                          idleCount={agentCounts.idle}
-                          busyCount={agentCounts.busy}
-                        />
-                      {/if}
-                      <span class="ch-visually-hidden">{workspace.name}</span>
-                    </button>
-                  </li>
-                {/if}
-              {/each}
-            </ul>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+                    <span class="ch-visually-hidden">{workspace.name}</span>
+                  </button>
+                </li>
+              {/if}
+            {/each}
+          </ul>
+        </li>
+      {/each}
+    </ul>
   </div>
 
   <NotificationStack {isExpanded} />
@@ -386,6 +394,107 @@
     flex: 1;
     overflow-y: auto;
     min-width: var(--ch-sidebar-width, 250px);
+  }
+
+  /* Global "New workspace" entry (expanded) */
+  .new-workspace-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-width: var(--ch-sidebar-width, 250px);
+    padding: 8px 12px 8px calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
+    background: transparent;
+    border: none;
+    color: var(--ch-foreground);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .new-workspace-entry:hover {
+    background: var(--ch-list-hover-bg);
+  }
+
+  .new-workspace-entry:focus-visible {
+    outline: 1px solid var(--ch-focus-border);
+    outline-offset: -1px;
+  }
+
+  .new-workspace-entry.active {
+    background: var(--ch-accent-muted, var(--ch-list-active-bg));
+    color: var(--ch-list-active-fg);
+    position: relative;
+  }
+
+  .new-workspace-entry.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--ch-focus-border);
+  }
+
+  .new-workspace-icon {
+    display: flex;
+    align-items: center;
+    opacity: 0.8;
+    flex-shrink: 0;
+  }
+
+  .new-workspace-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Global "New workspace" entry (minimized) */
+  .new-workspace-entry-minimized {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--ch-sidebar-minimized-width, 20px);
+    min-width: var(--ch-sidebar-minimized-width, 20px);
+    min-height: 36px;
+    background: transparent;
+    border: none;
+    color: var(--ch-foreground);
+    cursor: pointer;
+    padding: 4px;
+    opacity: 0.8;
+    flex-shrink: 0;
+  }
+
+  .new-workspace-entry-minimized:hover {
+    background: var(--ch-input-bg);
+    opacity: 1;
+  }
+
+  .new-workspace-entry-minimized:focus-visible {
+    outline: 1px solid var(--ch-focus-border);
+    outline-offset: -1px;
+  }
+
+  .new-workspace-entry-minimized.active {
+    background: var(--ch-accent-muted, var(--ch-list-active-bg));
+    color: var(--ch-list-active-fg);
+    opacity: 1;
+    position: relative;
+  }
+
+  .new-workspace-entry-minimized.active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--ch-focus-border);
   }
 
   .project-list {

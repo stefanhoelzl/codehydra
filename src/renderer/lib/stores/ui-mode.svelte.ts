@@ -27,6 +27,7 @@ import type { UIMode } from "@shared/ipc";
 let _modeFromMain = $state<UIMode>("workspace");
 let _dialogOpen = $state(false);
 let _sidebarExpanded = $state(false);
+let _newWorkspaceViewOpen = $state(false);
 
 // Track last emitted mode to prevent duplicate IPC calls
 let _lastEmittedMode: UIMode | null = null;
@@ -39,23 +40,31 @@ let _lastEmittedMode: UIMode | null = null;
  *
  * - "shortcut": Shortcut mode active (from main process)
  * - "dialog": Modal dialog open (blocks Alt+X)
- * - "hover": Sidebar expanded on hover (allows Alt+X)
+ * - "hover": Sidebar expanded on hover OR the New workspace view is open
+ *   (both bring the UI on top while still allowing Alt+X to navigate away)
  * - "workspace": Normal editing mode
+ *
+ * The New workspace view intentionally maps to "hover" rather than "dialog":
+ * it must keep the UI on top so the panel is visible, but Alt+X must still
+ * work so the user can leave via Alt+X+↑/↓.
  */
 export function computeDesiredMode(
   modeFromMain: UIMode,
   dialogOpen: boolean,
-  sidebarExpanded: boolean
+  sidebarExpanded: boolean,
+  newWorkspaceViewOpen = false
 ): UIMode {
   if (modeFromMain === "shortcut") return "shortcut";
   if (dialogOpen) return "dialog";
-  if (sidebarExpanded) return "hover";
+  if (newWorkspaceViewOpen || sidebarExpanded) return "hover";
   return "workspace";
 }
 
 // ============ Derived State ============
 
-const _desiredMode = $derived(computeDesiredMode(_modeFromMain, _dialogOpen, _sidebarExpanded));
+const _desiredMode = $derived(
+  computeDesiredMode(_modeFromMain, _dialogOpen, _sidebarExpanded, _newWorkspaceViewOpen)
+);
 
 // ============ Getters (follow store pattern) ============
 
@@ -115,6 +124,14 @@ export function setSidebarExpanded(expanded: boolean): void {
   _sidebarExpanded = expanded;
 }
 
+/**
+ * Called by MainView when the New workspace view opens/closes.
+ * Keeps the UI on top (hover-level) while the panel is shown.
+ */
+export function setNewWorkspaceViewOpen(open: boolean): void {
+  _newWorkspaceViewOpen = open;
+}
+
 // ============ Sync function for IPC ============
 
 /**
@@ -160,5 +177,6 @@ export function reset(): void {
   _modeFromMain = "workspace";
   _dialogOpen = false;
   _sidebarExpanded = false;
+  _newWorkspaceViewOpen = false;
   _lastEmittedMode = null;
 }

@@ -22,18 +22,24 @@
     activeWorkspacePath,
     activeWorkspace,
     getAllWorkspaces,
+    setActiveWorkspace,
   } from "$lib/stores/projects.svelte.js";
   import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
   import {
     dialogState,
-    openCreateDialog,
     openRemoveDialog,
     openCloseProjectDialog,
     closeDialog,
   } from "$lib/stores/dialogs.svelte.js";
   import {
+    newWorkspaceView,
+    openNewWorkspaceView,
+    closeNewWorkspaceView,
+  } from "$lib/stores/new-workspace-view.svelte.js";
+  import {
     shortcutModeActive,
     setDialogOpen,
+    setNewWorkspaceViewOpen,
     syncMode,
     desiredMode,
   } from "$lib/stores/ui-mode.svelte.js";
@@ -48,7 +54,7 @@
   // Components
   import Sidebar from "./Sidebar.svelte";
   import NotificationHost from "./NotificationHost.svelte";
-  import CreateWorkspaceDialog from "./CreateWorkspaceDialog.svelte";
+  import NewWorkspaceView from "./NewWorkspaceView.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
   import GitCloneDialog from "./GitCloneDialog.svelte";
@@ -60,7 +66,10 @@
   import { getDeletionStatus, deletionStates } from "$lib/stores/deletion.svelte.js";
   import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
-  import { dialogs } from "$lib/stores/dialog-framework.svelte.js";
+  import {
+    dialogs,
+    processCommand as processFrameworkDialog,
+  } from "$lib/stores/dialog-framework.svelte.js";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -71,10 +80,6 @@
 
   // Error state for open project dialog
   let openProjectError = $state<string | null>(null);
-
-  // Track if user has dismissed the auto-shown Create Workspace dialog
-  // When true, the auto-show will not trigger again until a workspace is created
-  let autoShowDismissed = $state(false);
 
   // Sync dialog state to central ui-mode store
   // Includes both renderer-side dialogs (create/remove) and declarative framework dialogs
@@ -115,69 +120,69 @@
     }).length;
   });
 
-  // Auto-show Create Workspace dialog when all conditions are met:
-  // - No effective workspaces (real count minus active deletions)
-  // - Loading is complete
-  // - No dialog is currently open
-  // - User hasn't dismissed the auto-shown dialog
-  // Uses a debounce to avoid showing during rapid state changes (e.g., after deletion)
-  let autoShowTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Keep the central ui-mode store informed so the UI layer stays on top (at
+  // hover level, which still allows Alt+X) while the New workspace view is shown.
   $effect(() => {
-    // Read all reactive dependencies
+    setNewWorkspaceViewOpen(newWorkspaceView.isOpen);
+  });
+
+  // When the New workspace view opens, dismiss any framework dialogs the main
+  // process opened in the meantime (most notably the "Loading workspace..."
+  // progress dialog triggered by `workspace:loading`). They render inside the
+  // UI's DialogHost, so without this they cover the panel until the workspace
+  // finishes loading. The sidebar's red "busy" indicator is sufficient
+  // feedback that creation is in progress.
+  $effect(() => {
+    if (!newWorkspaceView.isOpen) return;
+    for (const entry of [...dialogs.value.values()]) {
+      processFrameworkDialog({ action: "close", dialogId: entry.dialogId });
+    }
+  });
+
+  // Auto-open the New workspace view as the empty state: when no workspaces
+  // exist (real count minus active deletions), it's the natural landing spot.
+  // Replaces the old auto-shown Create Workspace dialog + logo backdrop.
+  // Debounced to avoid flicker during rapid state changes (e.g., after deletion).
+  // Never auto-closes: creating in the background leaves the user on the view.
+  let autoOpenTimeout: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
     const effectiveCount = effectiveWorkspaceCount;
-    const projectList = projects.value;
     const initialized = bootstrap.initialized;
     const dialog = dialogState.value;
 
-    // Reset dismissed state when effective workspaces exist (allows auto-show in future)
-    if (effectiveCount > 0) {
-      autoShowDismissed = false;
+    if (autoOpenTimeout !== null) {
+      clearTimeout(autoOpenTimeout);
+      autoOpenTimeout = null;
     }
 
-    // Clear any pending timeout
-    if (autoShowTimeout !== null) {
-      clearTimeout(autoShowTimeout);
-      autoShowTimeout = null;
-    }
-
-    // Check all conditions
-    // Show Create Workspace dialog when no effective workspaces exist (even if no projects)
-    // Suppress when a background operation is running — don't interrupt with the dialog
-    // Suppress when a framework dialog is open (e.g., git init confirmation)
+    // Suppress while a clone runs (a project is about to appear silently) or a
+    // framework dialog is open (e.g. git init confirmation).
     const cloneRunning = hasSpinnerNotifications.value;
     const hasFrameworkDialog = dialogs.value.size > 0;
-    const firstProject = projectList[0];
     if (
       effectiveCount === 0 &&
       initialized &&
       dialog.type === "closed" &&
-      !autoShowDismissed &&
       !cloneRunning &&
-      !hasFrameworkDialog
+      !hasFrameworkDialog &&
+      !newWorkspaceView.isOpen
     ) {
-      // Debounce to avoid showing during rapid state changes
-      autoShowTimeout = setTimeout(() => {
-        openCreateDialog(firstProject?.id);
+      autoOpenTimeout = setTimeout(() => {
+        openNewWorkspaceView();
       }, 100);
     }
 
     return () => {
-      if (autoShowTimeout !== null) {
-        clearTimeout(autoShowTimeout);
+      if (autoOpenTimeout !== null) {
+        clearTimeout(autoOpenTimeout);
       }
     };
   });
 
-  // Auto-close create dialog when first workspace appears (e.g., created via MCP or auto-PR)
-  // Uses raw workspace count (not effective) so deletion failures don't close the dialog
-  let prevWorkspaceCount = 0;
-  $effect(() => {
-    const count = getAllWorkspaces().length;
-    if (prevWorkspaceCount === 0 && count > 0 && dialogState.value.type === "create") {
-      closeDialog();
-    }
-    prevWorkspaceCount = count;
-  });
+  // Leaving the New workspace view is handled explicitly where navigation
+  // originates: clicking a workspace (handleSwitchWorkspace) and the shortcut-mode
+  // navigation handlers both call closeNewWorkspaceView(). Creating in the
+  // background intentionally does NOT switch, so the view stays open afterwards.
 
   // Derive count of idle workspaces for shortcut overlay
   const idleWorkspaceCount = $derived(
@@ -259,13 +264,18 @@
   // Handle switching workspace
   async function handleSwitchWorkspace(workspaceRef: WorkspaceRef): Promise<void> {
     logger.debug("Workspace selected", { workspaceName: workspaceRef.workspaceName });
+    // Leaving the New workspace view by selecting a workspace.
+    closeNewWorkspaceView();
+    // Set active eagerly so the empty-backdrop doesn't flash during the IPC
+    // round-trip — opening the panel cleared the previous active workspace.
+    setActiveWorkspace(workspaceRef.path);
     await api.ui.switchWorkspace(workspaceRef.path);
   }
 
-  // Handle opening create dialog
-  function handleOpenCreateDialog(projectId: ProjectId): void {
-    logger.debug("Dialog opened", { type: "create-workspace" });
-    openCreateDialog(projectId);
+  // Handle opening the New workspace view (global sidebar entry)
+  function handleOpenNewWorkspace(): void {
+    logger.debug("New workspace view opened");
+    openNewWorkspaceView();
   }
 
   // Handle opening remove dialog
@@ -282,19 +292,14 @@
     activeWorkspacePath={activeWorkspacePath.value}
     shortcutModeActive={shortcutModeActive.value}
     totalWorkspaces={getAllWorkspaces().length}
+    newWorkspaceViewOpen={newWorkspaceView.isOpen}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
-    onOpenCreateDialog={handleOpenCreateDialog}
+    onOpenNewWorkspace={handleOpenNewWorkspace}
     onOpenRemoveDialog={handleOpenRemoveDialog}
   />
 
-  {#if dialogState.value.type === "create"}
-    <CreateWorkspaceDialog
-      open={true}
-      projectId={dialogState.value.projectId}
-      onCancel={() => (autoShowDismissed = true)}
-    />
-  {:else if dialogState.value.type === "remove"}
+  {#if dialogState.value.type === "remove"}
     <RemoveWorkspaceDialog open={true} workspaceRef={dialogState.value.workspaceRef} />
   {:else if dialogState.value.type === "close-project"}
     <CloseProjectDialog open={true} projectId={dialogState.value.projectId} />
@@ -319,14 +324,17 @@
     {idleWorkspaceCount}
   />
 
-  <!-- Backdrop shown when no workspace is active -->
-  {#if activeWorkspacePath.value === null}
+  <!-- New workspace view: full-area panel; also serves as the empty state -->
+  <NewWorkspaceView open={newWorkspaceView.isOpen} />
+
+  <!-- Backdrop shown when no workspace is active and the panel is closed -->
+  {#if activeWorkspacePath.value === null && !newWorkspaceView.isOpen}
     <div class="empty-backdrop" aria-hidden="true">
       <div class="backdrop-logo">
         <Logo animated={false} />
       </div>
     </div>
-  {:else if activeHibernated && activeWorkspace.value}
+  {:else if activeWorkspacePath.value !== null && activeHibernated && activeWorkspace.value}
     <HibernatedOverlay workspaceRef={activeWorkspace.value} />
   {/if}
 </div>

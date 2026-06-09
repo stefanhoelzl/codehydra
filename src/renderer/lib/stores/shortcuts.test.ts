@@ -15,6 +15,11 @@ const mockApi = vi.hoisted(() => ({
   projects: {
     open: vi.fn().mockResolvedValue(undefined),
   },
+  workspaces: {
+    hibernate: vi.fn().mockResolvedValue(undefined),
+    wake: vi.fn().mockResolvedValue(undefined),
+    reopen: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 // Create mock dialog state with vi.hoisted
@@ -23,8 +28,15 @@ const mockDialogState = vi.hoisted(() => ({
   dialogState: {
     value: { type: "closed" } as Record<string, unknown>,
   },
-  openCreateDialog: vi.fn(),
   openRemoveDialog: vi.fn(),
+}));
+
+// Mock the New workspace view store
+const mockNewWorkspaceView = vi.hoisted(() => ({
+  newWorkspaceView: { isOpen: false as boolean },
+  openNewWorkspaceView: vi.fn(),
+  closeNewWorkspaceView: vi.fn(),
+  requestSubmit: vi.fn(),
 }));
 
 // Create mock workspace type for testing
@@ -63,6 +75,9 @@ const mockProjectsStore = vi.hoisted(() => ({
   activeWorkspace: { value: null as MockWorkspaceRef | null },
   // projects list for fallback when activeProject is null
   projects: { value: [] as { id: string; path: string }[] },
+  // Eager set used by navigation handlers to avoid empty-backdrop flicker
+  // after the New workspace view cleared the active workspace on open.
+  setActiveWorkspace: vi.fn(),
 }));
 
 // Mock the API module before any imports use it
@@ -70,6 +85,9 @@ vi.mock("$lib/api", () => mockApi);
 
 // Mock the dialogs store
 vi.mock("./dialogs.svelte", () => mockDialogState);
+
+// Mock the New workspace view store
+vi.mock("./new-workspace-view.svelte", () => mockNewWorkspaceView);
 
 // Mock the projects store
 vi.mock("./projects.svelte", () => mockProjectsStore);
@@ -123,6 +141,8 @@ describe("shortcuts store", () => {
     reset(); // Reset store state between tests
     // Reset dialog state to closed
     mockDialogState.dialogState.value = { type: "closed" };
+    // Reset New workspace view to closed
+    mockNewWorkspaceView.newWorkspaceView.isOpen = false;
     // Reset deletion status to "none"
     mockDeletionStore.getDeletionStatus.mockReturnValue("none");
   });
@@ -411,6 +431,43 @@ describe("shortcuts store", () => {
         { projectId: "test-project-12345678", workspaceName: "ws2", path: "/ws2" },
         { projectId: "test-project-12345678", workspaceName: "ws3", path: "/ws3" },
       ];
+
+      it("should-navigate-from-no-active-workspace-down → first (panel open)", async () => {
+        // When the New workspace view is the current tab, activeWorkspacePath is null.
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(-1);
+        mockProjectsStore.activeWorkspacePath.value = null;
+
+        enableShortcutMode();
+        handleShortcutKey("down");
+
+        await vi.waitFor(() => {
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws1", false);
+        });
+      });
+
+      it("should-navigate-from-no-active-workspace-up → last (panel open)", async () => {
+        const workspaces = createWorkspaces();
+        const workspaceRefs = createWorkspaceRefs();
+        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
+        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
+          (i: number) => workspaceRefs[i]
+        );
+        mockProjectsStore.findWorkspaceIndex.mockReturnValue(-1);
+        mockProjectsStore.activeWorkspacePath.value = null;
+
+        enableShortcutMode();
+        handleShortcutKey("up");
+
+        await vi.waitFor(() => {
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws3", false);
+        });
+      });
 
       it("should-navigate-to-next-workspace-on-down", async () => {
         const workspaces = createWorkspaces();
@@ -817,44 +874,30 @@ describe("shortcuts store", () => {
     describe("dialog actions", () => {
       // NOTE: Dialog tests use handleShortcutKey with normalized keys ("enter", "delete")
       // since these come from main process events. Backspace is normalized to "delete" by main process.
-      it("should-open-create-dialog-on-enter", () => {
+      it("should-open-new-workspace-view-on-enter (no project pre-fill)", () => {
         mockProjectsStore.activeProject.value = { id: "project-12345678", path: "/project" };
+        mockNewWorkspaceView.newWorkspaceView.isOpen = false;
 
         enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
         handleShortcutKey("enter");
 
-        // Now passes projectId instead of path
-        expect(mockDialogState.openCreateDialog).toHaveBeenCalledWith("project-12345678");
+        // Opens the New workspace view with no project pre-fill (no args).
+        expect(mockNewWorkspaceView.openNewWorkspaceView).toHaveBeenCalledWith();
+        expect(mockNewWorkspaceView.requestSubmit).not.toHaveBeenCalled();
         expect(shortcutModeActive.value).toBe(false);
       });
 
-      it("should-fallback-to-first-project-when-no-active-project", () => {
-        // activeProject is null but there are projects available
-        mockProjectsStore.activeProject.value = null;
-        mockProjectsStore.projects.value = [
-          { id: "first-project-12345678", path: "/first-project" },
-        ];
+      it("should-create-workspace-on-enter-when-view-already-open", () => {
+        // Already on the New workspace view: Alt+X+Enter triggers Create.
+        mockNewWorkspaceView.newWorkspaceView.isOpen = true;
 
         enableShortcutMode();
         handleShortcutKey("enter");
 
-        // Should use the first project as fallback
-        expect(mockDialogState.openCreateDialog).toHaveBeenCalledWith("first-project-12345678");
-        expect(shortcutModeActive.value).toBe(false);
-      });
-
-      it("should-open-create-dialog-with-undefined-when-no-projects-exist", () => {
-        mockProjectsStore.activeProject.value = null;
-        mockProjectsStore.projects.value = [];
-
-        enableShortcutMode();
-        handleShortcutKey("enter");
-
-        // Opens dialog with undefined projectId when no projects exist
-        expect(mockDialogState.openCreateDialog).toHaveBeenCalledWith(undefined);
-        expect(shortcutModeActive.value).toBe(false);
+        expect(mockNewWorkspaceView.requestSubmit).toHaveBeenCalled();
+        expect(mockNewWorkspaceView.openNewWorkspaceView).not.toHaveBeenCalled();
       });
 
       it("should-open-remove-dialog-on-delete", () => {

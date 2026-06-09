@@ -7,9 +7,11 @@
     value: ProjectId;
     onSelect: (projectId: ProjectId) => void;
     disabled?: boolean;
+    /** Whether to focus the input on mount */
+    autofocus?: boolean;
   }
 
-  let { value, onSelect, disabled = false }: ProjectDropdownProps = $props();
+  let { value, onSelect, disabled = false, autofocus = false }: ProjectDropdownProps = $props();
 
   /**
    * Transform projects to DropdownOption[].
@@ -56,6 +58,7 @@
     placeholder="Select project..."
     filterOption={filterProject}
     id="project-dropdown"
+    {autofocus}
   />
 </div>
 
