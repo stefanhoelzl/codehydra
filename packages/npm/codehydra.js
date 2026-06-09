@@ -136,7 +136,7 @@ async function main() {
     console.log("Done!\n");
   }
 
-  const child = spawn(binaryPath, ["--auto-update=never", ...process.argv.slice(2)], {
+  const child = spawn(binaryPath, ["--update.notification=false", ...process.argv.slice(2)], {
     stdio: "inherit",
   });
   child.on("exit", (code) => process.exit(code || 0));
