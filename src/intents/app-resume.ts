@@ -10,7 +10,7 @@
  *              domain events (e.g. code-server:restart-failed).
  *
  * After hooks complete, emits `app:resumed` for telemetry subscribers
- * (posthog-module) that don't depend on server state.
+ * (telemetry-module) that don't depend on server state.
  */
 
 import type { Intent, DomainEvent } from "./lib/types";

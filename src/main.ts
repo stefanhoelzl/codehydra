@@ -158,7 +158,8 @@ import { createKeepFilesModule } from "./modules/keepfiles-module";
 import { createWindowsFileLockModule } from "./modules/windows-file-lock-module";
 import { createPosixProcessCleanupModule } from "./modules/posix-process-cleanup-module";
 import { createWindowTitleModule } from "./modules/window-title-module";
-import { createPosthogModule } from "./modules/posthog-module";
+import { createTelemetryModule } from "./modules/telemetry-module";
+import { createPostHogBoundary } from "./boundaries/platform/posthog";
 import { createAutoUpdaterModule } from "./modules/auto-updater-module";
 import { DefaultStateService } from "./boundaries/platform/state-service";
 import { createStateModule, createStateMigrationRegistry } from "./modules/state-module";
@@ -172,7 +173,7 @@ import { createElectronLifecycleModule } from "./modules/electron-lifecycle-modu
 import { createLoggingModule } from "./modules/logging-module";
 import { createScriptModule } from "./modules/script-module";
 import { createTempDirModule } from "./modules/temp-dir-module";
-import { createErrorHandlerModule } from "./modules/error-handler-module";
+import { createErrorReportModule } from "./modules/error-report-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
 import { createThemeModule } from "./modules/theme-module";
@@ -183,7 +184,6 @@ import { NotificationManager } from "./modules/notification-manager";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
-import { createBugReportModule } from "./modules/bug-report-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
 import { createGitHubSource } from "./modules/auto-workspace/github-source";
@@ -235,6 +235,15 @@ const agentConfig = configService.register("agent", {
   default: null,
   description: "Agent selection",
   ...storeEnum(["claude", "opencode"], { nullable: true }),
+});
+// telemetry.enabled is read by two modules (telemetry-module gates passive
+// events; error-report-module gates crash reporting), so it is registered here
+// and its accessor is threaded into both.
+const telemetryEnabledConfig = configService.register("telemetry.enabled", {
+  default: true,
+  description: "Enable telemetry (false in dev/unpackaged)",
+  ...storeBoolean(),
+  computedDefault: (ctx) => (ctx.isDevelopment || !ctx.isPackaged ? false : undefined),
 });
 const helpConfig = configService.register("help", {
   default: false,
@@ -544,16 +553,23 @@ const windowTitleModule = createWindowTitleModule({
   windowManager,
   titleVersion: buildInfo.gitBranch ?? buildInfo.version,
 });
-const posthogModule = createPosthogModule({
+// The PostHog sink, shared by telemetry-module (passive events) and
+// error-report-module (crash + bug reports).
+const postHogBoundary = createPostHogBoundary({
+  logger: loggingService.createLogger("telemetry"),
+  apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
+  host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
+});
+const telemetryModule = createTelemetryModule({
   platformInfo,
   buildInfo,
   configService,
   stateService,
   stateMigrations,
   agentConfig,
+  telemetryEnabled: telemetryEnabledConfig,
+  boundary: postHogBoundary,
   logger: loggingService.createLogger("telemetry"),
-  apiKey: typeof __POSTHOG_API_KEY__ !== "undefined" ? __POSTHOG_API_KEY__ : undefined,
-  host: typeof __POSTHOG_HOST__ !== "undefined" ? __POSTHOG_HOST__ : undefined,
 });
 const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   autoUpdater,
@@ -664,10 +680,6 @@ const tempDirModule = createTempDirModule({
   pathProvider,
 });
 
-const errorHandlerModule = createErrorHandlerModule({
-  logger: appLogger,
-});
-
 const shortcutModule = createShortcutModule({
   viewManager,
   viewLayer,
@@ -689,12 +701,16 @@ const themeModule = createThemeModule({
 
 const debugModule = createDebugModule({ configService, notificationManager });
 
-const bugReportModule = createBugReportModule({
+const errorReportModule = createErrorReportModule({
   dialogManager,
   fileSystem: fileSystemLayer,
   loggingService,
   dispatcher,
-  logger: loggingService.createLogger("bug-report"),
+  boundary: postHogBoundary,
+  configService,
+  stateService,
+  telemetryEnabled: telemetryEnabledConfig,
+  logger: loggingService.createLogger("error-report"),
 });
 
 // 8. Operation registration
@@ -836,19 +852,18 @@ dispatcher.registerModule(localProjectModule);
 dispatcher.registerModule(gitWorktreeWorkspaceModule);
 dispatcher.registerModule(windowTitleModule);
 dispatcher.registerModule(stateModule);
-dispatcher.registerModule(posthogModule);
+dispatcher.registerModule(telemetryModule);
 dispatcher.registerModule(autoUpdaterLifecycleModule);
 dispatcher.registerModule(mcpModule);
 dispatcher.registerModule(electronLifecycleModule);
 dispatcher.registerModule(loggingModule);
 dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
-dispatcher.registerModule(errorHandlerModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(themeModule);
 dispatcher.registerModule(debugModule);
-dispatcher.registerModule(bugReportModule);
+dispatcher.registerModule(errorReportModule);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
