@@ -2,9 +2,11 @@
   Form.svelte
 
   Generic declarative form/section renderer.
-  Renders a DialogConfig's sections + actions by type: text, progress, radio,
-  dropdown, table, input. Actions are rendered as vscode-button elements in a
-  footer row.
+  Renders a DialogConfig's sections by type: text, progress, radio, dropdown,
+  table, input, group. Buttons live inside group sections: a button-only group
+  is a footer/action row, a group mixing a field with buttons attaches
+  side-flow buttons to that field's row. Every button click emits an action
+  event with the button's id and the full field-values snapshot.
 
   Surface-agnostic: the wrapping surface (e.g. DialogView's modal card, or a
   future panel shell) provides the chrome and text alignment. Form only lays the
@@ -16,7 +18,7 @@
   combobox (FilterableDropdown): a text input with a filtered suggestion list,
   optionally accepting free text. `config.layout` switches the section layout:
   "centered" (default) is the centered stack; "form" is left-aligned labeled
-  rows with right-aligned actions.
+  rows.
 
   Dropdown sections support a `loading` flag: a spinner is overlaid at the
   control's right edge while the backend fetches suggestions. The control
@@ -25,7 +27,7 @@
 <script lang="ts">
   import type {
     DialogConfig,
-    DialogAction,
+    DialogButton,
     DialogSection,
     DialogUserEvent,
     ProgressItem,
@@ -47,6 +49,42 @@
   }
 
   const { dialogId, config }: Props = $props();
+
+  // Narrowed views of the shared section union (the individual section
+  // interfaces are intentionally not exported from dialog-types).
+  type GroupSection = Extract<DialogSection, { type: "group" }>;
+  type GroupItem = GroupSection["items"][number];
+  type ButtonItem = Extract<GroupItem, { type: "button" }>;
+  type FieldInput = Extract<DialogSection, { type: "input" }>;
+  type FieldLike = Extract<DialogSection | GroupItem, { type: "input" | "radio" | "dropdown" }>;
+
+  /**
+   * The element id a row label points at for a field: FilterableDropdown
+   * renders its text input as `${id}-input`; other controls use the id as-is.
+   */
+  function labelTargetOf(field: GroupItem): string {
+    return field.type === "dropdown" ? `${field.id}-input` : field.id;
+  }
+
+  /**
+   * All field sections of the config in declaration order — top-level
+   * input/radio/dropdown sections plus input/dropdown items nested in groups.
+   */
+  function fieldSectionsOf(cfg: DialogConfig): FieldLike[] {
+    const fields: FieldLike[] = [];
+    for (const section of cfg.sections) {
+      if (section.type === "input" || section.type === "radio" || section.type === "dropdown") {
+        fields.push(section);
+      } else if (section.type === "group") {
+        for (const item of section.items) {
+          if (item.type === "input" || item.type === "dropdown") {
+            fields.push(item);
+          }
+        }
+      }
+    }
+    return fields;
+  }
 
   // Section layout: "centered" (default) keeps the centered stack; "form" lays
   // fields out as left-aligned labeled rows with right-aligned actions.
@@ -88,7 +126,7 @@
   $effect(() => {
     const next: Record<string, string> = {};
     const nextDisplay: Record<string, string> = {};
-    for (const section of config.sections) {
+    for (const section of fieldSectionsOf(config)) {
       if (section.type === "radio") {
         const existing = untrack(() => fieldValues[section.id]);
         const stillValid = existing !== undefined && section.options.some((o) => o.id === existing);
@@ -133,9 +171,7 @@
    * (input, dropdown typing) 200ms, radio (discrete) 0ms (immediate).
    * Dropdown suggestion picks bypass this entirely (see handleDropdownSelect).
    */
-  function changeDebounceMs(section: DialogSection): number | null {
-    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown")
-      return null;
+  function changeDebounceMs(section: FieldLike): number | null {
     const cfg = section.changeEvent;
     if (!cfg) return null;
     const fallback = section.type === "radio" ? 0 : 200;
@@ -143,11 +179,9 @@
     return cfg.debounceMs ?? fallback;
   }
 
-  /** Whether the dialog still has an input/radio/dropdown field with this id. */
+  /** Whether the dialog still has a field with this id. */
   function hasField(fieldId: string): boolean {
-    return config.sections.some(
-      (s) => (s.type === "input" || s.type === "radio" || s.type === "dropdown") && s.id === fieldId
-    );
+    return fieldSectionsOf(config).some((s) => s.id === fieldId);
   }
 
   /** Send a field-change event with the full keyed-values snapshot. */
@@ -168,8 +202,7 @@
    * effective debounce is 0, otherwise on the trailing edge of a per-field
    * timer. No-op for fields that did not opt in.
    */
-  function scheduleChange(section: DialogSection): void {
-    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown") return;
+  function scheduleChange(section: FieldLike): void {
     const debounce = changeDebounceMs(section);
     if (debounce === null) return;
     const fieldId = section.id;
@@ -258,10 +291,8 @@
   /** Snapshot every field's current value, keyed by field id. */
   function getValues(): Record<string, string> {
     const values: Record<string, string> = {};
-    for (const section of config.sections) {
-      if (section.type === "radio" || section.type === "dropdown" || section.type === "input") {
-        values[section.id] = fieldValues[section.id] ?? "";
-      }
+    for (const section of fieldSectionsOf(config)) {
+      values[section.id] = fieldValues[section.id] ?? "";
     }
     return values;
   }
@@ -313,25 +344,55 @@
     scheduleChange(section);
   }
 
-  /** Activate the form's primary action (first non-secondary, else first). */
+  /**
+   * Activate the form's primary button: the first button declared with an
+   * explicit variant "primary". Without one this does nothing — a positional
+   * fallback could land on a field-attached side-flow button.
+   */
   function triggerPrimaryAction(): void {
-    const primaryAction =
-      config.actions?.find((a) => a.variant !== "secondary") ?? config.actions?.[0];
-    if (primaryAction) handleAction(primaryAction);
+    const primaryButton = findPrimaryButton(config);
+    if (primaryButton) handleButton(primaryButton);
   }
 
-  /** Handle action button click. */
-  function handleAction(action: DialogAction): void {
-    if (action.disabled || action.busy) return;
+  /** Handle a button click: emit an action event with the values snapshot. */
+  function handleButton(button: DialogButton): void {
+    if (button.disabled || button.busy) return;
     // The action event carries the full snapshot, so any pending debounced
     // change is redundant — cancel it to avoid a stray emit after submit.
     cancelChangeTimers();
     const event: DialogUserEvent = {
       dialogId,
-      actionId: action.id,
+      actionId: button.id,
       data: getValues(),
     };
     sendDialogEvent(event);
+  }
+
+  /**
+   * The button Enter activates from a radio group: the first button declared
+   * with an explicit variant "primary". Without one, Enter does nothing — a
+   * positional fallback could land on a field-attached side-flow button.
+   */
+  function findPrimaryButton(cfg: DialogConfig): ButtonItem | undefined {
+    for (const section of cfg.sections) {
+      if (section.type !== "group") continue;
+      for (const item of section.items) {
+        if (item.type === "button" && item.variant === "primary") return item;
+      }
+    }
+    return undefined;
+  }
+
+  /** Resolved horizontal alignment of a group row (layout-natural default). */
+  function groupAlign(s: GroupSection): "left" | "center" | "right" {
+    return s.align ?? (layout === "form" ? "left" : "center");
+  }
+
+  /** A group's field items that carry an error (rendered below the row). */
+  function erroredFieldsOf(s: GroupSection): Exclude<GroupItem, ButtonItem>[] {
+    return s.items.filter(
+      (i): i is Exclude<GroupItem, ButtonItem> => i.type !== "button" && !!i.error
+    );
   }
 
   /** Parse text content for {badge:text} syntax. Returns segments. */
@@ -382,6 +443,94 @@
 </script>
 
 <div class="form" class:layout-form={layout === "form"} bind:this={formRef}>
+  {#snippet fieldError(id: string, message: string)}
+    <vscode-form-helper id="{id}-error">
+      <span class="field-error">{message}</span>
+    </vscode-form-helper>
+  {/snippet}
+
+  {#snippet inputControl(s: FieldInput)}
+    {#if s.multiline}
+      <textarea
+        class="input-textarea"
+        class:errored={!!s.error}
+        id={s.id}
+        placeholder={s.placeholder ?? ""}
+        aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
+        aria-invalid={s.error ? "true" : undefined}
+        aria-describedby={s.error ? `${s.id}-error` : undefined}
+        value={fieldValues[s.id] ?? ""}
+        use:seedCursor={{
+          initialValue: s.initialValue,
+          cursorOffset: s.cursorOffset,
+          selectInitialValue: s.selectInitialValue,
+        }}
+        oninput={(e) => {
+          fieldValues = { ...fieldValues, [s.id]: e.currentTarget.value };
+          scheduleChange(s);
+        }}
+      ></textarea>
+    {:else}
+      <vscode-textfield
+        class="input-textfield"
+        id={s.id}
+        invalid={s.error ? true : undefined}
+        placeholder={s.placeholder ?? ""}
+        aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
+        aria-invalid={s.error ? "true" : undefined}
+        aria-describedby={s.error ? `${s.id}-error` : undefined}
+        value={fieldValues[s.id] ?? ""}
+        oninput={(e: Event) => {
+          fieldValues = { ...fieldValues, [s.id]: (e.currentTarget as HTMLInputElement).value };
+          scheduleChange(s);
+        }}
+      ></vscode-textfield>
+    {/if}
+  {/snippet}
+
+  {#snippet dropdownControl(s: DropdownSection)}
+    <div class="dropdown-wrapper">
+      <FilterableDropdown
+        id={s.id}
+        options={toFilterableOptions(s)}
+        value={dropdownDisplay[s.id] ?? ""}
+        placeholder={s.placeholder ?? ""}
+        allowFreeText={s.freeText ?? false}
+        debounceMs={0}
+        invalid={!!s.error}
+        describedBy={s.error ? `${s.id}-error` : undefined}
+        onSelect={(value) => handleDropdownSelect(s, value)}
+        onInput={(text) => handleDropdownInput(s, text)}
+        onEnter={() => triggerPrimaryAction()}
+      />
+      {#if s.loading}
+        <div class="dropdown-loading" role="status" aria-label="Loading options">
+          <Icon name="loading" spin />
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+  {#snippet buttonControl(b: ButtonItem)}
+    <vscode-button
+      class:icon-button={!b.label}
+      secondary={b.variant === "secondary" || undefined}
+      disabled={b.disabled || b.busy || undefined}
+      aria-label={b.label ?? b.title}
+      onclick={() => handleButton(b)}
+      {...b.title ? { title: b.title } : {}}
+    >
+      {#if b.icon}
+        <span class="button-icon" class:icon-only={!b.label}>
+          <Icon name={b.icon} spin={!!b.busy && !b.label} />
+        </span>
+      {/if}
+      {#if b.label}
+        {b.busy ? (b.busyLabel ?? b.label) : b.label}
+      {/if}
+    </vscode-button>
+  {/snippet}
+
   {#each config.sections as section, sectionIndex (sectionIndex)}
     {@const s = section}
     {#if s.type === "text"}
@@ -543,30 +692,9 @@
         {#if s.label}
           <vscode-label for="{s.id}-input">{s.label}</vscode-label>
         {/if}
-        <div class="dropdown-wrapper">
-          <FilterableDropdown
-            id={s.id}
-            options={toFilterableOptions(s)}
-            value={dropdownDisplay[s.id] ?? ""}
-            placeholder={s.placeholder ?? ""}
-            allowFreeText={s.freeText ?? false}
-            debounceMs={0}
-            invalid={!!s.error}
-            describedBy={s.error ? `${s.id}-error` : undefined}
-            onSelect={(value) => handleDropdownSelect(s, value)}
-            onInput={(text) => handleDropdownInput(s, text)}
-            onEnter={() => triggerPrimaryAction()}
-          />
-          {#if s.loading}
-            <div class="dropdown-loading" role="status" aria-label="Loading options">
-              <Icon name="loading" spin />
-            </div>
-          {/if}
-        </div>
+        {@render dropdownControl(s)}
         {#if s.error}
-          <vscode-form-helper id="{s.id}-error">
-            <span class="field-error">{s.error}</span>
-          </vscode-form-helper>
+          {@render fieldError(s.id, s.error)}
         {/if}
       </div>
     {:else if s.type === "input"}
@@ -574,47 +702,34 @@
         {#if s.label}
           <vscode-label for={s.id}>{s.label}</vscode-label>
         {/if}
-        {#if s.multiline}
-          <textarea
-            class="input-textarea"
-            class:errored={!!s.error}
-            id={s.id}
-            placeholder={s.placeholder ?? ""}
-            aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
-            aria-invalid={s.error ? "true" : undefined}
-            aria-describedby={s.error ? `${s.id}-error` : undefined}
-            value={fieldValues[s.id] ?? ""}
-            use:seedCursor={{
-              initialValue: s.initialValue,
-              cursorOffset: s.cursorOffset,
-              selectInitialValue: s.selectInitialValue,
-            }}
-            oninput={(e) => {
-              fieldValues = { ...fieldValues, [s.id]: e.currentTarget.value };
-              scheduleChange(s);
-            }}
-          ></textarea>
-        {:else}
-          <vscode-textfield
-            class="input-textfield"
-            id={s.id}
-            invalid={s.error ? true : undefined}
-            placeholder={s.placeholder ?? ""}
-            aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
-            aria-invalid={s.error ? "true" : undefined}
-            aria-describedby={s.error ? `${s.id}-error` : undefined}
-            value={fieldValues[s.id] ?? ""}
-            oninput={(e: Event) => {
-              fieldValues = { ...fieldValues, [s.id]: (e.currentTarget as HTMLInputElement).value };
-              scheduleChange(s);
-            }}
-          ></vscode-textfield>
-        {/if}
+        {@render inputControl(s)}
         {#if s.error}
-          <vscode-form-helper id="{s.id}-error">
-            <span class="field-error">{s.error}</span>
-          </vscode-form-helper>
+          {@render fieldError(s.id, s.error)}
         {/if}
+      </div>
+    {:else if s.type === "group"}
+      {@const firstField = s.items.find((i) => i.type !== "button")}
+      {@const erroredFields = erroredFieldsOf(s)}
+      <div class="form-field">
+        {#if s.label}
+          <vscode-label for={firstField ? labelTargetOf(firstField) : undefined}
+            >{s.label}</vscode-label
+          >
+        {/if}
+        <div class="group-row align-{groupAlign(s)}">
+          {#each s.items as item, itemIndex (itemIndex)}
+            {#if item.type === "input"}
+              <div class="group-field">{@render inputControl(item)}</div>
+            {:else if item.type === "dropdown"}
+              <div class="group-field">{@render dropdownControl(item)}</div>
+            {:else if item.type === "button"}
+              {@render buttonControl(item)}
+            {/if}
+          {/each}
+        </div>
+        {#each erroredFields as field (field.id)}
+          {@render fieldError(field.id, field.error ?? "")}
+        {/each}
       </div>
     {:else if s.type === "table"}
       <div class="table-container">
@@ -651,25 +766,6 @@
       </div>
     {/if}
   {/each}
-
-  {#if config.actions && config.actions.length > 0}
-    <div class="actions">
-      {#each config.actions as action (action.id)}
-        <vscode-button
-          appearance={action.variant === "secondary" ? "secondary" : undefined}
-          disabled={action.disabled || action.busy || undefined}
-          onclick={() => handleAction(action)}
-          {...action.title ? { title: action.title } : {}}
-        >
-          {#if action.busy}
-            {action.busyLabel ?? action.label}
-          {:else}
-            {action.label}
-          {/if}
-        </vscode-button>
-      {/each}
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -685,15 +781,10 @@
     width: 100%;
   }
 
-  /* Form-layout mode: left-aligned labeled rows, right-aligned actions. */
+  /* Form-layout mode: left-aligned labeled rows. */
   .form.layout-form {
     align-items: stretch;
     text-align: left;
-  }
-
-  .form.layout-form .actions {
-    width: 100%;
-    justify-content: flex-end;
   }
 
   /* Field wrapper: groups a field's label, control, and error tightly so the
@@ -1037,11 +1128,43 @@
     width: 100%;
   }
 
-  /* ---- Actions ---- */
+  /* ---- Group sections ---- */
 
-  .actions {
+  /* Horizontal row of field controls and buttons. Field controls stretch
+     (via .group-field), buttons keep their natural size; `align` only shows
+     when no stretching field fills the row (e.g. a button-only footer). */
+  .group-row {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
-    margin-top: 0.5rem;
+    width: 100%;
+  }
+
+  .group-row.align-left {
+    justify-content: flex-start;
+  }
+
+  .group-row.align-center {
+    justify-content: center;
+  }
+
+  .group-row.align-right {
+    justify-content: flex-end;
+  }
+
+  .group-field {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Icon rendered inside a labeled button gets breathing room before the
+     text; icon-only buttons don't need it. */
+  .button-icon {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .button-icon:not(.icon-only) {
+    margin-right: 0.3rem;
   }
 </style>

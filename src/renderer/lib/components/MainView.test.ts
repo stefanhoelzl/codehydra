@@ -566,8 +566,13 @@ describe("MainView component", () => {
         action: "open",
         dialogId: "dlg-modal",
         config: {
-          sections: [{ type: "text", content: "Choose Agent", style: "heading" }],
-          actions: [{ id: "select", label: "Continue", variant: "primary" }],
+          sections: [
+            { type: "text", content: "Choose Agent", style: "heading" },
+            {
+              type: "group",
+              items: [{ type: "button", id: "select", label: "Continue", variant: "primary" }],
+            },
+          ],
           modal: true,
         },
       });

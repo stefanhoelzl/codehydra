@@ -4,8 +4,11 @@
  *
  * NOTE: This file must be browser-compatible (no Node.js imports).
  *
- * Dialogs are composed from ordered sections (building blocks) plus action buttons.
- * The backend sends the full config; a generic renderer displays it.
+ * Dialogs are composed from ordered sections (building blocks). Buttons are
+ * declared inside group sections — a trailing button-only group is the footer
+ * (submit/cancel); a group mixing a field with buttons attaches side-flow
+ * buttons to that field's row. The backend sends the full config; a generic
+ * renderer displays it.
  */
 
 // ---- Sections ----
@@ -163,13 +166,38 @@ interface InputSection extends FieldSection {
   readonly changeEvent?: FieldChangeConfig;
 }
 
+/**
+ * Group section - a horizontal row composing field controls and buttons.
+ *
+ * - items render in declaration order (which is also the tab order): field
+ *   controls (input/dropdown) stretch, buttons size to their content.
+ * - A group whose items are all buttons is the footer/action-row form (e.g.
+ *   submit/cancel); a group mixing a field with buttons attaches side-flow
+ *   buttons to that field's row.
+ * - label: row label rendered above the row. Child fields' own labels are not
+ *   rendered inside a group — use the group label.
+ * - align: horizontal alignment of the row content when it does not fill the
+ *   row. Defaults to the layout's natural alignment: "center" in the
+ *   "centered" layout, "left" in the "form" layout.
+ * - Child field errors render below the whole row.
+ */
+interface GroupSection {
+  readonly type: "group";
+  readonly label?: string;
+  readonly align?: "left" | "center" | "right";
+  readonly items: readonly GroupItem[];
+}
+
+type GroupItem = InputSection | DropdownSection | ButtonItem;
+
 export type DialogSection =
   | TextSection
   | ProgressSection
   | RadioSection
   | DropdownSection
   | TableSection
-  | InputSection;
+  | InputSection
+  | GroupSection;
 
 // ---- Progress Items ----
 
@@ -216,11 +244,28 @@ export interface TableColumn {
 
 export type TableRow = Readonly<Record<string, string>>;
 
-// ---- Actions (footer buttons) ----
+// ---- Buttons ----
 
-export interface DialogAction {
+/**
+ * Declarative button. Placed inside group sections (see GroupSection) — both
+ * for footer-style submit rows and for field-attached side-flow buttons.
+ * Clicking a button emits a DialogActionEvent with the button's id and the
+ * full field-values snapshot.
+ *
+ * - label: visible button text. When absent, the button renders icon-only
+ *   (vscode-button appearance "icon"); icon-only buttons must set `title`,
+ *   which doubles as the accessible name.
+ * - icon: codicon name rendered before the label (or alone when icon-only).
+ * - variant: "secondary" renders the muted style; an explicit "primary" also
+ *   marks the button that Enter activates from a radio group (without one,
+ *   Enter does nothing).
+ * - busy: disables the button; a labeled button shows busyLabel (or label),
+ *   an icon-only button spins its icon.
+ */
+export interface DialogButton {
   readonly id: string;
-  readonly label: string;
+  readonly label?: string;
+  readonly icon?: string;
   readonly variant?: "primary" | "secondary";
   readonly disabled?: boolean;
   readonly busy?: boolean;
@@ -228,16 +273,22 @@ export interface DialogAction {
   readonly title?: string;
 }
 
+/** A button placed in a group section's items. */
+interface ButtonItem extends DialogButton {
+  readonly type: "button";
+}
+
 // ---- Dialog Config ----
 
 /**
  * Full dialog configuration.
- * All dialogs render: faded static logo backdrop + centered card with sections + actions.
+ * All dialogs render: faded static logo backdrop + centered card with sections.
+ * Buttons (including the footer submit/cancel row) are declared as group
+ * sections; see GroupSection.
  * Positioning is automatic: if sidebar is visible -> workspace area; if not -> full viewport.
  */
 export interface DialogConfig {
   readonly sections: readonly DialogSection[];
-  readonly actions?: readonly DialogAction[];
   /** When true, the dialog is on top of everything and blocks keyboard shortcuts (Alt+X). Default: false. */
   readonly modal?: boolean;
   /**
@@ -261,16 +312,18 @@ export type DialogCommand =
 
 /**
  * `data` is a flat snapshot of the dialog's field values, keyed by each field's
- * stable id (input.id, radio.id, dropdown.id, ...). Field ids must be unique within a
- * DialogConfig. Every field is present; an empty/unset field reports "" (a
- * key being absent means the field is not part of this dialog). Values are
- * strings; widening the value type is a shared-type change.
+ * stable id (input.id, radio.id, dropdown.id, ...), including fields nested in
+ * group sections. Field ids must be unique within a DialogConfig. Every field
+ * is present; an empty/unset field reports "" (a key being absent means the
+ * field is not part of this dialog). Values are strings; widening the value
+ * type is a shared-type change.
  */
 type FieldValues = Readonly<Record<string, string>>;
 
 /**
- * Action event: the user activated an action button (submit). Carries the
- * field-values snapshot at submit time.
+ * Action event: the user activated a button (a footer submit or a
+ * field-attached side-flow button). `actionId` is the button's id; `data` is
+ * the field-values snapshot at click time.
  */
 export interface DialogActionEvent {
   /** Discriminant. Absent is treated as "action" for backward compatibility. */

@@ -23,7 +23,7 @@ import { createDeletionDialogModule } from "./deletion-dialog-module";
 import type { IntentModule } from "../intents/lib/module";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DialogAction, DialogConfig, DialogUserEvent } from "../shared/dialog-types";
+import type { DialogConfig, DialogUserEvent } from "../shared/dialog-types";
 import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
 import type { WorkspaceName, ProjectId } from "../shared/api/types";
@@ -299,12 +299,16 @@ describe("DeletionDialogModule", () => {
     // Dialog should remain open
     expect(handle.closed).toBe(false);
 
-    // Config should have actions for retry and dismiss
+    // Config should have a button group for retry and dismiss
     const config = handle.config;
-    expect(config.actions).toBeDefined();
-    const actionIds = config.actions!.map((a: DialogAction) => a.id);
-    expect(actionIds).toContain("retry");
-    expect(actionIds).toContain("dismiss");
+    const group = config.sections.find((s) => s.type === "group");
+    expect(group).toBeDefined();
+    const buttonIds =
+      group?.type === "group"
+        ? group.items.filter((i) => i.type === "button").map((i) => i.id)
+        : [];
+    expect(buttonIds).toContain("retry");
+    expect(buttonIds).toContain("dismiss");
   });
 
   it("should close old dialog and open new on workspace switch", async () => {
