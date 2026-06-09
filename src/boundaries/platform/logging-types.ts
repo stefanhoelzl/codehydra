@@ -50,7 +50,7 @@ export type LoggerName =
   | "dialog" // DialogBoundary - system dialogs
   | "menu" // MenuBoundary - application menu
   | "config" // Config - application config
-  | "telemetry" // PosthogModule - PostHog analytics
+  | "telemetry" // TelemetryModule + PostHogBoundary - PostHog analytics
   | "updater" // AutoUpdater - auto-update service
   | "agent" // AgentServerManager - agent lifecycle
   | "shortcut" // ShortcutController - keyboard shortcut detection
@@ -58,7 +58,7 @@ export type LoggerName =
   | "auto-workspace" // AutoWorkspaceModule - auto-workspace orchestrator
   | "auto-workspace:github" // GitHubSource - GitHub PR polling
   | "auto-workspace:youtrack" // YouTrackSource - YouTrack issue polling
-  | "bug-report"; // BugReportModule - bug report dialog
+  | "error-report"; // ErrorReportModule - crash + manual bug report
 
 /**
  * Context data for log entries.

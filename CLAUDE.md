@@ -39,26 +39,27 @@ These rules MUST be followed. Violations require explicit user approval.
 
 All external access MUST use abstraction interfaces:
 
-| External System  | Required Interface                    | Forbidden Direct Access |
-| ---------------- | ------------------------------------- | ----------------------- |
-| Filesystem       | `FileSystemBoundary`                  | `node:fs/promises`      |
-| HTTP requests    | `HttpClient`                          | `fetch()`               |
-| Port operations  | `PortManager`                         | `net` module            |
-| Process spawning | `ProcessRunner`                       | `execa`                 |
-| Agent operations | `AgentProvider`, `AgentServerManager` | Direct OpenCode SDK     |
-| OpenCode API     | `SdkClientFactory`                    | Direct HTTP/SSE         |
-| Git operations   | `IGitClient`                          | `simple-git`            |
-| Electron Window  | `WindowBoundary`                      | `BaseWindow`            |
-| Electron View    | `ViewBoundary`                        | `WebContentsView`       |
-| Electron Session | `SessionBoundary`                     | `session`               |
-| Electron IPC     | `IpcBoundary`                         | `ipcMain`               |
-| Electron Dialog  | `DialogBoundary`                      | `dialog`                |
-| Electron Image   | `ImageBoundary`                       | `nativeImage`           |
-| Electron App     | `AppBoundary`                         | `app`                   |
-| Electron Power   | `AppBoundary.allowPowerSaving`        | `powerSaveBlocker`      |
-| Electron Menu    | `MenuBoundary`                        | `Menu`                  |
+| External System   | Required Interface                    | Forbidden Direct Access |
+| ----------------- | ------------------------------------- | ----------------------- |
+| Filesystem        | `FileSystemBoundary`                  | `node:fs/promises`      |
+| HTTP requests     | `HttpClient`                          | `fetch()`               |
+| Port operations   | `PortManager`                         | `net` module            |
+| Process spawning  | `ProcessRunner`                       | `execa`                 |
+| Agent operations  | `AgentProvider`, `AgentServerManager` | Direct OpenCode SDK     |
+| OpenCode API      | `SdkClientFactory`                    | Direct HTTP/SSE         |
+| Git operations    | `IGitClient`                          | `simple-git`            |
+| Electron Window   | `WindowBoundary`                      | `BaseWindow`            |
+| Electron View     | `ViewBoundary`                        | `WebContentsView`       |
+| Electron Session  | `SessionBoundary`                     | `session`               |
+| Electron IPC      | `IpcBoundary`                         | `ipcMain`               |
+| Electron Dialog   | `DialogBoundary`                      | `dialog`                |
+| Electron Image    | `ImageBoundary`                       | `nativeImage`           |
+| Electron App      | `AppBoundary`                         | `app`                   |
+| Electron Power    | `AppBoundary.allowPowerSaving`        | `powerSaveBlocker`      |
+| Electron Menu     | `MenuBoundary`                        | `Menu`                  |
+| PostHog telemetry | `PostHogBoundary`                     | `posthog-node`          |
 
-**Acceptable exceptions**: Third-party libraries that encapsulate their own I/O (like `ignore`, `posthog-node`) do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
+**Acceptable exceptions**: Third-party libraries that encapsulate their own I/O (like `ignore`) do not need abstraction layers. We abstract our own I/O, not the internals of external libraries.
 
 ### Path Handling
 
@@ -337,7 +338,7 @@ Values the **app writes at runtime** (not user-authored settings) live in `state
 
 | State key (state.json)     | Owner                 | Description                                                                                                               |
 | -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `telemetry.distinct-id`    | posthog-module        | Auto-generated telemetry user id (sensitive)                                                                              |
+| `telemetry.distinct-id`    | telemetry-module      | Auto-generated telemetry user id (sensitive)                                                                              |
 | `update.dismissed-version` | auto-updater-module   | The update version the user last dismissed (silences re-notify)                                                           |
 | `auto-workspaces`          | auto-workspace-module | `Record<"${source}/${item}", {workspacePath,workspaceName,createdAt}\|null>` tracking map; `null` = dismissed (sensitive) |
 
@@ -345,7 +346,7 @@ Two migration shapes feed `state.json`. (1) **config→state** (telemetry, updat
 
 `deprecated: true` config keys are **readable** (`get()` returns the loaded value) but **not settable** (`set()` throws); `reset()` deletes the key from `config.json`. This makes a deprecated key a clean one-shot migration source.
 
-**Redaction.** A key definition may carry a `redact` field that scrubs its value in any payload that leaves the machine (e.g. bug reports). `getRedactedOverrides()` — on both `Config` and `StateService`, backed by `PersistedStore` — returns the non-default, non-deprecated values with each key's `redact` policy applied: `redact: true` replaces the whole value with `"<redacted>"`; `redact: (value, redacted) => …` returns a custom projection (the redaction token is passed in as the second arg), letting a key scrub only part of its value — e.g. `auto-workspaces` blanks just `workspacePath` and keeps the rest for diagnostics. A redactor must not throw; `getRedactedOverrides()` fails closed to the token if it does. `getEffective()` is **not** redacted — it's for local diagnostics only. posthog-module sends `getRedactedOverrides()` (config + state) on the bug-report event.
+**Redaction.** A key definition may carry a `redact` field that scrubs its value in any payload that leaves the machine (e.g. bug reports). `getRedactedOverrides()` — on both `Config` and `StateService`, backed by `PersistedStore` — returns the non-default, non-deprecated values with each key's `redact` policy applied: `redact: true` replaces the whole value with `"<redacted>"`; `redact: (value, redacted) => …` returns a custom projection (the redaction token is passed in as the second arg), letting a key scrub only part of its value — e.g. `auto-workspaces` blanks just `workspacePath` and keeps the rest for diagnostics. A redactor must not throw; `getRedactedOverrides()` fails closed to the token if it does. `getEffective()` is **not** redacted — it's for local diagnostics only. Telemetry flows through the `PostHogBoundary` sink (a pure sink — it never gates and never reads Config/State; the modules pass redacted overrides in): `telemetry-module` sends `config` overrides as person properties via `identify`, while `error-report-module` attaches `getRedactedOverrides()` (config + state) plus compressed logs to every `$exception` — both automatic crash reports and the manual bug report.
 
 ### Log Files
 

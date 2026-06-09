@@ -100,7 +100,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
  *
  * @example
  * const agentConfig = createMockAccessor<ConfigAgentType>("agent", "claude");
- * const module = createPosthogModule({ ...deps, agentConfig });
+ * const module = createTelemetryModule({ ...deps, agentConfig });
  */
 export function createMockAccessor<T>(
   name: string,
