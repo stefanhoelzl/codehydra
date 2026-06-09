@@ -169,8 +169,7 @@
    * timer. No-op for fields that did not opt in.
    */
   function scheduleChange(section: DialogSection): void {
-    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown")
-      return;
+    if (section.type !== "input" && section.type !== "radio" && section.type !== "dropdown") return;
     const debounce = changeDebounceMs(section);
     if (debounce === null) return;
     const fieldId = section.id;
