@@ -36,8 +36,12 @@ import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
 import type { ModeChangedPayload, ModeChangedEvent } from "../intents/set-mode";
 import { EVENT_MODE_CHANGED, INTENT_SET_MODE } from "../intents/set-mode";
 import type { SetModeIntent } from "../intents/set-mode";
-import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
-import { EVENT_WORKSPACE_CREATED, INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
+import type { WorkspaceCreatedEvent, WorkspaceCreateFailedEvent } from "../intents/open-workspace";
+import {
+  EVENT_WORKSPACE_CREATED,
+  EVENT_WORKSPACE_CREATE_FAILED,
+  INTENT_OPEN_WORKSPACE,
+} from "../intents/open-workspace";
 import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import type {
   WorkspaceDeletedEvent,
@@ -182,6 +186,16 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
           },
           ...(p.initialPrompt && { hasInitialPrompt: true }),
           ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
+        });
+      },
+    },
+    [EVENT_WORKSPACE_CREATE_FAILED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const p = (event as WorkspaceCreateFailedEvent).payload;
+        deps.viewManager.sendToUI(ApiIpcChannels.WORKSPACE_CREATE_FAILED, {
+          workspaceName: p.workspaceName,
+          projectPath: p.projectPath,
+          error: p.error,
         });
       },
     },

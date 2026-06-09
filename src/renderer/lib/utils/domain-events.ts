@@ -164,6 +164,16 @@ export function setupDomainEvents(
     })
   );
 
+  // Workspace create-failed event — delivery seam only.
+  // Task #11 (renderer create-bindings) will consume this to roll back the
+  // optimistic placeholder (resolve project by projectPath, remove the
+  // placeholder by workspaceName). Intentionally a no-op for now.
+  unsubscribes.push(
+    api.on("workspace:create-failed", () => {
+      /* #11: roll back optimistic placeholder */
+    })
+  );
+
   return () => {
     unsubscribes.forEach((unsub) => unsub());
   };
