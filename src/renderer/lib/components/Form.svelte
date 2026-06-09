@@ -2,14 +2,15 @@
   Form.svelte
 
   Generic declarative form/section renderer.
-  Renders a DialogConfig's sections + actions by type: text, progress, selection,
-  table, input. Actions are rendered as vscode-button elements in a footer row.
+  Renders a DialogConfig's sections + actions by type: text, progress, radio,
+  dropdown, table, input. Actions are rendered as vscode-button elements in a
+  footer row.
 
   Surface-agnostic: the wrapping surface (e.g. DialogView's modal card, or a
   future panel shell) provides the chrome and text alignment. Form only lays the
   sections out in a vertical flow.
 
-  Field sections (input/selection) support an optional `label` (rendered above
+  Field sections (input/radio) support an optional `label` (rendered above
   the control) and an optional `error` (red helper text below the control; the
   control is also marked invalid). `config.layout` switches the section layout:
   "centered" (default) is the centered stack; "form" is left-aligned labeled
@@ -40,24 +41,31 @@
   // fields out as left-aligned labeled rows with right-aligned actions.
   const layout = $derived(config.layout ?? "centered");
 
-  // Track all field values (selection + input) keyed by field id.
+  // Track all field values (radio + dropdown + input) keyed by field id.
   let fieldValues = $state<Record<string, string>>({});
 
   // Reconcile field values whenever the config changes: rebuild the map so it
   // mirrors the current field sections (dropping removed-field keys) while
   // preserving values for fields that remain.
-  // - selection: keep the existing choice if still a valid option, else the
-  //   first option.
+  // - radio: keep the existing choice if still a valid option id, else the
+  //   first option's id.
+  // - dropdown: keep the existing choice if still a valid option value, else
+  //   the first option's value.
   // - input: keep existing edits/seeded value; otherwise seed from initialValue
   //   on first sight (a later initialValue change does not re-seed).
   // Existing values are read via untrack to avoid a write -> retrigger loop.
   $effect(() => {
     const next: Record<string, string> = {};
     for (const section of config.sections) {
-      if (section.type === "selection") {
+      if (section.type === "radio") {
         const existing = untrack(() => fieldValues[section.id]);
         const stillValid = existing !== undefined && section.options.some((o) => o.id === existing);
         next[section.id] = stillValid ? existing : (section.options[0]?.id ?? "");
+      } else if (section.type === "dropdown") {
+        const existing = untrack(() => fieldValues[section.id]);
+        const stillValid =
+          existing !== undefined && section.options.some((o) => o.value === existing);
+        next[section.id] = stillValid ? existing : (section.options[0]?.value ?? "");
       } else if (section.type === "input") {
         const existing = untrack(() => fieldValues[section.id]);
         next[section.id] = existing ?? section.initialValue ?? "";
@@ -76,10 +84,10 @@
   /**
    * Effective debounce (ms) for a field's change-event opt-in, or null when the
    * field does not opt in. Default debounce per field type: input (continuous)
-   * 200ms, selection (discrete) 0ms (immediate).
+   * 200ms, radio (discrete) 0ms (immediate).
    */
   function changeDebounceMs(section: DialogSection): number | null {
-    if (section.type !== "input" && section.type !== "selection") return null;
+    if (section.type !== "input" && section.type !== "radio") return null;
     const cfg = section.changeEvent;
     if (!cfg) return null;
     const fallback = section.type === "input" ? 200 : 0;
@@ -87,10 +95,10 @@
     return cfg.debounceMs ?? fallback;
   }
 
-  /** Whether the dialog still has an input/selection field with this id. */
+  /** Whether the dialog still has an input/radio field with this id. */
   function hasField(fieldId: string): boolean {
     return config.sections.some(
-      (s) => (s.type === "input" || s.type === "selection") && s.id === fieldId
+      (s) => (s.type === "input" || s.type === "radio") && s.id === fieldId
     );
   }
 
@@ -113,7 +121,7 @@
    * timer. No-op for fields that did not opt in.
    */
   function scheduleChange(section: DialogSection): void {
-    if (section.type !== "input" && section.type !== "selection") return;
+    if (section.type !== "input" && section.type !== "radio") return;
     const debounce = changeDebounceMs(section);
     if (debounce === null) return;
     const fieldId = section.id;
@@ -203,11 +211,31 @@
   function getValues(): Record<string, string> {
     const values: Record<string, string> = {};
     for (const section of config.sections) {
-      if (section.type === "selection" || section.type === "input") {
+      if (section.type === "radio" || section.type === "dropdown" || section.type === "input") {
         values[section.id] = fieldValues[section.id] ?? "";
       }
     }
     return values;
+  }
+
+  /**
+   * Attach a direct `change` listener to a vscode-single-select.
+   * vscode-single-select's `change` event does not bubble, so Svelte's
+   * (delegated) onchange would never fire — we bind directly on the node.
+   */
+  function dropdownChange(
+    node: HTMLElement,
+    onChange: (value: string) => void
+  ): { destroy: () => void } {
+    const handler = (e: Event): void => {
+      onChange((e.target as HTMLSelectElement).value);
+    };
+    node.addEventListener("change", handler);
+    return {
+      destroy(): void {
+        node.removeEventListener("change", handler);
+      },
+    };
   }
 
   /** Handle action button click. */
@@ -348,13 +376,13 @@
           {/if}
         {/each}
       </div>
-    {:else if s.type === "selection"}
+    {:else if s.type === "radio"}
       <div class="form-field">
         {#if s.label}
           <vscode-label>{s.label}</vscode-label>
         {/if}
         <div
-          class="selection-cards"
+          class="radio-cards"
           class:errored={!!s.error}
           role="radiogroup"
           aria-label={s.label ?? "Selection"}
@@ -363,7 +391,7 @@
           {#each s.options as option, optionIndex (option.id)}
             <button
               type="button"
-              class="selection-card"
+              class="radio-card"
               class:selected={fieldValues[s.id] === option.id}
               role="radio"
               aria-checked={fieldValues[s.id] === option.id}
@@ -398,7 +426,7 @@
                   const targetId = opts[targetIndex]!.id;
                   fieldValues = { ...fieldValues, [s.id]: targetId };
                   scheduleChange(s);
-                  const container = e.currentTarget.closest(".selection-cards");
+                  const container = e.currentTarget.closest(".radio-cards");
                   setTimeout(() => {
                     const card = container?.querySelector(
                       `[data-option="${targetId}"]`
@@ -409,12 +437,12 @@
               }}
             >
               {#if option.icon}
-                <div class="selection-card-icon">
+                <div class="radio-card-icon">
                   <Icon name={option.icon} size={32} />
                 </div>
               {/if}
-              <span class="selection-card-title">{option.label}</span>
-              <div class="selection-card-indicator">
+              <span class="radio-card-title">{option.label}</span>
+              <div class="radio-card-indicator">
                 {#if fieldValues[s.id] === option.id}
                   <Icon name="circle-filled" size={16} />
                 {:else}
@@ -430,6 +458,19 @@
           </vscode-form-helper>
         {/if}
       </div>
+    {:else if s.type === "dropdown"}
+      <vscode-single-select
+        class="input-dropdown"
+        value={fieldValues[s.id] ?? ""}
+        aria-label="Select an option"
+        use:dropdownChange={(value) => {
+          fieldValues = { ...fieldValues, [s.id]: value };
+        }}
+      >
+        {#each s.options as option (option.value)}
+          <vscode-option value={option.value}>{option.label}</vscode-option>
+        {/each}
+      </vscode-single-select>
     {:else if s.type === "input"}
       <div class="form-field">
         {#if s.label}
@@ -717,21 +758,21 @@
     height: 16px;
   }
 
-  /* ---- Selection sections ---- */
+  /* ---- Radio sections ---- */
 
-  .selection-cards {
+  .radio-cards {
     display: flex;
     gap: 1rem;
     margin: 0.5rem 0;
   }
 
-  .selection-cards.errored {
+  .radio-cards.errored {
     outline: 1px solid var(--ch-danger, #f14c4c);
     outline-offset: 6px;
     border-radius: var(--ch-radius-md, 10px);
   }
 
-  .selection-card {
+  .radio-card {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -749,23 +790,23 @@
     font-family: inherit;
   }
 
-  .selection-card:hover {
+  .radio-card:hover {
     border-color: var(--ch-focus-border);
     background: var(--ch-accent-muted, var(--ch-list-hover-bg));
   }
 
-  .selection-card:focus {
+  .radio-card:focus {
     outline: none;
     border-color: var(--ch-focus-border);
     box-shadow: 0 0 0 1px var(--ch-focus-border);
   }
 
-  .selection-card.selected {
+  .radio-card.selected {
     border-color: var(--ch-focus-border);
     background: var(--ch-accent-muted, var(--ch-list-active-bg));
   }
 
-  .selection-card-icon {
+  .radio-card-icon {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -773,20 +814,26 @@
     height: 48px;
   }
 
-  .selection-card-title {
+  .radio-card-title {
     font-size: 1rem;
     font-weight: 500;
   }
 
-  .selection-card-indicator {
+  .radio-card-indicator {
     display: flex;
     align-items: center;
     opacity: 0.7;
   }
 
-  .selection-card.selected .selection-card-indicator {
+  .radio-card.selected .radio-card-indicator {
     opacity: 1;
     color: var(--ch-focus-border);
+  }
+
+  /* ---- Dropdown sections ---- */
+
+  .input-dropdown {
+    width: 100%;
   }
 
   /* ---- Table sections ---- */

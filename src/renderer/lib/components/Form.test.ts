@@ -1,7 +1,8 @@
 /**
  * Tests for Form component.
- * Tests rendering of text, progress, selection, table, and input sections,
- * badge parsing, action buttons, event payloads, and keyboard navigation.
+ * Tests rendering of text, progress, radio, dropdown, table, and input
+ * sections, badge parsing, action buttons, event payloads, and keyboard
+ * navigation.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -155,14 +156,14 @@ describe("Form component", () => {
     });
   });
 
-  // ---- Selection sections ----
+  // ---- Radio sections ----
 
-  describe("selection sections", () => {
-    it("renders selection cards with labels", () => {
+  describe("radio sections", () => {
+    it("renders radio cards with labels", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
@@ -182,7 +183,7 @@ describe("Form component", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
@@ -210,7 +211,7 @@ describe("Form component", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
@@ -232,6 +233,109 @@ describe("Form component", () => {
       await waitFor(() => {
         expect(radios[1]).toHaveAttribute("aria-checked", "true");
         expect(radios[0]).toHaveAttribute("aria-checked", "false");
+      });
+    });
+  });
+
+  // ---- Dropdown sections ----
+
+  describe("dropdown sections", () => {
+    const dropdownConfig: DialogConfig = {
+      sections: [
+        {
+          type: "dropdown",
+          id: "region",
+          options: [
+            { value: "us-east", label: "US East" },
+            { value: "us-west", label: "US West" },
+          ],
+        },
+      ],
+      actions: [{ id: "confirm", label: "Confirm" }],
+    };
+
+    it("renders a single-select with its option labels", () => {
+      renderForm(dropdownConfig);
+
+      const select = document.querySelector("vscode-single-select");
+      expect(select).toBeInTheDocument();
+
+      const options = document.querySelectorAll("vscode-option");
+      expect(options).toHaveLength(2);
+      expect(screen.getByText("US East")).toBeInTheDocument();
+      expect(screen.getByText("US West")).toBeInTheDocument();
+    });
+
+    it("defaults to the first option's value", async () => {
+      renderForm(dropdownConfig, { dialogId: "dd" });
+
+      await fireEvent.click(screen.getByText("Confirm"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dd",
+        actionId: "confirm",
+        data: { region: "us-east" },
+      });
+    });
+
+    // happy-dom does not wire vscode-single-select's slotted <vscode-option>s,
+    // so the component's own value resolution is inert here (it runs in real
+    // Electron). Stub the element's `value` to emulate a user picking an option,
+    // then dispatch the change our action listens for directly on the element.
+    function pickOption(select: Element, value: string): Promise<unknown> {
+      Object.defineProperty(select, "value", {
+        configurable: true,
+        get: () => value,
+        set: () => {},
+      });
+      return fireEvent.change(select);
+    }
+
+    it("reports the chosen option value after a change event", async () => {
+      renderForm(dropdownConfig, { dialogId: "dd" });
+
+      const select = document.querySelector("vscode-single-select")!;
+      await pickOption(select, "us-west");
+
+      await fireEvent.click(screen.getByText("Confirm"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dd",
+        actionId: "confirm",
+        data: { region: "us-west" },
+      });
+    });
+
+    it("keeps the selected value when the config updates with the same options", async () => {
+      const { rerender } = renderForm(dropdownConfig, { dialogId: "dd" });
+
+      const select = document.querySelector("vscode-single-select")!;
+      await pickOption(select, "us-west");
+
+      // Re-render with a new config object carrying the same option values.
+      await rerender({
+        dialogId: "dd",
+        config: {
+          sections: [
+            {
+              type: "dropdown",
+              id: "region",
+              options: [
+                { value: "us-east", label: "US East" },
+                { value: "us-west", label: "US West (renamed)" },
+              ],
+            },
+          ],
+          actions: [{ id: "confirm", label: "Confirm" }],
+        },
+      });
+
+      await fireEvent.click(screen.getByText("Confirm"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dd",
+        actionId: "confirm",
+        data: { region: "us-west" },
       });
     });
   });
@@ -356,7 +460,7 @@ describe("Form component", () => {
         sections: [
           { type: "text", content: "Pick one", style: "heading" },
           {
-            type: "selection",
+            type: "radio",
             id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
@@ -389,7 +493,7 @@ describe("Form component", () => {
         sections: [
           { type: "text", content: "Pick + note", style: "heading" },
           {
-            type: "selection",
+            type: "radio",
             id: "agent",
             options: [
               { id: "claude", label: "Claude" },
@@ -534,7 +638,7 @@ describe("Form component", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "agent",
             label: "Agent",
             options: [
@@ -597,7 +701,7 @@ describe("Form component", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "agent",
             error: "Pick an agent",
             options: [
@@ -675,7 +779,7 @@ describe("Form component", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "agent",
             options: [
               { id: "claude", label: "Claude" },
@@ -699,7 +803,7 @@ describe("Form component", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "agent",
             changeEvent: true,
             options: [
@@ -729,7 +833,7 @@ describe("Form component", () => {
         const config: DialogConfig = {
           sections: [
             {
-              type: "selection",
+              type: "radio",
               id: "agent",
               options: [
                 { id: "claude", label: "Claude" },
@@ -807,7 +911,7 @@ describe("Form component", () => {
       const config: DialogConfig = {
         sections: [
           {
-            type: "selection",
+            type: "radio",
             id: "agent",
             changeEvent: true,
             options: [
@@ -827,7 +931,7 @@ describe("Form component", () => {
         config: {
           sections: [
             {
-              type: "selection",
+              type: "radio",
               id: "agent",
               changeEvent: true,
               options: [

@@ -48,10 +48,10 @@ interface ProgressSection {
  * - absent / false: the field never emits change events (default — existing
  *   dialogs stay silent).
  * - true / {}: emit, using the field type's default debounce. A discrete field
- *   (selection) emits immediately (0ms); a continuous field (input) debounces
+ *   (radio) emits immediately (0ms); a continuous field (input) debounces
  *   200ms.
  * - { debounceMs }: emit with a custom debounce in ms (0 = immediate). Applies
- *   to any field type, so a selection can coalesce rapid keyboard navigation.
+ *   to any field type, so a radio can coalesce rapid keyboard navigation.
  */
 export type FieldChangeConfig = boolean | { readonly debounceMs?: number };
 
@@ -60,8 +60,8 @@ export type FieldChangeConfig = boolean | { readonly debounceMs?: number };
  * DialogUserEvent.data.
  *
  * - id: stable field id. The field's value is reported in DialogUserEvent.data
- *   keyed by this id. Must be unique among the field sections (input/selection)
- *   of a DialogConfig.
+ *   keyed by this id. Must be unique among the field sections
+ *   (input/radio/dropdown) of a DialogConfig.
  * - label: optional field label rendered above the control. Shown whenever
  *   present; the "form" layout (see DialogConfig.layout) lays fields out as
  *   left-aligned labeled rows.
@@ -76,16 +76,30 @@ interface FieldSection {
 }
 
 /**
- * Selection section - displays radio-group cards with icon + label.
+ * Radio section - displays radio-group cards with icon + label.
  * Extends FieldSection (id/label/error).
  *
- * - changeEvent: opt in to emit a field-change event when the selection
+ * - changeEvent: opt in to emit a field-change event when the radio selection
  *   changes (immediate by default; see FieldChangeConfig).
  */
-interface SelectionSection extends FieldSection {
-  readonly type: "selection";
-  readonly options: readonly SelectionOption[];
+interface RadioSection extends FieldSection {
+  readonly type: "radio";
+  readonly options: readonly RadioOption[];
   readonly changeEvent?: FieldChangeConfig;
+}
+
+/**
+ * Dropdown section - displays a compact single-value dropdown (a select).
+ *
+ * - id: stable field id. The chosen option's value is reported in
+ *   DialogUserEvent.data keyed by this id. Must be unique among the field
+ *   sections (input/radio/dropdown) of a DialogConfig.
+ * - Always starts on the first option, so it always reports a real value.
+ */
+interface DropdownSection {
+  readonly type: "dropdown";
+  readonly id: string;
+  readonly options: readonly DropdownOption[];
 }
 
 /**
@@ -127,7 +141,8 @@ interface InputSection extends FieldSection {
 export type DialogSection =
   | TextSection
   | ProgressSection
-  | SelectionSection
+  | RadioSection
+  | DropdownSection
   | TableSection
   | InputSection;
 
@@ -143,12 +158,19 @@ export interface ProgressItem {
   readonly message?: string;
 }
 
-// ---- Selection Options ----
+// ---- Radio Options ----
 
-export interface SelectionOption {
+export interface RadioOption {
   readonly id: string;
   readonly label: string;
   readonly icon?: string;
+}
+
+// ---- Dropdown Options ----
+
+export interface DropdownOption {
+  readonly value: string;
+  readonly label: string;
 }
 
 // ---- Table ----
@@ -205,7 +227,7 @@ export type DialogCommand =
 
 /**
  * `data` is a flat snapshot of the dialog's field values, keyed by each field's
- * stable id (input.id, selection.id, ...). Field ids must be unique within a
+ * stable id (input.id, radio.id, dropdown.id, ...). Field ids must be unique within a
  * DialogConfig. Every field is present; an empty/unset field reports "" (a
  * key being absent means the field is not part of this dialog). Values are
  * strings; widening the value type is a shared-type change.
