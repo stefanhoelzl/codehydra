@@ -17,12 +17,17 @@
     idleWorkspaceCount = 0,
   }: Props = $props();
 
-  const showNavigation = $derived(workspaceCount > 1);
-  const showJump = $derived(workspaceCount > 1);
+  // When there's no active workspace (e.g. the New workspace view is the
+  // current tab), any workspace is a valid navigation target — so the
+  // thresholds drop by one (1 workspace is enough for ↑↓/1-0/←→ to do
+  // something useful).
+  const minToNavigate = $derived(hasActiveWorkspace ? 2 : 1);
+  const showNavigation = $derived(workspaceCount >= minToNavigate);
+  const showJump = $derived(workspaceCount >= minToNavigate);
   // Always show "New" hint - Enter opens Create Workspace dialog even without projects
   const showNew = true;
   const showDelete = $derived(hasActiveWorkspace && !activeWorkspaceDeletionInProgress);
-  const showIdleNavigation = $derived(idleWorkspaceCount >= 2);
+  const showIdleNavigation = $derived(idleWorkspaceCount >= minToNavigate);
 </script>
 
 <!-- 

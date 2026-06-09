@@ -8,9 +8,6 @@ import type { ProjectId, WorkspaceName, WorkspaceRef } from "@shared/api/types";
 // Test project IDs
 const testProjectId = "test-project-12345678" as ProjectId;
 const activeProjectId = "active-project-87654321" as ProjectId;
-const firstProjectId = "first-project-11111111" as ProjectId;
-const secondProjectId = "second-project-22222222" as ProjectId;
-const explicitProjectId = "explicit-project-33333333" as ProjectId;
 
 // Helper to create WorkspaceRef
 function createWorkspaceRef(
@@ -48,7 +45,6 @@ vi.mock("./projects.svelte.js", () => ({
 // Import after mocks
 import {
   dialogState,
-  openCreateDialog,
   openRemoveDialog,
   openCloseProjectDialog,
   closeDialog,
@@ -72,84 +68,6 @@ describe("dialog state store", () => {
     });
   });
 
-  describe("openCreateDialog", () => {
-    it("sets type to 'create' with explicit projectId", () => {
-      openCreateDialog(testProjectId);
-
-      expect(dialogState.value).toEqual({
-        type: "create",
-        projectId: testProjectId,
-      });
-    });
-
-    it("uses provided defaultProjectId when specified", () => {
-      // Setup mocks to return different values
-      mockActiveWorkspace.mockReturnValue({
-        projectId: activeProjectId,
-        workspaceName: "ws1" as WorkspaceName,
-        path: "/active/project/.worktrees/ws1",
-      });
-      mockProjects.mockReturnValue([
-        { id: firstProjectId, path: "/first/project", name: "first" },
-        { id: secondProjectId, path: "/second/project", name: "second" },
-      ]);
-
-      // Open with explicit ID - should use that, not active or first
-      openCreateDialog(explicitProjectId);
-
-      expect(dialogState.value).toEqual({
-        type: "create",
-        projectId: explicitProjectId,
-      });
-    });
-
-    it("uses activeWorkspace projectId when no defaultProjectId provided", () => {
-      mockActiveWorkspace.mockReturnValue({
-        projectId: activeProjectId,
-        workspaceName: "ws1" as WorkspaceName,
-        path: "/active/project/.worktrees/ws1",
-      });
-      mockProjects.mockReturnValue([
-        { id: firstProjectId, path: "/first/project", name: "first" },
-        { id: secondProjectId, path: "/second/project", name: "second" },
-      ]);
-
-      // Open without ID - should use activeWorkspace's projectId
-      openCreateDialog();
-
-      expect(dialogState.value).toEqual({
-        type: "create",
-        projectId: activeProjectId,
-      });
-    });
-
-    it("uses first project ID when no active and no defaultProjectId", () => {
-      mockActiveWorkspace.mockReturnValue(null);
-      mockProjects.mockReturnValue([
-        { id: firstProjectId, path: "/first/project", name: "first" },
-        { id: secondProjectId, path: "/second/project", name: "second" },
-      ]);
-
-      // Open without ID and no active - should use first project
-      openCreateDialog();
-
-      expect(dialogState.value).toEqual({
-        type: "create",
-        projectId: firstProjectId,
-      });
-    });
-
-    it("opens without projectId when no projects available", () => {
-      mockActiveWorkspace.mockReturnValue(null);
-      mockProjects.mockReturnValue([]);
-
-      // Open with no projects - dialog opens with no projectId
-      openCreateDialog();
-
-      expect(dialogState.value).toEqual({ type: "create" });
-    });
-  });
-
   describe("openRemoveDialog", () => {
     it("sets type to 'remove' with workspaceRef", () => {
       const workspaceRef = createWorkspaceRef(testProjectId, "ws1", "/test/project/.worktrees/ws1");
@@ -164,7 +82,7 @@ describe("dialog state store", () => {
 
   describe("closeDialog", () => {
     it("sets type to 'closed'", () => {
-      openCreateDialog(testProjectId);
+      openCloseProjectDialog(testProjectId);
       closeDialog();
 
       expect(dialogState.value).toEqual({ type: "closed" });
@@ -206,38 +124,22 @@ describe("dialog state store", () => {
   });
 
   describe("opening new dialog closes previous (exclusive)", () => {
-    it("opening create dialog after remove closes remove", () => {
+    it("opening close-project dialog after remove closes remove", () => {
       const workspaceRef = createWorkspaceRef(testProjectId, "ws1", "/test/workspace");
       openRemoveDialog(workspaceRef);
       expect(dialogState.value.type).toBe("remove");
-
-      openCreateDialog(testProjectId);
-      expect(dialogState.value.type).toBe("create");
-    });
-
-    it("opening remove dialog after create closes create", () => {
-      openCreateDialog(testProjectId);
-      expect(dialogState.value.type).toBe("create");
-
-      const workspaceRef = createWorkspaceRef(testProjectId, "ws1", "/test/workspace");
-      openRemoveDialog(workspaceRef);
-      expect(dialogState.value.type).toBe("remove");
-    });
-
-    it("opening close-project dialog after create closes create", () => {
-      openCreateDialog(testProjectId);
-      expect(dialogState.value.type).toBe("create");
 
       openCloseProjectDialog(activeProjectId);
       expect(dialogState.value.type).toBe("close-project");
     });
 
-    it("opening create dialog after close-project closes close-project", () => {
-      openCloseProjectDialog(testProjectId);
+    it("opening remove dialog after close-project closes close-project", () => {
+      openCloseProjectDialog(activeProjectId);
       expect(dialogState.value.type).toBe("close-project");
 
-      openCreateDialog(activeProjectId);
-      expect(dialogState.value.type).toBe("create");
+      const workspaceRef = createWorkspaceRef(testProjectId, "ws1", "/test/workspace");
+      openRemoveDialog(workspaceRef);
+      expect(dialogState.value.type).toBe("remove");
     });
   });
 });

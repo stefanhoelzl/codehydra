@@ -4,13 +4,11 @@
  */
 
 import type { ProjectId, WorkspaceRef } from "@shared/api/types";
-import { activeWorkspace, projects } from "./projects.svelte.js";
 
 // ============ Types ============
 
 export type DialogState =
   | { type: "closed" }
-  | { type: "create"; projectId?: ProjectId }
   | { type: "remove"; workspaceRef: WorkspaceRef }
   | { type: "close-project"; projectId: ProjectId }
   | { type: "git-clone" };
@@ -28,21 +26,6 @@ export const dialogState = {
 };
 
 // ============ Actions ============
-
-/**
- * Open the create workspace dialog.
- * @param defaultProjectId - Optional ID of the project to create workspace in.
- *   Falls back to activeWorkspace's project, then first project.
- *   If no projects exist, opens dialog without a selected project.
- */
-export function openCreateDialog(defaultProjectId?: ProjectId): void {
-  const projectId = defaultProjectId ?? activeWorkspace.value?.projectId ?? projects.value[0]?.id;
-  if (projectId !== undefined) {
-    _dialogState = { type: "create", projectId };
-  } else {
-    _dialogState = { type: "create" };
-  }
-}
 
 /**
  * Open the remove workspace dialog.

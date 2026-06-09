@@ -24,6 +24,7 @@ import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
+import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import { AgentNotificationService } from "$lib/services/agent-notifications";
 
 // =============================================================================
@@ -105,6 +106,7 @@ describe("setupDomainEventBindings", () => {
     bootstrapStore.resetBootstrap();
     agentStatusStore.reset();
     dialogsStore.reset();
+    newWorkspaceViewStore.reset();
   });
 
   afterEach(() => {
@@ -136,7 +138,7 @@ describe("setupDomainEventBindings", () => {
       expect(projectsStore.projects.value).not.toContainEqual(TEST_PROJECT);
     });
 
-    it("auto-opens create dialog when project with no workspaces is opened after loading", () => {
+    it("auto-opens the New workspace view when project with no workspaces is opened after loading", () => {
       // Simulate post-startup state (loading complete)
       bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
 
@@ -144,13 +146,12 @@ describe("setupDomainEventBindings", () => {
 
       mockApi.emit("project:opened", { project: TEST_PROJECT });
 
-      expect(dialogsStore.dialogState.value).toEqual({
-        type: "create",
-        projectId: TEST_PROJECT_ID,
-      });
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
+      // The freshly opened project is selected in the view.
+      expect(newWorkspaceViewStore.newWorkspaceView.selectedProjectId).toBe(TEST_PROJECT_ID);
     });
 
-    it("does not auto-open create dialog during initial loading", () => {
+    it("does not auto-open the New workspace view during initial loading", () => {
       // bootstrap.initialized is false by default after reset
       expect(bootstrapStore.bootstrap.initialized).toBe(false);
 
@@ -158,11 +159,12 @@ describe("setupDomainEventBindings", () => {
 
       mockApi.emit("project:opened", { project: TEST_PROJECT });
 
-      // Dialog should NOT open during initial loading
-      expect(dialogsStore.dialogState.value).toEqual({ type: "closed" });
+      // View should NOT open during initial loading
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
 
-    it("does not open create dialog when project has workspaces", () => {
+    it("does not open the New workspace view when project has workspaces", () => {
+      bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
       setupDomainEventBindings(notificationService, mockApi.api);
 
       const projectWithWorkspaces: Project = {
@@ -171,18 +173,20 @@ describe("setupDomainEventBindings", () => {
       };
       mockApi.emit("project:opened", { project: projectWithWorkspaces });
 
-      expect(dialogsStore.dialogState.value).toEqual({ type: "closed" });
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
 
-    it("does not open create dialog when another dialog is already open", () => {
+    it("does not open the New workspace view when another dialog is already open", () => {
+      bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
       dialogsStore.openCloseProjectDialog(TEST_PROJECT_ID);
 
       setupDomainEventBindings(notificationService, mockApi.api);
 
       mockApi.emit("project:opened", { project: TEST_PROJECT });
 
-      // Should still show close-project dialog, not create
+      // Should still show close-project dialog; the New workspace view stays closed.
       expect(dialogsStore.dialogState.value.type).toBe("close-project");
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
   });
 
