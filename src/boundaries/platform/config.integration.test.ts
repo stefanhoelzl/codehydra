@@ -3,12 +3,12 @@
  * Integration tests for Config.
  *
  * Covers:
- * - register() / load() / get() / set() lifecycle
+ * - register() / load() / accessor get/set/reset lifecycle
  * - Precedence: CLI > env > file > computed defaults > static defaults
- * - Validation errors for unknown keys and invalid values
+ * - Lenient handling of unknown/deprecated/legacy keys across all sources
  * - Sync load from config.json via readFileSync
- * - Async set() persistence via FileSystemBoundary
- * - parseEnvVars / parseCliArgs standalone
+ * - Async accessor.set() persistence via FileSystemBoundary
+ * - parseEnvVars / parseCliArgs standalone tokenizers
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -269,7 +269,8 @@ describe("Config", () => {
       svc.load();
 
       expect(key.get()).toBe("kept");
-      expect(logger.warn).toHaveBeenCalledWith("Unknown config key in config.json (stripped)", {
+      expect(logger.warn).toHaveBeenCalledWith("Unknown config key (ignored)", {
+        source: "config.json",
         key: "unknown.key",
       });
       expect(writes).toHaveLength(1);
@@ -310,6 +311,42 @@ describe("Config", () => {
       svc.register("test.flag", boolDef("test.flag"));
 
       expect(() => svc.load()).toThrow(ConfigValidationError);
+    });
+
+    it("warns and ignores unknown env vars instead of crashing", () => {
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({
+        env: { CH_TEST__KEY: "kept", CH_UNKNOWN__OLD: "leftover" },
+        logger,
+      });
+      const key = svc.register("test.key", stringDef("test.key", "fallback"));
+
+      expect(() => svc.load()).not.toThrow();
+      expect(key.get()).toBe("kept");
+      expect(logger.warn).toHaveBeenCalledWith("Unknown config key (ignored)", {
+        source: "env var",
+        key: "unknown.old",
+      });
+    });
+
+    it("warns and ignores unknown CLI flags instead of crashing", () => {
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({ argv: ["--test.key=cli", "--inspect=9229"], logger });
+      const key = svc.register("test.key", stringDef("test.key"));
+
+      expect(() => svc.load()).not.toThrow();
+      expect(key.get()).toBe("cli");
+      expect(logger.warn).toHaveBeenCalledWith("Unknown config key (ignored)", {
+        source: "CLI flag",
+        key: "inspect",
+      });
+    });
+
+    it("ignores a deprecated key set via env var (no crash)", () => {
+      const svc = createService({ env: { CH_TEST__OLD: "ignored" } });
+      svc.register("test.old", { ...stringDef("test.old", "default"), deprecated: true });
+
+      expect(() => svc.load()).not.toThrow();
     });
 
     it("throws on duplicate register()", () => {
@@ -642,7 +679,7 @@ describe("Config", () => {
       expect(writes).toHaveLength(0);
     });
 
-    it("new key wins on conflict; legacy ignored with warn", () => {
+    it("new key wins on conflict in config.json; legacy ignored with warn", () => {
       const logger = { ...SILENT_LOGGER, warn: vi.fn() };
       const svc = createService({
         fileEntries: {
@@ -657,10 +694,11 @@ describe("Config", () => {
       svc.load();
 
       expect(newKey.get()).toBe("explicit");
-      expect(logger.warn).toHaveBeenCalledWith(
-        "Legacy config key shadowed by new key (legacy ignored)",
-        { legacy: "legacy.old-name", newKey: "test.new" }
-      );
+      expect(logger.warn).toHaveBeenCalledWith("Legacy config key shadowed by new key (ignored)", {
+        source: "config.json",
+        legacy: "legacy.old-name",
+        newKey: "test.new",
+      });
     });
 
     it("falls back to default when translator returns undefined", () => {
@@ -678,17 +716,47 @@ describe("Config", () => {
       expect(newKey.get()).toBe("default");
       expect(logger.warn).toHaveBeenCalledWith(
         "Legacy config key could not be translated (using default)",
-        { legacy: "legacy.old-name", newKey: "test.new", value: "42" }
+        { source: "config.json", legacy: "legacy.old-name", newKey: "test.new", value: "42" }
       );
     });
 
-    it("env vars and CLI flags do not honor legacy names", () => {
+    it("honors a legacy name via env var with pure-rename (new key's parse, not the translator)", () => {
       const svc = createService({
         env: { CH_LEGACY__OLD_NAME: "raw" },
       });
-      svc.register("test.new", defWithLegacy("test.new"));
+      const newKey = svc.register("test.new", defWithLegacy("test.new"));
 
-      expect(() => svc.load()).toThrow(ConfigValidationError);
+      // Pure-rename runs the raw string through the new key's parse(), so the value
+      // is "raw" — NOT "migrated:raw" (the translator only applies to typed config.json).
+      expect(() => svc.load()).not.toThrow();
+      expect(newKey.get()).toBe("raw");
+    });
+
+    it("honors a legacy name via CLI flag with pure-rename", () => {
+      const svc = createService({
+        argv: ["--legacy.old-name=raw"],
+      });
+      const newKey = svc.register("test.new", defWithLegacy("test.new"));
+
+      expect(() => svc.load()).not.toThrow();
+      expect(newKey.get()).toBe("raw");
+    });
+
+    it("new key wins over legacy via env var (legacy shadowed)", () => {
+      const logger = { ...SILENT_LOGGER, warn: vi.fn() };
+      const svc = createService({
+        env: { CH_LEGACY__OLD_NAME: "raw", CH_TEST__NEW: "explicit" },
+        logger,
+      });
+      const newKey = svc.register("test.new", defWithLegacy("test.new"));
+      svc.load();
+
+      expect(newKey.get()).toBe("explicit");
+      expect(logger.warn).toHaveBeenCalledWith("Legacy config key shadowed by new key (ignored)", {
+        source: "env var",
+        legacy: "legacy.old-name",
+        newKey: "test.new",
+      });
     });
 
     it("warns at register() on legacy-name collision (last writer wins)", () => {
@@ -761,59 +829,45 @@ describe("Config", () => {
 });
 
 // =============================================================================
-// Standalone parser tests (moved from config-module tests)
+// Standalone tokenizer tests
 // =============================================================================
 
 describe("parseEnvVars", () => {
-  const definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>> = new Map([
-    ["test.key", stringDef("test.key")],
-    ["test.flag", boolDef("test.flag")],
-    ["test.dev-option", stringDef("test.dev-option")],
-  ]);
-
-  it("parses CH_* env vars to config keys", () => {
-    const result = parseEnvVars({ CH_TEST__KEY: "hello", CH_TEST__FLAG: "true" }, definitions);
-    expect(result).toEqual({ "test.key": "hello", "test.flag": true });
+  it("extracts CH_* env vars as raw string values keyed by config key", () => {
+    const result = parseEnvVars({ CH_TEST__KEY: "hello", CH_TEST__FLAG: "true" });
+    expect(result).toEqual({ "test.key": "hello", "test.flag": "true" });
   });
 
   it("skips _CH_ prefixed vars", () => {
-    const result = parseEnvVars({ _CH_TEST__KEY: "skip" }, definitions);
+    const result = parseEnvVars({ _CH_TEST__KEY: "skip" });
     expect(result).toEqual({});
   });
 
   it("handles kebab-case conversion (underscore → hyphen)", () => {
-    const result = parseEnvVars({ CH_TEST__DEV_OPTION: "value" }, definitions);
+    const result = parseEnvVars({ CH_TEST__DEV_OPTION: "value" });
     expect(result).toEqual({ "test.dev-option": "value" });
+  });
+
+  it("collects unknown CH_* keys as raw values (classification happens later)", () => {
+    const result = parseEnvVars({ CH_UNKNOWN__KEY: "leftover" });
+    expect(result).toEqual({ "unknown.key": "leftover" });
   });
 });
 
 describe("parseCliArgs", () => {
-  const definitions: ReadonlyMap<string, ConfigKeyDefinition<unknown>> = new Map([
-    ["test.key", stringDef("test.key")],
-    ["test.flag", boolDef("test.flag")],
-  ]);
-
-  it("parses --key=value format", () => {
-    const result = parseCliArgs(["--test.key=hello"], definitions, SILENT_LOGGER);
-    expect(result).toEqual({ "test.key": "hello" });
+  it("tokenizes --key=value format", () => {
+    expect(parseCliArgs(["--test.key=hello"])).toEqual({ "test.key": "hello" });
   });
 
-  it("parses --key value format", () => {
-    const result = parseCliArgs(["--test.key", "hello"], definitions, SILENT_LOGGER);
-    expect(result).toEqual({ "test.key": "hello" });
+  it("tokenizes --key value format", () => {
+    expect(parseCliArgs(["--test.key", "hello"])).toEqual({ "test.key": "hello" });
   });
 
-  it("treats bare --flag as true", () => {
-    const result = parseCliArgs(["--test.flag"], definitions, SILENT_LOGGER);
-    expect(result).toEqual({ "test.flag": true });
+  it("treats bare --flag as 'true'", () => {
+    expect(parseCliArgs(["--test.flag"])).toEqual({ "test.flag": "true" });
   });
 
-  it("skips unknown flags with warning", () => {
-    const logger = { ...SILENT_LOGGER, warn: vi.fn() };
-    const result = parseCliArgs(["--unknown-flag=val"], definitions, logger);
-    expect(result).toEqual({});
-    expect(logger.warn).toHaveBeenCalledWith("Unknown CLI flag (ignored)", {
-      flag: "unknown-flag",
-    });
+  it("tokenizes unknown flags too (classification happens later)", () => {
+    expect(parseCliArgs(["--unknown-flag=val"])).toEqual({ "unknown-flag": "val" });
   });
 });
