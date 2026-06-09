@@ -102,7 +102,7 @@ import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
-import * as deletionStore from "$lib/stores/deletion.svelte.js";
+import * as lifecycleStore from "$lib/stores/workspace-lifecycle.svelte.js";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import type { DeletionProgress } from "@shared/api/types";
 
@@ -116,7 +116,7 @@ describe("MainView component", () => {
     newWorkspaceViewStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
-    deletionStore.reset();
+    lifecycleStore.reset();
     dialogFrameworkStore.reset();
     // Clear event callbacks between tests
     clearEventCallbacks();
@@ -971,7 +971,7 @@ describe("MainView component", () => {
       callback!(createDeletionProgress("/test/.worktrees/feature"));
 
       // Verify deletion state is set
-      expect(deletionStore.getDeletionStatus("/test/.worktrees/feature")).not.toBe("none");
+      expect(lifecycleStore.getLifecycle("/test/.worktrees/feature")).not.toBe("none");
 
       // Simulate successful completion
       callback!(
@@ -986,7 +986,7 @@ describe("MainView component", () => {
       );
 
       // Deletion state should be cleared
-      expect(deletionStore.getDeletionStatus("/test/.worktrees/feature")).toBe("none");
+      expect(lifecycleStore.getLifecycle("/test/.worktrees/feature")).toBe("none");
     });
 
     it("does not clear deletion state on completion with errors", async () => {
@@ -1015,7 +1015,7 @@ describe("MainView component", () => {
       );
 
       // Deletion state should NOT be cleared (user needs to see error and retry/close anyway)
-      expect(deletionStore.getDeletionStatus("/test/.worktrees/feature")).toBe("error");
+      expect(lifecycleStore.getLifecycle("/test/.worktrees/feature")).toBe("delete-failed");
     });
 
     // NOTE: "calls workspaces.remove on retry" and "calls remove with force and clears state

@@ -6,7 +6,7 @@
  * @returns Cleanup function to unsubscribe
  */
 import type { DeletionProgress } from "@shared/api/types";
-import { setDeletionState, clearDeletion } from "$lib/stores/deletion.svelte.js";
+import { setDeletionProgress, clearLifecycle } from "$lib/stores/workspace-lifecycle.svelte.js";
 import { on as apiOn } from "$lib/api";
 
 /**
@@ -32,10 +32,10 @@ const defaultApi: DeletionProgressApi = { on: apiOn };
  */
 export function setupDeletionProgress(apiImpl: DeletionProgressApi = defaultApi): () => void {
   return apiImpl.on("workspace:deletion-progress", (progress) => {
-    setDeletionState(progress);
+    setDeletionProgress(progress);
     // Auto-clear on successful completion
     if (progress.completed && !progress.hasErrors) {
-      clearDeletion(progress.workspacePath);
+      clearLifecycle(progress.workspacePath);
     }
   });
 }

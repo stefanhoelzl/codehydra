@@ -92,13 +92,13 @@ vi.mock("./new-workspace-view.svelte", () => mockNewWorkspaceView);
 // Mock the projects store
 vi.mock("./projects.svelte", () => mockProjectsStore);
 
-// Create mock deletion store with vi.hoisted
-const mockDeletionStore = vi.hoisted(() => ({
-  getDeletionStatus: vi.fn(() => "none" as "none" | "in-progress" | "error"),
+// Create mock workspace lifecycle store with vi.hoisted
+const mockLifecycleStore = vi.hoisted(() => ({
+  getLifecycle: vi.fn(() => "none" as "none" | "creating" | "deleting" | "delete-failed"),
 }));
 
-// Mock the deletion store
-vi.mock("./deletion.svelte", () => mockDeletionStore);
+// Mock the workspace lifecycle store
+vi.mock("./workspace-lifecycle.svelte", () => mockLifecycleStore);
 
 // AgentStatus type for mock return values
 type AgentStatus =
@@ -143,8 +143,8 @@ describe("shortcuts store", () => {
     mockDialogState.dialogState.value = { type: "closed" };
     // Reset New workspace view to closed
     mockNewWorkspaceView.newWorkspaceView.isOpen = false;
-    // Reset deletion status to "none"
-    mockDeletionStore.getDeletionStatus.mockReturnValue("none");
+    // Reset lifecycle status to "none"
+    mockLifecycleStore.getLifecycle.mockReturnValue("none");
   });
 
   describe("initial state", () => {
@@ -935,8 +935,8 @@ describe("shortcuts store", () => {
           path: "/workspace",
         };
         mockProjectsStore.activeWorkspace.value = workspaceRef;
-        // Mock getDeletionStatus to return "in-progress"
-        mockDeletionStore.getDeletionStatus.mockReturnValue("in-progress");
+        // Mock getLifecycle to return "deleting"
+        mockLifecycleStore.getLifecycle.mockReturnValue("deleting");
 
         enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
@@ -947,6 +947,39 @@ describe("shortcuts store", () => {
         expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
         // Shortcut mode should still be active (no action taken)
         expect(shortcutModeActive.value).toBe(true);
+      });
+
+      it("should-not-open-remove-dialog-while-workspace-is-creating", () => {
+        const workspaceRef = {
+          projectId: "project-12345678",
+          workspaceName: "feature",
+          path: "__pending__//project/feature",
+        };
+        mockProjectsStore.activeWorkspace.value = workspaceRef;
+        mockLifecycleStore.getLifecycle.mockReturnValue("creating");
+
+        enableShortcutMode();
+        handleShortcutKey("delete");
+
+        // Dialog should NOT be opened for an optimistic creating placeholder
+        expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
+        expect(shortcutModeActive.value).toBe(true);
+      });
+
+      it("should-open-remove-dialog-when-previous-deletion-failed", () => {
+        const workspaceRef = {
+          projectId: "project-12345678",
+          workspaceName: "feature",
+          path: "/workspace",
+        };
+        mockProjectsStore.activeWorkspace.value = workspaceRef;
+        mockLifecycleStore.getLifecycle.mockReturnValue("delete-failed");
+
+        enableShortcutMode();
+        handleShortcutKey("delete");
+
+        // Retry must stay possible after a failed deletion
+        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith(workspaceRef);
       });
 
       it("should-deactivate-shortcut-mode-before-opening-dialog", () => {

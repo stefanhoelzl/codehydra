@@ -23,10 +23,10 @@ import { dialogState } from "$lib/stores/dialogs.svelte.js";
 import { newWorkspaceView, openNewWorkspaceView } from "$lib/stores/new-workspace-view.svelte.js";
 import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
 import {
-  findPendingByName,
-  removePending,
-  isPending,
-} from "$lib/stores/pending-workspaces.svelte.js";
+  findCreatingByName,
+  clearLifecycle,
+  getLifecycle,
+} from "$lib/stores/workspace-lifecycle.svelte.js";
 import { setupDomainEvents, type DomainEventApi } from "$lib/utils/domain-events";
 import { createLogger } from "$lib/logging";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
@@ -79,10 +79,10 @@ export function setupDomainEventBindings(
         const project = projects.value.find((p) => p.id === projectId);
         if (project) {
           // Replace pending placeholder if one exists for this workspace
-          const pendingPath = findPendingByName(project.path, workspace.name);
+          const pendingPath = findCreatingByName(project.path, workspace.name);
           if (pendingPath) {
             removeWorkspace(project.path, pendingPath);
-            removePending(pendingPath);
+            clearLifecycle(pendingPath);
           }
           addWorkspace(project.path, workspace);
           logger.debug("Store updated", { store: "projects" });
@@ -98,8 +98,8 @@ export function setupDomainEventBindings(
       setActiveWorkspace: (ref) => {
         // Clean up pending placeholder if switching away from it
         const currentPath = activeWorkspacePath.value;
-        if (currentPath && isPending(currentPath) && ref?.path !== currentPath) {
-          removePending(currentPath);
+        if (currentPath && getLifecycle(currentPath) === "creating" && ref?.path !== currentPath) {
+          clearLifecycle(currentPath);
           // Find and remove the placeholder from the project
           for (const project of projects.value) {
             if (project.workspaces.some((w) => w.path === currentPath)) {

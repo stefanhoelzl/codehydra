@@ -17,7 +17,7 @@ import {
   closeNewWorkspaceView,
   requestSubmit,
 } from "./new-workspace-view.svelte";
-import { getDeletionStatus } from "./deletion.svelte";
+import { getLifecycle } from "./workspace-lifecycle.svelte";
 import {
   getAllWorkspaces,
   getWorkspaceRefByIndex,
@@ -370,8 +370,10 @@ function handleDialog(key: DialogKey): void {
     // workspace, so there's nothing to remove from there.
     const workspaceRef = activeWorkspace.value;
     if (!workspaceRef) return;
-    // Skip if deletion already in progress for this workspace
-    if (getDeletionStatus(workspaceRef.path) === "in-progress") return;
+    // Skip if the workspace is still creating or already being deleted
+    // (delete-failed stays allowed so the user can retry).
+    const lifecycle = getLifecycle(workspaceRef.path);
+    if (lifecycle === "creating" || lifecycle === "deleting") return;
     setModeFromMain("workspace");
     openRemoveDialog(workspaceRef);
   }

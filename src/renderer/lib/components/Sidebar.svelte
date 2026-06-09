@@ -8,8 +8,7 @@
   import NotificationStack from "./NotificationStack.svelte";
   import { extractTags } from "@shared/api/types";
   import { getCounts } from "$lib/stores/agent-status.svelte.js";
-  import { getDeletionStatus } from "$lib/stores/deletion.svelte.js";
-  import { isPending } from "$lib/stores/pending-workspaces.svelte.js";
+  import { getLifecycle } from "$lib/stores/workspace-lifecycle.svelte.js";
   import {
     desiredMode,
     hoverExpansionEligible,
@@ -248,7 +247,7 @@
               {@const agentCounts = getCounts(workspace.path)}
               {@const statusText = getStatusText(agentCounts.idle, agentCounts.busy)}
               {@const isActive = workspace.path === activeWorkspacePath}
-              {@const deletionStatus = getDeletionStatus(workspace.path)}
+              {@const lifecycle = getLifecycle(workspace.path)}
               {@const workspaceRef = {
                 projectId: project.id,
                 workspaceName: workspace.name as WorkspaceName,
@@ -257,7 +256,6 @@
               {@const hasTags = workspace.metadata
                 ? extractTags(workspace.metadata).length > 0
                 : false}
-              {@const pending = isPending(workspace.path)}
               {@const hibernated = workspace.metadata?.["hibernated"] === "true"}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
               <li
@@ -267,7 +265,7 @@
                 class:hibernated
                 aria-current={isActive ? "true" : undefined}
                 onclick={() => {
-                  if (!pending) onSwitchWorkspace(workspaceRef);
+                  if (lifecycle !== "creating") onSwitchWorkspace(workspaceRef);
                 }}
               >
                 <div class="workspace-row">
@@ -288,7 +286,7 @@
                       {/if}
                       {workspace.name}
                     </button>
-                    {#if !pending && deletionStatus === "none"}
+                    {#if lifecycle === "none"}
                       <button
                         type="button"
                         class="action-btn remove-btn"
@@ -310,18 +308,18 @@
                   <button
                     type="button"
                     class="ch-icon-cell status-cell"
-                    aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
+                    aria-label={`${workspace.name} in ${project.name} - ${lifecycle === "creating" ? "Creating" : lifecycle === "deleting" ? "Deleting" : lifecycle === "delete-failed" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
                     aria-current={isActive ? "true" : undefined}
                     onclick={() => {
                       if (hibernated) handleWakeWorkspace(workspace.path);
                     }}
                   >
-                    {#if pending}
+                    {#if lifecycle === "creating"}
                       <!-- Creating: show red "busy" immediately (work is queued) -->
                       <AgentStatusIndicator idleCount={0} busyCount={1} />
-                    {:else if deletionStatus === "in-progress"}
+                    {:else if lifecycle === "deleting"}
                       <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
-                    {:else if deletionStatus === "error"}
+                    {:else if lifecycle === "delete-failed"}
                       <span class="deletion-error" role="img" aria-label="Deletion failed">
                         <Icon name="warning" size={14} />
                       </span>
