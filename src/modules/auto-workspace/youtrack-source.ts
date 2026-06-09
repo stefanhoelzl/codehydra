@@ -25,13 +25,13 @@ export function createYouTrackSource(deps: YouTrackSourceDeps): AutoWorkspaceSou
   const baseUrlConfig = deps.configService.register("experimental.youtrack.base-url", {
     default: null,
     description: "YouTrack instance URL (e.g. https://youtrack.example.com)",
-    sensitive: true,
+    redact: true,
     ...storeString({ nullable: true }),
   });
   const tokenConfig = deps.configService.register("experimental.youtrack.token", {
     default: null,
     description: "YouTrack API permanent token",
-    sensitive: true,
+    redact: true,
     ...storeString({ nullable: true }),
   });
   const queryConfig = deps.configService.register("experimental.youtrack.query", {

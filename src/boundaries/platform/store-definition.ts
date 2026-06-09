@@ -40,8 +40,14 @@ export interface PersistedKeyDefinition<T> {
   readonly description?: string;
   /** Valid values hint for help text (e.g. "true|false", "claude|opencode"). */
   readonly validValues?: string;
-  /** When true, the value is redacted in contexts like bug reports. */
-  readonly sensitive?: boolean;
+  /**
+   * Controls redaction in contexts like bug reports (see getRedactedOverrides).
+   * `true` replaces the whole value with the redaction token. A function
+   * receives the effective value plus the redaction token and returns a custom
+   * projection (e.g. scrub one field, keep the rest) — it must not throw;
+   * getRedactedOverrides falls back to the token if it does.
+   */
+  readonly redact?: true | ((value: T, redacted: string) => unknown);
   /**
    * When true, the key is recognized and loaded read-only: its on-disk value is
    * preserved (so a downgrade doesn't lose it) and readable via get(), but set()

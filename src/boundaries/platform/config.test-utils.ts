@@ -15,7 +15,7 @@ export interface CreateMockConfigOptions {
    */
   defaults?: Record<string, unknown> | undefined;
   /**
-   * Snapshot returned by getOverrides(). Independent of `defaults`
+   * Snapshot returned by getRedactedOverrides(). Independent of `defaults`
    * because overrides are computed against registered definitions
    * the mock doesn't track.
    */
@@ -88,7 +88,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
     getDefinitions: () => new Map(),
     getEffective: () => Object.fromEntries(store),
     getDefaults: () => ({}),
-    getOverrides: () => ({ ...overrides }),
+    getRedactedOverrides: () => ({ ...overrides }),
     getHelpText: () => "",
   };
 }

@@ -94,6 +94,7 @@ function createTestSetup(overrides?: {
   workspacePayload?: WorkspaceCreatedPayload;
   configValues?: Record<string, unknown>;
   configOverrides?: Record<string, unknown>;
+  stateOverrides?: Record<string, unknown>;
 }): TestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
@@ -110,6 +111,7 @@ function createTestSetup(overrides?: {
   // telemetry.distinct-id now lives in state.json (StateService), not config.
   const mockState = createMockState({
     values: { "telemetry.distinct-id": overrides?.configValues?.["telemetry.distinct-id"] ?? null },
+    ...(overrides?.stateOverrides !== undefined && { overrides: overrides.stateOverrides }),
   });
 
   const dispatcher = createMockDispatcher();
@@ -807,6 +809,27 @@ describe("PosthogModule Integration", () => {
       const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
       const props = captured!.properties as Record<string, unknown>;
       expect(props["config"]).toEqual({ agent: "claude", "log.level": "debug" });
+    });
+
+    it("includes redacted state snapshot on the bug_report event", async () => {
+      const { dispatcher, getMock } = createTestSetup({
+        configValues: { "telemetry.enabled": true, "telemetry.distinct-id": "test-id" },
+        stateOverrides: {
+          "telemetry.distinct-id": "<redacted>",
+          "auto-workspaces": { "github/1": { workspacePath: "<redacted>", workspaceName: "pr-1" } },
+        },
+      });
+
+      await dispatcher.dispatch(startIntent());
+      await dispatcher.dispatch(submitBugReportIntent("issue", "logs"));
+
+      const mock = getMock()!;
+      const captured = mock.$.capturedEvents.find((e) => e.event === "$exception");
+      const props = captured!.properties as Record<string, unknown>;
+      expect(props["state"]).toEqual({
+        "telemetry.distinct-id": "<redacted>",
+        "auto-workspaces": { "github/1": { workspacePath: "<redacted>", workspaceName: "pr-1" } },
+      });
     });
 
     it("includes config snapshot on bug_report even when telemetry is disabled", async () => {

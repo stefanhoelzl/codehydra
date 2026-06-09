@@ -43,6 +43,13 @@ export interface PersistedStoreDeps {
 }
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/** Token substituted for redacted values in getRedactedOverrides(). */
+const REDACTED = "<redacted>";
+
+// =============================================================================
 // Defaults / Equality Helpers
 // =============================================================================
 
@@ -353,13 +360,33 @@ export class PersistedStore {
     return this.defaults;
   }
 
-  getOverrides(): Record<string, unknown> {
+  getRedactedOverrides(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [key, def] of this.definitions) {
       if (def.deprecated) continue;
       if (overrideEquals(this.effective[key], this.defaults[key])) continue;
-      out[key] = def.sensitive === true ? "<redacted>" : this.effective[key];
+      out[key] = this.redactValue(def, this.effective[key]);
     }
     return out;
+  }
+
+  /**
+   * Apply a definition's redaction policy to an effective value. `redact: true`
+   * fully redacts; a redactor function gets the value plus the token and returns
+   * a projection — if it throws, we fail closed to the token rather than leak
+   * the raw value (this output feeds user-submitted bug reports). No `redact`
+   * declared → the value passes through unchanged.
+   */
+  private redactValue(def: PersistedKeyDefinition<unknown>, value: unknown): unknown {
+    if (def.redact === undefined) return value;
+    if (def.redact === true) return REDACTED;
+    try {
+      return def.redact(value, REDACTED);
+    } catch (error) {
+      this.deps.logger.debug("redact() threw; falling back to redaction token", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return REDACTED;
+    }
   }
 }

@@ -155,13 +155,13 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
   const telemetryDistinctIdState = deps.stateService.register("telemetry.distinct-id", {
     default: null,
     description: "Telemetry user ID (auto-generated)",
-    sensitive: true,
+    redact: true,
     ...storeString({ nullable: true }),
   });
   const telemetryDistinctIdLegacy = deps.configService.register("telemetry.distinct-id", {
     default: null,
     description: "Deprecated: telemetry user ID (migrated to state.json)",
-    sensitive: true,
+    redact: true,
     deprecated: true,
     ...storeString({ nullable: true }),
   });
@@ -303,7 +303,8 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
       electron_logs_format: electronLogsBlob.compressed ? "gzip+base64" : "none",
       electron_logs_raw_bytes: electronLogsBlob.rawBytesKept,
       electron_logs_raw_bytes_dropped: electronLogs.length - electronLogsBlob.rawBytesKept,
-      config: deps.configService.getOverrides(),
+      config: deps.configService.getRedactedOverrides(),
+      state: deps.stateService.getRedactedOverrides(),
       ...eventProperties(),
       version: deps.buildInfo.version,
     });
@@ -391,7 +392,7 @@ export function createPosthogModule(deps: PosthogModuleDeps): IntentModule {
             if (enabled && client && distinctId) {
               client.identify({
                 distinctId,
-                properties: { config: deps.configService.getOverrides() },
+                properties: { config: deps.configService.getRedactedOverrides() },
               });
             }
           },
