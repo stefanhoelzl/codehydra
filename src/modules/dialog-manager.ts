@@ -6,7 +6,13 @@
  * and awaiting user interactions.
  */
 
-import type { DialogConfig, DialogCommand, DialogUserEvent } from "../shared/dialog-types";
+import type {
+  DialogConfig,
+  DialogCommand,
+  DialogUserEvent,
+  DialogActionEvent,
+  DialogFieldChangeEvent,
+} from "../shared/dialog-types";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { Logger } from "../boundaries/platform/logging";
 
@@ -19,10 +25,16 @@ export interface DialogHandle {
   update(config: DialogConfig): void;
   /** Close dialog from backend. */
   close(): void;
-  /** Subscribe to user events. Returns unsubscribe function. */
-  onEvent(handler: (event: DialogUserEvent) => void): () => void;
-  /** Await next user event (for sequential hook flows). Rejects on timeout if specified. */
-  nextEvent(timeoutMs?: number): Promise<DialogUserEvent>;
+  /** Subscribe to action (submit) events. Returns unsubscribe function. */
+  onEvent(handler: (event: DialogActionEvent) => void): () => void;
+  /**
+   * Subscribe to field-change events emitted before submit by fields that opt
+   * in via `changeEvent`. Use this to react (validation, dependent options) and
+   * push handle.update(). Returns unsubscribe function.
+   */
+  onChange(handler: (event: DialogFieldChangeEvent) => void): () => void;
+  /** Await next action event (for sequential hook flows). Rejects on timeout if specified. */
+  nextEvent(timeoutMs?: number): Promise<DialogActionEvent>;
   /** Promise that resolves when the dialog closes. */
   readonly closed: Promise<void>;
 }
@@ -70,7 +82,9 @@ export class DialogManager {
     } else {
       this.logger?.debug("Dialog event for unknown dialog", {
         dialogId: event.dialogId,
-        actionId: event.actionId,
+        ...(event.kind === "change"
+          ? { kind: "change", fieldId: event.fieldId }
+          : { kind: "action", actionId: event.actionId }),
       });
     }
   }
@@ -85,7 +99,8 @@ class DialogHandleImpl implements DialogHandle {
 
   private readonly sendToUI: SendToUI;
   private readonly onRemove: () => void;
-  private readonly listeners = new Set<(event: DialogUserEvent) => void>();
+  private readonly actionListeners = new Set<(event: DialogActionEvent) => void>();
+  private readonly changeListeners = new Set<(event: DialogFieldChangeEvent) => void>();
   private resolveClosed!: () => void;
   private isClosed = false;
 
@@ -110,19 +125,27 @@ class DialogHandleImpl implements DialogHandle {
     const command: DialogCommand = { action: "close", dialogId: this.id };
     this.sendToUI(ApiIpcChannels.DIALOG_COMMAND, command);
     this.resolveClosed();
-    this.listeners.clear();
+    this.actionListeners.clear();
+    this.changeListeners.clear();
     this.onRemove();
   }
 
-  onEvent(handler: (event: DialogUserEvent) => void): () => void {
-    this.listeners.add(handler);
+  onEvent(handler: (event: DialogActionEvent) => void): () => void {
+    this.actionListeners.add(handler);
     return () => {
-      this.listeners.delete(handler);
+      this.actionListeners.delete(handler);
     };
   }
 
-  nextEvent(timeoutMs?: number): Promise<DialogUserEvent> {
-    const eventPromise = new Promise<DialogUserEvent>((resolve) => {
+  onChange(handler: (event: DialogFieldChangeEvent) => void): () => void {
+    this.changeListeners.add(handler);
+    return () => {
+      this.changeListeners.delete(handler);
+    };
+  }
+
+  nextEvent(timeoutMs?: number): Promise<DialogActionEvent> {
+    const eventPromise = new Promise<DialogActionEvent>((resolve) => {
       const unsub = this.onEvent((event) => {
         unsub();
         resolve(event);
@@ -140,10 +163,21 @@ class DialogHandleImpl implements DialogHandle {
     ]);
   }
 
-  /** Called by DialogManager when a user event arrives for this dialog. */
+  /**
+   * Called by DialogManager when a user event arrives for this dialog. Routed by
+   * `kind` with specific positive checks: a "change" goes to change listeners, an
+   * "action" (or absent kind, for backward compatibility) goes to action
+   * listeners. Any future kind is ignored rather than leaking into either path.
+   */
   emit(event: DialogUserEvent): void {
-    for (const listener of this.listeners) {
-      listener(event);
+    if (event.kind === "change") {
+      for (const listener of this.changeListeners) {
+        listener(event);
+      }
+    } else if (event.kind === "action" || event.kind === undefined) {
+      for (const listener of this.actionListeners) {
+        listener(event);
+      }
     }
   }
 }

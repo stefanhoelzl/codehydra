@@ -41,6 +41,21 @@ interface ProgressSection {
 }
 
 /**
+ * Per-field opt-in for emitting field-change events to the backend as the user
+ * edits a field, BEFORE submit. Lets the backend react (validation, dependent
+ * options) and push handle.update().
+ *
+ * - absent / false: the field never emits change events (default — existing
+ *   dialogs stay silent).
+ * - true / {}: emit, using the field type's default debounce. A discrete field
+ *   (selection) emits immediately (0ms); a continuous field (input) debounces
+ *   200ms.
+ * - { debounceMs }: emit with a custom debounce in ms (0 = immediate). Applies
+ *   to any field type, so a selection can coalesce rapid keyboard navigation.
+ */
+export type FieldChangeConfig = boolean | { readonly debounceMs?: number };
+
+/**
  * Field section base — sections that hold a user-editable value reported in
  * DialogUserEvent.data.
  *
@@ -63,10 +78,14 @@ interface FieldSection {
 /**
  * Selection section - displays radio-group cards with icon + label.
  * Extends FieldSection (id/label/error).
+ *
+ * - changeEvent: opt in to emit a field-change event when the selection
+ *   changes (immediate by default; see FieldChangeConfig).
  */
 interface SelectionSection extends FieldSection {
   readonly type: "selection";
   readonly options: readonly SelectionOption[];
+  readonly changeEvent?: FieldChangeConfig;
 }
 
 /**
@@ -92,6 +111,8 @@ interface TableSection {
  * - selectInitialValue selects the seeded text instead of placing a caret, so
  *   the first keystroke replaces it (overrides cursorOffset)
  * - Input values are included in DialogUserEvent.data keyed by field id when actions fire
+ * - changeEvent: opt in to emit a field-change event as the user types
+ *   (debounced 200ms by default; see FieldChangeConfig).
  */
 interface InputSection extends FieldSection {
   readonly type: "input";
@@ -100,6 +121,7 @@ interface InputSection extends FieldSection {
   readonly initialValue?: string;
   readonly cursorOffset?: number;
   readonly selectInitialValue?: boolean;
+  readonly changeEvent?: FieldChangeConfig;
 }
 
 export type DialogSection =
@@ -182,16 +204,41 @@ export type DialogCommand =
   | { readonly action: "close"; readonly dialogId: string };
 
 /**
- * Events sent from renderer -> main when user interacts with a dialog.
- *
  * `data` is a flat snapshot of the dialog's field values, keyed by each field's
  * stable id (input.id, selection.id, ...). Field ids must be unique within a
  * DialogConfig. Every field is present; an empty/unset field reports "" (a
  * key being absent means the field is not part of this dialog). Values are
  * strings; widening the value type is a shared-type change.
  */
-export interface DialogUserEvent {
+type FieldValues = Readonly<Record<string, string>>;
+
+/**
+ * Action event: the user activated an action button (submit). Carries the
+ * field-values snapshot at submit time.
+ */
+export interface DialogActionEvent {
+  /** Discriminant. Absent is treated as "action" for backward compatibility. */
+  readonly kind?: "action";
   readonly dialogId: string;
   readonly actionId: string;
-  readonly data?: Readonly<Record<string, string>>;
+  readonly data?: FieldValues;
 }
+
+/**
+ * Field-change event: a field's value changed BEFORE submit. Emitted only for
+ * fields that opt in via `changeEvent`. `fieldId` is the field that changed;
+ * `data` is the full field-values snapshot (same shape as action `data`).
+ */
+export interface DialogFieldChangeEvent {
+  readonly kind: "change";
+  readonly dialogId: string;
+  readonly fieldId: string;
+  readonly data: FieldValues;
+}
+
+/**
+ * Events sent from renderer -> main when the user interacts with a dialog, over
+ * the api:dialog:event channel. Discriminated by `kind`: "action" (default when
+ * absent) or "change".
+ */
+export type DialogUserEvent = DialogActionEvent | DialogFieldChangeEvent;
