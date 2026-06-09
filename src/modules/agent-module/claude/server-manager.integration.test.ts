@@ -20,6 +20,7 @@ import {
   createFileSystemMock,
   directory,
 } from "../../../boundaries/platform/filesystem.state-mock";
+import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { MockFileSystemBoundary } from "../../../boundaries/platform/filesystem.state-mock";
@@ -1409,6 +1410,206 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // Normal flow — no sub-agents, Stop goes idle
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+  });
+
+  describe("background shell handling (experimental.busy-during-background-shell)", () => {
+    const WORKSPACE = "/workspace/feature-a";
+
+    /** Background task entry as carried by the Stop payload (Claude Code 2.1.170). */
+    function shellTask(command: string): Record<string, unknown> {
+      return { id: "task-1", type: "shell", status: "running", description: command, command };
+    }
+
+    /** Stop payload with the given still-running background tasks. */
+    function stopWithTasks(tasks: Record<string, unknown>[]): Record<string, unknown> {
+      return { workspacePath: WORKSPACE, background_tasks: tasks };
+    }
+
+    function createManager(value: boolean | readonly string[]): ClaudeCodeServerManager {
+      return new ClaudeCodeServerManager({
+        portManager: mockPortManager,
+        pathProvider: mockPathProvider,
+        fileSystem: mockFileSystem,
+        logger: SILENT_LOGGER,
+        config: { hookHandlerPath: "/mock/hook-handler.js" },
+        busyDuringBackgroundShell: createMockAccessor<boolean | readonly string[]>(
+          "experimental.busy-during-background-shell",
+          value,
+          false
+        ),
+      });
+    }
+
+    async function startBusyWorkspace(manager: ClaudeCodeServerManager): Promise<{
+      port: number;
+      statusChanges: AgentStatus[];
+    }> {
+      const port = await manager.startServer(WORKSPACE);
+      const statusChanges: AgentStatus[] = [];
+      manager.onStatusChange(WORKSPACE, (status) => {
+        statusChanges.push(status);
+      });
+      await sendHook(port, "SessionStart", { workspacePath: WORKSPACE });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
+      return { port, statusChanges };
+    }
+
+    it("true: Stop with a running background shell stays busy", async () => {
+      serverManager = createManager(true);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
+
+      expect(statusChanges).toEqual(["idle", "busy"]);
+      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+    });
+
+    it("true: Stop with no background tasks goes idle", async () => {
+      serverManager = createManager(true);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([]));
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("true: Stop without a background_tasks field goes idle", async () => {
+      serverManager = createManager(true);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", { workspacePath: WORKSPACE });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("true: idle_prompt Notification after suppressed Stop stays busy", async () => {
+      serverManager = createManager(true);
+      const { port } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
+      // ~60s after Stop, Claude Code sends an idle_prompt notification
+      await sendHook(port, "Notification", {
+        workspacePath: WORKSPACE,
+        notification_type: "idle_prompt",
+      });
+
+      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+    });
+
+    it("true: full cycle — resume after shell exit, final Stop goes idle", async () => {
+      serverManager = createManager(true);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
+      // Shell exits → harness re-invokes the agent with the task notification
+      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
+      await sendHook(port, "Stop", stopWithTasks([]));
+
+      // Exactly one idle transition — no false idle while waiting
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("patterns: matching command keeps busy", async () => {
+      serverManager = createManager(["ship-wait"]);
+      const { port } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
+
+      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+    });
+
+    it("patterns: non-matching command (dev server) goes idle", async () => {
+      serverManager = createManager(["ship-wait"]);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(
+        port,
+        "Stop",
+        stopWithTasks([shellTask("python3 -m http.server 8000 --bind 127.0.0.1")])
+      );
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("patterns: one matching among non-matching tasks keeps busy", async () => {
+      serverManager = createManager(["ship-wait"]);
+      const { port } = await startBusyWorkspace(serverManager);
+
+      await sendHook(
+        port,
+        "Stop",
+        stopWithTasks([
+          shellTask("python3 -m http.server 8000"),
+          shellTask("npx tsx ship-wait.ts 512"),
+        ])
+      );
+
+      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+    });
+
+    it("non-shell task types do not keep busy", async () => {
+      serverManager = createManager(true);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(
+        port,
+        "Stop",
+        stopWithTasks([{ id: "agent-1", type: "agent", status: "running" }])
+      );
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("real user prompt clears the stash — idle_prompt then goes idle", async () => {
+      serverManager = createManager(true);
+      const { port } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([shellTask("pnpm dev")]));
+      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+
+      // User re-engages; agent goes busy, then the turn ends at its idle prompt
+      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
+      await sendHook(port, "Notification", {
+        workspacePath: WORKSPACE,
+        notification_type: "idle_prompt",
+      });
+
+      expect(serverManager.getStatus(WORKSPACE)).toBe("idle");
+    });
+
+    it("StopFailure is suppressed like Stop", async () => {
+      serverManager = createManager(true);
+      const { port } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "StopFailure", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
+
+      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+    });
+
+    it("flag disabled: Stop goes idle even with a running background shell", async () => {
+      serverManager = createManager(false);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("WrapperEnd clears the stash", async () => {
+      serverManager = createManager(true);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
+
+      await sendHook(port, "Stop", stopWithTasks([shellTask("pnpm dev")]));
+      serverManager.triggerWrapperLifecycle(WORKSPACE, "WrapperEnd");
+
+      // New session: idle_prompt is not suppressed by the stale stash
+      serverManager.triggerWrapperLifecycle(WORKSPACE, "WrapperStart");
+      await sendHook(port, "SessionStart", { workspacePath: WORKSPACE });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
+      await sendHook(port, "Stop", { workspacePath: WORKSPACE });
+
+      expect(statusChanges).toEqual(["idle", "busy", "none", "idle", "busy", "idle"]);
     });
   });
 });

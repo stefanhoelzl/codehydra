@@ -3,6 +3,10 @@
  * Defines hook payloads and status mapping for the Claude Code agent.
  */
 
+import {
+  storeCustom,
+  type PersistedTypeBuilder,
+} from "../../../boundaries/platform/store-definition";
 import type { AgentStatus } from "../types";
 
 /**
@@ -50,6 +54,22 @@ export interface ClaudeCodeHookPayload {
   readonly notification_type?: string;
   /** Sub-agent ID for SubagentStart/SubagentStop hooks */
   readonly agent_id?: string;
+  /** Still-running background tasks, sent with Stop/StopFailure hooks */
+  readonly background_tasks?: readonly ClaudeCodeBackgroundTask[];
+}
+
+/**
+ * A background task entry from the Stop/StopFailure payload's background_tasks
+ * array. Shape verified against Claude Code 2.1.170:
+ * `{id, type: "shell", status: "running", description, command}`.
+ * All fields optional — the payload is external input.
+ */
+export interface ClaudeCodeBackgroundTask {
+  readonly id?: string;
+  readonly type?: string;
+  readonly status?: string;
+  readonly description?: string;
+  readonly command?: string;
 }
 
 /**
@@ -128,6 +148,67 @@ export function getStatusChangeForHook(hookName: ClaudeCodeHookName): HookStatus
  */
 export function isValidHookName(name: string): name is ClaudeCodeHookName {
   return name in HOOK_STATUS_MAP;
+}
+
+/**
+ * Value of the experimental.busy-during-background-shell config key:
+ * false = off, true = every running background shell keeps the workspace busy,
+ * string[] = regexes selecting the waited-on commands (match ⇒ keep busy).
+ */
+export type BusyDuringBackgroundShell = boolean | readonly string[];
+
+/**
+ * Config type builder for experimental.busy-during-background-shell.
+ * CLI/env accept booleans only (regexes can contain commas, so no list
+ * syntax); the pattern array form is config.json-only. Invalid regexes are
+ * rejected at validation time so misconfiguration fails at startup.
+ */
+export function configBusyDuringBackgroundShell(): PersistedTypeBuilder<BusyDuringBackgroundShell> {
+  return storeCustom<BusyDuringBackgroundShell>({
+    parse: (s) =>
+      s === "true" || s === "1" ? true : s === "false" || s === "0" ? false : undefined,
+    validate: (v) => {
+      if (typeof v === "boolean") {
+        return v;
+      }
+      if (!Array.isArray(v) || !v.every((p) => typeof p === "string")) {
+        return undefined;
+      }
+      try {
+        for (const pattern of v) {
+          new RegExp(pattern);
+        }
+      } catch {
+        return undefined;
+      }
+      return v as readonly string[];
+    },
+    validValues: "true|false|[<regex>, ...] (array via config.json only)",
+  });
+}
+
+/**
+ * Decide whether a background task keeps the workspace busy under the given
+ * config value. Only running shell tasks qualify (background agents are
+ * covered by sub-agent tracking). true keeps every qualifying shell busy;
+ * a pattern array keeps a shell busy if any regex tests true against its
+ * command (partial, case-sensitive). false never matches.
+ */
+export function taskKeepsBusy(
+  config: BusyDuringBackgroundShell,
+  task: ClaudeCodeBackgroundTask
+): boolean {
+  if (task.type !== "shell" || (task.status !== undefined && task.status !== "running")) {
+    return false;
+  }
+  if (typeof config === "boolean") {
+    return config;
+  }
+  const command = task.command;
+  if (typeof command !== "string") {
+    return false;
+  }
+  return config.some((pattern) => new RegExp(pattern).test(command));
 }
 
 /**
