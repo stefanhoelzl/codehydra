@@ -34,6 +34,19 @@ function renderForm(config: DialogConfig, options?: { dialogId?: string }) {
   });
 }
 
+// happy-dom does not wire vscode-single-select's slotted <vscode-option>s,
+// so the component's own value resolution is inert here (it runs in real
+// Electron). Stub the element's `value` to emulate a user picking an option,
+// then dispatch the change our action listens for directly on the element.
+function pickOption(select: Element, value: string): Promise<unknown> {
+  Object.defineProperty(select, "value", {
+    configurable: true,
+    get: () => value,
+    set: () => {},
+  });
+  return fireEvent.change(select);
+}
+
 describe("Form component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -277,19 +290,6 @@ describe("Form component", () => {
         data: { region: "us-east" },
       });
     });
-
-    // happy-dom does not wire vscode-single-select's slotted <vscode-option>s,
-    // so the component's own value resolution is inert here (it runs in real
-    // Electron). Stub the element's `value` to emulate a user picking an option,
-    // then dispatch the change our action listens for directly on the element.
-    function pickOption(select: Element, value: string): Promise<unknown> {
-      Object.defineProperty(select, "value", {
-        configurable: true,
-        get: () => value,
-        set: () => {},
-      });
-      return fireEvent.change(select);
-    }
 
     it("reports the chosen option value after a change event", async () => {
       renderForm(dropdownConfig, { dialogId: "dd" });
@@ -634,6 +634,31 @@ describe("Form component", () => {
       expect(document.querySelector("vscode-label")).not.toBeInTheDocument();
     });
 
+    it("renders a vscode-label associated with a dropdown via for/id", () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "dropdown",
+            id: "region",
+            label: "Region",
+            options: [{ value: "us-east", label: "US East" }],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      const label = document.querySelector("vscode-label");
+      expect(label).toBeInTheDocument();
+      expect(label).toHaveTextContent("Region");
+      expect(label).toHaveAttribute("for", "region");
+
+      const select = document.querySelector("vscode-single-select");
+      expect(select).toHaveAttribute("id", "region");
+      // The label names the control, so the aria-label fallback is dropped.
+      expect(select).not.toHaveAttribute("aria-label");
+    });
+
     it("names a selection group from its label via aria-label", () => {
       const config: DialogConfig = {
         sections: [
@@ -722,6 +747,32 @@ describe("Form component", () => {
       expect(helper?.querySelector(".field-error")).toHaveTextContent("Pick an agent");
     });
 
+    it("renders the error below a dropdown and marks the control invalid", () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "dropdown",
+            id: "region",
+            label: "Region",
+            error: "Region unavailable",
+            options: [{ value: "us-east", label: "US East" }],
+          },
+        ],
+      };
+
+      renderForm(config);
+
+      const helper = document.querySelector("vscode-form-helper");
+      expect(helper).toBeInTheDocument();
+      expect(helper).toHaveAttribute("id", "region-error");
+      expect(helper?.querySelector(".field-error")).toHaveTextContent("Region unavailable");
+
+      const select = document.querySelector("vscode-single-select");
+      expect(select).toHaveAttribute("aria-invalid", "true");
+      expect(select).toHaveAttribute("aria-describedby", "region-error");
+      expect((select as HTMLElement & { invalid?: boolean }).invalid).toBe(true);
+    });
+
     it("renders no error element and no invalid state when error is absent", () => {
       const config: DialogConfig = {
         sections: [{ type: "input", id: "branch", label: "Branch" }],
@@ -787,6 +838,14 @@ describe("Form component", () => {
             ],
           },
           { type: "input", id: "note", multiline: true, placeholder: "Note" },
+          {
+            type: "dropdown",
+            id: "region",
+            options: [
+              { value: "us-east", label: "US East" },
+              { value: "us-west", label: "US West" },
+            ],
+          },
         ],
       };
 
@@ -795,6 +854,7 @@ describe("Form component", () => {
       await fireEvent.click(screen.getAllByRole("radio")[1]!);
       const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
       await fireEvent.input(textarea, { target: { value: "hi" } });
+      await pickOption(document.querySelector("vscode-single-select")!, "us-west");
 
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
     });
@@ -824,6 +884,35 @@ describe("Form component", () => {
         dialogId: "d1",
         fieldId: "agent",
         data: { agent: "opencode" },
+      });
+    });
+
+    it("emits a change event immediately when an opted-in dropdown changes", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "dropdown",
+            id: "region",
+            changeEvent: true,
+            options: [
+              { value: "us-east", label: "US East" },
+              { value: "us-west", label: "US West" },
+            ],
+          },
+        ],
+      };
+
+      renderForm(config, { dialogId: "d1" });
+
+      const select = document.querySelector("vscode-single-select")!;
+      await pickOption(select, "us-west");
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        kind: "change",
+        dialogId: "d1",
+        fieldId: "region",
+        data: { region: "us-west" },
       });
     });
 
@@ -937,6 +1026,45 @@ describe("Form component", () => {
               options: [
                 { id: "gemini", label: "Gemini" },
                 { id: "opencode", label: "OpenCode" },
+              ],
+            },
+          ],
+        },
+      });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("does not emit a change when the backend updates a dropdown's config (no feedback loop)", async () => {
+      const config: DialogConfig = {
+        sections: [
+          {
+            type: "dropdown",
+            id: "region",
+            changeEvent: true,
+            options: [
+              { value: "us-east", label: "US East" },
+              { value: "us-west", label: "US West" },
+            ],
+          },
+        ],
+      };
+
+      const { rerender } = renderForm(config, { dialogId: "d4" });
+
+      // Backend-driven update drops the current option; reconcile re-picks the
+      // first option, but that value change must NOT emit a change event.
+      await rerender({
+        dialogId: "d4",
+        config: {
+          sections: [
+            {
+              type: "dropdown",
+              id: "region",
+              changeEvent: true,
+              options: [
+                { value: "eu-central", label: "EU Central" },
+                { value: "us-west", label: "US West" },
               ],
             },
           ],

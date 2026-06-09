@@ -48,8 +48,8 @@ interface ProgressSection {
  * - absent / false: the field never emits change events (default — existing
  *   dialogs stay silent).
  * - true / {}: emit, using the field type's default debounce. A discrete field
- *   (radio) emits immediately (0ms); a continuous field (input) debounces
- *   200ms.
+ *   (radio, dropdown) emits immediately (0ms); a continuous field (input)
+ *   debounces 200ms.
  * - { debounceMs }: emit with a custom debounce in ms (0 = immediate). Applies
  *   to any field type, so a radio can coalesce rapid keyboard navigation.
  */
@@ -90,16 +90,16 @@ interface RadioSection extends FieldSection {
 
 /**
  * Dropdown section - displays a compact single-value dropdown (a select).
+ * Extends FieldSection (id/label/error).
  *
- * - id: stable field id. The chosen option's value is reported in
- *   DialogUserEvent.data keyed by this id. Must be unique among the field
- *   sections (input/radio/dropdown) of a DialogConfig.
  * - Always starts on the first option, so it always reports a real value.
+ * - changeEvent: opt in to emit a field-change event when the chosen option
+ *   changes (immediate by default; see FieldChangeConfig).
  */
-interface DropdownSection {
+interface DropdownSection extends FieldSection {
   readonly type: "dropdown";
-  readonly id: string;
   readonly options: readonly DropdownOption[];
+  readonly changeEvent?: FieldChangeConfig;
 }
 
 /**
