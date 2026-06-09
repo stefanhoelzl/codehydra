@@ -304,6 +304,18 @@ describe("preload API", () => {
 
       expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:dialog:event", event);
     });
+
+    it("forwards a flat field-values data payload verbatim", () => {
+      const sendDialogEvent = exposedApi.sendDialogEvent as (event: unknown) => void;
+      const event = {
+        dialogId: "dlg-2",
+        actionId: "confirm",
+        data: { agent: "claude", description: "hi" },
+      };
+      sendDialogEvent(event);
+
+      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:dialog:event", event);
+    });
   });
 
   describe("event subscriptions", () => {

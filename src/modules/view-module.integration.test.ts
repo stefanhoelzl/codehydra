@@ -479,6 +479,57 @@ describe("ViewModule Integration", () => {
         } as SetupIntent)
       ).rejects.toThrow("DialogManager not available");
     });
+
+    it("reads the selected agent from the dialog event values", async () => {
+      const availableAgents: RegisterAgentResult[] = [
+        { agent: "claude", label: "Claude", icon: "sparkle" },
+        { agent: "opencode", label: "OpenCode", icon: "terminal" },
+      ];
+
+      const dispatcher = createMockDispatcher();
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(
+        INTENT_SETUP,
+        new MinimalAgentSelectionOperation(availableAgents)
+      );
+
+      // Selection dialog resolves to the "opencode" field value (keyed by id "agent").
+      const dialogManager = {
+        open: vi.fn(() => ({
+          id: "dlg-agent",
+          update: vi.fn(),
+          close: vi.fn(),
+          onEvent: vi.fn(() => () => {}),
+          nextEvent: vi.fn().mockResolvedValue({
+            dialogId: "dlg-agent",
+            actionId: "select",
+            data: { agent: "opencode" },
+          }),
+          closed: Promise.resolve(),
+        })),
+      };
+
+      const module = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        configService: createMockConfig(),
+        dialogManager: dialogManager as unknown as NonNullable<ViewModuleDeps["dialogManager"]>,
+      });
+
+      dispatcher.registerModule(module);
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_SETUP,
+        payload: {},
+      } as SetupIntent)) as unknown as AgentSelectionResult;
+
+      expect(result.selectedAgent).toBe("opencode");
+      expect(dialogManager.open).toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

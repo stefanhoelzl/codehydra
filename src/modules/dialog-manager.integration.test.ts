@@ -176,7 +176,7 @@ describe("DialogManager", () => {
       const event: DialogUserEvent = {
         dialogId: handle.id,
         actionId: "continue",
-        data: { selection: "claude" },
+        data: { agent: "claude" },
       };
       manager.routeEvent(event);
 

@@ -163,6 +163,7 @@ describe("Form component", () => {
         sections: [
           {
             type: "selection",
+            id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
               { id: "opt-b", label: "Option B" },
@@ -182,6 +183,7 @@ describe("Form component", () => {
         sections: [
           {
             type: "selection",
+            id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
               { id: "opt-b", label: "Option B" },
@@ -209,6 +211,7 @@ describe("Form component", () => {
         sections: [
           {
             type: "selection",
+            id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
               { id: "opt-b", label: "Option B" },
@@ -354,6 +357,7 @@ describe("Form component", () => {
           { type: "text", content: "Pick one", style: "heading" },
           {
             type: "selection",
+            id: "choice",
             options: [
               { id: "opt-a", label: "Option A" },
               { id: "opt-b", label: "Option B" },
@@ -376,7 +380,43 @@ describe("Form component", () => {
       expect(mockSendDialogEvent).toHaveBeenCalledWith({
         dialogId: "sel-dialog",
         actionId: "confirm",
-        data: { selection: "opt-b" },
+        data: { choice: "opt-b" },
+      });
+    });
+
+    it("includes all field values (selection + input) keyed by id", async () => {
+      const config: DialogConfig = {
+        sections: [
+          { type: "text", content: "Pick + note", style: "heading" },
+          {
+            type: "selection",
+            id: "agent",
+            options: [
+              { id: "claude", label: "Claude" },
+              { id: "opencode", label: "OpenCode" },
+            ],
+          },
+          { type: "input", id: "note", multiline: true, placeholder: "Note" },
+        ],
+        actions: [{ id: "confirm", label: "Confirm" }],
+      };
+
+      renderForm(config, { dialogId: "multi-dialog" });
+
+      // Switch the selection from its default (first option) to the second.
+      const radios = screen.getAllByRole("radio");
+      await fireEvent.click(radios[1]!);
+
+      // Type into the input.
+      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+      await fireEvent.input(textarea, { target: { value: "hello" } });
+
+      await fireEvent.click(screen.getByText("Confirm"));
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "multi-dialog",
+        actionId: "confirm",
+        data: { agent: "opencode", note: "hello" },
       });
     });
   });
