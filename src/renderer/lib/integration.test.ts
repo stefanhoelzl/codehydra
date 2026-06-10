@@ -64,6 +64,8 @@ const mockApi = vi.hoisted(() => ({
     quit: vi.fn().mockResolvedValue(undefined),
   },
   sendAgentSelected: vi.fn(),
+  // Dialog event channel (panel form actions + dismiss-on-show)
+  sendDialogEvent: vi.fn(),
   // on() captures callbacks by event name for tests to fire events
   on: vi.fn((event: string, callback: EventCallback) => {
     eventCallbacks.set(event, callback);
@@ -170,6 +172,42 @@ import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as uiModeStore from "$lib/stores/ui-mode.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
+import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
+
+// Simulate the backend creation module's always-alive panel session with a
+// representative creation-form config: heading, project row (with the
+// folder-open / clone side-flow buttons), name and base dropdowns. The "New
+// workspace" panel renders only while this session exists AND the renderer's
+// isOpen flag is set; form actions go to the backend via sendDialogEvent.
+function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
+  dialogFrameworkStore.processCommand({
+    action: "open",
+    dialogId,
+    surface: "panel",
+    config: {
+      layout: "form",
+      sections: [
+        { type: "text", content: "New workspace", style: "heading" },
+        {
+          type: "group",
+          label: "Project",
+          items: [
+            { type: "dropdown", id: "project", suggestions: [] },
+            {
+              type: "button",
+              id: "open-folder",
+              icon: "folder-opened",
+              title: "Open project folder",
+            },
+            { type: "button", id: "clone", icon: "source-control", title: "Clone from Git" },
+          ],
+        },
+        { type: "dropdown", id: "name", label: "Name", freeText: true, suggestions: [] },
+        { type: "dropdown", id: "base", label: "Base Branch", suggestions: [] },
+      ],
+    },
+  });
+}
 
 // Helper to create mock workspace (v2 API format)
 function createWorkspace(name: string, projectPath: string, projectId?: string): Workspace {
@@ -204,6 +242,7 @@ describe("Integration tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     projectsStore.reset();
+    dialogFrameworkStore.reset();
     bootstrapStore.resetBootstrap();
     dialogsStore.reset();
     shortcutsStore.reset();
@@ -260,7 +299,7 @@ describe("Integration tests", () => {
 
       const projectPath = "/test/my-project";
       const newProject = createProject("my-project", [createWorkspace("main", projectPath)]);
-      mockApi.projects.open.mockResolvedValue(newProject);
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -278,17 +317,18 @@ describe("Integration tests", () => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Click the folder icon to open a new project
+      // Click the folder icon: the form sends the action to the backend
+      // creation module, which drives the native picker (project:open intent).
       const folderButton = screen.getByRole("button", { name: /open project folder/i });
       await fireEvent.click(folderButton);
 
-      // Verify projects.open was called with no path (dialog is shown by backend)
       await waitFor(() => {
-        expect(mockApi.projects.open).toHaveBeenCalledTimes(1);
-        expect(mockApi.projects.open).toHaveBeenCalledWith();
+        expect(mockApi.sendDialogEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ actionId: "open-folder", dialogId: "dlg-creation-1" })
+        );
       });
 
-      // Simulate project:opened event (v2 format includes id)
+      // Simulate the backend completing the open: project:opened event
       fireApiEvent("project:opened", { project: newProject });
 
       // Verify new project appears in sidebar
@@ -301,6 +341,7 @@ describe("Integration tests", () => {
       // Projects always show dialog before closing (user confirms they want to stop tracking)
       const project = createProject("my-project", []);
       mockApi.projects.list.mockResolvedValue([project]);
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -353,6 +394,7 @@ describe("Integration tests", () => {
       // BranchDropdown interaction is tested separately in BranchDropdown.test.ts
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -371,9 +413,6 @@ describe("Integration tests", () => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Verify the view has project dropdown, name/branch dropdown, and base branch dropdown
-      // NameBranchDropdown is a filterable combobox, query its container
-      expect(document.querySelector(".name-branch-dropdown")).toBeInTheDocument();
       // Should have 3 comboboxes: project dropdown, name dropdown, and branch dropdown
       expect(screen.getAllByRole("combobox")).toHaveLength(3);
 
@@ -498,8 +537,7 @@ describe("Integration tests", () => {
         createWorkspace("main", "/test/existing"),
       ]);
       mockApi.projects.list.mockResolvedValue([existingProject]);
-
-      mockApi.projects.open.mockResolvedValue(null);
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -516,23 +554,28 @@ describe("Integration tests", () => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Click the folder icon
+      // Click the folder icon: the action goes to the backend, which handles
+      // the cancelled picker itself (no project:opened event follows).
       const folderButton = screen.getByRole("button", { name: /open project folder/i });
       await fireEvent.click(folderButton);
 
       await waitFor(() => {
-        expect(mockApi.projects.open).toHaveBeenCalledTimes(1);
+        expect(mockApi.sendDialogEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ actionId: "open-folder" })
+        );
       });
 
       // Existing project should still be shown
       expect(screen.getByText("existing")).toBeInTheDocument();
     });
 
-    it("createWorkspace API error handling is tested in CreateWorkspaceDialog.test.ts", async () => {
-      // The full form validation and API error handling is tested in the component test
-      // This integration test verifies the dialog opens and receives the project context
+    it("createWorkspace API error handling is owned by the backend creation module", async () => {
+      // Validation and creation errors are handled in the main-process
+      // creation module (see creation-module.integration.test.ts). This
+      // integration test verifies the panel opens with the form context.
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -549,9 +592,6 @@ describe("Integration tests", () => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Verify view opened with correct context (has project dropdown, name dropdown, and branch dropdown)
-      // NameBranchDropdown is a filterable combobox, query its container
-      expect(document.querySelector(".name-branch-dropdown")).toBeInTheDocument();
       // Should have 3 comboboxes: project dropdown, name dropdown, and branch dropdown
       expect(screen.getAllByRole("combobox")).toHaveLength(3);
     });
@@ -608,6 +648,7 @@ describe("Integration tests", () => {
     it("notifies ui-mode store when the New workspace view opens", async () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -635,6 +676,7 @@ describe("Integration tests", () => {
       const workspace = createWorkspace("main", "/test/my-project");
       const project = createProject("my-project", [workspace]);
       mockApi.projects.list.mockResolvedValue([project]);
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -667,6 +709,7 @@ describe("Integration tests", () => {
       const project = createProject("my-project", [createWorkspace("main", "/test/my-project")]);
       mockApi.projects.list.mockResolvedValue([project]);
       mockApi.ui.setMode.mockRejectedValue(new Error("IPC failed"));
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -920,6 +963,7 @@ describe("Integration tests", () => {
       const project = createProject("my-project", [ws]);
       mockApi.projects.list.mockResolvedValue([project]);
 
+      openCreationPanelSession();
       render(App);
       showMainView();
 
@@ -1066,17 +1110,10 @@ describe("Integration tests", () => {
   });
 
   describe("onboarding flow", () => {
-    it("complete-onboarding-flow: empty state → dialog auto-opens → click folder → projects.open() → project opens", async () => {
+    it("complete-onboarding-flow: empty state → panel auto-opens → click folder → backend opens project", async () => {
       // Start with no projects (empty state)
       mockApi.projects.list.mockResolvedValue([]);
-
-      // Defer open to simulate user selecting a folder in the backend dialog
-      let openPromiseResolve: (value: unknown) => void = () => {};
-      mockApi.projects.open.mockImplementation(() => {
-        return new Promise((resolve) => {
-          openPromiseResolve = resolve;
-        });
-      });
+      openCreationPanelSession();
 
       render(App);
       showMainView();
@@ -1086,24 +1123,20 @@ describe("Integration tests", () => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
 
-      // Verify projects.open was NOT automatically triggered
-      expect(mockApi.projects.open).not.toHaveBeenCalled();
-
-      // Click the folder button to open folder picker
+      // Click the folder button: the form sends the action to the backend
+      // creation module, which drives the native picker itself.
       const folderButton = screen.getByRole("button", { name: "Open project folder" });
       await fireEvent.click(folderButton);
 
-      // Verify projects.open was triggered (no path = dialog mode)
       await waitFor(() => {
-        expect(mockApi.projects.open).toHaveBeenCalledTimes(1);
-        expect(mockApi.projects.open).toHaveBeenCalledWith();
+        expect(mockApi.sendDialogEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ actionId: "open-folder" })
+        );
       });
 
-      // Simulate user selecting a folder — backend returns the project
+      // Simulate the backend completing the open: project:opened event with a
+      // project that has NO workspaces (v2 format)
       const emptyProject = createProject("new-project", []);
-      openPromiseResolve(emptyProject);
-
-      // Simulate project:opened event with a project that has NO workspaces (v2 format)
       fireApiEvent("project:opened", { project: emptyProject });
 
       // Verify the New workspace view is still open with the project
@@ -1114,6 +1147,7 @@ describe("Integration tests", () => {
 
     it("auto-open-when-no-projects: empty state → New workspace view opens", async () => {
       mockApi.projects.list.mockResolvedValue([]);
+      openCreationPanelSession();
 
       render(App);
       showMainView();

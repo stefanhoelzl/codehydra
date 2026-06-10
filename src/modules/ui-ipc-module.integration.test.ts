@@ -59,7 +59,7 @@ import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../shared/ipc";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
-import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
+import { EVENT_WORKSPACE_CREATE_FAILED, EVENT_WORKSPACE_LOADING } from "../intents/open-workspace";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import {
@@ -407,6 +407,50 @@ describe("UiIpcModule - workspace:create-failed", () => {
       workspaceName: TEST_WORKSPACE_NAME,
       projectPath: TEST_PROJECT_PATH,
       error: "boom",
+    });
+  });
+});
+
+// =============================================================================
+// Tests - workspace:loading event
+// =============================================================================
+
+describe("UiIpcModule - workspace:loading", () => {
+  it("forwards workspace:loading (creation context) to the UI", async () => {
+    const deps = createBridgeDeps();
+    const uiIpcModule = createUiIpcModule(deps);
+
+    await uiIpcModule.events![EVENT_WORKSPACE_LOADING]!.handler({
+      type: EVENT_WORKSPACE_LOADING,
+      payload: {
+        workspaceName: TEST_WORKSPACE_NAME,
+        projectPath: TEST_PROJECT_PATH,
+        base: "main",
+      },
+    });
+
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_LOADING, {
+      workspaceName: TEST_WORKSPACE_NAME,
+      projectPath: TEST_PROJECT_PATH,
+      base: "main",
+    });
+  });
+
+  it("omits base when the event carries none", async () => {
+    const deps = createBridgeDeps();
+    const uiIpcModule = createUiIpcModule(deps);
+
+    await uiIpcModule.events![EVENT_WORKSPACE_LOADING]!.handler({
+      type: EVENT_WORKSPACE_LOADING,
+      payload: {
+        workspaceName: TEST_WORKSPACE_NAME,
+        projectPath: TEST_PROJECT_PATH,
+      },
+    });
+
+    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.WORKSPACE_LOADING, {
+      workspaceName: TEST_WORKSPACE_NAME,
+      projectPath: TEST_PROJECT_PATH,
     });
   });
 });

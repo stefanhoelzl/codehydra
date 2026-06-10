@@ -58,6 +58,8 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
         callbacks.set("shortcut:key", callback);
         return vi.fn(); // unsubscribe
       }),
+      // Dialog event channel (panel dismiss-on-show)
+      sendDialogEvent: vi.fn(),
     },
   };
 });
@@ -101,6 +103,22 @@ import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
+import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
+
+// Simulate the backend creation module's always-alive panel session: the
+// "New workspace" panel renders only while a panel-surface dialog session
+// exists AND the renderer's isOpen flag is set.
+function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
+  dialogFrameworkStore.processCommand({
+    action: "open",
+    dialogId,
+    config: {
+      layout: "form",
+      sections: [{ type: "text", content: "New workspace", style: "heading" }],
+    },
+    surface: "panel",
+  });
+}
 describe("App component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -111,6 +129,7 @@ describe("App component", () => {
     newWorkspaceViewStore.reset();
     shortcutsStore.reset();
     agentStatusStore.reset();
+    dialogFrameworkStore.reset();
     // Reset v2 event callbacks
     clearEventCallbacks();
     // Reset v2.on implementation to capture callbacks (some tests override it)
@@ -157,6 +176,7 @@ describe("App component", () => {
     });
 
     it("renders NewWorkspaceView when the New workspace view opens", async () => {
+      openCreationPanelSession();
       render(App);
       showMainView();
 
@@ -782,6 +802,7 @@ describe("App component", () => {
         },
       ];
       mockApi.projects.list.mockResolvedValue(mockProjects);
+      openCreationPanelSession();
 
       render(App);
       showMainView();

@@ -72,11 +72,20 @@ export type FieldChangeConfig = boolean | { readonly debounceMs?: number };
  * - error: optional validation message rendered as red helper text below the
  *   control, which is also marked invalid (red border). Set/cleared by the
  *   backend via handle.update().
+ * - disabled: the control is rendered but not interactive (e.g. fields that
+ *   only become editable once another field has a value). A disabled field
+ *   still reports its current value in DialogUserEvent.data.
+ * - autofocus: focus this control when the form mounts. When a config update
+ *   MOVES the flag to a different control (e.g. from a picker button to the
+ *   name field once a project exists), focus follows; re-sending the same
+ *   target never steals focus. At most one control should carry the flag.
  */
 interface FieldSection {
   readonly id: string;
   readonly label?: string;
   readonly error?: string;
+  readonly disabled?: boolean;
+  readonly autofocus?: boolean;
 }
 
 /**
@@ -119,13 +128,23 @@ interface RadioSection extends FieldSection {
  *   loading: false. Renders a spinner overlaid at the control's right edge;
  *   the control stays interactive and reports its current value as usual.
  *   Independent of any error state (both may be shown at once).
+ * - value: controlled value push. When a config update carries a value the
+ *   renderer has not adopted yet, the field adopts it (strict mode falls back
+ *   to the first suggestion when the value names no suggestion). Re-sending
+ *   the same value is a no-op, so user edits between pushes are preserved —
+ *   the backend changes the field only by pushing a *different* value.
+ * - searchable false (strict mode only): the input is read-only — the field
+ *   behaves like a classic select (focus opens the list, arrow keys + click
+ *   pick, typing does nothing). Default true (type-to-filter combobox).
  */
 interface DropdownSection extends FieldSection {
   readonly type: "dropdown";
   readonly suggestions: readonly DropdownSuggestionGroup[];
   readonly freeText?: boolean;
+  readonly searchable?: boolean;
   readonly placeholder?: string;
   readonly initialValue?: string;
+  readonly value?: string;
   readonly changeEvent?: FieldChangeConfig;
   readonly loading?: boolean;
 }
@@ -147,6 +166,9 @@ interface TableSection {
  *
  * - multiline false (default): single-line text field
  * - multiline true: multi-line textarea
+ * - rows: initial height of a multiline textarea in text rows (user can still
+ *   resize vertically). Without it the textarea gets a tall viewport-relative
+ *   default height.
  * - initialValue seeds the field on first render only; later edits are preserved
  * - cursorOffset places the caret at this character offset after seeding
  *   (only applied when initialValue is set)
@@ -160,6 +182,7 @@ interface InputSection extends FieldSection {
   readonly type: "input";
   readonly placeholder?: string;
   readonly multiline?: boolean;
+  readonly rows?: number;
   readonly initialValue?: string;
   readonly cursorOffset?: number;
   readonly selectInitialValue?: boolean;
@@ -179,12 +202,16 @@ interface InputSection extends FieldSection {
  * - align: horizontal alignment of the row content when it does not fill the
  *   row. Defaults to the layout's natural alignment: "center" in the
  *   "centered" layout, "left" in the "form" layout.
+ * - reverse: render the items visually reversed while keeping declaration
+ *   order for tabbing — the dialog-footer convention where the primary button
+ *   is tabbed first but sits on the right (declare [primary, cancel]).
  * - Child field errors render below the whole row.
  */
 interface GroupSection {
   readonly type: "group";
   readonly label?: string;
   readonly align?: "left" | "center" | "right";
+  readonly reverse?: boolean;
   readonly items: readonly GroupItem[];
 }
 
@@ -261,6 +288,8 @@ export type TableRow = Readonly<Record<string, string>>;
  *   Enter does nothing).
  * - busy: disables the button; a labeled button shows busyLabel (or label),
  *   an icon-only button spins its icon.
+ * - autofocus: focus this button when the form mounts (same semantics as
+ *   FieldSection.autofocus).
  */
 export interface DialogButton {
   readonly id: string;
@@ -271,6 +300,7 @@ export interface DialogButton {
   readonly busy?: boolean;
   readonly busyLabel?: string;
   readonly title?: string;
+  readonly autofocus?: boolean;
 }
 
 /** A button placed in a group section's items. */

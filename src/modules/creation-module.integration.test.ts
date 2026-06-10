@@ -1,0 +1,1004 @@
+// @vitest-environment node
+/**
+ * Integration tests for CreationModule (behavioral mocks).
+ *
+ * The module owns the "New workspace" form session on the panel surface:
+ * always-alive (opened on app:started), reset on dismiss, project-row
+ * side-flows (folder-open via project:open, git-clone via a modal
+ * sub-dialog), two-phase branch loading, per-field validation, and submit
+ * (workspace:open with source "creation").
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
+import { createMockAccessor } from "../boundaries/platform/config.test-utils";
+import { createCreationModule, validateCloneUrl } from "./creation-module";
+import type { CreationModuleDeps } from "./creation-module";
+import type { IntentModule } from "../intents/lib/module";
+import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { Dispatcher } from "../intents/lib/dispatcher";
+import type {
+  DialogConfig,
+  DialogSection,
+  DialogActionEvent,
+  DialogFieldChangeEvent,
+  DialogDismissEvent,
+} from "../shared/dialog-types";
+import type { ConfigAgentType } from "../boundaries/platform/config";
+import type { Project, ProjectId, WorkspaceName, BaseInfo } from "../shared/api/types";
+import type { AgentInfo } from "../shared/ipc";
+import { EVENT_APP_STARTED } from "../intents/app-ready";
+import {
+  EVENT_PROJECT_OPENED,
+  EVENT_CLONE_PROGRESS,
+  INTENT_OPEN_PROJECT,
+} from "../intents/open-project";
+import { EVENT_PROJECT_CLOSED } from "../intents/close-project";
+import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../intents/get-project-bases";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
+import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
+import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
+import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
+
+// =============================================================================
+// Fixtures
+// =============================================================================
+
+const PROJECT_A: Project = {
+  id: "project-a-12345678" as ProjectId,
+  name: "project-a",
+  path: "/projects/a",
+  workspaces: [
+    {
+      projectId: "project-a-12345678" as ProjectId,
+      name: "existing" as WorkspaceName,
+      branch: "existing",
+      metadata: {},
+      path: "/projects/a/.worktrees/existing",
+    },
+  ],
+};
+
+const PROJECT_B: Project = {
+  id: "project-b-12345678" as ProjectId,
+  name: "project-b",
+  path: "/projects/b",
+  workspaces: [],
+};
+
+const BASES_A: readonly BaseInfo[] = [
+  { name: "main", isRemote: false, derives: "main" },
+  { name: "origin/feature-x", isRemote: true, base: "origin/feature-x", derives: "feature-x" },
+];
+
+const CLAUDE_AGENT: AgentInfo = { agent: "claude", label: "Claude Code", icon: "claude" };
+const OPENCODE_AGENT: AgentInfo = { agent: "opencode", label: "OpenCode", icon: "opencode" };
+
+// =============================================================================
+// Mock DialogManager (captures handles with emit helpers)
+// =============================================================================
+
+interface MockHandle {
+  id: string;
+  config: DialogConfig;
+  /** Every config this handle has seen (open + updates), in order. */
+  configs: DialogConfig[];
+  surface: string;
+  closed: boolean;
+  emitAction(actionId: string, data?: Record<string, string>): void;
+  emitChange(fieldId: string, data: Record<string, string>): void;
+  emitDismiss(): void;
+}
+
+function createMockDialogManager(): {
+  manager: DialogManager;
+  handles: MockHandle[];
+  panelHandles(): MockHandle[];
+  modalHandles(): MockHandle[];
+} {
+  const handles: MockHandle[] = [];
+  let nextId = 1;
+
+  const open = vi.fn((config: DialogConfig, options?: { surface?: string }) => {
+    const id = `dlg-test-${nextId++}`;
+    const actionListeners = new Set<(event: DialogActionEvent) => void>();
+    const changeListeners = new Set<(event: DialogFieldChangeEvent) => void>();
+    const dismissListeners = new Set<(event: DialogDismissEvent) => void>();
+    const mock: MockHandle = {
+      id,
+      config,
+      configs: [config],
+      surface: options?.surface ?? "modal",
+      closed: false,
+      emitAction(actionId, data = {}) {
+        for (const l of [...actionListeners]) l({ kind: "action", dialogId: id, actionId, data });
+      },
+      emitChange(fieldId, data) {
+        for (const l of [...changeListeners]) l({ kind: "change", dialogId: id, fieldId, data });
+      },
+      emitDismiss() {
+        for (const l of [...dismissListeners]) l({ kind: "dismiss", dialogId: id });
+      },
+    };
+    handles.push(mock);
+    const handle: DialogHandle = {
+      id,
+      update: (newConfig: DialogConfig) => {
+        mock.config = newConfig;
+        mock.configs.push(newConfig);
+      },
+      close: () => {
+        mock.closed = true;
+        actionListeners.clear();
+        changeListeners.clear();
+        dismissListeners.clear();
+      },
+      onEvent: (handler) => {
+        actionListeners.add(handler);
+        return () => actionListeners.delete(handler);
+      },
+      onChange: (handler) => {
+        changeListeners.add(handler);
+        return () => changeListeners.delete(handler);
+      },
+      onDismiss: (handler) => {
+        dismissListeners.add(handler);
+        return () => dismissListeners.delete(handler);
+      },
+      nextEvent: () => new Promise<DialogActionEvent>(() => {}),
+      closed: new Promise<void>(() => {}),
+    };
+    return handle;
+  });
+
+  return {
+    manager: { open } as unknown as DialogManager,
+    handles,
+    panelHandles: () => handles.filter((h) => h.surface === "panel"),
+    modalHandles: () => handles.filter((h) => h.surface === "modal"),
+  };
+}
+
+// =============================================================================
+// Mock Dispatcher (programmable per-intent results)
+// =============================================================================
+
+interface MockDispatcher {
+  dispatcher: Dispatcher;
+  dispatched: Array<{ type: string; payload: unknown }>;
+  results: Map<string, (payload: unknown) => unknown>;
+  byType(type: string): Array<{ type: string; payload: unknown }>;
+}
+
+function createDispatcher(): MockDispatcher {
+  const dispatched: Array<{ type: string; payload: unknown }> = [];
+  const results = new Map<string, (payload: unknown) => unknown>();
+  const dispatch = vi.fn((intent: { type: string; payload: unknown }) => {
+    dispatched.push(intent);
+    const handler = results.get(intent.type);
+    return Promise.resolve(handler ? handler(intent.payload) : undefined);
+  });
+  return {
+    dispatcher: { dispatch } as unknown as Dispatcher,
+    dispatched,
+    results,
+    byType: (type) => dispatched.filter((d) => d.type === type),
+  };
+}
+
+// =============================================================================
+// Config helpers
+// =============================================================================
+
+function sectionById(config: DialogConfig, id: string): DialogSection | undefined {
+  for (const section of config.sections) {
+    if ("id" in section && section.id === id) return section;
+    if (section.type === "group") {
+      for (const item of section.items) {
+        if (item.id === id) return item as unknown as DialogSection;
+      }
+    }
+  }
+  return undefined;
+}
+
+function field(config: DialogConfig, id: string): Record<string, unknown> {
+  const section = sectionById(config, id);
+  expect(section, `section "${id}"`).toBeDefined();
+  return section as unknown as Record<string, unknown>;
+}
+
+function suggestionValues(section: Record<string, unknown>): string[] {
+  const groups = section["suggestions"] as Array<{ items: Array<{ value: string }> }>;
+  return groups.flatMap((g) => g.items.map((i) => i.value));
+}
+
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+// =============================================================================
+// Test setup
+// =============================================================================
+
+interface Setup {
+  module: IntentModule;
+  dialogs: ReturnType<typeof createMockDialogManager>;
+  dispatcher: MockDispatcher;
+  openUrl: ReturnType<typeof vi.fn>;
+  emit(eventType: string, payload?: unknown): Promise<void>;
+  start(): Promise<MockHandle>;
+}
+
+function setup(options?: {
+  projects?: Project[];
+  bases?: readonly BaseInfo[];
+  defaultBaseBranch?: string;
+  activeWorkspaceProjectId?: ProjectId | null;
+  agents?: readonly AgentInfo[];
+  defaultAgent?: ConfigAgentType;
+}): Setup {
+  const dialogs = createMockDialogManager();
+  const dispatcher = createDispatcher();
+  const openUrl = vi.fn().mockResolvedValue(undefined);
+
+  const projects = options?.projects ?? [PROJECT_A];
+  dispatcher.results.set(INTENT_LIST_PROJECTS, () => projects);
+  dispatcher.results.set(INTENT_GET_PROJECT_BASES, (payload) => {
+    const p = payload as { projectPath: string };
+    return {
+      bases: options?.bases ?? BASES_A,
+      ...(options?.defaultBaseBranch !== undefined && {
+        defaultBaseBranch: options.defaultBaseBranch,
+      }),
+      projectPath: p.projectPath,
+      projectId: PROJECT_A.id,
+    };
+  });
+  dispatcher.results.set(INTENT_GET_ACTIVE_WORKSPACE, () => {
+    const projectId = options?.activeWorkspaceProjectId;
+    if (projectId === null || projectId === undefined) return null;
+    return { projectId, workspaceName: "existing", path: "/projects/a/.worktrees/existing" };
+  });
+
+  const deps: CreationModuleDeps = {
+    dialogManager: dialogs.manager,
+    dispatcher: dispatcher.dispatcher,
+    appBoundary: { openUrl },
+    agentConfig: createMockAccessor<ConfigAgentType>("agent", options?.defaultAgent ?? "claude"),
+    getAvailableAgents: vi.fn().mockResolvedValue(options?.agents ?? [CLAUDE_AGENT]),
+    logger: SILENT_LOGGER,
+  };
+  const module = createCreationModule(deps);
+
+  const emit = async (eventType: string, payload: unknown = {}): Promise<void> => {
+    const declaration = module.events?.[eventType];
+    expect(declaration, `event handler for ${eventType}`).toBeDefined();
+    await declaration!.handler({ type: eventType, payload } as never);
+    await flush();
+  };
+
+  const start = async (): Promise<MockHandle> => {
+    await emit(EVENT_APP_STARTED);
+    const panel = dialogs.panelHandles().find((h) => !h.closed);
+    expect(panel, "open panel session").toBeDefined();
+    return panel!;
+  };
+
+  return { module, dialogs, dispatcher, openUrl, emit, start };
+}
+
+/** The currently open (non-closed) panel session. */
+function currentPanel(s: Setup): MockHandle {
+  const panel = s.dialogs.panelHandles().find((h) => !h.closed);
+  expect(panel, "open panel session").toBeDefined();
+  return panel!;
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+describe("CreationModule", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe("session lifecycle", () => {
+    it("opens the panel session on app:started, seeded with the active workspace's project", async () => {
+      const s = setup({
+        projects: [PROJECT_B, PROJECT_A],
+        activeWorkspaceProjectId: PROJECT_A.id,
+      });
+      const panel = await s.start();
+
+      expect(panel.surface).toBe("panel");
+      const project = field(panel.config, "project");
+      expect(project["value"]).toBe(PROJECT_A.path);
+      expect(suggestionValues(project)).toEqual([PROJECT_B.path, PROJECT_A.path]);
+      // Heading + form layout
+      expect(panel.config.layout).toBe("form");
+      expect(panel.config.sections[0]).toEqual({
+        type: "text",
+        content: "New workspace",
+        style: "heading",
+      });
+    });
+
+    it("falls back to the first project when no workspace is active", async () => {
+      const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: null });
+      const panel = await s.start();
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+    });
+
+    it("renders the no-project placeholder (disabled fields, disabled Create) without projects", async () => {
+      const s = setup({ projects: [] });
+      const panel = await s.start();
+
+      expect(sectionById(panel.config, "project")).toBeUndefined();
+      expect(field(panel.config, "project-placeholder")["disabled"]).toBe(true);
+      expect(field(panel.config, "name")["disabled"]).toBe(true);
+      expect(field(panel.config, "base")["disabled"]).toBe(true);
+      expect(field(panel.config, "create")["disabled"]).toBe(true);
+    });
+
+    it("autofocus: folder button without a project, name field with one", async () => {
+      const empty = setup({ projects: [] });
+      const emptyPanel = await empty.start();
+      expect(field(emptyPanel.config, "open-folder")["autofocus"]).toBe(true);
+      expect(field(emptyPanel.config, "name")["autofocus"]).toBeUndefined();
+
+      const seeded = setup();
+      const seededPanel = await seeded.start();
+      expect(field(seededPanel.config, "name")["autofocus"]).toBe(true);
+      expect(field(seededPanel.config, "open-folder")["autofocus"]).toBeUndefined();
+    });
+
+    it("dismiss resets the session: close + reopen with fresh config", async () => {
+      const s = setup();
+      const panel = await s.start();
+
+      panel.emitDismiss();
+      await flush();
+
+      expect(panel.closed).toBe(true);
+      const fresh = currentPanel(s);
+      expect(fresh.id).not.toBe(panel.id);
+    });
+
+    it("shows the agent dropdown only when more than one agent is available", async () => {
+      const single = setup({ agents: [CLAUDE_AGENT] });
+      const panelSingle = await single.start();
+      expect(sectionById(panelSingle.config, "agent")).toBeUndefined();
+
+      const dual = setup({ agents: [CLAUDE_AGENT, OPENCODE_AGENT] });
+      const panelDual = await dual.start();
+      const agent = field(panelDual.config, "agent");
+      expect(suggestionValues(agent)).toEqual(["claude", "opencode"]);
+      expect(agent["initialValue"]).toBe("claude");
+    });
+  });
+
+  describe("branch loading (two-phase)", () => {
+    it("loads cached bases on seed and keeps loading until bases:updated confirms", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await s.start();
+
+      // Cached list arrived; loading stays on until the refresh confirms.
+      const base = field(panel.config, "base");
+      expect(base["loading"]).toBe(true);
+      expect(suggestionValues(base)).toEqual(["main", "origin/feature-x"]);
+      expect(base["value"]).toBe("main");
+
+      await s.emit(EVENT_BASES_UPDATED, {
+        projectId: PROJECT_A.id,
+        projectPath: PROJECT_A.path,
+        bases: BASES_A,
+        defaultBaseBranch: "main",
+      });
+      expect(field(panel.config, "base")["loading"]).toBe(false);
+    });
+
+    it("name suggestions are derivable branches (value = ref, label = derives)", async () => {
+      const s = setup();
+      const panel = await s.start();
+      const name = field(panel.config, "name");
+      const groups = name["suggestions"] as Array<{
+        header?: string;
+        items: Array<{ value: string; label: string }>;
+      }>;
+      expect(groups).toEqual([
+        { header: "Local Branches", items: [{ value: "main", label: "main" }] },
+        {
+          header: "Remote Branches",
+          items: [{ value: "origin/feature-x", label: "feature-x" }],
+        },
+      ]);
+    });
+
+    it("ignores bases:updated for a different project", async () => {
+      const s = setup();
+      const panel = await s.start();
+      await s.emit(EVENT_BASES_UPDATED, {
+        projectId: PROJECT_B.id,
+        projectPath: PROJECT_B.path,
+        bases: [],
+      });
+      expect(field(panel.config, "base")["loading"]).toBe(true);
+    });
+
+    it("shows 'No base branches available' when the fresh list is empty", async () => {
+      const s = setup({ bases: [] });
+      const panel = await s.start();
+      await s.emit(EVENT_BASES_UPDATED, {
+        projectId: PROJECT_A.id,
+        projectPath: PROJECT_A.path,
+        bases: [],
+      });
+      const base = field(panel.config, "base");
+      expect(base["error"]).toBe("No base branches available");
+      expect(field(panel.config, "create")["disabled"]).toBe(true);
+    });
+
+    it("project change reloads branches and re-defaults the base", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B], defaultBaseBranch: "main" });
+      const panel = await s.start();
+      await flush();
+
+      panel.emitChange("project", { project: PROJECT_B.path });
+      await flush();
+
+      const calls = s.dispatcher.byType(INTENT_GET_PROJECT_BASES);
+      expect(calls.map((c) => (c.payload as { projectPath: string }).projectPath)).toEqual([
+        PROJECT_A.path,
+        PROJECT_B.path,
+      ]);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+      expect(field(panel.config, "base")["loading"]).toBe(true);
+    });
+  });
+
+  describe("validation and Create gating", () => {
+    async function startValid(s: Setup): Promise<MockHandle> {
+      const panel = await s.start();
+      await s.emit(EVENT_BASES_UPDATED, {
+        projectId: PROJECT_A.id,
+        projectPath: PROJECT_A.path,
+        bases: BASES_A,
+        defaultBaseBranch: "main",
+      });
+      return panel;
+    }
+
+    it("Create is disabled until a valid name is entered", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await startValid(s);
+      expect(field(panel.config, "create")["disabled"]).toBe(true);
+
+      panel.emitChange("name", { name: "new-feature" });
+      await flush();
+      expect(field(panel.config, "create")["disabled"]).toBe(false);
+      expect(field(panel.config, "name")["error"]).toBeUndefined();
+    });
+
+    it("flags duplicate workspace names", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await startValid(s);
+
+      panel.emitChange("name", { name: "Existing" });
+      await flush();
+      expect(field(panel.config, "name")["error"]).toBe("Workspace already exists");
+      expect(field(panel.config, "create")["disabled"]).toBe(true);
+    });
+
+    it("flags format violations", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await startValid(s);
+
+      panel.emitChange("name", { name: "bad name!" });
+      await flush();
+      expect(field(panel.config, "name")["error"]).toMatch(/letters, numbers/);
+    });
+
+    it("picking an existing branch name suggests its base", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await startValid(s);
+
+      // A suggestion pick reports the branch ref as the field value.
+      panel.emitChange("name", { name: "origin/feature-x" });
+      await flush();
+      expect(field(panel.config, "base")["value"]).toBe("origin/feature-x");
+      // The resolved name ("feature-x") is valid.
+      expect(field(panel.config, "name")["error"]).toBeUndefined();
+      expect(field(panel.config, "create")["disabled"]).toBe(false);
+    });
+  });
+
+  describe("submit", () => {
+    async function readyPanel(s: Setup): Promise<MockHandle> {
+      const panel = await s.start();
+      await s.emit(EVENT_BASES_UPDATED, {
+        projectId: PROJECT_A.id,
+        projectPath: PROJECT_A.path,
+        bases: BASES_A,
+        defaultBaseBranch: "main",
+      });
+      return panel;
+    }
+
+    it("dispatches workspace:open with source 'creation' and resets the session", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await readyPanel(s);
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "new-feature",
+        base: "main",
+        prompt: "",
+        "agent-mode": "",
+        agent: "claude",
+      });
+      await flush();
+
+      const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
+      expect(opens).toHaveLength(1);
+      expect(opens[0]!.payload).toEqual({
+        projectPath: PROJECT_A.path,
+        workspaceName: "new-feature",
+        base: "main",
+        source: "creation",
+      });
+
+      // Reset: old session closed, a fresh one opened.
+      expect(panel.closed).toBe(true);
+      expect(currentPanel(s).id).not.toBe(panel.id);
+    });
+
+    it("resolves a picked branch ref to its derived workspace name", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await readyPanel(s);
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "origin/feature-x",
+        base: "origin/feature-x",
+        prompt: "",
+        "agent-mode": "",
+        agent: "claude",
+      });
+      await flush();
+
+      const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
+      expect(opens[0]!.payload).toMatchObject({
+        workspaceName: "feature-x",
+        base: "origin/feature-x",
+      });
+    });
+
+    it("builds the InitialPrompt: plain prompt, plan mode, and agent only when != default", async () => {
+      const s = setup({
+        defaultBaseBranch: "main",
+        agents: [CLAUDE_AGENT, OPENCODE_AGENT],
+        defaultAgent: "claude",
+      });
+      const panel = await readyPanel(s);
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "with-prompt",
+        base: "main",
+        prompt: "  do things  ",
+        "agent-mode": "plan",
+        agent: "opencode",
+      });
+      await flush();
+
+      const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
+      expect(opens[0]!.payload).toMatchObject({
+        initialPrompt: { prompt: "do things", agent: "plan" },
+        agent: "opencode",
+      });
+    });
+
+    it("omits initialPrompt and agent when prompt empty, mode full, agent = default", async () => {
+      const s = setup({ defaultBaseBranch: "main", defaultAgent: "claude" });
+      const panel = await readyPanel(s);
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "plain",
+        base: "main",
+        prompt: "   ",
+        "agent-mode": "",
+        agent: "claude",
+      });
+      await flush();
+
+      const payload = s.dispatcher.byType(INTENT_OPEN_WORKSPACE)[0]!.payload as Record<
+        string,
+        unknown
+      >;
+      expect(payload["initialPrompt"]).toBeUndefined();
+      expect(payload["agent"]).toBeUndefined();
+    });
+
+    it("re-validates the snapshot: an invalid submit pushes errors instead of dispatching", async () => {
+      const s = setup({ defaultBaseBranch: "main" });
+      const panel = await readyPanel(s);
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "existing",
+        base: "main",
+        prompt: "",
+        "agent-mode": "",
+        agent: "claude",
+      });
+      await flush();
+
+      expect(s.dispatcher.byType(INTENT_OPEN_WORKSPACE)).toHaveLength(0);
+      expect(panel.closed).toBe(false);
+      expect(field(panel.config, "name")["error"]).toBe("Workspace already exists");
+    });
+  });
+
+  describe("folder-open side-flow", () => {
+    it("dispatches project:open (native picker) and selects the opened project", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
+      const panel = await s.start();
+
+      let resolveOpen: (value: Project | null) => void = () => {};
+      s.dispatcher.results.set(
+        INTENT_OPEN_PROJECT,
+        () => new Promise<Project | null>((resolve) => (resolveOpen = resolve))
+      );
+
+      panel.emitAction("open-folder", {});
+      await flush();
+
+      // Picker in flight: button busy, fields disabled.
+      expect(field(panel.config, "open-folder")["busy"]).toBe(true);
+      expect(field(panel.config, "name")["disabled"]).toBe(true);
+      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)).toHaveLength(1);
+      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({});
+
+      resolveOpen(PROJECT_B);
+      await flush();
+      await flush();
+
+      expect(field(panel.config, "open-folder")["busy"]).toBe(false);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+    });
+
+    it("handles a cancelled picker (null result)", async () => {
+      const s = setup();
+      const panel = await s.start();
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => null);
+
+      panel.emitAction("open-folder", {});
+      await flush();
+      await flush();
+
+      expect(field(panel.config, "open-folder")["busy"]).toBe(false);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+    });
+
+    it("re-arms the name autofocus after a folder-open selects the project", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
+      const panel = await s.start();
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => PROJECT_B);
+
+      panel.emitAction("open-folder", {});
+      await flush();
+      await flush();
+      await flush();
+
+      // The nudge: a push WITHOUT the name autofocus immediately followed by
+      // one WITH it, so the renderer's move detection re-focuses the field.
+      const flags = panel.configs.map(
+        (c) => (sectionById(c, "name") as unknown as Record<string, unknown>)["autofocus"] === true
+      );
+      expect(flags.some((flag, i) => !flag && flags[i + 1] === true)).toBe(true);
+      expect(field(panel.config, "name")["autofocus"]).toBe(true);
+    });
+
+    it("shows a form error when the open fails", async () => {
+      const s = setup();
+      const panel = await s.start();
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
+        Promise.reject(new Error("not a git repository"))
+      );
+
+      panel.emitAction("open-folder", {});
+      await flush();
+      await flush();
+
+      const errorSection = panel.config.sections.find(
+        (sec) => sec.type === "text" && sec.icon === "error"
+      );
+      expect(errorSection).toMatchObject({ content: "not a git repository" });
+    });
+  });
+
+  describe("git-clone sub-dialog", () => {
+    it("opens a modal dialog with URL validation gating the Clone button", async () => {
+      const s = setup();
+      const panel = await s.start();
+
+      panel.emitAction("clone", {});
+      await flush();
+
+      const clone = s.dialogs.modalHandles()[0]!;
+      expect(clone.config.modal).toBe(true);
+      expect(field(clone.config, "do-clone")["disabled"]).toBe(true);
+
+      clone.emitChange("url", { url: "not a url" });
+      await flush();
+      expect(field(clone.config, "url")["error"]).toMatch(/git URL/);
+      expect(field(clone.config, "do-clone")["disabled"]).toBe(true);
+
+      clone.emitChange("url", { url: "org/repo" });
+      await flush();
+      expect(field(clone.config, "url")["error"]).toBeUndefined();
+      expect(field(clone.config, "do-clone")["disabled"]).toBe(false);
+    });
+
+    it("clones via project:open {git} and selects the project on success", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
+      const panel = await s.start();
+
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+
+      let resolveClone: (value: Project) => void = () => {};
+      s.dispatcher.results.set(
+        INTENT_OPEN_PROJECT,
+        () => new Promise<Project>((resolve) => (resolveClone = resolve))
+      );
+
+      clone.emitChange("url", { url: "org/repo" });
+      await flush();
+      clone.emitAction("do-clone", { url: "org/repo" });
+      await flush();
+
+      // Cloning: URL locked, footer switches to Continue in background.
+      expect(field(clone.config, "url")["disabled"]).toBe(true);
+      expect(sectionById(clone.config, "background")).toBeDefined();
+      expect(sectionById(clone.config, "cancel")).toBeUndefined();
+      expect(s.dispatcher.byType(INTENT_OPEN_PROJECT)[0]!.payload).toEqual({ git: "org/repo" });
+
+      resolveClone(PROJECT_B);
+      await flush();
+      await flush();
+
+      expect(clone.closed).toBe(true);
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+    });
+
+    it("shows the GitHub create-on-error flow for a GitHub-shaped URL", async () => {
+      const s = setup();
+      const panel = await s.start();
+
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
+        Promise.reject(new Error("repository not found"))
+      );
+
+      clone.emitChange("url", { url: "org/repo" });
+      await flush();
+      clone.emitAction("do-clone", { url: "org/repo" });
+      await flush();
+      await flush();
+
+      expect(sectionById(clone.config, "github-create")).toBeDefined();
+      expect(sectionById(clone.config, "retry")).toBeDefined();
+
+      clone.emitAction("github-create", { url: "org/repo" });
+      await flush();
+      expect(s.openUrl).toHaveBeenCalledWith("https://github.com/new?owner=org&name=repo");
+    });
+
+    it("shows a plain error (no GitHub flow) for non-GitHub URLs", async () => {
+      const s = setup();
+      const panel = await s.start();
+
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () =>
+        Promise.reject(new Error("connection refused"))
+      );
+
+      clone.emitChange("url", { url: "https://gitlab.example.com/org/repo.git" });
+      await flush();
+      clone.emitAction("do-clone", { url: "https://gitlab.example.com/org/repo.git" });
+      await flush();
+      await flush();
+
+      expect(sectionById(clone.config, "github-create")).toBeUndefined();
+      const errorSection = clone.config.sections.find(
+        (sec) => sec.type === "text" && sec.icon === "error"
+      );
+      expect(errorSection).toMatchObject({ content: "connection refused" });
+    });
+
+    it("shows inline clone progress from clone:progress events", async () => {
+      const s = setup();
+      const panel = await s.start();
+
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => new Promise<Project>(() => {}));
+
+      clone.emitChange("url", { url: "org/repo" });
+      await flush();
+      clone.emitAction("do-clone", { url: "org/repo" });
+      await flush();
+
+      // Cloning with no progress yet: indeterminate running item.
+      const progressSection = (): Record<string, unknown> | undefined =>
+        clone.config.sections.find((sec) => sec.type === "progress") as unknown as
+          | Record<string, unknown>
+          | undefined;
+      expect(progressSection()).toBeDefined();
+      expect((progressSection()!["items"] as Array<Record<string, unknown>>)[0]).toMatchObject({
+        status: "running",
+      });
+
+      // The event carries 0-1; the progress item is scaled to 0-100.
+      await s.emit(EVENT_CLONE_PROGRESS, {
+        stage: "Receiving objects",
+        progress: 0.42,
+        name: "repo",
+        url: "org/repo",
+      });
+      expect((progressSection()!["items"] as Array<Record<string, unknown>>)[0]).toMatchObject({
+        progress: 42,
+        message: "Receiving objects",
+      });
+
+      // Progress for a different URL is ignored.
+      await s.emit(EVENT_CLONE_PROGRESS, {
+        stage: "other",
+        progress: 0.99,
+        name: "other",
+        url: "other/repo",
+      });
+      expect((progressSection()!["items"] as Array<Record<string, unknown>>)[0]).toMatchObject({
+        progress: 42,
+      });
+    });
+
+    it("'Continue in background' closes the dialog; the clone result lands silently", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
+      const panel = await s.start();
+      const seededProject = field(panel.config, "project")["value"];
+
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+
+      let resolveClone: (value: Project) => void = () => {};
+      s.dispatcher.results.set(
+        INTENT_OPEN_PROJECT,
+        () => new Promise<Project>((resolve) => (resolveClone = resolve))
+      );
+      clone.emitChange("url", { url: "org/repo" });
+      await flush();
+      clone.emitAction("do-clone", { url: "org/repo" });
+      await flush();
+
+      clone.emitAction("background", {});
+      await flush();
+      expect(clone.closed).toBe(true);
+
+      // The detached clone completing must NOT hijack the form selection.
+      resolveClone(PROJECT_B);
+      await flush();
+      await flush();
+      expect(field(panel.config, "project")["value"]).toBe(seededProject);
+    });
+
+    it("Cancel closes the dialog when not cloning", async () => {
+      const s = setup();
+      const panel = await s.start();
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+
+      clone.emitAction("cancel", {});
+      await flush();
+      expect(clone.closed).toBe(true);
+    });
+  });
+
+  describe("seeding from domain events", () => {
+    it("a freshly opened project seeds the NEXT reset, not the live form", async () => {
+      const s = setup({ projects: [PROJECT_A] });
+      const panel = await s.start();
+
+      await s.emit(EVENT_PROJECT_OPENED, { project: PROJECT_B });
+      // Live selection unchanged; the new project joined the suggestions.
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+
+      panel.emitDismiss();
+      await flush();
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+    });
+
+    it("seeds the next reset with the freshly opened project when it is still open", async () => {
+      const projects: Project[] = [PROJECT_A];
+      const s = setup({ projects });
+      const panel = await s.start();
+
+      projects.push(PROJECT_B);
+      await s.emit(EVENT_PROJECT_OPENED, { project: PROJECT_B });
+
+      panel.emitDismiss();
+      await flush();
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.path);
+    });
+
+    it("workspace:switched clears the pending opened-project seed", async () => {
+      const projects: Project[] = [PROJECT_A];
+      const s = setup({ projects, activeWorkspaceProjectId: PROJECT_A.id });
+      const panel = await s.start();
+
+      projects.push(PROJECT_B);
+      await s.emit(EVENT_PROJECT_OPENED, { project: PROJECT_B });
+      await s.emit(EVENT_WORKSPACE_SWITCHED, { path: "/projects/a/.worktrees/existing" });
+
+      panel.emitDismiss();
+      await flush();
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+    });
+
+    it("falls back when the selected project is closed", async () => {
+      const projects: Project[] = [PROJECT_A, PROJECT_B];
+      const s = setup({ projects, activeWorkspaceProjectId: null });
+      const panel = await s.start();
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+
+      projects.splice(0, 1); // PROJECT_A closed
+      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id });
+
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+    });
+
+    it("clears to the placeholder when the last project is closed", async () => {
+      const projects: Project[] = [PROJECT_A];
+      const s = setup({ projects, activeWorkspaceProjectId: null });
+      const panel = await s.start();
+
+      projects.splice(0, 1);
+      await s.emit(EVENT_PROJECT_CLOSED, { projectId: PROJECT_A.id });
+
+      expect(sectionById(panel.config, "project")).toBeUndefined();
+      expect(field(panel.config, "project-placeholder")["disabled"]).toBe(true);
+    });
+  });
+});
+
+describe("validateCloneUrl", () => {
+  it.each([
+    "https://github.com/org/repo.git",
+    "http://example.com/repo",
+    "git@github.com:org/repo.git",
+    "git://example.com/repo.git",
+    "ssh://git@example.com/repo.git",
+    "org/repo",
+    "github.com/org/repo",
+    "",
+    "   ",
+  ])("accepts %j", (url) => {
+    expect(validateCloneUrl(url)).toBeNull();
+  });
+
+  it.each(["not a url", "just-words", "/absolute/path"])("rejects %j", (url) => {
+    expect(validateCloneUrl(url)).not.toBeNull();
+  });
+});

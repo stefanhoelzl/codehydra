@@ -17,17 +17,17 @@ import {
   updateWorkspaceMetadata,
   setProjectDefaultBaseBranch,
 } from "$lib/stores/projects.svelte.js";
-import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
 import { updateStatus } from "$lib/stores/agent-status.svelte.js";
-import { dialogState } from "$lib/stores/dialogs.svelte.js";
-import { newWorkspaceView, openNewWorkspaceView } from "$lib/stores/new-workspace-view.svelte.js";
-import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
+import { closeNewWorkspaceView } from "$lib/stores/new-workspace-view.svelte.js";
 import {
+  createPendingPath,
+  setCreating,
   findCreatingByName,
   clearLifecycle,
   getLifecycle,
 } from "$lib/stores/workspace-lifecycle.svelte.js";
 import { setupDomainEvents, type DomainEventApi } from "$lib/utils/domain-events";
+import type { Workspace } from "@shared/api/types";
 import { createLogger } from "$lib/logging";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
 import * as api from "$lib/api";
@@ -136,21 +136,46 @@ export function setupDomainEventBindings(
       },
     },
     {
-      onProjectOpenedHook: (project) => {
-        // Only auto-open during normal operation, not during initial startup loading.
-        // The auto-open $effect in MainView.svelte handles the post-load empty case.
-        // Skip when a background clone just completed — the project appears silently.
-        if (
-          bootstrap.initialized &&
-          project.workspaces.length === 0 &&
-          dialogState.value.type === "closed" &&
-          !newWorkspaceView.isOpen &&
-          !hasSpinnerNotifications.value
-        ) {
-          // Open the New workspace view with the freshly opened project selected.
-          openNewWorkspaceView(project.id);
+      // A workspace creation is starting: mirror what the old NewWorkspaceView
+      // submit did — optimistic placeholder, lifecycle "creating", switch to
+      // the (loading) placeholder, and leave the creation panel. Name-guarded:
+      // workspace:loading also fires for wakes/reopens of existing workspaces
+      // (and a duplicate event for an existing placeholder), which must not
+      // create a duplicate sidebar entry.
+      onWorkspaceLoadingHook: ({ workspaceName, projectPath, base }) => {
+        const project = projects.value.find((p) => p.path === projectPath);
+        if (!project) return;
+        const nameLower = workspaceName.toLowerCase();
+        if (project.workspaces.some((w) => w.name.toLowerCase() === nameLower)) return;
+        const pendingPath = createPendingPath(projectPath, workspaceName);
+        addWorkspace(projectPath, {
+          projectId: project.id,
+          name: workspaceName as Workspace["name"],
+          branch: base ?? null,
+          metadata: {},
+          path: pendingPath,
+        });
+        setCreating(pendingPath, projectPath, workspaceName);
+        // Landing in the (loading) placeholder is the visual confirmation the
+        // workspace is being made.
+        setActiveWorkspace(pendingPath);
+        closeNewWorkspaceView();
+      },
+      // Creation failed: roll back the optimistic placeholder.
+      onWorkspaceCreateFailedHook: ({ workspaceName, projectPath }) => {
+        const pendingPath = findCreatingByName(projectPath, workspaceName);
+        if (!pendingPath) return;
+        clearLifecycle(pendingPath);
+        removeWorkspace(projectPath, pendingPath);
+        if (activeWorkspacePath.value === pendingPath) {
+          setActiveWorkspace(null);
         }
       },
+      // NOTE: no onProjectOpenedHook auto-open. All interactive project opens
+      // now originate from the creation panel itself (folder-open / git-clone
+      // side-flows, with the panel already visible); a background clone
+      // completing must land silently — the project just appears in the
+      // sidebar and seeds the panel's next reset (creation module).
     },
     { notificationService }
   );

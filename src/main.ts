@@ -185,6 +185,7 @@ import { NotificationManager } from "./modules/notification-manager";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
+import { createCreationModule } from "./modules/creation-module";
 import { createWorkspaceSelectionModule } from "./modules/workspace-selection-module";
 import { createAutoWorkspaceModule } from "./modules/auto-workspace/module";
 import { createGitHubSource } from "./modules/auto-workspace/github-source";
@@ -514,33 +515,54 @@ const extensionModule = createExtensionModule({
   logger: loggingService.createLogger("ext-manager"),
 });
 
-const claudeAgentModule = createAgentModule(
-  createClaudeModuleProvider({
-    serverManager: agentServerManagers.claude,
-    downloadDeps,
-    binaryConfig: claudeBinaryConfig,
-    versionConfig: claudeVersionConfig,
-    pathProvider,
-    platform,
-    arch,
-    logger: providerLogger,
-  }),
-  { dispatcher, logger: apiLogger, agentConfig }
-);
+const claudeProvider = createClaudeModuleProvider({
+  serverManager: agentServerManagers.claude,
+  downloadDeps,
+  binaryConfig: claudeBinaryConfig,
+  versionConfig: claudeVersionConfig,
+  pathProvider,
+  platform,
+  arch,
+  logger: providerLogger,
+});
+const claudeAgentModule = createAgentModule(claudeProvider, {
+  dispatcher,
+  logger: apiLogger,
+  agentConfig,
+});
 
-const opencodeAgentModule = createAgentModule(
-  createOpenCodeModuleProvider({
-    serverManager: agentServerManagers.opencode,
-    downloadDeps,
-    binaryConfig: opencodeBinaryConfig,
-    versionConfig: opencodeVersionConfig,
-    pathProvider,
-    platform,
-    arch,
-    logger: providerLogger,
-  }),
-  { dispatcher, logger: apiLogger, agentConfig }
-);
+const opencodeProvider = createOpenCodeModuleProvider({
+  serverManager: agentServerManagers.opencode,
+  downloadDeps,
+  binaryConfig: opencodeBinaryConfig,
+  versionConfig: opencodeVersionConfig,
+  pathProvider,
+  platform,
+  arch,
+  logger: providerLogger,
+});
+const opencodeAgentModule = createAgentModule(opencodeProvider, {
+  dispatcher,
+  logger: apiLogger,
+  agentConfig,
+});
+
+// Agents whose binaries are currently present — same probe the app:ready
+// "available-agents" hook runs, exposed to the creation form module.
+const getAvailableAgents = async (): Promise<readonly AgentInfo[]> => {
+  const agents: AgentInfo[] = [];
+  for (const provider of [claudeProvider, opencodeProvider]) {
+    try {
+      const result = await provider.preflight();
+      if (result.success && !result.needsDownload) {
+        agents.push({ agent: provider.type, label: provider.displayName, icon: provider.icon });
+      }
+    } catch {
+      // Best-effort: a failing preflight just hides the agent.
+    }
+  }
+  return agents;
+};
 
 const metadataModule = createMetadataModule({
   gitWorktreeProvider,
@@ -632,6 +654,14 @@ const powerModule = createPowerModule({
 const deletionDialogModule = createDeletionDialogModule({
   dialogManager,
   dispatcher,
+  logger: apiLogger,
+});
+const creationModule = createCreationModule({
+  dialogManager,
+  dispatcher,
+  appBoundary: appLayer,
+  agentConfig,
+  getAvailableAgents,
   logger: apiLogger,
 });
 const workspaceSelectionModule = createWorkspaceSelectionModule();
@@ -859,6 +889,7 @@ dispatcher.registerModule(opencodeAgentModule);
 dispatcher.registerModule(badgeModule);
 dispatcher.registerModule(powerModule);
 dispatcher.registerModule(deletionDialogModule);
+dispatcher.registerModule(creationModule);
 dispatcher.registerModule(workspaceSelectionModule);
 dispatcher.registerModule(metadataModule);
 dispatcher.registerModule(keepFilesModule);

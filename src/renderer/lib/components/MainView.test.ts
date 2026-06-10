@@ -56,6 +56,8 @@ const mockApi = vi.hoisted(() => ({
     eventCallbacks.set(event, callback);
     return vi.fn(); // unsubscribe
   }),
+  // Dialog event channel (panel dismiss-on-show)
+  sendDialogEvent: vi.fn(),
 }));
 
 // Helper to get an event callback for firing events in tests
@@ -66,6 +68,21 @@ function getEventCallback(event: string): EventCallback | undefined {
 // Helper to clear event callbacks between tests
 function clearEventCallbacks(): void {
   eventCallbacks.clear();
+}
+
+// Simulate the backend creation module's always-alive panel session: the
+// "New workspace" panel renders only while a panel-surface dialog session
+// exists AND the renderer's isOpen flag is set.
+function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
+  dialogFrameworkStore.processCommand({
+    action: "open",
+    dialogId,
+    config: {
+      layout: "form",
+      sections: [{ type: "text", content: "New workspace", style: "heading" }],
+    },
+    surface: "panel",
+  });
 }
 
 // Mock the API module before any imports use it
@@ -173,12 +190,19 @@ describe("MainView component", () => {
     });
 
     it("auto-opens the New workspace view (empty state) when no workspaces exist", async () => {
+      openCreationPanelSession();
       render(MainView);
 
       // The New workspace view is the empty state: it auto-opens and replaces
       // the old logo backdrop.
       await waitFor(() => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
+      });
+
+      // The show transition requests a fresh form from the backend session.
+      expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
+        kind: "dismiss",
+        dialogId: "dlg-creation-1",
       });
 
       // The logo backdrop is superseded by the panel.
@@ -601,6 +625,7 @@ describe("MainView component", () => {
         },
       ];
       mockApi.projects.list.mockResolvedValue(projectWithWorkspace);
+      openCreationPanelSession();
 
       render(MainView);
 
@@ -645,6 +670,7 @@ describe("MainView component", () => {
   describe("auto-open New workspace view (empty state)", () => {
     it("auto-opens the New workspace view on mount when projects array is empty", async () => {
       mockApi.projects.list.mockResolvedValue([]);
+      openCreationPanelSession();
 
       render(MainView);
 
@@ -665,6 +691,7 @@ describe("MainView component", () => {
         workspaces: [],
       };
       mockApi.projects.list.mockResolvedValue([existingProject]);
+      openCreationPanelSession();
 
       render(MainView);
 
@@ -679,8 +706,8 @@ describe("MainView component", () => {
   });
 
   describe("auto-open New workspace view on project:opened", () => {
-    it("auto-opens the New workspace view when project:opened event has no workspaces", async () => {
-      // Start with one project so auto-open picker doesn't trigger
+    it("does NOT auto-open the view when a project without workspaces opens (e.g. background clone)", async () => {
+      // Start with one project so the empty-state auto-open doesn't trigger
       const existingProject = {
         id: asProjectId("test-project-12345678"),
         path: "/test/project",
@@ -702,7 +729,8 @@ describe("MainView component", () => {
         expect(getEventCallback("project:opened")).toBeDefined();
       });
 
-      // Simulate opening a project with no workspaces (includes 'id')
+      // Simulate a background clone completing: a project with no workspaces
+      // appears — it must land silently, not hijack the screen.
       const emptyProject = {
         id: asProjectId("empty-project-12345678"),
         path: "/test/empty-project",
@@ -712,11 +740,9 @@ describe("MainView component", () => {
       const callback = getEventCallback("project:opened");
       callback!({ project: emptyProject });
 
-      await waitFor(() => {
-        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
-        // The freshly opened project is selected in the view.
-        expect(newWorkspaceViewStore.newWorkspaceView.selectedProjectId).toBe(emptyProject.id);
-      });
+      // Give any (unwanted) auto-open time to trigger.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
 
     it("does NOT auto-open the view when project has workspaces", async () => {
@@ -805,7 +831,7 @@ describe("MainView component", () => {
       expect(dialogsStore.dialogState.value.type).toBe("remove");
     });
 
-    it("handles rapid project:opened events (only one dialog opens)", async () => {
+    it("handles rapid project:opened events (no view opens, projects appear)", async () => {
       // Start with one project so auto-open picker doesn't trigger
       const existingProject = {
         id: asProjectId("test-project-12345678"),
@@ -843,17 +869,14 @@ describe("MainView component", () => {
       };
 
       const callback = getEventCallback("project:opened");
-      // Fire both events rapidly
+      // Fire both events rapidly — both land silently, projects just appear.
       callback!({ project: emptyProject1 });
       callback!({ project: emptyProject2 });
 
       await waitFor(() => {
-        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
+        expect(projectsStore.projects.value).toHaveLength(3);
       });
-
-      // Only the first project should be selected (guard prevents the second
-      // from overriding once the view is already open).
-      expect(newWorkspaceViewStore.newWorkspaceView.selectedProjectId).toBe(emptyProject1.id);
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
   });
 

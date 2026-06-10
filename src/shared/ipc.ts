@@ -189,6 +189,7 @@ export const ApiIpcChannels = {
   PROJECT_CLOSED: "api:project:closed",
   PROJECT_BASES_UPDATED: "api:project:bases-updated",
   WORKSPACE_CREATED: "api:workspace:created",
+  WORKSPACE_LOADING: "api:workspace:loading",
   WORKSPACE_CREATE_FAILED: "api:workspace:create-failed",
   WORKSPACE_REMOVED: "api:workspace:removed",
   WORKSPACE_HIBERNATED: "api:workspace:hibernated",

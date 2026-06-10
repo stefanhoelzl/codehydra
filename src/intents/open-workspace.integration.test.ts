@@ -43,10 +43,12 @@ import {
   OPEN_WORKSPACE_OPERATION_ID,
   INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
+  EVENT_WORKSPACE_LOADING,
 } from "./open-workspace";
 import type {
   OpenWorkspaceIntent,
   OpenWorkspacePayload,
+  WorkspaceLoadingEvent,
   CreateHookInput,
   CreateHookResult,
   SetupHookInput,
@@ -522,6 +524,62 @@ describe("OpenWorkspace Operation", () => {
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
       expect(event.payload.tracking).toBeUndefined();
+    });
+  });
+
+  describe("emits workspace:loading with creation context", () => {
+    let setup: TestSetup;
+
+    beforeEach(() => {
+      setup = createTestSetup();
+    });
+
+    it("carries workspaceName, projectPath, and base from the intent", async () => {
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_LOADING, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await setup.dispatcher.dispatch(createIntent());
+
+      expect(receivedEvents).toHaveLength(1);
+      const event = receivedEvents[0] as WorkspaceLoadingEvent;
+      expect(event.payload).toEqual({
+        workspaceName: "feature-x",
+        projectPath: PROJECT_ROOT,
+        base: "main",
+      });
+    });
+
+    it("omits base when the intent has none", async () => {
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_LOADING, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const intentWithoutBase: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
+        payload: { projectPath: PROJECT_ROOT, workspaceName: "feature-x" },
+      };
+      await setup.dispatcher.dispatch(intentWithoutBase);
+
+      expect(receivedEvents).toHaveLength(1);
+      const event = receivedEvents[0] as WorkspaceLoadingEvent;
+      expect(event.payload).toEqual({
+        workspaceName: "feature-x",
+        projectPath: PROJECT_ROOT,
+      });
+    });
+
+    it("is suppressed for silent re-discovery (stealFocus false)", async () => {
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_LOADING, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await setup.dispatcher.dispatch(createIntent({ stealFocus: false }));
+
+      expect(receivedEvents).toHaveLength(0);
     });
   });
 

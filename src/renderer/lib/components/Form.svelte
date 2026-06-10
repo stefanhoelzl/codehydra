@@ -108,11 +108,19 @@
     return flatSuggestions(section).find((o) => o.value === value)?.label ?? value;
   }
 
+  // Last backend-pushed `value` adopted per dropdown field. A deliberately
+  // non-reactive record: only the reconcile effect reads/writes it, to decide
+  // whether a config's `value` is new (adopt) or a re-send (preserve edits).
+  const adoptedValues: Record<string, string> = {};
+
   // Reconcile field values whenever the config changes: rebuild the map so it
   // mirrors the current field sections (dropping removed-field keys) while
   // preserving values for fields that remain.
   // - radio: keep the existing choice if still a valid option id, else the
   //   first option's id.
+  // - dropdown (controlled): when the config carries a `value` the renderer
+  //   has not adopted yet, adopt it (strict mode falls back below when it
+  //   names no suggestion). Re-sends of the same value preserve user edits.
   // - dropdown (freeText): like input — keep existing edits/picks, else seed
   //   from initialValue on first sight.
   // - dropdown (strict): keep the existing choice if still a valid suggestion
@@ -133,20 +141,29 @@
         next[section.id] = stillValid ? existing : (section.options[0]?.id ?? "");
       } else if (section.type === "dropdown") {
         const existing = untrack(() => fieldValues[section.id]);
+        const pushed =
+          section.value !== undefined && section.value !== adoptedValues[section.id]
+            ? section.value
+            : undefined;
+        if (pushed !== undefined) {
+          adoptedValues[section.id] = pushed;
+        }
         if (section.freeText) {
-          next[section.id] = existing ?? section.initialValue ?? "";
+          next[section.id] = pushed ?? existing ?? section.initialValue ?? "";
         } else {
           const isValid = (v: string | undefined): v is string =>
             v !== undefined && flatSuggestions(section).some((o) => o.value === v);
-          next[section.id] = isValid(existing)
-            ? existing
-            : existing === undefined && isValid(section.initialValue)
-              ? section.initialValue
-              : (flatSuggestions(section)[0]?.value ?? "");
+          next[section.id] = isValid(pushed)
+            ? pushed
+            : pushed === undefined && isValid(existing)
+              ? existing
+              : existing === undefined && pushed === undefined && isValid(section.initialValue)
+                ? section.initialValue
+                : (flatSuggestions(section)[0]?.value ?? "");
         }
         const existingDisplay = untrack(() => dropdownDisplay[section.id]);
         nextDisplay[section.id] =
-          next[section.id] === existing && existingDisplay !== undefined
+          next[section.id] === existing && existingDisplay !== undefined && pushed === undefined
             ? existingDisplay
             : suggestionLabel(section, next[section.id]!);
       } else if (section.type === "input") {
@@ -233,12 +250,60 @@
     cancelChangeTimers();
   });
 
-  // Auto-focus the selected card on mount (for keyboard navigation)
+  /** Focus the control marked data-autofocus (after a tick for mounting). */
+  function focusAutofocusTarget(): void {
+    setTimeout(() => {
+      const target = formRef?.querySelector<HTMLElement>("[data-autofocus]");
+      target?.focus();
+    }, 0);
+  }
+
+  /** The id of the control carrying the autofocus flag, or null. */
+  function autofocusIdOf(cfg: DialogConfig): string | null {
+    for (const section of cfg.sections) {
+      if (section.type === "group") {
+        for (const item of section.items) {
+          if (item.autofocus) return item.id;
+        }
+      } else if (
+        (section.type === "input" || section.type === "dropdown" || section.type === "radio") &&
+        section.autofocus
+      ) {
+        return section.id;
+      }
+    }
+    return null;
+  }
+
+  // Auto-focus on mount: an explicit autofocus control wins, else the
+  // selected radio card (for keyboard navigation).
   onMount(() => {
     setTimeout(() => {
+      const explicit = formRef?.querySelector<HTMLElement>("[data-autofocus]");
+      if (explicit) {
+        explicit.focus();
+        return;
+      }
       const selected = formRef?.querySelector("[aria-checked='true']") as HTMLElement | null;
       selected?.focus();
     }, 0);
+  });
+
+  // Focus follows when a config update MOVES the autofocus flag to a
+  // different control (e.g. picker button -> name field once a project
+  // exists). Re-sends of the same target never steal focus; the initial
+  // target is handled by onMount.
+  let lastAutofocusId: string | null | undefined;
+  $effect(() => {
+    const id = autofocusIdOf(config);
+    if (lastAutofocusId === undefined) {
+      lastAutofocusId = id;
+      return;
+    }
+    if (id !== null && id !== lastAutofocusId) {
+      focusAutofocusTarget();
+    }
+    lastAutofocusId = id;
   });
 
   /**
@@ -284,6 +349,27 @@
     return {
       destroy(): void {
         window.removeEventListener("keyup", onKeyUp, true);
+      },
+    };
+  }
+
+  /**
+   * Enter in a single-line input activates the primary action (same as Enter
+   * in a dropdown). The action snapshot carries the typed value, so a pending
+   * debounced change is irrelevant. Attached as an action because the
+   * vscode-textfield custom element is opaque to the a11y template checks.
+   */
+  function submitOnEnter(node: HTMLElement): { destroy(): void } {
+    const handler = (e: KeyboardEvent): void => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        triggerPrimaryAction();
+      }
+    };
+    node.addEventListener("keydown", handler);
+    return {
+      destroy(): void {
+        node.removeEventListener("keydown", handler);
       },
     };
   }
@@ -464,8 +550,12 @@
       <textarea
         class="input-textarea"
         class:errored={!!s.error}
+        class:fixed-rows={s.rows !== undefined}
         id={s.id}
+        rows={s.rows}
         placeholder={s.placeholder ?? ""}
+        disabled={s.disabled || undefined}
+        data-autofocus={s.autofocus || undefined}
         aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
         aria-invalid={s.error ? "true" : undefined}
         aria-describedby={s.error ? `${s.id}-error` : undefined}
@@ -486,6 +576,8 @@
         id={s.id}
         invalid={s.error ? true : undefined}
         placeholder={s.placeholder ?? ""}
+        disabled={s.disabled || undefined}
+        data-autofocus={s.autofocus || undefined}
         aria-label={s.label ? undefined : (s.placeholder ?? "Text input")}
         aria-invalid={s.error ? "true" : undefined}
         aria-describedby={s.error ? `${s.id}-error` : undefined}
@@ -494,6 +586,7 @@
           fieldValues = { ...fieldValues, [s.id]: (e.currentTarget as HTMLInputElement).value };
           scheduleChange(s);
         }}
+        use:submitOnEnter
       ></vscode-textfield>
     {/if}
   {/snippet}
@@ -506,6 +599,9 @@
         value={dropdownDisplay[s.id] ?? ""}
         placeholder={s.placeholder ?? ""}
         allowFreeText={s.freeText ?? false}
+        searchable={s.searchable ?? true}
+        disabled={s.disabled ?? false}
+        autofocus={s.autofocus ?? false}
         debounceMs={0}
         invalid={!!s.error}
         describedBy={s.error ? `${s.id}-error` : undefined}
@@ -526,6 +622,7 @@
       class:icon-button={!b.label}
       secondary={b.variant === "secondary" || undefined}
       disabled={b.disabled || b.busy || undefined}
+      data-autofocus={b.autofocus || undefined}
       aria-label={b.label ?? b.title}
       onclick={() => handleButton(b)}
       {...b.title ? { title: b.title } : {}}
@@ -637,6 +734,7 @@
               role="radio"
               aria-checked={fieldValues[s.id] === option.id}
               tabindex={fieldValues[s.id] === option.id ? 0 : -1}
+              disabled={s.disabled || undefined}
               data-option={option.id}
               onclick={() => {
                 fieldValues = { ...fieldValues, [s.id]: option.id };
@@ -726,7 +824,7 @@
             >{s.label}</vscode-label
           >
         {/if}
-        <div class="group-row align-{groupAlign(s)}">
+        <div class="group-row align-{groupAlign(s)}" class:reverse={s.reverse}>
           {#each s.items as item, itemIndex (itemIndex)}
             {#if item.type === "input"}
               <div class="group-field">{@render inputControl(item)}</div>
@@ -994,6 +1092,12 @@
     background: var(--ch-accent-muted, var(--ch-list-hover-bg));
   }
 
+  .radio-card:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
   .radio-card:focus {
     outline: none;
     border-color: var(--ch-focus-border);
@@ -1115,8 +1219,10 @@
     font-family: inherit;
     font-size: 0.875rem;
     color: var(--ch-foreground);
-    background: var(--ch-input-background);
-    border: 1px solid var(--ch-border);
+    /* Same surface as the other inputs (FilterableDropdown, vscode-textfield
+       both resolve to --vscode-settings-textInputBackground). */
+    background: var(--ch-input-bg);
+    border: 1px solid var(--ch-input-border);
     border-radius: var(--ch-radius-sm, 6px);
     resize: vertical;
   }
@@ -1128,6 +1234,11 @@
 
   .input-textarea.errored {
     border-color: var(--ch-danger, #f14c4c);
+  }
+
+  /* An explicit `rows` controls the initial height (user can still resize). */
+  .input-textarea.fixed-rows {
+    min-height: 0;
   }
 
   .input-textarea::placeholder {
@@ -1162,6 +1273,26 @@
     justify-content: flex-end;
   }
 
+  /* Visually reversed row (tab order keeps declaration order). The main axis
+     flips, so the justify mapping flips with it. */
+  .group-row.reverse {
+    flex-direction: row-reverse;
+  }
+
+  .group-row.reverse.align-right {
+    justify-content: flex-start;
+  }
+
+  .group-row.reverse.align-left {
+    justify-content: flex-end;
+  }
+
+  /* Rows mixing a field with buttons stretch the buttons to the field's
+     height (the old project-row look); button-only rows keep natural height. */
+  .group-row:has(.group-field) {
+    align-items: stretch;
+  }
+
   .group-field {
     flex: 1;
     min-width: 0;
@@ -1176,5 +1307,16 @@
 
   .button-icon:not(.icon-only) {
     margin-right: 0.3rem;
+  }
+
+  /* Icons slotted into buttons follow the button's text color instead of the
+     muted global --vscode-icon-foreground, which is barely visible on the
+     filled primary background. The button chrome itself is untouched. */
+  .group-row :global(vscode-button) {
+    --vscode-icon-foreground: var(--vscode-button-foreground, #ffffff);
+  }
+
+  .group-row :global(vscode-button[secondary]) {
+    --vscode-icon-foreground: var(--vscode-button-secondaryForeground, #cccccc);
   }
 </style>

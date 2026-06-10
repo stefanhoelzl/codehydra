@@ -79,6 +79,18 @@ export interface DomainEventOptions {
 export interface DomainEventHooks {
   /** Called after a project is added to the store */
   onProjectOpenedHook?: (project: Parameters<IApiEvents["project:opened"]>[0]["project"]) => void;
+  /**
+   * Called when a workspace creation starts (workspace:loading). Consumers
+   * create the optimistic sidebar placeholder.
+   */
+  onWorkspaceLoadingHook?: (event: Parameters<IApiEvents["workspace:loading"]>[0]) => void;
+  /**
+   * Called when a workspace creation fails (workspace:create-failed).
+   * Consumers roll back the optimistic placeholder.
+   */
+  onWorkspaceCreateFailedHook?: (
+    event: Parameters<IApiEvents["workspace:create-failed"]>[0]
+  ) => void;
 }
 
 /**
@@ -179,13 +191,20 @@ export function setupDomainEvents(
     })
   );
 
-  // Workspace create-failed event — delivery seam only.
-  // Task #11 (renderer create-bindings) will consume this to roll back the
-  // optimistic placeholder (resolve project by projectPath, remove the
-  // placeholder by workspaceName). Intentionally a no-op for now.
+  // Workspace loading event — a creation (or wake) is about to start slow
+  // work. The hook creates the optimistic sidebar placeholder for fresh
+  // creations (it name-guards against wakes/reopens of existing workspaces).
   unsubscribes.push(
-    api.on("workspace:create-failed", () => {
-      /* #11: roll back optimistic placeholder */
+    api.on("workspace:loading", (event) => {
+      hooks?.onWorkspaceLoadingHook?.(event);
+    })
+  );
+
+  // Workspace create-failed event — the hook rolls back the optimistic
+  // placeholder created by the workspace:loading hook.
+  unsubscribes.push(
+    api.on("workspace:create-failed", (event) => {
+      hooks?.onWorkspaceCreateFailedHook?.(event);
     })
   );
 

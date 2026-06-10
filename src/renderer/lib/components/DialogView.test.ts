@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, fireEvent } from "@testing-library/svelte";
 import type { DialogConfig } from "@shared/dialog-types";
 
 // Mock setup - must be hoisted
@@ -124,6 +124,49 @@ describe("DialogView component (modal surface)", () => {
 
       expect(document.querySelector(".dialog-view")).toBeInTheDocument();
       expect(document.querySelector(".dialog-view.workspace-area")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("tab trap", () => {
+    const config: DialogConfig = {
+      sections: [
+        { type: "input", id: "url" },
+        {
+          type: "group",
+          items: [
+            { type: "button", id: "ok", label: "OK", variant: "primary" },
+            { type: "button", id: "cancel", label: "Cancel" },
+          ],
+        },
+      ],
+    };
+
+    it("Tab on the last focusable wraps to the first", async () => {
+      renderDialog(config);
+
+      const focusables = Array.from(
+        document.querySelectorAll<HTMLElement>("vscode-textfield, vscode-button")
+      );
+      const last = focusables[focusables.length - 1]!;
+      last.focus();
+
+      await fireEvent.keyDown(last, { key: "Tab" });
+
+      expect(document.activeElement).toBe(focusables[0]);
+    });
+
+    it("Shift+Tab on the first focusable wraps to the last", async () => {
+      renderDialog(config);
+
+      const focusables = Array.from(
+        document.querySelectorAll<HTMLElement>("vscode-textfield, vscode-button")
+      );
+      const first = focusables[0]!;
+      first.focus();
+
+      await fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+
+      expect(document.activeElement).toBe(focusables[focusables.length - 1]);
     });
   });
 });

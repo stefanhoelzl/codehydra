@@ -18,7 +18,7 @@
 
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type { ProjectId } from "../shared/api/types";
+import type { ProjectId, BaseInfo } from "../shared/api/types";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 
 // =============================================================================
@@ -33,7 +33,7 @@ export interface GetProjectBasesPayload {
 }
 
 export interface GetProjectBasesResult {
-  readonly bases: readonly { name: string; isRemote: boolean }[];
+  readonly bases: readonly BaseInfo[];
   readonly defaultBaseBranch?: string;
   readonly projectPath: string;
   readonly projectId: ProjectId;
@@ -53,7 +53,7 @@ export const INTENT_GET_PROJECT_BASES = "project:get-bases" as const;
 export interface BasesUpdatedPayload {
   readonly projectId: ProjectId;
   readonly projectPath: string;
-  readonly bases: readonly { name: string; isRemote: boolean }[];
+  readonly bases: readonly BaseInfo[];
   /** Fresh default base branch; absent when detection found none (authoritative). */
   readonly defaultBaseBranch?: string;
 }
@@ -74,7 +74,7 @@ export interface ListBasesHookInput extends HookContext {
 }
 
 export interface ListBasesHookResult {
-  readonly bases?: readonly { name: string; isRemote: boolean }[];
+  readonly bases?: readonly BaseInfo[];
   readonly defaultBaseBranch?: string;
 }
 

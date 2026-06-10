@@ -15,7 +15,7 @@
   - Render Sidebar, dialogs, and ShortcutOverlay
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import * as api from "$lib/api";
   import {
     projects,
@@ -35,6 +35,7 @@
     newWorkspaceView,
     openNewWorkspaceView,
     closeNewWorkspaceView,
+    registerSubmitHandler,
   } from "$lib/stores/new-workspace-view.svelte.js";
   import {
     shortcutModeActive,
@@ -54,10 +55,8 @@
   // Components
   import Sidebar from "./Sidebar.svelte";
   import NotificationHost from "./NotificationHost.svelte";
-  import NewWorkspaceView from "./NewWorkspaceView.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
-  import GitCloneDialog from "./GitCloneDialog.svelte";
   import OpenProjectErrorDialog from "./OpenProjectErrorDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
@@ -128,19 +127,52 @@
     setNewWorkspaceViewOpen(newWorkspaceView.isOpen);
   });
 
-  // When the New workspace view opens, dismiss any MODAL framework dialogs the
-  // main process opened in the meantime (most notably the "Loading workspace..."
-  // progress dialog triggered by `workspace:loading`). They render inside the
-  // UI's DialogHost, so without this they cover the panel until the workspace
-  // finishes loading. The sidebar's red "busy" indicator is sufficient
-  // feedback that creation is in progress. Panel-surface sessions are left
-  // alone — they live in the content area, not on top of it.
+  // At the moment the New workspace panel is shown, dismiss MODAL framework
+  // dialogs the main process opened in the meantime (most notably the
+  // "Loading workspace..." progress dialog triggered by `workspace:loading`).
+  // They render inside the UI's DialogHost, so without this they would cover
+  // the panel. Transition-based (not continuous): modal dialogs opened WHILE
+  // the panel is shown — e.g. the creation module's git-clone sub-dialog —
+  // must stay. Panel-surface sessions are left alone.
+  let prevOpenForModalSweep = false;
   $effect(() => {
-    if (!newWorkspaceView.isOpen) return;
-    for (const entry of [...dialogs.value.values()]) {
-      if (entry.surface !== "modal") continue;
-      processFrameworkDialog({ action: "close", dialogId: entry.dialogId });
+    const open = newWorkspaceView.isOpen;
+    if (open && !prevOpenForModalSweep) {
+      for (const entry of untrack(() => [...dialogs.value.values()])) {
+        if (entry.surface !== "modal") continue;
+        processFrameworkDialog({ action: "close", dialogId: entry.dialogId });
+      }
     }
+    prevOpenForModalSweep = open;
+  });
+
+  // Request a fresh form whenever the panel is (re)shown: send a dismiss
+  // event so the backend creation module resets its session (close + reopen
+  // with fresh config = new dialogId). Sent once per show transition, also
+  // covering the startup race where the flag flips before the always-alive
+  // session has arrived. NOT re-sent when the dialogId changes mid-show —
+  // that change IS the reset.
+  let showDismissPending = false;
+  let prevOpenForDismiss = false;
+  $effect(() => {
+    const open = newWorkspaceView.isOpen;
+    if (open && !prevOpenForDismiss) showDismissPending = true;
+    if (!open) showDismissPending = false;
+    prevOpenForDismiss = open;
+    const session = panelDialog.value;
+    if (showDismissPending && session) {
+      showDismissPending = false;
+      api.sendDialogEvent({ kind: "dismiss", dialogId: session.dialogId });
+    }
+  });
+
+  // Expose Create to keyboard shortcuts (Alt+X+Enter) while the panel is
+  // shown: forward to the panel form's primary action.
+  let panelViewRef: PanelView | undefined = $state();
+  $effect(() => {
+    if (!newWorkspaceView.isOpen || !panelDialog.value) return;
+    registerSubmitHandler(() => panelViewRef?.submitPrimary());
+    return () => registerSubmitHandler(null);
   });
 
   // Auto-open the New workspace view as the empty state: when no workspaces
@@ -160,9 +192,13 @@
     }
 
     // Suppress while a clone runs (a project is about to appear silently) or a
-    // framework dialog is open (e.g. git init confirmation).
+    // MODAL framework dialog is open (e.g. git init confirmation). The
+    // always-alive panel-surface session must not suppress — it IS the panel
+    // this effect opens.
     const cloneRunning = hasSpinnerNotifications.value;
-    const hasFrameworkDialog = dialogs.value.size > 0;
+    const hasFrameworkDialog = [...dialogs.value.values()].some(
+      (entry) => entry.surface === "modal"
+    );
     if (
       effectiveCount === 0 &&
       initialized &&
@@ -307,8 +343,6 @@
     <RemoveWorkspaceDialog open={true} workspaceRef={dialogState.value.workspaceRef} />
   {:else if dialogState.value.type === "close-project"}
     <CloseProjectDialog open={true} projectId={dialogState.value.projectId} />
-  {:else if dialogState.value.type === "git-clone"}
-    <GitCloneDialog open={true} />
   {/if}
 
   <OpenProjectErrorDialog
@@ -328,13 +362,16 @@
     {idleWorkspaceCount}
   />
 
-  <!-- New workspace view: full-area panel; also serves as the empty state -->
-  <NewWorkspaceView open={newWorkspaceView.isOpen} />
-
-  <!-- Panel surface: backend-driven form session docked in the content area.
-       Visible iff a panel-surface session exists (session-driven visibility). -->
-  {#if panelDialog.value}
-    <PanelView dialogId={panelDialog.value.dialogId} config={panelDialog.value.config} />
+  <!-- New workspace panel: the backend creation module's always-alive form
+       session, shown while the renderer's isOpen flag is set (also serves as
+       the empty state). The creation form is the only panel-surface session
+       today; revisit the gating if another panel session appears. -->
+  {#if newWorkspaceView.isOpen && panelDialog.value}
+    <PanelView
+      bind:this={panelViewRef}
+      dialogId={panelDialog.value.dialogId}
+      config={panelDialog.value.config}
+    />
   {/if}
 
   <!-- Backdrop shown when no workspace is active and the panel is closed -->
