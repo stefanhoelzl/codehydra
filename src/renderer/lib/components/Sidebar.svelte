@@ -9,14 +9,21 @@
   import { getCounts } from "$lib/stores/agent-status.svelte.js";
   import { getDeletionStatus } from "$lib/stores/deletion.svelte.js";
   import { isPending } from "$lib/stores/pending-workspaces.svelte.js";
-  import { uiMode, setSidebarExpanded } from "$lib/stores/ui-mode.svelte.js";
+  import {
+    desiredMode,
+    hoverExpansionEligible,
+    setSidebarExpanded,
+  } from "$lib/stores/ui-mode.svelte.js";
   import {
     getWorkspaceGlobalIndex,
     formatIndexDisplay,
     getShortcutHint,
     getStatusText,
   } from "$lib/utils/sidebar-utils.js";
+  import { createLogger } from "$lib/logging";
   import type { Project } from "$lib/api";
+
+  const logger = createLogger("ui");
 
   interface SidebarProps {
     projects: readonly Project[];
@@ -45,59 +52,113 @@
 
   // ============ Expansion State ============
 
-  let isHovering = $state(false);
+  /** Debounce for both arming expansion (deliberate-hover filter) and collapsing. */
+  const HOVER_DELAY_MS = 150;
+  /**
+   * Hover only arms expansion once the cursor has penetrated the collapsed
+   * gutter past the outer quarter; shallow grazes along its outer edge are
+   * ignored.
+   */
+  const HOVER_TRIGGER_DEPTH_PX = 15;
+
+  let isHovering = false;
+  let openTimeout: ReturnType<typeof setTimeout> | null = null;
   let collapseTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Sidebar is expanded when:
-  // - User is hovering over it, OR
-  // - UI mode is not "workspace" (shortcut/dialog mode), OR
-  // - There are no workspaces (so user can open a project)
-  const isExpanded = $derived(isHovering || uiMode.value !== "workspace" || totalWorkspaces === 0);
+  // - any ui-mode input forces the UI on top (hover, shortcut, dialog, New workspace view), OR
+  // - there are no workspaces (so user can open a project)
+  const isExpanded = $derived(desiredMode.value !== "workspace" || totalWorkspaces === 0);
 
-  function handleMouseEnter(): void {
+  function clearOpenTimeout(): void {
+    if (openTimeout) {
+      clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+  }
+
+  function clearCollapseTimeout(): void {
     if (collapseTimeout) {
       clearTimeout(collapseTimeout);
       collapseTimeout = null;
     }
+  }
 
-    // Don't set hover state when in shortcut mode - the sidebar is already
-    // expanded due to shortcut mode, not hover. This prevents the hover state
-    // from "locking in" when the sidebar expands into the mouse cursor.
-    if (shortcutModeActive) {
+  function maybeArmExpansion(clientX: number): void {
+    if (isHovering) return;
+    // Hover may only initiate expansion when nothing else forces the UI on
+    // top; otherwise the sidebar expanding into a parked cursor would latch
+    // hover and keep the sidebar open after that mode exits.
+    if (!hoverExpansionEligible.value) {
+      logger.debug("sidebar hover: not eligible", { clientX });
       return;
     }
+    if (clientX > HOVER_TRIGGER_DEPTH_PX) {
+      if (openTimeout) logger.debug("sidebar hover: disarm (shallow)", { clientX });
+      clearOpenTimeout();
+      return;
+    }
+    if (!openTimeout) {
+      logger.debug("sidebar hover: arm", { clientX });
+      openTimeout = setTimeout(() => {
+        openTimeout = null;
+        if (!hoverExpansionEligible.value) return;
+        logger.debug("sidebar hover: expand");
+        isHovering = true;
+        setSidebarExpanded(true);
+      }, HOVER_DELAY_MS);
+    }
+  }
 
-    isHovering = true;
-    setSidebarExpanded(true);
+  function handleMouseEnter(event: MouseEvent): void {
+    logger.debug("sidebar hover: enter", { clientX: event.clientX, isHovering });
+    clearCollapseTimeout();
+    // A cursor slammed against the window edge can come to rest in the same
+    // frame it enters — no mousemove ever fires, so arm from the enter too.
+    maybeArmExpansion(event.clientX);
+  }
+
+  function handleMouseMove(event: MouseEvent): void {
+    maybeArmExpansion(event.clientX);
+  }
+
+  function pinnedAgainstScreenEdge(): boolean {
+    // An exit through our left boundary can only be a "pin" when the
+    // window's left edge sits at the screen's left edge; otherwise the
+    // cursor genuinely left the window (windowed mode) and a normal leave
+    // applies. (Under native Wayland window positions report 0, degrading
+    // to treating every left exit as a pin.)
+    const availLeft = (window.screen as Screen & { availLeft?: number }).availLeft ?? 0;
+    return window.screenX <= availLeft;
   }
 
   function handleMouseLeave(event: MouseEvent): void {
-    // Don't collapse if mouse is at the left edge of the window
-    // (user likely moved to window boundary, not away from sidebar)
-    if (event.clientX < 5) {
+    // A leave through the left boundary while the window sits at the screen
+    // edge means the cursor is pinned: the OS keeps the pointer there but
+    // reports it just outside, and NO further events arrive while it rests
+    // (a fast slam delivers only a shallow enter + this leave). Treat it as
+    // the deepest possible hover — arm expansion / keep the sidebar open —
+    // not as a leave.
+    if (event.clientX <= 0 && pinnedAgainstScreenEdge()) {
+      logger.debug("sidebar hover: edge pin", { clientX: event.clientX, isHovering });
+      maybeArmExpansion(0);
       return;
     }
-
-    collapseTimeout = setTimeout(() => {
+    logger.debug("sidebar hover: leave", { clientX: event.clientX, isHovering });
+    clearOpenTimeout();
+    if (!isHovering) return;
+    collapseTimeout ??= setTimeout(() => {
+      collapseTimeout = null;
+      logger.debug("sidebar hover: collapse");
       isHovering = false;
       setSidebarExpanded(false);
-      collapseTimeout = null;
-    }, 150); // 150ms debounce
+    }, HOVER_DELAY_MS);
   }
 
-  // Clear hover state when entering shortcut mode (cleanup pending collapse)
-  $effect(() => {
-    if (shortcutModeActive && collapseTimeout) {
-      clearTimeout(collapseTimeout);
-      collapseTimeout = null;
-    }
-  });
-
-  // Clean up timeout on component destroy
+  // Clean up timeouts on component destroy
   onDestroy(() => {
-    if (collapseTimeout) {
-      clearTimeout(collapseTimeout);
-    }
+    clearOpenTimeout();
+    clearCollapseTimeout();
   });
 
   // ============ Actions ============
@@ -107,56 +168,55 @@
   }
 </script>
 
+<!--
+  Two-column row layout: every row is [flexible label cell | fixed icon cell
+  at the right edge]. Collapsing the sidebar shrinks the label cells to zero
+  width, so the icon column IS the collapsed sidebar.
+-->
 <nav
   class="sidebar"
   class:expanded={isExpanded}
+  class:ch-sidebar-expanded={isExpanded}
   aria-label="Projects"
   onmouseenter={handleMouseEnter}
+  onmousemove={handleMouseMove}
   onmouseleave={handleMouseLeave}
 >
   <header class="sidebar-header">
+    <div class="ch-label-cell header-label">
+      <h2>PROJECTS</h2>
+    </div>
     {#if !isExpanded}
-      <span class="expand-hint" aria-hidden="true">
+      <span class="ch-icon-cell expand-hint" aria-hidden="true">
         <Icon name="chevron-right" size={12} />
       </span>
     {/if}
-    <h2 class:visually-collapsed={!isExpanded}>PROJECTS</h2>
   </header>
 
   <div class="sidebar-content">
     <!-- Global "New workspace" entry, pinned above the projects. -->
-    {#if isExpanded}
-      <button
-        type="button"
-        class="new-workspace-entry"
-        class:active={newWorkspaceViewOpen}
-        aria-current={newWorkspaceViewOpen ? "true" : undefined}
-        onclick={() => onOpenNewWorkspace()}
-      >
-        <span class="new-workspace-icon"><Icon name="add" size={14} /></span>
+    <button
+      type="button"
+      class="new-workspace-entry"
+      class:active={newWorkspaceViewOpen}
+      aria-label="New workspace"
+      aria-current={newWorkspaceViewOpen ? "true" : undefined}
+      onclick={() => onOpenNewWorkspace()}
+    >
+      <span class="ch-label-cell new-workspace-label-cell">
         <span class="new-workspace-label">New workspace</span>
-      </button>
-    {:else}
-      <button
-        type="button"
-        class="new-workspace-entry-minimized"
-        class:active={newWorkspaceViewOpen}
-        aria-label="New workspace"
-        aria-current={newWorkspaceViewOpen ? "true" : undefined}
-        onclick={() => onOpenNewWorkspace()}
-      >
-        <Icon name="add" size={14} />
-      </button>
-    {/if}
+      </span>
+      <span class="ch-icon-cell new-workspace-icon"><Icon name="add" size={14} /></span>
+    </button>
 
     <ul class="project-list">
       {#each projects as project, projectIndex (project.path)}
         {#if projectIndex > 0}
-          <vscode-divider inert={!isExpanded}></vscode-divider>
+          <vscode-divider></vscode-divider>
         {/if}
         {@const projectTitle = project.remoteUrl ?? project.path}
         <li class="project-item">
-          <div class="project-header" inert={!isExpanded}>
+          <div class="project-header ch-label-cell">
             <span class="project-icon" title={projectTitle}>
               <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
             </span>
@@ -192,20 +252,19 @@
                 : false}
               {@const pending = isPending(workspace.path)}
               {@const hibernated = workspace.metadata?.["hibernated"] === "true"}
-              {#if isExpanded}
-                <!-- Expanded layout: two-row when tags exist -->
-                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-                <li
-                  class="workspace-item"
-                  class:active={isActive}
-                  class:has-tags={hasTags}
-                  class:hibernated
-                  aria-current={isActive ? "true" : undefined}
-                  onclick={() => {
-                    if (!pending) onSwitchWorkspace(workspaceRef);
-                  }}
-                >
-                  <div class="workspace-row">
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
+              <li
+                class="workspace-item"
+                class:active={isActive}
+                class:has-tags={hasTags}
+                class:hibernated
+                aria-current={isActive ? "true" : undefined}
+                onclick={() => {
+                  if (!pending) onSwitchWorkspace(workspaceRef);
+                }}
+              >
+                <div class="workspace-row">
+                  <div class="ch-label-cell workspace-label-cell">
                     <button
                       type="button"
                       class="workspace-btn"
@@ -236,46 +295,15 @@
                         <Icon name="trash" size={14} />
                       </button>
                     {/if}
-                    {#if pending}
-                      <!-- Creating: show red "busy" immediately (work is queued) -->
-                      <AgentStatusIndicator idleCount={0} busyCount={1} />
-                    {:else if deletionStatus === "in-progress"}
-                      <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
-                    {:else if deletionStatus === "error"}
-                      <span class="deletion-error" role="img" aria-label="Deletion failed">
-                        <Icon name="warning" size={14} />
-                      </span>
-                    {:else if hibernated}
-                      <span class="hibernation-indicator" role="img" aria-label="Hibernated">
-                        <Icon name="debug-pause" size={14} />
-                      </span>
-                    {:else}
-                      <AgentStatusIndicator
-                        idleCount={agentCounts.idle}
-                        busyCount={agentCounts.busy}
-                      />
-                    {/if}
                   </div>
-                  {#if hasTags}
-                    <WorkspaceTags metadata={workspace.metadata} />
-                  {/if}
-                </li>
-              {:else}
-                <!-- Minimized layout: clickable status indicators -->
-                <!-- Workspace name kept in DOM (visually hidden) for accessibility -->
-                <li
-                  class="workspace-item-minimized"
-                  class:active={isActive}
-                  aria-current={isActive ? "true" : undefined}
-                >
+                  <!-- Status cell: a button in both modes (clicks bubble to the
+                       row's switch handler); the collapsed sidebar shows only
+                       this cell. -->
                   <button
                     type="button"
-                    class="status-indicator-btn"
+                    class="ch-icon-cell status-cell"
                     aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : hibernated ? "Hibernated" : statusText}`}
                     aria-current={isActive ? "true" : undefined}
-                    onclick={() => {
-                      if (!pending) onSwitchWorkspace(workspaceRef);
-                    }}
                   >
                     {#if pending}
                       <!-- Creating: show red "busy" immediately (work is queued) -->
@@ -296,10 +324,14 @@
                         busyCount={agentCounts.busy}
                       />
                     {/if}
-                    <span class="ch-visually-hidden">{workspace.name}</span>
                   </button>
-                </li>
-              {/if}
+                </div>
+                {#if hasTags}
+                  <div class="workspace-tags-row">
+                    <WorkspaceTags metadata={workspace.metadata} />
+                  </div>
+                {/if}
+              </li>
             {/each}
           </ul>
         </li>
@@ -315,14 +347,14 @@
     position: absolute;
     left: 0;
     top: 0;
-    /* Minimized: show only left 20px, expanded: full width */
+    /* Minimized: show only the icon column, expanded: full width */
     width: var(--ch-sidebar-minimized-width, 20px);
     height: 100%;
     background: var(--ch-surface-1, var(--ch-background));
     color: var(--ch-foreground);
     display: flex;
     flex-direction: column;
-    overflow: clip;
+    overflow: hidden;
     transition:
       width var(--ch-sidebar-transition, 150ms ease-out),
       box-shadow var(--ch-sidebar-transition, 150ms ease-out);
@@ -331,12 +363,32 @@
     user-select: none;
   }
 
+  /* Collapse snaps instead of animating: collapsing also drops the UI view
+     below the workspace views (native z-order, instant), which covers
+     everything beyond the gutter — an animated slide would only be visible
+     as the icons popping in at the end. */
+  .sidebar:not(.expanded) {
+    transition: none;
+  }
+
   .sidebar.expanded {
     width: var(--ch-sidebar-width, 250px);
     z-index: var(--ch-z-sidebar-expanded, 50);
     box-shadow: var(--ch-shadow);
+  }
+
+  /* Two-column row cells: .ch-icon-cell / .ch-label-cell come from global.css. */
+
+  /* Shrink-to-zero zones inside two-column rows. Inner content keeps its own
+     spacing and is clipped while the width animates. */
+  .header-label,
+  .new-workspace-label-cell,
+  .workspace-label-cell {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
     overflow: hidden;
-    overflow-y: auto;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -345,29 +397,18 @@
     }
   }
 
+  /* ============ Header ============ */
+
   .sidebar-header {
     display: flex;
     align-items: center;
-    padding: 12px 16px 12px 12px;
+    padding: 12px 0;
     border-bottom: 1px solid var(--ch-input-border);
-    gap: 0;
-    min-width: var(--ch-sidebar-width, 250px);
-  }
-
-  /* When minimized, expand-hint takes up left space */
-  .sidebar-header:has(.expand-hint) {
-    padding-left: 0;
   }
 
   .expand-hint {
-    width: var(--ch-sidebar-minimized-width, 20px);
-    min-width: var(--ch-sidebar-minimized-width, 20px);
-    align-self: stretch;
     opacity: 0.5;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    align-self: stretch;
   }
 
   .expand-hint:hover {
@@ -379,31 +420,25 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin: 0;
-    margin-left: 8px;
+    margin: 0 0 0 20px;
     opacity: 0.7;
-    flex: 1;
     white-space: nowrap;
-  }
-
-  .sidebar-header h2.visually-collapsed {
-    visibility: hidden;
   }
 
   .sidebar-content {
     flex: 1;
     overflow-y: auto;
-    min-width: var(--ch-sidebar-width, 250px);
+    overflow-x: hidden;
   }
 
-  /* Global "New workspace" entry (expanded) */
+  /* ============ New workspace entry ============ */
+
   .new-workspace-entry {
     display: flex;
     align-items: center;
-    gap: 8px;
     width: 100%;
-    min-width: var(--ch-sidebar-width, 250px);
-    padding: 8px 12px 8px calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
+    min-height: 36px;
+    padding: 4px 0;
     background: transparent;
     border: none;
     color: var(--ch-foreground);
@@ -439,63 +474,23 @@
     background: var(--ch-focus-border);
   }
 
-  .new-workspace-icon {
-    display: flex;
-    align-items: center;
-    opacity: 0.8;
-    flex-shrink: 0;
-  }
-
   .new-workspace-label {
+    margin-left: 28px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  /* Global "New workspace" entry (minimized) */
-  .new-workspace-entry-minimized {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--ch-sidebar-minimized-width, 20px);
-    min-width: var(--ch-sidebar-minimized-width, 20px);
-    min-height: 36px;
-    background: transparent;
-    border: none;
-    color: var(--ch-foreground);
-    cursor: pointer;
-    padding: 4px;
+  .new-workspace-icon {
     opacity: 0.8;
-    flex-shrink: 0;
   }
 
-  .new-workspace-entry-minimized:hover {
-    background: var(--ch-input-bg);
+  .new-workspace-entry:hover .new-workspace-icon,
+  .new-workspace-entry.active .new-workspace-icon {
     opacity: 1;
   }
 
-  .new-workspace-entry-minimized:focus-visible {
-    outline: 1px solid var(--ch-focus-border);
-    outline-offset: -1px;
-  }
-
-  .new-workspace-entry-minimized.active {
-    background: var(--ch-accent-muted, var(--ch-list-active-bg));
-    color: var(--ch-list-active-fg);
-    opacity: 1;
-    position: relative;
-  }
-
-  .new-workspace-entry-minimized.active::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: var(--ch-focus-border);
-  }
+  /* ============ Projects ============ */
 
   .project-list {
     list-style: none;
@@ -507,9 +502,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 4px 12px 4px calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
+    padding: 4px 12px 4px 28px;
     gap: 8px;
-    min-width: var(--ch-sidebar-width, 250px);
   }
 
   .project-icon {
@@ -558,6 +552,8 @@
     background: var(--ch-list-hover-bg);
   }
 
+  /* ============ Workspaces ============ */
+
   .workspace-list {
     list-style: none;
     padding: 0;
@@ -567,44 +563,53 @@
   .workspace-item {
     display: flex;
     flex-direction: column;
-    padding: 4px 12px 4px 12px;
+    justify-content: center;
+    padding: 4px 0;
     min-height: 44px; /* Accessible click target */
-    min-width: var(--ch-sidebar-width, 250px);
     cursor: pointer;
     border-radius: var(--ch-radius-sm, 6px);
     position: relative;
   }
 
-  .workspace-item.has-tags {
+  .sidebar.expanded .workspace-item.has-tags {
     padding-bottom: 6px;
   }
 
   .workspace-row {
     display: flex;
     align-items: center;
-    gap: 4px;
   }
 
-  .status-indicator-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--ch-sidebar-minimized-width, 20px);
-    min-width: var(--ch-sidebar-minimized-width, 20px);
+  .workspace-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    color: var(--ch-foreground);
+    cursor: pointer;
+    text-align: left;
+    padding: 4px 8px 4px 20px;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-radius: var(--ch-radius-sm, 6px);
+  }
+
+  .status-cell {
     min-height: 36px;
     background: transparent;
     border: none;
     cursor: pointer;
     padding: 4px;
-    flex-shrink: 0;
     border-radius: var(--ch-radius-sm, 6px);
   }
 
-  .status-indicator-btn:hover {
+  .status-cell:hover {
     background: var(--ch-input-bg);
   }
 
-  .status-indicator-btn:focus {
+  .status-cell:focus {
     outline: 1px solid var(--ch-focus-border);
     outline-offset: -1px;
   }
@@ -642,21 +647,6 @@
     outline-offset: -1px;
   }
 
-  .workspace-btn {
-    flex: 1;
-    background: transparent;
-    border: none;
-    color: var(--ch-foreground);
-    cursor: pointer;
-    text-align: left;
-    padding: 4px 8px;
-    font-size: 13px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    border-radius: var(--ch-radius-sm, 6px);
-  }
-
   .workspace-item .remove-btn {
     opacity: 0;
   }
@@ -666,28 +656,12 @@
     opacity: 0.7;
   }
 
-  /* Minimized layout: only status indicator visible */
-  .workspace-item-minimized {
-    display: flex;
-    align-items: center;
-    min-height: 44px; /* Accessible click target */
-    position: relative;
+  .workspace-tags-row {
+    padding-left: 12px;
   }
 
-  .workspace-item-minimized.active .status-indicator-btn {
-    background: var(--ch-accent-muted, var(--ch-list-active-bg));
-    border-radius: 0;
-  }
-
-  .workspace-item-minimized.active::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 8px;
-    bottom: 8px;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: var(--ch-focus-border);
+  .sidebar:not(.expanded) .workspace-tags-row {
+    display: none;
   }
 
   .shortcut-badge {

@@ -21,9 +21,11 @@ import {
   uiMode,
   desiredMode,
   shortcutModeActive,
+  hoverExpansionEligible,
   setModeFromMain,
   setDialogOpen,
   setSidebarExpanded,
+  setNewWorkspaceViewOpen,
   computeDesiredMode,
   syncMode,
   reset,
@@ -238,6 +240,50 @@ describe("ui-mode store", () => {
 
       syncMode();
       expect(mockApi.ui.setMode).toHaveBeenCalledWith("hover");
+    });
+  });
+
+  describe("hoverExpansionEligible", () => {
+    it("is true in plain workspace mode", () => {
+      expect(hoverExpansionEligible.value).toBe(true);
+    });
+
+    it("is false while shortcut mode is active", () => {
+      setModeFromMain("shortcut");
+      flushSync();
+
+      expect(hoverExpansionEligible.value).toBe(false);
+    });
+
+    it("is false while a dialog is open", () => {
+      setDialogOpen(true);
+      flushSync();
+
+      expect(hoverExpansionEligible.value).toBe(false);
+    });
+
+    it("is false while the New workspace view is open", () => {
+      setNewWorkspaceViewOpen(true);
+      flushSync();
+
+      expect(hoverExpansionEligible.value).toBe(false);
+    });
+
+    it("stays true when hover itself is the only expansion cause", () => {
+      setSidebarExpanded(true);
+      flushSync();
+
+      expect(hoverExpansionEligible.value).toBe(true);
+    });
+
+    it("becomes true again when the forcing mode exits", () => {
+      setModeFromMain("shortcut");
+      flushSync();
+      expect(hoverExpansionEligible.value).toBe(false);
+
+      setModeFromMain("workspace");
+      flushSync();
+      expect(hoverExpansionEligible.value).toBe(true);
     });
   });
 

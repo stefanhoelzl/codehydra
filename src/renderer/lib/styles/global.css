@@ -58,3 +58,32 @@ textarea {
   white-space: nowrap;
   border: 0;
 }
+
+/* ============================================================================
+ * Sidebar two-column row cells
+ * Every sidebar row is [flexible label cell | fixed icon cell at the right
+ * edge]; the collapsed sidebar shows only the icon column. Shared between
+ * Sidebar and NotificationStack (Svelte scoping would otherwise force each
+ * component to duplicate these rules). `.ch-sidebar-expanded` is set on the
+ * sidebar root alongside its scoped `expanded` class.
+ * ============================================================================ */
+
+.ch-icon-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ch-sidebar-minimized-width, 20px);
+  min-width: var(--ch-sidebar-minimized-width, 20px);
+  flex-shrink: 0;
+}
+
+/* Collapsed label cells are out of the tab order and accessibility tree.
+   No transition: collapse snaps (see Sidebar.svelte), and during the expand
+   animation the labels are revealed by the growing width. */
+.ch-label-cell {
+  visibility: hidden;
+}
+
+.ch-sidebar-expanded .ch-label-cell {
+  visibility: visible;
+}

@@ -66,6 +66,15 @@ const _desiredMode = $derived(
   computeDesiredMode(_modeFromMain, _dialogOpen, _sidebarExpanded, _newWorkspaceViewOpen)
 );
 
+// True when hover may initiate sidebar expansion: nothing else (shortcut
+// mode, a dialog, the New workspace view) is already forcing the UI on top.
+// Derived by computing the mode with the hover input blanked out — otherwise
+// the sidebar expanding into a parked cursor would latch hover and keep the
+// sidebar open after that mode exits.
+const _hoverExpansionEligible = $derived(
+  computeDesiredMode(_modeFromMain, _dialogOpen, false, _newWorkspaceViewOpen) === "workspace"
+);
+
 // ============ Getters (follow store pattern) ============
 
 /**
@@ -96,6 +105,16 @@ export const desiredMode = {
 export const shortcutModeActive = {
   get value(): boolean {
     return _modeFromMain === "shortcut";
+  },
+};
+
+/**
+ * Whether hover may initiate sidebar expansion (no other input is already
+ * forcing the UI on top). Consumed by the Sidebar's hover tracking.
+ */
+export const hoverExpansionEligible = {
+  get value(): boolean {
+    return _hoverExpansionEligible;
   },
 };
 

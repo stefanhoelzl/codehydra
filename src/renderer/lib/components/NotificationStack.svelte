@@ -2,7 +2,9 @@
   NotificationStack.svelte
 
   Renders notifications stacked at the bottom of the sidebar.
-  Two modes: expanded (full cards) and collapsed (type icons only).
+  Each entry uses the sidebar's two-column row layout: [label cell | icon
+  cell at the right edge]. Collapsing the sidebar hides the label content,
+  leaving the type icon as the whole entry.
   Newest notifications appear on top.
 -->
 <script lang="ts">
@@ -43,10 +45,10 @@
     {#each entries as entry (entry.notificationId)}
       {@const config = entry.config}
       {@const pct = progressPercent(config)}
-      {#if isExpanded}
-        <div class="notification-entry" role="status" aria-label={config.title}>
-          <vscode-divider></vscode-divider>
-          <div class="notification-row">
+      <div class="notification-entry" role="status" aria-label={config.title}>
+        <vscode-divider class="expanded-only"></vscode-divider>
+        <div class="notification-row">
+          <div class="ch-label-cell notification-label">
             <span class="notification-title" title={config.title}>{config.title}</span>
             {#if config.dismissible}
               <button
@@ -58,57 +60,49 @@
                 <Icon name="close" size={14} />
               </button>
             {/if}
-            <span class="notification-indicator" aria-hidden="true">
-              {#if config.type === "spinner"}
-                <vscode-progress-ring class="notification-spinner"></vscode-progress-ring>
-              {:else}
-                <Icon name={config.type} size={14} />
-              {/if}
-            </span>
           </div>
-          {#if config.message}
-            <div class="notification-detail">{config.message}</div>
-          {/if}
-          {#if config.progress !== undefined}
-            <div class="notification-progress">
-              {#if typeof config.progress === "number"}
-                <div class="progress-row">
-                  <div class="progress-bar">
-                    <div class="progress-fill" style="width: {config.progress * 100}%"></div>
-                  </div>
-                  <span class="notification-pct">{pct}%</span>
-                </div>
-              {:else}
-                <div class="progress-bar indeterminate">
-                  <div class="progress-fill"></div>
-                </div>
-              {/if}
-            </div>
-          {/if}
-          {#if config.actions && config.actions.length > 0}
-            <div class="notification-actions">
-              {#each config.actions as action (action.id)}
-                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-                <vscode-button
-                  secondary={action.variant !== "primary" || undefined}
-                  disabled={action.disabled || action.busy || undefined}
-                  onclick={() => handleAction(entry.notificationId, action)}
-                >
-                  {action.busy ? (action.busyLabel ?? action.label) : action.label}
-                </vscode-button>
-              {/each}
-            </div>
-          {/if}
+          <span class="ch-icon-cell notification-indicator" aria-hidden="true">
+            {#if config.type === "spinner"}
+              <vscode-progress-ring class="notification-spinner"></vscode-progress-ring>
+            {:else}
+              <Icon name={config.type} size={14} />
+            {/if}
+          </span>
         </div>
-      {:else}
-        <div class="notification-entry-minimized" role="status" aria-label={config.title}>
-          {#if config.type === "spinner"}
-            <vscode-progress-ring class="notification-spinner"></vscode-progress-ring>
-          {:else}
-            <Icon name={config.type} size={14} />
-          {/if}
-        </div>
-      {/if}
+        {#if config.message}
+          <div class="notification-detail expanded-only">{config.message}</div>
+        {/if}
+        {#if config.progress !== undefined}
+          <div class="notification-progress expanded-only">
+            {#if typeof config.progress === "number"}
+              <div class="progress-row">
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width: {config.progress * 100}%"></div>
+                </div>
+                <span class="notification-pct">{pct}%</span>
+              </div>
+            {:else}
+              <div class="progress-bar indeterminate">
+                <div class="progress-fill"></div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+        {#if config.actions && config.actions.length > 0}
+          <div class="notification-actions expanded-only">
+            {#each config.actions as action (action.id)}
+              <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+              <vscode-button
+                secondary={action.variant !== "primary" || undefined}
+                disabled={action.disabled || action.busy || undefined}
+                onclick={() => handleAction(entry.notificationId, action)}
+              >
+                {action.busy ? (action.busyLabel ?? action.label) : action.label}
+              </vscode-button>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/each}
   </div>
 {/if}
@@ -121,25 +115,44 @@
   .notification-stack.expanded {
     max-height: 280px;
     overflow-y: auto;
-    min-width: var(--ch-sidebar-width, 250px);
   }
 
-  /* Expanded notification entry */
   .notification-entry {
-    padding: 0 0 8px 0;
-    min-width: var(--ch-sidebar-width, 250px);
     flex-shrink: 0;
+  }
+
+  .notification-stack.expanded .notification-entry {
+    padding-bottom: 8px;
+  }
+
+  /* Blocks that only exist in the expanded card (collapsed entries are
+     uniform icon rows). */
+  .notification-stack:not(.expanded) .expanded-only {
+    display: none;
   }
 
   .notification-row {
     display: flex;
     align-items: center;
-    padding: 8px 12px 0 calc(var(--ch-sidebar-minimized-width, 20px) + 8px);
+    min-height: 36px;
+  }
+
+  /* Label cell visibility / icon cell sizing come from the global
+     .ch-label-cell / .ch-icon-cell utilities; this zone shrinks to zero with
+     the collapsing sidebar. */
+  .notification-label {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    align-items: center;
     gap: 8px;
+    overflow: hidden;
   }
 
   .notification-title {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: 28px;
     font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -147,9 +160,6 @@
   }
 
   .notification-indicator {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
     opacity: 0.7;
   }
 
@@ -244,17 +254,5 @@
     width: 14px;
     height: 14px;
     flex-shrink: 0;
-  }
-
-  /* Collapsed notification entry */
-  .notification-entry-minimized {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--ch-sidebar-minimized-width, 20px);
-    min-height: 36px;
-    padding: 4px;
-    flex-shrink: 0;
-    opacity: 0.7;
   }
 </style>

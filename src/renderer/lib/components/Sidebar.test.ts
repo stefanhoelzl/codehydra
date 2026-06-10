@@ -1,28 +1,20 @@
 /**
  * Tests for the Sidebar component.
+ *
+ * The sidebar uses one DOM tree for both the expanded and collapsed state:
+ * every row is [label cell | icon cell at the right edge] and the collapsed
+ * sidebar shows only the icon column (via CSS keyed on the `.expanded`
+ * class). Expansion is derived from the real ui-mode store, so these tests
+ * use the actual store (reset between tests) instead of mocking it.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
+import { render, screen, fireEvent } from "@testing-library/svelte";
+import { flushSync } from "svelte";
 import type { Api } from "@shared/electron-api";
 import { createMockApi } from "../test-utils";
-import type { UIMode } from "@shared/ipc";
 // Import utility functions directly from the utility module
 import { getStatusText } from "$lib/utils/sidebar-utils";
-
-// Create mock for uiMode store
-const mockUiModeStore = vi.hoisted(() => ({
-  uiMode: {
-    value: "workspace" as UIMode,
-  },
-  setSidebarExpanded: vi.fn(),
-}));
-
-// Mock the ui-mode store (used directly by Sidebar)
-vi.mock("$lib/stores/ui-mode.svelte", () => mockUiModeStore);
-
-// Mock the shortcuts store (re-exports from ui-mode)
-vi.mock("$lib/stores/shortcuts.svelte", () => mockUiModeStore);
 
 // Create mock API (flat structure) — must be set before Sidebar import
 // because NotificationStack transitively imports $lib/api which checks window.api
@@ -41,7 +33,23 @@ import { createMockProject, createMockWorkspace } from "$lib/test-fixtures";
 import type { ProjectPath, WorkspacePath } from "@shared/ipc";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as deletionStore from "$lib/stores/deletion.svelte.js";
+import {
+  desiredMode,
+  setModeFromMain,
+  setDialogOpen,
+  reset as resetUiMode,
+} from "$lib/stores/ui-mode.svelte.js";
 import type { ProjectId, WorkspaceName } from "@shared/api/types";
+
+const HOVER_DELAY_MS = 150;
+
+/** Deliberate hover: cursor deep in the gutter, sustained past the open delay. */
+async function hoverExpand(sidebar: Element): Promise<void> {
+  await fireEvent.mouseEnter(sidebar);
+  await fireEvent.mouseMove(sidebar, { clientX: 8 });
+  vi.advanceTimersByTime(HOVER_DELAY_MS);
+  flushSync();
+}
 
 describe("getStatusText helper", () => {
   it('returns "No agents running" for (0, 0)', () => {
@@ -84,12 +92,12 @@ describe("Sidebar component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    // Reset uiMode to workspace
-    mockUiModeStore.uiMode.value = "workspace";
+    resetUiMode();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    resetUiMode();
     document.body.innerHTML = "";
   });
 
@@ -501,11 +509,11 @@ describe("Sidebar component", () => {
     });
   });
 
-  describe("status indicator button column (minimized state)", () => {
-    // Tests for the clickable status indicator column (only visible in minimized state)
-    // Note: These tests check minimized state behavior (totalWorkspaces > 0, not hovering)
+  describe("status cell button", () => {
+    // The status cell is a button in BOTH modes; clicks bubble to the row's
+    // switch handler. When collapsed it is the entire visible row.
 
-    it("renders status indicator button for each workspace in minimized state", () => {
+    it("renders a status cell button for each workspace", () => {
       const ws1 = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const ws2 = createMockWorkspace({ path: "/test/.worktrees/ws2", name: "ws2" });
       const project = createMockProject({
@@ -517,13 +525,12 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 2 },
       });
 
-      // Sidebar is minimized (totalWorkspaces > 0, not hovering, uiMode is workspace)
-      // Each workspace should have a status indicator button
+      // Sidebar is collapsed (totalWorkspaces > 0, not hovering, uiMode is workspace)
       const statusButtons = screen.getAllByRole("button", { name: /in test.*agent/i });
       expect(statusButtons).toHaveLength(2);
     });
 
-    it("clicking status indicator button calls onSwitchWorkspace", async () => {
+    it("clicking status cell button calls onSwitchWorkspace", async () => {
       const onSwitchWorkspace = vi.fn();
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
@@ -545,7 +552,7 @@ describe("Sidebar component", () => {
       });
     });
 
-    it("status indicator button has descriptive aria-label with workspace, project, and status", () => {
+    it("status cell button has descriptive aria-label with workspace, project, and status", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -612,11 +619,10 @@ describe("Sidebar component", () => {
   });
 
   describe("expand hint chevrons", () => {
-    // Note: Expand hints are only visible when sidebar is minimized
-    // When totalWorkspaces=0, sidebar is expanded (no expand hints visible)
-    // When totalWorkspaces>0 and not hovering, sidebar is minimized (expand hints visible)
+    // The expand hint is the one element that truly only exists in one mode
+    // (collapsed); everything else is a single DOM tree styled per mode.
 
-    it("renders expand hint chevron in header when minimized", () => {
+    it("renders expand hint chevron in header when collapsed", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -627,7 +633,7 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
       });
 
-      // Sidebar is minimized - check that header contains an expand hint chevron
+      // Sidebar is collapsed - check that header contains an expand hint chevron
       const header = container.querySelector(".sidebar-header");
       expect(header).not.toBeNull();
 
@@ -758,122 +764,255 @@ describe("Sidebar component", () => {
       return { ...defaultProps, projects: [project], totalWorkspaces: 1 };
     };
 
-    it("expands on mouseenter", async () => {
+    it("expands after deliberate hover (trigger depth + open delay)", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       expect(sidebar).not.toHaveClass("expanded");
 
-      await fireEvent.mouseEnter(sidebar!);
+      await hoverExpand(sidebar!);
 
       expect(sidebar).toHaveClass("expanded");
     });
 
-    it("collapses on mouseleave after 150ms debounce", async () => {
+    it("expands when the cursor enters and rests without further movement (edge slam)", async () => {
+      // A cursor slammed against the window edge can come to rest in the
+      // same frame it enters: mouseenter fires, but no mousemove follows.
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!, { clientX: 0 });
+
+      vi.advanceTimersByTime(HOVER_DELAY_MS);
+      flushSync();
+
+      expect(sidebar).toHaveClass("expanded");
+    });
+
+    it("does not expand before the open delay elapses", async () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
+
+      vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
+      flushSync();
+
+      expect(sidebar).not.toHaveClass("expanded");
+    });
+
+    it("does not expand while the cursor stays in the outer quarter of the gutter", async () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+      await fireEvent.mouseMove(sidebar!, { clientX: 18 });
+
+      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
+      flushSync();
+
+      expect(sidebar).not.toHaveClass("expanded");
+    });
+
+    it("moving back out of the trigger depth cancels the pending expansion", async () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
+      vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
+      await fireEvent.mouseMove(sidebar!, { clientX: 18 });
+
+      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
+      flushSync();
+
+      expect(sidebar).not.toHaveClass("expanded");
+    });
+
+    it("leaving before the open delay elapses cancels the pending expansion", async () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!);
+      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
+      vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
+      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
+
+      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
+      flushSync();
+
+      expect(sidebar).not.toHaveClass("expanded");
+    });
+
+    it("collapses on mouseleave after the debounce", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
 
-      // Expand
-      await fireEvent.mouseEnter(sidebar!);
+      await hoverExpand(sidebar!);
       expect(sidebar).toHaveClass("expanded");
 
-      // Start collapse - provide clientX > 5 to simulate leaving away from window edge
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
       // Should still be expanded immediately (debounce hasn't elapsed)
       expect(sidebar).toHaveClass("expanded");
 
-      // Wait for debounce
-      vi.advanceTimersByTime(150);
+      vi.advanceTimersByTime(HOVER_DELAY_MS);
+      flushSync();
 
-      await waitFor(() => {
-        expect(sidebar).not.toHaveClass("expanded");
-      });
+      expect(sidebar).not.toHaveClass("expanded");
     });
 
-    it("stays expanded when uiMode is 'shortcut'", async () => {
-      mockUiModeStore.uiMode.value = "shortcut";
+    it("expands after a slam to the left edge (shallow enter, then leave reported outside)", async () => {
+      // Observed event stream of a fast slam: one shallow enter (x=18), then
+      // a leave at x=-1 as the OS pins the cursor against the window edge.
+      // No further events arrive while the cursor rests there.
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      await fireEvent.mouseEnter(sidebar!, { clientX: 18 });
+      await fireEvent.mouseLeave(sidebar!, { clientX: -1 });
+
+      vi.advanceTimersByTime(HOVER_DELAY_MS);
+      flushSync();
+
+      expect(sidebar).toHaveClass("expanded");
+    });
+
+    it("collapses on left exit when the window is not at the screen edge (windowed mode)", async () => {
+      // With space left of the window the cursor genuinely leaves; the pin
+      // interpretation only applies when the window sits at the screen edge.
+      const original = Object.getOwnPropertyDescriptor(window, "screenX");
+      Object.defineProperty(window, "screenX", { value: 120, configurable: true });
+      try {
+        const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+        const sidebar = container.querySelector(".sidebar");
+        await hoverExpand(sidebar!);
+        expect(sidebar).toHaveClass("expanded");
+
+        await fireEvent.mouseLeave(sidebar!, { clientX: -1 });
+        vi.advanceTimersByTime(HOVER_DELAY_MS);
+        flushSync();
+
+        expect(sidebar).not.toHaveClass("expanded");
+      } finally {
+        if (original) {
+          Object.defineProperty(window, "screenX", original);
+        } else {
+          Object.defineProperty(window, "screenX", { value: 0, configurable: true });
+        }
+      }
+    });
+
+    it("stays expanded while the cursor is pinned at the left window edge", async () => {
+      // A leave through the left boundary is a pin (deepest hover), not a
+      // leave — the sidebar must not collapse underneath the pinned cursor.
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const sidebar = container.querySelector(".sidebar");
+      await hoverExpand(sidebar!);
+      expect(sidebar).toHaveClass("expanded");
+
+      await fireEvent.mouseLeave(sidebar!, { clientX: 0 });
+      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
+      flushSync();
+
+      expect(sidebar).toHaveClass("expanded");
+    });
+
+    it("stays expanded when uiMode is 'shortcut'", () => {
+      setModeFromMain("shortcut");
+      flushSync();
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       expect(sidebar).toHaveClass("expanded");
     });
 
-    it("does not set hover state when mouseenter occurs during shortcut mode", async () => {
-      // Scenario: Alt+X is pressed, sidebar expands into mouse position, mouseenter fires.
-      // When Alt is released, sidebar should collapse because hover state was not set.
-      const props = propsWithWorkspaces();
-
-      // Set uiMode to shortcut BEFORE render (like the "stays expanded" test above)
-      mockUiModeStore.uiMode.value = "shortcut";
+    it("does not latch hover while shortcut mode forces expansion", async () => {
+      // Scenario: Alt+X is pressed, sidebar expands into a parked cursor and
+      // mousemove events fire. When Alt is released the sidebar must collapse
+      // because hover was never latched.
+      setModeFromMain("shortcut");
+      flushSync();
 
       const { container } = render(Sidebar, {
-        props: { ...props, shortcutModeActive: true },
+        props: { ...propsWithWorkspaces(), shortcutModeActive: true },
       });
 
       const sidebar = container.querySelector(".sidebar");
-      // Sidebar is expanded due to shortcut mode (uiMode !== "workspace" check)
       expect(sidebar).toHaveClass("expanded");
 
-      // Mouse enters the expanded sidebar area during shortcut mode
+      // Cursor sits deep in the sidebar area during shortcut mode
       await fireEvent.mouseEnter(sidebar!);
+      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
+      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
+      flushSync();
 
-      // setSidebarExpanded should NOT have been called (hover state not set)
-      expect(mockUiModeStore.setSidebarExpanded).not.toHaveBeenCalled();
-    });
+      // Shortcut mode exits — sidebar collapses (hover was not latched)
+      setModeFromMain("workspace");
+      flushSync();
 
-    it("sets hover state when mouseenter occurs outside shortcut mode", async () => {
-      // Verify normal hover behavior works when not in shortcut mode
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
       expect(sidebar).not.toHaveClass("expanded");
-
-      // Mouse enters when NOT in shortcut mode
-      await fireEvent.mouseEnter(sidebar!);
-
-      // setSidebarExpanded SHOULD have been called with true
-      expect(mockUiModeStore.setSidebarExpanded).toHaveBeenCalledWith(true);
-      expect(sidebar).toHaveClass("expanded");
     });
 
-    it("stays expanded when uiMode is 'dialog'", async () => {
-      mockUiModeStore.uiMode.value = "dialog";
+    it("does not latch hover while a dialog forces expansion", async () => {
+      setDialogOpen(true);
+      flushSync();
+
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+      const sidebar = container.querySelector(".sidebar");
+      expect(sidebar).toHaveClass("expanded");
+
+      await fireEvent.mouseEnter(sidebar!);
+      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
+      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
+      flushSync();
+
+      setDialogOpen(false);
+      flushSync();
+
+      expect(sidebar).not.toHaveClass("expanded");
+    });
+
+    it("stays expanded when a dialog is open", () => {
+      setDialogOpen(true);
+      flushSync();
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       expect(sidebar).toHaveClass("expanded");
     });
 
-    it("stays expanded when totalWorkspaces is 0", async () => {
+    it("stays expanded when totalWorkspaces is 0", () => {
       const { container } = render(Sidebar, { props: { ...defaultProps, totalWorkspaces: 0 } });
 
       const sidebar = container.querySelector(".sidebar");
       expect(sidebar).toHaveClass("expanded");
     });
 
-    it("rapid mouseenter/mouseleave settles to correct final state", async () => {
+    it("rapid hover in/out settles to correct final state", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
 
-      // Rapid hover in/out - provide clientX > 5 for mouseleave events
-      await fireEvent.mouseEnter(sidebar!);
+      await hoverExpand(sidebar!);
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
       await fireEvent.mouseEnter(sidebar!);
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
       await fireEvent.mouseEnter(sidebar!);
+      flushSync();
 
-      // Should be expanded because last action was mouseenter
+      // Should be expanded because last action was re-entering
       expect(sidebar).toHaveClass("expanded");
 
       // Leave and wait
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      vi.advanceTimersByTime(150);
+      vi.advanceTimersByTime(HOVER_DELAY_MS);
+      flushSync();
 
-      await waitFor(() => {
-        expect(sidebar).not.toHaveClass("expanded");
-      });
+      expect(sidebar).not.toHaveClass("expanded");
     });
 
     it("cancels collapse when mouse re-enters during debounce", async () => {
@@ -881,11 +1020,9 @@ describe("Sidebar component", () => {
 
       const sidebar = container.querySelector(".sidebar");
 
-      // Expand
-      await fireEvent.mouseEnter(sidebar!);
+      await hoverExpand(sidebar!);
       expect(sidebar).toHaveClass("expanded");
 
-      // Start collapse - provide clientX > 5 for valid mouseleave
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
 
       // Wait partial debounce
@@ -895,52 +1032,33 @@ describe("Sidebar component", () => {
       await fireEvent.mouseEnter(sidebar!);
 
       // Wait full debounce time
-      vi.advanceTimersByTime(150);
+      vi.advanceTimersByTime(HOVER_DELAY_MS);
+      flushSync();
 
       // Should still be expanded because re-enter cancelled collapse
       expect(sidebar).toHaveClass("expanded");
     });
 
-    it("clears collapse timeout on unmount to prevent memory leak", async () => {
+    it("clears pending timeouts on unmount", async () => {
       const { container, unmount } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
 
-      // Expand
-      await fireEvent.mouseEnter(sidebar!);
+      await hoverExpand(sidebar!);
       expect(sidebar).toHaveClass("expanded");
 
-      // Start collapse (this schedules a timeout) - provide clientX > 5
+      // Start collapse (this schedules a timeout)
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
 
       // Unmount before timeout fires
       unmount();
 
-      // Advance timers past the debounce period
-      // If timeout was not cleared, this would throw due to accessing unmounted component state
       vi.advanceTimersByTime(200);
+      flushSync();
 
-      // No error thrown means cleanup worked correctly
-      // The component's onDestroy should have cleared the timeout
-    });
-
-    it("does not collapse when mouse leaves at window edge (clientX < 5)", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-
-      // Expand
-      await fireEvent.mouseEnter(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
-
-      // Mouse leaves at window edge (clientX < 5 indicates user hit window boundary)
-      await fireEvent.mouseLeave(sidebar!, { clientX: 0 });
-
-      // Wait for what would be the debounce period
-      vi.advanceTimersByTime(200);
-
-      // Should still be expanded because we don't collapse at window edge
-      expect(sidebar).toHaveClass("expanded");
+      // The collapse timeout was cleared: the store input set by hover is
+      // untouched after unmount.
+      expect(desiredMode.value).toBe("hover");
     });
 
     it("respects prefers-reduced-motion media query (CSS verification)", () => {
@@ -957,7 +1075,7 @@ describe("Sidebar component", () => {
     });
   });
 
-  describe("expanded vs minimized layout", () => {
+  describe("unified layout (expanded vs collapsed)", () => {
     const propsWithWorkspaces = () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
@@ -967,108 +1085,74 @@ describe("Sidebar component", () => {
       return { ...defaultProps, projects: [project], totalWorkspaces: 1 };
     };
 
-    it("expanded layout does not have status-indicator-btn in workspace rows", async () => {
-      // Set to expanded (hovering)
+    it("renders one DOM tree: status cell, workspace button, and remove button exist in both modes", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
       const sidebar = container.querySelector(".sidebar");
 
-      // Expand
-      await fireEvent.mouseEnter(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
-
-      // In expanded state, status-indicator-btn should NOT be rendered
-      const statusBtn = container.querySelector(".status-indicator-btn");
-      expect(statusBtn).not.toBeInTheDocument();
-    });
-
-    it("minimized layout shows status indicators with aria-labels", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      // Initially minimized (uiMode is workspace and totalWorkspaces > 0)
-      // However, the mock uiMode starts as "workspace" but we need to ensure
-      // the sidebar is NOT expanded (not hovering)
-      const sidebar = container.querySelector(".sidebar");
+      // Collapsed
       expect(sidebar).not.toHaveClass("expanded");
+      expect(container.querySelector(".status-cell")).toBeInTheDocument();
+      expect(container.querySelector(".workspace-btn")).toBeInTheDocument();
+      expect(container.querySelector(".remove-btn")).toBeInTheDocument();
 
-      // In minimized state, status-indicator-btn should be rendered with aria-label
-      const statusBtns = container.querySelectorAll(".status-indicator-btn");
-      expect(statusBtns.length).toBeGreaterThan(0);
-
-      // Check that buttons have descriptive aria-labels
-      statusBtns.forEach((btn) => {
-        expect(btn).toHaveAttribute("aria-label");
-        expect(btn.getAttribute("aria-label")).toMatch(/ws1 in test/);
-      });
+      // Expanded — same elements, no markup swap
+      await hoverExpand(sidebar!);
+      expect(sidebar).toHaveClass("expanded");
+      expect(container.querySelector(".status-cell")).toBeInTheDocument();
+      expect(container.querySelector(".workspace-btn")).toBeInTheDocument();
+      expect(container.querySelector(".remove-btn")).toBeInTheDocument();
     });
 
-    it("expand hint only visible when minimized", async () => {
+    it("status cell has descriptive aria-label in both modes", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
       const sidebar = container.querySelector(".sidebar");
 
-      // Initially minimized - expand hints should be visible
-      expect(sidebar).not.toHaveClass("expanded");
-      let expandHints = container.querySelectorAll(".expand-hint");
-      expect(expandHints.length).toBeGreaterThan(0);
+      const assertLabel = (): void => {
+        const statusCell = container.querySelector(".status-cell");
+        expect(statusCell).toHaveAttribute("aria-label");
+        expect(statusCell!.getAttribute("aria-label")).toMatch(/ws1 in test/);
+      };
 
-      // Expand - expand hints should be hidden
-      await fireEvent.mouseEnter(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
-      expandHints = container.querySelectorAll(".expand-hint");
-      expect(expandHints.length).toBe(0);
+      assertLabel();
+      await hoverExpand(sidebar!);
+      assertLabel();
     });
 
-    it("expanded layout has status indicator on right side (original layout)", async () => {
+    it("workspace label and remove button are in a label cell (hidden when collapsed via CSS)", () => {
+      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
+
+      const labelCell = container.querySelector(".workspace-label-cell");
+      expect(labelCell).toHaveClass("ch-label-cell");
+      expect(labelCell!.querySelector(".workspace-btn")).toBeInTheDocument();
+      expect(labelCell!.querySelector(".remove-btn")).toBeInTheDocument();
+    });
+
+    it("project header is a label cell and has no inert attribute", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
       const sidebar = container.querySelector(".sidebar");
 
-      // Expand
-      await fireEvent.mouseEnter(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
-
-      // In expanded state, AgentStatusIndicator should be rendered (as part of workspace-item)
-      const indicators = container.querySelectorAll('[role="status"]');
-      expect(indicators.length).toBeGreaterThan(0);
-    });
-
-    it("project header is inert when minimized", () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      // Sidebar is minimized (totalWorkspaces > 0, uiMode is workspace, no hover)
       const header = container.querySelector(".project-header");
-      expect(header).toHaveAttribute("inert");
+      expect(header).toHaveClass("ch-label-cell");
+      expect(header).not.toHaveAttribute("inert");
+
+      await hoverExpand(sidebar!);
+      expect(header).not.toHaveAttribute("inert");
     });
 
-    it("project header is interactive when expanded via hover", async () => {
+    it("h2 heading exists in both modes inside a label cell", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
       const sidebar = container.querySelector(".sidebar");
 
-      await fireEvent.mouseEnter(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
-
-      expect(container.querySelector(".project-header")).not.toHaveAttribute("inert");
-    });
-
-    it("h2 heading is visually hidden when minimized", () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
+      expect(sidebar).not.toHaveClass("expanded");
       const heading = container.querySelector(".sidebar-header h2");
       expect(heading).toBeInTheDocument();
-      expect(heading).toHaveClass("visually-collapsed");
+      expect(heading!.closest(".ch-label-cell")).not.toBeNull();
+
+      await hoverExpand(sidebar!);
+      expect(container.querySelector(".sidebar-header h2")).toBeInTheDocument();
     });
 
-    it("h2 heading is visible when expanded", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-      const sidebar = container.querySelector(".sidebar");
-
-      await fireEvent.mouseEnter(sidebar!);
-
-      const heading = container.querySelector(".sidebar-header h2");
-      expect(heading).toBeInTheDocument();
-      expect(heading).not.toHaveClass("visually-collapsed");
-    });
-
-    it("vscode-divider is inert when minimized", () => {
+    it("vscode-divider has no inert attribute", () => {
       const ws1 = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const ws2 = createMockWorkspace({ path: "/test2/.worktrees/ws2", name: "ws2" });
       const project1 = createMockProject({
@@ -1087,7 +1171,7 @@ describe("Sidebar component", () => {
       expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
       const divider = container.querySelector("vscode-divider");
       expect(divider).toBeInTheDocument();
-      expect(divider).toHaveAttribute("inert");
+      expect(divider).not.toHaveAttribute("inert");
     });
   });
 
@@ -1107,12 +1191,10 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project] },
       });
 
-      // Expand sidebar to see tags
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-
       const tagsContainer = container.querySelector(".workspace-tags");
       expect(tagsContainer).toBeInTheDocument();
+      // The tags row is hidden when collapsed via CSS keyed on .expanded
+      expect(container.querySelector(".workspace-tags-row")).toBeInTheDocument();
 
       const pills = container.querySelectorAll(".tag-pill");
       expect(pills).toHaveLength(2);
@@ -1122,7 +1204,7 @@ describe("Sidebar component", () => {
       expect(pillTexts).toContain("wip");
     });
 
-    it("does not render tags container when workspace has no tags", async () => {
+    it("does not render tags container when workspace has no tags", () => {
       const ws = createMockWorkspace({
         path: "/test/.worktrees/ws1",
         name: "ws1",
@@ -1137,10 +1219,8 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project] },
       });
 
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-
       expect(container.querySelector(".workspace-tags")).not.toBeInTheDocument();
+      expect(container.querySelector(".workspace-tags-row")).not.toBeInTheDocument();
     });
   });
 
@@ -1175,7 +1255,7 @@ describe("Sidebar component", () => {
       deletionStore.reset();
     });
 
-    it("shows spinner when workspace is deleting (expanded layout)", async () => {
+    it("shows spinner when workspace is deleting (expanded)", async () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1189,16 +1269,11 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project] },
       });
 
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-
       // Should have progress-ring (spinner) instead of status indicator
       expect(container.querySelector("vscode-progress-ring.deletion-spinner")).toBeInTheDocument();
-      // Should NOT have regular status indicator for this workspace
-      // Note: getByRole would find the workspace-item status, but we deleted it
     });
 
-    it("shows spinner when workspace is deleting (minimized layout)", () => {
+    it("shows spinner when workspace is deleting (collapsed)", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1212,11 +1287,11 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
       });
 
-      // In minimized state, should show spinner
+      // In collapsed state, should show spinner
       expect(container.querySelector("vscode-progress-ring.deletion-spinner")).toBeInTheDocument();
     });
 
-    it("shows agent status indicator when not deleting", async () => {
+    it("shows agent status indicator when not deleting", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1229,9 +1304,6 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project] },
       });
 
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-
       // Should have status indicator, NOT spinner
       expect(
         container.querySelector("vscode-progress-ring.deletion-spinner")
@@ -1239,7 +1311,7 @@ describe("Sidebar component", () => {
       expect(screen.getByRole("status")).toBeInTheDocument();
     });
 
-    it("minimized layout aria-label shows Deleting when workspace is being deleted", () => {
+    it("status cell aria-label shows Deleting when workspace is being deleted", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1259,7 +1331,7 @@ describe("Sidebar component", () => {
       expect(statusButton).toBeInTheDocument();
     });
 
-    it("shows spinner for deleting workspace and status for non-deleting", async () => {
+    it("shows spinner for deleting workspace and status for non-deleting", () => {
       const ws1 = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const ws2 = createMockWorkspace({ path: "/test/.worktrees/ws2", name: "ws2" });
       const project = createMockProject({
@@ -1274,15 +1346,12 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project] },
       });
 
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-
       // Should have one spinner (ws1) and one status indicator (ws2)
       expect(container.querySelectorAll("vscode-progress-ring.deletion-spinner")).toHaveLength(1);
       expect(screen.getAllByRole("status")).toHaveLength(1);
     });
 
-    it("hides X button when deletion status is in-progress (expanded layout)", async () => {
+    it("hides X button when deletion status is in-progress", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1292,18 +1361,15 @@ describe("Sidebar component", () => {
       // Set deletion state (in-progress: completed=false)
       deletionStore.setDeletionState(createDeletionProgress("/test/.worktrees/ws1"));
 
-      const { container } = render(Sidebar, {
+      render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
       });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
 
       // X button should NOT be rendered for workspace being deleted
       expect(screen.queryByLabelText("Remove workspace")).not.toBeInTheDocument();
     });
 
-    it("hides X button when deletion status is error (expanded layout)", async () => {
+    it("hides X button when deletion status is error", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1316,18 +1382,15 @@ describe("Sidebar component", () => {
       errorState.hasErrors = true;
       deletionStore.setDeletionState(errorState);
 
-      const { container } = render(Sidebar, {
+      render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
       });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
 
       // X button should NOT be rendered for workspace with deletion error
       expect(screen.queryByLabelText("Remove workspace")).not.toBeInTheDocument();
     });
 
-    it("shows warning triangle when deletion status is error (expanded layout)", async () => {
+    it("shows warning triangle when deletion status is error", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1343,9 +1406,6 @@ describe("Sidebar component", () => {
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
       });
-
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
 
       // Warning triangle should be visible - Icon component renders vscode-icon
       const warning = container.querySelector(".deletion-error");
@@ -1353,7 +1413,7 @@ describe("Sidebar component", () => {
       expect(warning!.querySelector("vscode-icon")).toBeInTheDocument();
     });
 
-    it("warning triangle has accessible attributes", async () => {
+    it("warning triangle has accessible attributes", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1370,16 +1430,13 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project] },
       });
 
-      const sidebar = container.querySelector(".sidebar");
-      await fireEvent.mouseEnter(sidebar!);
-
       // Warning should have role="img" and aria-label
       const warning = container.querySelector(".deletion-error");
       expect(warning).toHaveAttribute("role", "img");
       expect(warning).toHaveAttribute("aria-label", "Deletion failed");
     });
 
-    it("minimized layout shows warning when deletion status is error", () => {
+    it("collapsed mode shows warning when deletion status is error", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
@@ -1397,7 +1454,7 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
       });
 
-      // In minimized state, should show warning - Icon component renders vscode-icon
+      // In collapsed state, should show warning - Icon component renders vscode-icon
       const warning = container.querySelector(".deletion-error");
       expect(warning).toBeInTheDocument();
       expect(warning!.querySelector("vscode-icon")).toBeInTheDocument();
@@ -1410,7 +1467,7 @@ describe("Sidebar component", () => {
       ).not.toBeInTheDocument();
     });
 
-    it("minimized layout aria-label shows Deletion failed when status is error", () => {
+    it("status cell aria-label shows Deletion failed when status is error", () => {
       const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
       const project = createMockProject({
         path: "/test" as ProjectPath,
