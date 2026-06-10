@@ -49,7 +49,6 @@ const mockApi = vi.hoisted(() => ({
     open: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(undefined),
-    fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
   },
   ui: {
     getActiveWorkspace: vi.fn().mockResolvedValue(null),
@@ -256,12 +255,6 @@ describe("Integration tests", () => {
 
     // Default mocks for v2 API
     mockApi.projects.list.mockResolvedValue([]);
-    mockApi.projects.fetchBases.mockResolvedValue({
-      bases: [
-        { name: "main", isRemote: false },
-        { name: "develop", isRemote: false },
-      ],
-    });
     mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
     mockApi.workspaces.getStatus.mockResolvedValue({
       isDirty: false,

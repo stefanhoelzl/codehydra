@@ -282,8 +282,8 @@ describe("FilterableDropdown component", () => {
     });
 
     it("auto-opens dropdown when typing produces matches with openOnFocus=false", async () => {
-      // When openOnFocus is false (like NameBranchDropdown), the dropdown should
-      // still open when typing produces matches
+      // When openOnFocus is false, the dropdown should still open when typing
+      // produces matches
       render(FilterableDropdown, { props: { ...defaultProps, openOnFocus: false } });
 
       const input = screen.getByRole("combobox");

@@ -2,7 +2,8 @@
  * Tests for PanelView component (the persistent panel surface).
  * Section/action rendering lives in Form.test.ts — these cover only the
  * panel shell: accessible name, Escape -> dismiss event, Cmd/Ctrl+Enter ->
- * primary action, and the dialogId-keyed Form remount (the reset gesture).
+ * primary action, the Tab trap at the panel boundaries, and the
+ * dialogId-keyed Form remount (the reset gesture).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -129,6 +130,56 @@ describe("PanelView component (panel surface)", () => {
       });
 
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Tab trap", () => {
+    // Multiline inputs render as native <textarea>s — focusable in happy-dom,
+    // unlike the vscode-elements web components whose internals aren't wired.
+    const trapConfig: DialogConfig = {
+      layout: "form",
+      sections: [
+        { type: "text", content: "New Workspace", style: "heading" },
+        { type: "input", id: "first", label: "First", multiline: true },
+        { type: "input", id: "last", label: "Last", multiline: true },
+      ],
+    };
+
+    function getTextareas(): [HTMLTextAreaElement, HTMLTextAreaElement] {
+      const areas = document.querySelectorAll("textarea");
+      return [areas[0] as HTMLTextAreaElement, areas[1] as HTMLTextAreaElement];
+    }
+
+    it("Tab on the last control wraps to the first", async () => {
+      renderPanel(trapConfig);
+      const [first, last] = getTextareas();
+
+      last.focus();
+      await fireEvent.keyDown(last, { key: "Tab" });
+
+      expect(document.activeElement).toBe(first);
+    });
+
+    it("Shift+Tab on the first control wraps to the last", async () => {
+      renderPanel(trapConfig);
+      const [first, last] = getTextareas();
+
+      first.focus();
+      await fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+
+      expect(document.activeElement).toBe(last);
+    });
+
+    it("Tab pulls focus back in when it sits outside the panel", async () => {
+      renderPanel(trapConfig);
+      const [first] = getTextareas();
+
+      (document.activeElement as HTMLElement | null)?.blur();
+      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
+        key: "Tab",
+      });
+
+      expect(document.activeElement).toBe(first);
     });
   });
 
