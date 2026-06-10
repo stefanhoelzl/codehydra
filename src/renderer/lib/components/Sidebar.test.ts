@@ -25,9 +25,13 @@ window.api = mockApi;
 vi.mock("$lib/api", () => ({
   sendNotificationEvent: vi.fn(),
   on: vi.fn(() => () => {}),
+  workspaces: {
+    wake: vi.fn().mockResolvedValue(null),
+  },
 }));
 
 // Import after mock setup
+import { workspaces as apiWorkspaces } from "$lib/api";
 import Sidebar from "./Sidebar.svelte";
 import { createMockProject, createMockWorkspace } from "$lib/test-fixtures";
 import type { ProjectPath, WorkspacePath } from "@shared/ipc";
@@ -1221,6 +1225,93 @@ describe("Sidebar component", () => {
 
       expect(container.querySelector(".workspace-tags")).not.toBeInTheDocument();
       expect(container.querySelector(".workspace-tags-row")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("hibernation indicator", () => {
+    const hibernatedSetup = () => {
+      const ws = createMockWorkspace({
+        path: "/test/.worktrees/ws1",
+        name: "ws1",
+        metadata: { hibernated: "true" },
+      });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        name: "test",
+        workspaces: [ws],
+      });
+      return {
+        ws,
+        project,
+        props: { ...defaultProps, projects: [project], totalWorkspaces: 1 },
+      };
+    };
+
+    it("renders both pause and play icons for a hibernated workspace", () => {
+      const { props } = hibernatedSetup();
+      const { container } = render(Sidebar, { props });
+
+      // Both icons are in the DOM; CSS swaps them on :hover (not testable here).
+      const indicator = container.querySelector(".hibernation-indicator");
+      expect(indicator).toBeInTheDocument();
+      expect(indicator!.querySelector(".icon-pause vscode-icon")).toBeInTheDocument();
+      expect(indicator!.querySelector(".icon-play vscode-icon")).toBeInTheDocument();
+    });
+
+    it("status cell aria-label announces the wake action when hibernated", () => {
+      const { props } = hibernatedSetup();
+      render(Sidebar, { props });
+
+      const statusButton = screen.getByRole("button", {
+        name: /ws1 in test - Hibernated - click to wake/i,
+      });
+      expect(statusButton).toBeInTheDocument();
+    });
+
+    it("clicking the status cell wakes the workspace and switches to it", async () => {
+      const onSwitchWorkspace = vi.fn();
+      const { ws, project, props } = hibernatedSetup();
+      render(Sidebar, { props: { ...props, onSwitchWorkspace } });
+
+      const statusButton = screen.getByRole("button", { name: /Hibernated - click to wake/i });
+      await fireEvent.click(statusButton);
+
+      expect(apiWorkspaces.wake).toHaveBeenCalledWith(ws.path);
+      // The click bubbles to the row's switch handler.
+      expect(onSwitchWorkspace).toHaveBeenCalledWith({
+        projectId: project.id,
+        workspaceName: ws.name,
+        path: ws.path,
+      });
+    });
+
+    it("clicking the status cell of a non-hibernated workspace does not wake", async () => {
+      const onSwitchWorkspace = vi.fn();
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProject({
+        path: "/test" as ProjectPath,
+        name: "test",
+        workspaces: [ws],
+      });
+      render(Sidebar, {
+        props: { ...defaultProps, projects: [project], totalWorkspaces: 1, onSwitchWorkspace },
+      });
+
+      const statusButton = screen.getByRole("button", { name: /ws1 in test/i });
+      await fireEvent.click(statusButton);
+
+      expect(apiWorkspaces.wake).not.toHaveBeenCalled();
+      expect(onSwitchWorkspace).toHaveBeenCalled();
+    });
+
+    it("does not render the hibernation indicator when not hibernated", () => {
+      const ws = createMockWorkspace({ path: "/test/.worktrees/ws1", name: "ws1" });
+      const project = createMockProject({ path: "/test" as ProjectPath, workspaces: [ws] });
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      expect(container.querySelector(".hibernation-indicator")).not.toBeInTheDocument();
     });
   });
 
