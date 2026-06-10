@@ -45,6 +45,39 @@ describe("DialogManager", () => {
 
       expect(h1.id).not.toBe(h2.id);
     });
+
+    it("should include the surface on the open command when given", () => {
+      const config = createConfig("Panel form");
+
+      const handle = manager.open(config, { surface: "panel" });
+
+      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.DIALOG_COMMAND, {
+        action: "open",
+        dialogId: handle.id,
+        config,
+        surface: "panel",
+      } satisfies DialogCommand);
+    });
+
+    it("should omit the surface field by default", () => {
+      const config = createConfig("Modal");
+
+      manager.open(config);
+
+      const command = sendToUI.mock.calls[0]![1] as DialogCommand;
+      expect("surface" in command).toBe(false);
+    });
+
+    it("should not resend the surface on update (session property, set once)", () => {
+      const handle = manager.open(createConfig("Panel"), { surface: "panel" });
+      sendToUI.mockClear();
+
+      handle.update(createConfig("Updated"));
+
+      const command = sendToUI.mock.calls[0]![1] as DialogCommand;
+      expect(command.action).toBe("update");
+      expect("surface" in command).toBe(false);
+    });
   });
 
   describe("update", () => {
@@ -283,6 +316,58 @@ describe("DialogManager", () => {
 
       const promise = handle.nextEvent();
       manager.routeEvent({ kind: "change", dialogId: handle.id, fieldId: "f", data: { f: "x" } });
+      manager.routeEvent({ dialogId: handle.id, actionId: "go" });
+
+      const result = await promise;
+      expect(result.actionId).toBe("go");
+    });
+  });
+
+  describe("onDismiss", () => {
+    it("routes a dismiss event to onDismiss listeners only", () => {
+      const handle = manager.open(createConfig("Test"), { surface: "panel" });
+      const onAction = vi.fn();
+      const onChange = vi.fn();
+      const onDismiss = vi.fn();
+      handle.onEvent(onAction);
+      handle.onChange(onChange);
+      handle.onDismiss(onDismiss);
+
+      const event: DialogUserEvent = { kind: "dismiss", dialogId: handle.id };
+      manager.routeEvent(event);
+
+      expect(onDismiss).toHaveBeenCalledWith(event);
+      expect(onAction).not.toHaveBeenCalled();
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it("supports unsubscribe", () => {
+      const handle = manager.open(createConfig("Test"));
+      const onDismiss = vi.fn();
+      const unsub = handle.onDismiss(onDismiss);
+
+      unsub();
+      manager.routeEvent({ kind: "dismiss", dialogId: handle.id });
+
+      expect(onDismiss).not.toHaveBeenCalled();
+    });
+
+    it("does not deliver dismiss events after close", () => {
+      const handle = manager.open(createConfig("Test"));
+      const onDismiss = vi.fn();
+      handle.onDismiss(onDismiss);
+      handle.close();
+
+      manager.routeEvent({ kind: "dismiss", dialogId: handle.id });
+
+      expect(onDismiss).not.toHaveBeenCalled();
+    });
+
+    it("nextEvent ignores dismiss events and resolves on the next action", async () => {
+      const handle = manager.open(createConfig("Test"));
+
+      const promise = handle.nextEvent();
+      manager.routeEvent({ kind: "dismiss", dialogId: handle.id });
       manager.routeEvent({ dialogId: handle.id, actionId: "go" });
 
       const result = await promise;

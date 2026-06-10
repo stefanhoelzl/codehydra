@@ -303,10 +303,28 @@ export interface DialogConfig {
 // ---- IPC Protocol ----
 
 /**
+ * Surface hosting a form session.
+ * - "modal" (default): centered card on a backdrop (DialogView), on top of the UI.
+ * - "panel": non-modal docked panel shown in place of the main content area
+ *   (PanelView); modal dialogs stack above it.
+ *
+ * Set once on the open command and immutable for the session's lifetime —
+ * update commands carry only the config and cannot move a session between
+ * surfaces.
+ */
+export type DialogSurface = "modal" | "panel";
+
+/**
  * Commands sent from main -> renderer to manage dialog lifecycle.
  */
 export type DialogCommand =
-  | { readonly action: "open"; readonly dialogId: string; readonly config: DialogConfig }
+  | {
+      readonly action: "open";
+      readonly dialogId: string;
+      readonly config: DialogConfig;
+      /** Hosting surface; absent = "modal". See DialogSurface. */
+      readonly surface?: DialogSurface;
+    }
   | { readonly action: "update"; readonly dialogId: string; readonly config: DialogConfig }
   | { readonly action: "close"; readonly dialogId: string };
 
@@ -346,8 +364,19 @@ export interface DialogFieldChangeEvent {
 }
 
 /**
+ * Dismiss event: the user asked to dismiss the form session (Escape in the
+ * panel surface). The shell only reports the intent; the backend session owner
+ * decides what dismissing means (typically close + reopen with fresh config =
+ * clear, or ignore).
+ */
+export interface DialogDismissEvent {
+  readonly kind: "dismiss";
+  readonly dialogId: string;
+}
+
+/**
  * Events sent from renderer -> main when the user interacts with a dialog, over
  * the api:dialog:event channel. Discriminated by `kind`: "action" (default when
- * absent) or "change".
+ * absent), "change", or "dismiss".
  */
-export type DialogUserEvent = DialogActionEvent | DialogFieldChangeEvent;
+export type DialogUserEvent = DialogActionEvent | DialogFieldChangeEvent | DialogDismissEvent;

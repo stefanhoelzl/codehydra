@@ -57,6 +57,7 @@ function createMockHandle(): DialogHandle & { _emitEvent(event: DialogUserEvent)
       return () => listeners.delete(handler);
     }),
     onChange: vi.fn(() => () => {}),
+    onDismiss: vi.fn(() => () => {}),
     nextEvent: vi.fn(),
     _emitEvent(event: DialogUserEvent) {
       for (const listener of listeners) listener(event);

@@ -68,8 +68,10 @@
   import { getStatus } from "$lib/stores/agent-status.svelte.js";
   import {
     dialogs,
+    panelDialog,
     processCommand as processFrameworkDialog,
   } from "$lib/stores/dialog-framework.svelte.js";
+  import PanelView from "./PanelView.svelte";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
   import { getErrorMessage } from "@shared/error-utils";
 
@@ -126,15 +128,17 @@
     setNewWorkspaceViewOpen(newWorkspaceView.isOpen);
   });
 
-  // When the New workspace view opens, dismiss any framework dialogs the main
-  // process opened in the meantime (most notably the "Loading workspace..."
+  // When the New workspace view opens, dismiss any MODAL framework dialogs the
+  // main process opened in the meantime (most notably the "Loading workspace..."
   // progress dialog triggered by `workspace:loading`). They render inside the
   // UI's DialogHost, so without this they cover the panel until the workspace
   // finishes loading. The sidebar's red "busy" indicator is sufficient
-  // feedback that creation is in progress.
+  // feedback that creation is in progress. Panel-surface sessions are left
+  // alone — they live in the content area, not on top of it.
   $effect(() => {
     if (!newWorkspaceView.isOpen) return;
     for (const entry of [...dialogs.value.values()]) {
+      if (entry.surface !== "modal") continue;
       processFrameworkDialog({ action: "close", dialogId: entry.dialogId });
     }
   });
@@ -326,6 +330,12 @@
 
   <!-- New workspace view: full-area panel; also serves as the empty state -->
   <NewWorkspaceView open={newWorkspaceView.isOpen} />
+
+  <!-- Panel surface: backend-driven form session docked in the content area.
+       Visible iff a panel-surface session exists (session-driven visibility). -->
+  {#if panelDialog.value}
+    <PanelView dialogId={panelDialog.value.dialogId} config={panelDialog.value.config} />
+  {/if}
 
   <!-- Backdrop shown when no workspace is active and the panel is closed -->
   {#if activeWorkspacePath.value === null && !newWorkspaceView.isOpen}
