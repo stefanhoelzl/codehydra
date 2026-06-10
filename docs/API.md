@@ -770,14 +770,12 @@ const unsubscribe = on("workspace:switched", (event) => {
 
 #### `projects` - Project Management
 
-| Method       | Signature                                                                | Description                                           |
-| ------------ | ------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `open`       | `(path: string) => Promise<Project>`                                     | Open a git repository as a project                    |
-| `close`      | `(projectId: ProjectId, options?: ProjectCloseOptions) => Promise<void>` | Close a project and all its workspaces                |
-| `clone`      | `(url: string) => Promise<Project>`                                      | Clone a git repository from URL and open as a project |
-| `list`       | `() => Promise<readonly Project[]>`                                      | List all open projects                                |
-| `get`        | `(projectId: ProjectId) => Promise<Project \| undefined>`                | Get a project by ID                                   |
-| `fetchBases` | `(projectId: ProjectId) => Promise<{ bases: BaseInfo[] }>`               | Fetch available base branches                         |
+| Method  | Signature                                                                | Description                            |
+| ------- | ------------------------------------------------------------------------ | -------------------------------------- |
+| `open`  | `(path: string) => Promise<Project>`                                     | Open a git repository as a project     |
+| `close` | `(projectId: ProjectId, options?: ProjectCloseOptions) => Promise<void>` | Close a project and all its workspaces |
+| `list`  | `() => Promise<readonly Project[]>`                                      | List all open projects                 |
+| `get`   | `(projectId: ProjectId) => Promise<Project \| undefined>`                | Get a project by ID                    |
 
 **`ProjectCloseOptions`:**
 
@@ -788,12 +786,7 @@ interface ProjectCloseOptions {
 }
 ```
 
-**`clone()` behavior:**
-
-- If the URL was already cloned, returns the existing project (no duplicate clones)
-- Creates a bare clone in the app data directory
-- The project will have a `remoteUrl` field indicating it was cloned from a URL
-- URL formats supported: HTTPS (`https://github.com/org/repo.git`), SSH (`git@github.com:org/repo.git`)
+Cloning from a git URL and base-branch listing are owned by the main-process creation module (the `project:open` intent's `git` payload and the `project:get-bases` intent); they are no longer exposed over renderer IPC.
 
 #### `workspaces` - Workspace Management
 
@@ -909,7 +902,7 @@ interface Project {
 }
 ```
 
-**Note:** The `remoteUrl` field is present only for projects that were cloned using `projects.clone()`. For projects opened locally via `projects.open()`, this field is undefined.
+**Note:** The `remoteUrl` field is present only for projects that were cloned from a git URL (the creation form's clone flow). For projects opened locally via `projects.open()`, this field is undefined.
 
 #### `Workspace`
 

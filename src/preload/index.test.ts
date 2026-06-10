@@ -111,21 +111,6 @@ describe("preload API", () => {
         projectPath: "/test/my-app",
       });
     });
-
-    it("projects.fetchBases calls api:project:fetch-bases with projectPath", async () => {
-      const mockBases = { bases: [{ name: "main", isRemote: false }] };
-      mockIpcRenderer.invoke.mockResolvedValue(mockBases);
-
-      const projects = exposedApi.projects as {
-        fetchBases: (projectPath: string) => Promise<unknown>;
-      };
-      const result = await projects.fetchBases("/test/my-app");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:fetch-bases", {
-        projectPath: "/test/my-app",
-      });
-      expect(result).toEqual(mockBases);
-    });
   });
 
   describe("workspaces", () => {

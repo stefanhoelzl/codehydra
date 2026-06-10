@@ -40,9 +40,6 @@ contextBridge.exposeInMainWorld("api", {
       }),
     close: (projectPath: string, options?: { removeLocalRepo?: boolean }) =>
       ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectPath, ...options }),
-    clone: (url: string) => ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLONE, { url }),
-    fetchBases: (projectPath: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.PROJECT_FETCH_BASES, { projectPath }),
   },
   workspaces: {
     create: (
