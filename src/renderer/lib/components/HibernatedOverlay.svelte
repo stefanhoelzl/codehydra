@@ -47,7 +47,8 @@
     aria-label="Wake workspace"
     onclick={() => void handleHibernateToggle()}
   >
-    <Icon name="debug-start" size={48} />
+    <span class="icon-pause"><Icon name="debug-pause" size={48} /></span>
+    <span class="icon-play"><Icon name="debug-start" size={48} /></span>
     <span class="label">Hibernated</span>
     <span class="hint">Click or press Alt+X H to wake up</span>
   </button>
@@ -102,6 +103,23 @@
   .indicator:hover,
   .indicator:focus-visible {
     opacity: 1;
+  }
+
+  /* Pause at rest, play while hovering the indicator (= "click to wake"). */
+  .icon-pause {
+    display: flex;
+  }
+
+  .icon-play {
+    display: none;
+  }
+
+  .indicator:hover .icon-pause {
+    display: none;
+  }
+
+  .indicator:hover .icon-play {
+    display: flex;
   }
 
   .label {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import * as api from "$lib/api";
   import type { ProjectId, WorkspaceRef, WorkspaceName } from "$lib/api";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
@@ -166,6 +167,12 @@
   function handleRemoveWorkspace(workspaceRef: WorkspaceRef): void {
     onOpenRemoveDialog(workspaceRef);
   }
+
+  function handleWakeWorkspace(path: string): void {
+    api.workspaces.wake(path).catch((error: unknown) => {
+      logger.error("Failed to wake workspace", { path, error: String(error) });
+    });
+  }
 </script>
 
 <!--
@@ -298,12 +305,16 @@
                   </div>
                   <!-- Status cell: a button in both modes (clicks bubble to the
                        row's switch handler); the collapsed sidebar shows only
-                       this cell. -->
+                       this cell. For hibernated workspaces it also wakes —
+                       the click bubbles on, so the row switches too. -->
                   <button
                     type="button"
                     class="ch-icon-cell status-cell"
-                    aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : hibernated ? "Hibernated" : statusText}`}
+                    aria-label={`${workspace.name} in ${project.name} - ${pending ? "Creating" : deletionStatus === "in-progress" ? "Deleting" : deletionStatus === "error" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
                     aria-current={isActive ? "true" : undefined}
+                    onclick={() => {
+                      if (hibernated) handleWakeWorkspace(workspace.path);
+                    }}
                   >
                     {#if pending}
                       <!-- Creating: show red "busy" immediately (work is queued) -->
@@ -316,7 +327,8 @@
                       </span>
                     {:else if hibernated}
                       <span class="hibernation-indicator" role="img" aria-label="Hibernated">
-                        <Icon name="debug-pause" size={14} />
+                        <span class="icon-pause"><Icon name="debug-pause" size={14} /></span>
+                        <span class="icon-play"><Icon name="debug-start" size={14} /></span>
                       </span>
                     {:else}
                       <AgentStatusIndicator
@@ -606,10 +618,10 @@
   }
 
   .status-cell:hover {
-    background: var(--ch-input-bg);
+    background: var(--ch-list-hover-bg);
   }
 
-  .status-cell:focus {
+  .status-cell:focus-visible {
     outline: 1px solid var(--ch-focus-border);
     outline-offset: -1px;
   }
@@ -642,7 +654,9 @@
     background: var(--ch-list-active-bg);
   }
 
-  .workspace-item:focus-within {
+  /* Keyboard-only: mouse clicks focus the inner buttons too, and the active
+     row highlight already covers that case. */
+  .workspace-item:has(:focus-visible) {
     outline: 1px solid var(--ch-focus-border);
     outline-offset: -1px;
   }
@@ -690,6 +704,27 @@
     justify-content: center;
     opacity: 0.55;
     flex-shrink: 0;
+  }
+
+  /* Pause at rest, play while hovering the status cell (= "click to wake"). */
+  .hibernation-indicator .icon-pause {
+    display: flex;
+  }
+
+  .hibernation-indicator .icon-play {
+    display: none;
+  }
+
+  .status-cell:hover .icon-pause {
+    display: none;
+  }
+
+  .status-cell:hover .icon-play {
+    display: flex;
+  }
+
+  .status-cell:hover .hibernation-indicator {
+    opacity: 1;
   }
 
   .workspace-item.hibernated .workspace-btn {
