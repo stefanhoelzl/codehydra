@@ -1,11 +1,16 @@
 /**
  * Tests for the BranchDropdown component.
+ *
+ * The component is presentational: the parent owns the branch data (one fetch
+ * shared across dropdowns) and passes branches/loading/error as props.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 import type { BaseInfo } from "@shared/api/types";
+
+import BranchDropdown from "./BranchDropdown.svelte";
 
 // Mock branches data
 const mockLocalBranches: BaseInfo[] = [
@@ -20,67 +25,14 @@ const mockRemoteBranches: BaseInfo[] = [
 
 const allBranches = [...mockLocalBranches, ...mockRemoteBranches];
 
-// Use vi.hoisted to create mocks that can be referenced in vi.mock factory
-const { mockFetchBases, basesUpdatedHandlers } = vi.hoisted(() => ({
-  mockFetchBases: vi.fn(),
-  // Store handlers to trigger bases-updated events in tests
-  basesUpdatedHandlers: new Set<(event: { projectPath: string; bases: BaseInfo[] }) => void>(),
-}));
-
-// Mock $lib/api module
-vi.mock("$lib/api", () => ({
-  openProject: vi.fn().mockResolvedValue(undefined),
-  closeProject: vi.fn().mockResolvedValue(undefined),
-  listProjects: vi.fn().mockResolvedValue({ projects: [], activeWorkspacePath: null }),
-  createWorkspace: vi.fn().mockResolvedValue(undefined),
-  removeWorkspace: vi.fn().mockResolvedValue(undefined),
-  switchWorkspace: vi.fn().mockResolvedValue(undefined),
-  listBases: vi.fn().mockResolvedValue([]),
-  updateBases: vi.fn().mockResolvedValue(undefined),
-  onProjectOpened: vi.fn(() => vi.fn()),
-  onProjectClosed: vi.fn(() => vi.fn()),
-  onWorkspaceCreated: vi.fn(() => vi.fn()),
-  onWorkspaceRemoved: vi.fn(() => vi.fn()),
-  onWorkspaceSwitched: vi.fn(() => vi.fn()),
-  // Flat API structure
-  projects: {
-    fetchBases: mockFetchBases,
-  },
-  // Event subscription mock - directly return the implementation
-  on: (event: string, handler: (event: { projectPath: string; bases: BaseInfo[] }) => void) => {
-    if (event === "project:bases-updated") {
-      basesUpdatedHandlers.add(handler);
-      return () => basesUpdatedHandlers.delete(handler);
-    }
-    return () => {};
-  },
-}));
-
-// Helper to emit bases-updated event in tests
-function emitBasesUpdated(projectPath: string, bases: BaseInfo[]): void {
-  basesUpdatedHandlers.forEach((handler) => handler({ projectPath, bases }));
-}
-
-// Helper to complete loading: run timers then emit bases-updated event
-async function completeLoading(
-  projectPath: string = testProjectPath,
-  bases: BaseInfo[] = allBranches
-): Promise<void> {
-  await vi.runAllTimersAsync();
-  emitBasesUpdated(projectPath, bases);
-  await tick();
-}
-
-// Import component after mock setup
-import BranchDropdown from "./BranchDropdown.svelte";
-import { projects } from "$lib/api";
-
-// Test project path
 const testProjectPath = "/test/project";
 
 describe("BranchDropdown component", () => {
   const defaultProps = {
-    projectPath: testProjectPath,
+    id: `branch-dropdown-${testProjectPath}`,
+    branches: allBranches,
+    loading: false,
+    error: null,
     value: "",
     onSelect: vi.fn(),
   };
@@ -88,9 +40,6 @@ describe("BranchDropdown component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    basesUpdatedHandlers.clear();
-    // Reset the mock implementation for each test (v2 API returns { bases: [...] })
-    mockFetchBases.mockResolvedValue({ bases: allBranches });
   });
 
   afterEach(() => {
@@ -102,8 +51,6 @@ describe("BranchDropdown component", () => {
     it("renders with combobox role and aria attributes", async () => {
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading();
-
       const combobox = screen.getByRole("combobox");
       expect(combobox).toBeInTheDocument();
       expect(combobox).toHaveAttribute("aria-expanded");
@@ -112,8 +59,6 @@ describe("BranchDropdown component", () => {
 
     it("aria-expanded reflects dropdown open state", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       expect(input).toHaveAttribute("aria-expanded", "false");
@@ -125,8 +70,6 @@ describe("BranchDropdown component", () => {
     it("selected option has aria-selected true", async () => {
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading();
-
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
       await fireEvent.keyDown(input, { key: "ArrowDown" });
@@ -137,8 +80,6 @@ describe("BranchDropdown component", () => {
 
     it("aria-activedescendant updates on navigation", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -152,62 +93,36 @@ describe("BranchDropdown component", () => {
       // Should have an active descendant now
       const activedescendant = input.getAttribute("aria-activedescendant");
       expect(activedescendant).toBeTruthy();
-      // The ID is now generated by FilterableDropdown with format: branch-dropdown-{projectPath}-option-{value}
+      // The ID is generated by FilterableDropdown with format: {id}-option-{value}
       expect(activedescendant).toContain("option");
     });
   });
 
-  describe("loading", () => {
-    it("loads branches using projects.fetchBases(projectPath) on mount", async () => {
-      render(BranchDropdown, { props: defaultProps });
+  describe("loading and error props", () => {
+    it("shows spinner while loading is true", () => {
+      render(BranchDropdown, { props: { ...defaultProps, loading: true } });
 
-      await completeLoading();
-
-      expect(projects.fetchBases).toHaveBeenCalledWith(testProjectPath);
-    });
-
-    it("shows spinner while loading", async () => {
-      render(BranchDropdown, { props: defaultProps });
-
-      // Spinner should be visible immediately
       expect(screen.getByRole("status", { name: /loading branches/i })).toBeInTheDocument();
-      // Input should also be rendered immediately (not hidden during loading)
+      // Input is also rendered (not hidden during loading)
       expect(screen.getByRole("combobox")).toBeInTheDocument();
+    });
 
-      // Run timers to let fetchBases resolve (cached data arrives)
-      await vi.runAllTimersAsync();
+    it("hides spinner when loading is false", () => {
+      render(BranchDropdown, { props: defaultProps });
 
-      // Spinner should STILL be visible (waiting for bases-updated event)
-      expect(screen.getByRole("status", { name: /loading branches/i })).toBeInTheDocument();
-
-      // Emit bases-updated event (simulating background refresh completing)
-      emitBasesUpdated(testProjectPath, allBranches);
-      await tick();
-
-      // Spinner should be gone after bases-updated event
       expect(screen.queryByRole("status", { name: /loading branches/i })).not.toBeInTheDocument();
     });
 
-    it("handles fetchBases error gracefully", async () => {
-      mockFetchBases.mockRejectedValue(new Error("Network error"));
+    it("shows error message when error is set", () => {
+      render(BranchDropdown, { props: { ...defaultProps, error: "Network error" } });
 
-      render(BranchDropdown, { props: defaultProps });
-
-      // Run timers to let the error propagate
-      await vi.runAllTimersAsync();
-
-      // Should show error state, not crash (loading stops on error)
-      expect(screen.queryByRole("alert")).toBeInTheDocument();
-      // Spinner should be gone when error occurs
-      expect(screen.queryByRole("status", { name: /loading branches/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent("Network error");
     });
   });
 
   describe("display", () => {
     it("displays Local and Remote branch groups", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -218,8 +133,6 @@ describe("BranchDropdown component", () => {
 
     it('shows "No matches found" when filter has no matches', async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -232,13 +145,30 @@ describe("BranchDropdown component", () => {
 
       expect(screen.getByText(/no matches found/i)).toBeInTheDocument();
     });
+
+    it("updates the list when the branches prop changes", async () => {
+      const { rerender } = render(BranchDropdown, { props: defaultProps });
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      expect(screen.getByText("origin/feature")).toBeInTheDocument();
+
+      // Parent received fresh data (e.g. bases-updated pruned a branch)
+      const updatedBases: BaseInfo[] = [
+        { name: "main", isRemote: false },
+        { name: "origin/main", isRemote: true },
+      ];
+      await rerender({ ...defaultProps, branches: updatedBases });
+      await tick();
+
+      expect(screen.queryByText("origin/feature")).not.toBeInTheDocument();
+      expect(screen.getByText("main")).toBeInTheDocument();
+    });
   });
 
   describe("debounce", () => {
     it("typing doesn't filter immediately", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -250,8 +180,6 @@ describe("BranchDropdown component", () => {
 
     it("filter applies after 200ms debounce", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -269,8 +197,6 @@ describe("BranchDropdown component", () => {
 
     it("rapid typing resets debounce timer", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -300,8 +226,6 @@ describe("BranchDropdown component", () => {
     it("navigates local branches then remote branches", async () => {
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading();
-
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
@@ -318,8 +242,6 @@ describe("BranchDropdown component", () => {
 
     it("ArrowDown from last local branch goes to first remote branch (skipping header)", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -341,8 +263,6 @@ describe("BranchDropdown component", () => {
     it("mousedown on option prevents blur and selects branch", async () => {
       const onSelect = vi.fn();
       render(BranchDropdown, { props: { ...defaultProps, onSelect } });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -378,8 +298,6 @@ describe("BranchDropdown component", () => {
       const onSelect = vi.fn();
       render(BranchDropdown, { props: { ...defaultProps, onSelect } });
 
-      await completeLoading();
-
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
@@ -392,82 +310,13 @@ describe("BranchDropdown component", () => {
     it("displays selected value in input", async () => {
       render(BranchDropdown, { props: { ...defaultProps, value: "main" } });
 
-      await completeLoading();
-
-      const input = screen.getByRole("combobox") as HTMLInputElement;
-      expect(input.value).toBe("main");
-    });
-  });
-
-  describe("initial value validation", () => {
-    it("displays initial value prop in input when it exists in loaded branches", async () => {
-      render(BranchDropdown, { props: { ...defaultProps, value: "main" } });
-
-      await completeLoading();
-
       const input = screen.getByRole("combobox") as HTMLInputElement;
       expect(input.value).toBe("main");
     });
 
-    it("clears value and calls onSelect empty when initial value not in branch list", async () => {
-      const onSelect = vi.fn();
-      render(BranchDropdown, {
-        props: { ...defaultProps, value: "deleted-branch", onSelect },
-      });
-
-      await completeLoading();
-
-      // Should have called onSelect with empty string to clear invalid value
-      expect(onSelect).toHaveBeenCalledWith("");
-    });
-
-    it("does not re-clear when the parent re-applies a value after the list loaded", async () => {
-      // Regression: clearing on every value change fed an infinite clear/re-apply
-      // loop with the parent's default auto-fill (effect_update_depth_exceeded).
-      // Validation must run once per arriving list, not on value changes.
-      const onSelect = vi.fn();
-      const { rerender } = render(BranchDropdown, {
-        props: { ...defaultProps, value: "deleted-branch", onSelect },
-      });
-
-      await completeLoading();
-      expect(onSelect).toHaveBeenCalledTimes(1);
-
-      // Parent stubbornly re-applies the invalid value (simulates a stale default).
-      await rerender({ ...defaultProps, value: "deleted-branch", onSelect });
-      await tick();
-
-      expect(onSelect).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not clear value when branches are still loading", async () => {
-      const onSelect = vi.fn();
-
-      // Delay the response to keep loading state
-      mockFetchBases.mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve({ bases: allBranches }), 1000))
-      );
-
-      render(BranchDropdown, {
-        props: { ...defaultProps, value: "nonexistent", onSelect },
-      });
-
-      // Advance only partially - should still be loading
-      await vi.advanceTimersByTimeAsync(500);
-      await tick();
-
-      // Should NOT have called onSelect while still loading
-      expect(onSelect).not.toHaveBeenCalled();
-
-      // Now finish loading
-      await completeLoading();
-    });
-
-    it("user can override initial value by selecting different branch", async () => {
+    it("user can override value by selecting different branch", async () => {
       const onSelect = vi.fn();
       render(BranchDropdown, { props: { ...defaultProps, value: "main", onSelect } });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -489,8 +338,6 @@ describe("BranchDropdown component", () => {
     it("dropdown uses fixed positioning when open", async () => {
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading();
-
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
@@ -506,8 +353,6 @@ describe("BranchDropdown component", () => {
 
     it("dropdown position updates on window resize", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -549,8 +394,6 @@ describe("BranchDropdown component", () => {
     it("transforms branches to DropdownOption array", async () => {
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading();
-
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
@@ -568,8 +411,6 @@ describe("BranchDropdown component", () => {
     it("adds Local Branches header before local branches", async () => {
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading();
-
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
@@ -582,8 +423,6 @@ describe("BranchDropdown component", () => {
     it("adds Remote Branches header before remote branches", async () => {
       render(BranchDropdown, { props: defaultProps });
 
-      await completeLoading();
-
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
@@ -594,8 +433,6 @@ describe("BranchDropdown component", () => {
 
     it("headers are non-interactive (skipped in navigation)", async () => {
       render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -609,11 +446,7 @@ describe("BranchDropdown component", () => {
     });
 
     it("renders only local header when no remote branches", async () => {
-      mockFetchBases.mockResolvedValue({ bases: mockLocalBranches });
-
-      render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading(testProjectPath, mockLocalBranches);
+      render(BranchDropdown, { props: { ...defaultProps, branches: mockLocalBranches } });
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -623,11 +456,7 @@ describe("BranchDropdown component", () => {
     });
 
     it("renders only remote header when no local branches", async () => {
-      mockFetchBases.mockResolvedValue({ bases: mockRemoteBranches });
-
-      render(BranchDropdown, { props: defaultProps });
-
-      await completeLoading(testProjectPath, mockRemoteBranches);
+      render(BranchDropdown, { props: { ...defaultProps, branches: mockRemoteBranches } });
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -636,17 +465,14 @@ describe("BranchDropdown component", () => {
       expect(screen.getByText("Remote Branches")).toBeInTheDocument();
     });
 
-    it("full async load, filter, and select flow works", async () => {
+    it("full filter and select flow works", async () => {
       const onSelect = vi.fn();
       render(BranchDropdown, { props: { ...defaultProps, onSelect } });
-
-      // Wait for async load
-      await completeLoading();
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
 
-      // Verify branches loaded
+      // Verify branches rendered
       expect(screen.getByText("main")).toBeInTheDocument();
       expect(screen.getByText("develop")).toBeInTheDocument();
 
@@ -665,65 +491,6 @@ describe("BranchDropdown component", () => {
       await fireEvent.keyDown(input, { key: "Enter" });
 
       expect(onSelect).toHaveBeenCalledWith("origin/main");
-    });
-  });
-
-  describe("bases-updated event", () => {
-    it("subscribes to project:bases-updated event on mount", async () => {
-      render(BranchDropdown, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      // Handler should be registered in basesUpdatedHandlers set
-      expect(basesUpdatedHandlers.size).toBeGreaterThan(0);
-    });
-
-    it("updates branches when project:bases-updated event is received for matching projectPath", async () => {
-      render(BranchDropdown, { props: defaultProps });
-      await completeLoading();
-
-      // Verify initial branches
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-      expect(screen.getByText("main")).toBeInTheDocument();
-      expect(screen.getByText("origin/feature")).toBeInTheDocument();
-
-      // Simulate bases-updated event with pruned branches
-      const updatedBases: BaseInfo[] = [
-        { name: "main", isRemote: false },
-        { name: "origin/main", isRemote: true },
-      ];
-      emitBasesUpdated(testProjectPath, updatedBases);
-      await tick();
-
-      // origin/feature should be gone
-      expect(screen.queryByText("origin/feature")).not.toBeInTheDocument();
-      expect(screen.getByText("main")).toBeInTheDocument();
-    });
-
-    it("ignores project:bases-updated event for different projectPath", async () => {
-      render(BranchDropdown, { props: defaultProps });
-      await completeLoading();
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-
-      // Simulate event for different project
-      emitBasesUpdated("/different/project", []);
-      await tick();
-
-      // Should still have original branches
-      expect(screen.getByText("main")).toBeInTheDocument();
-    });
-
-    it("unsubscribes from event on cleanup", async () => {
-      const { unmount } = render(BranchDropdown, { props: defaultProps });
-      await vi.runAllTimersAsync();
-
-      const handlersBeforeUnmount = basesUpdatedHandlers.size;
-      unmount();
-
-      // Handler should be removed
-      expect(basesUpdatedHandlers.size).toBeLessThan(handlersBeforeUnmount);
     });
   });
 });

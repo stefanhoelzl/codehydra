@@ -24,9 +24,11 @@
   import {
     workspaces,
     projects as projectsApi,
+    on,
     type Workspace,
     type ProjectId,
     type Project,
+    type BaseInfo,
   } from "$lib/api";
   import { validateWorkspaceName, type InitialPrompt } from "@shared/api/types";
   import type { LifecycleAgentType } from "@shared/ipc";
@@ -70,6 +72,12 @@
   const selectedProjectId = $derived(newWorkspaceView.selectedProjectId);
   const hasProject = $derived(selectedProjectId !== undefined);
   const selectedProject = $derived(getProjectById(selectedProjectId));
+  // Memoized path string for the dropdowns: passing selectedProject.path
+  // directly would make their fetch effects track selectedProject's identity,
+  // which changes on every projects-store write — each bases:updated event
+  // would re-trigger fetchBases and feed a fetch/event loop. A $derived only
+  // propagates when the string actually changes.
+  const selectedProjectPath = $derived(selectedProject?.path);
   const defaultBranch = $derived(selectedProject?.defaultBaseBranch);
 
   let name = $state("");
@@ -91,6 +99,57 @@
   let promptRef: HTMLElement | undefined = $state();
   // Section ref for focus-trap enumeration.
   let sectionRef: HTMLElement | undefined = $state();
+
+  // ============ Branch data (shared by both dropdowns) ============
+
+  // The view owns the bases data: one fetch (and one background git refresh)
+  // per project selection, shared by the name and base-branch dropdowns, which
+  // are purely presentational. Cached bases display immediately; loading stays
+  // on until the background refresh confirms via project:bases-updated.
+  let branches = $state<readonly BaseInfo[]>([]);
+  let branchesLoading = $state(false);
+  let branchesError = $state<string | null>(null);
+
+  $effect(() => {
+    const currentProjectPath = selectedProjectPath;
+    branches = [];
+    branchesError = null;
+    branchesLoading = currentProjectPath !== undefined;
+    if (currentProjectPath === undefined) return;
+
+    let cancelled = false;
+    projectsApi
+      .fetchBases(currentProjectPath)
+      .then((result: { bases: readonly BaseInfo[] }) => {
+        if (!cancelled) branches = result.bases;
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        branchesError = err instanceof Error ? err.message : "Failed to load branches";
+        branchesLoading = false;
+      });
+
+    const unsubscribe = on<{ projectPath: string; bases: readonly BaseInfo[] }>(
+      "project:bases-updated",
+      (event) => {
+        if (event.projectPath !== currentProjectPath) return;
+        branches = event.bases;
+        branchesLoading = false;
+        // The fresh list is authoritative: clear a selection it no longer
+        // contains. Runs once per arriving list — never on value changes,
+        // which would re-clear a value just re-applied by the default
+        // auto-fill and feed an infinite clear/re-apply loop.
+        if (selectedBranch && !event.bases.some((b) => b.name === selectedBranch)) {
+          selectedBranch = "";
+        }
+      }
+    );
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  });
 
   // Auto-fill the base branch from the project's default. Each distinct default
   // value is applied at most once per project selection, and only into an empty
@@ -442,10 +501,11 @@
 
       <div class="ch-form-field">
         <label for="workspace-name" class="ch-form-label">Name</label>
-        {#if selectedProject}
+        {#if selectedProjectPath}
           <NameBranchDropdown
             id="workspace-name"
-            projectPath={selectedProject.path}
+            {branches}
+            error={branchesError}
             value={name}
             onSelect={handleNameSelect}
             onInput={handleNameInput}
@@ -465,9 +525,12 @@
 
       <div class="ch-form-field">
         <label for="branch-select" class="ch-form-label">Base Branch</label>
-        {#if selectedProject}
+        {#if selectedProjectPath}
           <BranchDropdown
-            projectPath={selectedProject.path}
+            id={`branch-dropdown-${selectedProjectPath}`}
+            {branches}
+            loading={branchesLoading}
+            error={branchesError}
             value={selectedBranch}
             onSelect={handleBranchSelect}
             disabled={isSubmitting || isOpeningProject}

@@ -28,18 +28,37 @@ let _activeWorkspacePath = $state<string | null>(null);
 // ============ Derived ============
 
 /**
+ * Identity-stable cache of sorted projections, keyed by source project object.
+ * Mutators replace a project's object only when it actually changes, so a
+ * cache hit means the projection (and its identity) can be reused. Without
+ * this, every store write would hand out all-new project objects, and any
+ * effect keyed on a project's identity would re-run on unrelated updates
+ * (this once fed a fetch/event loop in the New Workspace view's dropdowns).
+ * Relies on mutators never mutating a project in place.
+ */
+const _sortedProjectionCache = new WeakMap<Project, Project>();
+
+function sortedProjection(p: Project): Project {
+  const cached = _sortedProjectionCache.get(p);
+  if (cached) return cached;
+  const projection = {
+    ...p,
+    workspaces: [...p.workspaces].sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
+    ),
+  };
+  _sortedProjectionCache.set(p, projection);
+  return projection;
+}
+
+/**
  * Projects sorted alphabetically (AaBbCc ordering) with their workspaces also sorted.
  * This is the canonical order used for display and navigation.
  */
 const _sortedProjects = $derived(
   [...(_projects ?? [])]
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { caseFirst: "upper" }))
-    .map((p) => ({
-      ...p,
-      workspaces: [...p.workspaces].sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { caseFirst: "upper" })
-      ),
-    }))
+    .map(sortedProjection)
 );
 
 /**
@@ -152,6 +171,11 @@ export function setProjectDefaultBaseBranch(
   projectPath: string,
   defaultBaseBranch: string | undefined
 ): void {
+  // No-op when nothing changes: refreshes re-deliver the same default on
+  // every bases:updated event, and a write here would churn object
+  // identities for all identity-keyed consumers.
+  const project = _projects.find((p) => p.path === projectPath);
+  if (!project || project.defaultBaseBranch === defaultBaseBranch) return;
   _projects = _projects.map((p) => {
     if (p.path !== projectPath) return p;
     if (defaultBaseBranch !== undefined) return { ...p, defaultBaseBranch };
