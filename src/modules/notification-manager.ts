@@ -36,12 +36,20 @@ export interface NotificationHandle {
 
 /**
  * NotificationManager sends typed commands to the renderer for notification lifecycle.
+ *
+ * Commands are buffered until markUIReady() is called: the renderer's
+ * NotificationHost only subscribes to notification commands once MainView
+ * mounts, so anything sent earlier (e.g. from app:start hooks) would be
+ * silently dropped. The buffer is flushed in order when the renderer
+ * dispatches lifecycle.ready().
  */
 export class NotificationManager {
   private readonly viewManager: IViewManager;
   private readonly handles = new Map<string, NotificationHandleImpl>();
   private readonly logger: Logger | undefined;
   private nextId = 1;
+  private uiReady = false;
+  private pendingCommands: NotificationCommand[] = [];
 
   constructor(viewManager: IViewManager, logger?: Logger) {
     this.viewManager = viewManager;
@@ -53,15 +61,45 @@ export class NotificationManager {
    */
   open(config: NotificationConfig): NotificationHandle {
     const notificationId = `ntf-${this.nextId++}`;
-    const handle = new NotificationHandleImpl(notificationId, this.viewManager, () => {
-      this.handles.delete(notificationId);
-    });
+    const handle = new NotificationHandleImpl(
+      notificationId,
+      (command) => this.send(command),
+      () => {
+        this.handles.delete(notificationId);
+      }
+    );
     this.handles.set(notificationId, handle);
 
-    const command: NotificationCommand = { action: "open", notificationId, config };
-    this.viewManager.sendToUI(ApiIpcChannels.NOTIFICATION_COMMAND, command);
+    this.send({ action: "open", notificationId, config });
 
     return handle;
+  }
+
+  /**
+   * Flush buffered commands and switch to direct delivery. Idempotent.
+   * Called once the renderer's NotificationHost is mounted (lifecycle.ready()).
+   * Notifications that were already closed while buffered are skipped entirely.
+   */
+  markUIReady(): void {
+    if (this.uiReady) return;
+    this.uiReady = true;
+    const buffered = this.pendingCommands;
+    this.pendingCommands = [];
+    const closedIds = new Set(
+      buffered.filter((c) => c.action === "close").map((c) => c.notificationId)
+    );
+    for (const command of buffered) {
+      if (closedIds.has(command.notificationId)) continue;
+      this.viewManager.sendToUI(ApiIpcChannels.NOTIFICATION_COMMAND, command);
+    }
+  }
+
+  private send(command: NotificationCommand): void {
+    if (!this.uiReady) {
+      this.pendingCommands.push(command);
+      return;
+    }
+    this.viewManager.sendToUI(ApiIpcChannels.NOTIFICATION_COMMAND, command);
   }
 
   /**
@@ -88,15 +126,15 @@ class NotificationHandleImpl implements NotificationHandle {
   readonly id: string;
   readonly closed: Promise<void>;
 
-  private readonly viewManager: IViewManager;
+  private readonly send: (command: NotificationCommand) => void;
   private readonly onRemove: () => void;
   private readonly listeners = new Set<(event: NotificationUserEvent) => void>();
   private resolveClosed!: () => void;
   private isClosed = false;
 
-  constructor(id: string, viewManager: IViewManager, onRemove: () => void) {
+  constructor(id: string, send: (command: NotificationCommand) => void, onRemove: () => void) {
     this.id = id;
-    this.viewManager = viewManager;
+    this.send = send;
     this.onRemove = onRemove;
     this.closed = new Promise<void>((resolve) => {
       this.resolveClosed = resolve;
@@ -105,15 +143,13 @@ class NotificationHandleImpl implements NotificationHandle {
 
   update(config: NotificationConfig): void {
     if (this.isClosed) return;
-    const command: NotificationCommand = { action: "update", notificationId: this.id, config };
-    this.viewManager.sendToUI(ApiIpcChannels.NOTIFICATION_COMMAND, command);
+    this.send({ action: "update", notificationId: this.id, config });
   }
 
   close(): void {
     if (this.isClosed) return;
     this.isClosed = true;
-    const command: NotificationCommand = { action: "close", notificationId: this.id };
-    this.viewManager.sendToUI(ApiIpcChannels.NOTIFICATION_COMMAND, command);
+    this.send({ action: "close", notificationId: this.id });
     this.resolveClosed();
     this.listeners.clear();
     this.onRemove();

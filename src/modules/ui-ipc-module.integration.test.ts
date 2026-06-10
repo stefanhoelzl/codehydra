@@ -53,6 +53,7 @@ import {
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
+import type { NotificationManager } from "./notification-manager";
 import { createMockLogging } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
@@ -445,6 +446,30 @@ describe("UiIpcModule - IPC handlers", () => {
       type: "app:ready",
       payload: {},
     });
+  });
+
+  it("lifecycle.ready releases buffered notifications before dispatching app:ready", async () => {
+    const ipcLayer = createBehavioralIpcBoundary();
+    const markUIReady = vi.fn();
+    const dispatch = vi.fn().mockImplementation(async () => {
+      // markUIReady must run before app:ready so notifications opened during
+      // app:start hooks render as soon as the renderer is mounted.
+      expect(markUIReady).toHaveBeenCalledTimes(1);
+    });
+    const deps = createBridgeDeps({
+      ipcLayer,
+      dispatcher: { dispatch } as unknown as UiIpcModuleDeps["dispatcher"],
+      notificationManager: {
+        markUIReady,
+        routeEvent: vi.fn(),
+      } as unknown as NotificationManager,
+    });
+    createUiIpcModule(deps);
+
+    await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, undefined);
+
+    expect(markUIReady).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "app:ready", payload: {} });
   });
 });
 
