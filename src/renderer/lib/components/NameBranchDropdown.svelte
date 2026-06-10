@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { projects, on, type BaseInfo } from "$lib/api";
+  import type { BaseInfo } from "@shared/api/types";
   import FilterableDropdown, { type DropdownOption } from "./FilterableDropdown.svelte";
 
   /**
@@ -15,7 +15,10 @@
   }
 
   interface NameBranchDropdownProps {
-    projectPath: string;
+    /** Branch list for suggestions. Owned by the parent (one fetch shared across dropdowns). */
+    branches: readonly BaseInfo[];
+    /** Fetch error to display, if any. */
+    error?: string | null;
     value: string;
     onSelect: (selection: NameBranchSelection) => void;
     disabled?: boolean;
@@ -32,7 +35,8 @@
   }
 
   let {
-    projectPath,
+    branches,
+    error = null,
     value,
     onSelect,
     disabled = false,
@@ -42,38 +46,6 @@
     openOnFocus = false, // Default to false for name field - user types custom names
     autofocus = false,
   }: NameBranchDropdownProps = $props();
-
-  // State
-  let branches = $state<readonly BaseInfo[]>([]);
-  let error = $state<string | null>(null);
-
-  // Load branches on mount or when projectPath changes
-  $effect(() => {
-    const currentProjectPath = projectPath;
-    error = null;
-
-    projects
-      .fetchBases(currentProjectPath)
-      .then((result: { bases: readonly BaseInfo[] }) => {
-        branches = result.bases;
-      })
-      .catch((err: unknown) => {
-        error = err instanceof Error ? err.message : "Failed to load branches";
-      });
-
-    const unsubscribe = on<{ projectPath: string; bases: readonly BaseInfo[] }>(
-      "project:bases-updated",
-      (event) => {
-        if (event.projectPath === currentProjectPath) {
-          branches = event.bases;
-        }
-      }
-    );
-
-    return () => {
-      unsubscribe();
-    };
-  });
 
   /**
    * Filter branches to only those with derives set (can create workspace from them).
@@ -183,7 +155,7 @@
       {disabled}
       placeholder="Enter name or select branch..."
       filterOption={filterBranch}
-      id={id ?? `name-branch-dropdown-${projectPath}`}
+      id={id ?? "name-branch-dropdown"}
       allowFreeText={true}
       {onEnter}
       {onInput}

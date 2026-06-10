@@ -1,62 +1,31 @@
 <script lang="ts">
-  import { projects, on, type BaseInfo } from "$lib/api";
+  import type { BaseInfo } from "@shared/api/types";
   import FilterableDropdown, { type DropdownOption } from "./FilterableDropdown.svelte";
   import Icon from "./Icon.svelte";
 
   interface BranchDropdownProps {
-    projectPath: string;
+    /** Branch list to display. Owned by the parent (one fetch shared across dropdowns). */
+    branches: readonly BaseInfo[];
+    /** Whether the parent is still waiting for fresh branch data. */
+    loading: boolean;
+    /** Fetch error to display, if any. */
+    error: string | null;
     value: string;
     onSelect: (branch: string) => void;
     disabled?: boolean;
+    /** Id for the dropdown input (for label association). */
+    id: string;
   }
 
-  let { projectPath, value, onSelect, disabled = false }: BranchDropdownProps = $props();
-
-  // State
-  let branches = $state<readonly BaseInfo[]>([]);
-  let loading = $state(true);
-  let error = $state<string | null>(null);
-
-  // Load cached branches immediately, then wait for bases-updated event
-  $effect(() => {
-    const currentProjectPath = projectPath;
-    loading = true;
-    error = null;
-
-    // Fetch cached branches immediately for display
-    projects
-      .fetchBases(currentProjectPath)
-      .then((result: { bases: readonly BaseInfo[] }) => {
-        branches = result.bases;
-        // Keep loading=true until bases-updated event arrives
-      })
-      .catch((err: unknown) => {
-        error = err instanceof Error ? err.message : "Failed to load branches";
-        loading = false;
-      });
-
-    // Subscribe to bases-updated event for when fresh data arrives
-    const unsubscribe = on<{ projectPath: string; bases: readonly BaseInfo[] }>(
-      "project:bases-updated",
-      (event) => {
-        if (event.projectPath === currentProjectPath) {
-          branches = event.bases;
-          loading = false;
-          // The fresh list is authoritative: clear a selection it no longer
-          // contains. Validation runs once per arriving list — never on value
-          // changes, which would re-clear a value the parent just re-applied
-          // and feed an infinite clear/re-apply loop.
-          if (value && !event.bases.some((b) => b.name === value)) {
-            onSelect("");
-          }
-        }
-      }
-    );
-
-    return () => {
-      unsubscribe();
-    };
-  });
+  let {
+    branches,
+    loading,
+    error,
+    value,
+    onSelect,
+    disabled = false,
+    id,
+  }: BranchDropdownProps = $props();
 
   /**
    * Transform branches to DropdownOption[] with headers for local/remote groups.
@@ -118,7 +87,7 @@
       {disabled}
       placeholder="Select branch..."
       filterOption={filterBranch}
-      id={`branch-dropdown-${projectPath}`}
+      {id}
     >
       {#snippet optionSnippet(option)}
         {#if option.type === "header"}

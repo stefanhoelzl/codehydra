@@ -310,6 +310,58 @@ describe("projects store", () => {
     });
   });
 
+  describe("identity stability", () => {
+    // Identity-keyed consumers (e.g. effects fed by a project prop) must not
+    // re-run on writes that don't change their project. These tests pin the
+    // reference-equality guarantees the New Workspace view relies on to avoid
+    // a fetch/event feedback loop.
+    it("preserves project identity when setProjectDefaultBaseBranch value is unchanged", () => {
+      addProject(
+        createMockProject({
+          path: "/test/project" as ProjectPath,
+          defaultBaseBranch: "main",
+        })
+      );
+      const before = projects.value[0];
+
+      setProjectDefaultBaseBranch("/test/project", "main");
+
+      expect(projects.value[0]).toBe(before);
+    });
+
+    it("preserves project identity when clearing an already-absent default", () => {
+      addProject(createMockProject({ path: "/test/project" as ProjectPath }));
+      const before = projects.value[0];
+
+      setProjectDefaultBaseBranch("/test/project", undefined);
+
+      expect(projects.value[0]).toBe(before);
+    });
+
+    it("preserves untouched projects' identity across unrelated writes", () => {
+      addProject(
+        createMockProject({
+          path: "/test/a" as ProjectPath,
+          name: "project-a",
+          defaultBaseBranch: "main",
+        })
+      );
+      addProject(
+        createMockProject({
+          path: "/test/b" as ProjectPath,
+          name: "project-b",
+          defaultBaseBranch: "main",
+        })
+      );
+      const otherBefore = projects.value.find((p) => p.path === "/test/b");
+
+      setProjectDefaultBaseBranch("/test/a", "develop");
+
+      expect(projects.value.find((p) => p.path === "/test/b")).toBe(otherBefore);
+      expect(projects.value.find((p) => p.path === "/test/a")?.defaultBaseBranch).toBe("develop");
+    });
+  });
+
   describe("updateWorkspaceMetadata", () => {
     it("clears the key and returns true when the workspace matches", () => {
       const ws = createMockWorkspace({

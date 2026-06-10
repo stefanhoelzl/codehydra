@@ -191,6 +191,42 @@ describe("NewWorkspaceView", () => {
     await waitFor(() => expect(createButton).not.toBeDisabled());
   });
 
+  it("does not re-fetch bases when a bases-updated event rewrites the project (fetch loop regression)", async () => {
+    // Regression: every bases:updated event rewrote the projects store, handing
+    // out a new project object. The dropdowns' fetch effects were keyed on that
+    // identity (via the projectPath prop expression), so each event re-triggered
+    // fetchBases — whose background refresh emitted the next event: a
+    // self-amplifying loop of git fetches that kept the spinner loading forever.
+    mockApi.projects.fetchBases.mockResolvedValue({
+      bases: [{ name: "main", isRemote: false }],
+    });
+
+    render(NewWorkspaceView, { props: { open: true } });
+
+    // The view fetches once per project selection (shared by both dropdowns).
+    await waitFor(() => expect(mockApi.projects.fetchBases).toHaveBeenCalledTimes(1));
+
+    // A refresh completes: the event plus a store rewrite that changes the
+    // project's object identity (fresh default), as the domain-event binding does.
+    emitApiEvent("project:bases-updated", {
+      projectId: PROJECT_ID,
+      projectPath: PROJECT_PATH,
+      bases: [
+        { name: "main", isRemote: false },
+        { name: "develop", isRemote: false },
+      ],
+      defaultBaseBranch: "develop",
+    });
+    projectsStore.setProjectDefaultBaseBranch(PROJECT_PATH, "develop");
+
+    // Let any (rogue) effect re-runs and their async fetches settle.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // No additional fetches, and the spinner stays settled.
+    expect(mockApi.projects.fetchBases).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("status", { name: "Loading branches" })).toBeNull();
+  });
+
   it("does not override a manual branch pick when a fresh default arrives", async () => {
     mockApi.projects.fetchBases.mockResolvedValue({
       bases: [

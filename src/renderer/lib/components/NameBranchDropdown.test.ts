@@ -1,5 +1,8 @@
 /**
  * Tests for the NameBranchDropdown component.
+ *
+ * The component is presentational: the parent owns the branch data (one fetch
+ * shared across dropdowns) and passes branches/error as props.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -7,28 +10,11 @@ import { render, screen, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 import type { BaseInfo } from "@shared/api/types";
 
-// Create mock functions with vi.hoisted - required for vitest mocking pattern
-const { mockFetchBases, mockOn } = vi.hoisted(() => ({
-  mockFetchBases: vi.fn(),
-  mockOn: vi.fn().mockReturnValue(() => {}),
-}));
-
-// Mock $lib/api - must be a static mock, not dynamic (no importOriginal)
-vi.mock("$lib/api", () => ({
-  projects: {
-    fetchBases: mockFetchBases,
-  },
-  on: mockOn,
-}));
-
-// Import component after mocks
 import NameBranchDropdown, { type NameBranchSelection } from "./NameBranchDropdown.svelte";
 
 describe("NameBranchDropdown component", () => {
-  const testProjectPath = "/test/project";
-
   const defaultProps = {
-    projectPath: testProjectPath,
+    branches: [] as readonly BaseInfo[],
     value: "",
     onSelect: vi.fn(),
   };
@@ -44,24 +30,21 @@ describe("NameBranchDropdown component", () => {
   });
 
   /**
-   * Helper to set up mock branches and render component
+   * Helper to render the component with the given branches.
    */
-  async function renderWithBranches(
+  function renderWithBranches(
     branches: BaseInfo[],
     props: Partial<
       typeof defaultProps & {
         id?: string;
+        error?: string | null;
         onEnter?: () => void;
         openOnFocus?: boolean;
         autofocus?: boolean;
       }
     > = {}
-  ): Promise<void> {
-    mockFetchBases.mockResolvedValue({ bases: branches });
-    render(NameBranchDropdown, { props: { ...defaultProps, ...props } });
-    // Wait for promise to resolve
-    await vi.advanceTimersByTimeAsync(0);
-    await tick();
+  ): ReturnType<typeof render> {
+    return render(NameBranchDropdown, { props: { ...defaultProps, branches, ...props } });
   }
 
   /**
@@ -82,7 +65,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-login", isRemote: false, derives: "feature-login" }, // Has derives - no worktree
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -102,7 +85,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -116,7 +99,7 @@ describe("NameBranchDropdown component", () => {
         { name: "origin/feature-x", isRemote: true, derives: "feature-x" },
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -134,7 +117,7 @@ describe("NameBranchDropdown component", () => {
         { name: "origin/feature-dashboard", isRemote: true, derives: "feature-dashboard" },
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -155,7 +138,7 @@ describe("NameBranchDropdown component", () => {
         { name: "origin/feature-x", isRemote: true, derives: "feature-x" },
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -169,7 +152,7 @@ describe("NameBranchDropdown component", () => {
         { name: "origin/main", isRemote: true }, // No derives
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -191,7 +174,7 @@ describe("NameBranchDropdown component", () => {
         },
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -217,7 +200,7 @@ describe("NameBranchDropdown component", () => {
         },
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -238,7 +221,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-x", isRemote: false, derives: "feature-x" }, // No base field
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -264,7 +247,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -283,7 +266,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-auth", isRemote: false, derives: "feature-auth", base: "main" },
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -301,7 +284,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-auth", isRemote: false, derives: "feature-auth", base: "main" },
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -317,12 +300,8 @@ describe("NameBranchDropdown component", () => {
   });
 
   describe("error states", () => {
-    it("shows error message when fetch fails", async () => {
-      mockFetchBases.mockRejectedValue(new Error("Network error"));
-      render(NameBranchDropdown, { props: defaultProps });
-
-      await vi.advanceTimersByTimeAsync(0);
-      await tick();
+    it("shows error message when error prop is set", () => {
+      renderWithBranches([], { error: "Network error" });
 
       expect(screen.getByText("Network error")).toBeInTheDocument();
     });
@@ -336,7 +315,7 @@ describe("NameBranchDropdown component", () => {
         { name: "origin/feature-payment", isRemote: true, derives: "feature-payment" },
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -357,7 +336,7 @@ describe("NameBranchDropdown component", () => {
         { name: "origin/bugfix-payment", isRemote: true, derives: "bugfix-payment" },
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -375,15 +354,12 @@ describe("NameBranchDropdown component", () => {
   });
 
   describe("id prop", () => {
-    it("forwards id prop to FilterableDropdown input", async () => {
+    it("forwards id prop to FilterableDropdown input", () => {
       const branches: BaseInfo[] = [
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
       ];
 
-      mockFetchBases.mockResolvedValue({ bases: branches });
-      render(NameBranchDropdown, { props: { ...defaultProps, id: "workspace-name" } });
-      await vi.advanceTimersByTimeAsync(0);
-      await tick();
+      renderWithBranches(branches, { id: "workspace-name" });
 
       const input = screen.getByRole("combobox");
       expect(input).toHaveAttribute("id", "workspace-name-input");
@@ -397,7 +373,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
       ];
 
-      await renderWithBranches(branches, { onEnter });
+      renderWithBranches(branches, { onEnter });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -409,96 +385,39 @@ describe("NameBranchDropdown component", () => {
   });
 
   describe("autofocus prop", () => {
-    it("sets data-autofocus attribute when autofocus is true", async () => {
+    it("sets data-autofocus attribute when autofocus is true", () => {
       const branches: BaseInfo[] = [
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
       ];
 
-      await renderWithBranches(branches, { autofocus: true });
+      renderWithBranches(branches, { autofocus: true });
 
       const input = screen.getByRole("combobox");
       expect(input).toHaveAttribute("data-autofocus");
     });
   });
 
-  describe("project:bases-updated event updates branches", () => {
-    it("subscribes to project:bases-updated and updates branch list", async () => {
+  describe("branches prop updates", () => {
+    it("updates the suggestion list when the branches prop changes", async () => {
       const initialBranches: BaseInfo[] = [
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
       ];
-
       const updatedBranches: BaseInfo[] = [
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
         { name: "origin/feature-new", isRemote: true, derives: "feature-new" },
       ];
 
-      // Capture the on() callback so we can invoke it
-      let basesUpdatedHandler:
-        | ((event: { projectPath: string; bases: readonly BaseInfo[] }) => void)
-        | undefined;
-      mockOn.mockImplementation(
-        (
-          _event: string,
-          handler: (event: { projectPath: string; bases: readonly BaseInfo[] }) => void
-        ) => {
-          basesUpdatedHandler = handler;
-          return () => {};
-        }
-      );
+      const { rerender } = renderWithBranches(initialBranches);
 
-      await renderWithBranches(initialBranches);
-
-      // Verify subscription was made
-      expect(mockOn).toHaveBeenCalledWith("project:bases-updated", expect.any(Function));
-
-      // Simulate bases-updated event
-      basesUpdatedHandler!({
-        projectPath: testProjectPath,
-        bases: updatedBranches,
-      });
+      // Parent received fresh data (e.g. bases-updated added a branch)
+      await rerender({ ...defaultProps, branches: updatedBranches });
       await tick();
 
-      // Open dropdown and verify updated branches
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
 
       expect(screen.getByText("feature-auth")).toBeInTheDocument();
       expect(screen.getByText("feature-new")).toBeInTheDocument();
-    });
-
-    it("ignores events for different project paths", async () => {
-      const initialBranches: BaseInfo[] = [
-        { name: "feature-auth", isRemote: false, derives: "feature-auth" },
-      ];
-
-      let basesUpdatedHandler:
-        | ((event: { projectPath: string; bases: readonly BaseInfo[] }) => void)
-        | undefined;
-      mockOn.mockImplementation(
-        (
-          _event: string,
-          handler: (event: { projectPath: string; bases: readonly BaseInfo[] }) => void
-        ) => {
-          basesUpdatedHandler = handler;
-          return () => {};
-        }
-      );
-
-      await renderWithBranches(initialBranches);
-
-      // Simulate event for a different project
-      basesUpdatedHandler!({
-        projectPath: "/other/project",
-        bases: [{ name: "other-branch", isRemote: false, derives: "other-branch" }],
-      });
-      await tick();
-
-      // Open dropdown - should still show original branches only
-      const input = screen.getByRole("combobox");
-      await focusAndOpenDropdown(input);
-
-      expect(screen.getByText("feature-auth")).toBeInTheDocument();
-      expect(screen.queryByText("other-branch")).not.toBeInTheDocument();
     });
   });
 
@@ -512,7 +431,7 @@ describe("NameBranchDropdown component", () => {
         { name: "origin/feature-payments", isRemote: true, derives: "feature-payments" },
       ];
 
-      await renderWithBranches(branches);
+      renderWithBranches(branches);
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -546,7 +465,7 @@ describe("NameBranchDropdown component", () => {
         },
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await focusAndOpenDropdown(input);
@@ -566,7 +485,7 @@ describe("NameBranchDropdown component", () => {
         { name: "feature-auth", isRemote: false, derives: "feature-auth" },
       ];
 
-      await renderWithBranches(branches, { onSelect });
+      renderWithBranches(branches, { onSelect });
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
