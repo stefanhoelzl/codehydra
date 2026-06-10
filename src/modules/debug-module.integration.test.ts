@@ -256,10 +256,10 @@ describe("DebugModule Integration", () => {
   });
 
   describe("update (active)", () => {
-    it("start hook opens 'Update available' notification when debug.update is on", async () => {
+    it("start hook opens 'Update available' notification when debug.update is 'pending'", async () => {
       const { manager, notifications } = createMockNotificationManager();
       const module = createDebugModule({
-        configService: createMockConfig({ defaults: { "debug.update": true } }),
+        configService: createMockConfig({ defaults: { "debug.update": "pending" } }),
         notificationManager: manager,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
@@ -270,12 +270,39 @@ describe("DebugModule Integration", () => {
       expect(notifications[0]!.opened.actions).toEqual([{ id: "install", label: "Install" }]);
     });
 
+    it("bare flag value 'true' behaves like 'pending'", async () => {
+      const { manager, notifications } = createMockNotificationManager();
+      const module = createDebugModule({
+        configService: createMockConfig({ defaults: { "debug.update": "true" } }),
+        notificationManager: manager,
+      });
+      const hook = getHook(module, APP_START_OPERATION_ID, "start");
+      await hook.handler(makeHookContext());
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]!.opened.title).toBe("Update available");
+    });
+
+    it("start hook opens 'Update ready' notification when debug.update is 'downloaded'", async () => {
+      const { manager, notifications } = createMockNotificationManager();
+      const module = createDebugModule({
+        configService: createMockConfig({ defaults: { "debug.update": "downloaded" } }),
+        notificationManager: manager,
+      });
+      const hook = getHook(module, APP_START_OPERATION_ID, "start");
+      await hook.handler(makeHookContext());
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]!.opened.title).toBe("Update ready");
+      expect(notifications[0]!.opened.actions).toEqual([{ id: "restart", label: "Restart Now" }]);
+    });
+
     it("clicking Install transitions to downloading then ready", async () => {
       vi.useFakeTimers();
       try {
         const { manager, notifications, emitEvent } = createMockNotificationManager();
         const module = createDebugModule({
-          configService: createMockConfig({ defaults: { "debug.update": true } }),
+          configService: createMockConfig({ defaults: { "debug.update": "pending" } }),
           notificationManager: manager,
         });
         const hook = getHook(module, APP_START_OPERATION_ID, "start");
@@ -304,7 +331,7 @@ describe("DebugModule Integration", () => {
     it("check-deps returns missingBinaries when debug.setup is on", async () => {
       const module = createDebugModule({
         configService: createMockConfig({
-          defaults: { "debug.setup": true, "debug.update": true },
+          defaults: { "debug.setup": true, "debug.update": "pending" },
         }),
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");

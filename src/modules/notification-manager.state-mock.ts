@@ -73,6 +73,8 @@ export function createMockNotificationManager(): MockNotificationManager {
       } satisfies NotificationHandle;
     },
     routeEvent() {},
+    // The mock has no buffering — notifications are tracked immediately.
+    markUIReady() {},
   } as unknown as NotificationManager;
 
   return {

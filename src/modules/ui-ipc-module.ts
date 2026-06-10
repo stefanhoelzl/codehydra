@@ -339,6 +339,9 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
   // ---------------------------------------------------------------------------
 
   registerIpc(ApiIpcChannels.LIFECYCLE_READY, async () => {
+    // The renderer calls lifecycle.ready() once MainView (and its
+    // NotificationHost) is mounted — buffered notifications can now render.
+    deps.notificationManager?.markUIReady();
     return await dispatcher.dispatch({
       type: INTENT_APP_READY,
       payload: {},

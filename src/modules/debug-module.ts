@@ -4,7 +4,9 @@
  * Controlled by config keys (env vars / CLI flags):
  * - debug.blocking-pids: Simulate blocking processes during workspace deletion
  * - debug.setup: Force setup flow with simulated binary download progress
- * - debug.update: Simulate available update with download progress
+ * - debug.update: Simulate an update notification. "pending" (or bare flag)
+ *   shows "Update available" with the full install → download → ready flow;
+ *   "downloaded" jumps straight to "Update ready".
  *
  * Only active in development mode (requires: { development: true }).
  */
@@ -12,7 +14,7 @@
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
-import { storeBoolean } from "../boundaries/platform/store-definition";
+import { storeBoolean, storeEnum } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import {
@@ -54,16 +56,24 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         description: "Force setup flow with simulated binary download progress",
         ...storeBoolean(),
       }),
-      configService.register("debug.update", {
-        default: false,
-        description: "Simulate available update with download progress",
-        ...storeBoolean(),
-      }),
     ].map((accessor) => [accessor.name, accessor] as const)
   );
 
+  // "true" is what a bare --debug.update CLI flag parses to; treat it as "pending".
+  const updateModeConfig = configService.register("debug.update", {
+    default: null,
+    description:
+      "Simulate update notification: pending = available + install flow, downloaded = ready to install",
+    ...storeEnum(["true", "pending", "downloaded"], { nullable: true }),
+  });
+
   function isActive(key: string): boolean {
     return debugConfigs.get(key)?.get() === true;
+  }
+
+  function updateMode(): "pending" | "downloaded" | null {
+    const value = updateModeConfig.get();
+    return value === "true" ? "pending" : value;
   }
 
   // Workspaces kept alive by debug.blocking-pids after deletion
@@ -129,9 +139,14 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         },
         start: {
           handler: async (): Promise<void> => {
-            if (!isActive("debug.update") || !deps.notificationManager) return;
+            const mode = updateMode();
+            if (mode === null || !deps.notificationManager) return;
             const version = "99.0.0-debug";
-            simulateUpdateNotification(deps.notificationManager, version);
+            if (mode === "downloaded") {
+              deps.notificationManager.open(readyConfig(version));
+            } else {
+              simulateUpdateNotification(deps.notificationManager, version);
+            }
           },
         },
       },
@@ -152,6 +167,16 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         },
       },
     },
+  };
+}
+
+function readyConfig(version: string): NotificationConfig {
+  return {
+    type: "info",
+    title: "Update ready",
+    message: `Version ${version} is ready to install.`,
+    dismissible: false,
+    actions: [{ id: "restart", label: "Restart Now" }],
   };
 }
 
@@ -182,13 +207,7 @@ async function simulateDownload(handle: NotificationHandle, version: string): Pr
     });
     await delay(150);
   }
-  handle.update({
-    type: "info",
-    title: "Update ready",
-    message: `Version ${version} is ready to install.`,
-    dismissible: false,
-    actions: [{ id: "restart", label: "Restart Now" }],
-  });
+  handle.update(readyConfig(version));
 }
 
 function delay(ms: number): Promise<void> {
