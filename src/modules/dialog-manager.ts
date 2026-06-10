@@ -9,9 +9,11 @@
 import type {
   DialogConfig,
   DialogCommand,
+  DialogSurface,
   DialogUserEvent,
   DialogActionEvent,
   DialogFieldChangeEvent,
+  DialogDismissEvent,
 } from "../shared/dialog-types";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { Logger } from "../boundaries/platform/logging";
@@ -33,6 +35,13 @@ export interface DialogHandle {
    * push handle.update(). Returns unsubscribe function.
    */
   onChange(handler: (event: DialogFieldChangeEvent) => void): () => void;
+  /**
+   * Subscribe to dismiss events (Escape in the panel surface). The shell only
+   * reports the intent; this session owner decides what dismissing means
+   * (typically close + reopen with fresh config = clear). Returns unsubscribe
+   * function.
+   */
+  onDismiss(handler: (event: DialogDismissEvent) => void): () => void;
   /** Await next action event (for sequential hook flows). Rejects on timeout if specified. */
   nextEvent(timeoutMs?: number): Promise<DialogActionEvent>;
   /** Promise that resolves when the dialog closes. */
@@ -57,15 +66,21 @@ export class DialogManager {
 
   /**
    * Open a dialog. Returns a handle for updates and events.
+   *
+   * The surface is a session property set once here — update commands carry
+   * only the config and cannot move a session between surfaces.
    */
-  open(config: DialogConfig): DialogHandle {
+  open(config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle {
     const dialogId = `dlg-${this.nextId++}`;
     const handle = new DialogHandleImpl(dialogId, this.sendToUI, () => {
       this.handles.delete(dialogId);
     });
     this.handles.set(dialogId, handle);
 
-    const command: DialogCommand = { action: "open", dialogId, config };
+    const command: DialogCommand =
+      options?.surface !== undefined
+        ? { action: "open", dialogId, config, surface: options.surface }
+        : { action: "open", dialogId, config };
     this.sendToUI(ApiIpcChannels.DIALOG_COMMAND, command);
 
     return handle;
@@ -84,7 +99,9 @@ export class DialogManager {
         dialogId: event.dialogId,
         ...(event.kind === "change"
           ? { kind: "change", fieldId: event.fieldId }
-          : { kind: "action", actionId: event.actionId }),
+          : event.kind === "dismiss"
+            ? { kind: "dismiss" }
+            : { kind: "action", actionId: event.actionId }),
       });
     }
   }
@@ -101,6 +118,7 @@ class DialogHandleImpl implements DialogHandle {
   private readonly onRemove: () => void;
   private readonly actionListeners = new Set<(event: DialogActionEvent) => void>();
   private readonly changeListeners = new Set<(event: DialogFieldChangeEvent) => void>();
+  private readonly dismissListeners = new Set<(event: DialogDismissEvent) => void>();
   private resolveClosed!: () => void;
   private isClosed = false;
 
@@ -127,6 +145,7 @@ class DialogHandleImpl implements DialogHandle {
     this.resolveClosed();
     this.actionListeners.clear();
     this.changeListeners.clear();
+    this.dismissListeners.clear();
     this.onRemove();
   }
 
@@ -141,6 +160,13 @@ class DialogHandleImpl implements DialogHandle {
     this.changeListeners.add(handler);
     return () => {
       this.changeListeners.delete(handler);
+    };
+  }
+
+  onDismiss(handler: (event: DialogDismissEvent) => void): () => void {
+    this.dismissListeners.add(handler);
+    return () => {
+      this.dismissListeners.delete(handler);
     };
   }
 
@@ -165,13 +191,18 @@ class DialogHandleImpl implements DialogHandle {
 
   /**
    * Called by DialogManager when a user event arrives for this dialog. Routed by
-   * `kind` with specific positive checks: a "change" goes to change listeners, an
-   * "action" (or absent kind, for backward compatibility) goes to action
-   * listeners. Any future kind is ignored rather than leaking into either path.
+   * `kind` with specific positive checks: a "change" goes to change listeners, a
+   * "dismiss" to dismiss listeners, an "action" (or absent kind, for backward
+   * compatibility) goes to action listeners. Any future kind is ignored rather
+   * than leaking into either path.
    */
   emit(event: DialogUserEvent): void {
     if (event.kind === "change") {
       for (const listener of this.changeListeners) {
+        listener(event);
+      }
+    } else if (event.kind === "dismiss") {
+      for (const listener of this.dismissListeners) {
         listener(event);
       }
     } else if (event.kind === "action" || event.kind === undefined) {

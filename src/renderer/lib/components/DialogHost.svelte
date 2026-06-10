@@ -4,7 +4,10 @@
   Thin wrapper that:
   - Subscribes to api:dialog:command IPC events
   - Calls processCommand() on the dialog-framework store
-  - Renders one DialogView per active dialog from the store
+  - Renders one DialogView per active MODAL dialog from the store
+
+  Panel-surface sessions are stored here too (single subscription point) but
+  rendered by MainView as a PanelView in the content area.
 -->
 <script lang="ts">
   import * as api from "$lib/api";
@@ -30,6 +33,6 @@
   });
 </script>
 
-{#each [...dialogs.value.values()] as entry (entry.dialogId)}
+{#each [...dialogs.value.values()].filter((e) => e.surface === "modal") as entry (entry.dialogId)}
   <DialogView dialogId={entry.dialogId} config={entry.config} {workspaceArea} />
 {/each}

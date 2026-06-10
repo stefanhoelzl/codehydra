@@ -354,6 +354,16 @@
     if (primaryButton) handleButton(primaryButton);
   }
 
+  /**
+   * Activate the form's primary button as if clicked. Exposed for hosting
+   * surfaces that bind keyboard submit shortcuts (e.g. the panel shell's
+   * Cmd/Ctrl+Enter); same selection rule as Enter on a radio card. No-op
+   * without an explicit primary button.
+   */
+  export function submitPrimary(): void {
+    triggerPrimaryAction();
+  }
+
   /** Handle a button click: emit an action event with the values snapshot. */
   function handleButton(button: DialogButton): void {
     if (button.disabled || button.busy) return;

@@ -89,6 +89,7 @@ function createMockDialogManager(): MockDialogManager {
           return () => listeners.delete(handler);
         }),
         onChange: vi.fn(() => () => {}),
+        onDismiss: vi.fn(() => () => {}),
         nextEvent: vi.fn(),
         closed: new Promise<void>(() => {}),
       } as DialogHandle;
