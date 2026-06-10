@@ -37,6 +37,13 @@ describe("ApiEvents Interface", () => {
       }) => {
         void event;
       },
+      "workspace:loading": (event: {
+        readonly workspaceName: string;
+        readonly projectPath: string;
+        readonly base?: string;
+      }) => {
+        void event;
+      },
       "workspace:create-failed": (event: {
         readonly workspaceName: string;
         readonly projectPath: string;
@@ -67,6 +74,6 @@ describe("ApiEvents Interface", () => {
     };
 
     expect(handlers).toBeDefined();
-    expect(Object.keys(handlers)).toHaveLength(10);
+    expect(Object.keys(handlers)).toHaveLength(11);
   });
 });

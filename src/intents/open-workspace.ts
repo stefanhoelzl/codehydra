@@ -43,7 +43,8 @@ export type WorkspaceOpenSource =
   | "mcp"
   | "plugin-server"
   | "auto-workspace"
-  | "open-project";
+  | "open-project"
+  | "creation";
 
 /** Data for activating an existing (discovered) workspace via workspace:open */
 export interface ExistingWorkspaceData {
@@ -113,9 +114,16 @@ export const EVENT_WORKSPACE_CREATED = "workspace:created" as const;
 
 // -- workspace:loading (emitted before slow work begins) --
 
+export interface WorkspaceLoadingPayload {
+  readonly workspaceName: string;
+  readonly projectPath: string;
+  /** The requested base branch (absent when auto-detected later). */
+  readonly base?: string;
+}
+
 export interface WorkspaceLoadingEvent extends DomainEvent {
   readonly type: "workspace:loading";
-  readonly payload: Record<string, never>;
+  readonly payload: WorkspaceLoadingPayload;
 }
 
 export const EVENT_WORKSPACE_LOADING = "workspace:loading" as const;
@@ -208,7 +216,14 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     const showLoading = ctx.intent.payload.stealFocus !== false;
 
     if (showLoading) {
-      ctx.emit({ type: EVENT_WORKSPACE_LOADING, payload: {} } as WorkspaceLoadingEvent);
+      ctx.emit({
+        type: EVENT_WORKSPACE_LOADING,
+        payload: {
+          workspaceName: ctx.intent.payload.workspaceName,
+          projectPath,
+          ...(ctx.intent.payload.base !== undefined && { base: ctx.intent.payload.base }),
+        },
+      } as WorkspaceLoadingEvent);
     }
 
     try {

@@ -21,6 +21,7 @@
   import type { DialogConfig, DialogUserEvent } from "@shared/dialog-types";
   import Form from "./Form.svelte";
   import { sendDialogEvent } from "$lib/api";
+  import { trapTabKey } from "$lib/utils/focus-trap";
 
   interface Props {
     dialogId: string;
@@ -38,9 +39,17 @@
     return headingSection?.type === "text" ? headingSection.content : "Panel";
   });
 
+  /**
+   * Activate the form's primary action. Exposed so hosting code can bind
+   * keyboard shortcuts (e.g. Alt+X+Enter) to the panel form's submit.
+   */
+  export function submitPrimary(): void {
+    formRef?.submitPrimary();
+  }
+
   // Escape -> dismiss intent to the backend; Cmd/Ctrl+Enter -> primary action;
-  // Tab/Shift+Tab trapped at the panel boundaries (same focusable enumeration
-  // as NewWorkspaceView, including vscode-elements).
+  // Tab/Shift+Tab trapped at the panel boundaries (shared focus-trap util,
+  // including vscode-elements).
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
@@ -54,40 +63,8 @@
       sendDialogEvent(dismiss);
       return;
     }
-    if (event.key === "Tab") {
-      const section = sectionRef;
-      if (!section) return;
-      const focusables = Array.from(
-        section.querySelectorAll<HTMLElement>(
-          [
-            "input:not([disabled])",
-            "textarea:not([disabled])",
-            "button:not([disabled])",
-            "select:not([disabled])",
-            "vscode-button:not([disabled])",
-            "vscode-textfield:not([disabled])",
-            "vscode-textarea:not([disabled])",
-            "vscode-single-select:not([disabled])",
-            '[tabindex]:not([tabindex="-1"])',
-          ].join(",")
-        )
-      );
-      if (focusables.length === 0) return;
-      const first = focusables[0]!;
-      const last = focusables[focusables.length - 1]!;
-      const active = document.activeElement;
-      const inSection = active instanceof Node && section.contains(active);
-      if (event.shiftKey) {
-        if (!inSection || active === first) {
-          event.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (!inSection || active === last) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
+    if (sectionRef) {
+      trapTabKey(event, sectionRef);
     }
   }
 </script>
@@ -124,7 +101,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    width: min(480px, 90%);
+    width: min(640px, 90%);
     padding: 24px;
     text-align: center;
     background: var(--ch-surface-1, var(--ch-background));

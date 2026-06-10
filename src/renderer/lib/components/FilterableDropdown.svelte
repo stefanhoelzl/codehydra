@@ -39,6 +39,12 @@
     invalid?: boolean;
     /** id of the element describing this input (e.g. a validation error) */
     describedBy?: string | undefined;
+    /**
+     * When false, the input is read-only and the control behaves like a
+     * classic select: focus/click opens the list, arrow keys + click pick,
+     * typing does nothing. Defaults to true (type-to-filter combobox).
+     */
+    searchable?: boolean;
   }
 
   let {
@@ -58,6 +64,7 @@
     autofocus = false,
     invalid = false,
     describedBy = undefined,
+    searchable = true,
   }: FilterableDropdownProps = $props();
 
   // Internal state
@@ -94,8 +101,14 @@
 
     // If value changed, reset local override so displayText uses the new prop value
     if (value !== previousValue) {
-      localFilterOverride = null;
       previousValue = value;
+      // Free-text parents echo the typed text back through `value` — that
+      // echo must not clear the active filter mid-typing. A pick (isTyping
+      // false) or a genuinely external value still resets.
+      const isTypingEcho = isTyping && value === localFilterOverride;
+      if (!isTypingEcho) {
+        localFilterOverride = null;
+      }
     }
   });
 
@@ -209,10 +222,25 @@
     }
   });
 
+  // The click that GIVES the input focus must not toggle the list shut again
+  // right after the focus handler opened it.
+  let focusJustReceived = false;
+
   function handleFocus(): void {
     if (!disabled && openOnFocus) {
       isOpen = true;
     }
+    focusJustReceived = true;
+    setTimeout(() => {
+      focusJustReceived = false;
+    }, 0);
+  }
+
+  /** A non-searchable (select-like) control toggles its list on click. */
+  function handleClick(): void {
+    if (disabled || searchable || focusJustReceived) return;
+    isOpen = !isOpen;
+    if (!isOpen) highlightedIndex = -1;
   }
 
   function handleBlur(event: FocusEvent): void {
@@ -398,10 +426,13 @@
     aria-invalid={invalid ? "true" : undefined}
     aria-describedby={describedBy}
     class:invalid
+    class:select-like={!searchable}
     value={displayText}
     {disabled}
+    readonly={!searchable || undefined}
     {placeholder}
     onfocus={handleFocus}
+    onclick={handleClick}
     onblur={handleBlur}
     oninput={handleInput}
     onkeydown={handleKeyDown}
@@ -475,6 +506,12 @@
   input:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Non-searchable (select-like) mode: read-only input acting as a button. */
+  input.select-like {
+    cursor: pointer;
+    caret-color: transparent;
   }
 
   input.invalid {

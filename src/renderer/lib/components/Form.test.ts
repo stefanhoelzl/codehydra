@@ -529,6 +529,19 @@ describe("Form component", () => {
         });
       });
 
+      it("typing filters the suggestion list (the value echo must not clear it)", async () => {
+        renderForm(freeTextConfig, { dialogId: "ft" });
+
+        const input = screen.getByRole("combobox") as HTMLInputElement;
+        await fireEvent.focus(input);
+        await fireEvent.input(input, { target: { value: "feature-x" } });
+
+        await waitFor(() => {
+          expect(screen.getByText("feature-x")).toBeInTheDocument();
+          expect(screen.queryByText("feature-y")).not.toBeInTheDocument();
+        });
+      });
+
       it("seeds from initialValue", () => {
         renderForm({
           sections: [
@@ -674,6 +687,195 @@ describe("Form component", () => {
         });
 
         expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      });
+    });
+
+    describe("controlled value push", () => {
+      const suggestions = [
+        {
+          items: [
+            { value: "main", label: "main" },
+            { value: "develop", label: "develop" },
+          ],
+        },
+      ];
+
+      function valueConfig(value: string, extra?: { error?: string }): DialogConfig {
+        return {
+          sections: [
+            { type: "dropdown", id: "base", suggestions, value, ...extra },
+            {
+              type: "group",
+              items: [{ type: "button", id: "confirm", label: "Confirm", variant: "primary" }],
+            },
+          ],
+        };
+      }
+
+      it("adopts the pushed value (display follows the suggestion label)", async () => {
+        renderForm(valueConfig("develop"), { dialogId: "dd" });
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("develop");
+
+        await fireEvent.click(screen.getByText("Confirm"));
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { base: "develop" },
+        });
+      });
+
+      it("re-sending the same value preserves a user pick made in between", async () => {
+        const { rerender } = renderForm(valueConfig("main"), { dialogId: "dd" });
+
+        const input = screen.getByRole("combobox") as HTMLInputElement;
+        await fireEvent.focus(input);
+        await fireEvent.mouseDown(screen.getByText("develop"));
+        expect(input.value).toBe("develop");
+
+        // Backend re-sends the same value (e.g. alongside an error update).
+        await rerender({ dialogId: "dd", config: valueConfig("main", { error: "nope" }) });
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("develop");
+      });
+
+      it("pushing a DIFFERENT value adopts it over the user's choice", async () => {
+        const { rerender } = renderForm(valueConfig("main"), { dialogId: "dd" });
+
+        const input = screen.getByRole("combobox") as HTMLInputElement;
+        await fireEvent.focus(input);
+        await fireEvent.mouseDown(screen.getByText("develop"));
+
+        await rerender({ dialogId: "dd", config: valueConfig("main") });
+        // still develop (same value re-sent)
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("develop");
+
+        await rerender({ dialogId: "dd", config: valueConfig("develop") });
+        // a new pushed value is adopted... it matches the current choice
+        await rerender({ dialogId: "dd", config: valueConfig("main") });
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("main");
+      });
+
+      it("an invalid pushed value falls back to the first suggestion", async () => {
+        renderForm(valueConfig("gone"), { dialogId: "dd" });
+
+        await fireEvent.click(screen.getByText("Confirm"));
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { base: "main" },
+        });
+      });
+
+      it("adopts a pushed value on a freeText dropdown as the field text", async () => {
+        renderForm(
+          {
+            sections: [
+              { type: "dropdown", id: "name", freeText: true, suggestions: [], value: "seeded" },
+              {
+                type: "group",
+                items: [{ type: "button", id: "confirm", label: "Confirm", variant: "primary" }],
+              },
+            ],
+          },
+          { dialogId: "dd" }
+        );
+
+        expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe("seeded");
+
+        await fireEvent.click(screen.getByText("Confirm"));
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { name: "seeded" },
+        });
+      });
+    });
+
+    describe("searchable: false (select-like)", () => {
+      it("renders a read-only input that still reports the picked value", async () => {
+        renderForm(
+          {
+            sections: [
+              {
+                type: "dropdown",
+                id: "mode",
+                searchable: false,
+                suggestions: [
+                  {
+                    items: [
+                      { value: "", label: "Full permissions" },
+                      { value: "plan", label: "Plan mode" },
+                    ],
+                  },
+                ],
+              },
+              {
+                type: "group",
+                items: [{ type: "button", id: "confirm", label: "Confirm", variant: "primary" }],
+              },
+            ],
+          },
+          { dialogId: "dd" }
+        );
+
+        const input = screen.getByRole("combobox") as HTMLInputElement;
+        expect(input).toHaveAttribute("readonly");
+        expect(input.value).toBe("Full permissions");
+
+        await fireEvent.focus(input);
+        await fireEvent.mouseDown(screen.getByText("Plan mode"));
+
+        await fireEvent.click(screen.getByText("Confirm"));
+        expect(mockSendDialogEvent).toHaveBeenCalledWith({
+          dialogId: "dd",
+          actionId: "confirm",
+          data: { mode: "plan" },
+        });
+      });
+    });
+
+    describe("disabled fields", () => {
+      it("disables the dropdown control", () => {
+        renderForm({
+          sections: [{ type: "dropdown", id: "base", suggestions: [], disabled: true }],
+        });
+        expect(screen.getByRole("combobox")).toBeDisabled();
+      });
+
+      it("disables a single-line input", () => {
+        renderForm({
+          sections: [{ type: "input", id: "field", disabled: true }],
+        });
+        // vscode-textfield receives `disabled` as a property (custom element).
+        const field = document.getElementById("field") as unknown as { disabled?: boolean };
+        expect(field.disabled).toBe(true);
+      });
+
+      it("disables a multiline input", () => {
+        renderForm({
+          sections: [{ type: "input", id: "field", multiline: true, disabled: true }],
+        });
+        expect(document.getElementById("field")).toBeDisabled();
+      });
+
+      it("disables radio cards", () => {
+        renderForm({
+          sections: [
+            {
+              type: "radio",
+              id: "choice",
+              disabled: true,
+              options: [
+                { id: "a", label: "A" },
+                { id: "b", label: "B" },
+              ],
+            },
+          ],
+        });
+        for (const radio of screen.getAllByRole("radio")) {
+          expect(radio).toBeDisabled();
+        }
       });
     });
 
@@ -1303,9 +1505,104 @@ describe("Form component", () => {
     });
   });
 
+  // ---- Autofocus ----
+
+  describe("autofocus", () => {
+    const twoDropdowns = (target: "a" | "b"): DialogConfig => ({
+      sections: [
+        {
+          type: "dropdown",
+          id: "a",
+          suggestions: [{ items: [{ value: "x", label: "x" }] }],
+          ...(target === "a" && { autofocus: true }),
+        },
+        {
+          type: "dropdown",
+          id: "b",
+          suggestions: [{ items: [{ value: "y", label: "y" }] }],
+          ...(target === "b" && { autofocus: true }),
+        },
+      ],
+    });
+
+    it("focuses the autofocus control on mount", async () => {
+      renderForm(twoDropdowns("b"));
+
+      await waitFor(() => {
+        expect(document.activeElement?.id).toBe("b-input");
+      });
+    });
+
+    it("moves focus when an update moves the autofocus target", async () => {
+      const { rerender } = renderForm(twoDropdowns("a"));
+
+      await waitFor(() => {
+        expect(document.activeElement?.id).toBe("a-input");
+      });
+
+      await rerender({ dialogId: "test-dialog", config: twoDropdowns("b") });
+
+      await waitFor(() => {
+        expect(document.activeElement?.id).toBe("b-input");
+      });
+    });
+
+    it("does not steal focus when an update re-sends the same target", async () => {
+      const { rerender } = renderForm(twoDropdowns("a"));
+
+      await waitFor(() => {
+        expect(document.activeElement?.id).toBe("a-input");
+      });
+
+      // User moves focus manually...
+      (document.getElementById("b-input") as HTMLInputElement).focus();
+      // ...then the backend re-sends a config with the unchanged target.
+      await rerender({ dialogId: "test-dialog", config: twoDropdowns("a") });
+      // Give the (absent) focus timeout a tick.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(document.activeElement?.id).toBe("b-input");
+    });
+  });
+
   // ---- Input sections ----
 
   describe("input sections", () => {
+    it("Enter in a single-line input activates the primary action", async () => {
+      renderForm(
+        {
+          sections: [
+            { type: "input", id: "url" },
+            {
+              type: "group",
+              items: [{ type: "button", id: "go", label: "Go", variant: "primary" }],
+            },
+          ],
+        },
+        { dialogId: "dd" }
+      );
+
+      const field = document.getElementById("url")!;
+      await fireEvent.input(field, { target: { value: "org/repo" } });
+      await fireEvent.keyDown(field, { key: "Enter" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dd",
+        actionId: "go",
+        data: { url: "org/repo" },
+      });
+    });
+
+    it("applies `rows` to a multiline textarea and drops the viewport min-height", () => {
+      renderForm({
+        sections: [{ type: "input", id: "prompt", multiline: true, rows: 3 }],
+      });
+
+      const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
+      expect(textarea).toHaveAttribute("rows", "3");
+      expect(textarea.classList.contains("fixed-rows")).toBe(true);
+    });
+
     it("selects the seeded text when selectInitialValue is true", async () => {
       const config: DialogConfig = {
         sections: [

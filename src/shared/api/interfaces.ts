@@ -47,6 +47,12 @@ export interface ApiEvents {
     /** If false, workspace should not steal focus (but still switches when nothing is active) */
     readonly stealFocus?: boolean;
   }) => void;
+  "workspace:loading": (event: {
+    readonly workspaceName: string;
+    readonly projectPath: string;
+    /** The requested base branch (absent when auto-detected later). */
+    readonly base?: string;
+  }) => void;
   "workspace:create-failed": (event: {
     readonly workspaceName: string;
     readonly projectPath: string;

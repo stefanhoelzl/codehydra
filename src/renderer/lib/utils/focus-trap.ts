@@ -4,24 +4,51 @@
  */
 
 /**
- * Selector for focusable elements.
+ * Selector for focusable elements (disabled controls excluded).
  * Includes standard HTML focusable elements and vscode-elements web components.
  */
 const FOCUSABLE_SELECTOR = [
   // Standard focusable elements
-  "button",
+  "button:not([disabled])",
   "[href]",
-  "input",
-  "select",
-  "textarea",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
   '[tabindex]:not([tabindex="-1"])',
   // vscode-elements web components (they handle focus internally)
-  "vscode-button",
-  "vscode-checkbox",
-  "vscode-textfield",
-  "vscode-textarea",
-  "vscode-single-select",
+  "vscode-button:not([disabled])",
+  "vscode-checkbox:not([disabled])",
+  "vscode-textfield:not([disabled])",
+  "vscode-textarea:not([disabled])",
+  "vscode-single-select:not([disabled])",
 ].join(", ");
+
+/**
+ * Keep Tab/Shift+Tab cycling inside a container: wraps at the boundaries and
+ * pulls focus back in when it sits outside the container (so tabbing can
+ * never leave the form). Call from a keydown handler; non-Tab keys are
+ * ignored.
+ */
+export function trapTabKey(event: KeyboardEvent, container: HTMLElement): void {
+  if (event.key !== "Tab") return;
+  const focusables = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+  if (focusables.length === 0) return;
+  const first = focusables[0]!;
+  const last = focusables[focusables.length - 1]!;
+  const active = document.activeElement;
+  const inContainer = active instanceof Node && container.contains(active);
+  if (event.shiftKey) {
+    if (!inContainer || active === first) {
+      event.preventDefault();
+      last.focus();
+    }
+  } else {
+    if (!inContainer || active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+}
 
 export interface FocusTrap {
   /** Start trapping focus within the container */
@@ -45,21 +72,7 @@ export function createFocusTrap(container: HTMLElement): FocusTrap {
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
-    if (event.key !== "Tab") return;
-
-    const focusables = getFocusables();
-    if (focusables.length === 0) return;
-
-    const first = focusables[0]!;
-    const last = focusables[focusables.length - 1]!;
-
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
+    trapTabKey(event, container);
   }
 
   return {

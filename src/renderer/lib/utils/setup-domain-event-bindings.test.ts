@@ -25,6 +25,7 @@ import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
+import * as lifecycleStore from "$lib/stores/workspace-lifecycle.svelte.js";
 import { AgentNotificationService } from "$lib/services/agent-notifications";
 
 // =============================================================================
@@ -138,7 +139,7 @@ describe("setupDomainEventBindings", () => {
       expect(projectsStore.projects.value).not.toContainEqual(TEST_PROJECT);
     });
 
-    it("auto-opens the New workspace view when project with no workspaces is opened after loading", () => {
+    it("never auto-opens the New workspace view on project:opened (background clones land silently)", () => {
       // Simulate post-startup state (loading complete)
       bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
 
@@ -146,46 +147,7 @@ describe("setupDomainEventBindings", () => {
 
       mockApi.emit("project:opened", { project: TEST_PROJECT });
 
-      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
-      // The freshly opened project is selected in the view.
-      expect(newWorkspaceViewStore.newWorkspaceView.selectedProjectId).toBe(TEST_PROJECT_ID);
-    });
-
-    it("does not auto-open the New workspace view during initial loading", () => {
-      // bootstrap.initialized is false by default after reset
-      expect(bootstrapStore.bootstrap.initialized).toBe(false);
-
-      setupDomainEventBindings(notificationService, mockApi.api);
-
-      mockApi.emit("project:opened", { project: TEST_PROJECT });
-
-      // View should NOT open during initial loading
-      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
-    });
-
-    it("does not open the New workspace view when project has workspaces", () => {
-      bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
-      setupDomainEventBindings(notificationService, mockApi.api);
-
-      const projectWithWorkspaces: Project = {
-        ...TEST_PROJECT,
-        workspaces: [TEST_WORKSPACE],
-      };
-      mockApi.emit("project:opened", { project: projectWithWorkspaces });
-
-      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
-    });
-
-    it("does not open the New workspace view when another dialog is already open", () => {
-      bootstrapStore.setBootstrap({ defaultAgent: null, availableAgents: [] });
-      dialogsStore.openCloseProjectDialog(TEST_PROJECT_ID);
-
-      setupDomainEventBindings(notificationService, mockApi.api);
-
-      mockApi.emit("project:opened", { project: TEST_PROJECT });
-
-      // Should still show close-project dialog; the New workspace view stays closed.
-      expect(dialogsStore.dialogState.value.type).toBe("close-project");
+      expect(projectsStore.projects.value).toContainEqual(TEST_PROJECT);
       expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
     });
   });
@@ -337,6 +299,96 @@ describe("setupDomainEventBindings", () => {
       mockApi.emit("project:opened", { project: TEST_PROJECT });
 
       expect(projectsStore.projects.value).not.toContainEqual(TEST_PROJECT);
+    });
+  });
+
+  describe("workspace:loading optimistic placeholder", () => {
+    const pendingPath = lifecycleStore.createPendingPath(TEST_PROJECT_PATH, "new-feature");
+
+    beforeEach(() => {
+      lifecycleStore.reset();
+      projectsStore.addProject(TEST_PROJECT);
+    });
+
+    it("creates the placeholder, marks it creating, switches to it, and closes the view", () => {
+      newWorkspaceViewStore.openNewWorkspaceView();
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("workspace:loading", {
+        workspaceName: "new-feature",
+        projectPath: TEST_PROJECT_PATH,
+        base: "main",
+      });
+
+      const project = projectsStore.projects.value.find((p) => p.path === TEST_PROJECT_PATH)!;
+      const placeholder = project.workspaces.find((w) => w.path === pendingPath);
+      expect(placeholder).toMatchObject({ name: "new-feature", branch: "main" });
+      expect(lifecycleStore.getLifecycle(pendingPath)).toBe("creating");
+      expect(projectsStore.activeWorkspacePath.value).toBe(pendingPath);
+      expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(false);
+    });
+
+    it("skips wakes/reopens: a workspace with that name already exists", () => {
+      projectsStore.addWorkspace(TEST_PROJECT_PATH, {
+        ...TEST_WORKSPACE,
+        name: "new-feature" as WorkspaceName,
+        path: "/test/project/.worktrees/new-feature",
+      });
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("workspace:loading", {
+        workspaceName: "new-feature",
+        projectPath: TEST_PROJECT_PATH,
+      });
+
+      const project = projectsStore.projects.value.find((p) => p.path === TEST_PROJECT_PATH)!;
+      expect(project.workspaces.some((w) => w.path === pendingPath)).toBe(false);
+      expect(lifecycleStore.getLifecycle(pendingPath)).toBe("none");
+    });
+
+    it("ignores events for unknown projects", () => {
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("workspace:loading", {
+        workspaceName: "new-feature",
+        projectPath: "/unknown/project",
+      });
+
+      expect(lifecycleStore.lifecycleEntries.value.size).toBe(0);
+    });
+
+    it("workspace:create-failed rolls back the placeholder", () => {
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("workspace:loading", {
+        workspaceName: "new-feature",
+        projectPath: TEST_PROJECT_PATH,
+        base: "main",
+      });
+      expect(projectsStore.activeWorkspacePath.value).toBe(pendingPath);
+
+      mockApi.emit("workspace:create-failed", {
+        workspaceName: "new-feature",
+        projectPath: TEST_PROJECT_PATH,
+        error: "boom",
+      });
+
+      const project = projectsStore.projects.value.find((p) => p.path === TEST_PROJECT_PATH)!;
+      expect(project.workspaces.some((w) => w.path === pendingPath)).toBe(false);
+      expect(lifecycleStore.getLifecycle(pendingPath)).toBe("none");
+      expect(projectsStore.activeWorkspacePath.value).toBeNull();
+    });
+
+    it("workspace:create-failed without a placeholder is a no-op", () => {
+      setupDomainEventBindings(notificationService, mockApi.api);
+
+      mockApi.emit("workspace:create-failed", {
+        workspaceName: "never-started",
+        projectPath: TEST_PROJECT_PATH,
+        error: "boom",
+      });
+
+      expect(lifecycleStore.lifecycleEntries.value.size).toBe(0);
     });
   });
 });
