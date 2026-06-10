@@ -28,7 +28,6 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
         open: vi.fn().mockResolvedValue(undefined),
         close: vi.fn().mockResolvedValue(undefined),
         get: vi.fn().mockResolvedValue(undefined),
-        fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
       },
       ui: {
         getActiveWorkspace: vi.fn().mockResolvedValue(null),
@@ -175,7 +174,7 @@ describe("App component", () => {
       expect(nav).toBeInTheDocument();
     });
 
-    it("renders NewWorkspaceView when the New workspace view opens", async () => {
+    it("renders the creation panel (PanelView) when the New workspace view opens", async () => {
       openCreationPanelSession();
       render(App);
       showMainView();

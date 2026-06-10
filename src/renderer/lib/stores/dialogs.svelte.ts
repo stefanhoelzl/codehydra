@@ -1,6 +1,6 @@
 /**
  * Dialog state store using Svelte 5 runes.
- * Manages the state of dialogs (create workspace, remove workspace).
+ * Manages the state of renderer-side dialogs (remove workspace, close project).
  */
 
 import type { ProjectId, WorkspaceRef } from "@shared/api/types";
@@ -10,8 +10,7 @@ import type { ProjectId, WorkspaceRef } from "@shared/api/types";
 export type DialogState =
   | { type: "closed" }
   | { type: "remove"; workspaceRef: WorkspaceRef }
-  | { type: "close-project"; projectId: ProjectId }
-  | { type: "git-clone" };
+  | { type: "close-project"; projectId: ProjectId };
 
 // ============ State ============
 
@@ -41,13 +40,6 @@ export function openRemoveDialog(workspaceRef: WorkspaceRef): void {
  */
 export function openCloseProjectDialog(projectId: ProjectId): void {
   _dialogState = { type: "close-project", projectId };
-}
-
-/**
- * Open the git clone dialog.
- */
-export function openGitCloneDialog(): void {
-  _dialogState = { type: "git-clone" };
 }
 
 /**

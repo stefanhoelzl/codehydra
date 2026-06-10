@@ -23,7 +23,6 @@ const mockApi = vi.hoisted(() => ({
     open: vi.fn().mockResolvedValue({}),
     close: vi.fn().mockResolvedValue(undefined),
     get: vi.fn().mockResolvedValue(undefined),
-    fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
   },
   // Flat API structure - workspaces namespace
   workspaces: {
