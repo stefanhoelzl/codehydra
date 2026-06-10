@@ -28,14 +28,6 @@ export function createMockApi(): Api {
         workspaces: [],
       }),
       close: vi.fn().mockResolvedValue(undefined),
-      clone: vi.fn().mockResolvedValue({
-        id: "cloned-12345678",
-        name: "cloned",
-        path: "/cloned",
-        workspaces: [],
-        remoteUrl: "https://github.com/org/repo.git",
-      }),
-      fetchBases: vi.fn().mockResolvedValue({ bases: [] }),
     },
     workspaces: {
       create: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),

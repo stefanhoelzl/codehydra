@@ -9,13 +9,7 @@ import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
 import type { NotificationUserEvent } from "./notification-types";
 
-import type {
-  Project,
-  Workspace,
-  WorkspaceStatus,
-  BaseInfo as ApiBaseInfo,
-  InitialPrompt,
-} from "./api/types";
+import type { Project, Workspace, WorkspaceStatus, InitialPrompt } from "./api/types";
 
 /**
  * Function to unsubscribe from an event.
@@ -36,8 +30,6 @@ export interface Api {
   projects: {
     open(path?: string): Promise<Project | null>;
     close(projectPath: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
-    clone(url: string): Promise<Project>;
-    fetchBases(projectPath: string): Promise<{ readonly bases: readonly ApiBaseInfo[] }>;
   };
   workspaces: {
     create(

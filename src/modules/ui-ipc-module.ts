@@ -13,8 +13,6 @@ import type { DomainEvent } from "../intents/lib/types";
 import type {
   ProjectOpenPayload,
   ProjectClosePayload,
-  ProjectClonePayload,
-  ProjectPathPayload,
   WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceGetStatusPayload,
@@ -70,11 +68,10 @@ import type { SwitchWorkspaceIntent } from "../intents/switch-workspace";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { BasesUpdatedEvent } from "../intents/get-project-bases";
-import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../intents/get-project-bases";
+import { EVENT_BASES_UPDATED } from "../intents/get-project-bases";
 import type { ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { isShortcutKey } from "../shared/shortcuts";
-import type { GetProjectBasesIntent } from "../intents/get-project-bases";
 import type { WorkspaceStatus, Workspace } from "../shared/api/types";
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
@@ -508,23 +505,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     return await handle;
   });
 
-  registerIpc(ApiIpcChannels.PROJECT_CLONE, async (payload) => {
-    const p = payload as ProjectClonePayload;
-    const intent: OpenProjectIntent = {
-      type: INTENT_OPEN_PROJECT,
-      payload: { git: p.url },
-    };
-    const handle = dispatcher.dispatch(intent);
-    if (!(await handle.accepted)) {
-      throw new Error("Clone already in progress");
-    }
-    const result = await handle;
-    if (!result) {
-      throw new Error("Clone project dispatch returned no result");
-    }
-    return result;
-  });
-
   registerIpc(ApiIpcChannels.PROJECT_CLOSE, async (payload) => {
     const p = payload as ProjectClosePayload;
     const intent: CloseProjectIntent = {
@@ -535,19 +515,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
       },
     };
     await dispatcher.dispatch(intent);
-  });
-
-  registerIpc(ApiIpcChannels.PROJECT_FETCH_BASES, async (payload) => {
-    const p = payload as ProjectPathPayload;
-    const intent: GetProjectBasesIntent = {
-      type: INTENT_GET_PROJECT_BASES,
-      payload: { projectPath: p.projectPath, refresh: true },
-    };
-    const result = await dispatcher.dispatch(intent);
-    if (!result) {
-      throw new Error("Fetch bases dispatch returned no result");
-    }
-    return { bases: result.bases };
   });
 
   // ---------------------------------------------------------------------------

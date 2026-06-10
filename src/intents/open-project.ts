@@ -36,7 +36,7 @@ import { Path } from "../utils/path/path";
 export interface OpenProjectPayload {
   /** Absolute local filesystem path. Set by projects.open. */
   readonly path?: Path;
-  /** Git URL or shorthand (e.g. "org/repo"). Set by projects.clone. */
+  /** Git URL or shorthand (e.g. "org/repo"). Set by the creation module's clone sub-dialog. */
   readonly git?: string;
 }
 

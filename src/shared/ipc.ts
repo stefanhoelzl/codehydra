@@ -87,16 +87,6 @@ export interface ProjectClosePayload {
   readonly removeLocalRepo?: boolean;
 }
 
-/** projects.clone */
-export interface ProjectClonePayload {
-  readonly url: string;
-}
-
-/** projects.fetchBases */
-export interface ProjectPathPayload {
-  readonly projectPath: string;
-}
-
 /** workspaces.create */
 export interface WorkspaceCreatePayload {
   readonly projectPath: string;
@@ -156,8 +146,6 @@ export const ApiIpcChannels = {
   // Project commands
   PROJECT_OPEN: "api:project:open",
   PROJECT_CLOSE: "api:project:close",
-  PROJECT_CLONE: "api:project:clone",
-  PROJECT_FETCH_BASES: "api:project:fetch-bases",
   // Workspace commands
   WORKSPACE_CREATE: "api:workspace:create",
   WORKSPACE_REMOVE: "api:workspace:remove",

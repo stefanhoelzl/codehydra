@@ -42,10 +42,6 @@ describe("ApiIpcChannels (v2 API)", () => {
     it("has PROJECT_OPEN channel", () => {
       expect(ApiIpcChannels.PROJECT_OPEN).toBe("api:project:open");
     });
-
-    it("has PROJECT_FETCH_BASES channel", () => {
-      expect(ApiIpcChannels.PROJECT_FETCH_BASES).toBe("api:project:fetch-bases");
-    });
   });
 
   describe("Workspace commands", () => {
