@@ -777,7 +777,9 @@ export class DefaultViewBoundary implements ViewBoundary {
         (f) => f.processId === frameProcessId && f.routingId === frameRoutingId
       );
       if (!frame) return;
-      void frame.executeJavaScript(script);
+      frame.executeJavaScript(script).catch(() => {
+        // Frame may be gone before the script runs ("Script not run")
+      });
     });
   }
 
