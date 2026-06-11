@@ -207,6 +207,10 @@ describe("OpenCode module provider", () => {
       expect(provider.serverName).toBe("OpenCode");
     });
 
+    it("offers no launch options (no permission-mode axis)", () => {
+      expect(provider.getLaunchOptions).toBeUndefined();
+    });
+
     it("has correct scripts", () => {
       expect(provider.scripts).toEqual(["ch-opencode", "ch-opencode.cjs", "ch-opencode.cmd"]);
     });
@@ -519,7 +523,7 @@ describe("OpenCode module provider", () => {
     it("passes initialPrompt to startServer options", async () => {
       provider.initialize(null);
 
-      const initialPrompt = { prompt: "build feature X", agent: "coder" };
+      const initialPrompt = { prompt: "build feature X", agentName: "coder" };
       // startServer will trigger the callback
       vi.mocked(serverManager.startServer).mockImplementation(async () => {
         serverManager._triggerStarted(WS_PATH, 8080, undefined);

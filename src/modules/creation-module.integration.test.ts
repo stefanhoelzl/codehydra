@@ -34,6 +34,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
 import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
+import { INTENT_GET_LAUNCH_OPTIONS } from "../intents/agent-launch-options";
 
 // =============================================================================
 // Fixtures
@@ -170,6 +171,13 @@ function setup(options?: {
     if (projectId === null || projectId === undefined) return null;
     return { projectId, workspaceName: "existing", path: "/projects/a/.worktrees/existing" };
   });
+  dispatcher.results.set(INTENT_GET_LAUNCH_OPTIONS, (payload) => {
+    // Mirror real backends: Claude reports permission modes, OpenCode none.
+    const backend = (payload as { backend: string }).backend;
+    return {
+      permissionModes: backend === "claude" ? ["plan", "acceptEdits", "bypassPermissions"] : [],
+    };
+  });
 
   const deps: CreationModuleDeps = {
     dialogManager: dialogs.manager,
@@ -276,6 +284,18 @@ describe("CreationModule", () => {
       expect(fresh.id).not.toBe(panel.id);
     });
 
+    it("re-queries launch options on every form open (no stale cache)", async () => {
+      const s = setup();
+      await s.start();
+      await flush();
+      expect(s.dispatcher.byType(INTENT_GET_LAUNCH_OPTIONS)).toHaveLength(1);
+
+      currentPanel(s).emitDismiss();
+      await flush();
+
+      expect(s.dispatcher.byType(INTENT_GET_LAUNCH_OPTIONS)).toHaveLength(2);
+    });
+
     it("shows the agent dropdown only when more than one agent is available", async () => {
       const single = setup({ agents: [CLAUDE_AGENT] });
       const panelSingle = await single.start();
@@ -285,7 +305,35 @@ describe("CreationModule", () => {
       const panelDual = await dual.start();
       const agent = field(panelDual.config, "agent");
       expect(suggestionValues(agent)).toEqual(["claude", "opencode"]);
-      expect(agent["initialValue"]).toBe("claude");
+      expect(agent["value"]).toBe("claude");
+      expect(agent["changeEvent"]).toBe(true);
+    });
+
+    it("shows the permission-mode dropdown for Claude, populated from launch options", async () => {
+      const s = setup({ agents: [CLAUDE_AGENT, OPENCODE_AGENT], defaultAgent: "claude" });
+      await s.start();
+      await flush();
+
+      // Always-present free-text agent name field.
+      expect(field(currentPanel(s).config, "agent-name")["type"]).toBe("input");
+
+      // Permission mode is Claude-only: default entry plus detected modes.
+      const perm = field(currentPanel(s).config, "permission-mode");
+      expect(suggestionValues(perm)).toEqual(["", "plan", "acceptEdits", "bypassPermissions"]);
+    });
+
+    it("hides the permission-mode dropdown when switching to OpenCode", async () => {
+      const s = setup({ agents: [CLAUDE_AGENT, OPENCODE_AGENT], defaultAgent: "claude" });
+      const panel = await s.start();
+      await flush();
+      expect(sectionById(currentPanel(s).config, "permission-mode")).toBeDefined();
+
+      panel.emitChange("agent", { agent: "opencode" });
+      await flush();
+
+      expect(sectionById(currentPanel(s).config, "permission-mode")).toBeUndefined();
+      // The agent name field stays for both backends.
+      expect(sectionById(currentPanel(s).config, "agent-name")).toBeDefined();
     });
   });
 
@@ -445,7 +493,6 @@ describe("CreationModule", () => {
         name: "new-feature",
         base: "main",
         prompt: "",
-        "agent-mode": "",
         agent: "claude",
       });
       await flush();
@@ -473,7 +520,6 @@ describe("CreationModule", () => {
         name: "origin/feature-x",
         base: "origin/feature-x",
         prompt: "",
-        "agent-mode": "",
         agent: "claude",
       });
       await flush();
@@ -485,7 +531,7 @@ describe("CreationModule", () => {
       });
     });
 
-    it("builds the InitialPrompt: plain prompt, plan mode, and agent only when != default", async () => {
+    it("builds the InitialPrompt with permissionMode + agentName and the agent override when != default", async () => {
       const s = setup({
         defaultBaseBranch: "main",
         agents: [CLAUDE_AGENT, OPENCODE_AGENT],
@@ -498,19 +544,20 @@ describe("CreationModule", () => {
         name: "with-prompt",
         base: "main",
         prompt: "  do things  ",
-        "agent-mode": "plan",
+        "permission-mode": "plan",
+        "agent-name": "reviewer",
         agent: "opencode",
       });
       await flush();
 
       const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
       expect(opens[0]!.payload).toMatchObject({
-        initialPrompt: { prompt: "do things", agent: "plan" },
+        initialPrompt: { prompt: "do things", permissionMode: "plan", agentName: "reviewer" },
         agent: "opencode",
       });
     });
 
-    it("omits initialPrompt and agent when prompt empty, mode full, agent = default", async () => {
+    it("omits initialPrompt and agent when prompt empty, mode default, agent = default", async () => {
       const s = setup({ defaultBaseBranch: "main", defaultAgent: "claude" });
       const panel = await readyPanel(s);
 
@@ -519,7 +566,8 @@ describe("CreationModule", () => {
         name: "plain",
         base: "main",
         prompt: "   ",
-        "agent-mode": "",
+        "permission-mode": "",
+        "agent-name": "",
         agent: "claude",
       });
       await flush();
@@ -541,7 +589,6 @@ describe("CreationModule", () => {
         name: "existing",
         base: "main",
         prompt: "",
-        "agent-mode": "",
         agent: "claude",
       });
       await flush();

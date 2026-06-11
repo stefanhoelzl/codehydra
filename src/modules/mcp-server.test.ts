@@ -391,7 +391,8 @@ describe("SERVER_INSTRUCTIONS", () => {
     expect(SERVER_INSTRUCTIONS).toContain("workspace_create");
     expect(SERVER_INSTRUCTIONS).toContain('"plan"');
     expect(SERVER_INSTRUCTIONS).toContain("read-only");
-    expect(SERVER_INSTRUCTIONS).toContain("full permissions");
+    expect(SERVER_INSTRUCTIONS).toContain("default mode");
+    expect(SERVER_INSTRUCTIONS).toContain("agentName");
   });
 });
 
@@ -418,14 +419,25 @@ describe("initialPromptSchema validation", () => {
     expect(result.success).toBe(true);
   });
 
-  it("accepts object with prompt and agent", () => {
+  it("accepts object with prompt and agentName", () => {
     const result = initialPromptSchema.safeParse({
       prompt: "Implement the feature",
-      agent: "build",
+      agentName: "build",
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data).toEqual({ prompt: "Implement the feature", agent: "build" });
+      expect(result.data).toEqual({ prompt: "Implement the feature", agentName: "build" });
+    }
+  });
+
+  it("accepts object with prompt and permissionMode", () => {
+    const result = initialPromptSchema.safeParse({
+      prompt: "Investigate the bug",
+      permissionMode: "plan",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ prompt: "Investigate the bug", permissionMode: "plan" });
     }
   });
 });

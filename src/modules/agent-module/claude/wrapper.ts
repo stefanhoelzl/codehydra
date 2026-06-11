@@ -30,7 +30,10 @@ import { dirname } from "node:path";
 export interface InitialPromptConfig {
   readonly prompt: string;
   readonly model?: string;
-  readonly agent?: string;
+  /** Claude permission mode (e.g. "plan"). Omitted = let Claude decide. */
+  readonly permissionMode?: string;
+  /** Named agent/persona passed to --agent. */
+  readonly agentName?: string;
 }
 
 /**
@@ -97,18 +100,23 @@ function getInitialPromptConfig(): InitialPromptConfig | undefined {
 }
 
 /**
- * Build permission flags based on agent type.
- * - "plan" agent: read-only mode with --permissions-mode plan
- * - All others (including "implement" and no agent): full permissions
+ * Build permission flags from the selected permission mode.
  *
- * @param agent - The agent name from initial prompt config
+ * Always passes --allow-dangerously-skip-permissions so bypass stays reachable
+ * via Shift+Tab without forcing it. The starting mode is set with
+ * --permission-mode when a mode is chosen; omitting it lets Claude use its
+ * default (normal prompting). On resume (no initial-prompt config) the mode is
+ * not re-applied — Claude does not restore --permission-mode across --continue.
+ *
+ * @param permissionMode - The permission mode from initial prompt config
  * @returns Array of CLI permission flags
  */
-function buildPermissionArgs(agent?: string): string[] {
-  if (agent === "plan") {
-    return ["--allow-dangerously-skip-permissions", "--permission-mode", "plan"];
+function buildPermissionArgs(permissionMode?: string): string[] {
+  const args = ["--allow-dangerously-skip-permissions"];
+  if (permissionMode !== undefined && permissionMode !== "") {
+    args.push("--permission-mode", permissionMode);
   }
-  return ["--dangerously-skip-permissions"];
+  return args;
 }
 
 /**
@@ -128,8 +136,8 @@ function buildInitialPromptArgs(config: InitialPromptConfig): string[] {
     args.push("--model", config.model);
   }
 
-  if (config.agent !== undefined) {
-    args.push("--agent", config.agent);
+  if (config.agentName !== undefined && config.agentName !== "") {
+    args.push("--agent", config.agentName);
   }
 
   return args;
@@ -391,7 +399,7 @@ async function main(): Promise<never> {
   // User args can override these if they come after
   const args = [
     ...initialPromptArgs,
-    ...buildPermissionArgs(initialPromptConfig?.agent),
+    ...buildPermissionArgs(initialPromptConfig?.permissionMode),
     "--ide",
     "--settings",
     settingsPath,

@@ -385,33 +385,46 @@ export interface PromptModel {
 
 /**
  * Initial prompt for workspace creation.
- * Can be a simple string (uses default agent) or an object with optional agent/model.
+ * Can be a simple string (uses defaults) or an object with optional
+ * permissionMode / agentName / model.
+ *
+ * Axes (independent):
+ * - permissionMode: Claude permission mode (e.g. "plan", "acceptEdits",
+ *   "bypassPermissions"). Claude-only; ignored by OpenCode. Omit for the
+ *   default (Claude decides; no --permission-mode flag).
+ * - agentName: named agent/persona. Claude -> --agent; OpenCode -> the agent
+ *   to run (e.g. "build", "plan", or a custom agent). Omit for the default.
  *
  * @example
- * // Simple string - uses default agent
+ * // Simple string - uses defaults
  * initialPrompt: "Implement the login feature"
  *
- * // Object with agent - uses specified agent
- * initialPrompt: { prompt: "Implement the login feature", agent: "build" }
+ * // Read-only/plan mode on Claude
+ * initialPrompt: { prompt: "Investigate the bug", permissionMode: "plan" }
  *
- * // Object with model - uses specified model
+ * // Named agent (OpenCode 'build', or a Claude custom agent)
+ * initialPrompt: { prompt: "Implement the login feature", agentName: "build" }
+ *
+ * // Object with model
  * initialPrompt: { prompt: "Implement the login feature", model: { providerID: "anthropic", modelID: "claude-sonnet" } }
  */
 export type InitialPrompt =
   | string
   | {
       readonly prompt: string;
-      readonly agent?: string;
+      readonly permissionMode?: string;
+      readonly agentName?: string;
       readonly model?: PromptModel;
     };
 
 /**
  * Normalized initial prompt structure.
- * Always has prompt text, agent and model are optional.
+ * Always has prompt text; permissionMode, agentName and model are optional.
  */
 export interface NormalizedInitialPrompt {
   readonly prompt: string;
-  readonly agent?: string;
+  readonly permissionMode?: string;
+  readonly agentName?: string;
   readonly model?: PromptModel;
 }
 
@@ -419,24 +432,19 @@ export interface NormalizedInitialPrompt {
  * Normalize an initial prompt to a consistent structure.
  *
  * @param input - The initial prompt (string or object)
- * @returns Normalized object with prompt and optional agent/model
+ * @returns Normalized object with prompt and optional permissionMode/agentName/model
  */
 export function normalizeInitialPrompt(input: InitialPrompt): NormalizedInitialPrompt {
   if (typeof input === "string") {
     return { prompt: input };
   }
-  // Build result conditionally to satisfy exactOptionalPropertyTypes
-  const result: NormalizedInitialPrompt = { prompt: input.prompt };
-  if (input.agent !== undefined && input.model !== undefined) {
-    return { prompt: input.prompt, agent: input.agent, model: input.model };
-  }
-  if (input.agent !== undefined) {
-    return { prompt: input.prompt, agent: input.agent };
-  }
-  if (input.model !== undefined) {
-    return { prompt: input.prompt, model: input.model };
-  }
-  return result;
+  // Conditional spread keeps undefined keys out (exactOptionalPropertyTypes).
+  return {
+    prompt: input.prompt,
+    ...(input.permissionMode !== undefined && { permissionMode: input.permissionMode }),
+    ...(input.agentName !== undefined && { agentName: input.agentName }),
+    ...(input.model !== undefined && { model: input.model }),
+  };
 }
 
 /**
@@ -449,13 +457,15 @@ const promptModelSchema = z.object({
 
 /**
  * Zod schema for validating InitialPrompt.
- * Accepts either a non-empty string or an object with prompt and optional agent/model.
+ * Accepts either a non-empty string or an object with prompt and optional
+ * permissionMode / agentName / model.
  */
 export const initialPromptSchema = z.union([
   z.string().min(1),
   z.object({
     prompt: z.string().min(1),
-    agent: z.string().optional(),
+    permissionMode: z.string().optional(),
+    agentName: z.string().optional(),
     model: promptModelSchema.optional(),
   }),
 ]);

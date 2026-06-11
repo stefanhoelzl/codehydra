@@ -96,6 +96,10 @@ import { ListProjectsOperation, INTENT_LIST_PROJECTS } from "./intents/list-proj
 import { OpenWorkspaceOperation, INTENT_OPEN_WORKSPACE } from "./intents/open-workspace";
 import { GetProjectBasesOperation, INTENT_GET_PROJECT_BASES } from "./intents/get-project-bases";
 import {
+  AgentLaunchOptionsOperation,
+  INTENT_GET_LAUNCH_OPTIONS,
+} from "./intents/agent-launch-options";
+import {
   DeleteWorkspaceOperation,
   INTENT_DELETE_WORKSPACE,
   EVENT_WORKSPACE_DELETED,
@@ -509,6 +513,7 @@ const claudeProvider = createClaudeModuleProvider({
   platform,
   arch,
   logger: providerLogger,
+  processRunner,
 });
 const claudeAgentModule = createAgentModule(claudeProvider, {
   dispatcher,
@@ -766,6 +771,7 @@ dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspace
 dispatcher.registerOperation(INTENT_LIST_PROJECTS, new ListProjectsOperation());
 dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
 dispatcher.registerOperation(INTENT_GET_PROJECT_BASES, new GetProjectBasesOperation());
+dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
 
 dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
 dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, new HibernateWorkspaceOperation());

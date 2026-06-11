@@ -380,7 +380,7 @@ describe("validateWorkspaceCreateRequest", () => {
         base: "main",
         initialPrompt: {
           prompt: "Implement the feature",
-          agent: "build",
+          agentName: "build",
           model: { providerID: "anthropic", modelID: "claude-sonnet" },
         },
         stealFocus: false,
@@ -423,7 +423,7 @@ describe("validateWorkspaceCreateRequest", () => {
       const result = validateWorkspaceCreateRequest({
         name: "feature-x",
         base: "main",
-        initialPrompt: { agent: "build" },
+        initialPrompt: { agentName: "build" },
       });
       expect(result).toEqual({
         valid: false,

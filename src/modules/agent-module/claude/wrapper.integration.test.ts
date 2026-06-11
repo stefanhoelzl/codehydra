@@ -55,7 +55,8 @@ describe("getInitialPromptConfig integration", () => {
     const fileContent = JSON.stringify({
       prompt: "Hello, Claude!",
       model: "claude-sonnet",
-      agent: "coder",
+      agentName: "coder",
+      permissionMode: "plan",
     });
     mockReadFileSync.mockReturnValue(fileContent);
 
@@ -66,7 +67,8 @@ describe("getInitialPromptConfig integration", () => {
     expect(result).toEqual({
       prompt: "Hello, Claude!",
       model: "claude-sonnet",
-      agent: "coder",
+      agentName: "coder",
+      permissionMode: "plan",
     });
 
     // Verify file was read
@@ -149,7 +151,8 @@ describe("getInitialPromptConfig integration", () => {
 
     expect(result).toEqual({ prompt: "Simple prompt" });
     expect(result?.model).toBeUndefined();
-    expect(result?.agent).toBeUndefined();
+    expect(result?.agentName).toBeUndefined();
+    expect(result?.permissionMode).toBeUndefined();
   });
 
   it("continues cleanup even if unlink fails", () => {

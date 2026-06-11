@@ -13,6 +13,7 @@
 
 import type {
   AgentModuleProvider,
+  AgentLaunchOptions,
   WorkspaceStartOptions,
   WorkspaceStartResult,
 } from "./agent-module-provider";
@@ -148,6 +149,11 @@ export interface AgentModuleSpec<P extends AgentProvider> {
 
   /** Clear agent-specific state on dispose. */
   onDispose?(): void;
+
+  // --- Launch options ---
+
+  /** Launch options this agent offers the creation form (e.g. permission modes). */
+  getLaunchOptions?(): Promise<AgentLaunchOptions>;
 }
 
 /**
@@ -350,6 +356,9 @@ export function createAgentModuleProvider<P extends AgentProvider>(
 
     // --- Binary ---
     binaryType: binaryName as BinaryType,
+
+    // --- Launch options (optional per spec) ---
+    ...(spec.getLaunchOptions && { getLaunchOptions: spec.getLaunchOptions }),
 
     async preflight(): Promise<{ success: boolean; needsDownload: boolean }> {
       try {

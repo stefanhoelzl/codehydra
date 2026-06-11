@@ -597,7 +597,7 @@ describe("OpenWorkspace Operation", () => {
 
       await setup.dispatcher.dispatch(
         createIntent({
-          initialPrompt: { prompt: "Implement login", agent: "build" },
+          initialPrompt: { prompt: "Implement login", agentName: "build" },
         })
       );
 
@@ -605,7 +605,7 @@ describe("OpenWorkspace Operation", () => {
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
       expect(event.payload.initialPrompt).toEqual({
         prompt: "Implement login",
-        agent: "build",
+        agentName: "build",
       });
     });
 

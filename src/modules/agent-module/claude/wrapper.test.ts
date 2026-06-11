@@ -16,15 +16,15 @@ import {
 } from "./wrapper";
 
 describe("buildPermissionArgs", () => {
-  it("returns --dangerously-skip-permissions when no agent", () => {
-    expect(buildPermissionArgs()).toEqual(["--dangerously-skip-permissions"]);
+  it("returns only --allow-dangerously-skip-permissions for the default (no mode)", () => {
+    expect(buildPermissionArgs()).toEqual(["--allow-dangerously-skip-permissions"]);
   });
 
-  it("returns --dangerously-skip-permissions for implement agent", () => {
-    expect(buildPermissionArgs("implement")).toEqual(["--dangerously-skip-permissions"]);
+  it("treats an empty mode as the default", () => {
+    expect(buildPermissionArgs("")).toEqual(["--allow-dangerously-skip-permissions"]);
   });
 
-  it("returns plan mode flags for plan agent", () => {
+  it("adds --permission-mode for plan", () => {
     expect(buildPermissionArgs("plan")).toEqual([
       "--allow-dangerously-skip-permissions",
       "--permission-mode",
@@ -32,8 +32,12 @@ describe("buildPermissionArgs", () => {
     ]);
   });
 
-  it("returns --dangerously-skip-permissions for unknown agents", () => {
-    expect(buildPermissionArgs("coder")).toEqual(["--dangerously-skip-permissions"]);
+  it("adds --permission-mode for any detected mode", () => {
+    expect(buildPermissionArgs("bypassPermissions")).toEqual([
+      "--allow-dangerously-skip-permissions",
+      "--permission-mode",
+      "bypassPermissions",
+    ]);
   });
 });
 
@@ -50,8 +54,8 @@ describe("buildInitialPromptArgs", () => {
     expect(args).toEqual(["Hi", "--model", "claude-sonnet"]);
   });
 
-  it("with agent adds --agent flag", () => {
-    const config: InitialPromptConfig = { prompt: "Hi", agent: "coder" };
+  it("with agentName adds --agent flag", () => {
+    const config: InitialPromptConfig = { prompt: "Hi", agentName: "coder" };
     const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["Hi", "--agent", "coder"]);
   });
@@ -60,7 +64,7 @@ describe("buildInitialPromptArgs", () => {
     const config: InitialPromptConfig = {
       prompt: "Implement the feature",
       model: "claude-opus",
-      agent: "architect",
+      agentName: "architect",
     };
     const args = buildInitialPromptArgs(config);
     expect(args).toEqual([
@@ -89,7 +93,7 @@ describe("buildInitialPromptArgs", () => {
   });
 
   it("omits empty prompt but includes agent flag", () => {
-    const config: InitialPromptConfig = { prompt: "", agent: "plan" };
+    const config: InitialPromptConfig = { prompt: "", agentName: "plan" };
     const args = buildInitialPromptArgs(config);
     expect(args).toEqual(["--agent", "plan"]);
   });

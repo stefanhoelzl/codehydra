@@ -56,7 +56,7 @@ export interface WorkspaceState {
   initialPromptPath?: Path;
   /** Path to the no-session marker file (for getNoSessionMarkerPath) */
   noSessionMarkerPath?: Path;
-  /** Flag: first WrapperStart should set status to busy (non-plan initial prompt) */
+  /** Flag: first WrapperStart should set status to busy (a non-empty initial prompt) */
   busyOnWrapperStart?: boolean;
   /** Set of active sub-agent IDs (tracked via SubagentStart/SubagentStop) */
   activeSubagents: Set<string>;
@@ -369,14 +369,22 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       const tempDir = await this.fileSystem.mkdtemp("codehydra-initial-prompt-");
 
       // Build JSON content - extract modelID from model if present
-      const jsonContent: { prompt: string; model?: string; agent?: string } = {
+      const jsonContent: {
+        prompt: string;
+        model?: string;
+        permissionMode?: string;
+        agentName?: string;
+      } = {
         prompt: config.prompt,
       };
       if (config.model !== undefined) {
         jsonContent.model = config.model.modelID;
       }
-      if (config.agent !== undefined) {
-        jsonContent.agent = config.agent;
+      if (config.permissionMode !== undefined) {
+        jsonContent.permissionMode = config.permissionMode;
+      }
+      if (config.agentName !== undefined) {
+        jsonContent.agentName = config.agentName;
       }
 
       // Write the initial prompt file
@@ -386,9 +394,11 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       // Store the path for later retrieval
       state.initialPromptPath = promptFilePath;
 
-      // Non-plan agents will immediately process the prompt, so the first
-      // WrapperStart should show "busy" instead of "idle".
-      state.busyOnWrapperStart = config.agent !== "plan";
+      // Show "busy" on the first WrapperStart only when there is a prompt for
+      // the agent to process. Permission mode is irrelevant (even plan mode
+      // works on the prompt); an empty prompt (e.g. only an agent or permission
+      // mode was chosen) has nothing to run, so it starts "idle".
+      state.busyOnWrapperStart = config.prompt.trim() !== "";
 
       this.logger.info("Initial prompt file created", {
         workspacePath: normalizedPath,

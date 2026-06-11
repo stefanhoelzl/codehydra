@@ -52,6 +52,11 @@ import type { UpdateAgentStatusIntent } from "../../intents/update-agent-status"
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { APP_READY_OPERATION_ID, type AvailableAgentsResult } from "../../intents/app-ready";
+import {
+  GET_LAUNCH_OPTIONS_OPERATION_ID,
+  type LaunchOptionsHookInput,
+  type LaunchOptionsHookResult,
+} from "../../intents/agent-launch-options";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
@@ -199,6 +204,25 @@ export function createAgentModule(
                 },
               };
             } catch {
+              return {};
+            }
+          },
+        },
+      },
+
+      [GET_LAUNCH_OPTIONS_OPERATION_ID]: {
+        "launch-options": {
+          handler: async (ctx: HookContext): Promise<LaunchOptionsHookResult> => {
+            const { backend } = ctx as LaunchOptionsHookInput;
+            // Only the module matching the requested backend contributes.
+            if (backend !== provider.type || provider.getLaunchOptions === undefined) {
+              return {};
+            }
+            try {
+              const { permissionModes } = await provider.getLaunchOptions();
+              return { permissionModes };
+            } catch {
+              // Best-effort: detection failure → form offers only the default.
               return {};
             }
           },

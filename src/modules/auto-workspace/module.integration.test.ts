@@ -492,9 +492,10 @@ describe("AutoWorkspaceModule Integration", () => {
 
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
       expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("item-1");
+      // No `agent` in the default template → falls back to the default (no
+      // agent override, default permission mode).
       expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
         prompt: "Work on item-1",
-        agent: "plan",
       });
     });
 
@@ -654,7 +655,7 @@ describe("AutoWorkspaceModule Integration", () => {
       expect(payload.stealFocus).toBe(true);
       expect(payload.initialPrompt).toEqual({
         prompt: "Work on item-1",
-        agent: "build",
+        agentName: "build",
         model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
       });
     });

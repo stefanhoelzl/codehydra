@@ -360,9 +360,12 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         return;
       }
 
+      // The frontmatter `agent` field selects the named agent (e.g. "plan",
+      // "build", or a custom agent). When unset, fall back to the default — no
+      // agent override. Permission mode is left at the default.
       const initialPrompt: NormalizedInitialPrompt = {
         prompt: config.prompt,
-        agent: config.agent ?? "plan",
+        ...(config.agent !== undefined && { agentName: config.agent }),
         ...(config.model !== undefined && { model: config.model }),
       };
 

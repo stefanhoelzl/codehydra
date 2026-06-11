@@ -222,7 +222,7 @@ describe("ch-claude.cjs boundary tests", () => {
       expect(output!.args).toContain("/tmp/settings.json");
       expect(output!.args).toContain("--mcp-config");
       expect(output!.args).toContain("/tmp/mcp.json");
-      expect(output!.args).toContain("--dangerously-skip-permissions");
+      expect(output!.args).toContain("--allow-dangerously-skip-permissions");
     });
 
     it("deletes CLAUDECODE env var before spawning", async () => {
@@ -319,7 +319,10 @@ describe("ch-claude.cjs boundary tests", () => {
       const promptFile = join(promptDir, "initial-prompt.json");
       const multiLinePrompt =
         "Please review these changes:\n\n- Fix the login bug\n- Update the tests\n\nFocus on error handling.";
-      await writeFile(promptFile, JSON.stringify({ prompt: multiLinePrompt, agent: "plan" }));
+      await writeFile(
+        promptFile,
+        JSON.stringify({ prompt: multiLinePrompt, permissionMode: "plan" })
+      );
 
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,
@@ -370,12 +373,12 @@ describe("ch-claude.cjs boundary tests", () => {
       expect(output).not.toBeNull();
       // Without initial prompt, first non-continue arg should be a flag, not a prompt string
       const firstNonContinueArg = output!.args.find((a) => a !== "--continue");
-      expect(firstNonContinueArg).toBe("--dangerously-skip-permissions");
+      expect(firstNonContinueArg).toBe("--allow-dangerously-skip-permissions");
     });
   });
 
   describe("permission modes", () => {
-    it("uses --dangerously-skip-permissions when no agent is set", async () => {
+    it("uses only --allow-dangerously-skip-permissions when no mode is set", async () => {
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,
         {
@@ -392,15 +395,15 @@ describe("ch-claude.cjs boundary tests", () => {
       ).toBe(0);
       const output = parseFakeClaudeOutput(result.stdout);
       expect(output).not.toBeNull();
-      expect(output!.args).toContain("--dangerously-skip-permissions");
-      expect(output!.args).not.toContain("--allow-dangerously-skip-permissions");
+      expect(output!.args).toContain("--allow-dangerously-skip-permissions");
+      expect(output!.args).not.toContain("--permission-mode");
     });
 
-    it("uses plan permission mode when agent is 'plan'", async () => {
+    it("uses plan permission mode when permissionMode is 'plan'", async () => {
       const promptDir = join(tempDir.path, "prompt-dir");
       await mkdir(promptDir, { recursive: true });
       const promptFile = join(promptDir, "initial-prompt.json");
-      await writeFile(promptFile, JSON.stringify({ prompt: "test", agent: "plan" }));
+      await writeFile(promptFile, JSON.stringify({ prompt: "test", permissionMode: "plan" }));
 
       const result = await executeScript(
         COMPILED_SCRIPT_PATH,

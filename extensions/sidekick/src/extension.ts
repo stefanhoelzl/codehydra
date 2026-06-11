@@ -442,8 +442,11 @@ const codehydraApi = {
           if (typeof prompt.prompt !== "string" || prompt.prompt.length === 0) {
             return Promise.reject(new Error("Initial prompt.prompt must be a non-empty string"));
           }
-          if (prompt.agent !== undefined && typeof prompt.agent !== "string") {
-            return Promise.reject(new Error("Initial prompt.agent must be a string"));
+          if (prompt.permissionMode !== undefined && typeof prompt.permissionMode !== "string") {
+            return Promise.reject(new Error("Initial prompt.permissionMode must be a string"));
+          }
+          if (prompt.agentName !== undefined && typeof prompt.agentName !== "string") {
+            return Promise.reject(new Error("Initial prompt.agentName must be a string"));
           }
         } else {
           return Promise.reject(new Error("Initial prompt must be a string or object"));
