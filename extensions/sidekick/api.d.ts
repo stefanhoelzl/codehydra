@@ -106,10 +106,21 @@ export interface LogApi {
 }
 
 /**
- * Initial prompt for workspace creation.
- * Can be a simple string (uses default agent) or an object with agent selection.
+ * Model identifier for prompts.
  */
-export type InitialPrompt = string | { readonly prompt: string; readonly agent?: string };
+export interface PromptModel {
+  readonly providerID: string;
+  readonly modelID: string;
+}
+
+/**
+ * Initial prompt for workspace creation.
+ * Can be a simple string (uses the default agent) or an object with optional
+ * agent and model selection.
+ */
+export type InitialPrompt =
+  | string
+  | { readonly prompt: string; readonly agent?: string; readonly model?: PromptModel };
 
 /**
  * Options for workspace creation.
@@ -126,12 +137,21 @@ export interface WorkspaceCreateOptions {
  * Workspace information returned from creation.
  */
 export interface Workspace {
+  /** Identifier of the project this workspace belongs to */
+  readonly projectId: string;
   /** Workspace name (also the branch name) */
   readonly name: string;
+  /** Current branch name, or null for detached HEAD state */
+  readonly branch: string | null;
+  /**
+   * Workspace metadata stored in git config.
+   * Always contains a `base` key with the base branch the workspace was created from.
+   */
+  readonly metadata: Readonly<Record<string, string>>;
   /** Absolute path to the workspace directory */
   readonly path: string;
-  /** Base branch this workspace was created from */
-  readonly base: string;
+  /** code-server URL for embedding this workspace; absent while the workspace is hibernated */
+  readonly url?: string;
 }
 
 /**
@@ -168,6 +188,8 @@ export type AgentStatus =
 export interface WorkspaceStatus {
   /** True if the workspace has uncommitted changes */
   readonly isDirty: boolean;
+  /** Number of commits on this workspace's branch not merged into its base branch */
+  readonly unmergedCommits: number;
   /** Status of AI agents in this workspace */
   readonly agent: AgentStatus;
 }

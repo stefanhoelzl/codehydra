@@ -2,9 +2,10 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { io } from "socket.io-client";
 import cssColorNames from "color-name";
-import type { CodehydraApi, WorkspaceStatus } from "../api";
+import type { CodehydraApi } from "../api";
 import type {
   TypedSocket,
+  WorkspaceStatus,
   PluginResult,
   PluginConfig,
   CommandRequest,

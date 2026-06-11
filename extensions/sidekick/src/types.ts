@@ -1,181 +1,58 @@
 /**
  * Type definitions for the sidekick extension's Socket.IO communication.
  *
+ * The protocol is declared once in `src/shared/plugin-protocol.ts` (the same
+ * declaration the CodeHydra server compiles against) and re-exported here, so
+ * protocol drift between app and extension is a compile error instead of a
+ * runtime failure. All imports from `src/shared` are type-only and erased at
+ * build time — nothing outside this package is bundled into the extension.
+ *
  * Note: This extension uses socket.io-client which is bundled with Vite in SSR mode
  * to ensure the Node.js version (using 'ws' package) is used instead of the browser
  * version (which uses native WebSocket unavailable in VS Code extension host).
  */
 import type { Socket } from "socket.io-client";
-import type { WorkspaceStatus, Workspace, LogContext, InitialPrompt, AgentSession } from "../api";
+import type {
+  ServerToClientEvents,
+  ClientToServerEvents,
+} from "../../../src/shared/plugin-protocol";
 
-// Re-export types from api.d.ts that are used internally
-export type { LogContext, InitialPrompt, AgentSession };
+export type {
+  ServerToClientEvents,
+  ClientToServerEvents,
+  PluginResult,
+  CommandRequest,
+  ExecuteCommandRequest,
+  OpenSystemPathRequest,
+  SystemPathApp,
+  AgentType,
+  PluginConfig,
+  SetMetadataRequest,
+  GetWorkspaceStatusRequest,
+  DeleteWorkspaceRequest,
+  DeleteWorkspaceResponse,
+  WorkspaceCreateRequest,
+  LogRequest,
+  LogContext,
+  AgentLifecycleEvent,
+  AgentLifecycleRequest,
+  NotificationSeverity,
+  ShowNotificationRequest,
+  ShowNotificationResponse,
+  StatusBarUpdateRequest,
+  StatusBarDisposeRequest,
+  QuickPickItem,
+  ShowQuickPickRequest,
+  ShowQuickPickResponse,
+  ShowInputBoxRequest,
+  ShowInputBoxResponse,
+} from "../../../src/shared/plugin-protocol";
 
-// API response types
-export type PluginResult<T = unknown> =
-  | { readonly success: true; readonly data: T }
-  | { readonly success: false; readonly error: string };
-
-export interface CommandRequest {
-  readonly command: string;
-  readonly args?: readonly unknown[];
-}
-
-export interface OpenSystemPathRequest {
-  readonly app: "default" | "explorer";
-  readonly path: string;
-}
-
-/** Agent type for terminal launching */
-export type AgentType = "opencode" | "claude";
-
-export interface PluginConfig {
-  readonly isDevelopment: boolean;
-  readonly env: Record<string, string> | null;
-  readonly agentType: AgentType | null;
-  /** True for new workspaces (reset editor layout), false for reopened (preserve layout) */
-  readonly resetWorkspace: boolean;
-}
-
-export interface SetMetadataRequest {
-  readonly key: string;
-  readonly value: string | null;
-}
-
-export interface GetWorkspaceStatusRequest {
-  readonly refresh?: boolean;
-}
-
-export interface LogRequest {
-  readonly level: "silly" | "debug" | "info" | "warn" | "error";
-  readonly message: string;
-  readonly context?: LogContext;
-}
-
-/** Agent terminal lifecycle event reported to the main process. */
-export type AgentLifecycleEvent = "open" | "close";
-
-export interface AgentLifecycleRequest {
-  readonly event: AgentLifecycleEvent;
-}
-
-export interface WorkspaceCreateRequest {
-  readonly name: string;
-  readonly base: string;
-  readonly initialPrompt?: InitialPrompt;
-  readonly stealFocus?: boolean;
-}
-
-// UI request/response types
-export type NotificationSeverity = "info" | "warning" | "error";
-
-export interface ShowNotificationRequest {
-  readonly severity: NotificationSeverity;
-  readonly message: string;
-  readonly actions?: readonly string[];
-}
-
-export interface ShowNotificationResponse {
-  readonly action: string | null;
-}
-
-export interface StatusBarUpdateRequest {
-  readonly id: string;
-  readonly text: string;
-  readonly tooltip?: string;
-  readonly command?: string;
-  readonly color?: string;
-}
-
-export interface StatusBarDisposeRequest {
-  readonly id: string;
-}
-
-export interface QuickPickItem {
-  readonly label: string;
-  readonly description?: string;
-  readonly detail?: string;
-}
-
-export interface ShowQuickPickRequest {
-  readonly items: readonly QuickPickItem[];
-  readonly title?: string;
-  readonly placeholder?: string;
-}
-
-export interface ShowQuickPickResponse {
-  readonly selected: string | null;
-}
-
-export interface ShowInputBoxRequest {
-  readonly title?: string;
-  readonly prompt?: string;
-  readonly placeholder?: string;
-  readonly value?: string;
-  readonly password?: boolean;
-}
-
-export interface ShowInputBoxResponse {
-  readonly value: string | null;
-}
-
-// Socket.IO typed events
-export interface ServerToClientEvents {
-  config: (config: PluginConfig) => void;
-  command: (request: CommandRequest, ack: (result: PluginResult) => void) => void;
-  shutdown: (ack: (result: PluginResult<undefined>) => void) => void;
-  "ui:showNotification": (
-    request: ShowNotificationRequest,
-    ack: (result: PluginResult<ShowNotificationResponse>) => void
-  ) => void;
-  "ui:statusBarUpdate": (
-    request: StatusBarUpdateRequest,
-    ack: (result: PluginResult<void>) => void
-  ) => void;
-  "ui:statusBarDispose": (
-    request: StatusBarDisposeRequest,
-    ack: (result: PluginResult<void>) => void
-  ) => void;
-  "ui:showQuickPick": (
-    request: ShowQuickPickRequest,
-    ack: (result: PluginResult<ShowQuickPickResponse>) => void
-  ) => void;
-  "ui:showInputBox": (
-    request: ShowInputBoxRequest,
-    ack: (result: PluginResult<ShowInputBoxResponse>) => void
-  ) => void;
-}
-
-export interface ClientToServerEvents {
-  "api:workspace:getStatus": (
-    request: GetWorkspaceStatusRequest | undefined,
-    ack: (result: PluginResult<WorkspaceStatus>) => void
-  ) => void;
-  "api:workspace:getMetadata": (
-    ack: (result: PluginResult<Record<string, string>>) => void
-  ) => void;
-  "api:workspace:setMetadata": (
-    request: SetMetadataRequest,
-    ack: (result: PluginResult<void>) => void
-  ) => void;
-  "api:workspace:getAgentSession": (
-    ack: (result: PluginResult<AgentSession | null>) => void
-  ) => void;
-  "api:workspace:restartAgentServer": (ack: (result: PluginResult<number>) => void) => void;
-  "api:workspace:executeCommand": (
-    request: CommandRequest,
-    ack: (result: PluginResult<unknown>) => void
-  ) => void;
-  "api:workspace:openSystemPath": (
-    request: OpenSystemPathRequest,
-    ack: (result: PluginResult<void>) => void
-  ) => void;
-  "api:workspace:create": (
-    request: WorkspaceCreateRequest,
-    ack: (result: PluginResult<Workspace>) => void
-  ) => void;
-  "api:log": (request: LogRequest) => void;
-  "api:workspace:agentLifecycle": (request: AgentLifecycleRequest) => void;
-}
+export type {
+  WorkspaceStatus,
+  Workspace,
+  InitialPrompt,
+  AgentSession,
+} from "../../../src/shared/api/types";
 
 export type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
