@@ -206,7 +206,7 @@ Use `Icon` component. Never use Unicode characters.
 
 ```svelte
 <Icon name="check" />
-<Icon name="close" action label="Close" />
+<Icon name="sync" spin />
 ```
 
 ### CSS Theming

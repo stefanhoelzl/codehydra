@@ -108,10 +108,7 @@ export interface HibernatePipelineHookInput extends HookContext {
 }
 
 /** Per-handler result for the "capture" hook point. */
-export interface CaptureHookResult {
-  /** True if a screenshot was successfully written to disk. */
-  readonly captured?: boolean;
-}
+export type CaptureHookResult = Record<string, never>;
 
 /** Per-handler result for the "shutdown" hook point. */
 export type HibernateShutdownHookResult = Record<string, never>;

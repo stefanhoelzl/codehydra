@@ -18,13 +18,13 @@
  */
 
 import type { Logger } from "../platform/logging";
-import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
+import type { UIMode } from "../../shared/ipc";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { AppBoundary } from "./app";
 import type { SessionBoundary } from "./session";
 import type { ViewBoundary, WindowOpenDetails } from "./view";
 import type { ViewHandle } from "./types";
-import type { WindowBoundaryInternal } from "./window";
+import type { WindowBoundary } from "./window";
 import type { WindowManager } from "./window-manager";
 import type { IViewManager, Unsubscribe } from "./view-manager.interface";
 import { computeUIRect, type DevtoolsTarget, type KeyboardTarget } from "./view-manager-types";
@@ -82,7 +82,7 @@ export interface UiViewManagerConfig {
 
 export interface UiViewManagerDeps {
   readonly windowManager: WindowManager;
-  readonly windowLayer: WindowBoundaryInternal;
+  readonly windowLayer: WindowBoundary;
   readonly viewLayer: ViewBoundary;
   readonly sessionLayer: SessionBoundary;
   readonly appLayer: Pick<AppBoundary, "openUrl">;
@@ -92,7 +92,7 @@ export interface UiViewManagerDeps {
 
 export class UiViewManager implements IViewManager {
   private readonly windowManager: WindowManager;
-  private readonly windowLayer: WindowBoundaryInternal;
+  private readonly windowLayer: WindowBoundary;
   private readonly viewLayer: ViewBoundary;
   private readonly sessionLayer: SessionBoundary;
   private readonly appLayer: Pick<AppBoundary, "openUrl">;
@@ -102,7 +102,6 @@ export class UiViewManager implements IViewManager {
   private uiViewHandle: ViewHandle | null = null;
   private mode: UIMode = "workspace";
   private destroying = false;
-  private readonly modeChangeCallbacks = new Set<(event: UIModeChangedEvent) => void>();
   private unsubscribeResize: Unsubscribe | null = null;
 
   constructor(deps: UiViewManagerDeps) {
@@ -292,30 +291,10 @@ export class UiViewManager implements IViewManager {
     if (newMode === previousMode) return;
     this.mode = newMode;
     this.logger.debug("Mode changed", { mode: newMode, previous: previousMode });
-
-    const event: UIModeChangedEvent = { mode: newMode, previousMode };
-    for (const callback of this.modeChangeCallbacks) {
-      try {
-        callback(event);
-      } catch (error) {
-        this.logger.error(
-          "Error in mode change callback",
-          { mode: newMode },
-          error instanceof Error ? error : undefined
-        );
-      }
-    }
   }
 
   getMode(): UIMode {
     return this.mode;
-  }
-
-  onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe {
-    this.modeChangeCallbacks.add(callback);
-    return () => {
-      this.modeChangeCallbacks.delete(callback);
-    };
   }
 
   // ---------------------------------------------------------------------------

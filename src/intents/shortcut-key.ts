@@ -42,7 +42,7 @@ export const EVENT_SHORTCUT_KEY_PRESSED = "shortcut:key-pressed" as const;
 // Operation
 // =============================================================================
 
-export const SHORTCUT_KEY_OPERATION_ID = "shortcut-key";
+const SHORTCUT_KEY_OPERATION_ID = "shortcut-key";
 
 export class ShortcutKeyOperation implements Operation<ShortcutKeyIntent, void> {
   readonly id = SHORTCUT_KEY_OPERATION_ID;

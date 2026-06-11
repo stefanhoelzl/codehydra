@@ -84,21 +84,6 @@ describe("ElectronLog", () => {
     });
   });
 
-  describe("dispose", () => {
-    it("clears logger cache", async () => {
-      const service = await createService();
-      service.createLogger("git");
-      service.createLogger("process");
-
-      service.dispose();
-
-      // Creating logger again should call scope again
-      mockScope.mockClear();
-      service.createLogger("git");
-      expect(mockScope).toHaveBeenCalledWith("git");
-    });
-  });
-
   describe("Logger methods", () => {
     it("calls scope.silly for silly level messages", async () => {
       const scopeLogger = {
@@ -580,74 +565,6 @@ describe("ElectronLog", () => {
     it("treats * filter as undefined (all loggers)", async () => {
       const { splitLogLevelSpec } = await import("./electron-log");
       expect(splitLogLevelSpec("debug:*")).toEqual({ level: "debug", filter: undefined });
-    });
-  });
-
-  describe("parseLogOutput", () => {
-    it("validates file output", async () => {
-      const { parseLogOutput } = await import("./electron-log");
-      expect(parseLogOutput("file")).toBe("file");
-    });
-
-    it("validates console output", async () => {
-      const { parseLogOutput } = await import("./electron-log");
-      expect(parseLogOutput("console")).toBe("console");
-    });
-
-    it("validates combined output and sorts canonically", async () => {
-      const { parseLogOutput } = await import("./electron-log");
-      expect(parseLogOutput("file,console")).toBe("console,file");
-      expect(parseLogOutput("console,file")).toBe("console,file");
-    });
-
-    it("deduplicates tokens", async () => {
-      const { parseLogOutput } = await import("./electron-log");
-      expect(parseLogOutput("file,file")).toBe("file");
-    });
-
-    it("handles whitespace and case", async () => {
-      const { parseLogOutput } = await import("./electron-log");
-      expect(parseLogOutput("  FILE  ")).toBe("file");
-      expect(parseLogOutput(" Console , File ")).toBe("console,file");
-    });
-
-    it("returns undefined for invalid tokens", async () => {
-      const { parseLogOutput } = await import("./electron-log");
-      expect(parseLogOutput("stdout")).toBeUndefined();
-      expect(parseLogOutput("file,stdout")).toBeUndefined();
-    });
-
-    it("returns undefined for empty or undefined input", async () => {
-      const { parseLogOutput } = await import("./electron-log");
-      expect(parseLogOutput(undefined)).toBeUndefined();
-      expect(parseLogOutput("")).toBeUndefined();
-    });
-  });
-
-  describe("parseLogFormat", () => {
-    it("parses valid format values", async () => {
-      const { parseLogFormat } = await import("./electron-log");
-      expect(parseLogFormat("text")).toBe("text");
-      expect(parseLogFormat("json")).toBe("json");
-    });
-
-    it("handles case-insensitive input", async () => {
-      const { parseLogFormat } = await import("./electron-log");
-      expect(parseLogFormat("TEXT")).toBe("text");
-      expect(parseLogFormat("JSON")).toBe("json");
-      expect(parseLogFormat("Json")).toBe("json");
-    });
-
-    it("returns undefined for invalid input", async () => {
-      const { parseLogFormat } = await import("./electron-log");
-      expect(parseLogFormat("xml")).toBeUndefined();
-      expect(parseLogFormat("csv")).toBeUndefined();
-    });
-
-    it("returns undefined for empty or undefined input", async () => {
-      const { parseLogFormat } = await import("./electron-log");
-      expect(parseLogFormat(undefined)).toBeUndefined();
-      expect(parseLogFormat("")).toBeUndefined();
     });
   });
 

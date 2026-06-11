@@ -60,7 +60,7 @@ const WORKSPACE_PATH = "/workspaces/feature-x";
 
 type RestartServerResult =
   | { readonly success: true; readonly port: number }
-  | { readonly success: false; readonly error: string; readonly serverStopped: boolean };
+  | { readonly success: false; readonly error: string };
 
 interface MockAgentServerManager {
   restartResult: RestartServerResult;
@@ -200,7 +200,6 @@ describe("RestartAgent Operation", () => {
         serverManager: createMockAgentServerManager({
           success: false,
           error: "Server process exited unexpectedly",
-          serverStopped: true,
         }),
       });
 
@@ -246,7 +245,6 @@ describe("RestartAgent Operation", () => {
         serverManager: createMockAgentServerManager({
           success: false,
           error: "Failed",
-          serverStopped: true,
         }),
       });
 

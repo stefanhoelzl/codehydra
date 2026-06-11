@@ -111,7 +111,6 @@ describe("CloseProjectDialog component", () => {
   ]);
 
   const defaultProps = {
-    open: true,
     projectId: testProjectId,
   };
 

@@ -44,6 +44,11 @@ async function sendHook(
   });
 }
 
+/** Current status as observed through the public onStatusChange seam. */
+function lastStatus(statusChanges: readonly AgentStatus[]): AgentStatus {
+  return statusChanges.at(-1) ?? "none";
+}
+
 describe("ClaudeCodeServerManager integration", () => {
   let serverManager: ClaudeCodeServerManager;
   let mockPortManager: MockPortManager;
@@ -87,8 +92,6 @@ describe("ClaudeCodeServerManager integration", () => {
       // Both should get the same port (single server for all workspaces)
       expect(port1).toBe(15001);
       expect(port2).toBe(15001);
-      expect(serverManager.getPort("/workspace/feature-a")).toBe(15001);
-      expect(serverManager.getPort("/workspace/feature-b")).toBe(15001);
     });
 
     it("returns existing port when starting same workspace twice", async () => {
@@ -103,24 +106,14 @@ describe("ClaudeCodeServerManager integration", () => {
       await serverManager.startServer("/workspace/feature-a");
       await serverManager.startServer("/workspace/feature-b");
 
-      // Stop first workspace - server should still be running
+      // Stop first workspace - server still running, new workspaces reuse its port
       await serverManager.stopServer("/workspace/feature-a");
-      expect(serverManager.getPort("/workspace/feature-a")).toBeUndefined();
-      expect(serverManager.getPort("/workspace/feature-b")).toBe(15001);
+      expect(await serverManager.startServer("/workspace/feature-c")).toBe(15001);
 
-      // Stop second workspace - server should stop
+      // Stop remaining workspaces - server stops, next start allocates a fresh port
       await serverManager.stopServer("/workspace/feature-b");
-      expect(serverManager.getPort("/workspace/feature-b")).toBeUndefined();
-    });
-
-    it("isRunning reflects workspace registration", async () => {
-      expect(serverManager.isRunning("/workspace/feature-a")).toBe(false);
-
-      await serverManager.startServer("/workspace/feature-a");
-      expect(serverManager.isRunning("/workspace/feature-a")).toBe(true);
-
-      await serverManager.stopServer("/workspace/feature-a");
-      expect(serverManager.isRunning("/workspace/feature-a")).toBe(false);
+      await serverManager.stopServer("/workspace/feature-c");
+      expect(await serverManager.startServer("/workspace/feature-d")).toBe(15002);
     });
   });
 
@@ -161,23 +154,6 @@ describe("ClaudeCodeServerManager integration", () => {
       unsubscribe();
       await serverManager.startServer("/workspace/feature-b");
       expect(startedCallback).toHaveBeenCalledTimes(1);
-    });
-
-    it("onWorkspaceReady fires when status changes to idle", async () => {
-      const readyCallback = vi.fn();
-      serverManager.onWorkspaceReady(readyCallback);
-
-      const port = await serverManager.startServer("/workspace/feature-a");
-
-      // WrapperStart sets status to idle
-      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
-      expect(readyCallback).toHaveBeenCalledTimes(1);
-      expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
-
-      // SessionStart also sets status to idle, but status is already idle so no change
-      readyCallback.mockClear();
-      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
-      expect(readyCallback).not.toHaveBeenCalled(); // No change, already idle
     });
 
     it("markActiveHandler is called when status becomes idle", async () => {
@@ -295,7 +271,7 @@ describe("ClaudeCodeServerManager integration", () => {
       },
     ])(
       "$hookName -> $finalStatus",
-      async ({ hookName, setupHooks, extraPayload, expectedChanges, finalStatus }) => {
+      async ({ hookName, setupHooks, extraPayload, expectedChanges }) => {
         const port = await serverManager.startServer("/workspace/feature-a");
         const statusChanges: AgentStatus[] = [];
         serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -317,7 +293,6 @@ describe("ClaudeCodeServerManager integration", () => {
         }
 
         expect(statusChanges).toEqual(expectedChanges);
-        expect(serverManager.getStatus("/workspace/feature-a")).toBe(finalStatus);
         if (hookName === "SessionStart") {
           expect(serverManager.getSessionId("/workspace/feature-a")).toBe("test-session");
         }
@@ -342,7 +317,6 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(endRes.status).toBe(404);
       // No status changes — the HTTP path must not drive wrapper lifecycle.
       expect(statusChanges).toEqual([]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
     });
 
     it("WrapperEnd is idempotent — a second call produces no extra transition", async () => {
@@ -357,7 +331,6 @@ describe("ClaudeCodeServerManager integration", () => {
       serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperEnd");
 
       expect(statusChanges).toEqual(["idle", "none"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
     });
 
     it("SessionStart during automatic compaction stays busy", async () => {
@@ -377,7 +350,6 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // No false idle transition — status stays busy throughout
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("Stop between PreCompact and SessionStart stays busy", async () => {
@@ -397,7 +369,6 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
 
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("StopFailure between PreCompact and SessionStart stays busy", async () => {
@@ -415,7 +386,6 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
 
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("manual compact: SessionStart goes idle normally", async () => {
@@ -433,7 +403,6 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("compacting flag cleared after use", async () => {
@@ -456,7 +425,6 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("WrapperEnd clears ignoreNextSessionStart flag", async () => {
@@ -479,7 +447,6 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
 
       expect(statusChanges).toEqual(["idle", "busy", "none", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("Notification(idle_prompt) recovers from failed compaction", async () => {
@@ -501,7 +468,6 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("Notification(idle_prompt) clears ignoreNextSessionStart flag", async () => {
@@ -545,7 +511,6 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("Notification(elicitation_dialog) transitions to idle", async () => {
@@ -564,7 +529,6 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("Notification(auth_success) does not change status", async () => {
@@ -583,7 +547,6 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("Notification(idle_prompt) is no-op when already idle", async () => {
@@ -603,7 +566,6 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       expect(statusChanges).toEqual(["idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("PreToolUse does not change status without prior PermissionRequest", async () => {
@@ -625,7 +587,6 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // Status should remain busy
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("PreToolUse transitions to busy after PermissionRequest", async () => {
@@ -641,7 +602,7 @@ describe("ClaudeCodeServerManager integration", () => {
       // Permission request puts us in idle
       await sendHook(port, "PermissionRequest", { workspacePath: "/workspace/feature-a" });
 
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+      expect(lastStatus(statusChanges)).toBe("idle");
 
       // PreToolUse after PermissionRequest should transition to busy
       await sendHook(port, "PreToolUse", {
@@ -650,7 +611,6 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("PreToolUse flag is cleared after use", async () => {
@@ -726,28 +686,6 @@ describe("ClaudeCodeServerManager integration", () => {
     });
   });
 
-  describe("project close cleanup", () => {
-    it("stops all workspaces for a project", async () => {
-      await serverManager.startServer("/project/.worktrees/feature-a");
-      await serverManager.startServer("/project/.worktrees/feature-b");
-      await serverManager.startServer("/other-project/feature-c");
-
-      // All should be registered
-      expect(serverManager.isRunning("/project/.worktrees/feature-a")).toBe(true);
-      expect(serverManager.isRunning("/project/.worktrees/feature-b")).toBe(true);
-      expect(serverManager.isRunning("/other-project/feature-c")).toBe(true);
-
-      // Stop all for /project
-      await serverManager.stopAllForProject("/project");
-
-      // Project workspaces should be stopped
-      expect(serverManager.isRunning("/project/.worktrees/feature-a")).toBe(false);
-      expect(serverManager.isRunning("/project/.worktrees/feature-b")).toBe(false);
-      // Other project should still be running
-      expect(serverManager.isRunning("/other-project/feature-c")).toBe(true);
-    });
-  });
-
   describe("restartServer", () => {
     it("restarts workspace and preserves port", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
@@ -800,11 +738,10 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain("not registered");
-        expect(result.serverStopped).toBe(false);
       }
     });
 
-    it("resets status and preserves callbacks", async () => {
+    it("preserves status callbacks across restart", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -814,15 +751,12 @@ describe("ClaudeCodeServerManager integration", () => {
       // Make busy
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
 
       // Restart
       await serverManager.restartServer("/workspace/feature-a");
 
-      // Status should be reset to none
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("none");
-
-      // But callback should still work
+      // Callback should still work after restart
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       expect(statusChanges).toContain("idle");
     });
@@ -910,13 +844,16 @@ describe("ClaudeCodeServerManager integration", () => {
 
   describe("dispose", () => {
     it("stops all workspaces and server", async () => {
+      const stoppedCallback = vi.fn();
+      serverManager.onServerStopped(stoppedCallback);
+
       await serverManager.startServer("/workspace/feature-a");
       await serverManager.startServer("/workspace/feature-b");
 
       await serverManager.dispose();
 
-      expect(serverManager.isRunning("/workspace/feature-a")).toBe(false);
-      expect(serverManager.isRunning("/workspace/feature-b")).toBe(false);
+      expect(stoppedCallback).toHaveBeenCalledWith("/workspace/feature-a", false);
+      expect(stoppedCallback).toHaveBeenCalledWith("/workspace/feature-b", false);
     });
 
     it("is safe to call multiple times", async () => {
@@ -987,9 +924,6 @@ describe("ClaudeCodeServerManager integration", () => {
         statusChanges.push(status);
       });
 
-      const readyCallback = vi.fn();
-      serverManager.onWorkspaceReady(readyCallback);
-
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
 
@@ -1002,8 +936,6 @@ describe("ClaudeCodeServerManager integration", () => {
       serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
-      expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
       expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
     });
 
@@ -1025,7 +957,6 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // Should stay busy throughout — no idle blip
       expect(statusChanges).toEqual(["busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("WrapperStart with plan initial prompt sets status to idle", async () => {
@@ -1045,7 +976,6 @@ describe("ClaudeCodeServerManager integration", () => {
       serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("WrapperStart without initial prompt sets status to idle", async () => {
@@ -1061,7 +991,6 @@ describe("ClaudeCodeServerManager integration", () => {
       serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("flag consumed on SessionStart, subsequent session goes idle", async () => {
@@ -1086,7 +1015,6 @@ describe("ClaudeCodeServerManager integration", () => {
       serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["busy", "idle", "none", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("setInitialPrompt handles mkdtemp failure gracefully", async () => {
@@ -1168,7 +1096,6 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // Should stay busy — StopFailure suppressed
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("StopFailure without sub-agents transitions to idle", async () => {
@@ -1204,7 +1131,6 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // Should stay busy — Stop suppressed
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("last SubagentStop stays busy, subsequent Stop goes idle", async () => {
@@ -1232,21 +1158,20 @@ describe("ClaudeCodeServerManager integration", () => {
         workspacePath: "/workspace/feature-a",
         agent_id: "sub-1",
       });
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
 
       // Last sub-agent stops — stays busy (main agent will resume to process result)
       await sendHook(port, "SubagentStop", {
         workspacePath: "/workspace/feature-a",
         agent_id: "sub-2",
       });
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
 
       // Main agent resumes, processes result, then stops → real idle
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
 
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
     });
 
     it("SubagentStop without prior SubagentStart is a safe no-op", async () => {
@@ -1266,7 +1191,6 @@ describe("ClaudeCodeServerManager integration", () => {
       });
 
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("busy");
     });
 
     it("SubagentStart without agent_id is ignored", async () => {
@@ -1388,7 +1312,7 @@ describe("ClaudeCodeServerManager integration", () => {
         notification_type: "idle_prompt",
       });
 
-      expect(serverManager.getStatus("/workspace/feature-a")).toBe("idle");
+      expect(lastStatus(statusChanges)).toBe("idle");
 
       // Turn 2: normal turn, no sub-agents — Stop must go idle
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
@@ -1462,7 +1386,6 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
 
       expect(statusChanges).toEqual(["idle", "busy"]);
-      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
     });
 
     it("true: Stop with no background tasks goes idle", async () => {
@@ -1485,7 +1408,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
     it("true: idle_prompt Notification after suppressed Stop stays busy", async () => {
       serverManager = createManager(true);
-      const { port } = await startBusyWorkspace(serverManager);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
       // ~60s after Stop, Claude Code sends an idle_prompt notification
@@ -1494,7 +1417,7 @@ describe("ClaudeCodeServerManager integration", () => {
         notification_type: "idle_prompt",
       });
 
-      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
     });
 
     it("true: full cycle — resume after shell exit, final Stop goes idle", async () => {
@@ -1512,11 +1435,11 @@ describe("ClaudeCodeServerManager integration", () => {
 
     it("patterns: matching command keeps busy", async () => {
       serverManager = createManager(["ship-wait"]);
-      const { port } = await startBusyWorkspace(serverManager);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
 
-      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
     });
 
     it("patterns: non-matching command (dev server) goes idle", async () => {
@@ -1534,7 +1457,7 @@ describe("ClaudeCodeServerManager integration", () => {
 
     it("patterns: one matching among non-matching tasks keeps busy", async () => {
       serverManager = createManager(["ship-wait"]);
-      const { port } = await startBusyWorkspace(serverManager);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(
         port,
@@ -1545,7 +1468,7 @@ describe("ClaudeCodeServerManager integration", () => {
         ])
       );
 
-      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
     });
 
     it("non-shell task types do not keep busy", async () => {
@@ -1563,10 +1486,10 @@ describe("ClaudeCodeServerManager integration", () => {
 
     it("real user prompt clears the stash — idle_prompt then goes idle", async () => {
       serverManager = createManager(true);
-      const { port } = await startBusyWorkspace(serverManager);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "Stop", stopWithTasks([shellTask("pnpm dev")]));
-      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
 
       // User re-engages; agent goes busy, then the turn ends at its idle prompt
       await sendHook(port, "UserPromptSubmit", { workspacePath: WORKSPACE });
@@ -1575,16 +1498,16 @@ describe("ClaudeCodeServerManager integration", () => {
         notification_type: "idle_prompt",
       });
 
-      expect(serverManager.getStatus(WORKSPACE)).toBe("idle");
+      expect(lastStatus(statusChanges)).toBe("idle");
     });
 
     it("StopFailure is suppressed like Stop", async () => {
       serverManager = createManager(true);
-      const { port } = await startBusyWorkspace(serverManager);
+      const { port, statusChanges } = await startBusyWorkspace(serverManager);
 
       await sendHook(port, "StopFailure", stopWithTasks([shellTask("npx tsx ship-wait.ts 512")]));
 
-      expect(serverManager.getStatus(WORKSPACE)).toBe("busy");
+      expect(lastStatus(statusChanges)).toBe("busy");
     });
 
     it("flag disabled: Stop goes idle even with a running background shell", async () => {

@@ -45,8 +45,7 @@ export interface SerializedError {
     | "binary-download"
     | "archive"
     | "setup"
-    | "agent-binary"
-    | "extension";
+    | "agent-binary";
   readonly message: string;
   readonly code?: string;
   readonly path?: string;
@@ -211,18 +210,4 @@ export class SetupError extends ServiceError {
  */
 export class AgentBinaryError extends ServiceError {
   readonly type = "agent-binary" as const;
-}
-
-/**
- * Error from extension operations.
- */
-export class ExtensionError extends ServiceError {
-  readonly type = "extension" as const;
-}
-
-/**
- * Type guard to check if an error is a ServiceError.
- */
-export function isServiceError(error: unknown): error is ServiceError {
-  return error instanceof ServiceError;
 }

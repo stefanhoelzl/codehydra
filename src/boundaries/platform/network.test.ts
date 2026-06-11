@@ -60,36 +60,6 @@ describe("DefaultNetworkLayer", () => {
       vi.restoreAllMocks();
     });
 
-    it("fetch uses default timeout when not specified", async () => {
-      // Test that custom default timeout is applied
-      const customLayer = new DefaultNetworkLayer(SILENT_LOGGER, { defaultTimeout: 50 });
-      let abortTriggered = false;
-
-      vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
-        init?.signal?.addEventListener("abort", () => {
-          abortTriggered = true;
-        });
-
-        return new Promise<Response>((_, reject) => {
-          setTimeout(() => {
-            if (init?.signal?.aborted) {
-              reject(new DOMException("Aborted", "AbortError"));
-            }
-          }, 200);
-          init?.signal?.addEventListener("abort", () => {
-            reject(new DOMException("Aborted", "AbortError"));
-          });
-        });
-      });
-
-      // Should timeout using the custom default of 50ms
-      await expect(customLayer.fetch("http://127.0.0.1:8080/slow")).rejects.toThrow();
-
-      expect(abortTriggered).toBe(true);
-
-      vi.restoreAllMocks();
-    });
-
     it("fetch aborts when external signal is aborted", async () => {
       const controller = new AbortController();
 

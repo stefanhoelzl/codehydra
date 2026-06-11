@@ -304,7 +304,7 @@ export function createAgentModule(
 
             const result = await provider.startWorkspace(workspacePath, {
               ...(initialPrompt !== undefined && { initialPrompt }),
-              ...(isNewWorkspace !== undefined && { isNewWorkspace }),
+              isNewWorkspace,
             });
 
             capAgentType = provider.type;

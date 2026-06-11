@@ -70,16 +70,6 @@ import type { DomainEvent } from "../intents/lib/types";
 import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
 
 // =============================================================================
-// Hook Result Types
-// =============================================================================
-
-/** Result from the open-project "setup" hook point. */
-export interface WorkspaceSetupHookResult {
-  readonly workspaces: readonly Workspace[];
-  readonly defaultBaseBranch?: string;
-}
-
-// =============================================================================
 // Module Factory
 // =============================================================================
 
@@ -97,7 +87,6 @@ export function createGitWorktreeWorkspaceModule(
   logger: Logger
 ): IntentModule {
   // Internal state
-  const registeredProjects = new Set<string>();
   const workspaces = new Map<string, Workspace[]>();
   const deletionPending = new Map<string, { projectPath: string; workspace: Workspace }>();
 
@@ -214,7 +203,6 @@ export function createGitWorktreeWorkspaceModule(
 
             gitWorktreeProvider.registerProject(projectPathObj, workspacesDir);
             const key = projectPathObj.toString();
-            registeredProjects.add(key);
 
             const discovered = await gitWorktreeProvider.discover(projectPathObj);
             workspaces.set(key, [...discovered]);
@@ -248,7 +236,6 @@ export function createGitWorktreeWorkspaceModule(
 
             gitWorktreeProvider.unregisterProject(projectPathObj);
             const key = projectPathObj.toString();
-            registeredProjects.delete(key);
             workspaces.delete(key);
 
             // Clear deletion-pending entries for this project

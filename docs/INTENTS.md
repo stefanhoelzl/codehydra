@@ -4,21 +4,21 @@ Concrete reference for the intent-based architecture. For conceptual overview an
 
 ## Quick Navigation
 
-| Section                                                                     | Description                                                  |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| [Infrastructure Types](#infrastructure-types)                               | Core TypeScript interfaces (Intent, Operation, Module, etc.) |
-| [Capability-Based Hook Ordering](#capability-based-hook-ordering)           | requires/provides mechanism for hook execution order         |
-| [Idempotency](#idempotency)                                                 | Duplicate dispatch prevention patterns                       |
-| [IPC-to-Intent Mapping](#ipc-to-intent-mapping)                             | How IPC channels map to intents                              |
-| [Operations Reference](#operations-reference)                               | All operations with hook points and module contributions     |
-| [Domain Events](#domain-events)                                             | Event types, payloads, and flow                              |
-| [Composition Root](#composition-root)                                       | Bootstrap pattern in src/main/index.ts                       |
-| [External System Access Rules](#external-system-access-rules)               | Required abstraction interfaces                              |
-| [Platform Abstractions](#platform-abstractions)                             | FileSystemBoundary, NetworkLayer, ProcessRunner, Path, etc.  |
-| [Shell and Platform Layers](#shell-and-platform-layers)                     | Electron abstraction architecture                            |
-| [Service Patterns](#service-patterns)                                       | DI, WorkspaceLockHandler, PowerShell assets                  |
-| [Configuration and Binary Resolution](#configuration-and-binary-resolution) | Config and BinaryResolutionService                           |
-| [Mock Factories Reference](#mock-factories-reference)                       | All mock factories by interface                              |
+| Section                                                           | Description                                                  |
+| ----------------------------------------------------------------- | ------------------------------------------------------------ |
+| [Infrastructure Types](#infrastructure-types)                     | Core TypeScript interfaces (Intent, Operation, Module, etc.) |
+| [Capability-Based Hook Ordering](#capability-based-hook-ordering) | requires/provides mechanism for hook execution order         |
+| [Idempotency](#idempotency)                                       | Duplicate dispatch prevention patterns                       |
+| [IPC-to-Intent Mapping](#ipc-to-intent-mapping)                   | How IPC channels map to intents                              |
+| [Operations Reference](#operations-reference)                     | All operations with hook points and module contributions     |
+| [Domain Events](#domain-events)                                   | Event types, payloads, and flow                              |
+| [Composition Root](#composition-root)                             | Bootstrap pattern in src/main/index.ts                       |
+| [External System Access Rules](#external-system-access-rules)     | Required abstraction interfaces                              |
+| [Platform Abstractions](#platform-abstractions)                   | FileSystemBoundary, NetworkLayer, ProcessRunner, Path, etc.  |
+| [Shell and Platform Layers](#shell-and-platform-layers)           | Electron abstraction architecture                            |
+| [Service Patterns](#service-patterns)                             | DI, WorkspaceLockHandler, PowerShell assets                  |
+| [Configuration](#configuration)                                   | Config service for user preferences and versions             |
+| [Mock Factories Reference](#mock-factories-reference)             | All mock factories by interface                              |
 
 **Related Documentation:**
 
@@ -193,8 +193,6 @@ export interface IntentModule {
   readonly events?: EventDeclarations;
   /** Interceptors to add to the dispatcher pipeline */
   readonly interceptors?: readonly IntentInterceptor[];
-  /** Optional cleanup when the module is disposed. */
-  dispose?(): void;
 }
 ```
 
@@ -232,7 +230,6 @@ export class IntentHandle<T> implements PromiseLike<T> {
  */
 export interface IntentInterceptor {
   readonly id: string;
-  readonly order?: number;
   before(intent: Intent): Promise<Intent | null>;
 }
 
@@ -250,7 +247,7 @@ export interface IDispatcher {
 }
 ```
 
-`IntentHandle<T>` is a deferred-based thenable that supports two-phase awaiting: `await handle` waits for the full result, while `await handle.accepted` resolves immediately after interceptors pass/reject the intent. `IntentInterceptor` is a pre-operation policy that can modify or cancel intents -- returning `null` from `before()` cancels the intent. Interceptors are sorted by `order` (lower runs first). `IDispatcher` is the main entry point for the intent system, supporting dispatch, event subscription, interceptor registration, and module registration.
+`IntentHandle<T>` is a deferred-based thenable that supports two-phase awaiting: `await handle` waits for the full result, while `await handle.accepted` resolves immediately after interceptors pass/reject the intent. `IntentInterceptor` is a pre-operation policy that can modify or cancel intents -- returning `null` from `before()` cancels the intent. Interceptors run in registration order. `IDispatcher` is the main entry point for the intent system, supporting dispatch, event subscription, interceptor registration, and module registration.
 
 ---
 
@@ -1055,10 +1052,6 @@ await mock.loadURL(handle, "http://127.0.0.1:8080");
 // State access via $ property
 const snapshot = mock.$.snapshot();
 
-// Trigger simulated events
-mock.$.triggerDidFinishLoad(handle);
-mock.$.triggerWillNavigate(handle, "http://example.com");
-
 // Custom matchers for assertions
 expect(mock).toHaveView(handle.id);
 expect(mock).toHaveView(handle.id, {
@@ -1312,7 +1305,7 @@ Scripts should return structured JSON for parsing:
 
 ---
 
-## Configuration and Binary Resolution
+## Configuration
 
 ### Config
 
@@ -1351,50 +1344,6 @@ const config = await service.load();
 expect(config.agent).toBe("claude");
 ```
 
-### BinaryResolutionService
-
-`BinaryResolutionService` determines binary availability using a priority-based resolution:
-
-```typescript
-// Resolution priority for agents (versions.{agent} = null):
-// 1. System binary (via which/where)
-// 2. Downloaded binary (any version in bundles dir)
-// 3. Mark for download
-
-const result = await resolutionService.resolve("claude");
-// Returns: { available: true, path: "/usr/local/bin/claude", source: "system" }
-//     or: { available: true, path: "/bundles/claude/1.0.58/claude", source: "downloaded", version: "1.0.58" }
-//     or: { available: false, needsDownload: true }
-```
-
-**Resolution logic by version config:**
-
-| `versions.{binary}` | Resolution Order                               |
-| ------------------- | ---------------------------------------------- |
-| `null`              | System binary -> Latest downloaded -> Download |
-| `"1.0.58"` (pinned) | Exact version in bundles -> Download           |
-
-**System binary detection:**
-
-```typescript
-// Uses ProcessRunner to invoke which/where
-const proc = runner.run(platform === "win32" ? "where" : "which", [binaryName]);
-const result = await proc.wait();
-if (result.exitCode === 0) {
-  return result.stdout.trim().split("\n")[0]; // First line for Windows
-}
-return null;
-```
-
-**Version directory scanning:**
-
-```typescript
-// Find latest downloaded version using locale-aware comparison
-const versions = await fs.readdir(bundlesBaseDir);
-versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-return versions[0]; // Highest version
-```
-
 ---
 
 ## Mock Factories Reference
@@ -1415,17 +1364,16 @@ All paths below are relative to `src/services/`.
 
 ### Shell Layer Mocks
 
-| Interface                | Mock Factory                         | Location                        |
-| ------------------------ | ------------------------------------ | ------------------------------- |
-| `IpcBoundary`            | `createBehavioralIpcBoundary()`      | `platform/ipc.test-utils.ts`    |
-| `DialogBoundary`         | `createBehavioralDialogBoundary()`   | `platform/dialog.test-utils.ts` |
-| `ImageBoundary`          | `createImageBoundaryMock()`          | `platform/image.state-mock.ts`  |
-| `AppBoundary`            | `createAppBoundaryMock()`            | `platform/app.state-mock.ts`    |
-| `MenuBoundary`           | `createBehavioralMenuBoundary()`     | `platform/menu.test-utils.ts`   |
-| `WindowBoundary`         | `createWindowBoundaryMock()`         | `shell/window.state-mock.ts`    |
-| `WindowBoundaryInternal` | `createWindowBoundaryInternalMock()` | `shell/window.state-mock.ts`    |
-| `ViewBoundary`           | `createViewBoundaryMock()`           | `shell/view.state-mock.ts`      |
-| `SessionBoundary`        | `createSessionBoundaryMock()`        | `shell/session.state-mock.ts`   |
+| Interface         | Mock Factory                       | Location                        |
+| ----------------- | ---------------------------------- | ------------------------------- |
+| `IpcBoundary`     | `createBehavioralIpcBoundary()`    | `platform/ipc.test-utils.ts`    |
+| `DialogBoundary`  | `createBehavioralDialogBoundary()` | `platform/dialog.test-utils.ts` |
+| `ImageBoundary`   | `createImageBoundaryMock()`        | `platform/image.state-mock.ts`  |
+| `AppBoundary`     | `createAppBoundaryMock()`          | `platform/app.state-mock.ts`    |
+| `MenuBoundary`    | `createBehavioralMenuBoundary()`   | `platform/menu.test-utils.ts`   |
+| `WindowBoundary`  | `createWindowBoundaryMock()`       | `shell/window.state-mock.ts`    |
+| `ViewBoundary`    | `createViewBoundaryMock()`         | `shell/view.state-mock.ts`      |
+| `SessionBoundary` | `createSessionBoundaryMock()`      | `shell/session.state-mock.ts`   |
 
 ### Domain Mocks
 

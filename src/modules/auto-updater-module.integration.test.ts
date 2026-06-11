@@ -28,10 +28,9 @@ import {
   createMockConfig as createBaseMockConfig,
   type CreateMockConfigOptions,
 } from "../boundaries/platform/config.test-utils";
-import { createMockState } from "../boundaries/platform/state.test-utils";
+import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
 import { createStateMigrationRegistry } from "./state-module";
 import type { Config } from "../boundaries/platform/config";
-import type { StateService } from "../boundaries/platform/state-service";
 import {
   createMockNotificationManager,
   type MockNotificationManager,
@@ -54,7 +53,6 @@ function createMockConfig(options?: CreateMockConfigOptions): Config {
 
 interface MockAutoUpdater {
   mock: AutoUpdater;
-  startCalled: boolean;
   disposeCalled: boolean;
   checkForUpdatesCallCount: number;
   downloadCalled: boolean;
@@ -70,7 +68,6 @@ function createMockAutoUpdater(overrides?: {
   disposeThrows?: Error;
   checkReturns?: boolean;
 }): MockAutoUpdater {
-  let startCalled = false;
   let disposeCalled = false;
   let checkForUpdatesCallCount = 0;
   let downloadCalled = false;
@@ -83,9 +80,6 @@ function createMockAutoUpdater(overrides?: {
   let detectedVersion = "2.0.0";
 
   const mock: AutoUpdater = {
-    start() {
-      startCalled = true;
-    },
     async checkForUpdates() {
       checkForUpdatesCallCount++;
       if (checkResult && capturedDetectedCb) {
@@ -100,7 +94,6 @@ function createMockAutoUpdater(overrides?: {
         rejectDownload = reject;
       });
     },
-    cancelDownload() {},
     quitAndInstall() {
       quitAndInstallCalled = true;
     },
@@ -109,9 +102,6 @@ function createMockAutoUpdater(overrides?: {
       return () => {
         capturedDetectedCb = null;
       };
-    },
-    onUpdateDownloaded() {
-      return () => {};
     },
     onDownloadProgress(callback: DownloadProgressCallback) {
       capturedProgressCb = callback;
@@ -129,9 +119,6 @@ function createMockAutoUpdater(overrides?: {
 
   return {
     mock,
-    get startCalled() {
-      return startCalled;
-    },
     get disposeCalled() {
       return disposeCalled;
     },
@@ -168,7 +155,7 @@ interface TestSetup {
   autoUpdater: MockAutoUpdater;
   notificationManager: MockNotificationManager;
   mockConfig: Config;
-  mockState: StateService;
+  mockState: MockStateService;
 }
 
 function createTestSetup(overrides?: {
@@ -176,7 +163,7 @@ function createTestSetup(overrides?: {
   checkReturns?: boolean;
   configValues?: Record<string, unknown>;
   config?: Config;
-  state?: StateService;
+  state?: MockStateService;
 }): TestSetup {
   const autoUpdater = createMockAutoUpdater(overrides);
   const notificationManager = createMockNotificationManager();
@@ -234,13 +221,12 @@ async function flush(): Promise<void> {
 // =============================================================================
 
 describe("AutoUpdaterModule Integration", () => {
-  it("app:start calls autoUpdater.start() and runs initial check", async () => {
+  it("app:start runs initial check", async () => {
     const { dispatcher, autoUpdater } = createTestSetup();
 
     await dispatcher.dispatch(startIntent());
     await flush();
 
-    expect(autoUpdater.startCalled).toBe(true);
     expect(autoUpdater.checkForUpdatesCallCount).toBe(1);
   });
 

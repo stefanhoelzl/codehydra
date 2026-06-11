@@ -735,13 +735,6 @@ export interface SocketData {
  */
 export const COMMAND_TIMEOUT_MS = 10_000;
 
-/**
- * Timeout for shutdown disconnect confirmation (milliseconds).
- * If socket doesn't disconnect within this time, proceed with deletion anyway.
- * This is a best-effort timeout - extension host may be unresponsive.
- */
-export const SHUTDOWN_DISCONNECT_TIMEOUT_MS = 5_000;
-
 // ============================================================================
 // Log Types
 // ============================================================================

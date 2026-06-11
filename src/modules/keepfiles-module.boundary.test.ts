@@ -46,7 +46,6 @@ describe("KeepFilesService", () => {
 
       const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
-      expect(result.configExists).toBe(true);
       expect(result.copiedCount).toBe(2);
 
       // Verify files copied
@@ -117,7 +116,6 @@ describe("KeepFilesService", () => {
       const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
       expect(result.copiedCount).toBe(2); // api-key.txt and password.txt
-      expect(result.skippedCount).toBe(1); // README.md
 
       expect(await fs.readFile(join(targetPath, "secrets", "api-key.txt"))).toBe("secret-key");
       expect(await fs.readFile(join(targetPath, "secrets", "password.txt"))).toBe("secret-pass");
@@ -159,7 +157,6 @@ describe("KeepFilesService", () => {
 
       const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
-      expect(result.configExists).toBe(true);
       expect(result.copiedCount).toBe(0);
     });
 
@@ -172,14 +169,12 @@ describe("KeepFilesService", () => {
 
       const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
-      expect(result.configExists).toBe(true);
       expect(result.copiedCount).toBe(0);
     });
 
     it("handles no .keepfiles", async () => {
       const result = await service.copyToWorkspace(new Path(projectRoot), new Path(targetPath));
 
-      expect(result.configExists).toBe(false);
       expect(result.copiedCount).toBe(0);
     });
 

@@ -28,10 +28,6 @@ export interface NotificationHandle {
   close(): void;
   /** Subscribe to user events. Returns unsubscribe function. */
   onEvent(handler: (event: NotificationUserEvent) => void): () => void;
-  /** Await next user event (for sequential flows). Rejects on timeout if specified. */
-  nextEvent(timeoutMs?: number): Promise<NotificationUserEvent>;
-  /** Promise that resolves when the notification closes. */
-  readonly closed: Promise<void>;
 }
 
 /**
@@ -124,21 +120,16 @@ export class NotificationManager {
  */
 class NotificationHandleImpl implements NotificationHandle {
   readonly id: string;
-  readonly closed: Promise<void>;
 
   private readonly send: (command: NotificationCommand) => void;
   private readonly onRemove: () => void;
   private readonly listeners = new Set<(event: NotificationUserEvent) => void>();
-  private resolveClosed!: () => void;
   private isClosed = false;
 
   constructor(id: string, send: (command: NotificationCommand) => void, onRemove: () => void) {
     this.id = id;
     this.send = send;
     this.onRemove = onRemove;
-    this.closed = new Promise<void>((resolve) => {
-      this.resolveClosed = resolve;
-    });
   }
 
   update(config: NotificationConfig): void {
@@ -150,7 +141,6 @@ class NotificationHandleImpl implements NotificationHandle {
     if (this.isClosed) return;
     this.isClosed = true;
     this.send({ action: "close", notificationId: this.id });
-    this.resolveClosed();
     this.listeners.clear();
     this.onRemove();
   }
@@ -160,25 +150,6 @@ class NotificationHandleImpl implements NotificationHandle {
     return () => {
       this.listeners.delete(handler);
     };
-  }
-
-  nextEvent(timeoutMs?: number): Promise<NotificationUserEvent> {
-    const eventPromise = new Promise<NotificationUserEvent>((resolve) => {
-      const unsub = this.onEvent((event) => {
-        unsub();
-        resolve(event);
-      });
-    });
-    if (timeoutMs === undefined) return eventPromise;
-    return Promise.race([
-      eventPromise,
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error(`Notification ${this.id}: no response within ${timeoutMs}ms`)),
-          timeoutMs
-        )
-      ),
-    ]);
   }
 
   /** Called by NotificationManager when a user event arrives for this notification. */

@@ -9,7 +9,6 @@ import {
   validateOpenSystemPathRequest,
   validateLogRequest,
   COMMAND_TIMEOUT_MS,
-  SHUTDOWN_DISCONNECT_TIMEOUT_MS,
   type ServerToClientEvents,
 } from "./plugin-protocol";
 
@@ -349,12 +348,6 @@ describe("validateOpenSystemPathRequest", () => {
 describe("COMMAND_TIMEOUT_MS constant", () => {
   it("exports default timeout of 10 seconds", () => {
     expect(COMMAND_TIMEOUT_MS).toBe(10_000);
-  });
-});
-
-describe("SHUTDOWN_DISCONNECT_TIMEOUT_MS constant", () => {
-  it("exports default timeout of 5 seconds", () => {
-    expect(SHUTDOWN_DISCONNECT_TIMEOUT_MS).toBe(5_000);
   });
 });
 

@@ -55,13 +55,10 @@ export interface StateService {
   /** Load state.json (async). Call once after all register() calls. */
   load(): Promise<void>;
 
-  /** Get all effective state values (for debugging/diagnostics; not redacted). */
-  getEffective(): Readonly<Record<string, unknown>>;
-
   /**
    * Get the subset of effective values that differ from their defaults, with
-   * each key's `redact` policy applied. Use this (not getEffective) for any sink
-   * that leaves the machine, e.g. bug reports.
+   * each key's `redact` policy applied. Use this for any sink that leaves the
+   * machine, e.g. bug reports.
    */
   getRedactedOverrides(): Record<string, unknown>;
 }
@@ -112,7 +109,7 @@ export class DefaultStateService implements StateService {
   async load(): Promise<void> {
     this.store.beginLoad("StateService.load() has already been called");
 
-    // Seed defaults first so getEffective() is populated even if the file is
+    // Seed defaults first so accessors are populated even if the file is
     // missing or unreadable below.
     this.store.seedDefaults(STATIC_DEFAULT_CONTEXT);
 
@@ -152,10 +149,6 @@ export class DefaultStateService implements StateService {
       logger.debug("Ignoring unexpected state.json entry", { issue: JSON.stringify(issue) });
     }
     this.store.applyValues(values);
-  }
-
-  getEffective(): Readonly<Record<string, unknown>> {
-    return this.store.getEffective();
   }
 
   getRedactedOverrides(): Record<string, unknown> {

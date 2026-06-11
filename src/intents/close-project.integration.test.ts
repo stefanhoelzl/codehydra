@@ -178,7 +178,6 @@ function createTestHarness(options?: {
     focus: vi.fn(),
     setMode: vi.fn(),
     getMode: vi.fn().mockReturnValue("workspace"),
-    onModeChange: vi.fn().mockReturnValue(() => {}),
     onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
     updateCodeServerPort: vi.fn(),
     preloadWorkspaceUrl: vi.fn(),

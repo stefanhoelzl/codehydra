@@ -32,26 +32,17 @@ import { getErrorMessage } from "../shared/errors/service-errors";
 // =============================================================================
 
 /**
- * Interface for the KeepFiles service.
- */
-interface IKeepFilesService {
-  copyToWorkspace(projectRoot: Path, targetPath: Path): Promise<CopyResult>;
-}
-
-/**
  * Result of a copyToWorkspace operation.
  */
-export interface CopyResult {
-  readonly configExists: boolean;
+interface CopyResult {
   readonly copiedCount: number;
-  readonly skippedCount: number;
   readonly errors: readonly CopyError[];
 }
 
 /**
  * Error encountered during a copy operation.
  */
-export interface CopyError {
+interface CopyError {
   readonly path: string;
   readonly message: string;
 }
@@ -70,7 +61,7 @@ const UTF8_BOM = "\ufeff";
  * The `ignore` package is a pure pattern-matching library with no I/O,
  * so direct usage is acceptable (documented exception to interface rule).
  */
-export class KeepFilesService implements IKeepFilesService {
+export class KeepFilesService {
   constructor(
     private readonly fileSystem: FileSystemBoundary,
     private readonly logger: Logger
@@ -92,9 +83,7 @@ export class KeepFilesService implements IKeepFilesService {
       if (error instanceof Error && "fsCode" in error && error.fsCode === "ENOENT") {
         this.logger.debug("No .keepfiles found", { path: projectRootStr });
         return {
-          configExists: false,
           copiedCount: 0,
-          skippedCount: 0,
           errors: [],
         };
       }
@@ -113,9 +102,7 @@ export class KeepFilesService implements IKeepFilesService {
     // If no patterns, nothing to copy
     if (patterns.length === 0) {
       return {
-        configExists: true,
         copiedCount: 0,
-        skippedCount: 0,
         errors: [],
       };
     }
@@ -124,15 +111,10 @@ export class KeepFilesService implements IKeepFilesService {
     // INVERTED SEMANTICS: ig.ignores(path) === true means COPY the file
     const ig = ignore().add(patterns);
 
-    // Create a second ignore instance with only positive patterns
-    // Used to detect files that were excluded by negation
-    const positivePatterns = patterns.filter((p) => !p.startsWith("!"));
-    const igPositive = ignore().add(positivePatterns);
-
     this.logger.debug("CopyKeepFiles", { src: projectRootStr, dest: targetPathStr });
 
     // Scan and copy matching files
-    const result = await this.scanAndCopy(projectRootStr, targetPathStr, ig, igPositive);
+    const result = await this.scanAndCopy(projectRootStr, targetPathStr, ig);
 
     // Log completion or errors
     if (result.errors.length > 0) {
@@ -140,7 +122,6 @@ export class KeepFilesService implements IKeepFilesService {
     } else {
       this.logger.debug("CopyKeepFiles complete", {
         copied: result.copiedCount,
-        skipped: result.skippedCount,
       });
     }
 
@@ -178,16 +159,13 @@ export class KeepFilesService implements IKeepFilesService {
    * Uses queue-based iteration (not recursion).
    *
    * @param ig - Ignore instance with all patterns (including negation)
-   * @param igPositive - Ignore instance with only positive patterns (for skip counting)
    */
   private async scanAndCopy(
     projectRoot: string,
     targetPath: string,
-    ig: Ignore,
-    igPositive: Ignore
+    ig: Ignore
   ): Promise<CopyResult> {
     let copiedCount = 0;
-    let skippedCount = 0;
     const errors: CopyError[] = [];
 
     // Normalize target path for traversal validation
@@ -226,12 +204,6 @@ export class KeepFilesService implements IKeepFilesService {
 
         // Skip symlinks for security
         if (entry.isSymbolicLink) {
-          // Only count if it would have matched
-          // For symlinks, check both with and without trailing slash
-          const pathToCheck = entry.isDirectory ? entryRelativePath + "/" : entryRelativePath;
-          if (ig.ignores(pathToCheck)) {
-            skippedCount++;
-          }
           continue;
         }
 
@@ -254,21 +226,13 @@ export class KeepFilesService implements IKeepFilesService {
             } else {
               errors.push({ path: entryRelativePath, message: result.error! });
             }
-          } else {
-            // File was excluded - check if it was due to negation pattern
-            // (Would have matched a positive pattern but was negated)
-            if (igPositive.ignores(pathToCheck)) {
-              skippedCount++;
-            }
           }
         }
       }
     }
 
     return {
-      configExists: true,
       copiedCount,
-      skippedCount,
       errors,
     };
   }

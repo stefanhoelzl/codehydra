@@ -298,7 +298,7 @@ describe("OpenCodeClient boundary tests", () => {
 
         expect(result.ok).toBe(true);
         if (result.ok) {
-          expect(client.isRootSession(result.value.id)).toBe(true);
+          expect(client["rootSessionIds"].has(result.value.id)).toBe(true);
         }
       });
     },
@@ -306,11 +306,11 @@ describe("OpenCodeClient boundary tests", () => {
   );
 
   it(
-    "non-existent sessions return false for isRootSession",
+    "non-existent sessions are not tracked as root sessions",
     async () => {
       await withOpencode({ binaryPath, mockLlmMode: "instant" }, async ({ client }) => {
         // Non-existent sessions should not be considered root
-        expect(client.isRootSession("nonexistent-session-id")).toBe(false);
+        expect(client["rootSessionIds"].has("nonexistent-session-id")).toBe(false);
       });
     },
     CI_TIMEOUT_MS
@@ -345,7 +345,7 @@ describe("OpenCodeClient boundary tests", () => {
         await delay(100);
 
         // Verify root session is still tracked
-        expect(client.isRootSession(sessionId)).toBe(true);
+        expect(client["rootSessionIds"].has(sessionId)).toBe(true);
 
         // Verify child session has parentID set
         const allSessions = await sdk.session.list();
@@ -361,7 +361,7 @@ describe("OpenCodeClient boundary tests", () => {
 
         // Child sessions should NOT be in root set
         for (const child of childSessions) {
-          expect(client.isRootSession(child.id)).toBe(false);
+          expect(client["rootSessionIds"].has(child.id)).toBe(false);
         }
 
         // listSessions returns all sessions (root and child)
@@ -397,7 +397,7 @@ describe("OpenCodeClient boundary tests", () => {
         await delay(200);
 
         // SSE session.created event should have tracked it
-        expect(client.isRootSession(sessionId)).toBe(true);
+        expect(client["rootSessionIds"].has(sessionId)).toBe(true);
 
         // Verify session exists
         const updatedResult = await client.listSessions();
@@ -433,7 +433,7 @@ describe("OpenCodeClient boundary tests", () => {
         await delay(200);
 
         // Verify root session is still tracked
-        expect(client.isRootSession(rootSessionId)).toBe(true);
+        expect(client["rootSessionIds"].has(rootSessionId)).toBe(true);
 
         // Check that child sessions exist but are NOT in root set
         const allSessions = await sdk.session.list();
@@ -448,7 +448,7 @@ describe("OpenCodeClient boundary tests", () => {
 
         for (const child of childSessions) {
           // Child sessions should NOT be tracked as root
-          expect(client.isRootSession(child.id)).toBe(false);
+          expect(client["rootSessionIds"].has(child.id)).toBe(false);
         }
       });
     },

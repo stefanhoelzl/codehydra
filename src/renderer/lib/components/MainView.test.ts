@@ -32,7 +32,6 @@ const mockApi = vi.hoisted(() => ({
   },
   // Flat API structure - workspaces namespace
   workspaces: {
-    create: vi.fn().mockResolvedValue({}),
     remove: vi.fn().mockResolvedValue({ started: true }),
     getStatus: vi
       .fn()
@@ -88,23 +87,17 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
 vi.mock("$lib/api", () => mockApi);
 
 // Mock AgentNotificationService for testing chime behavior
-const { mockSeedInitialCounts, mockHandleStatusChange, MockAgentNotificationService } = vi.hoisted(
-  () => {
-    const mockSeedInitialCounts = vi.fn();
-    const mockHandleStatusChange = vi.fn();
+const { mockHandleStatusChange, MockAgentNotificationService } = vi.hoisted(() => {
+  const mockHandleStatusChange = vi.fn();
 
-    class MockAgentNotificationService {
-      seedInitialCounts = mockSeedInitialCounts;
-      handleStatusChange = mockHandleStatusChange;
-      removeWorkspace = vi.fn();
-      setEnabled = vi.fn();
-      isEnabled = vi.fn().mockReturnValue(true);
-      reset = vi.fn();
-    }
-
-    return { mockSeedInitialCounts, mockHandleStatusChange, MockAgentNotificationService };
+  class MockAgentNotificationService {
+    handleStatusChange = mockHandleStatusChange;
+    removeWorkspace = vi.fn();
+    reset = vi.fn();
   }
-);
+
+  return { mockHandleStatusChange, MockAgentNotificationService };
+});
 
 vi.mock("$lib/services/agent-notifications", () => ({
   AgentNotificationService: MockAgentNotificationService,
@@ -152,7 +145,6 @@ describe("MainView component", () => {
     });
     // Agent statuses are fetched per-workspace via workspaces.getStatus (already mocked in mockApi)
     // Reset notification service mocks
-    mockSeedInitialCounts.mockReset();
     mockHandleStatusChange.mockReset();
   });
 

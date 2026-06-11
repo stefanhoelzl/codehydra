@@ -57,7 +57,6 @@
   import NotificationHost from "./NotificationHost.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
-  import OpenProjectErrorDialog from "./OpenProjectErrorDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
   import Logo from "./Logo.svelte";
@@ -72,15 +71,11 @@
   } from "$lib/stores/dialog-framework.svelte.js";
   import PanelView from "./PanelView.svelte";
   import type { ProjectId, WorkspaceRef } from "$lib/api";
-  import { getErrorMessage } from "@shared/error-utils";
 
   const logger = createLogger("ui");
 
   // Container ref for focus management
   let containerRef: HTMLElement;
-
-  // Error state for open project dialog
-  let openProjectError = $state<string | null>(null);
 
   // Sync dialog state to central ui-mode store
   // Includes both renderer-side dialogs (create/remove) and declarative framework dialogs
@@ -254,32 +249,6 @@
     };
   });
 
-  // Handle retry from open project error dialog
-  async function handleOpenProjectRetry(): Promise<void> {
-    // Prevent sidebar collapse while native dialog is open (Windows focus issue)
-    setDialogOpen(true);
-    try {
-      const project = await api.projects.open();
-      if (!project) {
-        // User cancelled folder picker - keep dialog open with original error
-        return;
-      }
-      // Clear error on success
-      openProjectError = null;
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn("Failed to open project", { error: message });
-      openProjectError = message;
-    } finally {
-      setDialogOpen(false);
-    }
-  }
-
-  // Handle close from open project error dialog
-  function handleOpenProjectErrorClose(): void {
-    openProjectError = null;
-  }
-
   // Handle closing a project
   function handleCloseProject(projectId: ProjectId): void {
     const project = projects.value.find((p) => p.id === projectId);
@@ -332,17 +301,10 @@
   />
 
   {#if dialogState.value.type === "remove"}
-    <RemoveWorkspaceDialog open={true} workspaceRef={dialogState.value.workspaceRef} />
+    <RemoveWorkspaceDialog workspaceRef={dialogState.value.workspaceRef} />
   {:else if dialogState.value.type === "close-project"}
-    <CloseProjectDialog open={true} projectId={dialogState.value.projectId} />
+    <CloseProjectDialog projectId={dialogState.value.projectId} />
   {/if}
-
-  <OpenProjectErrorDialog
-    open={openProjectError !== null}
-    errorMessage={openProjectError ?? ""}
-    onRetry={handleOpenProjectRetry}
-    onClose={handleOpenProjectErrorClose}
-  />
 
   <ShortcutOverlay
     active={shortcutModeActive.value}
@@ -366,7 +328,7 @@
   {#if activeWorkspacePath.value === null && !newWorkspaceView.isOpen}
     <div class="empty-backdrop" aria-hidden="true">
       <div class="backdrop-logo">
-        <Logo animated={false} />
+        <Logo />
       </div>
     </div>
   {:else if activeWorkspacePath.value !== null && activeHibernated && activeWorkspace.value}

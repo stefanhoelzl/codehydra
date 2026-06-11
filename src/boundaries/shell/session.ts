@@ -84,22 +84,19 @@ export interface SessionBoundary {
    * Set a handler for permission requests.
    *
    * @param handle - Handle to the session
-   * @param handler - Handler function, or null to use default behavior
+   * @param handler - Handler function
    * @throws ShellError with code SESSION_NOT_FOUND if handle is invalid
    */
-  setPermissionRequestHandler(
-    handle: SessionHandle,
-    handler: PermissionRequestHandler | null
-  ): void;
+  setPermissionRequestHandler(handle: SessionHandle, handler: PermissionRequestHandler): void;
 
   /**
    * Set a handler for permission checks.
    *
    * @param handle - Handle to the session
-   * @param handler - Handler function, or null to use default behavior
+   * @param handler - Handler function
    * @throws ShellError with code SESSION_NOT_FOUND if handle is invalid
    */
-  setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler | null): void;
+  setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler): void;
 
   /**
    * Set a handler for modifying response headers.
@@ -113,7 +110,7 @@ export interface SessionBoundary {
    */
   setHeadersReceivedHandler(
     handle: SessionHandle,
-    handler: ((headers: Record<string, string[]>) => Record<string, string[]>) | null
+    handler: (headers: Record<string, string[]>) => Record<string, string[]>
   ): void;
 
   /**
@@ -163,66 +160,41 @@ export class DefaultSessionBoundary implements SessionBoundary {
     return createSessionHandle(id);
   }
 
-  setPermissionRequestHandler(
-    handle: SessionHandle,
-    handler: PermissionRequestHandler | null
-  ): void {
+  setPermissionRequestHandler(handle: SessionHandle, handler: PermissionRequestHandler): void {
     const state = this.getSession(handle);
 
-    if (handler === null) {
-      state.session.setPermissionRequestHandler(null);
-    } else {
-      state.session.setPermissionRequestHandler((_webContents, permission, callback) => {
-        const result = handler(permission as Permission);
-        callback(result);
-      });
-    }
-
-    this.logger.debug("Permission request handler set", {
-      id: handle.id,
-      hasHandler: handler !== null,
+    state.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+      const result = handler(permission as Permission);
+      callback(result);
     });
+
+    this.logger.debug("Permission request handler set", { id: handle.id });
   }
 
-  setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler | null): void {
+  setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler): void {
     const state = this.getSession(handle);
 
-    if (handler === null) {
-      state.session.setPermissionCheckHandler(null);
-    } else {
-      state.session.setPermissionCheckHandler((_webContents, permission) => {
-        return handler(permission as Permission);
-      });
-    }
-
-    this.logger.debug("Permission check handler set", {
-      id: handle.id,
-      hasHandler: handler !== null,
+    state.session.setPermissionCheckHandler((_webContents, permission) => {
+      return handler(permission as Permission);
     });
+
+    this.logger.debug("Permission check handler set", { id: handle.id });
   }
 
   setHeadersReceivedHandler(
     handle: SessionHandle,
-    handler: ((headers: Record<string, string[]>) => Record<string, string[]>) | null
+    handler: (headers: Record<string, string[]>) => Record<string, string[]>
   ): void {
     const state = this.getSession(handle);
 
-    if (handler === null) {
-      // Remove the handler by setting an empty one that passes through all headers
-      state.session.webRequest.onHeadersReceived(null);
-    } else {
-      state.session.webRequest.onHeadersReceived((details, callback) => {
-        // Convert Electron's header format to our interface format and back
-        const headers = details.responseHeaders ?? {};
-        const modifiedHeaders = handler(headers as Record<string, string[]>);
-        callback({ responseHeaders: modifiedHeaders });
-      });
-    }
-
-    this.logger.debug("Headers received handler set", {
-      id: handle.id,
-      hasHandler: handler !== null,
+    state.session.webRequest.onHeadersReceived((details, callback) => {
+      // Convert Electron's header format to our interface format and back
+      const headers = details.responseHeaders ?? {};
+      const modifiedHeaders = handler(headers as Record<string, string[]>);
+      callback({ responseHeaders: modifiedHeaders });
     });
+
+    this.logger.debug("Headers received handler set", { id: handle.id });
   }
 
   async dispose(): Promise<void> {

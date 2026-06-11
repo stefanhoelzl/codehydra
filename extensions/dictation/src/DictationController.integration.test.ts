@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Uri } from "vscode";
-import { MockProvider } from "./providers/mock";
+import { MockProvider } from "./providers/mock.state-mock";
 import type { DictationError } from "./providers/types";
 import type {
   AudioCapturePanel,

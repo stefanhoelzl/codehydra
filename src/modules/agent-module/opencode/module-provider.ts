@@ -256,7 +256,7 @@ export function createOpenCodeModuleProvider(
       }
 
       // First start: create OpenCode-specific provider directly
-      const provider = new OpenCodeProvider(workspacePath, logger, undefined);
+      const provider = new OpenCodeProvider(workspacePath, logger);
 
       try {
         await provider.connect(port);

@@ -261,16 +261,6 @@ export class Path {
   }
 
   /**
-   * Get relative path from a base.
-   * Returns POSIX-style relative path string.
-   * Note: Returns string, not Path, since relative paths cannot be Path instances.
-   */
-  relativeTo(base: Path | string): string {
-    const baseStr = base instanceof Path ? base._value : new Path(base)._value;
-    return nodePath.posix.relative(baseStr, this._value);
-  }
-
-  /**
    * Get the filename or final directory name.
    */
   get basename(): string {
@@ -283,19 +273,5 @@ export class Path {
   get dirname(): Path {
     const dir = nodePath.posix.dirname(this._value);
     return new Path(dir);
-  }
-
-  /**
-   * Get the file extension (including the dot).
-   */
-  get extension(): string {
-    return nodePath.posix.extname(this._value);
-  }
-
-  /**
-   * Get path segments as array.
-   */
-  get segments(): string[] {
-    return this._value.split("/").filter(Boolean);
   }
 }

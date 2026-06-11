@@ -58,21 +58,6 @@ export type WindowOpenHandler = (details: WindowOpenDetails) => WindowOpenAction
 export type Unsubscribe = () => void;
 
 /**
- * Details about a failed load event.
- */
-export interface FailLoadDetails {
-  readonly errorCode: number;
-  readonly errorDescription: string;
-  readonly isMainFrame: boolean;
-  /**
-   * The URL whose load failed. For subframe failures, the iframe's `src`.
-   * Used by shared-surface backends (iframe-view-manager) to map a
-   * subframe failure back to a workspace by URL.
-   */
-  readonly validatedURL: string;
-}
-
-/**
  * Details about a render-process-gone event.
  */
 export interface RenderProcessGoneDetails {
@@ -151,27 +136,6 @@ export interface ViewBoundary {
    */
   loadURL(handle: ViewHandle, url: string): Promise<void>;
 
-  /**
-   * Get the current URL of the view.
-   *
-   * @param handle - Handle to the view
-   * @returns The current URL
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  getURL(handle: ViewHandle): string;
-
-  /**
-   * Reload the view's current page in the renderer process.
-   *
-   * Used to force a fresh paint when a detached view becomes visible after
-   * a long idle period (e.g. across system suspend/resume), where the
-   * existing renderer can end up unfocusable and showing nothing.
-   *
-   * @param handle - Handle to the view
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  reload(handle: ViewHandle): void;
-
   // Layout
   /**
    * Set the bounds of the view.
@@ -181,15 +145,6 @@ export interface ViewBoundary {
    * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
    */
   setBounds(handle: ViewHandle, bounds: Rectangle): void;
-
-  /**
-   * Get the bounds of the view.
-   *
-   * @param handle - Handle to the view
-   * @returns The current bounds
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  getBounds(handle: ViewHandle): Rectangle;
 
   /**
    * Set the background color of the view.
@@ -215,66 +170,11 @@ export interface ViewBoundary {
    *
    * @param handle - Handle to the view
    * @param windowHandle - Handle to the window
-   * @param index - Optional z-order index (0 = bottom, omit = top)
    * @throws ShellError with code VIEW_NOT_FOUND if view handle is invalid
    */
-  attachToWindow(
-    handle: ViewHandle,
-    windowHandle: WindowHandle,
-    index?: number,
-    options?: { force?: boolean }
-  ): void;
-
-  /**
-   * Detach the view from its window's content view.
-   *
-   * @param handle - Handle to the view
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  detachFromWindow(handle: ViewHandle): void;
+  attachToWindow(handle: ViewHandle, windowHandle: WindowHandle): void;
 
   // Events
-  /**
-   * Subscribe to did-finish-load events.
-   *
-   * @param handle - Handle to the view
-   * @param callback - Called when page finishes loading
-   * @returns Unsubscribe function
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  onDidFinishLoad(handle: ViewHandle, callback: () => void): Unsubscribe;
-
-  /**
-   * Subscribe to did-fail-load events.
-   *
-   * @param handle - Handle to the view
-   * @param callback - Called with failure details when page fails to load
-   * @returns Unsubscribe function
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  onDidFailLoad(handle: ViewHandle, callback: (details: FailLoadDetails) => void): Unsubscribe;
-
-  /**
-   * Subscribe to dom-ready events.
-   *
-   * @param handle - Handle to the view
-   * @param callback - Called when DOM is ready
-   * @returns Unsubscribe function
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  onDomReady(handle: ViewHandle, callback: () => void): Unsubscribe;
-
-  /**
-   * Subscribe to will-navigate events.
-   *
-   * @param handle - Handle to the view
-   * @param callback - Called with the URL when navigation is about to occur.
-   *                   Return true to allow navigation, false to prevent it.
-   * @returns Unsubscribe function
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  onWillNavigate(handle: ViewHandle, callback: (url: string) => boolean): Unsubscribe;
-
   /**
    * Set a handler for window.open() requests.
    *
@@ -388,16 +288,6 @@ export interface ViewBoundary {
   onUnresponsive(handle: ViewHandle, callback: () => void): Unsubscribe;
 
   /**
-   * Subscribe to renderer responsive events (recovered from a hang).
-   *
-   * @param handle - Handle to the view
-   * @param callback - Called when the renderer becomes responsive again
-   * @returns Unsubscribe function
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  onResponsive(handle: ViewHandle, callback: () => void): Unsubscribe;
-
-  /**
    * Check if a view handle refers to a valid, non-destroyed view.
    *
    * @param handle - Handle to the view
@@ -465,7 +355,6 @@ import { WebContentsView } from "electron";
 interface ViewState {
   view: WebContentsView;
   attachedToWindow: WindowHandle | null;
-  options: ViewOptions;
   label: string;
 }
 
@@ -539,19 +428,13 @@ export class DefaultViewBoundary implements ViewBoundary {
       nodeIntegration: options.webPreferences?.nodeIntegration ?? false,
       contextIsolation: options.webPreferences?.contextIsolation ?? true,
       sandbox: options.webPreferences?.sandbox ?? true,
-      focusOnNavigation: options.webPreferences?.focusOnNavigation ?? true,
+      focusOnNavigation: true,
     };
     if (options.webPreferences?.partition !== undefined) {
       webPreferences.partition = options.webPreferences.partition;
     }
     if (options.webPreferences?.preload !== undefined) {
       webPreferences.preload = options.webPreferences.preload;
-    }
-    if (options.webPreferences?.webviewTag !== undefined) {
-      webPreferences.webviewTag = options.webPreferences.webviewTag;
-    }
-    if (options.webPreferences?.backgroundThrottling !== undefined) {
-      webPreferences.backgroundThrottling = options.webPreferences.backgroundThrottling;
     }
 
     const view = new WebContentsView({ webPreferences });
@@ -565,7 +448,6 @@ export class DefaultViewBoundary implements ViewBoundary {
     this.views.set(id, {
       view,
       attachedToWindow: null,
-      options,
       label,
     });
 
@@ -629,18 +511,6 @@ export class DefaultViewBoundary implements ViewBoundary {
     }
   }
 
-  getURL(handle: ViewHandle): string {
-    const state = this.getView(handle);
-    return state.view.webContents.getURL();
-  }
-
-  reload(handle: ViewHandle): void {
-    const state = this.getView(handle);
-    const wc = state.view.webContents;
-    if (!wc || wc.isDestroyed()) return;
-    wc.reload();
-  }
-
   async capturePNG(handle: ViewHandle, rect?: Rectangle): Promise<Buffer | null> {
     try {
       const state = this.getView(handle);
@@ -670,11 +540,6 @@ export class DefaultViewBoundary implements ViewBoundary {
     state.view.setBounds(bounds);
   }
 
-  getBounds(handle: ViewHandle): Rectangle {
-    const state = this.getView(handle);
-    return state.view.getBounds();
-  }
-
   setBackgroundColor(handle: ViewHandle, color: string): void {
     const state = this.getView(handle);
     state.view.setBackgroundColor(color);
@@ -685,75 +550,24 @@ export class DefaultViewBoundary implements ViewBoundary {
     state.view.webContents.focus();
   }
 
-  attachToWindow(
-    handle: ViewHandle,
-    windowHandle: WindowHandle,
-    index?: number,
-    options?: { force?: boolean }
-  ): void {
+  attachToWindow(handle: ViewHandle, windowHandle: WindowHandle): void {
     const state = this.getView(handle);
 
     // Get the content view from the window layer
     const contentView = this.windowLayer.getContentView(windowHandle);
-    const children = contentView.children;
-    const currentIndex = children.indexOf(state.view);
-    const isAttached = currentIndex !== -1;
+    contentView.addChildView(state.view);
 
-    this.logger.debug("attachToWindow called", {
-      viewId: handle.id,
-      windowId: windowHandle.id,
-      requestedIndex: index ?? "top",
-      currentIndex,
-      isAttached,
-      childCount: children.length,
-    });
-
-    // Check if already at the correct position (no-op to preserve focus)
-    if (isAttached && !options?.force) {
-      // For "top" position (no index), check if already at end
-      if (index === undefined && currentIndex === children.length - 1) {
-        this.logger.debug("View already at top, skipping attach", { viewId: handle.id });
-        return; // Already at top
-      }
-      // For explicit index, check if already there
-      if (index !== undefined && currentIndex === index) {
-        this.logger.debug("View already at correct index, skipping attach", {
-          viewId: handle.id,
-          index,
-        });
-        return; // Already at correct index
-      }
-    }
-    if (isAttached) {
-      // Need to move (or force re-composite) - remove first
-      this.logger.debug("View needs to move, removing first", {
-        viewId: handle.id,
-        fromIndex: currentIndex,
-        toIndex: index ?? "top",
-      });
-      contentView.removeChildView(state.view);
-    }
-
-    // Add at specified index or append to top
-    if (index !== undefined) {
-      contentView.addChildView(state.view, index);
-    } else {
-      contentView.addChildView(state.view);
-    }
-
-    // Track attachment in both view state and window layer
+    // Track attachment in view state
     state.attachedToWindow = windowHandle;
-    this.windowLayer.trackAttachedView(windowHandle, handle);
 
     this.logger.debug("View attached to window", {
       viewId: handle.id,
       windowId: windowHandle.id,
-      index: index ?? "top",
       newChildCount: contentView.children.length,
     });
   }
 
-  detachFromWindow(handle: ViewHandle): void {
+  private detachFromWindow(handle: ViewHandle): void {
     const state = this.getView(handle);
 
     // If not attached, no-op
@@ -770,78 +584,12 @@ export class DefaultViewBoundary implements ViewBoundary {
       // Window may have been destroyed - ignore
     }
 
-    // Untrack from window layer
-    try {
-      this.windowLayer.untrackAttachedView(windowHandle, handle);
-    } catch {
-      // Window may not exist anymore - ignore
-    }
-
     state.attachedToWindow = null;
 
     this.logger.debug("View detached from window", {
       viewId: handle.id,
       windowId: windowHandle.id,
     });
-  }
-
-  onDidFinishLoad(handle: ViewHandle, callback: () => void): Unsubscribe {
-    const state = this.getView(handle);
-    state.view.webContents.on("did-finish-load", callback);
-    return () => {
-      const wc = state.view.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("did-finish-load", callback);
-      }
-    };
-  }
-
-  onDidFailLoad(handle: ViewHandle, callback: (details: FailLoadDetails) => void): Unsubscribe {
-    const state = this.getView(handle);
-    const handler = (
-      _event: Electron.Event,
-      errorCode: number,
-      errorDescription: string,
-      validatedURL: string,
-      isMainFrame: boolean
-    ) => {
-      callback({ errorCode, errorDescription, isMainFrame, validatedURL });
-    };
-    state.view.webContents.on("did-fail-load", handler);
-    return () => {
-      const wc = state.view.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("did-fail-load", handler);
-      }
-    };
-  }
-
-  onDomReady(handle: ViewHandle, callback: () => void): Unsubscribe {
-    const state = this.getView(handle);
-    state.view.webContents.on("dom-ready", callback);
-    return () => {
-      const wc = state.view.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("dom-ready", callback);
-      }
-    };
-  }
-
-  onWillNavigate(handle: ViewHandle, callback: (url: string) => boolean): Unsubscribe {
-    const state = this.getView(handle);
-    const handler = (event: Electron.Event, url: string) => {
-      const allow = callback(url);
-      if (!allow) {
-        event.preventDefault();
-      }
-    };
-    state.view.webContents.on("will-navigate", handler);
-    return () => {
-      const wc = state.view.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("will-navigate", handler);
-      }
-    };
   }
 
   setWindowOpenHandler(handle: ViewHandle, handler: WindowOpenHandler | null): void {
@@ -990,17 +738,6 @@ export class DefaultViewBoundary implements ViewBoundary {
       const wc = state.view.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.off("unresponsive", callback);
-      }
-    };
-  }
-
-  onResponsive(handle: ViewHandle, callback: () => void): Unsubscribe {
-    const state = this.getView(handle);
-    state.view.webContents.on("responsive", callback);
-    return () => {
-      const wc = state.view.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("responsive", callback);
       }
     };
   }

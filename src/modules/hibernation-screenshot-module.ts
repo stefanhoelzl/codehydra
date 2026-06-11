@@ -85,21 +85,21 @@ export function createHibernationScreenshotModule(
               // the shared host view, which showed the active workspace's
               // pixels regardless of which workspace was hibernating.)
               if (!active) {
-                return { captured: false };
+                return {};
               }
               const png = await viewManager.captureActiveWorkspaceView();
               if (!png) {
-                return { captured: false };
+                return {};
               }
               const filePath = buildScreenshotPath(pathProvider, projectId, workspaceName);
-              await fileSystem.mkdir(filePath.dirname, { recursive: true });
+              await fileSystem.mkdir(filePath.dirname);
               await fileSystem.writeFileBuffer(filePath, png);
-              return { captured: true };
+              return {};
             } catch (error) {
               logger.debug("hibernation-screenshot: capture failed (ignored)", {
                 error: getErrorMessage(error),
               });
-              return { captured: false };
+              return {};
             }
           },
         },

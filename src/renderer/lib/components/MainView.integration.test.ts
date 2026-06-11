@@ -26,7 +26,6 @@ const mockApi = vi.hoisted(() => ({
   },
   // Flat API structure - workspaces namespace
   workspaces: {
-    create: vi.fn().mockResolvedValue({}),
     remove: vi.fn().mockResolvedValue({ branchDeleted: true }),
     getStatus: vi
       .fn()
@@ -54,11 +53,8 @@ vi.mock("$lib/api", () => mockApi);
 // Mock AgentNotificationService
 const { MockAgentNotificationService } = vi.hoisted(() => {
   class MockAgentNotificationService {
-    seedInitialCounts = vi.fn();
     handleStatusChange = vi.fn();
     removeWorkspace = vi.fn();
-    setEnabled = vi.fn();
-    isEnabled = vi.fn().mockReturnValue(true);
     reset = vi.fn();
   }
   return { MockAgentNotificationService };

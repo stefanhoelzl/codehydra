@@ -63,6 +63,20 @@ function createMockApp(): ElectronLifecycleModuleDeps["app"] {
   };
 }
 
+function createDeps(overrides?: Partial<ElectronLifecycleModuleDeps>): ElectronLifecycleModuleDeps {
+  return {
+    app: createMockApp(),
+    logger: SILENT_LOGGER,
+    buildInfo: { isPackaged: true },
+    pathProvider: { dataPath: (subpath: string) => new Path(`/data/${subpath}`) },
+    asyncWatcher: { check: vi.fn() },
+    powerMonitor: { on: vi.fn() },
+    dispatcher: { dispatch: vi.fn().mockResolvedValue(undefined) },
+    configService: createMockConfig(),
+    ...overrides,
+  };
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -78,11 +92,11 @@ describe("ElectronLifecycleModule Integration", () => {
       createMinimalOperation(APP_START_OPERATION_ID, "init")
     );
 
-    const module = createElectronLifecycleModule({
-      app: mockApp,
-      logger: SILENT_LOGGER,
-      configService: createMockConfig(),
-    });
+    const module = createElectronLifecycleModule(
+      createDeps({
+        app: mockApp,
+      })
+    );
     dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
@@ -104,11 +118,11 @@ describe("ElectronLifecycleModule Integration", () => {
       createMinimalOperation(APP_START_OPERATION_ID, "init")
     );
 
-    const module = createElectronLifecycleModule({
-      app: mockApp,
-      logger: SILENT_LOGGER,
-      configService: createMockConfig(),
-    });
+    const module = createElectronLifecycleModule(
+      createDeps({
+        app: mockApp,
+      })
+    );
     dispatcher.registerModule(module);
 
     await expect(
@@ -126,11 +140,11 @@ describe("ElectronLifecycleModule Integration", () => {
 
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 
-    const module = createElectronLifecycleModule({
-      app: mockApp,
-      logger: SILENT_LOGGER,
-      configService: createMockConfig(),
-    });
+    const module = createElectronLifecycleModule(
+      createDeps({
+        app: mockApp,
+      })
+    );
     dispatcher.registerModule(module);
 
     await dispatcher.dispatch({
@@ -151,12 +165,12 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        buildInfo: { isPackaged: false },
-        configService: createMockConfig(),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          buildInfo: { isPackaged: false },
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -183,12 +197,12 @@ describe("ElectronLifecycleModule Integration", () => {
         dataPath: (subpath: string) => new Path(`/data/${subpath}`),
       };
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        pathProvider: mockPathProvider,
-        configService: createMockConfig(),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          pathProvider: mockPathProvider,
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -221,12 +235,12 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        buildInfo: { isPackaged: true },
-        configService: createMockConfig(),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          buildInfo: { isPackaged: true },
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -244,42 +258,20 @@ describe("ElectronLifecycleModule Integration", () => {
       }
     });
 
-    it("skips when buildInfo and pathProvider are not provided", async () => {
-      const mockApp = createMockApp();
-      const dispatcher = createMockDispatcher();
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
-
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        configService: createMockConfig(),
-      });
-
-      dispatcher.registerModule(module);
-
-      // Should not throw when optional deps are omitted
-      await expect(
-        dispatcher.dispatch({
-          type: INTENT_APP_START,
-          payload: {},
-        } as AppStartIntent)
-      ).resolves.not.toThrow();
-    });
-
     it("applies electron flags from configService", async () => {
       const mockApp = createMockApp();
       const dispatcher = createMockDispatcher();
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        configService: createMockConfig({
-          defaults: { "electron.flags": "--disable-gpu --use-gl=swiftshader" },
-        }),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          configService: createMockConfig({
+            defaults: { "electron.flags": "--disable-gpu --use-gl=swiftshader" },
+          }),
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -298,11 +290,12 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        configService: createMockConfig({ defaults: { "electron.flags": null } }),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          configService: createMockConfig({ defaults: { "electron.flags": null } }),
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -320,11 +313,11 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        configService: createMockConfig(),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -343,13 +336,14 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        configService: createMockConfig({
-          defaults: { "electron.disabled-features": "FeatureA, FeatureB" },
-        }),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          configService: createMockConfig({
+            defaults: { "electron.disabled-features": "FeatureA, FeatureB" },
+          }),
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -376,11 +370,12 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        configService: createMockConfig({ defaults: { "electron.disabled-features": "" } }),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          configService: createMockConfig({ defaults: { "electron.disabled-features": "" } }),
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -401,11 +396,12 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        configService: createMockConfig({ defaults: { "electron.disabled-features": null } }),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          configService: createMockConfig({ defaults: { "electron.disabled-features": null } }),
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -425,13 +421,15 @@ describe("ElectronLifecycleModule Integration", () => {
 
       dispatcher.registerOperation(INTENT_APP_START, new MinimalBeforeReadyOperation());
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger,
-        configService: createMockConfig({
-          defaults: { "electron.disabled-features": "Foo,Bar" },
-        }),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          logger,
+          configService: createMockConfig({
+            defaults: { "electron.disabled-features": "Foo,Bar" },
+          }),
+        })
+      );
 
       dispatcher.registerModule(module);
 
@@ -468,13 +466,13 @@ describe("ElectronLifecycleModule Integration", () => {
         createMinimalOperation(APP_START_OPERATION_ID, "start")
       );
 
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        powerMonitor: mockPowerMonitor,
-        dispatcher: mockDispatcher,
-        configService: createMockConfig(),
-      });
+      const module = createElectronLifecycleModule(
+        createDeps({
+          app: mockApp,
+          powerMonitor: mockPowerMonitor,
+          dispatcher: mockDispatcher,
+        })
+      );
       dispatcher.registerModule(module);
 
       await dispatcher.dispatch({
@@ -487,61 +485,6 @@ describe("ElectronLifecycleModule Integration", () => {
       resumeCallbacks[0]!();
 
       expect(mockDispatcher.dispatch).toHaveBeenCalledWith({ type: "app:resume", payload: {} });
-    });
-
-    it("does not crash when powerMonitor is null", async () => {
-      const mockApp = createMockApp();
-
-      const dispatcher = createMockDispatcher();
-
-      dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "start")
-      );
-
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        powerMonitor: null,
-        dispatcher: { dispatch: vi.fn() },
-        configService: createMockConfig(),
-      });
-      dispatcher.registerModule(module);
-
-      // Should not throw
-      await expect(
-        dispatcher.dispatch({
-          type: INTENT_APP_START,
-          payload: {},
-        } as AppStartIntent)
-      ).resolves.not.toThrow();
-    });
-
-    it("does not register listener when dispatcher is not provided", async () => {
-      const mockApp = createMockApp();
-      const mockPowerMonitor = { on: vi.fn() };
-
-      const dispatcher = createMockDispatcher();
-
-      dispatcher.registerOperation(
-        INTENT_APP_START,
-        createMinimalOperation(APP_START_OPERATION_ID, "start")
-      );
-
-      const module = createElectronLifecycleModule({
-        app: mockApp,
-        logger: SILENT_LOGGER,
-        powerMonitor: mockPowerMonitor,
-        configService: createMockConfig(),
-      });
-      dispatcher.registerModule(module);
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(mockPowerMonitor.on).not.toHaveBeenCalled();
     });
   });
 });

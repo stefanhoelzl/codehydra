@@ -1180,7 +1180,6 @@ describe("createAgentModule", () => {
         restartWorkspace: vi.fn().mockResolvedValue({
           success: false,
           error: "restart failed",
-          serverStopped: false,
         }),
       });
       await activateModule(dispatcher, agentConfig);

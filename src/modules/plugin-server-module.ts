@@ -503,17 +503,11 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     return (ack) => {
       logger.debug("API call", { event: eventName, workspace: workspacePath });
 
+      // handlePluginApiCall never rejects (it converts all errors into a
+      // PluginResult), so this guard only covers ack() itself throwing.
       handlePluginApiCall(workspacePath, eventName, dispatchFn)
         .then((result) => ack(result))
-        .catch((error) => {
-          const message = getErrorMessage(error);
-          logger.error("API handler error", {
-            event: eventName,
-            workspace: workspacePath,
-            error: message,
-          });
-          ack({ success: false, error: message });
-        });
+        .catch(() => {});
     };
   }
 
@@ -548,17 +542,11 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         ...logContext?.(request),
       });
 
+      // Every dispatchFn resolves through handlePluginApiCall, which never
+      // rejects, so this guard only covers ack() itself throwing.
       dispatchFn(validatedRequest)
         .then((result) => ack(result))
-        .catch((error) => {
-          const message = getErrorMessage(error);
-          logger.error("API handler error", {
-            event: eventName,
-            workspace: workspacePath,
-            error: message,
-          });
-          ack({ success: false, error: message });
-        });
+        .catch(() => {});
     };
   }
 

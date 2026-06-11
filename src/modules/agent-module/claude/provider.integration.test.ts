@@ -335,18 +335,6 @@ describe("ClaudeCodeProvider integration", () => {
     });
   });
 
-  describe("markActive", () => {
-    it("can be called multiple times safely", async () => {
-      const port = await serverManager.startServer(workspacePath);
-      await provider.connect(port);
-
-      // Should not throw
-      provider.markActive();
-      provider.markActive();
-      provider.markActive();
-    });
-  });
-
   describe("dispose", () => {
     it("clears all state", async () => {
       const port = await serverManager.startServer(workspacePath);

@@ -8,7 +8,6 @@
 import type {
   Project,
   Workspace,
-  BaseInfo,
   ProjectId,
   WorkspaceName,
   WorkspaceRef,
@@ -19,7 +18,7 @@ import type { ProjectPath } from "./ipc";
 /**
  * Default project ID used in test fixtures.
  */
-export const DEFAULT_PROJECT_ID = "test-project-12345678" as ProjectId;
+const DEFAULT_PROJECT_ID = "test-project-12345678" as ProjectId;
 
 // =============================================================================
 // Type Cast Helpers
@@ -37,7 +36,7 @@ export function asProjectId(id: string): ProjectId {
  * Cast a string to WorkspaceName.
  * Use in tests when you need to create a typed workspace name from a plain string.
  */
-export function asWorkspaceName(name: string): WorkspaceName {
+function asWorkspaceName(name: string): WorkspaceName {
   return name as WorkspaceName;
 }
 
@@ -169,22 +168,6 @@ export function createMockProject(
     ...(overrides.defaultBaseBranch !== undefined
       ? { defaultBaseBranch: overrides.defaultBaseBranch }
       : {}),
-  };
-}
-
-// =============================================================================
-// Other Mock Factories
-// =============================================================================
-
-/**
- * Creates a mock BaseInfo with sensible defaults.
- * @param overrides - Optional properties to override defaults
- */
-export function createMockBaseInfo(overrides: Partial<BaseInfo> = {}): BaseInfo {
-  return {
-    name: "main",
-    isRemote: false,
-    ...overrides,
   };
 }
 

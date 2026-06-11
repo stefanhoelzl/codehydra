@@ -6,17 +6,17 @@
 
 The UI uses `@vscode-elements/elements` for consistent VS Code styling:
 
-| Component              | vscode-element Used      | Location                                                                                         |
-| ---------------------- | ------------------------ | ------------------------------------------------------------------------------------------------ |
-| Dialog buttons         | `<vscode-button>`        | CreateWorkspaceDialog, RemoveWorkspaceDialog, OpenProjectErrorDialog, SetupError, GitCloneDialog |
-| Text input             | `<vscode-textfield>`     | CreateWorkspaceDialog (Name field), GitCloneDialog (URL field)                                   |
-| Checkbox               | `<vscode-checkbox>`      | RemoveWorkspaceDialog (Delete branch), CloseProjectDialog (Remove workspaces, Delete repo)       |
-| Progress bar           | `<vscode-progress-bar>`  | SetupScreen                                                                                      |
-| Loading spinner        | `<vscode-progress-ring>` | Sidebar (while loading), GitCloneDialog (cloning status)                                         |
-| Shortcut badges        | `<vscode-badge>`         | Sidebar, ShortcutOverlay                                                                         |
-| Project dividers       | `<vscode-divider>`       | Sidebar (between projects)                                                                       |
-| Form validation helper | `<vscode-form-helper>`   | CreateWorkspaceDialog                                                                            |
-| Open project button    | `<vscode-button>`        | CreateWorkspaceDialog (folder icon, git clone icon)                                              |
+| Component              | vscode-element Used      | Location                                                                                   |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------------------------------ |
+| Dialog buttons         | `<vscode-button>`        | CreateWorkspaceDialog, RemoveWorkspaceDialog, SetupError, GitCloneDialog                   |
+| Text input             | `<vscode-textfield>`     | CreateWorkspaceDialog (Name field), GitCloneDialog (URL field)                             |
+| Checkbox               | `<vscode-checkbox>`      | RemoveWorkspaceDialog (Delete branch), CloseProjectDialog (Remove workspaces, Delete repo) |
+| Progress bar           | `<vscode-progress-bar>`  | SetupScreen                                                                                |
+| Loading spinner        | `<vscode-progress-ring>` | Sidebar (while loading), GitCloneDialog (cloning status)                                   |
+| Shortcut badges        | `<vscode-badge>`         | Sidebar, ShortcutOverlay                                                                   |
+| Project dividers       | `<vscode-divider>`       | Sidebar (between projects)                                                                 |
+| Form validation helper | `<vscode-form-helper>`   | CreateWorkspaceDialog                                                                      |
+| Open project button    | `<vscode-button>`        | CreateWorkspaceDialog (folder icon, git clone icon)                                        |
 
 **Exception**: BranchDropdown uses a custom implementation with native `<input>` for filtering and grouped options (Local/Remote branches), as `<vscode-single-select>` doesn't support these features.
 

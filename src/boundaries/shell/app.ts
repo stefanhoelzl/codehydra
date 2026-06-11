@@ -31,24 +31,6 @@ export interface AppDock {
   setBadge(text: string): void;
 }
 
-/**
- * App path names that can be queried.
- */
-export type AppPathName =
-  | "home"
-  | "appData"
-  | "userData"
-  | "sessionData"
-  | "temp"
-  | "exe"
-  | "desktop"
-  | "documents"
-  | "downloads"
-  | "music"
-  | "pictures"
-  | "videos"
-  | "logs";
-
 // ============================================================================
 // Interface
 // ============================================================================
@@ -75,22 +57,6 @@ export interface AppBoundary {
    * @returns true if successful, false otherwise
    */
   setBadgeCount(count: number): boolean;
-
-  /**
-   * Get a special directory or file path.
-   *
-   * @param name - Name of the path to get
-   * @returns The path string
-   */
-  getPath(name: AppPathName): string;
-
-  /**
-   * Append a switch to Chromium's command line.
-   *
-   * @param key - Switch name
-   * @param value - Optional switch value
-   */
-  commandLineAppendSwitch(key: string, value?: string): void;
 
   /**
    * Open a URL in the system's default handler (browser for http/https, mail client for mailto).
@@ -167,20 +133,6 @@ export class DefaultAppBoundary implements AppBoundary {
     const result = app.setBadgeCount(count);
     this.logger.debug("Badge count set", { count, success: result });
     return result;
-  }
-
-  getPath(name: AppPathName): string {
-    return app.getPath(name);
-  }
-
-  commandLineAppendSwitch(key: string, value?: string): void {
-    if (value !== undefined) {
-      app.commandLine.appendSwitch(key, value);
-      this.logger.debug("Command line switch appended", { key, value });
-    } else {
-      app.commandLine.appendSwitch(key);
-      this.logger.debug("Command line switch appended", { key });
-    }
   }
 
   async openUrl(url: string): Promise<void> {

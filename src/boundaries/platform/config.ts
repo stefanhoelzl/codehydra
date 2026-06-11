@@ -61,7 +61,7 @@ export type ConfigAgentType = "claude" | "opencode" | null;
  *   Config key / CLI flag: dot-separated, kebab-case  (e.g. "version.code-server")
  *   Env var:               CH_ prefix, . → __, - → _, UPPER  (e.g. CH_VERSION__CODE_SERVER)
  */
-export function envVarToConfigKey(envVar: string): string | undefined {
+function envVarToConfigKey(envVar: string): string | undefined {
   if (!envVar.startsWith("CH_")) return undefined;
   return envVar.slice(3).toLowerCase().replace(/__/g, ".").replace(/_/g, "-");
 }
@@ -78,7 +78,7 @@ export function envVarToConfigKey(envVar: string): string | undefined {
  * isDevelopment, isPackaged, etc.) so users see the actual defaults
  * that apply to their environment. Deprecated keys are omitted.
  */
-export function generateHelpText(
+function generateHelpText(
   configFilePath: string,
   definitions: ReadonlyMap<string, PersistedKeyDefinition<unknown>>,
   defaults: Readonly<Record<string, unknown>>
@@ -146,14 +146,8 @@ export interface Config {
    */
   load(): void;
 
-  /** Get the full definition map (for help text generation). */
-  getDefinitions(): ReadonlyMap<string, PersistedKeyDefinition<unknown>>;
-
   /** Get all effective config values (for help text). */
   getEffective(): Readonly<Record<string, unknown>>;
-
-  /** Get the resolved defaults (static + computed) for all registered keys. */
-  getDefaults(): Readonly<Record<string, unknown>>;
 
   /**
    * Get the subset of effective values that differ from their defaults, with
@@ -266,7 +260,7 @@ export function parseCliArgs(argv: readonly string[]): Record<string, string> {
  * The returned `data` is the original parsed object (untransformed); load() passes
  * it to PersistedDefinitions.validate() and also uses it to compute the on-disk rewrite.
  */
-export function readConfigFile(
+function readConfigFile(
   configPath: Path,
   syncRead: (path: string) => string,
   syncRename: (oldPath: string, newPath: string) => void
@@ -454,16 +448,8 @@ export class DefaultConfig implements Config {
     }
   }
 
-  getDefinitions(): ReadonlyMap<string, PersistedKeyDefinition<unknown>> {
-    return this.store.getDefinitions();
-  }
-
   getEffective(): Readonly<Record<string, unknown>> {
     return this.store.getEffective();
-  }
-
-  getDefaults(): Readonly<Record<string, unknown>> {
-    return this.store.getDefaults();
   }
 
   getRedactedOverrides(): Record<string, unknown> {

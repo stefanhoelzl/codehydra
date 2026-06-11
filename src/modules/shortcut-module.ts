@@ -66,7 +66,8 @@ export interface ShortcutModuleDeps {
 
 export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
   let state: ShortcutActivationState = "NORMAL";
-  const cleanups = new Map<string, Unsubscribe[]>();
+  let unsubscribeBeforeInput: Unsubscribe | null = null;
+  let unsubscribeDestroyed: Unsubscribe | null = null;
   let unsubscribeBlur: Unsubscribe | null = null;
 
   function dispatchSetMode(mode: string): void {
@@ -84,30 +85,19 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
   }
 
   function registerView(target: KeyboardTarget): void {
-    if (cleanups.has(target.id)) return;
-
-    const unsubs: Unsubscribe[] = [];
-    unsubs.push(
-      target.onBeforeInput((input) => {
-        handleInput(input);
-      })
-    );
-    unsubs.push(
-      target.onDestroyed(() => {
-        unregisterView(target.id);
-      })
-    );
-    cleanups.set(target.id, unsubs);
+    unsubscribeBeforeInput = target.onBeforeInput((input) => {
+      handleInput(input);
+    });
+    unsubscribeDestroyed = target.onDestroyed(() => {
+      unregisterView();
+    });
   }
 
-  function unregisterView(id: string): void {
-    const unsubs = cleanups.get(id);
-    if (unsubs) {
-      for (const unsub of unsubs) {
-        unsub();
-      }
-      cleanups.delete(id);
-    }
+  function unregisterView(): void {
+    unsubscribeBeforeInput?.();
+    unsubscribeBeforeInput = null;
+    unsubscribeDestroyed?.();
+    unsubscribeDestroyed = null;
   }
 
   /**
@@ -194,16 +184,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
   }
 
   function dispose(): void {
-    // Unregister all views (makes copy to avoid mutation during iteration)
-    for (const id of [...cleanups.keys()]) {
-      const unsubs = cleanups.get(id);
-      if (unsubs) {
-        for (const unsub of unsubs) {
-          unsub();
-        }
-      }
-    }
-    cleanups.clear();
+    unregisterView();
 
     // Remove window blur listener
     unsubscribeBlur?.();

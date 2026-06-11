@@ -8,7 +8,6 @@ import { mkdtemp, rm, realpath, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { simpleGit } from "simple-git";
-import { vi } from "vitest";
 
 /**
  * Create a temporary directory with automatic cleanup.
@@ -96,42 +95,6 @@ export async function createTestGitRepo(options: CreateTestGitRepoOptions = {}):
 }
 
 /**
- * Run a test function with a temporary git repository.
- * The repository is automatically cleaned up after the test,
- * even if the test fails.
- *
- * @param fn Test function that receives the repo path
- * @param options Repository configuration
- */
-export async function withTempRepo(
-  fn: (repoPath: string) => Promise<void>,
-  options: CreateTestGitRepoOptions = {}
-): Promise<void> {
-  const { path, cleanup } = await createTestGitRepo(options);
-  try {
-    await fn(path);
-  } finally {
-    await cleanup();
-  }
-}
-
-/**
- * Run a test function with a temporary directory.
- * The directory is automatically cleaned up after the test,
- * even if the test fails.
- *
- * @param fn Test function that receives the directory path
- */
-export async function withTempDir(fn: (dirPath: string) => Promise<void>): Promise<void> {
-  const { path, cleanup } = await createTempDir();
-  try {
-    await fn(path);
-  } finally {
-    await cleanup();
-  }
-}
-
-/**
  * Result from creating a test git repo with a remote.
  */
 export interface TestRepoWithRemoteResult {
@@ -153,7 +116,7 @@ export interface TestRepoWithRemoteResult {
  *
  * @returns Object with paths and cleanup function
  */
-export async function createTestGitRepoWithRemote(): Promise<TestRepoWithRemoteResult> {
+async function createTestGitRepoWithRemote(): Promise<TestRepoWithRemoteResult> {
   // Create parent temp directory
   const parent = await mkdtemp(join(tmpdir(), "codehydra-test-"));
   const repoPath = join(parent, "repo");
@@ -232,57 +195,4 @@ export async function withTempRepoWithRemote(
   } finally {
     await cleanup();
   }
-}
-
-/**
- * Suppress console output during a test that is expected to produce console output.
- * Use this when testing error handling code that logs to console.
- *
- * @param methods Console methods to suppress (default: ["error", "warn"])
- * @returns Object with restore function to call in afterEach/finally
- *
- * @example
- * ```ts
- * it("handles error gracefully", () => {
- *   const console = suppressConsole();
- *   try {
- *     // Code that calls console.error
- *     expect(console.error).toHaveBeenCalled();
- *   } finally {
- *     console.restore();
- *   }
- * });
- * ```
- */
-export function suppressConsole(
-  methods: Array<"error" | "warn" | "log" | "info" | "debug"> = ["error", "warn"]
-): {
-  error: ReturnType<typeof vi.spyOn>;
-  warn: ReturnType<typeof vi.spyOn>;
-  log: ReturnType<typeof vi.spyOn>;
-  info: ReturnType<typeof vi.spyOn>;
-  debug: ReturnType<typeof vi.spyOn>;
-  restore: () => void;
-} {
-  const spies = {
-    error: vi.spyOn(console, "error"),
-    warn: vi.spyOn(console, "warn"),
-    log: vi.spyOn(console, "log"),
-    info: vi.spyOn(console, "info"),
-    debug: vi.spyOn(console, "debug"),
-  };
-
-  // Suppress requested methods
-  for (const method of methods) {
-    spies[method].mockImplementation(() => {});
-  }
-
-  return {
-    ...spies,
-    restore: () => {
-      for (const spy of Object.values(spies)) {
-        spy.mockRestore();
-      }
-    },
-  };
 }

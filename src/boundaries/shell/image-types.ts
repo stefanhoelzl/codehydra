@@ -15,14 +15,6 @@ export interface ImageHandle {
 }
 
 /**
- * Size of an image in pixels.
- */
-export interface ImageSize {
-  readonly width: number;
-  readonly height: number;
-}
-
-/**
  * Creates an ImageHandle with the given ID.
  * Used by layer implementations to create handles.
  */

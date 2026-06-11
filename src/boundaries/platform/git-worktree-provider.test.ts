@@ -18,6 +18,23 @@ import { createMockLogger } from "./logging.test-utils";
 import { delay } from "@shared/test-fixtures";
 import { Path } from "../../utils/path/path";
 import { createMockGitClient } from "./git-client.state-mock";
+import type { IGitClient } from "./git-client";
+import type { FileSystemBoundary } from "./filesystem";
+import type { Logger } from "./logging";
+
+/** Construct a provider the way production does: new + validateRepository + registerProject. */
+async function createProvider(
+  projectRoot: Path,
+  gitClient: IGitClient,
+  workspacesDir: Path,
+  fileSystemLayer: FileSystemBoundary,
+  logger: Logger
+): Promise<GitWorktreeProvider> {
+  const provider = new GitWorktreeProvider(gitClient, fileSystemLayer, logger);
+  await provider.validateRepository(projectRoot);
+  provider.registerProject(projectRoot, workspacesDir);
+  return provider;
+}
 
 describe("GitWorktreeProvider error injection", () => {
   const PROJECT_ROOT = new Path("/home/user/projects/my-repo");
@@ -25,7 +42,7 @@ describe("GitWorktreeProvider error injection", () => {
   const mockFs = createFileSystemMock();
   const mockLogger = createMockLogger();
 
-  describe("create (factory)", () => {
+  describe("provider construction", () => {
     it("throws WorkspaceError when git client throws", async () => {
       // Create a mock that throws on isRepositoryRoot
       const mockClient = createMockGitClient({
@@ -35,7 +52,7 @@ describe("GitWorktreeProvider error injection", () => {
       mockClient.isRepositoryRoot = vi.fn().mockRejectedValue(new Error("Path does not exist"));
 
       await expect(
-        GitWorktreeProvider.create(PROJECT_ROOT, mockClient, WORKSPACES_DIR, mockFs, mockLogger)
+        createProvider(PROJECT_ROOT, mockClient, WORKSPACES_DIR, mockFs, mockLogger)
       ).rejects.toThrow(WorkspaceError);
     });
   });
@@ -58,7 +75,7 @@ describe("GitWorktreeProvider error injection", () => {
         .fn()
         .mockRejectedValue(new Error("Config read failed"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -87,14 +104,14 @@ describe("GitWorktreeProvider error injection", () => {
       });
       // Override fetch to fail for backup remote
       const originalFetch = mockClient.fetch.bind(mockClient);
-      mockClient.fetch = vi.fn().mockImplementation(async (repoPath: Path, remote?: string) => {
+      mockClient.fetch = vi.fn().mockImplementation(async (repoPath: Path, remote: string) => {
         if (remote === "backup") {
           throw new Error("Network error");
         }
         return originalFetch(repoPath, remote);
       });
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -130,7 +147,7 @@ describe("GitWorktreeProvider error injection", () => {
 
       // Override fetch to simulate prune behavior: remove the stale remote branch
       const originalFetch = mockClient.fetch.bind(mockClient);
-      mockClient.fetch = vi.fn().mockImplementation(async (repoPath: Path, remote?: string) => {
+      mockClient.fetch = vi.fn().mockImplementation(async (repoPath: Path, remote: string) => {
         // Simulate prune: remove the stale-feature branch from remoteBranches
         const repo = mockClient.$.repositories.get(PROJECT_ROOT.toString());
         if (repo) {
@@ -140,7 +157,7 @@ describe("GitWorktreeProvider error injection", () => {
         return originalFetch(repoPath, remote);
       });
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -172,7 +189,7 @@ describe("GitWorktreeProvider error injection", () => {
       // Override addWorktree to fail
       mockClient.addWorktree = vi.fn().mockRejectedValue(new Error("Worktree creation failed"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -198,7 +215,7 @@ describe("GitWorktreeProvider error injection", () => {
       // Make createBranch fail
       mockClient.createBranch = vi.fn().mockRejectedValue(new Error("Git error"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -226,7 +243,7 @@ describe("GitWorktreeProvider error injection", () => {
           new Error("Failed to create branch feature-x: fatal: not a valid object name: 'main'")
         );
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -251,7 +268,7 @@ describe("GitWorktreeProvider error injection", () => {
       // Override addWorktree to fail
       mockClient.addWorktree = vi.fn().mockRejectedValue(new Error("Worktree creation failed"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -279,7 +296,7 @@ describe("GitWorktreeProvider error injection", () => {
       // Override setBranchConfig to fail
       mockClient.setBranchConfig = vi.fn().mockRejectedValue(new Error("Config write failed"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -316,7 +333,7 @@ describe("GitWorktreeProvider error injection", () => {
       });
 
       const spyFs = createSpyFileSystemBoundary();
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -355,7 +372,7 @@ describe("GitWorktreeProvider error injection", () => {
       const spyFs = createSpyFileSystemBoundary();
       spyFs.rm = vi.fn().mockRejectedValue(new Error("rm failed"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -383,7 +400,7 @@ describe("GitWorktreeProvider error injection", () => {
       // Override deleteBranch to fail
       mockClient.deleteBranch = vi.fn().mockRejectedValue(new Error("Branch deletion failed"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -424,7 +441,7 @@ describe("GitWorktreeProvider error injection", () => {
           )
         );
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -452,7 +469,7 @@ describe("GitWorktreeProvider error injection", () => {
       // Override listBranches to throw
       mockClient.listBranches = vi.fn().mockRejectedValue(new Error("Git error"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -503,7 +520,7 @@ describe("GitWorktreeProvider error injection", () => {
           [new Path(WORKSPACES_DIR, "orphan-workspace").toString()]: directory(),
         },
       });
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -539,7 +556,7 @@ describe("GitWorktreeProvider error injection", () => {
         new FileSystemError("EACCES", orphanPath.toNative(), "Permission denied")
       );
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -567,7 +584,7 @@ describe("GitWorktreeProvider error injection", () => {
       // Override listWorktrees to throw
       mockClient.listWorktrees = vi.fn().mockRejectedValue(new Error("Git error"));
 
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,
@@ -619,7 +636,7 @@ describe("GitWorktreeProvider error injection", () => {
           [new Path(WORKSPACES_DIR, "orphan").toString()]: directory(),
         },
       });
-      const provider = await GitWorktreeProvider.create(
+      const provider = await createProvider(
         PROJECT_ROOT,
         mockClient,
         WORKSPACES_DIR,

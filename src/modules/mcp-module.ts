@@ -116,11 +116,7 @@ function formatDeletionFailure(progress: DeletionProgress): string {
 /**
  * MCP error codes.
  */
-export type McpErrorCode =
-  | "workspace-not-found"
-  | "project-not-found"
-  | "invalid-input"
-  | "internal-error";
+export type McpErrorCode = "workspace-not-found" | "internal-error";
 
 /**
  * MCP error structure.
@@ -128,44 +124,6 @@ export type McpErrorCode =
 export interface McpError {
   readonly code: McpErrorCode;
   readonly message: string;
-}
-
-/**
- * Unified show-message request covering all VS Code UI interactions.
- */
-export type ShowMessageType = "info" | "warning" | "error" | "status" | "select";
-
-export interface ShowMessageRequest {
-  readonly type: ShowMessageType;
-  /** Display text. null = dismiss (only valid for status). */
-  readonly message: string | null;
-  /** Secondary text: tooltip for status, placeholder for select. */
-  readonly hint?: string;
-  /** Action buttons (notification) or selection items (select). Omit for free text input. */
-  readonly options?: readonly string[];
-  /** Timeout in milliseconds for interactive operations. */
-  readonly timeoutMs?: number;
-}
-
-/**
- * MCP Server interface.
- */
-export interface IMcpServer extends IDisposable {
-  /**
-   * Start the server on a specific port.
-   * @param port - Port to listen on
-   */
-  start(port: number): Promise<void>;
-
-  /**
-   * Stop the server.
-   */
-  stop(): Promise<void>;
-
-  /**
-   * Check if the server is running.
-   */
-  isRunning(): boolean;
 }
 
 // =============================================================================
@@ -235,7 +193,7 @@ interface McpSession {
  * Each connecting client gets a dedicated MCP session with its own transport and server.
  * Workspace resolution is delegated to the intent system via workspacePath-based API methods.
  */
-export class McpServer implements IMcpServer {
+export class McpServer {
   private readonly dispatcher: Dispatcher;
   private readonly serverFactory: McpServerFactory;
   private readonly logger: Logger;
@@ -363,13 +321,6 @@ export class McpServer implements IMcpServer {
    */
   isRunning(): boolean {
     return this.running;
-  }
-
-  /**
-   * Dispose the server (alias for stop).
-   */
-  async dispose(): Promise<void> {
-    await this.stop();
   }
 
   /**
@@ -1320,22 +1271,6 @@ export class McpServerManager implements IDisposable {
 
     this.port = null;
     this.logger.info("Manager stopped");
-  }
-
-  /**
-   * Get the port the MCP server is running on.
-   *
-   * @returns Port number or null if not running
-   */
-  getPort(): number | null {
-    return this.port;
-  }
-
-  /**
-   * Check if the server is running.
-   */
-  isRunning(): boolean {
-    return this.mcpServer?.isRunning() ?? false;
   }
 
   /**

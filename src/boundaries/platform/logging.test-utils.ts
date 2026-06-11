@@ -34,7 +34,6 @@ export interface MockLogging extends Logging {
   createLogger: Mock<(name: LoggerName) => Logger>;
   configure: Mock<(options: LoggingConfigureOptions) => void>;
   initialize: Mock<() => void>;
-  dispose: Mock<() => void>;
 
   /**
    * Get all logger names that were requested via createLogger().
@@ -104,7 +103,6 @@ export function createMockLogging(): MockLogging {
 
     configure: vi.fn(),
     initialize: vi.fn(),
-    dispose: vi.fn(),
     getLogFilePath: vi.fn().mockReturnValue("/mock/logs/test-session.log"),
     getElectronLogFilePath: vi.fn().mockReturnValue("/mock/logs/electron.log"),
 

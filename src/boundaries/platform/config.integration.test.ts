@@ -897,19 +897,7 @@ describe("Config", () => {
     });
   });
 
-  describe("getDefinitions + getEffective", () => {
-    it("returns all registered definitions", () => {
-      const svc = createService();
-      svc.register("test.a", stringDef("test.a"));
-      svc.register("test.b", boolDef("test.b"));
-      svc.load();
-
-      const defs = svc.getDefinitions();
-      expect(defs.size).toBe(2);
-      expect(defs.has("test.a")).toBe(true);
-      expect(defs.has("test.b")).toBe(true);
-    });
-
+  describe("getEffective", () => {
     it("returns all effective values", () => {
       const svc = createService({ env: { CH_TEST__B: "true" } });
       svc.register("test.a", stringDef("test.a", "val-a"));

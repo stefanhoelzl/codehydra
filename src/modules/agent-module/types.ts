@@ -1,16 +1,8 @@
 /**
  * Shared types and interfaces for the Agent Abstraction Layer.
  * These interfaces enable pluggable agent implementations (OpenCode, Claude, etc.)
- *
- * Design principles:
- * - AgentError provides typed error codes for consistent handling
- * - Factory functions enable dependency injection for testability
  */
 
-import type { ProcessRunner } from "../../boundaries/platform/process";
-import type { PortManager, HttpClient } from "../../boundaries/platform/network";
-import type { PathProvider } from "../../boundaries/platform/path-provider";
-import type { Logger } from "../../boundaries/platform/logging";
 import type { NormalizedInitialPrompt } from "../../shared/api/types";
 
 /**
@@ -30,13 +22,6 @@ export type AgentType = "opencode" | "claude";
 /** Agent status for a single workspace */
 export type AgentStatus = "none" | "idle" | "busy";
 
-/** Error types that can occur during agent operations */
-export interface AgentError {
-  readonly code: "CONNECTION_FAILED" | "SERVER_START_FAILED" | "CONFIG_ERROR" | "TIMEOUT";
-  readonly message: string;
-  readonly cause?: Error;
-}
-
 import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
 // Re-export platform types from canonical location
 export type { SupportedPlatform, SupportedArch };
@@ -54,7 +39,7 @@ export interface StopServerResult {
  */
 export type RestartServerResult =
   | { readonly success: true; readonly port: number }
-  | { readonly success: false; readonly error: string; readonly serverStopped: boolean };
+  | { readonly success: false; readonly error: string };
 
 /**
  * Server lifecycle manager for an agent (one server per workspace).
@@ -71,15 +56,6 @@ export interface AgentServerManager {
 
   /** Restart server for a workspace, preserving the same port */
   restartServer(workspacePath: string): Promise<RestartServerResult>;
-
-  /** Check if server is running for workspace */
-  isRunning(workspacePath: string): boolean;
-
-  /** Get the port for a running workspace server */
-  getPort(workspacePath: string): number | undefined;
-
-  /** Stop all servers for a project */
-  stopAllForProject(projectPath: string): Promise<void>;
 
   /** Callback when server starts successfully */
   onServerStarted(
@@ -163,19 +139,4 @@ export interface AgentProvider {
 
   /** Dispose the provider completely */
   dispose(): void;
-}
-
-/** Dependencies for creating AgentServerManager instances */
-export interface ServerManagerDeps {
-  readonly processRunner: ProcessRunner;
-  readonly portManager: PortManager;
-  readonly httpClient: HttpClient;
-  readonly pathProvider: PathProvider;
-  readonly logger: Logger;
-}
-
-/** Dependencies for creating AgentProvider instances */
-export interface ProviderDeps {
-  readonly httpClient: HttpClient;
-  readonly logger: Logger;
 }

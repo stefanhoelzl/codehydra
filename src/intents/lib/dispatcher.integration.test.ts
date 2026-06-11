@@ -164,7 +164,7 @@ describe("Dispatcher", () => {
     expect((capturedIntent?.payload as Record<string, unknown>)?.extra).toBe("added");
   });
 
-  it("interceptors run in order priority", async () => {
+  it("interceptors run in registration order", async () => {
     const dispatcher = createDispatcher();
 
     const order: string[] = [];
@@ -175,17 +175,7 @@ describe("Dispatcher", () => {
     });
 
     dispatcher.addInterceptor({
-      id: "second",
-      order: 20,
-      async before(intent: Intent): Promise<Intent | null> {
-        order.push("second");
-        return intent;
-      },
-    });
-
-    dispatcher.addInterceptor({
       id: "first",
-      order: 10,
       async before(intent: Intent): Promise<Intent | null> {
         order.push("first");
         return intent;
@@ -193,17 +183,16 @@ describe("Dispatcher", () => {
     });
 
     dispatcher.addInterceptor({
-      id: "third",
-      order: 30,
+      id: "second",
       async before(intent: Intent): Promise<Intent | null> {
-        order.push("third");
+        order.push("second");
         return intent;
       },
     });
 
     await dispatcher.dispatch(createActionIntent());
 
-    expect(order).toEqual(["first", "second", "third"]);
+    expect(order).toEqual(["first", "second"]);
   });
 
   it("events emitted after execution", async () => {
@@ -1731,42 +1720,6 @@ describe("Dispatcher", () => {
           },
         ],
         { intent: { type: "test:noop", payload: {} } }
-      );
-
-      expect(ran).toEqual([]);
-    });
-
-    it("value matching: requires with undefined means capability must NOT exist", async () => {
-      const ran: string[] = [];
-
-      await collectWithModules(
-        [
-          {
-            requires: { flag: undefined },
-            handler: async () => {
-              ran.push("no-flag");
-            },
-          },
-        ],
-        { intent: { type: "test:noop", payload: {} } }
-      );
-
-      expect(ran).toEqual(["no-flag"]);
-    });
-
-    it("value matching: requires undefined blocked when capability exists", async () => {
-      const ran: string[] = [];
-
-      await collectWithModules(
-        [
-          {
-            requires: { flag: undefined },
-            handler: async () => {
-              ran.push("no-flag");
-            },
-          },
-        ],
-        { intent: { type: "test:noop", payload: {} }, capabilities: { flag: true } }
       );
 
       expect(ran).toEqual([]);

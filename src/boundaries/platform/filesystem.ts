@@ -44,14 +44,6 @@ export interface DirEntry {
 }
 
 /**
- * Options for mkdir operation.
- */
-export interface MkdirOptions {
-  /** Create parent directories if they don't exist (default: true) */
-  readonly recursive?: boolean;
-}
-
-/**
  * Options for rm operation.
  */
 export interface RmOptions {
@@ -120,18 +112,17 @@ export interface FileSystemBoundary {
   writeFile(path: PathLike, content: string): Promise<void>;
 
   /**
-   * Create directory. Creates parent directories by default.
+   * Create directory. Creates parent directories as needed.
    * No-op if directory already exists.
    *
    * @param path - Absolute path to directory (Path object or string)
-   * @param options - mkdir options (recursive defaults to true)
    * @throws FileSystemError with code EEXIST if path exists as a file
    * @throws FileSystemError with code EACCES if permission denied
    *
    * @example
    * await fs.mkdir('/path/to/new/directory');
    */
-  mkdir(path: PathLike, options?: MkdirOptions): Promise<void>;
+  mkdir(path: PathLike): Promise<void>;
 
   /**
    * List directory contents.
@@ -232,20 +223,6 @@ export interface FileSystemBoundary {
    * await fs.writeFileBuffer('/path/to/binary', buffer);
    */
   writeFileBuffer(path: PathLike, content: Buffer): Promise<void>;
-
-  /**
-   * Create a symbolic link.
-   * Removes existing symlink at linkPath before creating new one.
-   *
-   * @param target - Path the symlink should point to (Path object or string)
-   * @param linkPath - Path where the symlink will be created (Path object or string)
-   * @throws FileSystemError with code ENOENT if parent directory of linkPath doesn't exist
-   * @throws FileSystemError with code EACCES if permission denied
-   *
-   * @example Create symlink to versioned directory
-   * await fs.symlink('/app/opencode/1.0.0', '/app/opencode/current');
-   */
-  symlink(target: PathLike, linkPath: PathLike): Promise<void>;
 
   /**
    * Rename (move) a file or directory atomically.
@@ -377,12 +354,11 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     }
   }
 
-  async mkdir(dirPath: PathLike, options?: MkdirOptions): Promise<void> {
+  async mkdir(dirPath: PathLike): Promise<void> {
     const nativePath = toNativePath(dirPath);
-    const recursive = options?.recursive ?? true;
     this.logger.debug("Mkdir", { path: nativePath });
     try {
-      await fs.mkdir(nativePath, { recursive });
+      await fs.mkdir(nativePath, { recursive: true });
     } catch (error) {
       throw mapError(error, nativePath);
     }
@@ -510,34 +486,6 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
       await fs.writeFile(nativePath, content);
     } catch (error) {
       throw mapError(error, nativePath);
-    }
-  }
-
-  async symlink(target: PathLike, linkPath: PathLike): Promise<void> {
-    const nativeTarget = toNativePath(target);
-    const nativeLinkPath = toNativePath(linkPath);
-    this.logger.debug("Symlink", { target: nativeTarget, linkPath: nativeLinkPath });
-    try {
-      // Remove existing symlink if present
-      try {
-        const stat = await fs.lstat(nativeLinkPath);
-        if (stat.isSymbolicLink()) {
-          await fs.unlink(nativeLinkPath);
-        }
-      } catch (error) {
-        // Ignore ENOENT - file doesn't exist, which is fine
-        const nodeError = error as NodeJS.ErrnoException;
-        if (nodeError.code !== "ENOENT") {
-          throw error;
-        }
-      }
-
-      // Create symlink
-      // On Windows, use 'junction' for directories (doesn't require admin)
-      const type = process.platform === "win32" ? "junction" : undefined;
-      await fs.symlink(nativeTarget, nativeLinkPath, type);
-    } catch (error) {
-      throw mapError(error, nativeLinkPath);
     }
   }
 

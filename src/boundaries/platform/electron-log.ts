@@ -21,7 +21,6 @@ import type {
   Logging,
   LogContext,
   LogLevel,
-  LogOutput,
 } from "./logging-types";
 import { LogLevel as LogLevelValues } from "./logging-types";
 
@@ -110,45 +109,6 @@ export function splitLogLevelSpec(spec: string): {
   if (filterPart === "*") return { level, filter: undefined };
 
   return { level, filter: parseLoggerFilter(filterPart) };
-}
-
-/**
- * Validate and normalize a log output destination string.
- *
- * @param raw - Raw string value (e.g., "file", "console", "file,console")
- * @returns Normalized output string, or undefined if invalid
- */
-export function parseLogOutput(raw: string | undefined): string | undefined {
-  if (!raw) return undefined;
-  const tokens = raw
-    .split(",")
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 0);
-  if (tokens.length === 0) return undefined;
-
-  const valid: LogOutput[] = ["file", "console"];
-  for (const token of tokens) {
-    if (!valid.includes(token as LogOutput)) return undefined;
-  }
-
-  // Deduplicate and sort for canonical form
-  const unique = [...new Set(tokens)].sort() as LogOutput[];
-  return unique.join(",");
-}
-
-/**
- * Validate and normalize a log format string.
- *
- * @param raw - Raw string value (e.g., "text", "json")
- * @returns Normalized format string, or undefined if invalid
- */
-export function parseLogFormat(raw: string | undefined): LogFormat | undefined {
-  if (!raw) return undefined;
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === "text" || normalized === "json") {
-    return normalized;
-  }
-  return undefined;
 }
 
 /**
@@ -554,14 +514,6 @@ export class ElectronLog implements Logging {
    */
   initialize(): void {
     log.initialize();
-  }
-
-  /**
-   * Dispose of the logging service.
-   * Currently a no-op as electron-log doesn't require cleanup.
-   */
-  dispose(): void {
-    this.loggers.clear();
   }
 
   getLogFilePath(): string {

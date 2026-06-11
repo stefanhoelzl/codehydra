@@ -85,9 +85,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
   return {
     register,
     load: () => {},
-    getDefinitions: () => new Map(),
     getEffective: () => Object.fromEntries(store),
-    getDefaults: () => ({}),
     getRedactedOverrides: () => ({ ...overrides }),
     getHelpText: () => "",
   };

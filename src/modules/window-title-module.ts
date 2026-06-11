@@ -27,7 +27,7 @@ import type { WindowManager } from "../boundaries/shell/window-manager";
  * @param version - Version suffix (branch in dev mode, version in packaged mode), or undefined
  * @returns Formatted window title
  */
-export function formatWindowTitle(
+function formatWindowTitle(
   projectName: string | undefined,
   workspaceName: string | undefined,
   version?: string

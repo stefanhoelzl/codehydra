@@ -281,7 +281,7 @@ function createTestSetup(opts?: {
           "select-next": {
             handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
               const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
-              const result = selectNextWorkspace(currentPath, candidates);
+              const result = selectNextWorkspace(currentPath, candidates, () => 2);
               return result ? { selected: result } : {};
             },
           },

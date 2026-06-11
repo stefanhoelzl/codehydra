@@ -29,82 +29,6 @@ function createDefaultRunner(): ProcessRunner {
 }
 
 /**
- * Result of checking for the opencode binary.
- */
-export interface BinaryCheckResult {
-  readonly available: boolean;
-  readonly version?: string;
-  readonly error?: string;
-}
-
-/**
- * Check if the opencode binary is available and return version info.
- *
- * Uses the injected ProcessRunner for testability.
- *
- * @param binaryPath - Path to the opencode binary
- * @param runner - Process runner to use (defaults to ExecaProcessRunner)
- * @returns Result indicating if binary is available
- *
- * @example
- * ```ts
- * const result = await checkOpencodeAvailable('/path/to/opencode');
- * if (!result.available) {
- *   throw new Error(`OpenCode binary not available: ${result.error}`);
- * }
- * ```
- */
-export async function checkOpencodeAvailable(
-  binaryPath: string,
-  runner: ProcessRunner = createDefaultRunner()
-): Promise<BinaryCheckResult> {
-  const proc = runner.run(binaryPath, ["--version"], {});
-
-  const result = await proc.wait(5000);
-
-  // If still running after timeout, kill it (fire and forget)
-  if (result.running) {
-    void proc.kill();
-    return {
-      available: false,
-      error: "opencode --version timed out",
-    };
-  }
-
-  // Check for spawn errors (ENOENT)
-  if (result.exitCode === null && result.stderr.includes("ENOENT")) {
-    return {
-      available: false,
-      error: "opencode binary not found in PATH",
-    };
-  }
-
-  // Check exit code
-  if (result.exitCode !== 0) {
-    return {
-      available: false,
-      error: `opencode --version failed with exit code ${result.exitCode}: ${result.stderr}`,
-    };
-  }
-
-  // Parse version from output
-  const versionMatch = result.stdout.match(/v?(\d+\.\d+\.\d+)/);
-  const version = versionMatch ? versionMatch[1] : result.stdout.trim();
-
-  // Only include version if we found one
-  if (version) {
-    return {
-      available: true,
-      version,
-    };
-  }
-
-  return {
-    available: true,
-  };
-}
-
-/**
  * Configuration for starting an opencode serve process.
  */
 export interface OpencodeTestConfig {
@@ -168,7 +92,7 @@ export interface OpencodeProcess {
  * await proc.stop();
  * ```
  */
-export async function startOpencode(
+async function startOpencode(
   config: OpencodeTestConfig,
   runner: ProcessRunner = createDefaultRunner()
 ): Promise<OpencodeProcess> {

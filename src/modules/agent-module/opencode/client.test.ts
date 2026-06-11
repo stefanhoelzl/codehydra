@@ -21,6 +21,7 @@ import {
   createTestSession,
   type SdkClientFactory,
   type MockSdkClient,
+  type SdkEvent,
 } from "./sdk-client.state-mock";
 import type { SessionStatus as SdkSessionStatus } from "@opencode-ai/sdk";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
@@ -218,15 +219,13 @@ describe("OpenCodeClient", () => {
       registerSessions(client, [{ id: "ses-123" }]);
       client.onStatusChanged(listener);
 
-      // Simulate SSE session.status event via handleMessage
+      // Simulate SDK session.status event via handleSdkEvent
       const event = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "ses-123", status: { type: "busy" } },
-        }),
-      } as MessageEvent;
+        type: "session.status",
+        properties: { sessionID: "ses-123", status: { type: "busy" } },
+      } as unknown as SdkEvent;
 
-      client["handleMessage"](event);
+      client["handleSdkEvent"](event);
 
       expect(listener).toHaveBeenCalledWith("busy");
     });
@@ -240,13 +239,11 @@ describe("OpenCodeClient", () => {
 
       // Simulate status change for child session
       const event = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "child-1", status: { type: "busy" } },
-        }),
-      } as MessageEvent;
+        type: "session.status",
+        properties: { sessionID: "child-1", status: { type: "busy" } },
+      } as unknown as SdkEvent;
 
-      client["handleMessage"](event);
+      client["handleSdkEvent"](event);
 
       // Should NOT fire for child sessions
       expect(listener).not.toHaveBeenCalled();
@@ -264,16 +261,14 @@ describe("OpenCodeClient", () => {
 
       // First status change to idle (same as default)
       const idleEvent = {
-        data: JSON.stringify({
-          type: "session.idle",
-          properties: { sessionID: "ses-123" },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](idleEvent);
+        type: "session.idle",
+        properties: { sessionID: "ses-123" },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](idleEvent);
       listener.mockClear();
 
       // Same idle status again - should not fire
-      client["handleMessage"](idleEvent);
+      client["handleSdkEvent"](idleEvent);
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -292,12 +287,10 @@ describe("OpenCodeClient", () => {
 
       // Simulate status change
       const event = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "ses-123", status: { type: "busy" } },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](event);
+        type: "session.status",
+        properties: { sessionID: "ses-123", status: { type: "busy" } },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](event);
 
       expect(listener).not.toHaveBeenCalled();
     });
@@ -306,7 +299,7 @@ describe("OpenCodeClient", () => {
   describe("currentStatus", () => {
     it("starts as idle", () => {
       client = createClient(8080);
-      expect(client.currentStatus).toBe("idle");
+      expect(client["_currentStatus"]).toBe("idle");
     });
 
     it("updates on SSE session.status event for root session", async () => {
@@ -318,14 +311,12 @@ describe("OpenCodeClient", () => {
       registerSessions(client, [{ id: "ses-123" }]);
 
       const event = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "ses-123", status: { type: "busy" } },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](event);
+        type: "session.status",
+        properties: { sessionID: "ses-123", status: { type: "busy" } },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](event);
 
-      expect(client.currentStatus).toBe("busy");
+      expect(client["_currentStatus"]).toBe("busy");
     });
 
     it("does not update on SSE session.status event for child session", async () => {
@@ -341,15 +332,13 @@ describe("OpenCodeClient", () => {
 
       // Child session goes busy - should NOT update currentStatus
       const event = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "child-1", status: { type: "busy" } },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](event);
+        type: "session.status",
+        properties: { sessionID: "child-1", status: { type: "busy" } },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](event);
 
       // Should still be idle (default)
-      expect(client.currentStatus).toBe("idle");
+      expect(client["_currentStatus"]).toBe("idle");
     });
 
     it("updates on SSE session.idle event for root session", async () => {
@@ -362,24 +351,20 @@ describe("OpenCodeClient", () => {
 
       // First set to busy
       const busyEvent = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "ses-123", status: { type: "busy" } },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](busyEvent);
-      expect(client.currentStatus).toBe("busy");
+        type: "session.status",
+        properties: { sessionID: "ses-123", status: { type: "busy" } },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](busyEvent);
+      expect(client["_currentStatus"]).toBe("busy");
 
       // Then idle event
       const idleEvent = {
-        data: JSON.stringify({
-          type: "session.idle",
-          properties: { sessionID: "ses-123" },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](idleEvent);
+        type: "session.idle",
+        properties: { sessionID: "ses-123" },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](idleEvent);
 
-      expect(client.currentStatus).toBe("idle");
+      expect(client["_currentStatus"]).toBe("idle");
     });
 
     it("does not update on SSE session.idle event for child session", async () => {
@@ -396,25 +381,21 @@ describe("OpenCodeClient", () => {
 
       // Set parent to busy first
       const busyEvent = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "parent-1", status: { type: "busy" } },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](busyEvent);
-      expect(client.currentStatus).toBe("busy");
+        type: "session.status",
+        properties: { sessionID: "parent-1", status: { type: "busy" } },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](busyEvent);
+      expect(client["_currentStatus"]).toBe("busy");
 
       // Child session goes idle - should NOT update currentStatus
       const idleEvent = {
-        data: JSON.stringify({
-          type: "session.idle",
-          properties: { sessionID: "child-1" },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](idleEvent);
+        type: "session.idle",
+        properties: { sessionID: "child-1" },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](idleEvent);
 
       // Should still be busy (parent is busy, child idle should be ignored)
-      expect(client.currentStatus).toBe("busy");
+      expect(client["_currentStatus"]).toBe("busy");
     });
 
     it("maps retry to busy for root session", async () => {
@@ -426,14 +407,12 @@ describe("OpenCodeClient", () => {
       registerSessions(client, [{ id: "ses-123" }]);
 
       const event = {
-        data: JSON.stringify({
-          type: "session.status",
-          properties: { sessionID: "ses-123", status: { type: "retry" } },
-        }),
-      } as MessageEvent;
-      client["handleMessage"](event);
+        type: "session.status",
+        properties: { sessionID: "ses-123", status: { type: "retry" } },
+      } as unknown as SdkEvent;
+      client["handleSdkEvent"](event);
 
-      expect(client.currentStatus).toBe("busy");
+      expect(client["_currentStatus"]).toBe("busy");
     });
   });
 
@@ -502,7 +481,7 @@ describe("OpenCodeClient", () => {
 
       expect(listener).toHaveBeenCalledWith(event);
       // After deletion, the session should be removed from root set
-      expect(client.isRootSession("test-session")).toBe(false);
+      expect(client["rootSessionIds"].has("test-session")).toBe(false);
     });
 
     it("emits session.idle events for root sessions", async () => {
@@ -675,7 +654,7 @@ describe("OpenCodeClient", () => {
       // Simulate session.created event for root session
       client["handleSessionCreated"]({ info: { id: "new-root" } });
 
-      expect(client.isRootSession("new-root")).toBe(true);
+      expect(client["rootSessionIds"].has("new-root")).toBe(true);
       // Should emit "created" event - status is unknown until we receive session.status
       // This allows sessionToPort tracking without assuming idle status
       expect(listener).toHaveBeenCalledWith({ type: "created", sessionId: "new-root" });
@@ -693,7 +672,7 @@ describe("OpenCodeClient", () => {
       // Simulate session.created event for child session
       client["handleSessionCreated"]({ info: { id: "new-child", parentID: "some-parent" } });
 
-      expect(client.isRootSession("new-child")).toBe(false);
+      expect(client["rootSessionIds"].has("new-child")).toBe(false);
       expect(listener).not.toHaveBeenCalled();
     });
 
@@ -715,7 +694,7 @@ describe("OpenCodeClient", () => {
     });
   });
 
-  describe("handleMessage", () => {
+  describe("handleSdkEvent", () => {
     describe("session.status events", () => {
       it("emits idle status for root sessions", async () => {
         mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
@@ -728,13 +707,11 @@ describe("OpenCodeClient", () => {
 
         // Simulate SSE event in OpenCode wire format
         const event = {
-          data: JSON.stringify({
-            type: "session.status",
-            properties: { sessionID: "ses-123", status: { type: "idle" } },
-          }),
-        } as MessageEvent;
+          type: "session.status",
+          properties: { sessionID: "ses-123", status: { type: "idle" } },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "ses-123" });
       });
@@ -749,13 +726,11 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.status",
-            properties: { sessionID: "ses-123", status: { type: "busy" } },
-          }),
-        } as MessageEvent;
+          type: "session.status",
+          properties: { sessionID: "ses-123", status: { type: "busy" } },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({ type: "busy", sessionId: "ses-123" });
       });
@@ -770,13 +745,11 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.status",
-            properties: { sessionID: "ses-123", status: { type: "retry" } },
-          }),
-        } as MessageEvent;
+          type: "session.status",
+          properties: { sessionID: "ses-123", status: { type: "retry" } },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({ type: "busy", sessionId: "ses-123" });
       });
@@ -794,13 +767,11 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.status",
-            properties: { sessionID: "child-1", status: { type: "busy" } },
-          }),
-        } as MessageEvent;
+          type: "session.status",
+          properties: { sessionID: "child-1", status: { type: "busy" } },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -815,13 +786,11 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.status",
-            properties: { status: { type: "busy" } },
-          }),
-        } as MessageEvent;
+          type: "session.status",
+          properties: { status: { type: "busy" } },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -836,13 +805,11 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.status",
-            properties: { sessionID: "ses-123" },
-          }),
-        } as MessageEvent;
+          type: "session.status",
+          properties: { sessionID: "ses-123" },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -859,15 +826,13 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.created",
-            properties: { info: { id: "new-root" } },
-          }),
-        } as MessageEvent;
+          type: "session.created",
+          properties: { info: { id: "new-root" } },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
-        expect(client.isRootSession("new-root")).toBe(true);
+        expect(client["rootSessionIds"].has("new-root")).toBe(true);
         // Should emit "created" event - status is unknown until we receive session.status
         expect(listener).toHaveBeenCalledWith({ type: "created", sessionId: "new-root" });
       });
@@ -882,15 +847,13 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.created",
-            properties: { info: { id: "child-1", parentID: "parent-1" } },
-          }),
-        } as MessageEvent;
+          type: "session.created",
+          properties: { info: { id: "child-1", parentID: "parent-1" } },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
-        expect(client.isRootSession("child-1")).toBe(false);
+        expect(client["rootSessionIds"].has("child-1")).toBe(false);
         expect(listener).not.toHaveBeenCalled();
       });
     });
@@ -906,13 +869,11 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.idle",
-            properties: { sessionID: "ses-123" },
-          }),
-        } as MessageEvent;
+          type: "session.idle",
+          properties: { sessionID: "ses-123" },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({ type: "idle", sessionId: "ses-123" });
       });
@@ -930,13 +891,11 @@ describe("OpenCodeClient", () => {
         client.onSessionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.idle",
-            properties: { sessionID: "child-1" },
-          }),
-        } as MessageEvent;
+          type: "session.idle",
+          properties: { sessionID: "child-1" },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -952,19 +911,17 @@ describe("OpenCodeClient", () => {
         registerSessions(client, [{ id: "ses-123" }]);
         client.onSessionEvent(listener);
 
-        expect(client.isRootSession("ses-123")).toBe(true);
+        expect(client["rootSessionIds"].has("ses-123")).toBe(true);
 
         const event = {
-          data: JSON.stringify({
-            type: "session.deleted",
-            properties: { sessionID: "ses-123" },
-          }),
-        } as MessageEvent;
+          type: "session.deleted",
+          properties: { sessionID: "ses-123" },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({ type: "deleted", sessionId: "ses-123" });
-        expect(client.isRootSession("ses-123")).toBe(false);
+        expect(client["rootSessionIds"].has("ses-123")).toBe(false);
       });
     });
 
@@ -979,18 +936,16 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.updated",
-            properties: {
-              id: "perm-456",
-              sessionID: "ses-123",
-              type: "bash",
-              title: "Run command",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.updated",
+          properties: {
+            id: "perm-456",
+            sessionID: "ses-123",
+            type: "bash",
+            title: "Run command",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({
           type: "permission.updated",
@@ -1017,18 +972,16 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.updated",
-            properties: {
-              id: "perm-456",
-              sessionID: "child-1",
-              type: "bash",
-              title: "Run command",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.updated",
+          properties: {
+            id: "perm-456",
+            sessionID: "child-1",
+            type: "bash",
+            title: "Run command",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         // Child sessions are now tracked and emit permission events
         expect(listener).toHaveBeenCalledWith({
@@ -1054,18 +1007,16 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.updated",
-            properties: {
-              id: "perm-456",
-              sessionID: "unknown-session",
-              type: "bash",
-              title: "Run command",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.updated",
+          properties: {
+            id: "perm-456",
+            sessionID: "unknown-session",
+            type: "bash",
+            title: "Run command",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -1081,13 +1032,11 @@ describe("OpenCodeClient", () => {
 
         // Missing required fields
         const event = {
-          data: JSON.stringify({
-            type: "permission.updated",
-            properties: { id: "perm-456" },
-          }),
-        } as MessageEvent;
+          type: "permission.updated",
+          properties: { id: "perm-456" },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -1104,17 +1053,15 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.replied",
-            properties: {
-              sessionID: "ses-123",
-              permissionID: "perm-456",
-              response: "once",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.replied",
+          properties: {
+            sessionID: "ses-123",
+            permissionID: "perm-456",
+            response: "once",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({
           type: "permission.replied",
@@ -1136,17 +1083,15 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.replied",
-            properties: {
-              sessionID: "ses-123",
-              permissionID: "perm-456",
-              response: "always",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.replied",
+          properties: {
+            sessionID: "ses-123",
+            permissionID: "perm-456",
+            response: "always",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({
           type: "permission.replied",
@@ -1168,17 +1113,15 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.replied",
-            properties: {
-              sessionID: "ses-123",
-              permissionID: "perm-456",
-              response: "reject",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.replied",
+          properties: {
+            sessionID: "ses-123",
+            permissionID: "perm-456",
+            response: "reject",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).toHaveBeenCalledWith({
           type: "permission.replied",
@@ -1204,17 +1147,15 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.replied",
-            properties: {
-              sessionID: "child-1",
-              permissionID: "perm-456",
-              response: "once",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.replied",
+          properties: {
+            sessionID: "child-1",
+            permissionID: "perm-456",
+            response: "once",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         // Child sessions are now tracked and emit permission events
         expect(listener).toHaveBeenCalledWith({
@@ -1239,17 +1180,15 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.replied",
-            properties: {
-              sessionID: "unknown-session",
-              permissionID: "perm-456",
-              response: "once",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.replied",
+          properties: {
+            sessionID: "unknown-session",
+            permissionID: "perm-456",
+            response: "once",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });
@@ -1264,76 +1203,15 @@ describe("OpenCodeClient", () => {
         client.onPermissionEvent(listener);
 
         const event = {
-          data: JSON.stringify({
-            type: "permission.replied",
-            properties: {
-              sessionID: "ses-123",
-              permissionID: "perm-456",
-              response: "invalid",
-            },
-          }),
-        } as MessageEvent;
+          type: "permission.replied",
+          properties: {
+            sessionID: "ses-123",
+            permissionID: "perm-456",
+            response: "invalid",
+          },
+        } as unknown as SdkEvent;
 
-        client["handleMessage"](event);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-    });
-
-    describe("error handling", () => {
-      it("ignores invalid JSON", async () => {
-        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onSessionEvent(listener);
-
-        const event = { data: "not valid json" } as MessageEvent;
-
-        // Should not throw
-        expect(() => client["handleMessage"](event)).not.toThrow();
-        expect(listener).not.toHaveBeenCalled();
-      });
-
-      it("ignores unknown event types", async () => {
-        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onSessionEvent(listener);
-
-        const event = {
-          data: JSON.stringify({
-            type: "unknown.event",
-            properties: { sessionID: "ses-123" },
-          }),
-        } as MessageEvent;
-
-        client["handleMessage"](event);
-
-        expect(listener).not.toHaveBeenCalled();
-      });
-
-      it("ignores events without type field", async () => {
-        mockSdk = createSdkWithSessions([createTestSession({ id: "ses-123", directory: "/test" })]);
-        mockFactory = createSdkFactoryMock(mockSdk);
-
-        const listener = vi.fn();
-        client = createClient(8080);
-        registerSessions(client, [{ id: "ses-123" }]);
-        client.onSessionEvent(listener);
-
-        const event = {
-          data: JSON.stringify({
-            properties: { sessionID: "ses-123" },
-          }),
-        } as MessageEvent;
-
-        client["handleMessage"](event);
+        client["handleSdkEvent"](event);
 
         expect(listener).not.toHaveBeenCalled();
       });

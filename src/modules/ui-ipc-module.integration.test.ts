@@ -470,7 +470,6 @@ describe("UiIpcModule - IPC handlers", () => {
     const state = ipcLayer._getState();
     expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_READY)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_QUIT)).toBe(true);
-    expect(state.handlers.has(ApiIpcChannels.WORKSPACE_CREATE)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.WORKSPACE_REMOVE)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.PROJECT_OPEN)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.UI_SET_MODE)).toBe(true);

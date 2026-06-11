@@ -15,8 +15,7 @@
  * ```
  */
 
-import { Dispatcher } from "./lib/dispatcher";
-import { createMockLogger } from "../boundaries/platform/logging.test-utils";
+import type { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "../shared/api/types";
@@ -93,7 +92,7 @@ export interface TestMockConfig {
  * - get-active-workspace: returns config.activeWorkspaceRef
  * - switch-workspace activate: calls config.viewManager.setActiveWorkspace() (if provided)
  */
-export function createTestMockModule(config: TestMockConfig): IntentModule {
+function createTestMockModule(config: TestMockConfig): IntentModule {
   const hooks: Record<
     string,
     Record<string, { handler: (ctx: HookContext) => Promise<unknown> }>
@@ -192,18 +191,4 @@ export function registerTestInfrastructure(
   dispatcher.registerModule(mockModule);
 
   return { mockModule };
-}
-
-/**
- * Creates a fresh Dispatcher and registers infrastructure.
- * Convenience for tests that don't need custom dispatcher setup.
- */
-export function createTestDispatcher(config: TestMockConfig): {
-  dispatcher: Dispatcher;
-
-  mockModule: IntentModule;
-} {
-  const dispatcher = new Dispatcher({ logger: createMockLogger() });
-  const { mockModule } = registerTestInfrastructure(dispatcher, config);
-  return { dispatcher, mockModule };
 }

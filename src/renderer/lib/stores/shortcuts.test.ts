@@ -69,10 +69,8 @@ const mockProjectsStore = vi.hoisted(() => ({
   }),
   wrapIndex: vi.fn((i: number, l: number) => ((i % l) + l) % l),
   activeWorkspacePath: { value: null as string | null },
-  activeProject: { value: null as { id: string; path: string } | null },
   // activeWorkspace is now used for remove dialog
   activeWorkspace: { value: null as MockWorkspaceRef | null },
-  // projects list for fallback when activeProject is null
   projects: { value: [] as { id: string; path: string }[] },
   // Eager set used by navigation handlers to avoid empty-backdrop flicker
   // after the New workspace view cleared the active workspace on open.
@@ -381,7 +379,6 @@ describe("shortcuts store", () => {
       mockProjectsStore.getWorkspaceRefByIndex.mockReturnValue(undefined);
       mockProjectsStore.findWorkspaceIndex.mockReturnValue(-1);
       mockProjectsStore.activeWorkspacePath.value = null;
-      mockProjectsStore.activeProject.value = null;
       mockProjectsStore.projects.value = [];
     });
 
@@ -874,7 +871,6 @@ describe("shortcuts store", () => {
       // NOTE: Dialog tests use handleShortcutKey with normalized keys ("enter", "delete")
       // since these come from main process events. Backspace is normalized to "delete" by main process.
       it("should-open-new-workspace-view-on-enter (no project pre-fill)", () => {
-        mockProjectsStore.activeProject.value = { id: "project-12345678", path: "/project" };
         mockNewWorkspaceView.newWorkspaceView.isOpen = false;
 
         enableShortcutMode();
@@ -981,11 +977,6 @@ describe("shortcuts store", () => {
       });
 
       it("should-deactivate-shortcut-mode-before-opening-dialog", () => {
-        mockProjectsStore.activeProject.value = {
-          id: "test-project-12345678",
-          path: "/project",
-        };
-
         enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 

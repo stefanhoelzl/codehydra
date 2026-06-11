@@ -124,21 +124,6 @@ describe("Path", () => {
       expect(p.dirname).toBeInstanceOf(Path);
       expect(p.dirname.toString()).toBe("/foo");
     });
-
-    it("returns extension including dot", () => {
-      const p = new Path("/foo/bar.ts");
-      expect(p.extension).toBe(".ts");
-    });
-
-    it("returns empty extension for no extension", () => {
-      const p = new Path("/foo/bar");
-      expect(p.extension).toBe("");
-    });
-
-    it("returns segments as array", () => {
-      const p = new Path("/foo/bar/baz");
-      expect(p.segments).toEqual(["foo", "bar", "baz"]);
-    });
   });
 
   describe("equals (cross-platform)", () => {
@@ -221,23 +206,6 @@ describe("Path", () => {
     it("returns false for invalid parent", () => {
       const p = new Path("/foo/bar");
       expect(p.isChildOf("relative")).toBe(false);
-    });
-  });
-
-  describe("relativeTo (cross-platform)", () => {
-    it("returns relative path", () => {
-      const p = new Path("/foo/bar/baz");
-      expect(p.relativeTo("/foo")).toBe("bar/baz");
-    });
-
-    it("returns empty string for same path", () => {
-      const p = new Path("/foo/bar");
-      expect(p.relativeTo("/foo/bar")).toBe("");
-    });
-
-    it("handles parent traversal", () => {
-      const p = new Path("/foo/bar");
-      expect(p.relativeTo("/foo/baz")).toBe("../bar");
     });
   });
 

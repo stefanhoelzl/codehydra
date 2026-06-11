@@ -44,20 +44,3 @@ export class PlatformError extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
-
-/**
- * Type guard to check if an error is a PlatformError.
- */
-export function isPlatformError(error: unknown): error is PlatformError {
-  return error instanceof PlatformError;
-}
-
-/**
- * Type guard to check if an error is a PlatformError with a specific code.
- */
-export function isPlatformErrorWithCode(
-  error: unknown,
-  code: PlatformErrorCode
-): error is PlatformError {
-  return isPlatformError(error) && error.code === code;
-}

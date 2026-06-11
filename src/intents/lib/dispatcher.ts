@@ -111,7 +111,6 @@ export class IntentHandle<T> implements PromiseLike<T> {
  */
 export interface IntentInterceptor {
   readonly id: string;
-  readonly order?: number;
   before(intent: Intent): Promise<Intent | null>;
 }
 
@@ -169,7 +168,6 @@ export class Dispatcher implements IDispatcher {
 
   addInterceptor(interceptor: IntentInterceptor): void {
     this.interceptors.push(interceptor);
-    this.interceptors.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }
 
   registerModule(module: IntentModule): void {
@@ -477,9 +475,7 @@ function requirementsSatisfied(
   capabilities: Record<string, unknown>
 ): boolean {
   for (const [key, value] of Object.entries(requires)) {
-    if (value === undefined) {
-      if (key in capabilities) return false;
-    } else if (value === ANY_VALUE) {
+    if (value === ANY_VALUE) {
       if (!(key in capabilities)) return false;
     } else {
       if (!(key in capabilities)) return false;
@@ -495,9 +491,7 @@ function unsatisfiedKeys(
 ): string[] {
   const keys: string[] = [];
   for (const [key, value] of Object.entries(requires)) {
-    if (value === undefined) {
-      if (key in capabilities) keys.push(key);
-    } else if (value === ANY_VALUE) {
+    if (value === ANY_VALUE) {
       if (!(key in capabilities)) keys.push(key);
     } else {
       if (!(key in capabilities) || capabilities[key] !== value) keys.push(key);

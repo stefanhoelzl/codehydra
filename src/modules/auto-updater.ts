@@ -9,7 +9,7 @@
  * - Windows (NSIS): Full auto-update
  * - macOS (DMG): Full auto-update
  * - Linux (AppImage): Full auto-update
- * - Windows (portable), Linux (.deb/.rpm): Not supported - start() is no-op
+ * - Windows (portable), Linux (.deb/.rpm): Not supported
  */
 
 import { autoUpdater } from "electron-updater";
@@ -20,12 +20,6 @@ import type { Logger } from "../boundaries/platform/logging";
  * @param version - The version string of the detected update
  */
 export type UpdateDetectedCallback = (version: string) => void;
-
-/**
- * Callback type for update downloaded events (download complete).
- * @param version - The version string of the downloaded update
- */
-export type UpdateDownloadedCallback = (version: string) => void;
 
 /**
  * Callback type for download progress events.
@@ -45,7 +39,7 @@ export interface AutoUpdaterDeps {
  *
  * Wraps electron-updater to provide:
  * - Detection via checkForUpdates() (fires onUpdateDetected)
- * - Manual download via downloadUpdate() (fires onDownloadProgress, onUpdateDownloaded)
+ * - Manual download via downloadUpdate() (fires onDownloadProgress)
  * - Install via quitAndInstall()
  * - Error handling (log but don't crash)
  */
@@ -53,10 +47,8 @@ export class AutoUpdater {
   private readonly logger: Logger;
   private readonly isDevelopment: boolean;
   private readonly detectedCallbacks: Set<UpdateDetectedCallback> = new Set();
-  private readonly downloadedCallbacks: Set<UpdateDownloadedCallback> = new Set();
   private readonly progressCallbacks: Set<DownloadProgressCallback> = new Set();
   private disposed = false;
-  private downloadCancelled = false;
 
   constructor(deps: AutoUpdaterDeps) {
     this.logger = deps.logger;
@@ -78,12 +70,10 @@ export class AutoUpdater {
       // Wire up event handlers
       this.handleError = this.handleError.bind(this);
       this.handleUpdateAvailable = this.handleUpdateAvailable.bind(this);
-      this.handleUpdateDownloaded = this.handleUpdateDownloaded.bind(this);
       this.handleDownloadProgress = this.handleDownloadProgress.bind(this);
 
       autoUpdater.on("error", this.handleError);
       autoUpdater.on("update-available", this.handleUpdateAvailable);
-      autoUpdater.on("update-downloaded", this.handleUpdateDownloaded);
       autoUpdater.on("download-progress", this.handleDownloadProgress);
     }
   }
@@ -140,33 +130,19 @@ export class AutoUpdater {
 
   /**
    * Start downloading the update.
-   * Fires onDownloadProgress callbacks during download and onUpdateDownloaded on completion.
-   * Throws if cancelled via cancelDownload().
+   * Fires onDownloadProgress callbacks during download.
    */
   async downloadUpdate(): Promise<void> {
     if (this.isDevelopment || this.disposed) return;
 
-    this.downloadCancelled = false;
-
     try {
       await autoUpdater.downloadUpdate();
-      if (this.downloadCancelled) {
-        throw new Error("Download cancelled");
-      }
     } catch (error) {
       this.logger.warn("Update download failed", {
         error: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }
-  }
-
-  /**
-   * Cancel an in-progress download.
-   * Sets a flag that causes downloadUpdate() to throw on next check.
-   */
-  cancelDownload(): void {
-    this.downloadCancelled = true;
   }
 
   /**
@@ -180,34 +156,12 @@ export class AutoUpdater {
   }
 
   /**
-   * Start the auto-updater (legacy — just logs).
-   * The check-deps hook now calls checkForUpdates() directly.
-   */
-  start(): void {
-    if (this.isDevelopment) {
-      this.logger.debug("Skipping auto-updater start (development mode)");
-      return;
-    }
-    this.logger.debug("Auto-updater started");
-  }
-
-  /**
    * Register a callback for when an update is detected (before download).
    */
   onUpdateDetected(callback: UpdateDetectedCallback): () => void {
     this.detectedCallbacks.add(callback);
     return () => {
       this.detectedCallbacks.delete(callback);
-    };
-  }
-
-  /**
-   * Register a callback for when an update has been downloaded.
-   */
-  onUpdateDownloaded(callback: UpdateDownloadedCallback): () => void {
-    this.downloadedCallbacks.add(callback);
-    return () => {
-      this.downloadedCallbacks.delete(callback);
     };
   }
 
@@ -232,12 +186,10 @@ export class AutoUpdater {
     if (!this.isDevelopment) {
       autoUpdater.off("error", this.handleError);
       autoUpdater.off("update-available", this.handleUpdateAvailable);
-      autoUpdater.off("update-downloaded", this.handleUpdateDownloaded);
       autoUpdater.off("download-progress", this.handleDownloadProgress);
     }
 
     this.detectedCallbacks.clear();
-    this.downloadedCallbacks.clear();
     this.progressCallbacks.clear();
     this.logger.debug("Auto-updater disposed");
   }
@@ -304,22 +256,6 @@ export class AutoUpdater {
         callback(info);
       } catch (error) {
         this.logger.warn("Download progress callback error", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
-
-  /**
-   * Handle update-downloaded events.
-   */
-  private handleUpdateDownloaded(info: { version: string }): void {
-    this.logger.info("Update downloaded", { version: info.version });
-    for (const callback of this.downloadedCallbacks) {
-      try {
-        callback(info.version);
-      } catch (error) {
-        this.logger.warn("Update downloaded callback error", {
           error: error instanceof Error ? error.message : String(error),
         });
       }

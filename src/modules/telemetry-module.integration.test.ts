@@ -35,9 +35,8 @@ import {
   type MockPostHogBoundary,
 } from "../boundaries/platform/posthog.state-mock";
 import type { ConfigAgentType } from "../boundaries/platform/config";
-import type { StateService } from "../boundaries/platform/state-service";
 import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
-import { createMockState } from "../boundaries/platform/state.test-utils";
+import { createMockState, type MockStateService } from "../boundaries/platform/state.test-utils";
 import { createStateMigrationRegistry } from "./state-module";
 import type { Operation, OperationContext } from "../intents/lib/operation";
 
@@ -72,7 +71,7 @@ const REOPENED_WORKSPACE_PAYLOAD: WorkspaceCreatedPayload = {
 interface TestSetup {
   dispatcher: Dispatcher;
   boundary: MockPostHogBoundary;
-  state: StateService;
+  state: MockStateService;
 }
 
 function createTestSetup(overrides?: {

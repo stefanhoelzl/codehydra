@@ -550,19 +550,6 @@ describe("McpServer", () => {
       });
     });
   });
-
-  describe("dispose", () => {
-    it("stops the server", async () => {
-      const port = await findFreePort();
-      const server = new McpServer(mockDispatcher.dispatcher, mockFactory, mockLogger);
-
-      await server.start(port);
-      expect(server.isRunning()).toBe(true);
-
-      await server.dispose();
-      expect(server.isRunning()).toBe(false);
-    });
-  });
 });
 
 describe("createDefaultMcpServer", () => {

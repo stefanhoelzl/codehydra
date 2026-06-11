@@ -188,7 +188,7 @@ function createHibernateHookModule(
             expect(c.projectId).toBe(PROJECT_ID);
             recorder.captureCalled = true;
             recorder.callOrder.push("capture");
-            return { captured: true };
+            return {};
           },
         },
         shutdown: {
@@ -392,7 +392,7 @@ describe("workspace:hibernate", () => {
         hooks: {
           [HIBERNATE_WORKSPACE_OPERATION_ID]: {
             capture: {
-              handler: async (): Promise<CaptureHookResult> => ({ captured: false }),
+              handler: async (): Promise<CaptureHookResult> => ({}),
             },
             shutdown: {
               handler: async (): Promise<HibernateShutdownHookResult> => ({}),

@@ -118,7 +118,7 @@ export function getCodeServerUrl(platform: SupportedPlatform, arch: SupportedArc
  * @param arch - CPU architecture
  * @returns Subpath prefix within the archive
  */
-export function getCodeServerSubPathForVersion(
+function getCodeServerSubPathForVersion(
   version: string,
   platform: SupportedPlatform,
   arch: SupportedArch

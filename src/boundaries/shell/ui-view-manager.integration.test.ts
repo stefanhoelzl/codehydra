@@ -13,7 +13,7 @@ import { UiViewManager, type UiViewManagerDeps } from "./ui-view-manager";
 import { createViewBoundaryMock } from "./view.state-mock";
 import { createSessionBoundaryMock } from "./session.state-mock";
 import { createMockWindowManager } from "./window-manager.test-utils";
-import type { WindowBoundaryInternal } from "./window";
+import type { WindowBoundary } from "./window";
 import type { WindowManager } from "./window-manager";
 import type { AppBoundary } from "./app";
 
@@ -23,7 +23,7 @@ function createDeps() {
   const windowManager = createMockWindowManager();
   const windowLayer = {
     isDestroyed: vi.fn(() => false),
-  } as unknown as WindowBoundaryInternal;
+  } as unknown as WindowBoundary;
   const appLayer: Pick<AppBoundary, "openUrl"> = {
     openUrl: vi.fn().mockResolvedValue(undefined),
   };
@@ -118,35 +118,12 @@ describe("UiViewManager", () => {
   });
 
   describe("mode state", () => {
-    it("defaults to workspace and notifies subscribers on change", () => {
+    it("defaults to workspace and updates on setMode", () => {
       const { manager } = createManager();
       expect(manager.getMode()).toBe("workspace");
 
-      const events: unknown[] = [];
-      manager.onModeChange((e) => events.push(e));
-
       manager.setMode("shortcut");
       expect(manager.getMode()).toBe("shortcut");
-      expect(events).toEqual([{ mode: "shortcut", previousMode: "workspace" }]);
-    });
-
-    it("does not notify when the mode is unchanged", () => {
-      const { manager } = createManager();
-      const callback = vi.fn();
-      manager.onModeChange(callback);
-
-      manager.setMode("workspace");
-      expect(callback).not.toHaveBeenCalled();
-    });
-
-    it("unsubscribe stops notifications", () => {
-      const { manager } = createManager();
-      const callback = vi.fn();
-      const unsubscribe = manager.onModeChange(callback);
-      unsubscribe();
-
-      manager.setMode("dialog");
-      expect(callback).not.toHaveBeenCalled();
     });
   });
 

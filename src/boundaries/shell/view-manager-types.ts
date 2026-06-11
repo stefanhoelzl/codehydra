@@ -11,8 +11,8 @@ import type { Unsubscribe } from "./view-manager.interface";
 /**
  * Minimum window dimensions.
  */
-export const MIN_WIDTH = 800;
-export const MIN_HEIGHT = 600;
+const MIN_WIDTH = 800;
+const MIN_HEIGHT = 600;
 
 /**
  * Rectangle in window coordinates.
@@ -56,7 +56,7 @@ export interface KeyboardTarget {
 /**
  * Clamps a window size to the configured minimum dimensions.
  */
-export function clampSize(size: { width: number; height: number }): {
+function clampSize(size: { width: number; height: number }): {
   width: number;
   height: number;
 } {

@@ -132,9 +132,6 @@ describe("FilterableDropdown component", () => {
 
       // Type to filter
       await fireEvent.input(input, { target: { value: "Ban" } });
-
-      // Wait for debounce
-      await vi.advanceTimersByTimeAsync(250);
       await tick();
 
       // Only Banana should be visible - filtering works after pre-selection
@@ -149,9 +146,6 @@ describe("FilterableDropdown component", () => {
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
       await fireEvent.input(input, { target: { value: "app" } });
-
-      // Wait for debounce
-      await vi.advanceTimersByTimeAsync(250);
       await tick();
 
       expect(screen.getByText("Apple")).toBeInTheDocument();
@@ -159,31 +153,8 @@ describe("FilterableDropdown component", () => {
       expect(screen.queryByText("Cherry")).not.toBeInTheDocument();
     });
 
-    it("uses a custom filterOption override when provided", async () => {
-      // Filter by VALUE prefix instead of label substring.
-      const filterOption = (opt: { label: string; value: string }, lower: string): boolean =>
-        opt.value.toLowerCase().startsWith(lower);
-      render(FilterableDropdown, {
-        props: {
-          ...defaultProps,
-          options: [createOption("Apple", "fruit-a"), createOption("Banana", "fruit-b")],
-          filterOption,
-        },
-      });
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-      await fireEvent.input(input, { target: { value: "fruit-b" } });
-
-      await vi.advanceTimersByTimeAsync(250);
-      await tick();
-
-      expect(screen.queryByText("Apple")).not.toBeInTheDocument();
-      expect(screen.getByText("Banana")).toBeInTheDocument();
-    });
-
-    it("filters synchronously when debounceMs is 0", async () => {
-      render(FilterableDropdown, { props: { ...defaultProps, debounceMs: 0 } });
+    it("filters synchronously", async () => {
+      render(FilterableDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
@@ -207,8 +178,6 @@ describe("FilterableDropdown component", () => {
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
       await fireEvent.input(input, { target: { value: "carrot" } });
-
-      await vi.advanceTimersByTimeAsync(250);
       await tick();
 
       expect(screen.queryByText("Fruits")).not.toBeInTheDocument();
@@ -225,100 +194,14 @@ describe("FilterableDropdown component", () => {
 
       // Type something, then clear
       await fireEvent.input(input, { target: { value: "app" } });
-      await vi.advanceTimersByTimeAsync(250);
       await tick();
 
       await fireEvent.input(input, { target: { value: "" } });
-      await vi.advanceTimersByTimeAsync(250);
       await tick();
 
       expect(screen.getByText("Apple")).toBeInTheDocument();
       expect(screen.getByText("Banana")).toBeInTheDocument();
       expect(screen.getByText("Cherry")).toBeInTheDocument();
-    });
-
-    it("debounces filter input with 200ms delay", async () => {
-      render(FilterableDropdown, { props: defaultProps });
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-      await fireEvent.input(input, { target: { value: "ban" } });
-
-      // Immediately after typing, all options still visible
-      expect(screen.getByText("Apple")).toBeInTheDocument();
-
-      // Wait 100ms - still not filtered
-      await vi.advanceTimersByTimeAsync(100);
-      await tick();
-      expect(screen.getByText("Apple")).toBeInTheDocument();
-
-      // Wait past debounce threshold
-      await vi.advanceTimersByTimeAsync(150);
-      await tick();
-
-      // Now filtered
-      expect(screen.queryByText("Apple")).not.toBeInTheDocument();
-      expect(screen.getByText("Banana")).toBeInTheDocument();
-    });
-
-    it("respects custom debounceMs prop", async () => {
-      render(FilterableDropdown, { props: { ...defaultProps, debounceMs: 500 } });
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-      await fireEvent.input(input, { target: { value: "ban" } });
-
-      // Wait 300ms - still not filtered
-      await vi.advanceTimersByTimeAsync(300);
-      await tick();
-      expect(screen.getByText("Apple")).toBeInTheDocument();
-
-      // Wait past 500ms threshold
-      await vi.advanceTimersByTimeAsync(250);
-      await tick();
-
-      expect(screen.queryByText("Apple")).not.toBeInTheDocument();
-      expect(screen.getByText("Banana")).toBeInTheDocument();
-    });
-
-    it("auto-opens dropdown when typing produces matches with openOnFocus=false", async () => {
-      // When openOnFocus is false, the dropdown should still open when typing
-      // produces matches
-      render(FilterableDropdown, { props: { ...defaultProps, openOnFocus: false } });
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-
-      // Dropdown should NOT open on focus because openOnFocus=false
-      expect(input).toHaveAttribute("aria-expanded", "false");
-
-      // Type something that matches
-      await fireEvent.input(input, { target: { value: "app" } });
-
-      // Wait for debounce
-      await vi.advanceTimersByTimeAsync(250);
-      await tick();
-
-      // Dropdown should now be open because there are matches
-      expect(input).toHaveAttribute("aria-expanded", "true");
-      expect(screen.getByText("Apple")).toBeInTheDocument();
-    });
-
-    it("does not auto-open dropdown when typing produces no matches", async () => {
-      render(FilterableDropdown, { props: { ...defaultProps, openOnFocus: false } });
-
-      const input = screen.getByRole("combobox");
-      await fireEvent.focus(input);
-
-      // Type something that doesn't match
-      await fireEvent.input(input, { target: { value: "xyz" } });
-
-      // Wait for debounce
-      await vi.advanceTimersByTimeAsync(250);
-      await tick();
-
-      // Dropdown should stay closed because there are no matches
-      expect(input).toHaveAttribute("aria-expanded", "false");
     });
   });
 
@@ -494,10 +377,12 @@ describe("FilterableDropdown component", () => {
     it("Escape when dropdown closed does not stop propagation", async () => {
       // When dropdown is already closed, ESC should propagate to parent
       // so that parent dialog can close
-      render(FilterableDropdown, { props: { ...defaultProps, openOnFocus: false } });
+      render(FilterableDropdown, { props: defaultProps });
 
       const input = screen.getByRole("combobox");
       await fireEvent.focus(input);
+      // Close the dropdown first (focus opens it)
+      await fireEvent.keyDown(input, { key: "Escape" });
       expect(input).toHaveAttribute("aria-expanded", "false");
 
       const keyDownEvent = new KeyboardEvent("keydown", {

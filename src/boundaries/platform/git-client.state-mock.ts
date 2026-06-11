@@ -572,17 +572,16 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
       throw new GitError(`Not a git repository or worktree: ${normalizedPath}`);
     },
 
-    async fetch(repoPath: Path, remote?: string): Promise<void> {
+    async fetch(repoPath: Path, remote: string): Promise<void> {
       const repo = getRepoOrThrow(repoPath);
 
-      // If remote specified, check it exists
-      if (remote !== undefined && !repo.remotes.has(remote)) {
+      if (!repo.remotes.has(remote)) {
         throw new GitError(`Remote '${remote}' not found`);
       }
 
       // Simulate `remote set-head --auto`: record the server's default branch as the
       // remote HEAD symref (mirrors SimpleGitClient.fetch)
-      if (remote !== undefined && repo.serverDefaultBranch !== undefined) {
+      if (repo.serverDefaultBranch !== undefined) {
         repo.remoteHeads.set(remote, repo.serverDefaultBranch);
       }
     },
@@ -705,11 +704,6 @@ export function createMockGitClient(options?: MockGitClientOptions): MockGitClie
         }
       }
       return 0;
-    },
-
-    async isBare(repoPath: Path): Promise<boolean> {
-      const repo = getRepoOrThrow(repoPath);
-      return repo.isBare;
     },
 
     async init(targetPath: Path, options?: { initialCommit?: string }): Promise<void> {

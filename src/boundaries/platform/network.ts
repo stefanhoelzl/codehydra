@@ -88,39 +88,26 @@ export interface PortManager {
 }
 
 // ============================================================================
-// Configuration
-// ============================================================================
-
-/**
- * Configuration for DefaultNetworkLayer.
- */
-export interface NetworkLayerConfig {
-  /** Default timeout for HTTP requests in ms. Default: 5000 */
-  readonly defaultTimeout?: number;
-}
-
-// ============================================================================
 // Default Implementation
 // ============================================================================
+
+/** Default timeout for HTTP requests in ms. */
+const DEFAULT_TIMEOUT_MS = 5000;
 
 /**
  * Default implementation of network interfaces.
  * Implements HttpClient and PortManager.
  */
 export class DefaultNetworkLayer implements HttpClient, PortManager {
-  private readonly config: Required<NetworkLayerConfig>;
   private readonly logger: Logger;
 
-  constructor(logger: Logger, config: NetworkLayerConfig = {}) {
+  constructor(logger: Logger) {
     this.logger = logger;
-    this.config = {
-      defaultTimeout: config.defaultTimeout ?? 5000,
-    };
   }
 
   // HttpClient implementation
   async fetch(url: string, options?: HttpRequestOptions): Promise<Response> {
-    const timeout = options?.timeout ?? this.config.defaultTimeout;
+    const timeout = options?.timeout ?? DEFAULT_TIMEOUT_MS;
     const externalSignal = options?.signal;
 
     this.logger.debug("Fetch", { url, method: "GET" });

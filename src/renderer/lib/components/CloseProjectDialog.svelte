@@ -11,11 +11,10 @@
   const logger = createLogger("ui");
 
   interface CloseProjectDialogProps {
-    open: boolean;
     projectId: ProjectId;
   }
 
-  let { open, projectId }: CloseProjectDialogProps = $props();
+  let { projectId }: CloseProjectDialogProps = $props();
 
   // Form state
   let removeAll = $state(false);
@@ -121,14 +120,7 @@
   const descriptionId = "close-project-desc";
 </script>
 
-<Dialog
-  {open}
-  onClose={handleCancel}
-  busy={isSubmitting}
-  {titleId}
-  {descriptionId}
-  initialFocusSelector="vscode-button"
->
+<Dialog open={true} onClose={handleCancel} busy={isSubmitting} {titleId} {descriptionId}>
   {#snippet title()}
     <h2 id={titleId} class="ch-dialog-title">Close Project</h2>
   {/snippet}

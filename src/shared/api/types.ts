@@ -35,12 +35,6 @@ export type WorkspaceName = string & { readonly [WorkspaceNameBrand]: true };
 // =============================================================================
 
 /**
- * Regex for validating ProjectId format.
- * Pattern: alphanumeric name with dashes, followed by dash and 8 hex characters.
- */
-const PROJECT_ID_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9-]*-[a-f0-9]{8}$/;
-
-/**
  * Regex for validating WorkspaceName format.
  * Pattern: starts with alphanumeric, followed by alphanumeric, dashes, underscores, dots, or forward slashes.
  */
@@ -50,15 +44,6 @@ const WORKSPACE_NAME_REGEX = /^[a-zA-Z0-9][-_./a-zA-Z0-9]*$/;
  * Maximum length for workspace names.
  */
 const WORKSPACE_NAME_MAX_LENGTH = 100;
-
-/**
- * Type guard for ProjectId validation.
- * @param value String to validate
- * @returns True if the value matches ProjectId format
- */
-export function isProjectId(value: string): value is ProjectId {
-  return PROJECT_ID_REGEX.test(value);
-}
 
 /**
  * Validate a workspace name and return an error message or null.
@@ -75,15 +60,6 @@ export function validateWorkspaceName(value: string): string | null {
     return "Name can only contain letters, numbers, dash, underscore, dot, forward slash";
   }
   return null;
-}
-
-/**
- * Type guard for WorkspaceName validation.
- * @param value String to validate
- * @returns True if the value matches WorkspaceName format
- */
-export function isWorkspaceName(value: string): value is WorkspaceName {
-  return validateWorkspaceName(value) === null;
 }
 
 // =============================================================================
@@ -285,49 +261,9 @@ export interface BaseInfo {
 }
 
 /**
- * Steps in the VS Code setup process.
- */
-export type SetupStep = "binary-download" | "extensions" | "settings";
-
-/**
- * Progress update during setup.
- */
-export interface SetupProgress {
-  readonly step: SetupStep;
-  readonly message: string;
-}
-
-/**
- * Result of the setup operation.
- */
-export type SetupResult =
-  | { readonly success: true }
-  | { readonly success: false; readonly message: string; readonly code: string };
-
-/**
- * Application state for lifecycle management.
- * - "agent-selection": Agent selection is required (first run)
- * - "setup": Initial setup is required
- * - "loading": Services are starting (shows loading screen)
- * - "ready": Application is fully operational
- */
-export type AppState = "agent-selection" | "setup" | "loading" | "ready";
-
-/**
  * Agent types that can be selected by the user.
  */
 export type ConfigAgentType = "claude" | "opencode";
-
-/**
- * Result of lifecycle.getState().
- * Includes both the current state and the selected agent (if any).
- */
-export interface AppStateResult {
-  /** Current application state */
-  readonly state: AppState;
-  /** Selected agent type (null if not yet selected) */
-  readonly agent: ConfigAgentType | null;
-}
 
 // =============================================================================
 // Setup Screen Progress Types
@@ -345,31 +281,6 @@ export type SetupRowId = "vscode" | "agent" | "setup";
  * Status of a setup row.
  */
 export type SetupRowStatus = "pending" | "running" | "done" | "failed";
-
-/**
- * Progress update for a single setup row.
- */
-export interface SetupRowProgress {
-  /** Row identifier */
-  readonly id: SetupRowId;
-  /** Current status */
-  readonly status: SetupRowStatus;
-  /** Progress percentage (0-100), only valid when status is "running" */
-  readonly progress?: number;
-  /** Status message to display */
-  readonly message?: string;
-  /** Error message when status is "failed" */
-  readonly error?: string;
-}
-
-/**
- * Full setup screen progress state.
- * Sent with each progress update containing all row states.
- */
-export interface SetupScreenProgress {
-  /** Progress for each row */
-  readonly rows: readonly SetupRowProgress[];
-}
 
 // =============================================================================
 // Clone Progress Types
@@ -531,7 +442,7 @@ export function normalizeInitialPrompt(input: InitialPrompt): NormalizedInitialP
 /**
  * Zod schema for validating PromptModel.
  */
-export const promptModelSchema = z.object({
+const promptModelSchema = z.object({
   providerID: z.string().min(1),
   modelID: z.string().min(1),
 });
@@ -563,10 +474,3 @@ export interface AgentSession {
   /** Session ID of the primary session */
   readonly sessionId: string;
 }
-
-/**
- * Agent environment variables for a workspace.
- * These are set by the sidekick extension for all new terminals.
- * The exact variables depend on the agent type (OpenCode, Claude Code, etc.).
- */
-export type AgentEnvironmentVariables = Record<string, string>;

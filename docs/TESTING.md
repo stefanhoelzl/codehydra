@@ -889,10 +889,6 @@ expect(mock).toHaveView(handle.id, {
 // Assert exact set of views
 expect(mock).toHaveViews([handle.id]);
 
-// Trigger simulated events
-mock.onDidFinishLoad(handle, () => console.log("loaded"));
-mock.$.triggerDidFinishLoad(handle);
-
 // Snapshot for unchanged assertions
 const snapshot = mock.$.snapshot();
 // ... action that should not change state ...
@@ -1013,27 +1009,21 @@ expect(mock).toHaveSession("ses-0001");
 **Event Emission** (synchronous for test predictability):
 
 ```typescript
-import { createSessionStatusEvent } from "./sdk-client.state-mock";
-
 // Emit events via state - immediately resolves pending iterator reads
-mock.$.emitEvent(createSessionStatusEvent("ses-0001", { type: "busy" }));
+mock.$.emitEvent({
+  type: "session.status",
+  properties: { sessionID: "ses-0001", status: { type: "busy" } },
+});
 
 // Assertions can be made immediately (no await needed)
-expect(client.currentStatus).toBe("busy");
 expect(listener).toHaveBeenCalledWith("busy");
 ```
 
 **Helper Functions**:
 
-| Function                         | Returns       | Description                  |
-| -------------------------------- | ------------- | ---------------------------- |
-| `createTestSession(overrides)`   | `MockSession` | Create session with defaults |
-| `createSessionStatusEvent()`     | `SdkEvent`    | session.status event         |
-| `createSessionCreatedEvent()`    | `SdkEvent`    | session.created event        |
-| `createSessionIdleEvent()`       | `SdkEvent`    | session.idle event           |
-| `createSessionDeletedEvent()`    | `SdkEvent`    | session.deleted event        |
-| `createPermissionUpdatedEvent()` | `SdkEvent`    | permission.updated event     |
-| `createPermissionRepliedEvent()` | `SdkEvent`    | permission.replied event     |
+| Function                       | Returns       | Description                  |
+| ------------------------------ | ------------- | ---------------------------- |
+| `createTestSession(overrides)` | `MockSession` | Create session with defaults |
 
 ---
 
@@ -1304,7 +1294,7 @@ Stores exist to serve components. Testing stores in isolation often leads to "te
 
 | Category                 | Test Type                  | Examples                                                     |
 | ------------------------ | -------------------------- | ------------------------------------------------------------ |
-| **Pure utils** (no deps) | Focused test (`*.test.ts`) | focus-trap, sidebar-utils, domain-events                     |
+| **Pure utils** (no deps) | Focused test (`*.test.ts`) | focus-trap, sidebar-utils                                    |
 | **Utils that wire API**  | Component integration test | initialize-app → App, setup-domain-event-bindings → MainView |
 
 ### Component Grouping

@@ -1,6 +1,4 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
-
   /**
    * A dropdown option that can be selected.
    */
@@ -14,25 +12,15 @@
     options: DropdownOption[];
     value: string;
     onSelect: (value: string) => void;
-    /**
-     * Optional filter override, called only for "option" entries (never for
-     * headers — header visibility is computed automatically from the group's
-     * matches). Default: case-insensitive substring match on the label.
-     */
-    filterOption?: (option: DropdownOption, filterLowercase: string) => boolean;
     disabled?: boolean;
     placeholder?: string;
     id?: string;
-    debounceMs?: number;
-    optionSnippet?: Snippet<[option: DropdownOption, highlighted: boolean]>;
     /** If true, pressing Enter with no selection calls onSelect with typed text */
     allowFreeText?: boolean;
     /** Called when Enter is pressed with no highlighted option (after any free-text/exact-match commit) */
     onEnter?: (() => void) | undefined;
     /** Called on every input change with the current text */
     onInput?: ((value: string) => void) | undefined;
-    /** Whether to open dropdown on focus. Defaults to true. Set to false for free-text fields. */
-    openOnFocus?: boolean;
     /** Whether to focus the input on mount */
     autofocus?: boolean;
     /** Render the input as invalid (red border), e.g. for a validation error */
@@ -51,16 +39,12 @@
     options,
     value,
     onSelect,
-    filterOption,
     disabled = false,
     placeholder = "",
     id,
-    debounceMs = 200,
-    optionSnippet,
     allowFreeText = false,
     onEnter,
     onInput: onInputCallback,
-    openOnFocus = true,
     autofocus = false,
     invalid = false,
     describedBy = undefined,
@@ -70,8 +54,6 @@
   // Internal state
   let isOpen = $state(false);
   let highlightedIndex = $state(-1);
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let debouncedFilter = $state("");
   // Track whether user is actively typing (vs selection just happened)
   let isTyping = $state(false);
 
@@ -119,14 +101,13 @@
   // Derived: selectable options only (excludes headers)
   const selectableOptions = $derived(options.filter((opt) => opt.type === "option"));
 
-  // Derived: filtered options. The filter (custom or default substring on the
-  // label) only applies to "option" entries; a header is kept iff its group
+  // Derived: filtered options. The case-insensitive substring filter on the
+  // label only applies to "option" entries; a header is kept iff its group
   // (the options that follow it, up to the next header) has at least one match.
   const filteredOptions = $derived.by(() => {
-    if (debouncedFilter === "") return options;
-    const lower = debouncedFilter.toLowerCase();
-    const matches = (opt: DropdownOption): boolean =>
-      filterOption ? filterOption(opt, lower) : opt.label.toLowerCase().includes(lower);
+    if (filterText === "") return options;
+    const lower = filterText.toLowerCase();
+    const matches = (opt: DropdownOption): boolean => opt.label.toLowerCase().includes(lower);
     const result: DropdownOption[] = [];
     let pendingHeader: DropdownOption | null = null;
     for (const opt of options) {
@@ -191,33 +172,9 @@
     };
   });
 
-  // Debounce filter input (debounceMs <= 0 filters synchronously)
-  $effect(() => {
-    const currentFilter = filterText;
-
-    if (debounceTimer !== null) {
-      clearTimeout(debounceTimer);
-    }
-
-    if (debounceMs <= 0) {
-      debouncedFilter = currentFilter;
-      return;
-    }
-
-    debounceTimer = setTimeout(() => {
-      debouncedFilter = currentFilter;
-    }, debounceMs);
-
-    return () => {
-      if (debounceTimer !== null) {
-        clearTimeout(debounceTimer);
-      }
-    };
-  });
-
   // Auto-open dropdown when typing produces matches
   $effect(() => {
-    if (isTyping && debouncedFilter !== "" && filteredSelectableOptions.length > 0 && !isOpen) {
+    if (isTyping && filterText !== "" && filteredSelectableOptions.length > 0 && !isOpen) {
       isOpen = true;
     }
   });
@@ -227,7 +184,7 @@
   let focusJustReceived = false;
 
   function handleFocus(): void {
-    if (!disabled && openOnFocus) {
+    if (!disabled) {
       isOpen = true;
     }
     focusJustReceived = true;
@@ -261,7 +218,6 @@
       if (exactMatch === undefined) {
         // No valid match - revert to original prop value
         localFilterOverride = null;
-        debouncedFilter = "";
       } else {
         selectOption(exactMatch.value);
       }
@@ -367,7 +323,6 @@
 
   function selectOption(optionValue: string): void {
     localFilterOverride = options.find((o) => o.value === optionValue)?.label ?? optionValue;
-    debouncedFilter = localFilterOverride;
     isOpen = false;
     highlightedIndex = -1;
     isTyping = false;
@@ -380,7 +335,6 @@
    */
   function selectFreeText(text: string): void {
     localFilterOverride = text;
-    debouncedFilter = text;
     isOpen = false;
     highlightedIndex = -1;
     isTyping = false;
@@ -400,14 +354,6 @@
    */
   function getSelectableIndex(option: DropdownOption): number {
     return filteredSelectableOptions.findIndex((o) => o.value === option.value);
-  }
-
-  /**
-   * Focus the input element.
-   * Exported for parent components to programmatically focus this dropdown.
-   */
-  export function focus(): void {
-    inputRef?.focus();
   }
 </script>
 
@@ -451,11 +397,7 @@
         {#each filteredOptions as option (option.value)}
           {#if option.type === "header"}
             <li class="group-header" role="presentation">
-              {#if optionSnippet}
-                {@render optionSnippet(option, false)}
-              {:else}
-                {option.label}
-              {/if}
+              {option.label}
             </li>
           {:else}
             {@const selectableIdx = getSelectableIndex(option)}
@@ -468,11 +410,7 @@
               aria-selected={isHighlighted}
               onmousedown={(e: MouseEvent) => handleOptionMouseDown(e, option.value)}
             >
-              {#if optionSnippet}
-                {@render optionSnippet(option, isHighlighted)}
-              {:else}
-                {option.label}
-              {/if}
+              {option.label}
             </li>
           {/if}
         {/each}

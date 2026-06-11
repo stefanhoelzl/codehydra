@@ -151,19 +151,6 @@ describe("InputSection component", () => {
     });
   });
 
-  it("places caret at cursorOffset when selectInitialValue is not set", async () => {
-    renderInput(
-      { type: "input", id: "desc", multiline: true, initialValue: "hello world", cursorOffset: 5 },
-      "hello world"
-    );
-
-    const textarea = document.querySelector("textarea") as HTMLTextAreaElement;
-    await waitFor(() => {
-      expect(textarea.selectionStart).toBe(5);
-      expect(textarea.selectionEnd).toBe(5);
-    });
-  });
-
   it("re-focuses the textarea on Alt keyup when focus was lost to body", async () => {
     renderInput(
       {

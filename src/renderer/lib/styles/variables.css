@@ -50,25 +50,14 @@
   --ch-surface-0: #0e0e10;
   --ch-surface-1: #16161a;
   --ch-surface-2: #1c1c22;
-  --ch-surface-3: #24242c;
-  --ch-surface-4: #2c2c36;
 
   /* Border colors */
   --ch-border: var(--vscode-panel-border, rgba(255, 255, 255, 0.06));
   --ch-input-border: var(--vscode-settings-textInputBorder, rgba(255, 255, 255, 0.06));
   --ch-input-hover-border: rgba(255, 255, 255, 0.12);
 
-  /* Button colors */
-  --ch-button-bg: var(--vscode-button-background, #6c8cff);
-  --ch-button-fg: var(--vscode-button-foreground, #ffffff);
-  --ch-button-hover-bg: var(--vscode-button-hoverBackground, #8aa4ff);
-  --ch-button-disabled-bg: #24242c;
-  --ch-button-disabled-fg: #6c6c78;
-
   /* Input colors */
   --ch-input-bg: var(--vscode-settings-textInputBackground, #0e0e10);
-  --ch-input-disabled-bg: #1c1c22;
-  --ch-input-disabled-fg: #6c6c78;
 
   /* Focus/selection colors */
   --ch-focus-border: var(--vscode-focusBorder, #6c8cff);
@@ -91,7 +80,6 @@
 
   /* Overlay/shadow colors */
   --ch-overlay-bg: rgba(0, 0, 0, 0.6);
-  --ch-shadow-color: rgba(0, 0, 0, 0.3);
   --ch-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   --ch-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
   --ch-overlay-blur: blur(8px);
@@ -110,12 +98,6 @@
 
   /* Logo backdrop opacity */
   --ch-logo-backdrop-opacity: 0.15;
-
-  /* Icon sizes */
-  --ch-icon-size-small: 12px;
-  --ch-icon-size-default: 16px;
-  --ch-icon-size-medium: 14px;
-  --ch-icon-size-large: 48px;
 
   /* Layout variables (theme-independent) */
   --ch-sidebar-width: 250px;
@@ -158,19 +140,6 @@
 .ch-alert-box-icon {
   --vscode-icon-foreground: var(--ch-error-fg);
   flex-shrink: 0;
-}
-
-/* Form field container - consistent spacing */
-.ch-form-field {
-  margin-bottom: 16px;
-}
-
-/* Form label - consistent label styling */
-.ch-form-label {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 13px;
-  color: var(--ch-foreground);
 }
 
 /* Status message - informational text with reduced opacity */
@@ -235,22 +204,14 @@
   --ch-surface-0: #f4f4f8;
   --ch-surface-1: #ffffff;
   --ch-surface-2: #ffffff;
-  --ch-surface-3: #ededf2;
-  --ch-surface-4: #e0e0e8;
 
   /* Border colors */
   --ch-border: var(--vscode-panel-border, rgba(0, 0, 0, 0.08));
   --ch-input-border: var(--vscode-settings-textInputBorder, rgba(0, 0, 0, 0.08));
   --ch-input-hover-border: rgba(0, 0, 0, 0.15);
 
-  /* Button colors */
-  --ch-button-disabled-bg: #ededf2;
-  --ch-button-disabled-fg: #9494a4;
-
   /* Input colors */
   --ch-input-bg: var(--vscode-settings-textInputBackground, #f4f4f8);
-  --ch-input-disabled-bg: #f4f4f8;
-  --ch-input-disabled-fg: #9494a4;
 
   /* Focus/selection colors */
   --ch-focus-border: var(--vscode-focusBorder, #4b6de8);
@@ -269,7 +230,6 @@
 
   /* Overlay/shadow colors */
   --ch-overlay-bg: rgba(0, 0, 0, 0.2);
-  --ch-shadow-color: rgba(0, 0, 0, 0.1);
   --ch-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   --ch-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.15);
 

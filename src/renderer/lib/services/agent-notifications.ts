@@ -18,7 +18,6 @@ export type ChimePlayer = () => void;
  */
 export class AgentNotificationService {
   private previousCounts = new Map<string, InternalAgentCounts>();
-  private enabled = true;
   private readonly playChime: ChimePlayer;
 
   /**
@@ -40,31 +39,13 @@ export class AgentNotificationService {
     // Play chime when:
     // 1. Idle count increases from previous (red → green, or more agents became idle)
     // 2. First status report with idle agents (gray → green, opencode just connected)
-    if (this.enabled) {
-      const idleIncreased = prev && counts.idle > prev.idle;
-      const firstIdleReport = !prev && counts.idle > 0;
-      if (idleIncreased || firstIdleReport) {
-        this.playChime();
-      }
+    const idleIncreased = prev && counts.idle > prev.idle;
+    const firstIdleReport = !prev && counts.idle > 0;
+    if (idleIncreased || firstIdleReport) {
+      this.playChime();
     }
 
     this.previousCounts.set(workspacePath, { ...counts });
-  }
-
-  /**
-   * Enable or disable chime notifications.
-   * @internal Reserved for future use, currently only used in tests
-   */
-  setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
-  }
-
-  /**
-   * Check if notifications are enabled.
-   * @internal Reserved for future use, currently only used in tests
-   */
-  isEnabled(): boolean {
-    return this.enabled;
   }
 
   /**
@@ -80,19 +61,6 @@ export class AgentNotificationService {
   reset(): void {
     this.previousCounts.clear();
   }
-
-  /**
-   * Seed the service with initial counts from existing statuses.
-   * This establishes the baseline for detecting when idle counts increase.
-   * Should be called after loading initial agent statuses.
-   *
-   * @param statuses - Record of workspace paths to their counts
-   */
-  seedInitialCounts(statuses: Record<string, InternalAgentCounts>): void {
-    for (const [workspacePath, counts] of Object.entries(statuses)) {
-      this.previousCounts.set(workspacePath, { ...counts });
-    }
-  }
 }
 
 // Audio context singleton
@@ -103,13 +71,6 @@ function getAudioContext(): AudioContext {
     audioContext = new AudioContext();
   }
   return audioContext;
-}
-
-/**
- * Reset audio context (for testing).
- */
-export function resetAudioContext(): void {
-  audioContext = null;
 }
 
 /**
