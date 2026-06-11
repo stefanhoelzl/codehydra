@@ -2,17 +2,16 @@
  * Implementation-agnostic behavioral contract for IViewManager.
  *
  * Any IViewManager implementation MUST pass this suite. Concrete impls
- * (WebContentsViewManager today, others later) wire their own factory
+ * (IframeViewManager today, others later) wire their own factory
  * over their own mocks and produce a ConformanceProbe that gives the
  * suite enough visibility to assert ordering and z-order invariants.
  *
  * This suite is intentionally focused on invariants documented in
  * `view-manager.interface.ts`: attach-before-detach sequencing, late-
  * binding loading replay, idempotency, z-order re-raise after switches,
- * focus routing per mode. Implementation-specific behavior (retry
- * backoff, watchdog, render-process-gone, navigation handlers, the
- * Windows DC workaround) is verified in each implementation's own
- * integration test file.
+ * focus routing per mode. Implementation-specific behavior (navigation
+ * handlers, the Windows DC workaround) is verified in each
+ * implementation's own integration test file.
  */
 
 import { describe, expect, it } from "vitest";

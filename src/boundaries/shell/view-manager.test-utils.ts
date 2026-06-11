@@ -52,7 +52,6 @@ export function createMockViewManager(options?: CreateMockViewManagerOptions): I
     isWorkspaceLoading: vi.fn().mockReturnValue(false),
     setWorkspaceLoaded: vi.fn(),
     onLoadingChange: vi.fn(() => () => {}),
-    reloadAllViews: vi.fn(),
     preloadWorkspaceUrl: vi.fn(),
     destroy: vi.fn(),
     captureWorkspaceView: vi.fn().mockResolvedValue(null),

@@ -252,14 +252,6 @@ const helpConfig = configService.register("help", {
   description: "Print config help and exit",
   ...storeBoolean(),
 });
-const iframesConfig = configService.register("experimental.iframes", {
-  default: true,
-  description:
-    "Render workspaces as iframes inside a single host WebContentsView " +
-    "(experimental; requires app restart). Lower memory at the cost of " +
-    "per-workspace devtools and crash recovery.",
-  ...storeBoolean(),
-});
 const busyDuringBackgroundShellConfig = configService.register(
   "experimental.busy-during-background-shell",
   {
@@ -402,15 +394,14 @@ const windowManager = new WindowManager(
 );
 
 // ViewManager construction is cheap (no backend yet). The backend is
-// chosen inside ViewManager.create() based on `experimental.iframes` —
-// which runs later, from the app-start/init hook, AFTER configService.load().
+// created inside ViewManager.create(), which runs later from the
+// app-start/init hook, once the window exists.
 const viewManager = new ViewManager({
   windowManager,
   windowLayer,
   viewLayer,
   sessionLayer,
   appLayer,
-  iframesConfig,
   config: {
     uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
     codeServerPort: 0,
@@ -476,7 +467,6 @@ const viewModule = createViewModule({
   windowManager,
   buildInfo,
   uiHtmlPath,
-  configService,
   dialogManager,
   dispatcher,
 });

@@ -4,16 +4,10 @@
  * One shared host `WebContentsView` (`workspace-host.html`) holds one
  * `<iframe>` per workspace, keyed by workspace path. All workspaces share
  * a single renderer process — the main memory win over per-view rendering.
+ * DevTools and keyboard input are routed to the host view; workspaces
+ * share both.
  *
- * Trade-offs vs `WebContentsViewManager`:
- *   - Per-iframe `did-fail-load` retry uses the host's webContents event
- *     (filtered to subframes, mapped back to a workspace by URL). There
- *     is no per-iframe `render-process-gone` — all iframes share the host
- *     renderer.
- *   - DevTools and keyboard input are routed to the host view; workspaces
- *     share both.
- *
- * Loading semantics mirror per-view backends: when the active workspace
+ * Loading semantics: when the active workspace
  * is in the loading set, the host view is detached from the window so the
  * UI's loading overlay is visible. The iframe inside is still
  * `display: block` (set during `swapActiveSurface`) so workbench can lay
@@ -25,7 +19,7 @@ import { basename } from "node:path";
 import type { AppBoundary } from "./app";
 import type { Logger } from "../platform/logging";
 import { getErrorMessage } from "../../shared/error-utils";
-import type { FailLoadDetails, ViewBoundary, WindowOpenDetails } from "./view";
+import type { ViewBoundary, WindowOpenDetails } from "./view";
 import type { SessionBoundary } from "./session";
 import type { WindowBoundaryInternal } from "./window";
 import type { SessionHandle, ViewHandle, WindowHandle } from "./types";
@@ -244,18 +238,6 @@ export class IframeViewManager extends BaseViewManager {
       for (const code of pending) this.hostExec(code);
     });
 
-    // Subframe load failures: Electron's `did-fail-load` fires on the host's
-    // webContents for both the host page (isMainFrame=true) and any iframe
-    // inside it (isMainFrame=false). For subframes we map the failing URL
-    // back to a workspace and delegate to the shared backoff scheduler
-    // (`scheduleLoadRetry` in `BaseViewManager`).
-    viewLayer.onDidFailLoad(this.workspaceHostHandle, (details: FailLoadDetails) => {
-      if (details.isMainFrame) return;
-      const failingPath = this.findWorkspacePathByUrl(details.validatedURL);
-      if (failingPath === undefined) return;
-      this.scheduleLoadRetry(failingPath, details);
-    });
-
     void viewLayer.loadURL(this.workspaceHostHandle, `file://${config.workspaceHostHtmlPath}`);
   }
 
@@ -312,12 +294,6 @@ export class IframeViewManager extends BaseViewManager {
     // Remove the iframe from the host page. The host view itself is
     // shared and stays alive until UI shutdown.
     this.hostExec(`window.__host.remove(${jsStr(state.workspacePath)})`);
-
-    // Clear any pending retry timer for this iframe.
-    if (state.retryTimer !== null) {
-      clearTimeout(state.retryTimer);
-      state.retryTimer = null;
-    }
 
     // If no workspaces remain (e.g. hibernating the last awake workspace),
     // detach the host view so the UI overlay (HibernatedOverlay, empty
@@ -416,12 +392,6 @@ export class IframeViewManager extends BaseViewManager {
     }
   }
 
-  protected reloadWorkspaceView(state: WorkspaceState): void {
-    // No per-iframe reload primitive — reload the entire host renderer.
-    // Cheap because all workspaces share it, but coarse (affects all).
-    this.hostExec(`window.__host.add(${jsStr(state.workspacePath)}, ${jsStr(state.url)})`);
-  }
-
   protected makeDevtoolsTarget(handle: ViewHandle): DevtoolsTarget {
     // All workspace iframes share the host's webContents devtools.
     const viewLayer = this.viewLayer;
@@ -469,26 +439,6 @@ export class IframeViewManager extends BaseViewManager {
     this.viewLayer.executeJavaScript(this.workspaceHostHandle, code).catch((error: unknown) => {
       this.logger.warn("hostExec failed", { error: getErrorMessage(error) });
     });
-  }
-
-  /** Reverse-lookup a workspace path from its iframe URL. */
-  private findWorkspacePathByUrl(url: string): string | undefined {
-    for (const [path, state] of this.workspaceStates) {
-      if (state.url === url) return path;
-    }
-    return undefined;
-  }
-
-  /**
-   * Re-issue the iframe's `src` via the host page. `__host.add` with
-   * `force: true` bounces through `about:blank` so Chromium actually
-   * re-requests the URL even when it matches the previous (failed)
-   * navigation.
-   */
-  protected retryLoad(state: WorkspaceState): void {
-    this.hostExec(
-      `window.__host.add(${jsStr(state.workspacePath)}, ${jsStr(state.url)}, { force: true })`
-    );
   }
 }
 
