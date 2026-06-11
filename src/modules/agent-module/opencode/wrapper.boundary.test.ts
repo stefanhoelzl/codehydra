@@ -11,12 +11,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
 import { join, resolve } from "node:path";
-import { writeFile, mkdir, chmod, access } from "node:fs/promises";
-import { constants } from "node:fs";
 import { createTempDir } from "../../../utils/testing/test-utils";
-import { executeScript } from "../wrapper-boundary-test-utils";
-
-const isWindows = process.platform === "win32";
+import {
+  assertCompiledScript,
+  createFakeAgentBinary,
+  executeScript,
+} from "../wrapper-boundary-test-utils";
 
 /**
  * Path to the compiled ch-opencode.cjs script.
@@ -53,10 +53,6 @@ function parseFakeOpencodeOutput(stdout: string): FakeOpencodeOutput | null {
  * @param opencodeDir Directory to create the fake binary in
  */
 async function createFakeOpencodeBinary(opencodeDir: string): Promise<string> {
-  await mkdir(opencodeDir, { recursive: true });
-
-  // Create a cross-platform Node.js fake binary that outputs JSON
-  const fakeScriptPath = join(opencodeDir, "opencode-fake.cjs");
   const fakeNodeContent = `#!/usr/bin/env node
 // Fake opencode binary for testing - outputs JSON for structured assertions
 const output = {
@@ -66,29 +62,12 @@ console.log(JSON.stringify(output));
 const exitCode = parseInt(process.env.OPENCODE_EXIT_CODE || "0", 10);
 process.exit(isNaN(exitCode) ? 0 : exitCode);
 `;
-  await writeFile(fakeScriptPath, fakeNodeContent);
-
-  // Create platform-specific wrapper
-  const fakeOpencodePath = join(opencodeDir, isWindows ? "opencode.cmd" : "opencode");
-
-  if (isWindows) {
-    // Windows: batch wrapper calling node with absolute path
-    const nodePath = process.execPath;
-    const batchContent = `@echo off
-"${nodePath}" "%~dp0opencode-fake.cjs" %*
-exit /b %ERRORLEVEL%
-`;
-    await writeFile(fakeOpencodePath, batchContent);
-  } else {
-    // Unix: shell wrapper calling node
-    const shellContent = `#!/bin/sh
-exec node "$(dirname "$0")/opencode-fake.cjs" "$@"
-`;
-    await writeFile(fakeOpencodePath, shellContent);
-    await chmod(fakeOpencodePath, 0o755);
-  }
-
-  return opencodeDir;
+  return createFakeAgentBinary({
+    dir: opencodeDir,
+    binaryName: "opencode",
+    scriptBody: fakeNodeContent,
+    windowsMode: "batch",
+  });
 }
 
 describe("ch-opencode.cjs boundary tests", () => {
@@ -97,13 +76,7 @@ describe("ch-opencode.cjs boundary tests", () => {
 
   // Check if the compiled script exists before running tests
   beforeAll(async () => {
-    try {
-      await access(COMPILED_SCRIPT_PATH, constants.R_OK);
-    } catch {
-      throw new Error(
-        `Compiled script not found at ${COMPILED_SCRIPT_PATH}. Run 'pnpm build:wrappers' first.`
-      );
-    }
+    await assertCompiledScript(COMPILED_SCRIPT_PATH);
   });
 
   beforeEach(async () => {

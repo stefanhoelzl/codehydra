@@ -51,6 +51,9 @@ import type {
   WorkspaceName,
 } from "../shared/api/types";
 import { getErrorMessage } from "../shared/error-utils";
+import { createTestViewManager } from "./operations.test-utils";
+import type { TestViewManager } from "./operations.test-utils";
+import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import {
   SwitchWorkspaceOperation,
@@ -247,42 +250,6 @@ function createTestAppState(initial?: Partial<TestAppState>): {
   return { appState, state };
 }
 
-interface TestViewManager {
-  getActiveWorkspacePath(): string | null;
-  setActiveWorkspace(path: string | null, focus?: boolean): void;
-  destroyWorkspaceView(path: string): Promise<void>;
-}
-
-function createTestViewManager(activeWorkspacePath: string | null = WORKSPACE_PATH): {
-  viewManager: TestViewManager;
-  activeWorkspace: { path: string | null };
-  destroyedViews: string[];
-} {
-  const activeWorkspace = { path: activeWorkspacePath };
-  const destroyedViews: string[] = [];
-
-  const viewManager = {
-    getActiveWorkspacePath: vi.fn().mockImplementation(() => activeWorkspace.path),
-    setActiveWorkspace: vi.fn().mockImplementation((path: string | null) => {
-      activeWorkspace.path = path;
-    }),
-    destroyWorkspaceView: vi.fn().mockImplementation(async (path: string) => {
-      destroyedViews.push(path);
-    }),
-    getUIView: vi.fn(),
-    createWorkspaceView: vi.fn(),
-    getWorkspaceView: vi.fn(),
-    updateBounds: vi.fn(),
-    focus: vi.fn(),
-    setMode: vi.fn(),
-    getMode: vi.fn().mockReturnValue("workspace"),
-    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
-    updateCodeServerPort: vi.fn(),
-  } as TestViewManager;
-
-  return { viewManager, activeWorkspace, destroyedViews };
-}
-
 function createTestSendToUI(): {
   sendToUI: (channel: string, payload: unknown) => void;
   emittedEvents: Array<{ event: string; payload: unknown }>;
@@ -362,8 +329,7 @@ function createTestHarness(options?: {
     options?.activeWorkspacePath ?? WORKSPACE_PATH
   );
   const { sendToUI, emittedEvents } = createTestSendToUI();
-  const noop: (...args: unknown[]) => void = () => {};
-  const logger = { silly: noop, debug: noop, info: noop, warn: noop, error: noop };
+  const logger = SILENT_LOGGER;
   const workspaceFileService = createTestWorkspaceFileService();
 
   // Register operations

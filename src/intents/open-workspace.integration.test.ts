@@ -64,33 +64,9 @@ import type { ProjectId, Workspace, WorkspaceName } from "../shared/api/types";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 import { Path } from "../utils/path/path";
-import {
-  SwitchWorkspaceOperation,
-  INTENT_SWITCH_WORKSPACE,
-  SWITCH_WORKSPACE_OPERATION_ID,
-} from "./switch-workspace";
+import { SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
 import type { SwitchWorkspaceHookResult, ActivateHookInput } from "./switch-workspace";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
-import type {
-  ResolveHookResult as ResolveProjectResolveHookResult,
-  ResolveHookInput as ResolveProjectHookInput,
-} from "./resolve-project";
-import {
-  GetActiveWorkspaceOperation,
-  GET_ACTIVE_WORKSPACE_OPERATION_ID,
-  INTENT_GET_ACTIVE_WORKSPACE,
-} from "./get-active-workspace";
-import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
+import { registerTestInfrastructure } from "./operations.test-utils";
 import type { WorkspaceRef } from "../shared/api/types";
 
 // =============================================================================
@@ -209,49 +185,26 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
-  // Shared resolve modules for workspace:resolve and project:resolve
-  const resolveWorkspaceModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-            const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
-            return {
-              projectPath: PROJECT_ROOT,
-              workspaceName: workspaceName as WorkspaceName,
-            };
-          },
-        },
-      },
-    },
-  };
   // Tracks known project paths for project:resolve resolution.
   // Only PROJECT_ROOT is known by default; tests can add more.
   const knownProjectPaths = new Set<string>([PROJECT_ROOT]);
-  const resolveProjectResolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectResolveHookResult> => {
-            const { projectPath } = ctx as ResolveProjectHookInput;
-            if (knownProjectPaths.has(projectPath)) {
-              return { projectId: PROJECT_ID, projectName: "test" };
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
+
+  // Shared infra: every workspace path resolves under PROJECT_ROOT with the
+  // basename as workspaceName; projects resolve from knownProjectPaths.
+  registerTestInfrastructure(dispatcher, {
+    workspaces: (wsPath) => ({
+      projectPath: PROJECT_ROOT,
+      workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
+    }),
+    projects: (projectPath) =>
+      knownProjectPaths.has(projectPath)
+        ? { projectId: PROJECT_ID, projectName: "test" }
+        : undefined,
+    activeWorkspaceRef: opts?.activeWorkspaceRef ?? null,
+  });
+
   const switchViewModule: IntentModule = {
     name: "test",
     hooks: {
@@ -260,21 +213,6 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const { workspacePath } = ctx as ActivateHookInput;
             return { resolvedPath: workspacePath };
-          },
-        },
-      },
-    },
-  };
-
-  // GetActiveWorkspace module: returns configurable active workspace ref
-  const activeWorkspaceRef = opts?.activeWorkspaceRef ?? null;
-  const getActiveWorkspaceModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
-        get: {
-          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-            return { workspaceRef: activeWorkspaceRef };
           },
         },
       },
@@ -408,10 +346,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
   };
 
   const modules: IntentModule[] = [
-    resolveWorkspaceModule,
-    resolveProjectResolveModule,
     switchViewModule,
-    getActiveWorkspaceModule,
     worktreeModule,
     keepFilesModule,
     agentModule,
@@ -991,42 +926,17 @@ describe("OpenWorkspace Operation", () => {
       // Re-create setup with the extra module
       const dispatcher = createMockDispatcher();
 
-      dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-      dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
       dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-      dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
-      dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
 
-      // Shared resolve modules
-      const resolveWorkspaceModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [RESOLVE_WORKSPACE_OPERATION_ID]: {
-            resolve: {
-              handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-                const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-                const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
-                return {
-                  projectPath: PROJECT_ROOT,
-                  workspaceName: workspaceName as WorkspaceName,
-                };
-              },
-            },
-          },
-        },
-      };
-      const resolveProjectResolveModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [RESOLVE_PROJECT_OPERATION_ID]: {
-            resolve: {
-              handler: async (): Promise<ResolveProjectResolveHookResult> => {
-                return { projectId: PROJECT_ID, projectName: "test" };
-              },
-            },
-          },
-        },
-      };
+      registerTestInfrastructure(dispatcher, {
+        workspaces: (wsPath) => ({
+          projectPath: PROJECT_ROOT,
+          workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
+        }),
+        projects: () => ({ projectId: PROJECT_ID, projectName: "test" }),
+        activeWorkspaceRef: null,
+      });
+
       const switchViewModule: IntentModule = {
         name: "test",
         hooks: {
@@ -1083,23 +993,7 @@ describe("OpenWorkspace Operation", () => {
         },
       };
 
-      const getActiveWorkspaceModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
-            get: {
-              handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-                return { workspaceRef: null };
-              },
-            },
-          },
-        },
-      };
-
-      dispatcher.registerModule(resolveWorkspaceModule);
-      dispatcher.registerModule(resolveProjectResolveModule);
       dispatcher.registerModule(switchViewModule);
-      dispatcher.registerModule(getActiveWorkspaceModule);
       dispatcher.registerModule(worktreeModule);
       dispatcher.registerModule(agentModule);
       dispatcher.registerModule(extraEnvModule);

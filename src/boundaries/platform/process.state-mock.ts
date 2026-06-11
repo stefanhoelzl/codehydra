@@ -9,6 +9,7 @@ import type {
   Snapshot,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // Types and Interfaces
@@ -124,7 +125,7 @@ class SpawnedProcessMockStateImpl implements SpawnedProcessMockState {
   }
 
   snapshot(): Snapshot {
-    return { __brand: "Snapshot", value: this.toString() };
+    return createSnapshot(this);
   }
 
   toString(): string {
@@ -206,7 +207,7 @@ class ProcessRunnerMockStateImpl implements ProcessRunnerMockState {
   }
 
   snapshot(): Snapshot {
-    return { __brand: "Snapshot", value: this.toString() };
+    return createSnapshot(this);
   }
 
   toString(): string {

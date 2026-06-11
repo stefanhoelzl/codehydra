@@ -20,14 +20,8 @@ import {
   INTENT_GET_AGENT_SESSION,
 } from "./get-agent-session";
 import type { GetAgentSessionIntent, GetAgentSessionHookResult } from "./get-agent-session";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult } from "./resolve-workspace";
+import { registerTestInfrastructure } from "./operations.test-utils";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, AgentSession } from "../shared/api/types";
 
@@ -62,25 +56,10 @@ function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, new GetAgentSessionOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 
-  // Resolve module: validates workspacePath → returns projectPath + workspaceName
-  const resolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const intent = ctx.intent as { payload: { workspacePath: string } };
-            if (intent.payload.workspacePath === WORKSPACE_PATH) {
-              return { projectPath: PROJECT_ROOT, workspaceName };
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
+  registerTestInfrastructure(dispatcher, {
+    workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },
+  });
 
   // Agent session hook handler module (returns session from test data)
   const agentSessionModule: IntentModule = {
@@ -96,7 +75,6 @@ function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup
     },
   };
 
-  dispatcher.registerModule(resolveModule);
   dispatcher.registerModule(agentSessionModule);
 
   return { dispatcher, workspaceName };

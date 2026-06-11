@@ -8,17 +8,22 @@
 
 import type { Intent } from "./types";
 import type { Operation, OperationContext, HookContext } from "./operation";
+import { DELETE_WORKSPACE_OPERATION_ID, EVENT_WORKSPACE_DELETED } from "../delete-workspace";
+import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../delete-workspace";
+import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 /**
  * Options for `createMinimalOperation`.
  *
  * @template TIntent - The intent type the operation handles.
  */
-export interface MinimalOperationOptions<TIntent extends Intent> {
+export interface MinimalOperationOptions<TIntent extends Intent, TResult = void> {
   /** Whether to throw `errors[0]` when the hook returns errors. Default: `true`. */
   throwOnError?: boolean;
   /** Custom hook context builder. Default: `{ intent: ctx.intent }`. */
   hookContext?: (ctx: OperationContext<TIntent>) => HookContext;
+  /** Fallback returned when the hook produced no result (`results[0] ?? defaultResult`). */
+  defaultResult?: TResult;
 }
 
 /**
@@ -45,7 +50,7 @@ export interface MinimalOperationOptions<TIntent extends Intent> {
 export function createMinimalOperation<TIntent extends Intent = Intent, TResult = void>(
   operationId: string,
   hookPoint: string,
-  options?: MinimalOperationOptions<TIntent>
+  options?: MinimalOperationOptions<TIntent, TResult>
 ): Operation<TIntent, TResult> {
   const throwOnError = options?.throwOnError !== false;
   const buildHookContext = options?.hookContext;
@@ -58,7 +63,41 @@ export function createMinimalOperation<TIntent extends Intent = Intent, TResult 
         : { intent: ctx.intent, capabilities: {} };
       const { results, errors } = await ctx.hooks.collect<TResult>(hookPoint, hookCtx);
       if (throwOnError && errors.length > 0) throw errors[0]!;
-      return results[0] as TResult;
+      return (results[0] ?? options?.defaultResult) as TResult;
+    },
+  };
+}
+
+/** Canned event fields for `createDeleteEventOperation`. */
+export interface DeleteEventOperationFields {
+  readonly projectId?: ProjectId;
+  readonly workspaceName?: WorkspaceName;
+  readonly projectPath?: string;
+}
+
+/**
+ * Minimal delete-workspace operation that only emits EVENT_WORKSPACE_DELETED,
+ * so tests can trigger workspace:deleted through the public dispatcher API
+ * without the full DeleteWorkspaceOperation pipeline. The workspacePath comes
+ * from the intent; the remaining event fields are canned (overridable).
+ */
+export function createDeleteEventOperation(
+  fields: DeleteEventOperationFields = {}
+): Operation<DeleteWorkspaceIntent, { started: true }> {
+  return {
+    id: DELETE_WORKSPACE_OPERATION_ID,
+    async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
+      const event: WorkspaceDeletedEvent = {
+        type: EVENT_WORKSPACE_DELETED,
+        payload: {
+          projectId: fields.projectId ?? ("test-12345678" as ProjectId),
+          workspaceName: fields.workspaceName ?? ("ws" as WorkspaceName),
+          workspacePath: ctx.intent.payload.workspacePath,
+          projectPath: fields.projectPath ?? "/projects/test",
+        },
+      };
+      ctx.emit(event);
+      return { started: true };
     },
   };
 }

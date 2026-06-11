@@ -36,18 +36,7 @@ import {
   type CleanupHookResult,
   type WakePipelineHookInput,
 } from "./wake-workspace";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
+import { registerTestInfrastructure } from "./operations.test-utils";
 import {
   SetMetadataOperation,
   INTENT_SET_METADATA,
@@ -55,11 +44,7 @@ import {
   EVENT_METADATA_CHANGED,
   type MetadataChangedEvent,
 } from "./set-metadata";
-import {
-  SwitchWorkspaceOperation,
-  INTENT_SWITCH_WORKSPACE,
-  SWITCH_WORKSPACE_OPERATION_ID,
-} from "./switch-workspace";
+import { SWITCH_WORKSPACE_OPERATION_ID } from "./switch-workspace";
 import { INTENT_GET_METADATA, GET_METADATA_OPERATION_ID } from "./get-metadata";
 import {
   INTENT_OPEN_WORKSPACE,
@@ -104,32 +89,6 @@ function createRecorder(): Recorder {
     callOrder: [],
     metadataWrites: [],
     events: [],
-  };
-}
-
-function createResolveModule(active: boolean): IntentModule {
-  return {
-    name: "test-resolve",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (): Promise<ResolveWorkspaceHookResult> => ({
-            projectPath: PROJECT_PATH,
-            workspaceName: WORKSPACE_NAME,
-            active,
-            branch: BRANCH,
-          }),
-        },
-      },
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (): Promise<ResolveProjectHookResult> => ({
-            projectId: PROJECT_ID,
-            projectName: "test-project",
-          }),
-        },
-      },
-    },
   };
 }
 
@@ -251,10 +210,7 @@ function buildHarness(
   const recorder = createRecorder();
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
   dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, new HibernateWorkspaceOperation());
   dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, new WakeWorkspaceOperation());
 
@@ -274,7 +230,17 @@ function buildHarness(
     },
   });
 
-  dispatcher.registerModule(createResolveModule(opts.active ?? false));
+  // Every workspace path resolves to the test workspace; `active` comes from opts.
+  registerTestInfrastructure(dispatcher, {
+    workspaces: () => ({
+      projectPath: PROJECT_PATH,
+      workspaceName: WORKSPACE_NAME,
+      active: opts.active ?? false,
+      branch: BRANCH,
+    }),
+    projects: () => ({ projectId: PROJECT_ID, projectName: "test-project" }),
+  });
+
   dispatcher.registerModule(createMetadataModule(recorder));
   dispatcher.registerModule(createSwitchModule(recorder));
   for (const m of buildHookModules(recorder)) dispatcher.registerModule(m);

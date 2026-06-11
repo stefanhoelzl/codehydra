@@ -66,22 +66,22 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, void> {
   }
 }
 
-class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteHookResult> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<DeleteHookResult> {
-    const { payload } = ctx.intent;
-    const hookCtx: DeletePipelineHookInput = {
-      intent: ctx.intent,
-      projectPath: "/projects/test",
-      workspacePath: payload.workspacePath ?? "",
-      workspaceName: "test-workspace" as WorkspaceName,
-      active: false,
-    };
-    const { results, errors } = await ctx.hooks.collect<DeleteHookResult>("delete", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
-  }
+/** Runs the "delete" hook point with a canned delete-pipeline context. */
+function createMinimalDeleteOperation(): Operation<DeleteWorkspaceIntent, DeleteHookResult> {
+  return createMinimalOperation<DeleteWorkspaceIntent, DeleteHookResult>(
+    DELETE_WORKSPACE_OPERATION_ID,
+    "delete",
+    {
+      hookContext: (ctx): DeletePipelineHookInput => ({
+        intent: ctx.intent,
+        projectPath: "/projects/test",
+        workspacePath: ctx.intent.payload.workspacePath ?? "",
+        workspaceName: "test-workspace" as WorkspaceName,
+        active: false,
+      }),
+      defaultResult: {},
+    }
+  );
 }
 
 // =============================================================================
@@ -274,7 +274,7 @@ describe("PluginServerModule", () => {
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
+      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -295,7 +295,7 @@ describe("PluginServerModule", () => {
     it("is a no-op when server has not been started (io is null)", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
+      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",
@@ -317,7 +317,7 @@ describe("PluginServerModule", () => {
       // Force mode delete should not throw even if internal state is inconsistent
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
+      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
 
       const result = (await dispatcher.dispatch({
         type: "workspace:delete",

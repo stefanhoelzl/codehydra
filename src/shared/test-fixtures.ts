@@ -100,6 +100,7 @@ export function createMockWorkspace(overrides: WorkspaceOverrides = {}): Workspa
     branch,
     metadata: { base: branch ?? "main", ...overrides.metadata },
     path: overrides.path ?? `/test/project/.worktrees/${name}`,
+    ...(overrides.url !== undefined ? { url: overrides.url } : {}),
   };
 }
 
@@ -168,6 +169,7 @@ export function createMockProject(
     ...(overrides.defaultBaseBranch !== undefined
       ? { defaultBaseBranch: overrides.defaultBaseBranch }
       : {}),
+    ...(overrides.remoteUrl !== undefined ? { remoteUrl: overrides.remoteUrl } : {}),
   };
 }
 

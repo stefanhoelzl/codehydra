@@ -5,6 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Project, Workspace, ProjectId, WorkspaceName } from "@shared/api/types";
+import { createMockProject, createMockWorkspace } from "@shared/test-fixtures";
 
 vi.mock("$lib/api", () => ({
   lifecycle: { ready: vi.fn() },
@@ -20,20 +21,19 @@ const TEST_PROJECT_PATH = "/test/project";
 const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
 const TEST_WORKSPACE_PATH = "/test/project/.worktrees/feature";
 
-const TEST_WORKSPACE: Workspace = {
+const TEST_WORKSPACE: Workspace = createMockWorkspace({
   projectId: TEST_PROJECT_ID,
   name: TEST_WORKSPACE_NAME,
-  branch: "feature-branch",
   metadata: { base: "main" },
   path: TEST_WORKSPACE_PATH,
-};
+});
 
-const TEST_PROJECT: Project = {
+const TEST_PROJECT: Project = createMockProject({
   id: TEST_PROJECT_ID,
   name: "my-project",
   path: TEST_PROJECT_PATH,
   workspaces: [TEST_WORKSPACE],
-};
+});
 
 function createMockApi(config?: {
   projects?: Project[];

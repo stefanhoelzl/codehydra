@@ -174,22 +174,22 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, string 
   }
 }
 
-class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, DeleteHookResult> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<DeleteHookResult> {
-    const { payload } = ctx.intent;
-    const hookCtx: DeletePipelineHookInput = {
-      intent: ctx.intent,
-      projectPath: "/projects/test",
-      workspacePath: payload.workspacePath ?? "",
-      workspaceName: "test-workspace" as WorkspaceName,
-      active: false,
-    };
-    const { results, errors } = await ctx.hooks.collect<DeleteHookResult>("delete", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-    return results[0] ?? {};
-  }
+/** Runs the "delete" hook point with a canned delete-pipeline context. */
+function createMinimalDeleteOperation(): Operation<DeleteWorkspaceIntent, DeleteHookResult> {
+  return createMinimalOperation<DeleteWorkspaceIntent, DeleteHookResult>(
+    DELETE_WORKSPACE_OPERATION_ID,
+    "delete",
+    {
+      hookContext: (ctx): DeletePipelineHookInput => ({
+        intent: ctx.intent,
+        projectPath: "/projects/test",
+        workspacePath: ctx.intent.payload.workspacePath ?? "",
+        workspaceName: "test-workspace" as WorkspaceName,
+        active: false,
+      }),
+      defaultResult: {},
+    }
+  );
 }
 
 // =============================================================================
@@ -859,7 +859,7 @@ describe("CodeServerModule", () => {
     it("deletes workspace file", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
+      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
 
       await dispatcher.dispatch({
         type: "workspace:delete",
@@ -895,7 +895,7 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
+      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
 
       // Should not throw
       const result = (await dispatcher.dispatch({
@@ -929,7 +929,7 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation("workspace:delete", new MinimalDeleteOperation());
+      dispatcher.registerOperation("workspace:delete", createMinimalDeleteOperation());
 
       await expect(
         dispatcher.dispatch({

@@ -15,15 +15,10 @@ import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import { createCreationModule, validateCloneUrl } from "./creation-module";
 import type { CreationModuleDeps } from "./creation-module";
 import type { IntentModule } from "../intents/lib/module";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
+import { createMockDialogManager } from "./dialog-manager.state-mock";
+import type { MockDialogHandle } from "./dialog-manager.state-mock";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type {
-  DialogConfig,
-  DialogSection,
-  DialogActionEvent,
-  DialogFieldChangeEvent,
-  DialogDismissEvent,
-} from "../shared/dialog-types";
+import type { DialogConfig, DialogSection } from "../shared/dialog-types";
 import type { ConfigAgentType } from "../boundaries/platform/config";
 import type { Project, ProjectId, WorkspaceName, BaseInfo } from "../shared/api/types";
 import type { AgentInfo } from "../shared/ipc";
@@ -73,91 +68,6 @@ const BASES_A: readonly BaseInfo[] = [
 
 const CLAUDE_AGENT: AgentInfo = { agent: "claude", label: "Claude Code", icon: "claude" };
 const OPENCODE_AGENT: AgentInfo = { agent: "opencode", label: "OpenCode", icon: "opencode" };
-
-// =============================================================================
-// Mock DialogManager (captures handles with emit helpers)
-// =============================================================================
-
-interface MockHandle {
-  id: string;
-  config: DialogConfig;
-  /** Every config this handle has seen (open + updates), in order. */
-  configs: DialogConfig[];
-  surface: string;
-  closed: boolean;
-  emitAction(actionId: string, data?: Record<string, string>): void;
-  emitChange(fieldId: string, data: Record<string, string>): void;
-  emitDismiss(): void;
-}
-
-function createMockDialogManager(): {
-  manager: DialogManager;
-  handles: MockHandle[];
-  panelHandles(): MockHandle[];
-  modalHandles(): MockHandle[];
-} {
-  const handles: MockHandle[] = [];
-  let nextId = 1;
-
-  const open = vi.fn((config: DialogConfig, options?: { surface?: string }) => {
-    const id = `dlg-test-${nextId++}`;
-    const actionListeners = new Set<(event: DialogActionEvent) => void>();
-    const changeListeners = new Set<(event: DialogFieldChangeEvent) => void>();
-    const dismissListeners = new Set<(event: DialogDismissEvent) => void>();
-    const mock: MockHandle = {
-      id,
-      config,
-      configs: [config],
-      surface: options?.surface ?? "modal",
-      closed: false,
-      emitAction(actionId, data = {}) {
-        for (const l of [...actionListeners]) l({ kind: "action", dialogId: id, actionId, data });
-      },
-      emitChange(fieldId, data) {
-        for (const l of [...changeListeners]) l({ kind: "change", dialogId: id, fieldId, data });
-      },
-      emitDismiss() {
-        for (const l of [...dismissListeners]) l({ kind: "dismiss", dialogId: id });
-      },
-    };
-    handles.push(mock);
-    const handle: DialogHandle = {
-      id,
-      update: (newConfig: DialogConfig) => {
-        mock.config = newConfig;
-        mock.configs.push(newConfig);
-      },
-      close: () => {
-        mock.closed = true;
-        actionListeners.clear();
-        changeListeners.clear();
-        dismissListeners.clear();
-      },
-      onEvent: (handler) => {
-        actionListeners.add(handler);
-        return () => actionListeners.delete(handler);
-      },
-      onChange: (handler) => {
-        changeListeners.add(handler);
-        return () => changeListeners.delete(handler);
-      },
-      onDismiss: (handler) => {
-        dismissListeners.add(handler);
-        return () => dismissListeners.delete(handler);
-      },
-      nextEvent: () => new Promise<DialogActionEvent>(() => {}),
-      closed: new Promise<void>(() => {}),
-    };
-    return handle;
-  });
-
-  return {
-    manager: { open } as unknown as DialogManager,
-    handles,
-    panelHandles: () => handles.filter((h) => h.surface === "panel"),
-    modalHandles: () => handles.filter((h) => h.surface === "modal"),
-  };
-}
 
 // =============================================================================
 // Mock Dispatcher (programmable per-intent results)
@@ -227,7 +137,7 @@ interface Setup {
   dispatcher: MockDispatcher;
   openUrl: ReturnType<typeof vi.fn>;
   emit(eventType: string, payload?: unknown): Promise<void>;
-  start(): Promise<MockHandle>;
+  start(): Promise<MockDialogHandle>;
 }
 
 function setup(options?: {
@@ -278,7 +188,7 @@ function setup(options?: {
     await flush();
   };
 
-  const start = async (): Promise<MockHandle> => {
+  const start = async (): Promise<MockDialogHandle> => {
     await emit(EVENT_APP_STARTED);
     const panel = dialogs.panelHandles().find((h) => !h.closed);
     expect(panel, "open panel session").toBeDefined();
@@ -289,7 +199,7 @@ function setup(options?: {
 }
 
 /** The currently open (non-closed) panel session. */
-function currentPanel(s: Setup): MockHandle {
+function currentPanel(s: Setup): MockDialogHandle {
   const panel = s.dialogs.panelHandles().find((h) => !h.closed);
   expect(panel, "open panel session").toBeDefined();
   return panel!;
@@ -459,7 +369,7 @@ describe("CreationModule", () => {
   });
 
   describe("validation and Create gating", () => {
-    async function startValid(s: Setup): Promise<MockHandle> {
+    async function startValid(s: Setup): Promise<MockDialogHandle> {
       const panel = await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,
@@ -515,7 +425,7 @@ describe("CreationModule", () => {
   });
 
   describe("submit", () => {
-    async function readyPanel(s: Setup): Promise<MockHandle> {
+    async function readyPanel(s: Setup): Promise<MockDialogHandle> {
       const panel = await s.start();
       await s.emit(EVENT_BASES_UPDATED, {
         projectId: PROJECT_A.id,

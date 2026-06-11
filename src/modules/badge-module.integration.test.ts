@@ -18,29 +18,15 @@ import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
 } from "../intents/update-agent-status";
-import type { UpdateAgentStatusIntent } from "../intents/update-agent-status";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "../intents/resolve-workspace";
-import type {
-  ResolveHookResult as ResolveWorkspaceHookResult,
-  ResolveHookInput as ResolveWorkspaceHookInput,
-} from "../intents/resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "../intents/resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/resolve-project";
-import { EVENT_WORKSPACE_DELETED, INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
-import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../intents/delete-workspace";
+import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
-import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import type { IntentModule } from "../intents/lib/module";
+import {
+  createDeleteEventOperation,
+  createMinimalOperation,
+} from "../intents/lib/operation.test-utils";
+import { registerTestInfrastructure, updateStatusIntent } from "../intents/operations.test-utils";
 import { BadgeManager, createBadgeModule } from "./badge-module";
 import { createMockPlatformInfo } from "../boundaries/platform/platform-info.test-utils";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
@@ -55,7 +41,6 @@ import {
   type MockWindowManager,
 } from "../boundaries/shell/window-manager.test-utils";
 import type { ImageHandle } from "../boundaries/shell/image-types";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
@@ -465,29 +450,6 @@ function createSimpleMockWindowManager(): {
   };
 }
 
-/**
- * Minimal delete operation that only emits EVENT_WORKSPACE_DELETED.
- * Used to trigger workspace:deleted events through the public dispatcher API
- * without needing the full DeleteWorkspaceOperation pipeline.
- */
-class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { started: true }> {
-  readonly id = "delete-workspace";
-
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
-    const event: WorkspaceDeletedEvent = {
-      type: EVENT_WORKSPACE_DELETED,
-      payload: {
-        projectId: "test-12345678" as ProjectId,
-        workspaceName: "ws" as WorkspaceName,
-        workspacePath: ctx.intent.payload.workspacePath ?? "",
-        projectPath: "/projects/test",
-      },
-    };
-    ctx.emit(event);
-    return { started: true };
-  }
-}
-
 // =============================================================================
 // Test Setup
 // =============================================================================
@@ -495,37 +457,6 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { start
 interface ModuleTestSetup {
   dispatcher: Dispatcher;
   appLayer: MockAppBoundary;
-}
-
-/**
- * Mock resolve module that provides workspace resolution for the
- * update-agent-status operation (replaces the old payload fields).
- * Uses workspacePath as-is to derive projectPath and workspaceName.
- */
-function createMockResolveModule(): IntentModule {
-  return {
-    name: "test-resolve",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspacePath } = ctx as ResolveWorkspaceHookInput;
-            return {
-              projectPath: "/projects/test",
-              workspaceName: workspacePath.split("/").pop() as WorkspaceName,
-            };
-          },
-        },
-      },
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (): Promise<ResolveProjectHookResult> => {
-            return { projectId: "test-project" as ProjectId };
-          },
-        },
-      },
-    },
-  };
 }
 
 function createModuleTestSetup(): ModuleTestSetup {
@@ -537,9 +468,16 @@ function createModuleTestSetup(): ModuleTestSetup {
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
+  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, createDeleteEventOperation());
+
+  // Every workspace path resolves; workspaceName derives from the path basename.
+  registerTestInfrastructure(dispatcher, {
+    workspaces: (workspacePath) => ({
+      projectPath: "/projects/test",
+      workspaceName: workspacePath.split("/").pop() as WorkspaceName,
+    }),
+    projects: () => ({ projectId: "test-project" as ProjectId }),
+  });
 
   const badgeModule = createBadgeModule({
     platformInfo,
@@ -548,25 +486,10 @@ function createModuleTestSetup(): ModuleTestSetup {
     windowManager: windowManager as unknown as WindowManager,
     logger: SILENT_LOGGER,
   });
-  const resolveModule = createMockResolveModule();
 
   dispatcher.registerModule(badgeModule);
-  dispatcher.registerModule(resolveModule);
 
   return { dispatcher, appLayer };
-}
-
-function updateStatusIntent(
-  workspacePath: string,
-  status: AggregatedAgentStatus
-): UpdateAgentStatusIntent {
-  return {
-    type: INTENT_UPDATE_AGENT_STATUS,
-    payload: {
-      workspacePath: workspacePath as WorkspacePath,
-      status,
-    },
-  };
 }
 
 // =============================================================================

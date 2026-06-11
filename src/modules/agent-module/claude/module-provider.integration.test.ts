@@ -17,11 +17,13 @@ import type { ClaudeCodeServerManager } from "./server-manager";
 import type { AgentProvider, AgentStatus } from "../types";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-download";
-import { createFileSystemMock } from "../../../boundaries/platform/filesystem.state-mock";
-import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
-import { createArchiveExtractorMock } from "../../../boundaries/platform/archive-extractor.state-mock";
-import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
+import type { DownloadDeps } from "../../../utils/binary-download";
+import {
+  createBinaryConfig,
+  createDownloadDeps,
+  createMockServerManager as createServerManagerBase,
+  createVersionConfig,
+} from "../module-provider.test-utils";
 import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 
 // =============================================================================
@@ -58,37 +60,10 @@ vi.mock("./provider", () => ({
 // =============================================================================
 
 function createMockServerManager(): ClaudeCodeServerManager {
-  return {
-    startServer: vi.fn().mockResolvedValue(8080),
-    stopServer: vi.fn().mockResolvedValue({ success: true }),
-    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
-    dispose: vi.fn().mockResolvedValue(undefined),
-    setMcpConfig: vi.fn(),
+  return createServerManagerBase({
     setInitialPrompt: vi.fn().mockResolvedValue(undefined),
     setNoSessionMarker: vi.fn().mockResolvedValue(undefined),
-    onServerStarted: vi.fn().mockReturnValue(vi.fn()),
-    onServerStopped: vi.fn().mockReturnValue(vi.fn()),
-  } as unknown as ClaudeCodeServerManager;
-}
-
-function createDownloadDeps(): DownloadDeps {
-  return {
-    httpClient: createMockHttpClient(),
-    fileSystemLayer: createFileSystemMock(),
-    archiveExtractor: createArchiveExtractorMock(),
-  };
-}
-
-function createBinaryConfig() {
-  return {
-    name: "claude" as const,
-    executablePath: "claude",
-    archiveExtension: ".tar.gz" as ArchiveExtension,
-  };
-}
-
-function createVersionConfig(version: string | null = null) {
-  return createMockAccessor<string | null>("version.claude", version);
+  }) as unknown as ClaudeCodeServerManager;
 }
 
 const WS_PATH = "/workspace/feature-a" as WorkspacePath;
@@ -110,8 +85,8 @@ describe("createClaudeModuleProvider", () => {
     capturedStatusCallback = null;
     mockServerManager = createMockServerManager();
     downloadDeps = createDownloadDeps();
-    binaryConfig = createBinaryConfig();
-    versionConfig = createVersionConfig(null);
+    binaryConfig = createBinaryConfig("claude");
+    versionConfig = createVersionConfig<string | null>("version.claude", null);
     pathProvider = createMockPathProvider();
   });
 

@@ -58,36 +58,14 @@ import type {
 } from "./open-workspace";
 import type { Project, ProjectId, WorkspaceName } from "../shared/api/types";
 import { Path } from "../utils/path/path";
+import { SwitchWorkspaceOperation, INTENT_SWITCH_WORKSPACE } from "./switch-workspace";
 import {
-  SwitchWorkspaceOperation,
-  INTENT_SWITCH_WORKSPACE,
-  SWITCH_WORKSPACE_OPERATION_ID,
-} from "./switch-workspace";
-import type {
-  SwitchWorkspaceIntent,
-  SwitchWorkspaceHookResult,
-  ActivateHookInput,
-} from "./switch-workspace";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
-import type {
-  ResolveHookResult as SharedResolveProjectHookResult,
-  ResolveHookInput as SharedResolveProjectHookInput,
-} from "./resolve-project";
-import {
-  GetActiveWorkspaceOperation,
-  GET_ACTIVE_WORKSPACE_OPERATION_ID,
-  INTENT_GET_ACTIVE_WORKSPACE,
-} from "./get-active-workspace";
+  createTestViewManager,
+  registerTestInfrastructure,
+  workspacesFromProjects,
+} from "./operations.test-utils";
+import type { TestViewManager } from "./operations.test-utils";
+import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "./get-active-workspace";
 import type { GetActiveWorkspaceHookResult } from "./get-active-workspace";
 
 // =============================================================================
@@ -116,49 +94,6 @@ const WORKSPACE_URL = "http://127.0.0.1:8080/?folder=test";
 // =============================================================================
 // Mock Factories
 // =============================================================================
-
-interface TestViewManager {
-  getActiveWorkspacePath(): string | null;
-  setActiveWorkspace(path: string | null, focus?: boolean): void;
-  destroyWorkspaceView(path: string): Promise<void>;
-  createWorkspaceView(path: string, url: string, projectPath: string, visible: boolean): void;
-  preloadWorkspaceUrl(path: string): void;
-}
-
-function createTestViewManager(): {
-  viewManager: TestViewManager;
-  activeWorkspace: { path: string | null };
-  createdViews: Array<{ path: string; url: string }>;
-  preloadedPaths: string[];
-} {
-  const activeWorkspace = { path: null as string | null };
-  const createdViews: Array<{ path: string; url: string }> = [];
-  const preloadedPaths: string[] = [];
-
-  const viewManager = {
-    getActiveWorkspacePath: vi.fn().mockImplementation(() => activeWorkspace.path),
-    setActiveWorkspace: vi.fn().mockImplementation((path: string | null) => {
-      activeWorkspace.path = path;
-    }),
-    destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
-    getUIView: vi.fn(),
-    createWorkspaceView: vi.fn().mockImplementation((path: string, url: string) => {
-      createdViews.push({ path, url });
-    }),
-    getWorkspaceView: vi.fn(),
-    updateBounds: vi.fn(),
-    focus: vi.fn(),
-    setMode: vi.fn(),
-    getMode: vi.fn().mockReturnValue("workspace"),
-    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
-    updateCodeServerPort: vi.fn(),
-    preloadWorkspaceUrl: vi.fn().mockImplementation((path: string) => {
-      preloadedPaths.push(path);
-    }),
-  } as TestViewManager;
-
-  return { viewManager, activeWorkspace, createdViews, preloadedPaths };
-}
 
 interface TestProjectState {
   /** Projects registered via registerProject */
@@ -352,10 +287,19 @@ function createTestHarness(options?: {
   // Register operations
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, new OpenProjectOperation());
   dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new OpenWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_GET_ACTIVE_WORKSPACE, new GetActiveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
+
+  // Shared workspace:resolve (reverse lookup over registered projects),
+  // project:resolve, switch-workspace activate, and infra operations.
+  registerTestInfrastructure(dispatcher, {
+    workspaces: workspacesFromProjects(() => projectState.registeredProjects),
+    projects: (projectPath) => {
+      const project = projectState.registeredProjects.find((p) => p.path === projectPath);
+      return project
+        ? { projectId: testProjectId(project.path), projectName: project.name }
+        : undefined;
+    },
+    viewManager,
+  });
 
   // ---------------------------------------------------------------------------
   // Self-selecting resolve modules (local vs remote)
@@ -613,67 +557,10 @@ function createTestHarness(options?: {
     },
   };
 
-  // Resolve modules: workspace:resolve and project:resolve (shared across all operations)
-  const switchResolveModule: IntentModule = {
+  // Dynamic get-active-workspace ref derived from the view manager + registered projects
+  const activeWorkspaceModule: IntentModule = {
     name: "test",
     hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-            // Reverse lookup: find which project owns this workspace path
-            for (const project of projectState.registeredProjects) {
-              const workspace = project.workspaces.find((w) => w.path === wsPath);
-              if (workspace) {
-                const workspaceName = extractWorkspaceName(wsPath);
-                return {
-                  projectPath: project.path,
-                  workspaceName: workspaceName as WorkspaceName,
-                  active: viewManager.getActiveWorkspacePath() === wsPath,
-                };
-              }
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
-  const switchResolveProjectModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<SharedResolveProjectHookResult> => {
-            const { projectPath } = ctx as SharedResolveProjectHookInput;
-            const project = projectState.registeredProjects.find((p) => p.path === projectPath);
-            return project
-              ? { projectId: testProjectId(project.path), projectName: project.name }
-              : {};
-          },
-        },
-      },
-    },
-  };
-  const switchViewModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        activate: {
-          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath, active } = ctx as ActivateHookInput;
-            const intent = ctx.intent as SwitchWorkspaceIntent;
-
-            if (active) {
-              return {};
-            }
-
-            const focus = intent.payload.focus ?? true;
-            viewManager.setActiveWorkspace(workspacePath, focus);
-            return { resolvedPath: workspacePath };
-          },
-        },
-      },
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
           handler: async (): Promise<GetActiveWorkspaceHookResult> => {
@@ -710,9 +597,7 @@ function createTestHarness(options?: {
     stateModule,
     viewModule,
     projectViewModule,
-    switchResolveModule,
-    switchResolveProjectModule,
-    switchViewModule,
+    activeWorkspaceModule,
   ])
     dispatcher.registerModule(m);
 

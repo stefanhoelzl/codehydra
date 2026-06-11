@@ -31,6 +31,7 @@ import type {
   Snapshot,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { CallbackRegistry, createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // State Types
@@ -146,28 +147,16 @@ interface ViewState {
 class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   private readonly _views: Map<string, ViewState>;
   private readonly _windowChildren: Map<string, string[]>;
-  private readonly _beforeInputEventCallbacks: Map<
-    string,
-    Set<(input: KeyboardInput, preventDefault: () => void) => void>
-  >;
-  private readonly _destroyedCallbacks: Map<string, Set<() => void>>;
-  private readonly _uncaughtExceptionCallbacks: Map<
-    string,
-    Set<(details: UncaughtExceptionDetails) => void>
-  >;
-  private readonly _renderProcessGoneCallbacks: Map<
-    string,
-    Set<(details: RenderProcessGoneDetails) => void>
-  >;
   private readonly _devToolsOpen: Set<string>;
+
+  readonly beforeInputEventCallbacks = new CallbackRegistry<[KeyboardInput, () => void]>();
+  readonly destroyedCallbacks = new CallbackRegistry();
+  readonly uncaughtExceptionCallbacks = new CallbackRegistry<[UncaughtExceptionDetails]>();
+  readonly renderProcessGoneCallbacks = new CallbackRegistry<[RenderProcessGoneDetails]>();
 
   constructor() {
     this._views = new Map();
     this._windowChildren = new Map();
-    this._beforeInputEventCallbacks = new Map();
-    this._destroyedCallbacks = new Map();
-    this._uncaughtExceptionCallbacks = new Map();
-    this._renderProcessGoneCallbacks = new Map();
     this._devToolsOpen = new Set();
   }
 
@@ -180,25 +169,6 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     return this._windowChildren;
   }
 
-  get beforeInputEventCallbacks(): Map<
-    string,
-    Set<(input: KeyboardInput, preventDefault: () => void) => void>
-  > {
-    return this._beforeInputEventCallbacks;
-  }
-
-  get destroyedCallbacks(): Map<string, Set<() => void>> {
-    return this._destroyedCallbacks;
-  }
-
-  get uncaughtExceptionCallbacks(): Map<string, Set<(details: UncaughtExceptionDetails) => void>> {
-    return this._uncaughtExceptionCallbacks;
-  }
-
-  get renderProcessGoneCallbacks(): Map<string, Set<(details: RenderProcessGoneDetails) => void>> {
-    return this._renderProcessGoneCallbacks;
-  }
-
   get devToolsOpen(): Set<string> {
     return this._devToolsOpen;
   }
@@ -208,47 +178,32 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     const preventDefault = () => {
       defaultPrevented = true;
     };
-    const callbacks = this._beforeInputEventCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback(input, preventDefault);
-      }
-    }
+    this.beforeInputEventCallbacks.trigger(handle.id, input, preventDefault);
     return { defaultPrevented };
   }
 
   triggerDestroyed(handle: ViewHandle): void {
-    const callbacks = this._destroyedCallbacks.get(handle.id);
+    const callbacks = this.destroyedCallbacks.get(handle.id);
     if (callbacks) {
       for (const callback of [...callbacks]) {
         callback();
       }
     }
     // Clean up callbacks for the destroyed view
-    this._beforeInputEventCallbacks.delete(handle.id);
-    this._destroyedCallbacks.delete(handle.id);
+    this.beforeInputEventCallbacks.delete(handle.id);
+    this.destroyedCallbacks.delete(handle.id);
   }
 
   triggerUncaughtException(handle: ViewHandle, details: UncaughtExceptionDetails): void {
-    const callbacks = this._uncaughtExceptionCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback(details);
-      }
-    }
+    this.uncaughtExceptionCallbacks.trigger(handle.id, details);
   }
 
   triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void {
-    const callbacks = this._renderProcessGoneCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback(details);
-      }
-    }
+    this.renderProcessGoneCallbacks.trigger(handle.id, details);
   }
 
   snapshot(): Snapshot {
-    return { __brand: "Snapshot", value: this.toString() } as Snapshot;
+    return createSnapshot(this);
   }
 
   toString(): string {
@@ -336,6 +291,12 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
  */
 export function createViewBoundaryMock(): MockViewBoundary {
   const state = new ViewBoundaryMockStateImpl();
+  const registries = [
+    state.beforeInputEventCallbacks,
+    state.destroyedCallbacks,
+    state.uncaughtExceptionCallbacks,
+    state.renderProcessGoneCallbacks,
+  ];
   let nextId = 1;
 
   function getView(handle: ViewHandle): ViewState {
@@ -367,10 +328,9 @@ export function createViewBoundaryMock(): MockViewBoundary {
         hasWindowOpenHandler: false,
         focused: false,
       });
-      state.beforeInputEventCallbacks.set(id, new Set());
-      state.destroyedCallbacks.set(id, new Set());
-      state.uncaughtExceptionCallbacks.set(id, new Set());
-      state.renderProcessGoneCallbacks.set(id, new Set());
+      for (const registry of registries) {
+        registry.init(id);
+      }
       return { id, __brand: "ViewHandle" };
     },
 
@@ -390,18 +350,16 @@ export function createViewBoundaryMock(): MockViewBoundary {
         }
       }
       state.views.delete(handle.id);
-      state.beforeInputEventCallbacks.delete(handle.id);
-      state.destroyedCallbacks.delete(handle.id);
-      state.uncaughtExceptionCallbacks.delete(handle.id);
-      state.renderProcessGoneCallbacks.delete(handle.id);
+      for (const registry of registries) {
+        registry.delete(handle.id);
+      }
     },
 
     destroyAll(): void {
       state.views.clear();
-      state.beforeInputEventCallbacks.clear();
-      state.destroyedCallbacks.clear();
-      state.uncaughtExceptionCallbacks.clear();
-      state.renderProcessGoneCallbacks.clear();
+      for (const registry of registries) {
+        registry.clear();
+      }
       state.windowChildren.clear();
     },
 
@@ -468,20 +426,12 @@ export function createViewBoundaryMock(): MockViewBoundary {
       callback: (input: KeyboardInput, preventDefault: () => void) => void
     ): Unsubscribe {
       getView(handle); // Validate handle exists
-      const callbacks = state.beforeInputEventCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return state.beforeInputEventCallbacks.add(handle.id, callback);
     },
 
     onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe {
       getView(handle); // Validate handle exists
-      const callbacks = state.destroyedCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return state.destroyedCallbacks.add(handle.id, callback);
     },
 
     onUncaughtException(
@@ -489,11 +439,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
       callback: (details: UncaughtExceptionDetails) => void
     ): Unsubscribe {
       getView(handle); // Validate handle exists
-      const callbacks = state.uncaughtExceptionCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return state.uncaughtExceptionCallbacks.add(handle.id, callback);
     },
 
     onRenderProcessGone(
@@ -501,11 +447,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
       callback: (details: RenderProcessGoneDetails) => void
     ): Unsubscribe {
       getView(handle); // Validate handle exists
-      const callbacks = state.renderProcessGoneCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return state.renderProcessGoneCallbacks.add(handle.id, callback);
     },
 
     onUnresponsive(handle: ViewHandle, _callback: () => void): Unsubscribe {
@@ -534,10 +476,9 @@ export function createViewBoundaryMock(): MockViewBoundary {
 
     async dispose(): Promise<void> {
       state.views.clear();
-      state.beforeInputEventCallbacks.clear();
-      state.destroyedCallbacks.clear();
-      state.uncaughtExceptionCallbacks.clear();
-      state.renderProcessGoneCallbacks.clear();
+      for (const registry of registries) {
+        registry.clear();
+      }
       state.windowChildren.clear();
     },
   };

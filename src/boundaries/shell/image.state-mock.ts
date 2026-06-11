@@ -29,6 +29,7 @@ import type {
   Snapshot,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // State Types
@@ -91,7 +92,7 @@ export class ImageBoundaryMockState implements MockState {
   }
 
   snapshot(): Snapshot {
-    return { __brand: "Snapshot", value: this.toString() } as Snapshot;
+    return createSnapshot(this);
   }
 
   toString(): string {

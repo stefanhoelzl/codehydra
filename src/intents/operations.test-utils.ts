@@ -19,6 +19,9 @@ import type { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "../shared/api/types";
+import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import { INTENT_UPDATE_AGENT_STATUS } from "./update-agent-status";
+import type { UpdateAgentStatusIntent } from "./update-agent-status";
 import {
   ResolveWorkspaceOperation,
   RESOLVE_WORKSPACE_OPERATION_ID,
@@ -58,6 +61,9 @@ import type {
 export interface MockWorkspaceEntry {
   readonly projectPath: string;
   readonly workspaceName: WorkspaceName;
+  readonly branch?: string | null;
+  /** Explicit active flag; when omitted, derived from the viewManager (if any). */
+  readonly active?: boolean;
 }
 
 export interface MockProjectEntry {
@@ -70,15 +76,129 @@ export interface MockViewManager {
   setActiveWorkspace(path: string | null, focus?: boolean): void;
 }
 
+/** Static map or dynamic lookup function for workspace resolution. */
+export type MockWorkspaceLookup =
+  | Readonly<Record<string, MockWorkspaceEntry>>
+  | ((workspacePath: string) => MockWorkspaceEntry | undefined);
+
+/** Static map or dynamic lookup function for project resolution. */
+export type MockProjectLookup =
+  | Readonly<Record<string, MockProjectEntry>>
+  | ((projectPath: string) => MockProjectEntry | undefined);
+
 export interface TestMockConfig {
-  /** Maps workspacePath → resolution data. */
-  readonly workspaces?: Readonly<Record<string, MockWorkspaceEntry>>;
-  /** Maps projectPath → resolution data. */
-  readonly projects?: Readonly<Record<string, MockProjectEntry>>;
+  /** Maps workspacePath → resolution data (or dynamic lookup). */
+  readonly workspaces?: MockWorkspaceLookup;
+  /** Maps projectPath → resolution data (or dynamic lookup). */
+  readonly projects?: MockProjectLookup;
   /** Active workspace ref for get-active-workspace. Default: null. */
   readonly activeWorkspaceRef?: WorkspaceRef | null;
   /** View manager for switch-workspace activate hook. Only wired if provided. */
   readonly viewManager?: MockViewManager;
+}
+
+/** Minimal project shape for {@link workspacesFromProjects}. */
+export interface ProjectWithWorkspaces {
+  readonly path: string;
+  readonly workspaces?: ReadonlyArray<{ readonly path: string }>;
+}
+
+/**
+ * Workspace lookup that reverse-looks-up the owning project from a live
+ * project list. The workspaceName derives from the path basename, matching
+ * production resolution.
+ */
+export function workspacesFromProjects(
+  getProjects: () => readonly ProjectWithWorkspaces[]
+): (workspacePath: string) => MockWorkspaceEntry | undefined {
+  return (workspacePath) => {
+    for (const project of getProjects()) {
+      if (project.workspaces?.some((w) => w.path === workspacePath)) {
+        return {
+          projectPath: project.path,
+          workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1) as WorkspaceName,
+        };
+      }
+    }
+    return undefined;
+  };
+}
+
+// =============================================================================
+// Intent Builders
+// =============================================================================
+
+/** Build an agent:update-status intent. */
+export function updateStatusIntent(
+  workspacePath: string,
+  status: AggregatedAgentStatus
+): UpdateAgentStatusIntent {
+  return {
+    type: INTENT_UPDATE_AGENT_STATUS,
+    payload: {
+      workspacePath: workspacePath as WorkspacePath,
+      status,
+    },
+  };
+}
+
+// =============================================================================
+// View Manager Mock
+// =============================================================================
+
+/** ViewManager surface used by operation tests, with capture-friendly extras. */
+export interface TestViewManager extends MockViewManager {
+  destroyWorkspaceView(path: string): Promise<void>;
+  createWorkspaceView(path: string, url: string, projectPath: string, visible: boolean): void;
+  preloadWorkspaceUrl(path: string): void;
+}
+
+export interface TestViewManagerHarness {
+  readonly viewManager: TestViewManager;
+  /** Live active-workspace state; mutate `path` to simulate external changes. */
+  readonly activeWorkspace: { path: string | null };
+  readonly destroyedViews: string[];
+  readonly createdViews: Array<{ path: string; url: string }>;
+  readonly preloadedPaths: string[];
+  readonly setActiveWorkspaceCalls: Array<{ path: string | null; focus?: boolean }>;
+}
+
+/**
+ * Stateful ViewManager mock: setActiveWorkspace updates the active path and
+ * records the call; destroy/create/preload record their arguments.
+ */
+export function createTestViewManager(initialActive: string | null = null): TestViewManagerHarness {
+  const activeWorkspace = { path: initialActive };
+  const destroyedViews: string[] = [];
+  const createdViews: Array<{ path: string; url: string }> = [];
+  const preloadedPaths: string[] = [];
+  const setActiveWorkspaceCalls: Array<{ path: string | null; focus?: boolean }> = [];
+
+  const viewManager: TestViewManager = {
+    getActiveWorkspacePath: () => activeWorkspace.path,
+    setActiveWorkspace: (path, focus) => {
+      activeWorkspace.path = path;
+      setActiveWorkspaceCalls.push({ path, ...(focus !== undefined && { focus }) });
+    },
+    destroyWorkspaceView: async (path) => {
+      destroyedViews.push(path);
+    },
+    createWorkspaceView: (path, url) => {
+      createdViews.push({ path, url });
+    },
+    preloadWorkspaceUrl: (path) => {
+      preloadedPaths.push(path);
+    },
+  };
+
+  return {
+    viewManager,
+    activeWorkspace,
+    destroyedViews,
+    createdViews,
+    preloadedPaths,
+    setActiveWorkspaceCalls,
+  };
 }
 
 // =============================================================================
@@ -92,7 +212,7 @@ export interface TestMockConfig {
  * - get-active-workspace: returns config.activeWorkspaceRef
  * - switch-workspace activate: calls config.viewManager.setActiveWorkspace() (if provided)
  */
-function createTestMockModule(config: TestMockConfig): IntentModule {
+export function createTestMockModule(config: TestMockConfig): IntentModule {
   const hooks: Record<
     string,
     Record<string, { handler: (ctx: HookContext) => Promise<unknown> }>
@@ -101,16 +221,20 @@ function createTestMockModule(config: TestMockConfig): IntentModule {
   // -- resolve-workspace --
   if (config.workspaces) {
     const workspaces = config.workspaces;
+    const lookupWorkspace =
+      typeof workspaces === "function" ? workspaces : (path: string) => workspaces[path];
     const vm = config.viewManager;
     hooks[RESOLVE_WORKSPACE_OPERATION_ID] = {
       resolve: {
         handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
           const intent = ctx.intent as { payload: { workspacePath: string } };
-          const entry = workspaces[intent.payload.workspacePath];
+          const entry = lookupWorkspace(intent.payload.workspacePath);
           if (!entry) return {};
           return {
             ...entry,
-            active: vm ? vm.getActiveWorkspacePath() === intent.payload.workspacePath : false,
+            active:
+              entry.active ??
+              (vm ? vm.getActiveWorkspacePath() === intent.payload.workspacePath : false),
           };
         },
       },
@@ -120,11 +244,13 @@ function createTestMockModule(config: TestMockConfig): IntentModule {
   // -- resolve-project --
   if (config.projects) {
     const projects = config.projects;
+    const lookupProject =
+      typeof projects === "function" ? projects : (path: string) => projects[path];
     hooks[RESOLVE_PROJECT_OPERATION_ID] = {
       resolve: {
         handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
           const { projectPath } = ctx as ResolveProjectHookInput;
-          const entry = projects[projectPath];
+          const entry = lookupProject(projectPath);
           if (!entry) return {};
           const result: ResolveProjectHookResult = { projectId: entry.projectId };
           if (entry.projectName !== undefined) {
@@ -137,14 +263,18 @@ function createTestMockModule(config: TestMockConfig): IntentModule {
   }
 
   // -- get-active-workspace --
-  const activeRef = config.activeWorkspaceRef ?? null;
-  hooks[GET_ACTIVE_WORKSPACE_OPERATION_ID] = {
-    get: {
-      handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-        return { workspaceRef: activeRef };
+  // Only wired when explicitly configured, so tests can provide their own
+  // dynamic get hook without competing handlers.
+  if (config.activeWorkspaceRef !== undefined) {
+    const activeRef = config.activeWorkspaceRef;
+    hooks[GET_ACTIVE_WORKSPACE_OPERATION_ID] = {
+      get: {
+        handler: async (): Promise<GetActiveWorkspaceHookResult> => {
+          return { workspaceRef: activeRef };
+        },
       },
-    },
-  };
+    };
+  }
 
   // -- switch-workspace activate --
   if (config.viewManager) {

@@ -4,7 +4,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { Project, ProjectId, WorkspaceName, Workspace } from "@shared/api/types";
+import type { Project, ProjectId, Workspace } from "@shared/api/types";
+import { createMockProject, createMockWorkspace } from "@shared/test-fixtures";
 
 // Create mock functions with vi.hoisted
 const { mockCloseProject, mockRemoveWorkspace, mockCloseDialog, mockProjects } = vi.hoisted(() => ({
@@ -45,13 +46,7 @@ import CloseProjectDialog from "./CloseProjectDialog.svelte";
 const testProjectId = "test-project-12345678" as ProjectId;
 
 function createWorkspace(name: string, projectId: ProjectId): Workspace {
-  return {
-    projectId,
-    name: name as WorkspaceName,
-    branch: name,
-    path: `/test/project/.worktrees/${name}`,
-    metadata: { base: "main" },
-  };
+  return createMockWorkspace({ name, projectId, metadata: { base: "main" } });
 }
 
 function createProject(
@@ -60,13 +55,13 @@ function createProject(
   workspaces: Workspace[] = [],
   remoteUrl?: string
 ): Project {
-  return {
+  return createMockProject({
     id,
     name,
     path: `/test/projects/${name}`,
     workspaces,
     ...(remoteUrl !== undefined && { remoteUrl }),
-  };
+  });
 }
 
 /**
@@ -495,13 +490,12 @@ describe("CloseProjectDialog component", () => {
   });
 
   describe("remote project (cloned from URL)", () => {
-    const remoteProject: Project = {
-      id: testProjectId,
-      name: "test-project",
-      path: "/test/projects/test-project",
-      workspaces: [createWorkspace("ws1", testProjectId)],
-      remoteUrl: "https://github.com/org/test-repo.git",
-    };
+    const remoteProject: Project = createProject(
+      testProjectId,
+      "test-project",
+      [createWorkspace("ws1", testProjectId)],
+      "https://github.com/org/test-repo.git"
+    );
 
     beforeEach(() => {
       // Override the global beforeEach mock setup (global beforeEach runs first, then this)

@@ -29,6 +29,7 @@ import type {
   MatcherResult,
   MatcherImplementationsFor,
 } from "../../../test/state-mock";
+import { createSnapshot } from "../../../test/state-mock";
 // Re-export SDK types for convenience
 export type { Session, SdkEvent, SdkSessionStatus };
 
@@ -332,10 +333,7 @@ class SdkClientMockStateImpl implements SdkClientMockState {
   // ---- MockState Implementation ----
 
   snapshot(): Snapshot {
-    return {
-      __brand: "Snapshot" as const,
-      value: this.toString(),
-    };
+    return createSnapshot(this);
   }
 
   toString(): string {

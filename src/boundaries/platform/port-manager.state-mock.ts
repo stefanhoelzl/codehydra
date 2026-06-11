@@ -7,6 +7,7 @@
 
 import type { PortManager } from "./network";
 import type { MockState, MockWithState, Snapshot } from "../../test/state-mock";
+import { createSnapshot } from "../../test/state-mock";
 
 /**
  * Configuration options for the PortManager mock.
@@ -91,10 +92,7 @@ export class PortManagerMockState implements MockState {
   }
 
   snapshot(): Snapshot {
-    return {
-      __brand: "Snapshot",
-      value: this.toString(),
-    };
+    return createSnapshot(this);
   }
 
   toString(): string {

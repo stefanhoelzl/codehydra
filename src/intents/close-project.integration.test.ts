@@ -49,23 +49,11 @@ import type {
   DeletePipelineHookInput,
 } from "./delete-workspace";
 import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type {
-  ResolveHookResult as ResolveWorkspaceHookResult,
-  ResolveHookInput as ResolveWorkspaceHookInput,
-} from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
-import type {
-  ResolveHookResult as ResolveProjectHookResult,
-  ResolveHookInput as ResolveProjectHookInput,
-} from "./resolve-project";
+  createTestViewManager,
+  registerTestInfrastructure,
+  workspacesFromProjects,
+} from "./operations.test-utils";
+import type { TestViewManager } from "./operations.test-utils";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
 import { Path } from "../utils/path/path";
@@ -106,11 +94,7 @@ interface TestState {
 interface TestHarness {
   dispatcher: Dispatcher;
   state: TestState;
-  viewManager: {
-    getActiveWorkspacePath(): string;
-    setActiveWorkspace(path: string | null, focus?: boolean): void;
-    destroyWorkspaceView(path: string): Promise<void>;
-  };
+  viewManager: TestViewManager;
 }
 
 function createTestHarness(options?: {
@@ -121,14 +105,17 @@ function createTestHarness(options?: {
 }): TestHarness {
   const dispatcher = createMockDispatcher();
 
+  const vmHarness = createTestViewManager(WORKSPACE_A_PATH);
+  const viewManager = vmHarness.viewManager;
+
   const state: TestState = {
     serversStoppedForWorkspaces: [],
-    destroyedViews: [],
+    destroyedViews: vmHarness.destroyedViews,
     deregisteredProjects: [],
     removedProjectsFromStore: [],
     deletedProjectDirectories: [],
     unregisteredProjects: [],
-    setActiveWorkspaceCalls: [],
+    setActiveWorkspaceCalls: vmHarness.setActiveWorkspaceCalls,
   };
 
   const workspaces = options?.emptyProject
@@ -159,29 +146,6 @@ function createTestHarness(options?: {
         workspaces,
         ...(options?.withRemoteUrl && { remoteUrl: "https://github.com/org/repo.git" }),
       };
-
-  const viewManager = {
-    getActiveWorkspacePath: vi.fn().mockReturnValue(WORKSPACE_A_PATH),
-    setActiveWorkspace: vi.fn().mockImplementation((path: string | null, focus?: boolean) => {
-      state.setActiveWorkspaceCalls.push({
-        path,
-        ...(focus !== undefined && { focus }),
-      });
-    }),
-    destroyWorkspaceView: vi.fn().mockImplementation(async (path: string) => {
-      state.destroyedViews.push(path);
-    }),
-    getUIView: vi.fn(),
-    createWorkspaceView: vi.fn(),
-    getWorkspaceView: vi.fn(),
-    updateBounds: vi.fn(),
-    focus: vi.fn(),
-    setMode: vi.fn(),
-    getMode: vi.fn().mockReturnValue("workspace"),
-    onWorkspaceChange: vi.fn().mockReturnValue(() => {}),
-    updateCodeServerPort: vi.fn(),
-    preloadWorkspaceUrl: vi.fn(),
-  } as TestHarness["viewManager"];
 
   const remoteUrl = options?.withRemoteUrl
     ? "https://github.com/org/repo.git"
@@ -228,51 +192,13 @@ function createTestHarness(options?: {
   // Register operations
   dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
   dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new DeleteWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  // Resolve modules (shared workspace:resolve and project:resolve operations)
-  const deleteResolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspacePath: wsPath } = ctx as ResolveWorkspaceHookInput;
-            // Reverse lookup: find which project owns this workspace path
-            const projects: Project[] = await appState.getAllProjects();
-            for (const p of projects) {
-              const workspace = p.workspaces?.find((w: { path: string }) => w.path === wsPath);
-              if (workspace) {
-                const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
-                return {
-                  projectPath: p.path,
-                  workspaceName: workspaceName as WorkspaceName,
-                  active: viewManager.getActiveWorkspacePath() === wsPath,
-                };
-              }
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
-
-  const deleteResolveProjectModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { projectPath } = ctx as ResolveProjectHookInput;
-            const projectId = testProjectId(projectPath);
-            return { projectId };
-          },
-        },
-      },
-    },
-  };
+  // Shared workspace:resolve (reverse lookup over the project) and project:resolve
+  registerTestInfrastructure(dispatcher, {
+    workspaces: workspacesFromProjects(() => (project ? [project] : [])),
+    projects: (projectPath) => ({ projectId: testProjectId(projectPath) }),
+    viewManager,
+  });
 
   // Delete-workspace hook modules (simplified for close-project testing)
   const deleteViewModule: IntentModule = {
@@ -460,8 +386,6 @@ function createTestHarness(options?: {
   };
 
   for (const m of [
-    deleteResolveModule,
-    deleteResolveProjectModule,
     deleteViewModule,
     deleteAgentModule,
     deleteStateModule,

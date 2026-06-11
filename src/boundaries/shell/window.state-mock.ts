@@ -29,6 +29,7 @@ import type {
   Snapshot,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { CallbackRegistry, countMatcher, createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // State Types
@@ -145,11 +146,11 @@ interface WindowStateInternal {
 class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
   constructor(
     private readonly _windows: Map<string, WindowStateInternal>,
-    private readonly _resizeCallbacks: Map<string, Set<() => void>>,
-    private readonly _maximizeCallbacks: Map<string, Set<() => void>>,
-    private readonly _unmaximizeCallbacks: Map<string, Set<() => void>>,
-    private readonly _closeCallbacks: Map<string, Set<() => void>>,
-    private readonly _blurCallbacks: Map<string, Set<() => void>>
+    private readonly _resizeCallbacks: CallbackRegistry,
+    private readonly _maximizeCallbacks: CallbackRegistry,
+    private readonly _unmaximizeCallbacks: CallbackRegistry,
+    private readonly _closeCallbacks: CallbackRegistry,
+    private readonly _blurCallbacks: CallbackRegistry
   ) {}
 
   get windows(): ReadonlyMap<string, WindowMockState> {
@@ -169,12 +170,7 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
   }
 
   triggerResize(handle: WindowHandle): void {
-    const callbacks = this._resizeCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback();
-      }
-    }
+    this._resizeCallbacks.trigger(handle.id);
   }
 
   triggerMaximize(handle: WindowHandle): void {
@@ -182,12 +178,7 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
     if (window) {
       window.isMaximized = true;
     }
-    const callbacks = this._maximizeCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback();
-      }
-    }
+    this._maximizeCallbacks.trigger(handle.id);
   }
 
   triggerUnmaximize(handle: WindowHandle): void {
@@ -195,34 +186,19 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
     if (window) {
       window.isMaximized = false;
     }
-    const callbacks = this._unmaximizeCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback();
-      }
-    }
+    this._unmaximizeCallbacks.trigger(handle.id);
   }
 
   triggerClose(handle: WindowHandle): void {
-    const callbacks = this._closeCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback();
-      }
-    }
+    this._closeCallbacks.trigger(handle.id);
   }
 
   triggerBlur(handle: WindowHandle): void {
-    const callbacks = this._blurCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback();
-      }
-    }
+    this._blurCallbacks.trigger(handle.id);
   }
 
   snapshot(): Snapshot {
-    return { __brand: "Snapshot", value: this.toString() } as Snapshot;
+    return createSnapshot(this);
   }
 
   toString(): string {
@@ -261,11 +237,18 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
  */
 export function createWindowBoundaryMock(): MockWindowBoundary {
   const windows = new Map<string, WindowStateInternal>();
-  const resizeCallbacks = new Map<string, Set<() => void>>();
-  const maximizeCallbacks = new Map<string, Set<() => void>>();
-  const unmaximizeCallbacks = new Map<string, Set<() => void>>();
-  const closeCallbacks = new Map<string, Set<() => void>>();
-  const blurCallbacks = new Map<string, Set<() => void>>();
+  const resizeCallbacks = new CallbackRegistry();
+  const maximizeCallbacks = new CallbackRegistry();
+  const unmaximizeCallbacks = new CallbackRegistry();
+  const closeCallbacks = new CallbackRegistry();
+  const blurCallbacks = new CallbackRegistry();
+  const registries = [
+    resizeCallbacks,
+    maximizeCallbacks,
+    unmaximizeCallbacks,
+    closeCallbacks,
+    blurCallbacks,
+  ];
   const contentViews = new Map<string, ContentView>();
   let nextId = 1;
 
@@ -336,11 +319,9 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
         options,
       });
       contentViews.set(id, createContentView());
-      resizeCallbacks.set(id, new Set());
-      maximizeCallbacks.set(id, new Set());
-      unmaximizeCallbacks.set(id, new Set());
-      closeCallbacks.set(id, new Set());
-      blurCallbacks.set(id, new Set());
+      for (const registry of registries) {
+        registry.init(id);
+      }
       return { id, __brand: "WindowHandle" };
     },
 
@@ -389,47 +370,27 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
 
     onResize(handle: WindowHandle, callback: () => void): Unsubscribe {
       getWindow(handle); // Validate handle exists
-      const callbacks = resizeCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return resizeCallbacks.add(handle.id, callback);
     },
 
     onMaximize(handle: WindowHandle, callback: () => void): Unsubscribe {
       getWindow(handle); // Validate handle exists
-      const callbacks = maximizeCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return maximizeCallbacks.add(handle.id, callback);
     },
 
     onUnmaximize(handle: WindowHandle, callback: () => void): Unsubscribe {
       getWindow(handle); // Validate handle exists
-      const callbacks = unmaximizeCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return unmaximizeCallbacks.add(handle.id, callback);
     },
 
     onClose(handle: WindowHandle, callback: () => void): Unsubscribe {
       getWindow(handle); // Validate handle exists
-      const callbacks = closeCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return closeCallbacks.add(handle.id, callback);
     },
 
     onBlur(handle: WindowHandle, callback: () => void): Unsubscribe {
       getWindow(handle); // Validate handle exists
-      const callbacks = blurCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
+      return blurCallbacks.add(handle.id, callback);
     },
 
     getContentView(handle: WindowHandle): ContentView {
@@ -452,11 +413,9 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
       }
       windows.clear();
       contentViews.clear();
-      resizeCallbacks.clear();
-      maximizeCallbacks.clear();
-      unmaximizeCallbacks.clear();
-      closeCallbacks.clear();
-      blurCallbacks.clear();
+      for (const registry of registries) {
+        registry.clear();
+      }
     },
   };
 
@@ -538,19 +497,7 @@ export const windowBoundaryMatchers: MatcherImplementationsFor<
     };
   },
 
-  toHaveWindowCount(received, count) {
-    const actualCount = received.$.windows.size;
-    if (actualCount !== count) {
-      return {
-        pass: false,
-        message: () => `Expected ${count} windows but found ${actualCount}`,
-      };
-    }
-    return {
-      pass: true,
-      message: () => `Expected not to have ${count} windows`,
-    };
-  },
+  toHaveWindowCount: countMatcher<MockWindowBoundary>("window", (mock) => mock.$.windows.size),
 
   toHaveWindowTitle(received, id, title) {
     const window = received.$.windows.get(id);

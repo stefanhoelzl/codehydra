@@ -21,6 +21,7 @@ import type {
   MatcherResult,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // Type Definitions
@@ -118,10 +119,7 @@ export function createArchiveExtractorMock(
       return extractions;
     },
     snapshot(): Snapshot {
-      return {
-        __brand: "Snapshot" as const,
-        value: this.toString(),
-      };
+      return createSnapshot(this);
     },
     toString(): string {
       const count = extractions.length;
