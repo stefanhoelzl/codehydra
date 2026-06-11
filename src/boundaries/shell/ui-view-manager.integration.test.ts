@@ -1,0 +1,265 @@
+// @vitest-environment node
+/**
+ * Integration tests for UiViewManager with behavioral boundary mocks.
+ *
+ * Covers: UI view creation (preload, partition, attach, bounds, transparent
+ * background, window-open handler), session handler wiring, mode state +
+ * change notifications, mode-routed focus, renderer-hook-driven capture,
+ * resize propagation, and destroy.
+ */
+
+import { describe, it, expect, vi } from "vitest";
+import { UiViewManager, type UiViewManagerDeps } from "./ui-view-manager";
+import { createViewBoundaryMock } from "./view.state-mock";
+import { createSessionBoundaryMock } from "./session.state-mock";
+import { createMockWindowManager } from "./window-manager.test-utils";
+import type { WindowBoundaryInternal } from "./window";
+import type { WindowManager } from "./window-manager";
+import type { AppBoundary } from "./app";
+
+function createDeps() {
+  const viewLayer = createViewBoundaryMock();
+  const sessionLayer = createSessionBoundaryMock();
+  const windowManager = createMockWindowManager();
+  const windowLayer = {
+    isDestroyed: vi.fn(() => false),
+  } as unknown as WindowBoundaryInternal;
+  const appLayer: Pick<AppBoundary, "openUrl"> = {
+    openUrl: vi.fn().mockResolvedValue(undefined),
+  };
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    silly: vi.fn(),
+  };
+
+  const deps = {
+    windowManager: windowManager as unknown as WindowManager,
+    windowLayer,
+    viewLayer,
+    sessionLayer,
+    appLayer,
+    config: { uiPreloadPath: "/path/to/preload.cjs" },
+    logger,
+  } as unknown as UiViewManagerDeps;
+
+  return { deps, viewLayer, sessionLayer, windowManager, appLayer, logger };
+}
+
+function createManager() {
+  const ctx = createDeps();
+  const manager = new UiViewManager(ctx.deps);
+  manager.create();
+  return { manager, ...ctx };
+}
+
+describe("UiViewManager", () => {
+  describe("create", () => {
+    it("creates the UI view attached, full-window, transparent, with preload + shared partition", () => {
+      const { manager, viewLayer } = createManager();
+
+      const handle = manager.getUIViewHandle();
+      const snapshot = viewLayer.$.getViewSnapshot(handle.id);
+      expect(snapshot).toMatchObject({
+        attachedTo: "test-window-1",
+        backgroundColor: "#00000000",
+        bounds: { x: 0, y: 0, width: 1200, height: 800 },
+        hasWindowOpenHandler: true,
+      });
+      expect(snapshot?.options.webPreferences).toMatchObject({
+        preload: "/path/to/preload.cjs",
+        partition: "persist:codehydra-global",
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      });
+    });
+
+    it("wires header + permission handlers on the shared session", () => {
+      const { sessionLayer } = createManager();
+
+      const sessions = [...sessionLayer.$.sessions.values()];
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        partition: "persist:codehydra-global",
+        hasHeadersReceivedHandler: true,
+        hasPermissionRequestHandler: true,
+        hasPermissionCheckHandler: true,
+      });
+    });
+
+    it("is idempotent", () => {
+      const { manager } = createManager();
+      const handle = manager.getUIViewHandle();
+      manager.create();
+      expect(manager.getUIViewHandle()).toBe(handle);
+    });
+
+    it("throws when accessed before create()", () => {
+      const { deps } = createDeps();
+      const manager = new UiViewManager(deps);
+      expect(() => manager.getUIViewHandle()).toThrow("create() has not been called");
+    });
+  });
+
+  describe("resize", () => {
+    it("re-applies full-window bounds on window resize", () => {
+      const { manager, viewLayer, windowManager } = createManager();
+      const resizeCallback = windowManager.onResize.mock.calls[0]![0];
+
+      windowManager.getBounds.mockReturnValue({ width: 1600, height: 1000 });
+      resizeCallback();
+
+      const snapshot = viewLayer.$.getViewSnapshot(manager.getUIViewHandle().id);
+      expect(snapshot?.bounds).toEqual({ x: 0, y: 0, width: 1600, height: 1000 });
+    });
+  });
+
+  describe("mode state", () => {
+    it("defaults to workspace and notifies subscribers on change", () => {
+      const { manager } = createManager();
+      expect(manager.getMode()).toBe("workspace");
+
+      const events: unknown[] = [];
+      manager.onModeChange((e) => events.push(e));
+
+      manager.setMode("shortcut");
+      expect(manager.getMode()).toBe("shortcut");
+      expect(events).toEqual([{ mode: "shortcut", previousMode: "workspace" }]);
+    });
+
+    it("does not notify when the mode is unchanged", () => {
+      const { manager } = createManager();
+      const callback = vi.fn();
+      manager.onModeChange(callback);
+
+      manager.setMode("workspace");
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("unsubscribe stops notifications", () => {
+      const { manager } = createManager();
+      const callback = vi.fn();
+      const unsubscribe = manager.onModeChange(callback);
+      unsubscribe();
+
+      manager.setMode("dialog");
+      expect(callback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("focus routing", () => {
+    it("workspace mode focuses the view and asks the renderer to focus the active frame", () => {
+      const { manager, viewLayer } = createManager();
+      const exec = vi.spyOn(viewLayer, "executeJavaScript");
+
+      manager.focus();
+
+      expect(viewLayer.$.getViewSnapshot(manager.getUIViewHandle().id)?.focused).toBe(true);
+      expect(exec).toHaveBeenCalledWith(
+        manager.getUIViewHandle(),
+        expect.stringContaining("__chFocusActiveFrame")
+      );
+    });
+
+    it("shortcut mode focuses the view without the frame hook", () => {
+      const { manager, viewLayer } = createManager();
+      manager.setMode("shortcut");
+      const exec = vi.spyOn(viewLayer, "executeJavaScript");
+
+      manager.focus();
+
+      expect(viewLayer.$.getViewSnapshot(manager.getUIViewHandle().id)?.focused).toBe(true);
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it.each(["dialog", "hover"] as const)("%s mode does not move focus", (mode) => {
+      const { manager, viewLayer } = createManager();
+      manager.setMode(mode);
+
+      manager.focus();
+
+      expect(viewLayer.$.getViewSnapshot(manager.getUIViewHandle().id)?.focused).toBe(false);
+    });
+  });
+
+  describe("captureActiveWorkspaceView", () => {
+    it("clips the capture to the active frame rect reported by the renderer", async () => {
+      const { manager, viewLayer } = createManager();
+      const rect = { x: 20, y: 0, width: 1180, height: 800 };
+      vi.spyOn(viewLayer, "executeJavaScript").mockResolvedValue(rect);
+      const capture = vi.spyOn(viewLayer, "capturePNG");
+
+      const png = await manager.captureActiveWorkspaceView();
+
+      expect(png).not.toBeNull();
+      expect(capture).toHaveBeenCalledWith(manager.getUIViewHandle(), rect);
+    });
+
+    it("returns null when no active frame is visible", async () => {
+      const { manager, viewLayer } = createManager();
+      vi.spyOn(viewLayer, "executeJavaScript").mockResolvedValue(null);
+
+      expect(await manager.captureActiveWorkspaceView()).toBeNull();
+    });
+
+    it("returns null when the rect lookup throws", async () => {
+      const { manager, viewLayer } = createManager();
+      vi.spyOn(viewLayer, "executeJavaScript").mockRejectedValue(new Error("page gone"));
+
+      expect(await manager.captureActiveWorkspaceView()).toBeNull();
+    });
+  });
+
+  describe("capability targets", () => {
+    it("devtools target toggles devtools on the UI view", () => {
+      const { manager } = createManager();
+      const target = manager.getUIDevtoolsTarget();
+
+      expect(target.id).toBe(manager.getUIViewHandle().id);
+      expect(target.isOpen()).toBe(false);
+      target.toggle();
+      expect(target.isOpen()).toBe(true);
+      target.toggle();
+      expect(target.isOpen()).toBe(false);
+    });
+
+    it("keyboard target subscribes to before-input on the UI view", () => {
+      const { manager, viewLayer } = createManager();
+      const target = manager.getUIKeyboardTarget();
+      const callback = vi.fn();
+      target.onBeforeInput(callback);
+
+      viewLayer.$.triggerBeforeInputEvent(manager.getUIViewHandle(), {
+        type: "keyDown",
+        key: "Alt",
+        isAutoRepeat: false,
+        control: false,
+        shift: false,
+        alt: true,
+        meta: false,
+      });
+
+      expect(callback).toHaveBeenCalled();
+    });
+  });
+
+  describe("sendToUI", () => {
+    it("drops sends before create() without throwing", () => {
+      const { deps } = createDeps();
+      const manager = new UiViewManager(deps);
+      expect(() => manager.sendToUI("api:test", 1)).not.toThrow();
+    });
+  });
+
+  describe("destroy", () => {
+    it("destroys the UI view and is idempotent", () => {
+      const { manager } = createManager();
+      manager.destroy();
+      expect(manager.isUIAvailable()).toBe(false);
+      expect(() => manager.destroy()).not.toThrow();
+    });
+  });
+});

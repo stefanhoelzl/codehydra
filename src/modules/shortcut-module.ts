@@ -6,15 +6,13 @@
  * By letting all keys propagate, we ensure reliable Alt keyUp detection.
  *
  * Hooks:
- * - app-start/init: Subscribe to input events on UI view, subscribe to window blur
+ * - app-start/init: Subscribe to input events on the UI view (before-input-event
+ *   fires at the webContents level, so keys typed inside workspace iframes are
+ *   included), subscribe to window blur
  * - app-shutdown/stop: Dispose all listeners
- *
- * Events:
- * - workspace:created: Register new workspace view for input detection
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { KeyboardTarget } from "../boundaries/shell/view-manager-types";
 import type { Logger } from "../boundaries/platform/logging";
@@ -24,7 +22,6 @@ import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
 import { INTENT_SET_MODE, type SetModeIntent } from "../intents/set-mode";
 import { INTENT_SHORTCUT_KEY, type ShortcutKeyIntent } from "../intents/shortcut-key";
 
@@ -60,10 +57,7 @@ export function normalizeKey(key: string): string {
 }
 
 export interface ShortcutModuleDeps {
-  readonly viewManager: Pick<
-    IViewManager,
-    "getUIKeyboardTarget" | "getMode" | "getWorkspaceKeyboardTarget"
-  >;
+  readonly viewManager: Pick<IViewManager, "getUIKeyboardTarget" | "getMode">;
   readonly windowLayer: Pick<WindowBoundary, "onBlur">;
   readonly windowManager: Pick<WindowManager, "getWindowHandle">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
@@ -242,18 +236,6 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
               // Best-effort: shutdown disposal is non-fatal
             }
           },
-        },
-      },
-    },
-
-    events: {
-      [EVENT_WORKSPACE_CREATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as WorkspaceCreatedEvent).payload;
-          const target = deps.viewManager.getWorkspaceKeyboardTarget(payload.workspacePath);
-          if (target) {
-            registerView(target);
-          }
         },
       },
     },

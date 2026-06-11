@@ -316,6 +316,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       branch,
       metadata,
       path: workspacePath,
+      url: workspaceUrl,
     };
 
     // Build and emit domain event

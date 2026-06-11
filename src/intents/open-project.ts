@@ -294,7 +294,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       }
 
       // Build Project return value
-      const project: Project = {
+      let project: Project = {
         id: projectId,
         path: projectPath,
         name: name ?? new Path(projectPath).basename,
@@ -308,6 +308,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
         // Dispatch workspace:open per discovered workspace (best-effort).
         // Hibernated workspaces stay inert at startup — no view + agent init runs;
         // they appear in the sidebar with the hibernation indicator.
+        const urlByPath = new Map<string, string>();
         for (const workspace of workspaces) {
           if (workspace.metadata[HIBERNATED_METADATA_KEY] === "true") continue;
           try {
@@ -330,11 +331,26 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
               },
             };
 
-            await ctx.dispatch(openWsIntent);
+            const opened = await ctx.dispatch(openWsIntent);
+            if (opened?.url !== undefined) {
+              urlByPath.set(opened.path, opened.url);
+            }
           } catch {
             // Best-effort: individual workspace:open failures don't fail the project open
           }
         }
+
+        // Carry each opened workspace's code-server URL so the renderer can
+        // mount iframes for workspaces it learns about via project:opened
+        // (their earlier workspace:created events predate the project in the
+        // renderer store). Hibernated workspaces stay URL-less.
+        project = {
+          ...project,
+          workspaces: project.workspaces.map((w) => {
+            const url = urlByPath.get(w.path);
+            return url !== undefined ? { ...w, url } : w;
+          }),
+        };
 
         // Emit project:opened event
         const event: ProjectOpenedEvent = {

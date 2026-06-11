@@ -302,9 +302,10 @@ export interface ViewBoundary {
    * or capture fails for any reason. Does not throw.
    *
    * @param handle - Handle to the view
+   * @param rect - Optional region (view-local CSS pixels) to clip the capture to
    * @returns PNG-encoded bytes, or null on failure / no content
    */
-  capturePNG(handle: ViewHandle): Promise<Buffer | null>;
+  capturePNG(handle: ViewHandle, rect?: Rectangle): Promise<Buffer | null>;
 
   // IPC
   /**
@@ -640,12 +641,19 @@ export class DefaultViewBoundary implements ViewBoundary {
     wc.reload();
   }
 
-  async capturePNG(handle: ViewHandle): Promise<Buffer | null> {
+  async capturePNG(handle: ViewHandle, rect?: Rectangle): Promise<Buffer | null> {
     try {
       const state = this.getView(handle);
       const wc = state.view.webContents;
       if (!wc || wc.isDestroyed()) return null;
-      const image = await wc.capturePage();
+      const image = await (rect
+        ? wc.capturePage({
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          })
+        : wc.capturePage());
       if (image.isEmpty()) return null;
       return image.toPNG();
     } catch (error) {

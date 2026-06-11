@@ -54,6 +54,7 @@
 
   // Components
   import Sidebar from "./Sidebar.svelte";
+  import WorkspaceFrames from "./WorkspaceFrames.svelte";
   import NotificationHost from "./NotificationHost.svelte";
   import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
@@ -326,6 +327,7 @@
 </script>
 
 <div class="main-view" bind:this={containerRef}>
+  <WorkspaceFrames />
   <NotificationHost />
   <Sidebar
     projects={projects.value}

@@ -87,7 +87,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/renderer/index.html"),
-          "workspace-host": resolve(__dirname, "src/renderer/workspace-host.html"),
         },
       },
     },

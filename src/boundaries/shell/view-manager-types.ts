@@ -1,31 +1,18 @@
 /**
- * Shared types and pure helpers for view-manager implementations.
+ * Shared types and pure helpers for the UI view manager.
  *
  * Anything in this file is implementation-agnostic: no Electron calls, no I/O,
- * no state. The base class and any concrete implementation may depend on it.
+ * no state.
  */
 
-import type { SessionHandle, ViewHandle } from "./types";
 import type { KeyboardInput } from "./view";
 import type { Unsubscribe } from "./view-manager.interface";
-
-/**
- * Sidebar minimized width in pixels.
- * Workspace views start at this offset, with expanded sidebar overlaying them.
- */
-export const SIDEBAR_MINIMIZED_WIDTH = 20;
 
 /**
  * Minimum window dimensions.
  */
 export const MIN_WIDTH = 800;
 export const MIN_HEIGHT = 600;
-
-/**
- * Z-index for the UI layer when positioned at the bottom of the view stack.
- * The window's own backgroundColor provides the backdrop, so the UI sits at index 0.
- */
-export const Z_UI_BOTTOM = 0;
 
 /**
  * Rectangle in window coordinates.
@@ -38,31 +25,9 @@ export interface Rect {
 }
 
 /**
- * Per-workspace state shared by all implementations.
- *
- * Concrete implementations carry their own private state on the view handle
- * itself or in a separate side map; the slot here only covers what the
- * shared coordination layer needs to read.
- */
-export interface WorkspaceState {
-  /** Workspace path (POSIX-normalized) this state belongs to */
-  workspacePath: string;
-  /** Handle to the view */
-  handle: ViewHandle;
-  /** Handle to the session */
-  sessionHandle: SessionHandle;
-  /** URL to load (stored for lazy loading) */
-  url: string;
-  /** Whether URL has been loaded */
-  urlLoaded: boolean;
-  /** Partition name for cleanup */
-  partitionName: string;
-}
-
-/**
  * Narrow capability handle for opening/closing devtools on a view, without
  * exposing the underlying ViewHandle to consumers. Returned by
- * IViewManager.getUIDevtoolsTarget / getWorkspaceDevtoolsTarget.
+ * IViewManager.getUIDevtoolsTarget.
  */
 export interface DevtoolsTarget {
   /** Stable identifier (handle id of the underlying view). */
@@ -76,7 +41,7 @@ export interface DevtoolsTarget {
 /**
  * Narrow capability handle for keyboard input + lifecycle events on a view,
  * without exposing the underlying ViewHandle. Returned by
- * IViewManager.getUIKeyboardTarget / getWorkspaceKeyboardTarget.
+ * IViewManager.getUIKeyboardTarget.
  */
 export interface KeyboardTarget {
   /** Stable identifier (handle id of the underlying view). Used by consumers
@@ -108,17 +73,4 @@ export function clampSize(size: { width: number; height: number }): {
 export function computeUIRect(size: { width: number; height: number }): Rect {
   const { width, height } = clampSize(size);
   return { x: 0, y: 0, width, height };
-}
-
-/**
- * Rect for a workspace view: full window minus the minimized sidebar gutter.
- */
-export function computeWorkspaceRect(size: { width: number; height: number }): Rect {
-  const { width, height } = clampSize(size);
-  return {
-    x: SIDEBAR_MINIMIZED_WIDTH,
-    y: 0,
-    width: width - SIDEBAR_MINIMIZED_WIDTH,
-    height,
-  };
 }

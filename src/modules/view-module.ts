@@ -1,21 +1,18 @@
 /**
- * ViewModule - Manages workspace views, UI modes, loading states,
- * and shell layer disposal.
+ * ViewModule - Manages UI lifecycle, UI modes, workspace loading dialogs,
+ * active-workspace bookkeeping, and shell layer disposal.
  *
- * Consolidates 11 inline bootstrap modules into a single extracted module:
- * - earlySetModeModule (set-mode/set hook)
- * - appStartUIModule (app-start/show-ui hook)
- * - setupUIModule (setup/show-ui + setup/hide-ui hooks)
- * - uiHookModule (get-active-workspace/get hook + workspace:switched event)
- * - viewModule (workspace:created event)
- * - deleteViewModule (delete-workspace/shutdown hook)
- * - switchViewModule (switch-workspace/activate hook + workspace:switched event)
- * - projectViewModule (project:opened event)
- * - viewLifecycleModule (app-start/start + app-shutdown/stop hooks)
- * - mountModule (app-start/start hook)
- * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
+ * Workspace surfaces are iframes inside the UI renderer's DOM, derived from
+ * the renderer stores — this module no longer creates or destroys views per
+ * workspace. What remains main-side:
+ * - set-mode/set hook (mode state lives on the UiViewManager)
+ * - app-start hooks (window + UI view creation, startup splash, mount signal)
+ * - setup dialog hooks
+ * - active-workspace bookkeeping (resolve/get-active/switch/delete/hibernate)
+ * - per-workspace loading dialogs (created → agent:status-updated / timeout)
+ * - app-shutdown/stop (dialog cleanup + UI view + layer disposal)
  *
- * Internal state: cachedActiveRef, loadingChangeCleanupFn.
+ * Internal state: cachedActiveRef, activeWorkspacePath, loading bookkeeping.
  */
 
 import type { DialogBoundary } from "../boundaries/shell/dialog";
@@ -27,24 +24,17 @@ import type { Logger } from "../boundaries/platform/logging";
 import type { ViewBoundary } from "../boundaries/shell/view";
 import type { WindowBoundaryInternal } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
-import type { IpcBoundary } from "../boundaries/shell/ipc";
-import type { Unsubscribe } from "../shared/api/interfaces";
 import type { WorkspaceRef } from "../shared/api/types";
 import type { SetModeIntent, SetModeHookResult } from "../intents/set-mode";
 import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/app-start";
 import type { AgentSelectionHookContext } from "../intents/setup";
 import type { GetActiveWorkspaceHookResult } from "../intents/get-active-workspace";
 import type {
-  SwitchWorkspaceIntent,
   SwitchWorkspaceHookResult,
   ActivateHookInput,
   WorkspaceSwitchedEvent,
 } from "../intents/switch-workspace";
-import type {
-  DeleteWorkspaceIntent,
-  ShutdownHookResult,
-  DeletePipelineHookInput,
-} from "../intents/delete-workspace";
+import type { ShutdownHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
 import type {
   HibernatePipelineHookInput,
   HibernateShutdownHookResult,
@@ -54,7 +44,7 @@ import {
   HIBERNATED_METADATA_KEY,
 } from "../intents/hibernate-workspace";
 import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
-import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
+import type { SelectFolderHookResult } from "../intents/open-project";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
@@ -81,7 +71,6 @@ import {
 } from "../intents/open-workspace";
 
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { LifecycleAgentType } from "../shared/ipc";
@@ -89,7 +78,6 @@ import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DialogConfig, DialogSection, ProgressItem } from "../shared/dialog-types";
 import { SetupError } from "../shared/errors/service-errors";
-import { getErrorMessage } from "../shared/error-utils";
 
 // =============================================================================
 // Types
@@ -111,7 +99,6 @@ export interface ViewModuleDeps {
   readonly windowLayer: WindowBoundaryInternal | null;
   readonly sessionLayer: SessionBoundary | null;
   readonly dialogLayer?: Pick<DialogBoundary, "showOpenDialog"> | null;
-  readonly ipcLayer?: Pick<IpcBoundary, "on" | "removeListener"> | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
   readonly windowManager?: {
     create(): void;
@@ -140,31 +127,22 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
   // Internal state
   let cachedActiveRef: WorkspaceRef | null = null;
+  /**
+   * The actual active surface, fed by the switch pipeline. Intentionally
+   * distinct from `cachedActiveRef`, which is a UI-level cache that sticks
+   * to the hibernating workspace during the fallbackToCurrent overlay window
+   * (see hibernate-workspace.ts). The resolve hook reports this value;
+   * delete/hibernate shutdown clears it so a later wake's switch is not
+   * short-circuited as "already active".
+   */
+  let activeWorkspacePath: string | null = null;
   /** Capability: agentType provided by agent-selection handler. */
   let capAgentType: LifecycleAgentType | undefined;
-  let loadingChangeCleanupFn: Unsubscribe | null = null;
-
-  /**
-   * Shared shutdown logic for workspace teardown (used by delete + hibernate).
-   * Returns { error } and never throws. Callers decide whether to propagate
-   * the error (delete in non-force mode does; hibernate doesn't).
-   */
-  async function tearDownWorkspaceView(
-    workspacePath: string,
-    logTag: string
-  ): Promise<{ error?: string }> {
-    try {
-      await viewManager.destroyWorkspaceView(workspacePath);
-      return {};
-    } catch (error) {
-      const message = getErrorMessage(error);
-      logger.warn(`ViewModule: ${logTag} error`, { error: message });
-      return { error: message };
-    }
-  }
 
   /** Track which workspaces are loading (not necessarily showing a dialog). */
   const loadingPaths = new Set<string>();
+  /** Loading-timeout fallback per workspace (agent may never report). */
+  const loadingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
   /** Currently visible loading dialog (only for active workspace).
    *  path is null when opened by workspace:loading before the workspace path is known. */
   let loadingDialog: { path: string | null; handle: DialogHandle } | null = null;
@@ -204,6 +182,60 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
     string,
     { status: ProgressItem["status"]; message?: string; progress?: number }
   >();
+
+  function openLoadingDialog(): DialogHandle | null {
+    if (!deps.dialogManager) return null;
+    return deps.dialogManager.open({
+      sections: [
+        {
+          type: "progress",
+          items: [{ id: "loading", label: "Loading workspace...", status: "running" }],
+          style: "spinner",
+        },
+      ],
+    });
+  }
+
+  /**
+   * Mark a workspace as loading (from workspace:created until the agent's
+   * first status report or the timeout fallback). Shows the loading dialog
+   * only when the workspace is the active one and the splash isn't already
+   * covering the window.
+   */
+  function startWorkspaceLoading(workspacePath: string): void {
+    if (loadingPaths.has(workspacePath)) return;
+    loadingPaths.add(workspacePath);
+    loadingTimeouts.set(
+      workspacePath,
+      setTimeout(() => finishWorkspaceLoading(workspacePath), WORKSPACE_LOADING_TIMEOUT_MS)
+    );
+
+    const activePath = cachedActiveRef?.path ?? null;
+    if (workspacePath === activePath && !startupSplashActive) {
+      if (loadingDialog && loadingDialog.path === null) {
+        // Associate path with dialog opened early by workspace:loading event
+        loadingDialog = { path: workspacePath, handle: loadingDialog.handle };
+      } else if (!loadingDialog) {
+        const handle = openLoadingDialog();
+        if (handle) loadingDialog = { path: workspacePath, handle };
+      }
+    }
+  }
+
+  /** Clear a workspace's loading state and close its dialog. Idempotent. */
+  function finishWorkspaceLoading(workspacePath: string): void {
+    const timeout = loadingTimeouts.get(workspacePath);
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+      loadingTimeouts.delete(workspacePath);
+    }
+    if (!loadingPaths.delete(workspacePath)) return;
+    if (loadingDialog?.path === workspacePath) {
+      loadingDialog.handle.close();
+      loadingDialog = null;
+    }
+    logger.debug("Workspace loaded", { workspace: workspacePath });
+  }
 
   const module: IntentModule = {
     name: "view",
@@ -308,57 +340,10 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           },
         },
         start: {
+          // Gate the renderer mount on code-server being up: workspace URLs
+          // shipped to the renderer must be servable when iframes mount.
           requires: { codeServerPort: ANY_VALUE },
-          handler: async (ctx: HookContext): Promise<void> => {
-            // Update code-server port from capabilities
-            const codeServerPort = ctx.capabilities?.codeServerPort as number | null;
-            if (codeServerPort !== null) {
-              viewManager.updateCodeServerPort(codeServerPort);
-            }
-
-            // Wire loading state changes — track silently, show dialog only for active workspace
-            loadingChangeCleanupFn = viewManager.onLoadingChange(
-              (path: string, loading: boolean) => {
-                if (!deps.dialogManager) return;
-                if (loading) {
-                  loadingPaths.add(path);
-                  // Show dialog only if this is the active workspace AND the
-                  // startup splash isn't already covering the window.
-                  const activePath = cachedActiveRef?.path ?? null;
-                  if (path === activePath && !startupSplashActive) {
-                    if (loadingDialog && loadingDialog.path === null) {
-                      // Associate path with dialog opened early by workspace:loading event
-                      loadingDialog = { path, handle: loadingDialog.handle };
-                    } else if (!loadingDialog) {
-                      const handle = deps.dialogManager.open({
-                        sections: [
-                          {
-                            type: "progress",
-                            items: [
-                              {
-                                id: "loading",
-                                label: "Loading workspace...",
-                                status: "running",
-                              },
-                            ],
-                            style: "spinner",
-                          },
-                        ],
-                      });
-                      loadingDialog = { path, handle };
-                    }
-                  }
-                } else {
-                  loadingPaths.delete(path);
-                  // Close dialog if it's for this workspace
-                  if (loadingDialog?.path === path) {
-                    loadingDialog.handle.close();
-                    loadingDialog = null;
-                  }
-                }
-              }
-            );
-
+          handler: async (): Promise<void> => {
             // Send show-main-view to trigger renderer mount.
             // The renderer will call lifecycle.ready() IPC when mounted,
             // which dispatches app:ready to load initial projects.
@@ -534,19 +519,18 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       // resolve-workspace → resolve: contribute `active` snapshot
       //
-      // Sourced from the view-manager (the actual active surface), not from
-      // `cachedActiveRef` (which is a UI-level cache that intentionally
-      // sticks to the hibernating workspace during the fallbackToCurrent
-      // overlay window — see hibernate-workspace.ts). The switch operation
-      // uses this flag to decide whether to short-circuit; that decision
-      // must reflect what's actually attached, otherwise wake never calls
-      // setActiveWorkspace and the woken iframe stays detached.
+      // Sourced from `activeWorkspacePath` (the actual active surface), not
+      // from `cachedActiveRef` (a UI-level cache that intentionally sticks
+      // to the hibernating workspace during the fallbackToCurrent overlay
+      // window — see hibernate-workspace.ts). The switch operation uses this
+      // flag to decide whether to short-circuit; hibernate's shutdown hook
+      // clears it, otherwise wake would never re-activate the workspace.
       // -------------------------------------------------------------------
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
           handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
             const { workspacePath } = ctx as ResolveHookInput;
-            return { active: viewManager.getActiveWorkspacePath() === workspacePath };
+            return { active: activeWorkspacePath === workspacePath };
           },
         },
       },
@@ -563,55 +547,59 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
-      // switch-workspace → activate: setActiveWorkspace (no-op if same)
+      // switch-workspace → activate: record the new active surface
+      // (no-op if same). The renderer swaps the visible iframe when the
+      // workspace:switched event lands, and routes focus itself (gated on
+      // mode), so no view operation happens here.
       // -------------------------------------------------------------------
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const { workspacePath, active } = ctx as ActivateHookInput;
-            const intent = ctx.intent as SwitchWorkspaceIntent;
 
             if (active) {
               return {};
             }
 
-            const focus = intent.payload.focus ?? true;
-            viewManager.setActiveWorkspace(workspacePath, focus);
+            activeWorkspacePath = workspacePath;
             return { resolvedPath: workspacePath };
           },
         },
       },
 
       // -------------------------------------------------------------------
-      // delete-workspace → shutdown: destroy workspace view
+      // delete-workspace → shutdown: clear main-side workspace state.
+      // The iframe itself unmounts in the renderer when workspace:removed
+      // lands; main only reports wasActive (drives the post-delete
+      // auto-switch) and clears its bookkeeping.
       // -------------------------------------------------------------------
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
             const { workspacePath, active } = ctx as DeletePipelineHookInput;
-            const { payload } = ctx.intent as DeleteWorkspaceIntent;
-            const result = await tearDownWorkspaceView(workspacePath, "delete shutdown");
-            if (result.error && !payload.force) {
-              throw new Error(result.error);
+            finishWorkspaceLoading(workspacePath);
+            if (activeWorkspacePath === workspacePath) {
+              activeWorkspacePath = null;
             }
-            return {
-              ...(active && { wasActive: true }),
-              ...(result.error && { error: result.error }),
-            };
+            return { ...(active && { wasActive: true }) };
           },
         },
       },
 
       // -------------------------------------------------------------------
-      // hibernate-workspace → shutdown: destroy workspace view
-      // (Same teardown as delete-workspace shutdown, but errors never
-      // propagate — hibernation is best-effort silent.)
+      // hibernate-workspace → shutdown: clear main-side workspace state.
+      // Clearing activeWorkspacePath here covers the fallbackToCurrent case
+      // (hibernating the only workspace keeps it "active" for the overlay):
+      // a later wake must not be short-circuited as already-active.
       // -------------------------------------------------------------------
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
-            await tearDownWorkspaceView(workspacePath, "hibernate shutdown");
+            finishWorkspaceLoading(workspacePath);
+            if (activeWorkspacePath === workspacePath) {
+              activeWorkspacePath = null;
+            }
             return {};
           },
         },
@@ -643,18 +631,16 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            // Cleanup loading state callback
-            if (loadingChangeCleanupFn) {
-              loadingChangeCleanupFn();
-              loadingChangeCleanupFn = null;
-            }
-
             // Close loading dialog if open
             if (loadingDialog) {
               loadingDialog.handle.close();
               loadingDialog = null;
             }
             loadingPaths.clear();
+            for (const timeout of loadingTimeouts.values()) {
+              clearTimeout(timeout);
+            }
+            loadingTimeouts.clear();
 
             // Close setup dialog if open
             if (setupDialogHandle) {
@@ -667,7 +653,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             }
             startupSplashActive = false;
 
-            // Destroy all views before disposing layers (uses viewLayer internally)
+            // Destroy the UI view before disposing layers (uses viewLayer internally)
             viewManager.destroy();
 
             // Dispose layers in reverse initialization order
@@ -719,24 +705,17 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
-      // workspace:created → create view + preload URL
+      // workspace:created → begin loading indication. The renderer mounts
+      // the iframe (the event payload carries the code-server URL); main
+      // only tracks the created → first-agent-status window for the
+      // "Loading workspace..." dialog.
       // -------------------------------------------------------------------
       [EVENT_WORKSPACE_CREATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceCreatedEvent).payload;
-          // Hibernated workspaces re-discovered on startup must not have a
-          // view created — otherwise the live WebContentsView occludes
-          // HibernatedOverlay, masking the wake-on-click affordance and
-          // leaving the sidebar's hibernated indicator out of sync with
-          // what the user sees in the pane.
+          // Hibernated workspaces have no runtime — nothing is loading.
           if (payload.metadata?.[HIBERNATED_METADATA_KEY] === "true") return;
-          viewManager.createWorkspaceView(
-            payload.workspacePath,
-            payload.workspaceUrl,
-            payload.projectPath,
-            true
-          );
-          viewManager.preloadWorkspaceUrl(payload.workspacePath);
+          startWorkspaceLoading(payload.workspacePath);
         },
       },
 
@@ -771,26 +750,14 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
           if (payload === null) {
             cachedActiveRef = null;
-            viewManager.setActiveWorkspace(null);
+            activeWorkspacePath = null;
           } else {
             cachedActiveRef = {
               projectId: payload.projectId,
               workspaceName: payload.workspaceName,
               path: payload.path,
             };
-          }
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // project:opened → preload non-first workspaces
-      // -------------------------------------------------------------------
-      [EVENT_PROJECT_OPENED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as ProjectOpenedEvent).payload;
-          const workspaces = payload.project.workspaces;
-          for (let i = 1; i < workspaces.length; i++) {
-            viewManager.preloadWorkspaceUrl(workspaces[i]!.path);
+            activeWorkspacePath = payload.path;
           }
         },
       },
@@ -891,7 +858,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [EVENT_AGENT_STATUS_UPDATED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as AgentStatusUpdatedEvent).payload;
-          viewManager.setWorkspaceLoaded(payload.workspace.path);
+          finishWorkspaceLoading(payload.workspace.path);
           closeStartupSplash();
         },
       },

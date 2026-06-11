@@ -1,5 +1,5 @@
 /**
- * Test utilities for ViewManager.
+ * Test utilities for the UI view manager.
  *
  * Provides a stateful mock implementing `IViewManager` with sensible no-op
  * defaults for every method. Tests override only the slices they care about
@@ -30,31 +30,18 @@ export function createMockViewManager(options?: CreateMockViewManagerOptions): I
     create: vi.fn(),
     getUIViewHandle: vi.fn().mockReturnValue({ id: "ui-view", __brand: "ViewHandle" }),
     getUIDevtoolsTarget: vi.fn(),
-    getActiveWorkspaceDevtoolsTarget: vi.fn(),
     getUIKeyboardTarget: vi.fn(),
-    getWorkspaceKeyboardTarget: vi.fn(),
     isUIAvailable: vi.fn().mockReturnValue(true),
     loadUIContent: vi.fn().mockResolvedValue(undefined),
     sendToUI: vi.fn(),
-    createWorkspaceView: vi.fn(),
-    destroyWorkspaceView: vi.fn().mockResolvedValue(undefined),
-    updateBounds: vi.fn(),
-    setActiveWorkspace: vi.fn(),
-    getActiveWorkspacePath: vi.fn().mockReturnValue(null),
     focus: vi.fn(),
     setMode: vi.fn((mode: UIMode) => {
       currentMode = mode;
     }),
     getMode: vi.fn(() => currentMode),
     onModeChange: vi.fn(() => () => {}),
-    onWorkspaceChange: vi.fn(() => () => {}),
-    updateCodeServerPort: vi.fn(),
-    isWorkspaceLoading: vi.fn().mockReturnValue(false),
-    setWorkspaceLoaded: vi.fn(),
-    onLoadingChange: vi.fn(() => () => {}),
-    preloadWorkspaceUrl: vi.fn(),
+    captureActiveWorkspaceView: vi.fn().mockResolvedValue(null),
     destroy: vi.fn(),
-    captureWorkspaceView: vi.fn().mockResolvedValue(null),
   } as IViewManager;
 
   return { ...base, ...(options?.overrides ?? {}) };

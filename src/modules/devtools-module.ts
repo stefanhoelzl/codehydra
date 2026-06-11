@@ -2,8 +2,8 @@
  * DevtoolsModule - Dev-only DevTools toggling via shortcut keys.
  *
  * Subscribes to shortcut:key-pressed domain event and handles:
- * - "d": Toggle UI DevTools
- * - "w": Toggle active workspace DevTools
+ * - "d": Toggle DevTools on the single UI view (workspace iframes share the
+ *   instance — use the devtools frame picker to target one)
  */
 
 import type { IntentModule } from "../intents/lib/module";
@@ -12,10 +12,7 @@ import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 
 export interface DevtoolsModuleDeps {
-  readonly viewManager: Pick<
-    IViewManager,
-    "getUIDevtoolsTarget" | "getActiveWorkspaceDevtoolsTarget"
-  >;
+  readonly viewManager: Pick<IViewManager, "getUIDevtoolsTarget">;
 }
 
 export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
@@ -29,11 +26,6 @@ export function createDevtoolsModule(deps: DevtoolsModuleDeps): IntentModule {
 
           if (key === "d") {
             deps.viewManager.getUIDevtoolsTarget().toggle();
-            return;
-          }
-
-          if (key === "w") {
-            deps.viewManager.getActiveWorkspaceDevtoolsTarget()?.toggle();
           }
         },
       },
