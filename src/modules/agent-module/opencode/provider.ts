@@ -14,6 +14,7 @@ import { OpenCodeClient, type PermissionEvent } from "./client";
 import { OpenCodeError } from "../../../shared/errors/service-errors";
 import { findMatchingSession } from "./session-utils";
 import { err } from "./types";
+import { countsToStatus } from "../status-utils";
 import type { Logger } from "../../../boundaries/platform/logging";
 
 /**
@@ -189,19 +190,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
           });
         } else {
           // No matching session found, create a new one
-          const createResult = await client.createSession();
-          if (createResult.ok) {
-            this._primarySessionId = createResult.value.id;
-            this.logger.info("Created new session", {
-              workspacePath: this.workspacePath,
-              sessionId: createResult.value.id,
-            });
-          } else {
-            this.logger.error("Failed to create session", {
-              workspacePath: this.workspacePath,
-              error: createResult.error.message,
-            });
-          }
+          await this.createNewSession(client);
         }
       } else {
         // listSessions failed, try to create a new session instead
@@ -209,19 +198,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
           workspacePath: this.workspacePath,
           error: sessionsResult.error.message,
         });
-        const createResult = await client.createSession();
-        if (createResult.ok) {
-          this._primarySessionId = createResult.value.id;
-          this.logger.info("Created new session", {
-            workspacePath: this.workspacePath,
-            sessionId: createResult.value.id,
-          });
-        } else {
-          this.logger.error("Failed to create session", {
-            workspacePath: this.workspacePath,
-            error: createResult.error.message,
-          });
-        }
+        await this.createNewSession(client);
       }
 
       // Connect to SSE for real-time updates
@@ -233,6 +210,26 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       this.logger.warn("Failed to initialize client", {
         workspacePath: this.workspacePath,
         error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Create a new session and store it as the primary session.
+   * Logs the outcome; failures are non-fatal (provider works without a session).
+   */
+  private async createNewSession(client: OpenCodeClient): Promise<void> {
+    const createResult = await client.createSession();
+    if (createResult.ok) {
+      this._primarySessionId = createResult.value.id;
+      this.logger.info("Created new session", {
+        workspacePath: this.workspacePath,
+        sessionId: createResult.value.id,
+      });
+    } else {
+      this.logger.error("Failed to create session", {
+        workspacePath: this.workspacePath,
+        error: createResult.error.message,
       });
     }
   }
@@ -428,24 +425,10 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
   }
 
   /**
-   * Calculate the current status from effective counts.
-   */
-  private calculateStatus(): AgentStatus {
-    const counts = this.getEffectiveCounts();
-    if (counts.idle === 0 && counts.busy === 0) {
-      return "none";
-    }
-    if (counts.busy > 0) {
-      return "busy";
-    }
-    return "idle";
-  }
-
-  /**
-   * Notify status change listeners with calculated status.
+   * Notify status change listeners with the status derived from effective counts.
    */
   private notifyStatusChange(): void {
-    const status = this.calculateStatus();
+    const status = countsToStatus(this.getEffectiveCounts());
     for (const listener of this.statusChangeListeners) {
       listener(status);
     }

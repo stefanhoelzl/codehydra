@@ -449,21 +449,6 @@ describe("OpenCodeServerManager", () => {
   });
 
   describe("MCP configuration", () => {
-    it("setMcpConfig stores configuration", () => {
-      manager.setMcpConfig({
-        port: 12345,
-      });
-
-      const config = manager.getMcpConfig();
-      expect(config).toEqual({
-        port: 12345,
-      });
-    });
-
-    it("getMcpConfig returns null before setMcpConfig", () => {
-      expect(manager.getMcpConfig()).toBeNull();
-    });
-
     it("passes OPENCODE_CONFIG_CONTENT env var when config is set", async () => {
       manager.setMcpConfig({
         port: 12345,

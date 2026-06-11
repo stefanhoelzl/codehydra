@@ -1,16 +1,16 @@
 # Agent System Documentation
 
-This document describes the agent integration layer, provider interface, and how to implement new agent types.
+This document describes the agent integration layer, provider interfaces, and how to implement new agent types.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Core Components](#core-components)
-  - [AgentSetupInfo](#agentsetupinfo)
+  - [AgentModuleProvider](#agentmoduleprovider)
+  - [AgentModuleSpec and the core factory](#agentmodulespec-and-the-core-factory)
   - [AgentServerManager](#agentservermanager)
   - [AgentProvider](#agentprovider)
-  - [AgentStatusManager](#agentstatusmanager)
 - [Status Flow](#status-flow)
 - [MCP Integration](#mcp-integration)
 - [OpenCode Implementation](#opencode-implementation)
@@ -22,18 +22,20 @@ This document describes the agent integration layer, provider interface, and how
 
 ## Overview
 
-CodeHydra uses an abstraction layer to support multiple AI coding agents. The architecture consists of three main components:
+CodeHydra uses an abstraction layer to support multiple AI coding agents. Everything lives under `src/modules/agent-module/`:
 
-| Component            | Purpose                                     | Scope                    |
-| -------------------- | ------------------------------------------- | ------------------------ |
-| `AgentSetupInfo`     | Binary distribution, config file generation | Singleton per type       |
-| `AgentServerManager` | Server lifecycle (start, stop, restart)     | Shared across workspaces |
-| `AgentProvider`      | Connection and status tracking              | One per workspace        |
+| Component                   | Purpose                                                               | Scope                    |
+| --------------------------- | --------------------------------------------------------------------- | ------------------------ |
+| `createAgentModule`         | Generic intent module; delegates every hook to an AgentModuleProvider | One per agent type       |
+| `AgentModuleProvider`       | Unified per-agent surface (binary, lifecycle, status, sessions)       | One per agent type       |
+| `createAgentModuleProvider` | Generic provider-tracking core, parameterized by an `AgentModuleSpec` | One per agent type       |
+| `AgentServerManager`        | Server lifecycle (start, stop, restart)                               | Shared across workspaces |
+| `AgentProvider`             | Connection and status tracking                                        | One per workspace        |
 
 **Existing implementations:**
 
-- **OpenCode** (`src/agents/opencode/`) - SSE-based SDK client, one server per workspace
-- **Claude Code** (`src/agents/claude-code/`) - HTTP hook server, shared across all workspaces
+- **OpenCode** (`src/modules/agent-module/opencode/`) - SSE-based SDK client, one server per workspace
+- **Claude Code** (`src/modules/agent-module/claude/`) - HTTP hook server, shared across all workspaces
 
 ---
 
@@ -43,27 +45,27 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. The ar
 ┌─────────────────────────────────────────────────────────────────┐
 │                        MAIN PROCESS                              │
 │                                                                  │
-│  AgentServerManager ──► spawns agent server(s)                   │
+│  AgentServerManager ──► spawns/tracks agent server(s)            │
 │         │                      port stored in memory             │
-│         │ onServerStarted(path, port)                            │
+│         │ onServerStarted(path, port, ...)                       │
 │         ▼                                                        │
-│  AgentStatusManager ◄── AgentProvider (status events)            │
+│  module-provider core ◄── AgentProvider (status events)          │
+│  (registry + status cache)                                       │
 │         │                                                        │
-│         │ onStatusChanged callback                               │
+│         │ onStatusChange callback (wired by createAgentModule)   │
 │         ▼                                                        │
 │  Dispatcher.dispatch(agent:update-status intent)                 │
 │         │                                                        │
-│         │ UpdateAgentStatusOperation emits domain event           │
+│         │ UpdateAgentStatusOperation emits domain event          │
 │         ▼                                                        │
 │  agent:status-updated domain event                               │
 │         │                                                        │
-│         ├──► UiIpcModule subscriber                            │
+│         ├──► UI IPC subscriber                                   │
 │         │      converts AggregatedAgentStatus → WorkspaceStatus  │
-│         │      emits workspace:status-changed via registry        │
+│         │      emits workspace:status-changed                    │
 │         │                                                        │
-│         └──► BadgeModule subscriber                               │
-│                updates internal map, re-aggregates badge state    │
-│                calls badgeManager.updateBadge()                   │
+│         └──► Badge module subscriber                             │
+│                updates internal map, re-aggregates badge state   │
 │                                                                  │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
@@ -81,108 +83,100 @@ CodeHydra uses an abstraction layer to support multiple AI coding agents. The ar
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### AgentModule
+### Generic agent module
 
-`AgentModule` (`src/main/modules/agent-module.ts`) is the consolidated lifecycle owner for all agent concerns. It is a factory function (`createAgentModule`) returning an `IntentModule` with hooks across multiple operations:
+`createAgentModule(provider, deps)` (`src/modules/agent-module/agent-module.ts`) returns an `IntentModule` that is a thin adapter: every hook handler delegates to the `AgentModuleProvider`. One module instance is registered per agent type in the composition root (`src/main.ts`).
 
-| Operation              | Hook Points                                       | Responsibility                                                                          |
-| ---------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `app:start`            | `check-config`, `check-deps`, `start`, `activate` | Config check, binary preflight, server callback wiring, status subscription, MCP config |
-| `app:shutdown`         | `stop`                                            | Dispose ServerManager, AgentStatusManager, cleanup callbacks                            |
-| `app:setup`            | `agent-selection`, `save-agent`, `binary`         | Agent selection UI, config persistence, binary download                                 |
-| `open-workspace`       | `setup`                                           | Start server, wait for provider, set initial prompt, get env vars                       |
-| `delete-workspace`     | `shutdown`                                        | Kill terminals, stop server, clear TUI tracking                                         |
-| `get-workspace-status` | `get`                                             | Return agent status                                                                     |
-| `get-agent-session`    | `get`                                             | Return session info                                                                     |
-| `restart-agent`        | `restart`                                         | Restart agent server                                                                    |
+| Operation              | Hook Points                               | Responsibility                                             |
+| ---------------------- | ----------------------------------------- | ---------------------------------------------------------- |
+| `app:start`            | `before-ready`, `check-deps`, `start`     | Script declarations, binary preflight, MCP port capture    |
+| `app:ready`            | `available-agents`                        | Report agent availability for the picker                   |
+| `app:shutdown`         | `stop`                                    | Dispose provider, cleanup status subscription              |
+| `setup`                | `register-agents`, `save-agent`, `binary` | Agent selection UI, config persistence, binary download    |
+| `open-workspace`       | `setup`                                   | Start server, wait for provider, prompt plumbing, env vars |
+| `delete-workspace`     | `shutdown`                                | Stop server, clear per-workspace tracking                  |
+| `hibernate-workspace`  | `shutdown`                                | Best-effort server stop (errors not propagated)            |
+| `get-workspace-status` | `get`                                     | Return agent status                                        |
+| `get-agent-session`    | `get`                                     | Return session info                                        |
+| `restart-agent`        | `restart`                                 | Restart agent server                                       |
+| `agent-lifecycle`      | `lifecycle`                               | Terminal open/close transitions (reported by the sidekick) |
 
-Internal closure state: `handleServerStarted()`, `waitForProvider()`, `serverStartedPromises`, server callback wiring.
+Provider initialization is lazy: it happens on the first `open-workspace` for the configured agent, using the MCP port captured during `app:start`.
 
 ### File Structure
 
 ```
-src/agents/
-  types.ts              # Shared interfaces (AgentSetupInfo, AgentServerManager, AgentProvider)
-  index.ts              # Factory functions and exports
-  status-manager.ts     # AgentStatusManager (aggregates status across workspaces)
+src/modules/agent-module/
+  types.ts                  # Shared interfaces (AgentServerManager, AgentProvider, McpConfig, ...)
+  agent-module.ts           # createAgentModule (generic intent adapter)
+  agent-module-provider.ts  # AgentModuleProvider interface
+  module-provider.ts        # createAgentModuleProvider core + AgentModuleSpec
+  status-utils.ts           # Pure status conversion helpers
   opencode/
-    setup-info.ts       # OpenCodeSetupInfo (version, URLs)
-    server-manager.ts   # OpenCodeServerManager (one server per workspace)
-    provider.ts         # OpenCodeProvider (SSE client)
-    client.ts           # OpenCodeClient (SSE/HTTP)
-    types.ts            # OpenCode-specific types
-  claude-code/
-    setup-info.ts       # ClaudeCodeSetupInfo
-    server-manager.ts   # ClaudeCodeServerManager (shared HTTP server)
-    provider.ts         # ClaudeCodeProvider
-src/main/modules/
-  agent-module.ts       # AgentModule (consolidated lifecycle owner)
+    setup-info.ts           # Version/URL/bundle-dir helper functions
+    server-manager.ts       # OpenCodeServerManager (one server per workspace)
+    provider.ts             # OpenCodeProvider (SSE client wrapper)
+    client.ts               # OpenCodeClient (official SDK + SSE)
+    module-provider.ts      # createOpenCodeModuleProvider (spec definition)
+    wrapper.ts              # CLI wrapper (redirects to `opencode attach`)
+  claude/
+    setup-info.ts           # Version/URL/sub-path helper functions
+    server-manager.ts       # ClaudeCodeServerManager (shared HTTP hook server)
+    provider.ts             # ClaudeCodeProvider (env vars + hook subscription)
+    module-provider.ts      # createClaudeModuleProvider (spec definition)
+    hook-handler.ts         # Hook POST script run by the Claude CLI
+    wrapper.ts              # CLI wrapper (session resume, initial prompt)
 ```
 
 ---
 
 ## Core Components
 
-### AgentSetupInfo
+### AgentModuleProvider
 
-Static information about an agent type. One instance per agent type (singleton).
+The unified per-agent surface consumed by the generic module (`agent-module-provider.ts`). Covers identity constants (`type`, `displayName`, `icon`, `scripts`, ...), binary management (`preflight`, `downloadBinary`), lifecycle (`initialize`, `dispose`), per-workspace operations (`startWorkspace`, `stopWorkspace`, `restartWorkspace`, `applyTerminalLifecycle`), queries (`getStatus`, `getSession`), the cross-workspace `onStatusChange` event, and `clearWorkspaceTracking`.
 
-```typescript
-interface AgentSetupInfo {
-  /** Version string (e.g., "0.1.0-beta.43") */
-  readonly version: string;
+### AgentModuleSpec and the core factory
 
-  /** Binary filename relative to bin directory (e.g., "opencode" or "opencode.exe") */
-  readonly binaryPath: string;
+`createAgentModuleProvider(spec, deps)` (`module-provider.ts`) implements `AgentModuleProvider` once. It owns the shared machinery:
 
-  /** Entry point for wrapper script (e.g., "agents/opencode-wrapper.cjs") */
-  readonly wrapperEntryPoint: string;
+- per-workspace provider registry and status cache (with change deduplication)
+- `onServerStarted`/`onServerStopped` wiring, including the restart path (disconnect → reconnect)
+- binary preflight/download scaffolding
+- disposal
 
-  /** VS Code marketplace extension ID (e.g., "anthropic.claude-code") */
-  readonly extensionId?: string;
+Per-agent behavior is supplied via `AgentModuleSpec<P>` (generic over the concrete provider class):
 
-  /** Get download URL for the binary for current platform */
-  getBinaryUrl(): string;
-
-  /**
-   * Generate config file with environment variable substitution
-   * @param targetPath - Path where config file should be written
-   * @param variables - Variables to substitute (e.g., { MCP_PORT: "3000" })
-   */
-  generateConfigFile(targetPath: Path, variables: Record<string, string>): Promise<void>;
-}
-```
-
-**Implementation notes:**
-
-- `getBinaryUrl()` returns platform-specific download URL
-- `generateConfigFile()` creates workspace-specific config (e.g., MCP server configuration)
-- Use template files with `${VARIABLE}` placeholders for config generation
+| Spec member              | Claude                                        | OpenCode                                       |
+| ------------------------ | --------------------------------------------- | ---------------------------------------------- |
+| `resolveBinary()`        | `null` when no version override (bundled)     | always resolves from `version.opencode`        |
+| `createProvider`         | `new ClaudeCodeProvider({serverManager,...})` | `new OpenCodeProvider(path, logger)`           |
+| `connectProvider`        | `connect(port)`                               | `connect(port)` + `fetchStatus()`              |
+| `initialStatus`          | always `"none"` (status arrives via hooks)    | derived from `getEffectiveCounts()`            |
+| `onProviderRegistered`   | —                                             | sends the pending initial prompt               |
+| `startServer`            | `startServer(path)`                           | `startServer(path, {initialPrompt})`           |
+| `afterProviderReady`     | writes prompt file + no-session marker        | —                                              |
+| `applyTerminalLifecycle` | WrapperStart/WrapperEnd via server manager    | `triggerWrapperStart` / TUI detach             |
+| `wireExtraCallbacks`     | —                                             | `setMarkActiveHandler` (TUI-attached tracking) |
+| `clearWorkspaceTracking` | — (no per-workspace tracking)                 | clears the TUI-attached entry                  |
 
 ### AgentServerManager
 
-Manages server lifecycle. One manager handles all workspaces.
+Manages server lifecycle (`types.ts`). One manager handles all workspaces.
 
 ```typescript
 interface AgentServerManager {
-  /** Start server for a workspace, returns allocated port */
   startServer(workspacePath: string): Promise<number>;
-
-  /** Stop server for a workspace */
   stopServer(workspacePath: string): Promise<StopServerResult>;
-
-  /** Restart server for a workspace, preserving the same port */
   restartServer(workspacePath: string): Promise<RestartServerResult>;
-
-  /** Callback when server starts successfully */
   onServerStarted(
-    callback: (workspacePath: string, port: number, ...args: unknown[]) => void
+    cb: (workspacePath: string, port: number, ...args: unknown[]) => void
   ): () => void;
-
-  /** Callback when server stops */
-  onServerStopped(callback: (workspacePath: string, ...args: unknown[]) => void): () => void;
-
-  /** Dispose the manager, stopping all servers */
+  onServerStopped(cb: (workspacePath: string, ...args: unknown[]) => void): () => void;
+  setMarkActiveHandler(handler: (workspacePath: string) => void): void;
+  setInitialPrompt?(workspacePath: string, config: NormalizedInitialPrompt): Promise<void>; // Claude only
+  setNoSessionMarker?(workspacePath: string): Promise<void>; // Claude only
+  setMcpConfig(config: McpConfig): void;
   dispose(): Promise<void>;
 }
 ```
@@ -203,72 +197,27 @@ interface AgentServerManager {
 
 ### AgentProvider
 
-Per-workspace connection and status tracking.
+Per-workspace connection and status tracking (`types.ts`).
 
 ```typescript
 interface AgentProvider {
-  /** VS Code commands to execute on workspace activation */
-  readonly startupCommands: readonly string[];
-
-  /** Connect to agent server at given port */
   connect(port: number): Promise<void>;
-
-  /** Disconnect from agent server (for restart, preserves session info) */
-  disconnect(): void;
-
-  /** Reconnect to agent server after restart */
+  disconnect(): void; // for restart, preserves session info
   reconnect(): Promise<void>;
-
-  /** Subscribe to status changes - callback receives computed status */
   onStatusChange(callback: (status: AgentStatus) => void): () => void;
-
-  /** Get session info for TUI attachment */
   getSession(): AgentSessionInfo | null;
-
-  /** Get environment variables needed for terminal integration */
   getEnvironmentVariables(): Record<string, string>;
-
-  /** Mark agent as active (first MCP request received) */
   markActive(): void;
-
-  /** Dispose the provider completely */
+  detachTui?(): void; // only providers with a TUI-attached status gate (OpenCode)
   dispose(): void;
 }
 ```
 
 **Implementation notes:**
 
-- `startupCommands` are VS Code commands executed when workspace becomes active
 - `disconnect()` preserves state for reconnection; `dispose()` is final cleanup
 - Status changes should be emitted as soon as they occur
-- `getEnvironmentVariables()` provides env vars for terminal/extension integration
-
-### AgentStatusManager
-
-Aggregates status across all workspaces:
-
-```typescript
-interface AgentStatusManager {
-  /** Register a provider for a workspace */
-  registerProvider(workspacePath: string, provider: AgentProvider): void;
-
-  /** Unregister a provider when workspace is removed */
-  unregisterProvider(workspacePath: string): void;
-
-  /** Get current status for a workspace */
-  getStatus(workspacePath: string): AgentStatus;
-
-  /** Subscribe to status changes for any workspace */
-  onStatusChange(callback: (workspacePath: string, status: AgentStatus) => void): () => void;
-}
-```
-
-**Key responsibilities:**
-
-1. Maintains registry of workspace → provider mappings
-2. Subscribes to each provider's status changes
-3. Aggregates and emits unified status events
-4. Cleans up subscriptions when providers are unregistered
+- `getEnvironmentVariables()` provides env vars the sidekick sets for all new terminals
 
 ---
 
@@ -298,29 +247,14 @@ interface AgentSessionInfo {
 
 ### Permission State Override
 
-For agents like OpenCode, sessions waiting for user permission are displayed as "idle" (green indicator) rather than "busy":
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      AgentProvider                               │
-│                                                                  │
-│  sessionStatuses: Map<sessionId, SessionStatus>                  │
-│  pendingPermissions: Map<sessionId, Set<permissionId>>          │
-│                                                                  │
-│  getAdjustedStatus():                                           │
-│    for each session:                                            │
-│      if pendingPermissions.has(sessionId) → count as idle       │
-│      else if status.type === "idle" → count as idle             │
-│      else if status.type === "busy" → count as busy             │
-└─────────────────────────────────────────────────────────────────┘
-```
+For agents like OpenCode, sessions waiting for user permission are displayed as "idle" (green indicator) rather than "busy". The provider tracks `pendingPermissions: Map<sessionId, Set<permissionId>>`; any pending permission makes `getEffectiveCounts()` report idle.
 
 **Event handling:**
 
-- `permission.updated`: Adds permission to `pendingPermissions` Set
-- `permission.replied`: Removes permission from `pendingPermissions` Set
+- `permission.updated`: Adds permission to `pendingPermissions`
+- `permission.replied`: Removes permission from `pendingPermissions`
 - `session.deleted`: Clears pending permissions for that session
-- Connection disconnect: Clears all pending permissions (reconnection safety)
+- Disconnect: Clears all pending permissions (reconnection safety)
 
 ### Background Shell Handling (Claude Code)
 
@@ -340,61 +274,45 @@ which happens automatically when a background shell exits) or the session ends.
 
 ## MCP Integration
 
-Agent servers are configured to connect to CodeHydra's MCP server for workspace API access.
-
-### Environment Variables
-
-When spawning agent servers, the following environment variables are set:
-
-| Variable             | Set for     | Purpose                                                      |
-| -------------------- | ----------- | ------------------------------------------------------------ |
-| `_CH_WORKSPACE_PATH` | Agents      | Absolute path to the workspace (for X-Workspace-Path header) |
-| `_CH_MCP_PORT`       | Agents      | Port of CodeHydra's MCP server                               |
-| `_CH_PLUGIN_PORT`    | code-server | Port of CodeHydra's Plugin server (for VS Code extensions)   |
+Agent servers are configured to connect to CodeHydra's MCP server for workspace API access. The MCP port is captured during `app:start` and passed to the provider via `initialize()`.
 
 ### OpenCode MCP Configuration
 
-OpenCode servers receive a config file path via `OPENCODE_CONFIG` env var:
+OpenCode servers receive the MCP config inline via the `OPENCODE_CONFIG_CONTENT` environment variable at spawn time:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "codehydra": {
       "type": "remote",
-      "url": "http://127.0.0.1:{env:_CH_MCP_PORT}",
-      "headers": {
-        "X-Workspace-Path": "{env:_CH_WORKSPACE_PATH}"
-      },
+      "url": "http://127.0.0.1:<mcp-port>/mcp",
+      "headers": { "X-Workspace-Path": "<workspace-path>" },
       "enabled": true
     }
   }
 }
 ```
 
+### Claude Code MCP Configuration
+
+The server manager generates per-workspace config files (`codehydra-hooks.json`, `codehydra-mcp.json`) from JSON templates with `${VARIABLE}` substitution, stored under `<data>/claude/configs/<workspace-hash>/`. The provider exposes their paths via environment variables (`_CH_CLAUDE_SETTINGS`, `_CH_CLAUDE_MCP_CONFIG`).
+
 ### MCP Tools Available to Agents
 
-The MCP server exposes workspace management tools:
-
-| Tool                       | Description                           |
-| -------------------------- | ------------------------------------- |
-| `workspace.getStatus`      | Get workspace dirty/agent status      |
-| `workspace.getMetadata`    | Get all workspace metadata            |
-| `workspace.setMetadata`    | Set or delete metadata key            |
-| `workspace.delete`         | Delete the current workspace          |
-| `workspace.create`         | Create a new workspace in the project |
-| `workspace.executeCommand` | Execute a VS Code command             |
+The MCP server exposes workspace management tools (`workspace.getStatus`, `workspace.getMetadata`, `workspace.setMetadata`, `workspace.delete`, `workspace.create`, `workspace.executeCommand`, ...). See docs/API.md.
 
 ### Port Discovery for CLI
 
-The sidekick extension calls `api.workspace.getAgentSession()` on connect and sets environment variables for all new terminals:
+The sidekick extension applies the env vars from `getEnvironmentVariables()` to all new terminals:
 
 | Variable                  | Purpose                            |
 | ------------------------- | ---------------------------------- |
 | `_CH_OPENCODE_PORT`       | OpenCode server port               |
 | `_CH_OPENCODE_SESSION_ID` | OpenCode session ID for attachment |
+| `_CH_BRIDGE_PORT`         | Claude hook bridge port            |
+| `_CH_WORKSPACE_PATH`      | Workspace path (both agents)       |
 
-The wrapper script (`<app-data>/bin/opencode`) reads these env vars to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID`.
+The OpenCode wrapper script reads these to redirect `opencode` invocations to `opencode attach http://127.0.0.1:$PORT --session $SESSION_ID`.
 
 ---
 
@@ -407,10 +325,10 @@ OpenCode uses SSE (Server-Sent Events) for real-time status updates.
 ```
 1. startServer(workspacePath) called
 2. Allocate port via PortManager
-3. Spawn `opencode serve --port N --dir path`
-4. HTTP probe to `/app` confirms server is ready
-5. Fire onServerStarted callback
-6. Provider.connect(port) establishes SSE connection
+3. Spawn `opencode serve --port N` (cwd = workspace)
+4. HTTP probe to `/path` confirms server is ready
+5. Fire onServerStarted(path, port, pendingPrompt)
+6. Provider.connect(port) finds/creates a session and connects SSE
 ```
 
 ### SSE Event Types
@@ -442,24 +360,15 @@ import { createOpencodeClient, type OpencodeClient } from "@opencode-ai/sdk";
 export type SdkClientFactory = (baseUrl: string) => OpencodeClient;
 
 export class OpenCodeClient implements IDisposable {
-  constructor(port: number, sdkFactory: SdkClientFactory = defaultFactory) {
-    this.baseUrl = `http://localhost:${port}`;
-    this.sdk = sdkFactory(this.baseUrl);
-  }
-
-  async connect(timeoutMs = 5000): Promise<void> {
-    const events = await this.sdk.event.subscribe();
-    this.processEvents(events.stream);
+  constructor(port: number, logger: Logger, sdkFactory: SdkClientFactory = defaultSdkFactory) {
+    // ...
   }
 }
 ```
 
-### Error Handling
+### TUI-Attached Gate
 
-- **Connection Failures**: Exponential backoff reconnection (1s, 2s, 4s... max 30s)
-- **Port Reuse**: PID comparison detects when different process reuses a port
-- **Concurrent Scans**: Mutex flag prevents overlapping scan operations
-- **Resource Cleanup**: `IDisposable` pattern ensures proper cleanup on shutdown
+OpenCode status reports `"none"` until the TUI attaches (first MCP request or terminal open). The module provider keeps a `tuiAttachedWorkspaces` set that survives provider recreation across server restarts; terminal close detaches the TUI (`detachTui()`) without stopping the server.
 
 ---
 
@@ -469,178 +378,82 @@ Claude Code uses a shared HTTP server with a hook-based integration model.
 
 ### Architecture
 
-Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP server that handles requests for all workspaces. The workspace is identified via request headers.
+Unlike OpenCode (one server per workspace), Claude Code uses a single HTTP bridge server that handles hook notifications for all workspaces. The workspace is identified by the `workspacePath` field in the hook payload.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  ClaudeCodeServerManager                                         │
-│  - Single HTTP server on dynamic port                           │
-│  - Routes: POST /hook                                           │
-│  - Workspace identified by X-Workspace-Path header              │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │
-            ┌───────────────┼───────────────┐
-            │               │               │
-            ▼               ▼               ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│ Workspace A   │ │ Workspace B   │ │ Workspace C   │
-│ Provider      │ │ Provider      │ │ Provider      │
-└───────────────┘ └───────────────┘ └───────────────┘
-```
-
-### Hook Integration
-
-Claude Code sends hooks to the CodeHydra server:
-
-```typescript
-// Hook request from Claude Code
-POST /hook
-X-Workspace-Path: /path/to/workspace
+POST /hook/<HookName>
 Content-Type: application/json
 
-{
-  "type": "status",
-  "status": "busy"
-}
+{ "workspacePath": "/path/to/workspace", "session_id": "..." }
 ```
 
 ### Status Derivation
 
-Since Claude Code doesn't provide explicit status events, status is derived from hook activity:
-
-- **First hook received**: `none` → `idle`
-- **Prompt submitted**: `idle` → `busy`
-- **Response completed**: `busy` → `idle`
-- **Inactivity timeout**: `busy` → `idle` (safety fallback)
+Status is driven by the Claude CLI's hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, ...) routed through a per-workspace state machine in the server manager (see `claude/types.ts` for the hook → status mapping). It also handles compaction, sub-agent tracking, and permission-resolution edge cases. `WrapperStart`/`WrapperEnd` are not accepted over HTTP — they are driven by the sidekick via the `agent:lifecycle` intent (`triggerWrapperLifecycle`).
 
 ### Session Resumption
 
 The Claude wrapper automatically attempts to resume previous sessions using the `--continue` flag:
 
 1. On launch, checks if user passed `--continue`, `-c`, or `--resume` flags
-2. If not, prepends `--continue` to attempt resuming the most recent session for this directory
+2. If not, prepends `--continue` to attempt resuming the most recent session for this directory (unless the no-session marker for a brand-new workspace is present)
 3. If continuation fails (no session exists), automatically retries without `--continue`
 4. This enables seamless session continuity across CodeHydra restarts
 
-**How `--continue` works**: The Claude CLI `--continue` flag loads the most recent conversation from the current project directory. Sessions are stored in `~/.claude/projects/` and are per-directory.
-
 **Flag precedence**: If user passes `--resume <session-id>`, it takes precedence over `--continue`. The wrapper detects this and skips adding `--continue` to avoid conflicts.
-
-Users can still use their own flags:
-
-- `--resume <session>` - Resume a specific named session
-- `--continue` or `-c` - Explicitly continue most recent session
 
 ---
 
 ## Implementing a New Agent
 
-### 1. Create Setup Info Class
+### 1. Create setup-info helpers
 
 ```typescript
-// src/agents/my-agent/setup-info.ts
-export class MyAgentSetupInfo implements AgentSetupInfo {
-  readonly version = "1.0.0";
-  readonly binaryPath = process.platform === "win32" ? "my-agent.exe" : "my-agent";
-  readonly wrapperEntryPoint = "agents/my-agent-wrapper.cjs";
-  readonly extensionId = "publisher.my-agent-extension";
+// src/modules/agent-module/my-agent/setup-info.ts
+export function getMyAgentUrlForVersion(version, platform, arch): string { ... }
+export function getMyAgentBundleDir(pathProvider, version): Path { ... }
+```
 
-  constructor(private deps: { fileSystem: FileSystemBoundary; platform: string }) {}
+### 2. Create the server manager and provider
 
-  getBinaryUrl(): string {
-    // Return platform-specific download URL
-  }
+Implement `AgentServerManager` (server lifecycle) and `AgentProvider` (per-workspace connection + status), following the per-workspace (OpenCode) or shared (Claude) pattern.
 
-  async generateConfigFile(targetPath: Path, variables: Record<string, string>): Promise<void> {
-    // Generate config with variable substitution
-  }
+### 3. Define the module provider spec
+
+```typescript
+// src/modules/agent-module/my-agent/module-provider.ts
+export function createMyAgentModuleProvider(deps: MyAgentModuleProviderDeps): AgentModuleProvider {
+  return createAgentModuleProvider<MyAgentProvider>(
+    {
+      type: "my-agent",
+      configKey: "version.my-agent",
+      displayName: "My Agent",
+      icon: "rocket",
+      serverName: "My Agent",
+      scripts: ["ch-my-agent"],
+      serverManager: deps.serverManager,
+      resolveBinary() { ... },
+      createProvider: (path) => new MyAgentProvider(path, deps.logger),
+      connectProvider: (provider, port) => provider.connect(port),
+      initialStatus: () => "none",
+      startServer: (path) => deps.serverManager.startServer(path).then(() => undefined),
+      applyTerminalLifecycle: (path, event, ctx) => { ... },
+    },
+    { logger: deps.logger, downloadDeps: deps.downloadDeps, binaryName: deps.binaryConfig.name }
+  );
 }
 ```
 
-### 2. Create Server Manager Class
+### 4. Register in the composition root
+
+In `src/main.ts`, construct the module provider and register a module:
 
 ```typescript
-// src/agents/my-agent/server-manager.ts
-export class MyAgentServerManager implements AgentServerManager {
-  private servers = new Map<string, ServerState>();
-  private startedCallbacks: Array<(...args: unknown[]) => void> = [];
-  private stoppedCallbacks: Array<(...args: unknown[]) => void> = [];
-
-  async startServer(workspacePath: string): Promise<number> {
-    const port = await this.deps.portManager.acquirePort();
-    // Start server, wait for ready
-    this.notifyStarted(workspacePath, port);
-    return port;
-  }
-
-  // ... implement remaining methods
-}
+const myAgentProvider = createMyAgentModuleProvider({ ... });
+dispatcher.registerModule(createAgentModule(myAgentProvider, { dispatcher, logger, agentConfig }));
 ```
 
-### 3. Create Provider Class
-
-```typescript
-// src/agents/my-agent/provider.ts
-export class MyAgentProvider implements AgentProvider {
-  readonly startupCommands = ["my-agent.openTerminal"] as const;
-  private statusCallbacks: Array<(status: AgentStatus) => void> = [];
-  private status: AgentStatus = "none";
-  private port: number | null = null;
-  private sessionId: string | null = null;
-
-  async connect(port: number): Promise<void> {
-    this.port = port;
-    // Establish connection, subscribe to events
-  }
-
-  onStatusChange(callback: (status: AgentStatus) => void): () => void {
-    this.statusCallbacks.push(callback);
-    callback(this.status); // Emit current status immediately
-    return () => {
-      const idx = this.statusCallbacks.indexOf(callback);
-      if (idx >= 0) this.statusCallbacks.splice(idx, 1);
-    };
-  }
-
-  // ... implement remaining methods
-}
-```
-
-### 4. Register in Factory Functions
-
-Update `src/agents/index.ts`:
-
-```typescript
-// Add to AgentType union in src/agents/types.ts
-export type AgentType = "opencode" | "claude-code" | "my-agent";
-
-// Add imports
-import { MyAgentSetupInfo } from "./my-agent/setup-info";
-import { MyAgentServerManager } from "./my-agent/server-manager";
-import { MyAgentProvider } from "./my-agent/provider";
-
-// Add cases to factory functions
-export function getAgentSetupInfo(type: AgentType, deps: SetupInfoDeps): AgentSetupInfo {
-  switch (type) {
-    // ... existing cases
-    case "my-agent":
-      return new MyAgentSetupInfo({ fileSystem: deps.fileSystem, platform: deps.platform });
-  }
-}
-```
-
-### Dependencies
-
-Providers receive dependencies through factory functions:
-
-```typescript
-/** Dependencies for AgentSetupInfo */
-interface SetupInfoDeps {
-  readonly fileSystem: FileSystemBoundary;
-  readonly platform: "darwin" | "linux" | "win32";
-  readonly arch: SupportedArch;
-}
-```
+Also extend the `AgentType` union (`src/shared/plugin-protocol`) — this is an interface change requiring approval (see CLAUDE.md).
 
 ---
 
@@ -648,63 +461,24 @@ interface SetupInfoDeps {
 
 ### Integration Test Coverage
 
-Tests should cover:
+The primary suites are `claude/module-provider.integration.test.ts` and `opencode/module-provider.integration.test.ts`. They exercise the full `AgentModuleProvider` surface against a stubbed server manager and a `vi.mock`ed provider class, covering:
 
-1. **Connect/disconnect/reconnect cycle**
-2. **Status change propagation**
-3. **Session retrieval**
-4. **Environment variables**
-5. **Multiple subscribers**
+1. **Identity constants and binary management** (preflight/download)
+2. **Server started/stopped callbacks** (first start, restart-reconnect, full stop)
+3. **Status change propagation and deduplication**
+4. **Session retrieval and environment variables**
+5. **Prompt plumbing** (Claude prompt file / OpenCode pending prompt)
 6. **Disposal cleanup**
 
-### Example Test Structure
+### Testing the OpenCode Client
 
 ```typescript
-describe("MyAgentProvider", () => {
-  it("should emit status changes to subscribers", async () => {
-    const provider = new MyAgentProvider(deps);
-    const statuses: AgentStatus[] = [];
-
-    provider.onStatusChange((status) => statuses.push(status));
-    await provider.connect(3000);
-
-    // Trigger status change
-    // ...
-
-    expect(statuses).toContain("idle");
-  });
-
-  it("should preserve session across disconnect/reconnect", async () => {
-    const provider = new MyAgentProvider(deps);
-    await provider.connect(3000);
-
-    // Establish session
-    // ...
-
-    provider.disconnect();
-    await provider.reconnect();
-
-    expect(provider.getSession()).not.toBeNull();
-  });
-});
-```
-
-### Testing OpenCode Client
-
-```typescript
-import { createMockSdkClient, createMockSdkFactory, createTestSession } from "./sdk-test-utils";
-
 const mockSdk = createMockSdkClient({
   sessions: [createTestSession({ id: "ses-1", directory: "/test" })],
   sessionStatuses: { "ses-1": { type: "idle" } },
 });
 const factory = createMockSdkFactory(mockSdk);
-const client = new OpenCodeClient(8080, factory);
+const client = new OpenCodeClient(8080, SILENT_LOGGER, factory);
 ```
 
-### Reference Implementations
-
-| Agent       | Setup Info                             | Server Manager                             | Provider                             |
-| ----------- | -------------------------------------- | ------------------------------------------ | ------------------------------------ |
-| OpenCode    | `src/agents/opencode/setup-info.ts`    | `src/agents/opencode/server-manager.ts`    | `src/agents/opencode/provider.ts`    |
-| Claude Code | `src/agents/claude-code/setup-info.ts` | `src/agents/claude-code/server-manager.ts` | `src/agents/claude-code/provider.ts` |
+See `opencode/sdk-client.state-mock.ts` and docs/TESTING.md for conventions.
