@@ -35,7 +35,6 @@ import { registerTestInfrastructure } from "./operations.test-utils";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { isValidMetadataKey } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { IntentModule } from "./lib/module";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { HookContext } from "./lib/operation";
@@ -62,7 +61,7 @@ interface TestSetup {
 function createTestSetup(): TestSetup {
   const workspacePath = new Path(WORKSPACES_DIR, "feature-x");
   const projectId = "project-ea0135bc" as ProjectId;
-  const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
+  const workspaceName = "feature-x" as WorkspaceName;
 
   // Simple Map-based metadata store: workspacePath → Record<string, string>
   const metadataStore = new Map<string, Record<string, string>>();

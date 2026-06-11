@@ -68,7 +68,6 @@ import type {
 } from "./resolve-project";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import { Path } from "../utils/path/path";
 
 // =============================================================================
@@ -246,7 +245,7 @@ function createTestHarness(options?: {
             for (const p of projects) {
               const workspace = p.workspaces?.find((w: { path: string }) => w.path === wsPath);
               if (workspace) {
-                const workspaceName = extractWorkspaceName(wsPath);
+                const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
                 return {
                   projectPath: p.path,
                   workspaceName: workspaceName as WorkspaceName,

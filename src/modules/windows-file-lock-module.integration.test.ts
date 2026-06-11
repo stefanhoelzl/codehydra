@@ -11,6 +11,7 @@ import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 
 import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
+import type { WorkspaceName } from "../shared/api/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
   DELETE_WORKSPACE_OPERATION_ID,
@@ -115,6 +116,7 @@ class FlushOperation implements Operation<Intent, FlushHookResult> {
       intent: ctx.intent,
       projectPath: "/projects/my-app",
       workspacePath: "/workspaces/feature-1",
+      workspaceName: "feature-1" as WorkspaceName,
       active: false,
       blockingPids: this.blockingPids,
     };

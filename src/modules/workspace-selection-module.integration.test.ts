@@ -45,7 +45,6 @@ import type { DomainEvent } from "../intents/lib/types";
 import { createWorkspaceSelectionModule } from "./workspace-selection-module";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
@@ -60,7 +59,12 @@ const WS_B = "/projects/app/workspaces/beta";
 const WS_C = "/projects/app/workspaces/gamma";
 
 function candidate(workspacePath: string): WorkspaceCandidate {
-  return { projectPath: PROJECT_PATH, projectName: PROJECT_NAME, workspacePath };
+  return {
+    projectPath: PROJECT_PATH,
+    projectName: PROJECT_NAME,
+    workspacePath,
+    workspaceName: workspacePath.slice(workspacePath.lastIndexOf("/") + 1),
+  };
 }
 
 function noneStatus(): AggregatedAgentStatus {
@@ -106,7 +110,7 @@ function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup 
             if (!found) return {};
             return {
               projectPath: found.projectPath,
-              workspaceName: extractWorkspaceName(wsPath),
+              workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
             };
           },
         },
@@ -226,7 +230,7 @@ describe("WorkspaceSelectionModule", () => {
             workspace: {
               path: wsPath as WorkspacePath,
               projectId,
-              name: extractWorkspaceName(wsPath) as WorkspaceName,
+              name: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
               active: false,
             },
             status,

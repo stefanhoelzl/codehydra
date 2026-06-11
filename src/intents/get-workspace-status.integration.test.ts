@@ -36,7 +36,6 @@ import type { HookContext } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import { Path } from "../utils/path/path";
 
 // =============================================================================
@@ -76,7 +75,7 @@ function createTestSetup(opts: {
   workspaceProvider?: MockWorkspaceProvider | null;
   agentStatus?: AggregatedAgentStatus | null;
 }): TestSetup {
-  const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+  const workspaceName = "feature-x" as WorkspaceName;
 
   const dispatcher = createMockDispatcher();
 
@@ -240,7 +239,7 @@ describe("GetWorkspaceStatus Operation", () => {
   describe("unmerged commits (#3)", () => {
     it("returns unmergedCommits from hook result", async () => {
       const dispatcher = createMockDispatcher();
-      const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+      const workspaceName = "feature-x" as WorkspaceName;
 
       dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
       dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());

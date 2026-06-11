@@ -50,7 +50,6 @@ import type {
   ProjectId,
   WorkspaceName,
 } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import { getErrorMessage } from "../shared/error-utils";
 import { Path } from "../utils/path/path";
 import {
@@ -434,7 +433,7 @@ function createTestHarness(options?: {
             // Reverse lookup: find which project owns this workspace path
             const project = appState.findProjectForWorkspace(wsPath);
             if (!project) return {};
-            const workspaceName = extractWorkspaceName(wsPath);
+            const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
             return {
               projectPath: project.path,
               workspaceName: workspaceName as WorkspaceName,
@@ -733,6 +732,7 @@ function createTestHarness(options?: {
               projectPath: string;
               projectName: string;
               workspacePath: string;
+              workspaceName: string;
             }> = [];
             for (const project of allProjects) {
               for (const ws of project.workspaces) {
@@ -740,6 +740,7 @@ function createTestHarness(options?: {
                   projectPath: project.path,
                   projectName: project.name,
                   workspacePath: ws.path,
+                  workspaceName: ws.path.slice(ws.path.lastIndexOf("/") + 1),
                 });
               }
             }
@@ -761,7 +762,7 @@ function createTestHarness(options?: {
             return {
               workspaceRef: {
                 projectId: PROJECT_ID,
-                workspaceName: extractWorkspaceName(path) as WorkspaceName,
+                workspaceName: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
                 path,
               },
             };
@@ -793,12 +794,7 @@ function createTestHarness(options?: {
             // In production, scoring uses an internal status cache.
             // For these tests, all workspaces are treated as idle (score 0).
             const scorer = (): number => 0;
-            const result = selectNextWorkspace(
-              currentPath,
-              candidates,
-              extractWorkspaceName,
-              scorer
-            );
+            const result = selectNextWorkspace(currentPath, candidates, scorer);
             return result ? { selected: result } : {};
           },
         },

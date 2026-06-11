@@ -61,7 +61,6 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, Workspace, WorkspaceName } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 import { Path } from "../utils/path/path";
@@ -228,7 +227,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
         resolve: {
           handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
             const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-            const workspaceName = extractWorkspaceName(wsPath);
+            const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
             return {
               projectPath: PROJECT_ROOT,
               workspaceName: workspaceName as WorkspaceName,
@@ -468,7 +467,7 @@ describe("OpenWorkspace Operation", () => {
       expect(workspace.branch).toBe(WORKSPACE_BRANCH);
       expect(workspace.metadata).toEqual(WORKSPACE_METADATA);
       expect(workspace.projectId).toBe(setup.projectId);
-      expect(workspace.name).toBe(extractWorkspaceName(WORKSPACE_PATH));
+      expect(workspace.name).toBe("feature-x");
     });
   });
 
@@ -491,7 +490,7 @@ describe("OpenWorkspace Operation", () => {
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
       expect(event.type).toBe(EVENT_WORKSPACE_CREATED);
       expect(event.payload.projectId).toBe(setup.projectId);
-      expect(event.payload.workspaceName).toBe(extractWorkspaceName(WORKSPACE_PATH));
+      expect(event.payload.workspaceName).toBe("feature-x");
       expect(event.payload.workspacePath).toBe(WORKSPACE_PATH);
       expect(event.payload.projectPath).toBe(PROJECT_ROOT);
       expect(event.payload.branch).toBe(WORKSPACE_BRANCH);
@@ -900,6 +899,64 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
+  describe("workspace name preserves payload case, not path basename", () => {
+    // Regression: the create hook returns a normalized Path string, which is
+    // lowercased on Windows. Deriving the name from it broke the renderer's
+    // case-sensitive name matching for uppercase workspace names.
+    it("uses the requested name for new workspaces", async () => {
+      const setup = createTestSetup();
+
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      // Mock provider returns WORKSPACE_PATH regardless of the requested name,
+      // so the path basename ("feature-x") differs from the requested name.
+      const result = await setup.dispatcher.dispatch(createIntent({ workspaceName: "SDK-214" }));
+
+      const workspace = result as Workspace;
+      expect(workspace.name).toBe("SDK-214");
+
+      const event = receivedEvents[0] as WorkspaceCreatedEvent;
+      expect(event.payload.workspaceName).toBe("SDK-214");
+    });
+
+    it("uses existingWorkspace.name when the stored path differs in case", async () => {
+      const setup = createTestSetup();
+
+      const existingWorkspace: ExistingWorkspaceData = {
+        path: "/existing/workspace/sdk-214", // lowercased by Path on Windows
+        name: "SDK-214",
+        branch: "SDK-214",
+        metadata: { base: "main" },
+      };
+
+      const receivedEvents: DomainEvent[] = [];
+      setup.dispatcher.subscribe(EVENT_WORKSPACE_CREATED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      const intent: OpenWorkspaceIntent = {
+        type: INTENT_OPEN_WORKSPACE,
+        payload: {
+          workspaceName: "SDK-214",
+          base: "main",
+          existingWorkspace,
+          projectPath: PROJECT_ROOT,
+        },
+      };
+
+      const result = await setup.dispatcher.dispatch(intent);
+
+      const workspace = result as Workspace;
+      expect(workspace.name).toBe("SDK-214");
+
+      const event = receivedEvents[0] as WorkspaceCreatedEvent;
+      expect(event.payload.workspaceName).toBe("SDK-214");
+    });
+  });
+
   describe("project:resolve failure propagates error (#18)", () => {
     it("throws when project:resolve finds no project for path", async () => {
       const setup = createTestSetup();
@@ -952,7 +1009,7 @@ describe("OpenWorkspace Operation", () => {
             resolve: {
               handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
                 const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-                const workspaceName = extractWorkspaceName(wsPath);
+                const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
                 return {
                   projectPath: PROJECT_ROOT,
                   workspaceName: workspaceName as WorkspaceName,

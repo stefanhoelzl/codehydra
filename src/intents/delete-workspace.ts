@@ -162,6 +162,7 @@ export interface FlushHookResult {
 export interface DeletePipelineHookInput extends HookContext {
   readonly projectPath: string;
   readonly workspacePath: string;
+  readonly workspaceName: WorkspaceName;
   readonly active: boolean;
 }
 
@@ -402,6 +403,7 @@ export class DeleteWorkspaceOperation implements Operation<
       intent: ctx.intent,
       projectPath,
       workspacePath: payload.workspacePath,
+      workspaceName,
       active,
     };
 

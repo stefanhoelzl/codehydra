@@ -24,7 +24,6 @@ import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { DomainEvent } from "../intents/lib/types";
 import { Path } from "../utils/path/path";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import { getErrorMessage } from "../shared/error-utils";
 import {
   HIBERNATE_WORKSPACE_OPERATION_ID,
@@ -120,8 +119,11 @@ export function createHibernationScreenshotModule(
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceDeletedEvent).payload;
-          const workspaceName = extractWorkspaceName(payload.workspacePath);
-          const filePath = buildScreenshotPath(pathProvider, payload.projectId, workspaceName);
+          const filePath = buildScreenshotPath(
+            pathProvider,
+            payload.projectId,
+            payload.workspaceName
+          );
           await deletePath(filePath);
         },
       },
