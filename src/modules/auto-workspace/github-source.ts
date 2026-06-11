@@ -132,7 +132,10 @@ export function createGitHubSource(deps: GitHubSourceDeps): AutoWorkspaceSource 
     fetchBasesBeforeDelete: true,
 
     isConfigured(): boolean {
-      return queryConfig.get() !== null;
+      // The query has a non-nullable default, so this source is always
+      // "configured". Actual gating is the template-path config (checked by
+      // the module) plus `gh auth token` succeeding in initialize().
+      return true;
     },
 
     async initialize(): Promise<boolean> {

@@ -10,7 +10,7 @@
 
 import type { AgentProvider, AgentSessionInfo, AgentStatus } from "../types";
 import type { IDisposable, Unsubscribe, ClientStatus, Result, Session } from "./types";
-import { OpenCodeClient, type PermissionEvent, type SdkClientFactory } from "./client";
+import { OpenCodeClient, type PermissionEvent } from "./client";
 import { OpenCodeError } from "../../../shared/errors/service-errors";
 import { findMatchingSession } from "./session-utils";
 import { err } from "./types";
@@ -25,7 +25,6 @@ import type { Logger } from "../../../boundaries/platform/logging";
 export class OpenCodeProvider implements AgentProvider, IDisposable {
   private client: OpenCodeClient | null = null;
   private clientStatus: ClientStatus = "idle";
-  private readonly sdkFactory: SdkClientFactory | undefined;
   private readonly logger: Logger;
   private readonly workspacePath: string;
 
@@ -63,10 +62,9 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
    */
   private readonly statusChangeListeners = new Set<(status: AgentStatus) => void>();
 
-  constructor(workspacePath: string, logger: Logger, sdkFactory: SdkClientFactory | undefined) {
+  constructor(workspacePath: string, logger: Logger) {
     this.workspacePath = workspacePath;
     this.logger = logger;
-    this.sdkFactory = sdkFactory;
   }
 
   /**
@@ -95,13 +93,6 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       _CH_WORKSPACE_PATH: this.workspacePath,
     };
     return envVars;
-  }
-
-  /**
-   * Check if provider has a connected client.
-   */
-  hasClient(): boolean {
-    return this.client !== null;
   }
 
   /**
@@ -173,7 +164,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
     // Store the port
     this._port = port;
 
-    const client = new OpenCodeClient(port, this.logger, this.sdkFactory);
+    const client = new OpenCodeClient(port, this.logger);
 
     // Subscribe to status changes from client
     client.onStatusChanged((status) => this.handleStatusChanged(status));
@@ -335,7 +326,7 @@ export class OpenCodeProvider implements AgentProvider, IDisposable {
       sessionId: this._primarySessionId,
     });
 
-    const client = new OpenCodeClient(this._port, this.logger, this.sdkFactory);
+    const client = new OpenCodeClient(this._port, this.logger);
 
     // Subscribe to events
     client.onStatusChanged((status) => this.handleStatusChanged(status));

@@ -41,7 +41,6 @@ describe("StateService", () => {
     await svc.load();
 
     expect(key.get()).toBeNull();
-    expect(svc.getEffective()).toEqual({ "telemetry.distinct-id": null });
   });
 
   it("loads a value present in state.json", async () => {
@@ -135,7 +134,7 @@ describe("StateService", () => {
         })
       ),
     });
-    svc.register("telemetry.distinct-id", { ...stringKeyDef(), redact: true });
+    const distinctId = svc.register("telemetry.distinct-id", { ...stringKeyDef(), redact: true });
     svc.register("tracked.item", {
       ...stringKeyDef(),
       redact: (value, redacted) => ({ value, token: redacted }),
@@ -143,12 +142,12 @@ describe("StateService", () => {
     await svc.load();
 
     // distinct-id fully redacted; the custom redactor sees the value + token;
-    // getEffective stays raw (it never leaves the machine).
+    // accessor reads stay raw (they never leave the machine).
     expect(svc.getRedactedOverrides()).toEqual({
       "telemetry.distinct-id": "<redacted>",
       "tracked.item": { value: "keep/this/path", token: "<redacted>" },
     });
-    expect(svc.getEffective()).toMatchObject({ "telemetry.distinct-id": "uuid-secret" });
+    expect(distinctId.get()).toBe("uuid-secret");
   });
 
   it("throws on double load()", async () => {

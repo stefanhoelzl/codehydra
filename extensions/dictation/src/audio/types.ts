@@ -1,31 +1,4 @@
 /**
- * Transcript message for the log
- */
-export interface TranscriptMessage {
-  type: "transcript";
-  text: string;
-  timestamp: number;
-}
-
-/**
- * Error message for the log
- */
-export interface ErrorMessage {
-  type: "error";
-  message: string;
-  timestamp: number;
-}
-
-/**
- * Status message for the log
- */
-export interface StatusMessage {
-  type: "status";
-  status: string;
-  duration?: number;
-}
-
-/**
  * Session start message - begins a new recording session card in the log
  */
 export interface SessionStartMessage {

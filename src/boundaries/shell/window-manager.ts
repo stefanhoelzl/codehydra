@@ -11,10 +11,9 @@
  */
 
 import type { Logger } from "../platform/logging";
-import type { PlatformInfo } from "../platform/platform-info";
 import type { ImageBoundary } from "./image";
 import type { ImageHandle } from "./image-types";
-import type { WindowBoundaryInternal } from "./window";
+import type { WindowBoundary } from "./window";
 import type { AppBoundary } from "./app";
 import type { WindowHandle } from "./types";
 import { getErrorMessage } from "../../shared/error-utils";
@@ -52,36 +51,32 @@ export interface ContentBounds {
  * Dependencies for creating a WindowManager.
  */
 export interface WindowManagerDeps {
-  readonly windowLayer: WindowBoundaryInternal;
+  readonly windowLayer: WindowBoundary;
   readonly imageLayer: ImageBoundary;
   readonly appLayer: Pick<AppBoundary, "shouldUseDarkColors" | "onThemeUpdated">;
   readonly logger: Logger;
-  readonly platformInfo: PlatformInfo;
 }
 
 /**
  * Manages the main application window.
  */
 export class WindowManager {
-  private readonly windowLayer: WindowBoundaryInternal;
+  private readonly windowLayer: WindowBoundary;
   private readonly imageLayer: ImageBoundary;
   private readonly appLayer: Pick<AppBoundary, "shouldUseDarkColors" | "onThemeUpdated">;
   private readonly logger: Logger;
-  private readonly platformInfo: PlatformInfo;
   private readonly title: string;
   private readonly iconPath: string | undefined;
   private readonly resizeCallbacks: Set<() => void> = new Set();
   private readonly themeChangeCallbacks: Set<(theme: Theme) => void> = new Set();
   private windowHandle!: WindowHandle;
   private currentTheme: Theme = "dark";
-  private unsubscribeTheme: Unsubscribe | null = null;
 
   constructor(deps: WindowManagerDeps, title: string = "CodeHydra", iconPath?: string) {
     this.windowLayer = deps.windowLayer;
     this.imageLayer = deps.imageLayer;
     this.appLayer = deps.appLayer;
     this.logger = deps.logger;
-    this.platformInfo = deps.platformInfo;
     this.title = title;
     this.iconPath = iconPath;
   }
@@ -102,7 +97,7 @@ export class WindowManager {
       backgroundColor: colorForTheme(this.currentTheme),
     });
 
-    this.unsubscribeTheme = this.appLayer.onThemeUpdated(() => {
+    this.appLayer.onThemeUpdated(() => {
       const next: Theme = this.appLayer.shouldUseDarkColors() ? "dark" : "light";
       if (next === this.currentTheme) return;
       this.currentTheme = next;
@@ -235,20 +230,7 @@ export class WindowManager {
    * @param description - Accessibility description for the overlay
    */
   setOverlayIcon(image: ImageHandle | null, description: string): void {
-    // Only Windows supports overlay icons on the taskbar
-    if (this.platformInfo.platform !== "win32") {
-      return;
-    }
-
-    try {
-      this.windowLayer.setOverlayIcon(this.windowHandle, image, description);
-    } catch (error) {
-      // Log but don't throw - overlay icon is non-critical
-      this.logger.warn("Failed to set overlay icon", {
-        description,
-        error: getErrorMessage(error),
-      });
-    }
+    this.windowLayer.setOverlayIcon(this.windowHandle, image, description);
   }
 
   /**
@@ -256,17 +238,6 @@ export class WindowManager {
    */
   focus(): void {
     this.windowLayer.focus(this.windowHandle);
-  }
-
-  /**
-   * Closes the window.
-   */
-  close(): void {
-    if (this.unsubscribeTheme) {
-      this.unsubscribeTheme();
-      this.unsubscribeTheme = null;
-    }
-    this.windowLayer.close(this.windowHandle);
   }
 
   /**

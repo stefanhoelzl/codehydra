@@ -92,42 +92,6 @@ describe("IpcBoundary.removeHandler", () => {
   });
 });
 
-describe("IpcBoundary.removeAllHandlers", () => {
-  let ipcLayer: BehavioralIpcBoundary;
-
-  beforeEach(() => {
-    ipcLayer = createBehavioralIpcBoundary();
-  });
-
-  it("removes all handlers", () => {
-    ipcLayer.handle("api:test:one", async () => "one");
-    ipcLayer.handle("api:test:two", async () => "two");
-    ipcLayer.handle("api:test:three", async () => "three");
-
-    ipcLayer.removeAllHandlers();
-
-    const state = ipcLayer._getState();
-    expect(state.handlers.size).toBe(0);
-  });
-
-  it("is idempotent when no handlers registered", () => {
-    // Should not throw
-    expect(() => ipcLayer.removeAllHandlers()).not.toThrow();
-
-    const state = ipcLayer._getState();
-    expect(state.handlers.size).toBe(0);
-  });
-
-  it("allows registration after removeAll", () => {
-    ipcLayer.handle("api:test:channel", async () => "first");
-    ipcLayer.removeAllHandlers();
-    ipcLayer.handle("api:test:channel", async () => "second");
-
-    const state = ipcLayer._getState();
-    expect(state.handlers.has("api:test:channel")).toBe(true);
-  });
-});
-
 describe("IpcBoundary._invoke (test helper)", () => {
   let ipcLayer: BehavioralIpcBoundary;
 

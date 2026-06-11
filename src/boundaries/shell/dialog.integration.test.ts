@@ -89,51 +89,6 @@ describe("DialogBoundary (behavioral mock)", () => {
     });
   });
 
-  describe("showSaveDialog", () => {
-    it("returns canceled by default", async () => {
-      const result = await dialogLayer.showSaveDialog({ title: "Save File" });
-
-      expect(result.canceled).toBe(true);
-      expect(result.filePath).toBeUndefined();
-    });
-
-    it("returns configured response when set", async () => {
-      dialogLayer._setNextSaveDialogResponse({
-        canceled: false,
-        filePath: "/path/to/file.txt",
-      });
-
-      const result = await dialogLayer.showSaveDialog({ title: "Save File" });
-
-      expect(result.canceled).toBe(false);
-      expect(result.filePath?.toString()).toBe("/path/to/file.txt");
-    });
-
-    it("returns Path object for file path", async () => {
-      dialogLayer._setNextSaveDialogResponse({
-        canceled: false,
-        filePath: "/documents/report.pdf",
-      });
-
-      const result = await dialogLayer.showSaveDialog({ title: "Save Report" });
-
-      expect(result.filePath?.basename).toBe("report.pdf");
-      expect(result.filePath?.extension).toBe(".pdf");
-    });
-
-    it("records call in state", async () => {
-      const options = { title: "Save As", defaultPath: "/home" };
-      await dialogLayer.showSaveDialog(options);
-
-      const state = dialogLayer._getState();
-      expect(state.saveDialogCount).toBe(1);
-      expect(state.calls[0]).toEqual({
-        method: "showSaveDialog",
-        options,
-      });
-    });
-  });
-
   describe("showMessageBox", () => {
     it("returns button index 0 by default", async () => {
       const result = await dialogLayer.showMessageBox({
@@ -200,16 +155,14 @@ describe("DialogBoundary (behavioral mock)", () => {
   describe("_getState", () => {
     it("tracks all call types", async () => {
       await dialogLayer.showOpenDialog({ properties: ["openFile"] });
-      await dialogLayer.showSaveDialog({ title: "Save" });
       await dialogLayer.showMessageBox({ message: "Hello" });
       dialogLayer.showErrorBox("Error", "Details");
 
       const state = dialogLayer._getState();
       expect(state.openDialogCount).toBe(1);
-      expect(state.saveDialogCount).toBe(1);
       expect(state.messageBoxCount).toBe(1);
       expect(state.errorBoxCount).toBe(1);
-      expect(state.calls).toHaveLength(4);
+      expect(state.calls).toHaveLength(3);
     });
 
     it("returns copies of arrays (not mutable references)", async () => {
@@ -229,7 +182,6 @@ describe("DialogBoundary (behavioral mock)", () => {
     it("clears all state", async () => {
       dialogLayer._setNextOpenDialogResponse({ canceled: false, filePaths: ["/path"] });
       await dialogLayer.showOpenDialog({ properties: ["openFile"] });
-      await dialogLayer.showSaveDialog({ title: "Save" });
       dialogLayer.showErrorBox("Error", "Details");
 
       dialogLayer._reset();
@@ -237,7 +189,6 @@ describe("DialogBoundary (behavioral mock)", () => {
       const state = dialogLayer._getState();
       expect(state.calls).toHaveLength(0);
       expect(state.openDialogCount).toBe(0);
-      expect(state.saveDialogCount).toBe(0);
       expect(state.errorBoxCount).toBe(0);
     });
 

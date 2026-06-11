@@ -54,12 +54,11 @@ import { createAutoWorkspaceModule, redactAutoWorkspaceEntries } from "./module"
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import type { Config } from "../../boundaries/platform/config";
-import { createMockState } from "../../boundaries/platform/state.test-utils";
-import type { StateService } from "../../boundaries/platform/state-service";
+import { createMockState, type MockStateService } from "../../boundaries/platform/state.test-utils";
 
 // Entries currently persisted in the (mock) state.json `auto-workspaces` key.
 type StateEntry = { workspacePath: string; workspaceName: string; createdAt: string };
-function entriesOf(state: StateService): Record<string, StateEntry | null> {
+function entriesOf(state: MockStateService): Record<string, StateEntry | null> {
   return (state.getEffective()["auto-workspaces"] ?? {}) as Record<string, StateEntry | null>;
 }
 
@@ -297,7 +296,7 @@ function trackedProject(workspacePath: string): Project {
 interface TestSetup {
   dispatcher: Dispatcher;
   fs: ReturnType<typeof createFileSystemMock>;
-  state: StateService;
+  state: MockStateService;
   source: ReturnType<typeof createMockSource>;
   mockConfig: Config;
   openProjectOp: TrackingOpenProjectOperation;

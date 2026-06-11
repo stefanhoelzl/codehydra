@@ -19,14 +19,8 @@
  */
 
 import { expect } from "vitest";
-import type {
-  WindowBoundary,
-  WindowOptions,
-  ContentView,
-  Unsubscribe,
-  WindowBoundaryInternal,
-} from "./window";
-import type { WindowHandle, Rectangle, ViewHandle } from "./types";
+import type { WindowBoundary, WindowOptions, ContentView, Unsubscribe } from "./window";
+import type { WindowHandle, Rectangle } from "./types";
 import type { ImageHandle } from "./image-types";
 import { ShellError } from "../../shared/errors/shell-errors";
 import type {
@@ -51,7 +45,6 @@ export interface WindowMockState {
   readonly backgroundColor: string | null;
   readonly isMaximized: boolean;
   readonly isDestroyed: boolean;
-  readonly attachedViews: ReadonlySet<string>;
 }
 
 /**
@@ -129,13 +122,6 @@ export interface WindowBoundaryMockState extends MockState {
  */
 export type MockWindowBoundary = WindowBoundary & MockWithState<WindowBoundaryMockState>;
 
-/**
- * WindowBoundaryInternal with behavioral mock state access via `$` property.
- * Used for manager tests that need WindowBoundaryInternal._getRawWindow.
- */
-export type MockWindowBoundaryInternal = WindowBoundaryInternal &
-  MockWithState<WindowBoundaryMockState>;
-
 // =============================================================================
 // Internal State Implementation
 // =============================================================================
@@ -150,7 +136,6 @@ interface WindowStateInternal {
   backgroundColor: string | null;
   isMaximized: boolean;
   isDestroyed: boolean;
-  attachedViews: Set<string>;
   options: WindowOptions;
 }
 
@@ -178,7 +163,6 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
         backgroundColor: state.backgroundColor,
         isMaximized: state.isMaximized,
         isDestroyed: state.isDestroyed,
-        attachedViews: new Set(state.attachedViews),
       });
     }
     return result;
@@ -244,11 +228,7 @@ class WindowBoundaryMockStateImpl implements WindowBoundaryMockState {
   toString(): string {
     const sorted = [...this._windows.entries()].sort(([a], [b]) => a.localeCompare(b));
     const lines = sorted.map(([id, state]) => {
-      const flags = [
-        state.isMaximized ? "maximized" : null,
-        state.isDestroyed ? "destroyed" : null,
-        state.attachedViews.size > 0 ? `views:${state.attachedViews.size}` : null,
-      ]
+      const flags = [state.isMaximized ? "maximized" : null, state.isDestroyed ? "destroyed" : null]
         .filter(Boolean)
         .join(",");
       const flagStr = flags ? ` [${flags}]` : "";
@@ -353,7 +333,6 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
         backgroundColor: options.backgroundColor ?? null,
         isMaximized: false,
         isDestroyed: false,
-        attachedViews: new Set(),
         options,
       });
       contentViews.set(id, createContentView());
@@ -365,64 +344,9 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
       return { id, __brand: "WindowHandle" };
     },
 
-    destroy(handle: WindowHandle): void {
-      const window = getWindow(handle);
-      if (window.attachedViews.size > 0) {
-        throw new ShellError(
-          "WINDOW_HAS_ATTACHED_VIEWS",
-          `Window ${handle.id} has ${window.attachedViews.size} attached views`,
-          handle.id
-        );
-      }
-      window.isDestroyed = true;
-      windows.delete(handle.id);
-      contentViews.delete(handle.id);
-      resizeCallbacks.delete(handle.id);
-      maximizeCallbacks.delete(handle.id);
-      unmaximizeCallbacks.delete(handle.id);
-      closeCallbacks.delete(handle.id);
-      blurCallbacks.delete(handle.id);
-    },
-
-    destroyAll(): void {
-      // Check for attached views first
-      for (const [id, window] of windows) {
-        if (window.attachedViews.size > 0) {
-          throw new ShellError(
-            "WINDOW_HAS_ATTACHED_VIEWS",
-            `Window ${id} has ${window.attachedViews.size} attached views`,
-            id
-          );
-        }
-      }
-
-      // Now destroy all
-      for (const window of windows.values()) {
-        window.isDestroyed = true;
-      }
-      windows.clear();
-      contentViews.clear();
-      resizeCallbacks.clear();
-      maximizeCallbacks.clear();
-      unmaximizeCallbacks.clear();
-      closeCallbacks.clear();
-      blurCallbacks.clear();
-    },
-
-    getBounds(handle: WindowHandle): Rectangle {
-      const window = getWindow(handle);
-      return { ...window.bounds };
-    },
-
     getContentBounds(handle: WindowHandle): Rectangle {
       const window = getWindow(handle);
       return { ...window.contentBounds };
-    },
-
-    setBounds(handle: WindowHandle, bounds: Rectangle): void {
-      const window = getWindow(handle);
-      window.bounds = { ...bounds };
-      window.contentBounds = { ...bounds };
     },
 
     setOverlayIcon(handle: WindowHandle, _image: ImageHandle | null, _description: string): void {
@@ -438,11 +362,6 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
     maximize(handle: WindowHandle): void {
       const window = getWindow(handle);
       window.isMaximized = true;
-    },
-
-    isMaximized(handle: WindowHandle): boolean {
-      const window = getWindow(handle);
-      return window.isMaximized;
     },
 
     isDestroyed(handle: WindowHandle): boolean {
@@ -466,18 +385,6 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
     focus(handle: WindowHandle): void {
       getWindow(handle); // Validate handle exists
       // No-op in mock - focus is an OS-level operation
-    },
-
-    close(handle: WindowHandle): void {
-      const window = getWindow(handle);
-      // Trigger close callbacks before marking destroyed
-      const callbacks = closeCallbacks.get(handle.id);
-      if (callbacks) {
-        for (const callback of callbacks) {
-          callback();
-        }
-      }
-      window.isDestroyed = true;
     },
 
     onResize(handle: WindowHandle, callback: () => void): Unsubscribe {
@@ -538,18 +445,8 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
       return contentView;
     },
 
-    trackAttachedView(handle: WindowHandle, viewHandle: ViewHandle): void {
-      const window = getWindow(handle);
-      window.attachedViews.add(viewHandle.id);
-    },
-
-    untrackAttachedView(handle: WindowHandle, viewHandle: ViewHandle): void {
-      const window = getWindow(handle);
-      window.attachedViews.delete(viewHandle.id);
-    },
-
     async dispose(): Promise<void> {
-      // Destroy all windows without checking for attached views
+      // Destroy all windows
       for (const window of windows.values()) {
         window.isDestroyed = true;
       }
@@ -564,29 +461,6 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
   };
 
   return Object.assign(layer, { $: state });
-}
-
-/**
- * Create a behavioral mock for WindowBoundaryInternal.
- *
- * Extends createWindowBoundaryMock() with _getRawWindow that throws by default.
- * Used in manager tests where WindowBoundaryInternal is needed for ShortcutController.
- *
- * @example
- * const mock = createWindowBoundaryInternalMock();
- * const handle = mock.createWindow({ title: "Test" });
- *
- * // _getRawWindow throws in behavioral mock
- * expect(() => mock._getRawWindow(handle)).toThrow();
- */
-export function createWindowBoundaryInternalMock(): MockWindowBoundaryInternal {
-  const layer = createWindowBoundaryMock();
-
-  return Object.assign(layer, {
-    _getRawWindow: (): never => {
-      throw new Error("_getRawWindow not available in behavioral mock");
-    },
-  }) as MockWindowBoundaryInternal;
 }
 
 // =============================================================================
@@ -640,22 +514,6 @@ interface WindowBoundaryMatchers {
    * expect(mock).toHaveWindowBounds(handle.id, { width: 1200, height: 800 });
    */
   toHaveWindowBounds(id: string, bounds: Partial<Rectangle>): void;
-
-  /**
-   * Assert a specific view is attached to a window.
-   *
-   * @example
-   * expect(mock).toHaveAttachedView(windowHandle.id, viewHandle.id);
-   */
-  toHaveAttachedView(windowId: string, viewId: string): void;
-
-  /**
-   * Assert the number of views attached to a window.
-   *
-   * @example
-   * expect(mock).toHaveAttachedViewCount(handle.id, 3);
-   */
-  toHaveAttachedViewCount(windowId: string, count: number): void;
 }
 
 declare module "vitest" {
@@ -768,51 +626,6 @@ export const windowBoundaryMatchers: MatcherImplementationsFor<
     return {
       pass: true,
       message: () => `Expected window ${id} not to have bounds ${JSON.stringify(bounds)}`,
-    };
-  },
-
-  toHaveAttachedView(received, windowId, viewId) {
-    const window = received.$.windows.get(windowId);
-    if (!window) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected window ${windowId} to have attached view ${viewId} but window does not exist`,
-      };
-    }
-    if (!window.attachedViews.has(viewId)) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected window ${windowId} to have attached view ${viewId} but it does not`,
-      };
-    }
-    return {
-      pass: true,
-      message: () => `Expected window ${windowId} not to have attached view ${viewId}`,
-    };
-  },
-
-  toHaveAttachedViewCount(received, windowId, count) {
-    const window = received.$.windows.get(windowId);
-    if (!window) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected window ${windowId} to have ${count} attached views but window does not exist`,
-      };
-    }
-    const actualCount = window.attachedViews.size;
-    if (actualCount !== count) {
-      return {
-        pass: false,
-        message: () =>
-          `Expected window ${windowId} to have ${count} attached views but has ${actualCount}`,
-      };
-    }
-    return {
-      pass: true,
-      message: () => `Expected window ${windowId} not to have ${count} attached views`,
     };
   },
 };

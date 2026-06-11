@@ -63,7 +63,6 @@
       searchable={section.searchable ?? true}
       disabled={section.disabled ?? false}
       autofocus={section.autofocus ?? false}
-      debounceMs={0}
       invalid={!!section.error}
       describedBy={section.error ? `${section.id}-error` : undefined}
       onSelect={onPick}

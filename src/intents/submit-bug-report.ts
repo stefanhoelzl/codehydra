@@ -48,7 +48,7 @@ export const EVENT_BUG_REPORT_SUBMITTED = "bug-report:submitted" as const;
 // Operation
 // =============================================================================
 
-export const SUBMIT_BUG_REPORT_OPERATION_ID = "submit-bug-report";
+const SUBMIT_BUG_REPORT_OPERATION_ID = "submit-bug-report";
 
 export class SubmitBugReportOperation implements Operation<SubmitBugReportIntent, void> {
   readonly id = SUBMIT_BUG_REPORT_OPERATION_ID;

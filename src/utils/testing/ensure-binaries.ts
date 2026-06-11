@@ -104,24 +104,6 @@ function buildDownloadRequest(
 }
 
 /**
- * Check if a binary is installed at the expected path.
- *
- * @param binary - Binary type to check
- * @param options - Options for path provider
- * @returns true if the binary exists at the expected path
- */
-export function isBinaryInstalled(binary: TestBinaryType, options?: EnsureBinaryOptions): boolean {
-  try {
-    const pathProvider = options?.pathProvider ?? getTestPathProvider();
-    const platformInfo = options?.platformInfo ?? new NodePlatformInfo();
-    const { binaryPath } = buildDownloadRequest(binary, pathProvider, platformInfo);
-    return existsSync(binaryPath);
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Ensure a binary is available for tests.
  *
  * This function checks if the binary exists and downloads it if missing.
@@ -180,21 +162,6 @@ export async function ensureBinaryForTests(
 }
 
 /**
- * Ensure multiple binaries are available for tests.
- *
- * @param binaries - Array of binary types to ensure
- * @param options - Options for download behavior
- */
-export async function ensureBinariesForTests(
-  binaries: readonly TestBinaryType[],
-  options?: EnsureBinaryOptions
-): Promise<void> {
-  for (const binary of binaries) {
-    await ensureBinaryForTests(binary, options);
-  }
-}
-
-/**
  * Get the path to a binary for tests.
  * Throws if the binary is not installed.
  *
@@ -220,6 +187,3 @@ export function getBinaryPathForTests(
 
   return binaryPath;
 }
-
-// Re-export version constants for convenience
-export { CODE_SERVER_VERSION, OPENCODE_VERSION };

@@ -8,7 +8,7 @@
  * derived from the workspace stores.
  */
 
-import type { UIMode, UIModeChangedEvent } from "../../shared/ipc";
+import type { UIMode } from "../../shared/ipc";
 import type { ViewHandle } from "./types";
 import type { DevtoolsTarget, KeyboardTarget } from "./view-manager-types";
 
@@ -91,17 +91,14 @@ export interface IViewManager {
   focus(): void;
 
   /**
-   * Sets the UI mode. Pure state: notifies subscribers when the mode
-   * actually changes. No view operations are tied to mode anymore — the
-   * renderer derives everything visual from the mirrored mode state.
+   * Sets the UI mode. Pure state. No view operations are tied to mode
+   * anymore — the renderer derives everything visual from the mirrored
+   * mode state.
    */
   setMode(mode: UIMode): void;
 
   /** Returns the current UI mode. */
   getMode(): UIMode;
-
-  /** Subscribe to mode changes. */
-  onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe;
 
   /**
    * Capture a PNG screenshot of the active workspace iframe, by clipping a

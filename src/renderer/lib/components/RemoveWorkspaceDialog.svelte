@@ -9,11 +9,10 @@
   const logger = createLogger("ui");
 
   interface RemoveWorkspaceDialogProps {
-    open: boolean;
     workspaceRef: WorkspaceRef;
   }
 
-  let { open, workspaceRef }: RemoveWorkspaceDialogProps = $props();
+  let { workspaceRef }: RemoveWorkspaceDialogProps = $props();
 
   // Form state
   let keepBranch = $state(false);
@@ -33,8 +32,6 @@
   // Check workspace status on mount. refresh:true tells the operation to fetch
   // remotes first so unmerged-commit counts reflect server-merged branches.
   $effect(() => {
-    if (!open) return;
-
     isCheckingStatus = true;
     isDirty = false;
     unmergedCommits = 0;
@@ -83,14 +80,7 @@
   const descriptionId = "remove-workspace-desc";
 </script>
 
-<Dialog
-  {open}
-  onClose={handleCancel}
-  busy={false}
-  {titleId}
-  {descriptionId}
-  initialFocusSelector="vscode-button"
->
+<Dialog open={true} onClose={handleCancel} busy={false} {titleId} {descriptionId}>
   {#snippet title()}
     <h2 id={titleId} class="ch-dialog-title">Remove Workspace</h2>
   {/snippet}

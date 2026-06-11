@@ -380,12 +380,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         },
       } as OpenWorkspaceIntent);
 
-      const workspacePath =
-        wsResult && typeof wsResult === "object" && "path" in wsResult
-          ? (wsResult as { path: string }).path
-          : "";
-
-      if (!workspacePath) return;
+      const workspacePath = wsResult.path;
 
       // Set metadata
       const autoMetadata: Record<string, string> = {

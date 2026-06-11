@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createWindowBoundaryMock, type MockWindowBoundary } from "./window.state-mock";
-import { ShellError, isShellErrorWithCode } from "../../shared/errors/shell-errors";
+import { ShellError } from "../../shared/errors/shell-errors";
 
 describe("WindowBoundary (integration)", () => {
   let windowLayer: MockWindowBoundary;
@@ -31,9 +31,7 @@ describe("WindowBoundary (integration)", () => {
         minHeight: 300,
       });
 
-      const bounds = windowLayer.getBounds(handle);
-      expect(bounds.width).toBe(1200);
-      expect(bounds.height).toBe(800);
+      expect(windowLayer).toHaveWindowBounds(handle.id, { width: 1200, height: 800 });
     });
 
     it("creates a window with title", () => {
@@ -52,79 +50,7 @@ describe("WindowBoundary (integration)", () => {
     });
   });
 
-  describe("destroy", () => {
-    it("destroys an existing window", () => {
-      const handle = windowLayer.createWindow({});
-      windowLayer.destroy(handle);
-
-      expect(windowLayer.isDestroyed(handle)).toBe(true);
-      expect(windowLayer).toHaveWindowCount(0);
-    });
-
-    it("throws WINDOW_NOT_FOUND for non-existent window", () => {
-      const fakeHandle = { id: "window-999", __brand: "WindowHandle" as const };
-
-      expect(() => windowLayer.destroy(fakeHandle)).toThrow(ShellError);
-      expect(() => windowLayer.destroy(fakeHandle)).toThrow("Window window-999 not found");
-    });
-
-    it("throws WINDOW_HAS_ATTACHED_VIEWS when views are attached", () => {
-      const handle = windowLayer.createWindow({});
-      const viewHandle = { id: "view-1", __brand: "ViewHandle" as const };
-      windowLayer.trackAttachedView(handle, viewHandle);
-
-      expect(() => windowLayer.destroy(handle)).toThrow(ShellError);
-      try {
-        windowLayer.destroy(handle);
-      } catch (error) {
-        expect(isShellErrorWithCode(error, "WINDOW_HAS_ATTACHED_VIEWS")).toBe(true);
-      }
-    });
-
-    it("succeeds after views are untracked", () => {
-      const handle = windowLayer.createWindow({});
-      const viewHandle = { id: "view-1", __brand: "ViewHandle" as const };
-      windowLayer.trackAttachedView(handle, viewHandle);
-      windowLayer.untrackAttachedView(handle, viewHandle);
-
-      expect(() => windowLayer.destroy(handle)).not.toThrow();
-    });
-  });
-
-  describe("destroyAll", () => {
-    it("destroys all windows", () => {
-      windowLayer.createWindow({});
-      windowLayer.createWindow({});
-      windowLayer.createWindow({});
-
-      windowLayer.destroyAll();
-
-      expect(windowLayer).toHaveWindowCount(0);
-    });
-
-    it("throws when any window has attached views", () => {
-      const handle1 = windowLayer.createWindow({});
-      const handle2 = windowLayer.createWindow({});
-      const viewHandle = { id: "view-1", __brand: "ViewHandle" as const };
-      windowLayer.trackAttachedView(handle2, viewHandle);
-
-      expect(() => windowLayer.destroyAll()).toThrow(ShellError);
-
-      // Windows should still exist
-      expect(windowLayer).toHaveWindow(handle1.id);
-      expect(windowLayer).toHaveWindow(handle2.id);
-    });
-  });
-
   describe("bounds", () => {
-    it("gets window bounds", () => {
-      const handle = windowLayer.createWindow({ width: 1024, height: 768 });
-
-      const bounds = windowLayer.getBounds(handle);
-
-      expect(bounds).toEqual({ x: 0, y: 0, width: 1024, height: 768 });
-    });
-
     it("gets content bounds", () => {
       const handle = windowLayer.createWindow({ width: 1024, height: 768 });
 
@@ -133,19 +59,10 @@ describe("WindowBoundary (integration)", () => {
       expect(bounds).toEqual({ x: 0, y: 0, width: 1024, height: 768 });
     });
 
-    it("sets window bounds", () => {
-      const handle = windowLayer.createWindow({});
-      const newBounds = { x: 100, y: 50, width: 800, height: 600 };
-
-      windowLayer.setBounds(handle, newBounds);
-
-      expect(windowLayer.getBounds(handle)).toEqual(newBounds);
-    });
-
     it("throws for non-existent window", () => {
       const fakeHandle = { id: "window-999", __brand: "WindowHandle" as const };
 
-      expect(() => windowLayer.getBounds(fakeHandle)).toThrow(ShellError);
+      expect(() => windowLayer.getContentBounds(fakeHandle)).toThrow(ShellError);
     });
   });
 
@@ -153,9 +70,9 @@ describe("WindowBoundary (integration)", () => {
     it("maximizes a window", () => {
       const handle = windowLayer.createWindow({});
 
-      expect(windowLayer.isMaximized(handle)).toBe(false);
+      expect(windowLayer).not.toBeWindowMaximized(handle.id);
       windowLayer.maximize(handle);
-      expect(windowLayer.isMaximized(handle)).toBe(true);
+      expect(windowLayer).toBeWindowMaximized(handle.id);
     });
   });
 
@@ -169,21 +86,13 @@ describe("WindowBoundary (integration)", () => {
     });
   });
 
-  describe("close", () => {
-    it("marks window as destroyed", () => {
-      const handle = windowLayer.createWindow({});
-
-      windowLayer.close(handle);
-
-      expect(windowLayer.isDestroyed(handle)).toBe(true);
-    });
-
-    it("triggers close callbacks before destroying", () => {
+  describe("close events", () => {
+    it("triggers close callbacks", () => {
       const handle = windowLayer.createWindow({});
       const callback = vi.fn();
       windowLayer.onClose(handle, callback);
 
-      windowLayer.close(handle);
+      windowLayer.$.triggerClose(handle);
 
       expect(callback).toHaveBeenCalled();
     });
@@ -234,7 +143,7 @@ describe("WindowBoundary (integration)", () => {
       windowLayer.$.triggerMaximize(handle);
 
       expect(callback).toHaveBeenCalled();
-      expect(windowLayer.isMaximized(handle)).toBe(true);
+      expect(windowLayer).toBeWindowMaximized(handle.id);
     });
 
     it("triggers unmaximize callback and updates state", () => {
@@ -246,7 +155,7 @@ describe("WindowBoundary (integration)", () => {
       windowLayer.$.triggerUnmaximize(handle);
 
       expect(callback).toHaveBeenCalled();
-      expect(windowLayer.isMaximized(handle)).toBe(false);
+      expect(windowLayer).not.toBeWindowMaximized(handle.id);
     });
   });
 
@@ -283,39 +192,11 @@ describe("WindowBoundary (integration)", () => {
     });
   });
 
-  describe("view tracking", () => {
-    it("tracks attached views", () => {
-      const handle = windowLayer.createWindow({});
-      const viewHandle = { id: "view-1", __brand: "ViewHandle" as const };
-
-      windowLayer.trackAttachedView(handle, viewHandle);
-
-      expect(windowLayer).toHaveAttachedView(handle.id, "view-1");
-    });
-
-    it("untracks detached views", () => {
-      const handle = windowLayer.createWindow({});
-      const viewHandle = { id: "view-1", __brand: "ViewHandle" as const };
-
-      windowLayer.trackAttachedView(handle, viewHandle);
-      windowLayer.untrackAttachedView(handle, viewHandle);
-
-      expect(windowLayer).toHaveAttachedViewCount(handle.id, 0);
-    });
-  });
-
   describe("isDestroyed", () => {
     it("returns false for existing window", () => {
       const handle = windowLayer.createWindow({});
 
       expect(windowLayer.isDestroyed(handle)).toBe(false);
-    });
-
-    it("returns true for destroyed window", () => {
-      const handle = windowLayer.createWindow({});
-      windowLayer.destroy(handle);
-
-      expect(windowLayer.isDestroyed(handle)).toBe(true);
     });
 
     it("returns true for non-existent window", () => {

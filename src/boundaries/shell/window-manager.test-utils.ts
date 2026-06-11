@@ -22,7 +22,6 @@ export interface MockWindowManager {
   focus: Mock<WindowManager["focus"]>;
   setTitle: Mock<WindowManager["setTitle"]>;
   setOverlayIcon: Mock<WindowManager["setOverlayIcon"]>;
-  close: Mock<WindowManager["close"]>;
   getTheme: Mock<WindowManager["getTheme"]>;
   onThemeChange: Mock<WindowManager["onThemeChange"]>;
   /**
@@ -84,7 +83,6 @@ export function createMockWindowManager(options?: MockWindowManagerOptions): Moc
     setOverlayIcon: vi.fn((image: ImageHandle | null, description: string) => {
       overlayIconCalls.push({ image, description });
     }),
-    close: vi.fn(),
     getTheme: vi.fn(() => currentTheme),
     onThemeChange: vi.fn((cb: (theme: Theme) => void): Unsubscribe => {
       themeCallbacks.add(cb);

@@ -5,7 +5,6 @@
  * Tests the managed OpenCode server lifecycle:
  * - startServer: allocates port, spawns process, health check, stores port in memory
  * - stopServer: graceful shutdown, cleanup
- * - stopAllForProject: bulk cleanup
  * - dispose: full cleanup on shutdown
  */
 
@@ -99,12 +98,6 @@ describe("OpenCodeServerManager", () => {
       ]);
     });
 
-    it("stores port in memory after health check passes", async () => {
-      await manager.startServer("/workspace/feature-a");
-
-      expect(manager.getPort("/workspace/feature-a")).toBe(14001);
-    });
-
     it("fires onServerStarted callback with path, port, and undefined pending prompt", async () => {
       const callback = vi.fn();
       manager.onServerStarted(callback);
@@ -159,7 +152,7 @@ describe("OpenCodeServerManager", () => {
       });
       manager = new OpenCodeServerManager(
         mockProcessRunner,
-        mockPortManager,
+        createPortManagerMock([14001, 14002]),
         mockHttpClient,
         mockPathProvider,
         createMockAccessor("version.opencode", "1.0.223"),
@@ -172,8 +165,10 @@ describe("OpenCodeServerManager", () => {
         // Expected to throw
       }
 
-      // getPort should return undefined
-      expect(manager.getPort("/workspace/feature-a")).toBeUndefined();
+      // Entry was cleaned up — a retry attempts a fresh spawn instead of
+      // returning the stale failed entry
+      await expect(manager.startServer("/workspace/feature-a")).rejects.toThrow();
+      expect(mockProcessRunner.$.spawnedCount).toBe(2);
     });
 
     it("cleans up on health check timeout", async () => {
@@ -216,12 +211,14 @@ describe("OpenCodeServerManager", () => {
       expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
     });
 
-    it("removes port from memory", async () => {
+    it("removes server entry on stop", async () => {
       await manager.startServer("/workspace/feature-a");
 
       await manager.stopServer("/workspace/feature-a");
 
-      expect(manager.getPort("/workspace/feature-a")).toBeUndefined();
+      // Entry is gone — restart reports "not running"
+      const result = await manager.restartServer("/workspace/feature-a");
+      expect(result).toEqual({ success: false, error: "Server not running" });
     });
 
     it("fires onServerStopped callback", async () => {
@@ -357,37 +354,6 @@ describe("OpenCodeServerManager", () => {
     });
   });
 
-  describe("stopAllForProject", () => {
-    it("kills all workspace servers for project", async () => {
-      let processCount = 0;
-      mockProcessRunner = createMockProcessRunner({
-        onSpawn: () => ({
-          pid: 1001 + processCount++,
-          killResult: { success: true, reason: "SIGTERM" },
-        }),
-      });
-
-      // Create manager with multiple ports
-      const multiPortManager = createPortManagerMock([14001, 14002]);
-      manager = new OpenCodeServerManager(
-        mockProcessRunner,
-        multiPortManager,
-        mockHttpClient,
-        mockPathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
-        SILENT_LOGGER
-      );
-
-      await manager.startServer("/project/.worktrees/feature-a");
-      await manager.startServer("/project/.worktrees/feature-b");
-
-      await manager.stopAllForProject("/project");
-
-      expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
-      expect(mockProcessRunner.$.spawned(1)).toHaveBeenKilled();
-    });
-  });
-
   describe("concurrent starts", () => {
     it("get unique ports", async () => {
       // Create manager with multiple ports for concurrent starts
@@ -416,18 +382,6 @@ describe("OpenCodeServerManager", () => {
       ]);
 
       expect(port1).not.toBe(port2);
-    });
-  });
-
-  describe("getPort", () => {
-    it("returns correct port for workspace", async () => {
-      await manager.startServer("/workspace/feature-a");
-
-      expect(manager.getPort("/workspace/feature-a")).toBe(14001);
-    });
-
-    it("returns undefined for unknown workspace", () => {
-      expect(manager.getPort("/workspace/unknown")).toBeUndefined();
     });
   });
 

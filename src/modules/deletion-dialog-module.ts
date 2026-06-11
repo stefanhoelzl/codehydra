@@ -22,7 +22,6 @@ import type { DeletionProgress, DeletionOperationStatus } from "../shared/api/ty
 import {
   EVENT_WORKSPACE_DELETION_PROGRESS,
   EVENT_WORKSPACE_DELETED,
-  EVENT_WORKSPACE_DELETE_FAILED,
   INTENT_DELETE_WORKSPACE,
 } from "../intents/delete-workspace";
 import type {
@@ -272,11 +271,6 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
           closeActiveDialog();
         }
         progressMap.delete(workspacePath);
-      },
-    },
-    [EVENT_WORKSPACE_DELETE_FAILED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        void event;
       },
     },
   };

@@ -6,8 +6,6 @@
  * Validation schemas are in src/main/ipc/validation.ts.
  */
 
-import type { InitialPrompt } from "./api/types";
-
 // ============ Branded Path Types ============
 
 declare const ProjectPathBrand: unique symbol;
@@ -72,9 +70,6 @@ export interface UIModeChangedEvent {
 // ============ IPC Handler Payload Types ============
 // Payload types for IPC handlers registered in the UiIpc module.
 
-/** Methods with no input - use empty object {} */
-export type EmptyPayload = object;
-
 /** projects.open */
 export interface ProjectOpenPayload {
   readonly path?: string;
@@ -85,20 +80,6 @@ export interface ProjectClosePayload {
   readonly projectPath: string;
   /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
   readonly removeLocalRepo?: boolean;
-}
-
-/** workspaces.create */
-export interface WorkspaceCreatePayload {
-  readonly projectPath: string;
-  readonly name: string;
-  readonly base: string;
-  /** Optional initial prompt to send after workspace is created */
-  readonly initialPrompt?: InitialPrompt;
-  /** If true, steal focus from current workspace. If false, don't steal focus but still
-   *  switch when no workspace is active. Default: switch (undefined treated as true). */
-  readonly stealFocus?: boolean;
-  /** Optional per-workspace agent override. When omitted, falls back to the global default. */
-  readonly agent?: LifecycleAgentType;
 }
 
 /** workspaces.remove */
@@ -147,7 +128,6 @@ export const ApiIpcChannels = {
   PROJECT_OPEN: "api:project:open",
   PROJECT_CLOSE: "api:project:close",
   // Workspace commands
-  WORKSPACE_CREATE: "api:workspace:create",
   WORKSPACE_REMOVE: "api:workspace:remove",
   WORKSPACE_HIBERNATE: "api:workspace:hibernate",
   WORKSPACE_WAKE: "api:workspace:wake",

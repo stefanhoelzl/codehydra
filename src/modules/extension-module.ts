@@ -49,15 +49,6 @@ function validateExtensionsManifest(value: unknown): ExtensionsManifestValidatio
   const extensions: ExtensionConfig[] = [];
   for (let i = 0; i < value.length; i++) {
     const item = value[i];
-    if (typeof item === "string") {
-      return {
-        isValid: false,
-        error:
-          `manifest.json[${i}] is a string but should be an object with { id, version, vsix }. ` +
-          `Found: "${item}". ` +
-          `Please update manifest.json to use the new format.`,
-      };
-    }
     if (typeof item !== "object" || item === null) {
       return {
         isValid: false,

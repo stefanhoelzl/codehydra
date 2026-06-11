@@ -28,7 +28,7 @@ import type {
 import { createPluginServerModule, type PluginServerModuleDeps } from "./plugin-server-module";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { COMMAND_TIMEOUT_MS, SHUTDOWN_DISCONNECT_TIMEOUT_MS } from "../shared/plugin-protocol";
+import { COMMAND_TIMEOUT_MS } from "../shared/plugin-protocol";
 
 // =============================================================================
 // Minimal Test Operations
@@ -126,10 +126,6 @@ describe("PluginServerModule", () => {
   describe("constants", () => {
     it("COMMAND_TIMEOUT_MS is 10 seconds", () => {
       expect(COMMAND_TIMEOUT_MS).toBe(10_000);
-    });
-
-    it("SHUTDOWN_DISCONNECT_TIMEOUT_MS is 5 seconds", () => {
-      expect(SHUTDOWN_DISCONNECT_TIMEOUT_MS).toBe(5_000);
     });
   });
 

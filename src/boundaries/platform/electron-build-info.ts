@@ -16,7 +16,7 @@ import type { BuildInfo } from "./build-info";
  *
  * @returns Current branch name or "unknown branch" on failure
  */
-export function getGitBranch(): string {
+function getGitBranch(): string {
   try {
     return execSync("git rev-parse --abbrev-ref HEAD", {
       encoding: "utf-8",

@@ -8,7 +8,6 @@ import {
   ProjectStoreError,
   OpenCodeError,
   FileSystemError,
-  isServiceError,
   getErrorMessage,
 } from "./service-errors";
 
@@ -232,45 +231,6 @@ describe("FileSystemError", () => {
       expect(json.code).toBe(code);
       expect(json.path).toBe(path);
     }
-  });
-});
-
-describe("isServiceError", () => {
-  it("returns true for GitError", () => {
-    const error = new GitError("test");
-    expect(isServiceError(error)).toBe(true);
-  });
-
-  it("returns true for WorkspaceError", () => {
-    const error = new WorkspaceError("test");
-    expect(isServiceError(error)).toBe(true);
-  });
-
-  it("returns true for CodeServerError", () => {
-    const error = new CodeServerError("test");
-    expect(isServiceError(error)).toBe(true);
-  });
-
-  it("returns true for ProjectStoreError", () => {
-    const error = new ProjectStoreError("test");
-    expect(isServiceError(error)).toBe(true);
-  });
-
-  it("returns true for FileSystemError", () => {
-    const error = new FileSystemError("ENOENT", "/path", "Not found");
-    expect(isServiceError(error)).toBe(true);
-  });
-
-  it("returns false for regular Error", () => {
-    const error = new Error("test");
-    expect(isServiceError(error)).toBe(false);
-  });
-
-  it("returns false for non-error objects", () => {
-    expect(isServiceError({ message: "test" })).toBe(false);
-    expect(isServiceError("test")).toBe(false);
-    expect(isServiceError(null)).toBe(false);
-    expect(isServiceError(undefined)).toBe(false);
   });
 });
 

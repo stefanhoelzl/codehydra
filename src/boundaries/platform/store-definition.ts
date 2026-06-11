@@ -383,14 +383,6 @@ export class PersistedDefinitions {
     return this.map.get(key);
   }
 
-  get size(): number {
-    return this.map.size;
-  }
-
-  entries(): IterableIterator<[string, PersistedKeyDefinition<unknown>]> {
-    return this.map.entries();
-  }
-
   /** The underlying map as a ReadonlyMap, for help-text generation and the public getter. */
   asReadonlyMap(): ReadonlyMap<string, PersistedKeyDefinition<unknown>> {
     return this.map;

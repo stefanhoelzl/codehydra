@@ -25,7 +25,7 @@ const normalizePath = (p: string) => p.replace(/\\/g, "/");
 describe("KeepFilesService", () => {
   describe("copyToWorkspace", () => {
     describe("no .keepfiles config", () => {
-      it("returns configExists: false when no .keepfiles", async () => {
+      it("copies nothing when no .keepfiles", async () => {
         // Empty filesystem - .keepfiles doesn't exist
         const mockFs = createFileSystemMock({
           entries: {
@@ -37,15 +37,13 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        expect(result.configExists).toBe(false);
         expect(result.copiedCount).toBe(0);
-        expect(result.skippedCount).toBe(0);
         expect(result.errors).toHaveLength(0);
       });
     });
 
     describe("empty .keepfiles config", () => {
-      it("returns configExists: true with copiedCount: 0 when .keepfiles is empty", async () => {
+      it("copies nothing when .keepfiles is empty", async () => {
         const mockFs = createFileSystemMock({
           entries: {
             "/project": directory(),
@@ -57,9 +55,7 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(0);
-        expect(result.skippedCount).toBe(0);
         expect(result.errors).toHaveLength(0);
       });
     });
@@ -77,7 +73,6 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(0);
       });
 
@@ -93,7 +88,6 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(0);
       });
     });
@@ -112,7 +106,6 @@ describe("KeepFilesService", () => {
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
-        expect(result.configExists).toBe(true);
         expect(result.copiedCount).toBe(1);
         // Verify the file was copied
         expect(mockFs).toHaveFile("/workspace/.env", "ENV_VAR=value");
@@ -156,7 +149,6 @@ describe("KeepFilesService", () => {
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
-          symlink: vi.fn(),
           rename: vi.fn(),
           mkdtemp: vi.fn(),
         };
@@ -223,7 +215,6 @@ describe("KeepFilesService", () => {
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
-          symlink: vi.fn(),
           rename: vi.fn(),
           mkdtemp: vi.fn(),
         };
@@ -232,7 +223,7 @@ describe("KeepFilesService", () => {
         const result = await service.copyToWorkspace(new Path(projectRoot), new Path("/workspace"));
 
         expect(result.copiedCount).toBe(1);
-        expect(result.skippedCount).toBe(1);
+        expect(copyTreeFn).toHaveBeenCalledTimes(1);
       });
     });
 
@@ -262,7 +253,6 @@ describe("KeepFilesService", () => {
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
-          symlink: vi.fn(),
           rename: vi.fn(),
           mkdtemp: vi.fn(),
         };
@@ -296,7 +286,6 @@ describe("KeepFilesService", () => {
           unlink: vi.fn(),
           rm: vi.fn(),
           makeExecutable: vi.fn(),
-          symlink: vi.fn(),
           rename: vi.fn(),
           mkdtemp: vi.fn(),
         };
@@ -311,7 +300,7 @@ describe("KeepFilesService", () => {
     });
 
     describe("symlink handling", () => {
-      it("skips symlinks and counts them in skippedCount", async () => {
+      it("skips symlinks", async () => {
         const mockFs = createFileSystemMock({
           entries: {
             "/project": directory(),
@@ -326,8 +315,8 @@ describe("KeepFilesService", () => {
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.copiedCount).toBe(1);
-        expect(result.skippedCount).toBe(1);
         expect(mockFs).toHaveFile("/workspace/file.txt", "content");
+        expect(mockFs).not.toHaveFile("/workspace/link.txt");
       });
     });
 

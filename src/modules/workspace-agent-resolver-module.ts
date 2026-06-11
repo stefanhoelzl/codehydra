@@ -44,7 +44,7 @@ import {
   type AgentLifecycleHookInput,
 } from "../intents/agent-lifecycle";
 
-export const AGENT_METADATA_KEY = "agent";
+const AGENT_METADATA_KEY = "agent";
 
 interface WorkspaceAgentResolverDeps {
   readonly gitWorktreeProvider: GitWorktreeProvider;

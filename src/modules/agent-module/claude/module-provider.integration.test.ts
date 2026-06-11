@@ -46,7 +46,6 @@ vi.mock("./provider", () => ({
     });
     getSession = vi.fn().mockReturnValue({ port: 8080, sessionId: "s1" });
     getEnvironmentVariables = vi.fn().mockReturnValue({ CLAUDE_PORT: "8080" });
-    markActive = vi.fn();
     constructor() {
       capturedStatusCallback = null;
       latestMockProvider = this as unknown as AgentProvider;
@@ -65,7 +64,6 @@ function createMockServerManager(): ClaudeCodeServerManager {
     restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
     dispose: vi.fn().mockResolvedValue(undefined),
     setMcpConfig: vi.fn(),
-    setMarkActiveHandler: vi.fn(),
     setInitialPrompt: vi.fn().mockResolvedValue(undefined),
     setNoSessionMarker: vi.fn().mockResolvedValue(undefined),
     onServerStarted: vi.fn().mockReturnValue(vi.fn()),
@@ -195,7 +193,6 @@ describe("createClaudeModuleProvider", () => {
 
       provider.initialize({ port: 9999 });
 
-      expect(mockServerManager.setMarkActiveHandler).toHaveBeenCalled();
       expect(mockServerManager.onServerStarted).toHaveBeenCalled();
       expect(mockServerManager.onServerStopped).toHaveBeenCalled();
       expect(mockServerManager.setMcpConfig).toHaveBeenCalledWith({ port: 9999 });
@@ -206,7 +203,6 @@ describe("createClaudeModuleProvider", () => {
 
       provider.initialize(null);
 
-      expect(mockServerManager.setMarkActiveHandler).toHaveBeenCalled();
       expect(mockServerManager.onServerStarted).toHaveBeenCalled();
       expect(mockServerManager.onServerStopped).toHaveBeenCalled();
       expect(mockServerManager.setMcpConfig).not.toHaveBeenCalled();
@@ -552,95 +548,6 @@ describe("createClaudeModuleProvider", () => {
 
       expect(mockServerManager.restartServer).toHaveBeenCalledWith(WS_PATH);
       expect(result).toEqual({ success: true, port: 8080 });
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // markActive via setMarkActiveHandler
-  // ---------------------------------------------------------------------------
-
-  describe("markActive handler", () => {
-    it("marks provider active when setMarkActiveHandler fires", async () => {
-      const provider = createProvider();
-      provider.initialize({ port: 9999 });
-
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      await onStartedCb(WS_PATH, 8080);
-
-      // Get the markActiveHandler
-      const markActiveHandler = (mockServerManager.setMarkActiveHandler as ReturnType<typeof vi.fn>)
-        .mock.calls[0]![0] as (workspacePath: string) => void;
-
-      markActiveHandler(WS_PATH);
-
-      expect(latestMockProvider.markActive).toHaveBeenCalled();
-    });
-
-    it("restores markActive on server restart when workspace was previously attached", async () => {
-      const provider = createProvider();
-      provider.initialize({ port: 9999 });
-
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      const markActiveHandler = (mockServerManager.setMarkActiveHandler as ReturnType<typeof vi.fn>)
-        .mock.calls[0]![0] as (workspacePath: string) => void;
-
-      // First start + mark active
-      await onStartedCb(WS_PATH, 8080);
-      markActiveHandler(WS_PATH);
-
-      const firstProvider = latestMockProvider;
-      expect(firstProvider.markActive).toHaveBeenCalledTimes(1);
-
-      // Simulate restart: stop, remove old provider, start new
-      const onStoppedCb = (mockServerManager.onServerStopped as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, isRestart: boolean) => void;
-
-      // Full stop to remove provider, then re-create
-      onStoppedCb(WS_PATH, false);
-
-      // New server start creates a new provider
-      await onStartedCb(WS_PATH, 8080);
-      const newProvider = latestMockProvider;
-
-      // New provider should be marked active because workspace was in tuiAttachedWorkspaces
-      expect(newProvider.markActive).toHaveBeenCalled();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // clearWorkspaceTracking
-  // ---------------------------------------------------------------------------
-
-  describe("clearWorkspaceTracking", () => {
-    it("removes workspace from tuiAttachedWorkspaces", async () => {
-      const provider = createProvider();
-      provider.initialize({ port: 9999 });
-
-      const onStartedCb = (mockServerManager.onServerStarted as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, port: number) => void;
-      const markActiveHandler = (mockServerManager.setMarkActiveHandler as ReturnType<typeof vi.fn>)
-        .mock.calls[0]![0] as (workspacePath: string) => void;
-
-      // Start and mark active
-      await onStartedCb(WS_PATH, 8080);
-      markActiveHandler(WS_PATH);
-
-      // Clear tracking
-      provider.clearWorkspaceTracking(WS_PATH);
-
-      // Remove existing provider via full stop
-      const onStoppedCb = (mockServerManager.onServerStopped as ReturnType<typeof vi.fn>).mock
-        .calls[0]![0] as (workspacePath: string, isRestart: boolean) => void;
-      onStoppedCb(WS_PATH, false);
-
-      // Create new provider: should NOT be auto-marked active
-      await onStartedCb(WS_PATH, 8080);
-      const newProvider = latestMockProvider;
-
-      // markActive should not have been called on the new provider
-      expect(newProvider.markActive).not.toHaveBeenCalled();
     });
   });
 

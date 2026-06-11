@@ -19,18 +19,16 @@
   const { section, value, onInput, onSubmit }: Props = $props();
 
   /**
-   * Focus the textarea and either select the seeded text or place the caret
-   * at `cursorOffset`. Also re-focuses the textarea when Alt is released:
-   * Chromium's default Alt-up handler activates the window menu and pulls
-   * focus out of the WebContents, which after Alt+X+B would otherwise leave
-   * the dialog with no caret. (Electron #37336 prevents us from suppressing
-   * Alt at the keyDown layer.)
+   * Focus the textarea and optionally select the seeded text. Also re-focuses
+   * the textarea when Alt is released: Chromium's default Alt-up handler
+   * activates the window menu and pulls focus out of the WebContents, which
+   * after Alt+X+B would otherwise leave the dialog with no caret. (Electron
+   * #37336 prevents us from suppressing Alt at the keyDown layer.)
    */
   function seedCursor(
     node: HTMLTextAreaElement,
     params: {
       initialValue: string | undefined;
-      cursorOffset: number | undefined;
       selectInitialValue: boolean | undefined;
     }
   ): { destroy: () => void } | void {
@@ -40,9 +38,6 @@
       node.focus();
       if (params.selectInitialValue) {
         node.setSelectionRange(0, length);
-      } else if (params.cursorOffset !== undefined) {
-        const offset = Math.max(0, Math.min(params.cursorOffset, length));
-        node.setSelectionRange(offset, offset);
       }
       node.scrollTop = 0;
     });
@@ -107,7 +102,6 @@
       {value}
       use:seedCursor={{
         initialValue: section.initialValue,
-        cursorOffset: section.cursorOffset,
         selectInitialValue: section.selectInitialValue,
       }}
       oninput={(e) => {

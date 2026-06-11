@@ -38,7 +38,7 @@ export interface IdempotencyRule {
  * Create an IntentModule that enforces idempotency for the given rules.
  *
  * Returns a module with:
- * - One interceptor (id: "idempotency", order: 0) covering all rules
+ * - One interceptor (id: "idempotency") covering all rules
  * - Event handlers for each unique `resetOn` value
  */
 export function createIdempotencyModule(rules: readonly IdempotencyRule[]): IntentModule {
@@ -101,7 +101,6 @@ export function createIdempotencyModule(rules: readonly IdempotencyRule[]): Inte
     interceptors: [
       {
         id: "idempotency",
-        order: 0,
         async before(intent: Intent): Promise<Intent | null> {
           const rule = rulesByIntent.get(intent.type);
           if (!rule) {

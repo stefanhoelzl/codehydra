@@ -193,12 +193,6 @@ export interface Logging {
   initialize(): void;
 
   /**
-   * Dispose of the logging service.
-   * Cleans up any resources (e.g., IPC handlers).
-   */
-  dispose(): void;
-
-  /**
    * Get the current session's log file path.
    *
    * @returns Absolute path to the session log file

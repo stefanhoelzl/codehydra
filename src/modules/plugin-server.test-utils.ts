@@ -177,7 +177,7 @@ export function createMockCommandHandler(
 /**
  * Create a mock dispatch function that returns IntentHandle with configurable results.
  */
-export function createMockDispatch(resolveWith?: unknown, options?: { accepted?: boolean }): Mock {
+function createMockDispatch(resolveWith?: unknown, options?: { accepted?: boolean }): Mock {
   return vi.fn().mockImplementation(() => {
     const handle = new IntentHandle();
     handle.signalAccepted(options?.accepted ?? true);

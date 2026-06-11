@@ -60,15 +60,6 @@ export const notifications = {
 };
 
 /**
- * Reactive getter for whether any notifications are active.
- */
-export const hasNotifications = {
-  get value(): boolean {
-    return _notifications.size > 0;
-  },
-};
-
-/**
  * Reactive getter for whether any spinner-type notifications are active.
  * Replaces hasActiveClones — used to suppress auto-show-create-dialog while background work runs.
  */
@@ -80,10 +71,3 @@ export const hasSpinnerNotifications = {
     return false;
   },
 };
-
-/**
- * Reset store to initial state. Used for testing.
- */
-export function reset(): void {
-  _notifications.clear();
-}

@@ -9,7 +9,7 @@ import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
 import type { NotificationUserEvent } from "./notification-types";
 
-import type { Project, Workspace, WorkspaceStatus, InitialPrompt } from "./api/types";
+import type { Project, Workspace, WorkspaceStatus } from "./api/types";
 
 /**
  * Function to unsubscribe from an event.
@@ -32,16 +32,6 @@ export interface Api {
     close(projectPath: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
   };
   workspaces: {
-    create(
-      projectPath: string,
-      name: string,
-      base: string,
-      options?: {
-        initialPrompt?: InitialPrompt;
-        stealFocus?: boolean;
-        agent?: LifecycleAgentType;
-      }
-    ): Promise<Workspace>;
     /**
      * Start workspace removal (fire-and-forget).
      * Progress is emitted via workspace:deletion-progress events.

@@ -593,7 +593,7 @@ On first startup (no `config.json` exists), the application follows this flow:
 
 2. **Agent Selection**: When `agent` is null, UI shows `AgentSelectionDialog`. User selects Claude or OpenCode, which calls `lifecycle.setAgent()` to save the choice.
 
-3. **Binary Resolution**: `BinaryResolutionService.resolve()` determines binary availability:
+3. **Binary Resolution**: Binary availability is determined per binary:
    - For code-server (pinned version): Check exact version in bundles directory
    - For agents with null version (Claude, OpenCode):
      1. Check system binary via `which`/`where`
@@ -748,16 +748,15 @@ CodeHydra uses a CSS custom properties system for theming, with support for both
 
 ### Variable Categories
 
-| Category    | Variables                                                     | Purpose                  |
-| ----------- | ------------------------------------------------------------- | ------------------------ |
-| Core        | `--ch-foreground`, `--ch-background`                          | Base text and background |
-| Border      | `--ch-border`, `--ch-input-border`, `--ch-input-hover-border` | Borders and dividers     |
-| Interactive | `--ch-button-bg`, `--ch-button-fg`, `--ch-button-hover-bg`    | Buttons, inputs, forms   |
-| Focus       | `--ch-focus-border`                                           | Focus indicators         |
-| Semantic    | `--ch-success`, `--ch-danger`, `--ch-warning`                 | Status colors            |
-| Agent       | `--ch-agent-idle`, `--ch-agent-busy`                          | Agent status (semantic)  |
-| Overlay     | `--ch-overlay-bg`, `--ch-shadow-color`, `--ch-shadow`         | Modals, tooltips         |
-| Layout      | `--ch-sidebar-width`, `--ch-dialog-max-width`                 | Sizing (theme-agnostic)  |
+| Category | Variables                                                     | Purpose                  |
+| -------- | ------------------------------------------------------------- | ------------------------ |
+| Core     | `--ch-foreground`, `--ch-background`                          | Base text and background |
+| Border   | `--ch-border`, `--ch-input-border`, `--ch-input-hover-border` | Borders and dividers     |
+| Focus    | `--ch-focus-border`                                           | Focus indicators         |
+| Semantic | `--ch-success`, `--ch-danger`, `--ch-warning`                 | Status colors            |
+| Agent    | `--ch-agent-idle`, `--ch-agent-busy`                          | Agent status (semantic)  |
+| Overlay  | `--ch-overlay-bg`, `--ch-shadow`                              | Modals, tooltips         |
+| Layout   | `--ch-sidebar-width`, `--ch-dialog-max-width`                 | Sizing (theme-agnostic)  |
 
 ### VS Code Variable Fallback Pattern
 

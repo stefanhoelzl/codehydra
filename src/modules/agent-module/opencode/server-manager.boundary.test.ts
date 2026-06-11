@@ -82,7 +82,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
 
       expect(port).toBeGreaterThan(0);
       expect(port).toBeLessThan(65536);
-      expect(manager.getPort(workspacePath)).toBe(port);
     },
     CI_TIMEOUT_MS
   );
@@ -146,34 +145,6 @@ describe("OpenCodeServerManager Boundary Tests", () => {
       } catch {
         // Expected - server should be stopped
       }
-    },
-    CI_TIMEOUT_MS
-  );
-
-  it(
-    "port is stored in memory after start",
-    async () => {
-      manager = new OpenCodeServerManager(
-        processRunner,
-        networkLayer,
-        networkLayer,
-        pathProvider,
-        createMockAccessor("version.opencode", "1.0.223"),
-        SILENT_LOGGER,
-        { healthCheckTimeoutMs: CI_TIMEOUT_MS }
-      );
-
-      const workspacePath = join(testDir, "workspace");
-      const port = await manager.startServer(workspacePath);
-
-      // Port should be retrievable via getPort
-      expect(manager.getPort(workspacePath)).toBe(port);
-
-      // Stop server
-      await manager.stopServer(workspacePath);
-
-      // Port should no longer be available
-      expect(manager.getPort(workspacePath)).toBeUndefined();
     },
     CI_TIMEOUT_MS
   );

@@ -62,19 +62,6 @@ const _sortedProjects = $derived(
 );
 
 /**
- * Projects with IDs (v2 API projects already include IDs).
- * This is an alias for sorted projects since they already have IDs from the API.
- */
-const _projectsWithIds = $derived(_sortedProjects);
-
-/**
- * Active project with ID.
- */
-const _activeProject = $derived<Project | undefined>(
-  _projectsWithIds.find((p) => p.workspaces.some((w) => w.path === _activeWorkspacePath))
-);
-
-/**
  * Active workspace as WorkspaceRef (includes projectId).
  * Returns null if no active workspace.
  */
@@ -82,7 +69,7 @@ const _activeWorkspace = $derived.by((): WorkspaceRef | null => {
   if (!_activeWorkspacePath) return null;
 
   // Find the project and workspace
-  for (const project of _projectsWithIds) {
+  for (const project of _sortedProjects) {
     const workspace = project.workspaces.find((w) => w.path === _activeWorkspacePath);
     if (workspace) {
       return {
@@ -99,19 +86,13 @@ const _activeWorkspace = $derived.by((): WorkspaceRef | null => {
 
 export const projects = {
   get value() {
-    return _projectsWithIds;
+    return _sortedProjects;
   },
 };
 
 export const activeWorkspacePath = {
   get value() {
     return _activeWorkspacePath;
-  },
-};
-
-export const activeProject = {
-  get value() {
-    return _activeProject;
   },
 };
 
@@ -297,18 +278,4 @@ export function findWorkspaceIndex(path: string | null): number {
  */
 export function wrapIndex(index: number, length: number): number {
   return ((index % length) + length) % length;
-}
-
-// =============================================================================
-// v2 API Functions
-// =============================================================================
-
-/**
- * Get a project by its ID.
- * @param id - The project ID to look up (can be undefined)
- * @returns The project if found, undefined otherwise
- */
-export function getProjectById(id: ProjectId | undefined): Project | undefined {
-  if (id === undefined) return undefined;
-  return _projectsWithIds.find((p) => p.id === id);
 }

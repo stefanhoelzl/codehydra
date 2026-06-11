@@ -313,25 +313,15 @@ export class SimpleGitClient implements IGitClient {
     return status;
   }
 
-  async fetch(repoPath: Path, remote?: string): Promise<void> {
-    await this.wrapGitOperation(
-      async () => {
-        const git = this.getGit(repoPath);
-        if (remote) {
-          // Use array format to ensure remote is treated as remote name, not refspec
-          // Include --prune to remove stale remote-tracking branches
-          await git.fetch([remote, "--prune"]);
-        } else {
-          // Fetch all remotes with pruning
-          await git.fetch(["--all", "--prune"]);
-        }
-      },
-      `Failed to fetch${remote ? ` from ${remote}` : ""}`
-    );
-    if (remote) {
-      await this.updateRemoteHead(repoPath, remote);
-    }
-    this.logger.debug("Fetch", { path: repoPath.toString(), remote: remote ?? "all" });
+  async fetch(repoPath: Path, remote: string): Promise<void> {
+    await this.wrapGitOperation(async () => {
+      const git = this.getGit(repoPath);
+      // Use array format to ensure remote is treated as remote name, not refspec
+      // Include --prune to remove stale remote-tracking branches
+      await git.fetch([remote, "--prune"]);
+    }, `Failed to fetch from ${remote}`);
+    await this.updateRemoteHead(repoPath, remote);
+    this.logger.debug("Fetch", { path: repoPath.toString(), remote });
   }
 
   /**
@@ -511,14 +501,6 @@ export class SimpleGitClient implements IGitClient {
         await bareGit.branch(["-D", branchName]);
       }
     }, `Failed to clone repository from ${url}`);
-  }
-
-  async isBare(repoPath: Path): Promise<boolean> {
-    return this.wrapGitOperation(async () => {
-      const git = this.getGit(repoPath);
-      const result = await git.revparse(["--is-bare-repository"]);
-      return result.trim() === "true";
-    }, "Failed to check if repository is bare");
   }
 
   async init(targetPath: Path, options?: { initialCommit?: string }): Promise<void> {

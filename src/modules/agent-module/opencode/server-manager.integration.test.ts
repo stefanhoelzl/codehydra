@@ -5,7 +5,6 @@
  * Tests the full lifecycle of OpenCode servers managed by AgentModule:
  * - Server starts when workspace is added
  * - Server stops when workspace is removed
- * - All servers stop when project is closed
  * - Callbacks fire correctly for start/stop events
  */
 
@@ -129,11 +128,10 @@ describe("OpenCodeServerManager integration", () => {
       // Start
       const port = await serverManager.startServer("/workspace/feature-a");
       expect(port).toBe(14001);
-      expect(serverManager.getPort("/workspace/feature-a")).toBe(14001);
 
       // Stop
       await serverManager.stopServer("/workspace/feature-a");
-      expect(serverManager.getPort("/workspace/feature-a")).toBeUndefined();
+      expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
     });
   });
 
@@ -146,37 +144,6 @@ describe("OpenCodeServerManager integration", () => {
       expect(port1).toBe(14001);
       expect(port2).toBe(14002);
       expect(port3).toBe(14003);
-
-      expect(serverManager.getPort("/workspace/feature-a")).toBe(14001);
-      expect(serverManager.getPort("/workspace/feature-b")).toBe(14002);
-      expect(serverManager.getPort("/workspace/feature-c")).toBe(14003);
-    });
-  });
-
-  describe("project close cleanup", () => {
-    it("all servers killed when project is closed", async () => {
-      // Start multiple servers for the same project
-      await serverManager.startServer("/project/.worktrees/feature-a");
-      await serverManager.startServer("/project/.worktrees/feature-b");
-      await serverManager.startServer("/project/.worktrees/feature-c");
-
-      // All should be running
-      expect(serverManager.getPort("/project/.worktrees/feature-a")).toBeDefined();
-      expect(serverManager.getPort("/project/.worktrees/feature-b")).toBeDefined();
-      expect(serverManager.getPort("/project/.worktrees/feature-c")).toBeDefined();
-
-      // Close project
-      await serverManager.stopAllForProject("/project");
-
-      // All should be stopped
-      expect(serverManager.getPort("/project/.worktrees/feature-a")).toBeUndefined();
-      expect(serverManager.getPort("/project/.worktrees/feature-b")).toBeUndefined();
-      expect(serverManager.getPort("/project/.worktrees/feature-c")).toBeUndefined();
-
-      // All processes should have been killed
-      expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
-      expect(mockProcessRunner.$.spawned(1)).toHaveBeenKilled();
-      expect(mockProcessRunner.$.spawned(2)).toHaveBeenKilled();
     });
   });
 
@@ -193,7 +160,6 @@ describe("OpenCodeServerManager integration", () => {
       if (result.success) {
         expect(result.port).toBe(14001);
       }
-      expect(serverManager.getPort("/workspace/feature-a")).toBe(14001);
     });
 
     it("restartServer fails if server not running", async () => {
@@ -202,7 +168,6 @@ describe("OpenCodeServerManager integration", () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain("not running");
-        expect(result.serverStopped).toBe(false);
       }
     });
 
@@ -290,9 +255,6 @@ describe("OpenCodeServerManager integration", () => {
         const result = await shortTimeoutManager.restartServer("/workspace/feature-a");
 
         expect(result.success).toBe(false);
-        if (!result.success) {
-          expect(result.serverStopped).toBe(true);
-        }
       } finally {
         await shortTimeoutManager.dispose();
       }
@@ -300,16 +262,6 @@ describe("OpenCodeServerManager integration", () => {
   });
 
   describe("agent terminal lifecycle (triggerWrapperStart)", () => {
-    it("fires onWorkspaceReady callback on triggerWrapperStart", async () => {
-      const readyCallback = vi.fn();
-      serverManager.onWorkspaceReady(readyCallback);
-
-      await serverManager.startServer("/workspace/feature-a");
-      serverManager.triggerWrapperStart("/workspace/feature-a");
-
-      expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
-    });
-
     it("calls markActiveHandler on triggerWrapperStart", async () => {
       const markActiveHandler = vi.fn();
       serverManager.setMarkActiveHandler(markActiveHandler);
@@ -320,14 +272,14 @@ describe("OpenCodeServerManager integration", () => {
       expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
     });
 
-    it("normalizes the workspace path passed to callbacks", async () => {
-      const readyCallback = vi.fn();
-      serverManager.onWorkspaceReady(readyCallback);
+    it("normalizes the workspace path passed to the handler", async () => {
+      const markActiveHandler = vi.fn();
+      serverManager.setMarkActiveHandler(markActiveHandler);
 
       await serverManager.startServer("/workspace/feature-a");
       serverManager.triggerWrapperStart("/workspace/feature-a/");
 
-      expect(readyCallback).toHaveBeenCalledWith("/workspace/feature-a");
+      expect(markActiveHandler).toHaveBeenCalledWith("/workspace/feature-a");
     });
   });
 
@@ -339,9 +291,9 @@ describe("OpenCodeServerManager integration", () => {
         await serverManager.stopServer(`/workspace/feature-${i}`);
       }
 
-      // No servers should be running
+      // Every spawned process should have been killed
       for (let i = 0; i < 5; i++) {
-        expect(serverManager.getPort(`/workspace/feature-${i}`)).toBeUndefined();
+        expect(mockProcessRunner.$.spawned(i)).toHaveBeenKilled();
       }
     });
 
@@ -365,10 +317,10 @@ describe("OpenCodeServerManager integration", () => {
         serverManager.stopServer("/workspace/feature-c"),
       ]);
 
-      // All should be stopped
-      expect(serverManager.getPort("/workspace/feature-a")).toBeUndefined();
-      expect(serverManager.getPort("/workspace/feature-b")).toBeUndefined();
-      expect(serverManager.getPort("/workspace/feature-c")).toBeUndefined();
+      // All processes should have been killed
+      expect(mockProcessRunner.$.spawned(0)).toHaveBeenKilled();
+      expect(mockProcessRunner.$.spawned(1)).toHaveBeenKilled();
+      expect(mockProcessRunner.$.spawned(2)).toHaveBeenKilled();
     });
   });
 });

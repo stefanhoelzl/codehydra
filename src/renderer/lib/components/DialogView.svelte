@@ -30,7 +30,7 @@
 
 <div class="dialog-view" class:workspace-area={workspaceArea} role="dialog" aria-label={heading}>
   <div class="backdrop" aria-hidden="true">
-    <Logo size={128} />
+    <Logo />
   </div>
   <div class="card">
     <Form {dialogId} {config} />

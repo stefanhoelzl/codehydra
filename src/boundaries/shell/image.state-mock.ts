@@ -20,7 +20,7 @@
 import { expect } from "vitest";
 import type { NativeImage } from "electron";
 import type { ImageBoundary } from "./image";
-import type { ImageHandle, ImageSize } from "./image-types";
+import type { ImageHandle } from "./image-types";
 import { createImageHandle } from "./image-types";
 import { PlatformError } from "../../shared/errors/platform-errors";
 import type {
@@ -35,12 +35,19 @@ import type {
 // =============================================================================
 
 /**
+ * Size of an image in pixels.
+ */
+interface ImageSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
  * State for a single image in the behavioral mock.
  */
 export interface ImageState {
   readonly size: ImageSize;
   readonly isEmpty: boolean;
-  readonly dataURL: string;
   readonly fromPath?: string;
 }
 
@@ -168,28 +175,7 @@ export function createImageBoundaryMock(): MockImageBoundary {
       state._setImage(id, {
         size: { width: 16, height: 16 }, // Default test size
         isEmpty: false,
-        dataURL: `data:image/png;base64,mock-${id}`,
         fromPath: path,
-      });
-      return createImageHandle(id);
-    },
-
-    createFromDataURL(dataURL: string): ImageHandle {
-      const id = `image-${nextId++}`;
-      state._setImage(id, {
-        size: { width: 16, height: 16 }, // Default test size
-        isEmpty: false,
-        dataURL,
-      });
-      return createImageHandle(id);
-    },
-
-    createEmpty(width: number, height: number): ImageHandle {
-      const id = `image-${nextId++}`;
-      state._setImage(id, {
-        size: { width, height },
-        isEmpty: true,
-        dataURL: "data:image/png;base64,",
       });
       return createImageHandle(id);
     },
@@ -199,21 +185,12 @@ export function createImageBoundaryMock(): MockImageBoundary {
       state._setImage(id, {
         size: { width, height },
         isEmpty: false,
-        dataURL: `data:image/png;base64,bitmap-${id}`,
       });
       return createImageHandle(id);
     },
 
-    getSize(handle: ImageHandle): ImageSize {
-      return getImage(handle).size;
-    },
-
     isEmpty(handle: ImageHandle): boolean {
       return getImage(handle).isEmpty;
-    },
-
-    toDataURL(handle: ImageHandle): string {
-      return getImage(handle).dataURL;
     },
 
     release(handle: ImageHandle): void {

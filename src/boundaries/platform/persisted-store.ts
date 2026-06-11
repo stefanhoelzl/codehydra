@@ -56,7 +56,7 @@ const REDACTED = "<redacted>";
 /**
  * Build default values from definitions, applying computedDefault where available.
  */
-export function buildDefaults(
+function buildDefaults(
   definitions: ReadonlyMap<string, PersistedKeyDefinition<unknown>>,
   ctx: ComputedDefaultContext
 ): Record<string, unknown> {
@@ -73,7 +73,7 @@ export function buildDefaults(
   return defaults;
 }
 
-export function overrideEquals(a: unknown, b: unknown): boolean {
+function overrideEquals(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null) return false;
   if (typeof a !== typeof b) return false;
@@ -354,10 +354,6 @@ export class PersistedStore {
 
   getEffective(): Readonly<Record<string, unknown>> {
     return this.effective;
-  }
-
-  getDefaults(): Readonly<Record<string, unknown>> {
-    return this.defaults;
   }
 
   getRedactedOverrides(): Record<string, unknown> {

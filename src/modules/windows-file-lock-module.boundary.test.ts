@@ -274,7 +274,4 @@ describe.skipIf(!isWindows)("WindowsFileLockModule functions (boundary)", () => 
       TEST_TIMEOUT
     );
   });
-
-  // Note: closeFileHandles() tests require elevation and are not practical for automated testing
-  // Manual testing is required for the UAC flow
 });

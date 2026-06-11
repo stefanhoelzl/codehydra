@@ -16,7 +16,6 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
     mockApi: {
       // Normal API (flat structure)
       workspaces: {
-        create: vi.fn().mockResolvedValue({}),
         remove: vi.fn().mockResolvedValue({ branchDeleted: true }),
         getStatus: vi
           .fn()

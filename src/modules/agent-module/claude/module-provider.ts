@@ -90,13 +90,6 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
   /** Cached aggregated status per workspace (for deduplication and queries). */
   const statusCache = new Map<WorkspacePath, AggregatedAgentStatus>();
 
-  /**
-   * Track workspaces that have had TUI attached.
-   * Persists across provider recreations (e.g., server restart) so we can
-   * restore the attached state without waiting for a new MCP request.
-   */
-  const tuiAttachedWorkspaces = new Set<WorkspacePath>();
-
   /** Tracks pending handleServerStarted() promises for waitForProvider(). */
   const serverStartedPromises = new Map<string, Promise<void>>();
 
@@ -154,10 +147,6 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
 
     provider.onStatusChange((status) => handleStatusUpdate(path, status));
 
-    if (tuiAttachedWorkspaces.has(path)) {
-      provider.markActive();
-    }
-
     providers.set(path, provider);
     // ClaudeCodeProvider: initial status is "none" (status comes via onStatusChange from ServerManager)
     handleStatusUpdate(path, "none");
@@ -186,14 +175,6 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       await provider.reconnect();
       // ClaudeCodeProvider: status comes via onStatusChange, initial reconnect status is "none"
       handleStatusUpdate(path, "none");
-    }
-  }
-
-  function markProviderActive(path: WorkspacePath): void {
-    tuiAttachedWorkspaces.add(path);
-    const provider = providers.get(path);
-    if (provider) {
-      provider.markActive();
     }
   }
 
@@ -245,8 +226,6 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
   }
 
   function wireServerCallbacks(): void {
-    serverManager.setMarkActiveHandler((wp) => markProviderActive(wp as WorkspacePath));
-
     serverStartedCleanupFn = serverManager.onServerStarted((workspacePath, port) => {
       const promise = handleServerStarted(workspacePath as WorkspacePath, port);
       serverStartedPromises.set(workspacePath, promise);
@@ -347,7 +326,6 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
       }
       providers.clear();
       statusCache.clear();
-      tuiAttachedWorkspaces.clear();
     },
 
     // --- Per-workspace ---
@@ -364,11 +342,11 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
         await promise;
       }
 
-      if (options?.initialPrompt && serverManager.setInitialPrompt) {
+      if (options?.initialPrompt) {
         await serverManager.setInitialPrompt(workspacePath, options.initialPrompt);
       }
 
-      if (options?.isNewWorkspace && serverManager.setNoSessionMarker) {
+      if (options?.isNewWorkspace) {
         await serverManager.setNoSessionMarker(workspacePath);
       }
 
@@ -418,8 +396,8 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
 
     // --- Cleanup ---
 
-    clearWorkspaceTracking(workspacePath: WorkspacePath): void {
-      tuiAttachedWorkspaces.delete(workspacePath);
+    clearWorkspaceTracking(): void {
+      // No-op for Claude: no per-workspace tracking state to clear
     },
   };
 }

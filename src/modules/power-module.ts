@@ -46,9 +46,7 @@ import type { Logger } from "../boundaries/platform/logging";
  * @param statuses - Map of workspace paths to their aggregated statuses
  * @returns true if sleep should be prevented
  */
-export function shouldPreventSleep(
-  statuses: ReadonlyMap<WorkspacePath, AggregatedAgentStatus>
-): boolean {
+function shouldPreventSleep(statuses: ReadonlyMap<WorkspacePath, AggregatedAgentStatus>): boolean {
   for (const status of statuses.values()) {
     if (status.status === "busy" || status.status === "mixed") {
       return true;

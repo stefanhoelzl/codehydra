@@ -19,7 +19,6 @@ window.api = mockApi;
 import {
   projects,
   activeWorkspacePath,
-  activeProject,
   setProjects,
   addProject,
   removeProject,
@@ -131,33 +130,6 @@ describe("projects store", () => {
     });
   });
 
-  describe("activeProject derived", () => {
-    it("returns correct project for active workspace", () => {
-      const project = createMockProject({
-        path: "/test/project" as ProjectPath,
-        workspaces: [createMockWorkspace({ path: "/test/project/.worktrees/ws1" })],
-      });
-
-      addProject(project);
-      setActiveWorkspace("/test/project/.worktrees/ws1");
-
-      expect(activeProject.value).toMatchObject({
-        ...project,
-        // id is generated from path, just verify it exists
-        id: expect.any(String),
-      });
-      expect(activeProject.value?.id).toBeDefined();
-    });
-
-    it("returns undefined when no match", () => {
-      const project = createMockProject();
-      addProject(project);
-      setActiveWorkspace("/nonexistent/path");
-
-      expect(activeProject.value).toBeUndefined();
-    });
-  });
-
   describe("addWorkspace", () => {
     it("adds workspace to correct project", () => {
       const project = createMockProject({
@@ -243,8 +215,8 @@ describe("projects store", () => {
       addProject(createMockProject({ path: "/B" as ProjectPath, workspaces: [wsB, wsC, wsD] }));
 
       // Simulate the renderer-side handler of workspace:created with reopened=true
-      // (see src/renderer/lib/utils/domain-events.ts:120 — it calls addWorkspace
-      // unconditionally regardless of the reopened flag).
+      // (see src/renderer/lib/utils/setup-domain-event-bindings.ts — it calls
+      // addWorkspace unconditionally regardless of the reopened flag).
       addWorkspace("/B" as ProjectPath, wsB);
 
       // The flat workspace list backing both navigation and the sidebar's
@@ -642,53 +614,6 @@ describe("projects store", () => {
       expect(activeRef?.path).toBe("/test/project/.worktrees/ws1");
       // Should include projectId (generated from project path)
       expect(activeRef?.projectId).toBeDefined();
-    });
-  });
-
-  describe("getProjectById", () => {
-    it("returns project by ID", async () => {
-      const store = (await import("./projects.svelte.js")) as unknown as {
-        reset: () => void;
-        addProject: (p: ReturnType<typeof createMockProject>) => void;
-        projects: { value: Array<{ id: ProjectId; path: string; name: string }> };
-        getProjectById: (id: ProjectId) => { path: string; name: string } | undefined;
-      };
-      store.reset();
-
-      const project = createMockProject({
-        path: "/test/my-app" as ProjectPath,
-        name: "my-app",
-        workspaces: [createMockWorkspace({ path: "/test/my-app/.worktrees/ws1" })],
-      });
-      store.addProject(project);
-
-      // Get projects to find the generated ID
-      const projects = store.projects.value;
-      expect(projects).toHaveLength(1);
-
-      // The v2 projects should have IDs
-      const projectWithId = projects[0];
-      expect(projectWithId).toBeDefined();
-
-      // Look up by ID
-      const found = store.getProjectById(projectWithId!.id);
-      expect(found).toBeDefined();
-      expect(found?.path).toBe("/test/my-app");
-    });
-
-    it("returns undefined for unknown ID", async () => {
-      const store = (await import("./projects.svelte.js")) as unknown as {
-        reset: () => void;
-        addProject: (p: ReturnType<typeof createMockProject>) => void;
-        getProjectById: (id: ProjectId) => { path: string } | undefined;
-      };
-      store.reset();
-
-      const project = createMockProject({ path: "/test/project" as ProjectPath });
-      store.addProject(project);
-
-      const found = store.getProjectById("unknown-12345678" as ProjectId);
-      expect(found).toBeUndefined();
     });
   });
 });

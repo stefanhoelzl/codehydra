@@ -12,7 +12,7 @@ export type {
   LogLevel,
   LogOutput,
 } from "./logging-types";
-export { LogLevel as LogLevelValues, logAtLevel } from "./logging-types";
-export { ElectronLog, parseLogLevel, parseLogLevelSpec, splitLogLevelSpec } from "./electron-log";
+export { logAtLevel } from "./logging-types";
+export { ElectronLog } from "./electron-log";
 export { createMockLogger, createMockLogging, SILENT_LOGGER } from "./logging.test-utils";
 export type { MockLogger, MockLogging } from "./logging.test-utils";

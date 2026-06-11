@@ -129,18 +129,6 @@ describe("McpServerManager", () => {
       await expect(manager.stop()).resolves.not.toThrow();
     });
 
-    it("clears port after stop", async () => {
-      activeManager = new McpServerManager(portManager, dispatcher, logger, {
-        serverFactory: mockSdkFactory,
-      });
-
-      await activeManager.start();
-      expect(activeManager.getPort()).toBe(12345);
-
-      await activeManager.stop();
-      expect(activeManager.getPort()).toBeNull();
-    });
-
     it("allows restart after stop", async () => {
       // Provide two ports for start/stop/restart cycle
       const restartPortManager = createPortManagerMock([12345, 54321]);
@@ -157,42 +145,20 @@ describe("McpServerManager", () => {
     });
   });
 
-  describe("getPort", () => {
-    it("returns null before start", () => {
-      const manager = new McpServerManager(portManager, dispatcher, logger);
-
-      expect(manager.getPort()).toBeNull();
-    });
-
-    it("returns port after start", async () => {
-      activeManager = new McpServerManager(portManager, dispatcher, logger, {
-        serverFactory: mockSdkFactory,
-      });
-
-      await activeManager.start();
-
-      expect(activeManager.getPort()).toBe(12345);
-    });
-  });
-
-  describe("isRunning", () => {
-    it("returns false before start", () => {
-      const manager = new McpServerManager(portManager, dispatcher, logger);
-
-      expect(manager.isRunning()).toBe(false);
-    });
-  });
-
   describe("dispose", () => {
     it("stops the manager", async () => {
-      activeManager = new McpServerManager(portManager, dispatcher, logger, {
+      // Provide two ports so a restart after dispose is observable
+      const disposePortManager = createPortManagerMock([12345, 54321]);
+      activeManager = new McpServerManager(disposePortManager, dispatcher, logger, {
         serverFactory: mockSdkFactory,
       });
 
       await activeManager.start();
       await activeManager.dispose();
 
-      expect(activeManager.getPort()).toBeNull();
+      // After dispose, starting again allocates the next port
+      const port = await activeManager.start();
+      expect(port).toBe(54321);
     });
   });
 
@@ -204,7 +170,6 @@ describe("McpServerManager", () => {
       const manager = new McpServerManager(failingPortManager, dispatcher, logger);
 
       await expect(manager.start()).rejects.toThrow("No ports available");
-      expect(manager.getPort()).toBeNull();
     });
   });
 });

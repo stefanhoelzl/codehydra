@@ -11,10 +11,6 @@
  * const mock = createViewBoundaryMock();
  * const handle = mock.createView({ backgroundColor: "#1e1e1e" });
  * expect(mock).toHaveView(handle.id, { backgroundColor: "#1e1e1e" });
- *
- * @example Simulating events
- * mock.onDidFinishLoad(handle, () => console.log("loaded"));
- * mock.$.triggerDidFinishLoad(handle);
  */
 
 import { expect } from "vitest";
@@ -24,7 +20,6 @@ import type {
   WindowOpenHandler,
   Unsubscribe,
   KeyboardInput,
-  FailLoadDetails,
   RenderProcessGoneDetails,
   UncaughtExceptionDetails,
 } from "./view";
@@ -82,49 +77,6 @@ export interface ViewBoundaryMockState extends MockState {
    * Maps window ID to ordered array of view IDs (index 0 = bottom).
    */
   readonly windowChildren: Map<string, string[]>;
-
-  /**
-   * Simulates Electron's 'did-finish-load' event.
-   * Invokes all registered handlers for the specified view.
-   *
-   * @example
-   * mock.onDidFinishLoad(handle, callback);
-   * mock.$.triggerDidFinishLoad(handle); // callback is invoked
-   */
-  triggerDidFinishLoad(handle: ViewHandle): void;
-
-  /**
-   * Simulates Electron's 'did-fail-load' event.
-   * Invokes all registered handlers for the specified view.
-   *
-   * @example
-   * mock.onDidFailLoad(handle, (details) => console.log(details.errorDescription));
-   * mock.$.triggerDidFailLoad(handle, { errorCode: -21, errorDescription: "ERR_NETWORK_CHANGED", isMainFrame: true });
-   */
-  triggerDidFailLoad(handle: ViewHandle, details: FailLoadDetails): void;
-
-  /**
-   * Simulates Electron's 'dom-ready' event.
-   * Invokes all registered handlers for the specified view.
-   *
-   * @example
-   * mock.onDomReady(handle, callback);
-   * mock.$.triggerDomReady(handle); // callback is invoked
-   */
-  triggerDomReady(handle: ViewHandle): void;
-
-  /**
-   * Simulates Electron's 'will-navigate' event.
-   * Invokes all registered handlers for the specified view.
-   *
-   * @returns true if all handlers allow navigation, false if any handler prevents it
-   *
-   * @example
-   * mock.onWillNavigate(handle, (url) => url.startsWith("http://allowed"));
-   * mock.$.triggerWillNavigate(handle, "http://allowed/page"); // returns true
-   * mock.$.triggerWillNavigate(handle, "http://blocked/page"); // returns false
-   */
-  triggerWillNavigate(handle: ViewHandle, url: string): boolean;
 
   /**
    * Simulates Electron's 'before-input-event' event.
@@ -194,10 +146,6 @@ interface ViewState {
 class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   private readonly _views: Map<string, ViewState>;
   private readonly _windowChildren: Map<string, string[]>;
-  private readonly _didFinishLoadCallbacks: Map<string, Set<() => void>>;
-  private readonly _didFailLoadCallbacks: Map<string, Set<(details: FailLoadDetails) => void>>;
-  private readonly _domReadyCallbacks: Map<string, Set<() => void>>;
-  private readonly _willNavigateCallbacks: Map<string, Set<(url: string) => boolean>>;
   private readonly _beforeInputEventCallbacks: Map<
     string,
     Set<(input: KeyboardInput, preventDefault: () => void) => void>
@@ -216,10 +164,6 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   constructor() {
     this._views = new Map();
     this._windowChildren = new Map();
-    this._didFinishLoadCallbacks = new Map();
-    this._didFailLoadCallbacks = new Map();
-    this._domReadyCallbacks = new Map();
-    this._willNavigateCallbacks = new Map();
     this._beforeInputEventCallbacks = new Map();
     this._destroyedCallbacks = new Map();
     this._uncaughtExceptionCallbacks = new Map();
@@ -234,22 +178,6 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   get windowChildren(): Map<string, string[]> {
     return this._windowChildren;
-  }
-
-  get didFinishLoadCallbacks(): Map<string, Set<() => void>> {
-    return this._didFinishLoadCallbacks;
-  }
-
-  get didFailLoadCallbacks(): Map<string, Set<(details: FailLoadDetails) => void>> {
-    return this._didFailLoadCallbacks;
-  }
-
-  get domReadyCallbacks(): Map<string, Set<() => void>> {
-    return this._domReadyCallbacks;
-  }
-
-  get willNavigateCallbacks(): Map<string, Set<(url: string) => boolean>> {
-    return this._willNavigateCallbacks;
   }
 
   get beforeInputEventCallbacks(): Map<
@@ -273,46 +201,6 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   get devToolsOpen(): Set<string> {
     return this._devToolsOpen;
-  }
-
-  triggerDidFinishLoad(handle: ViewHandle): void {
-    const callbacks = this._didFinishLoadCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback();
-      }
-    }
-  }
-
-  triggerDidFailLoad(handle: ViewHandle, details: FailLoadDetails): void {
-    const callbacks = this._didFailLoadCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback(details);
-      }
-    }
-  }
-
-  triggerDomReady(handle: ViewHandle): void {
-    const callbacks = this._domReadyCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback();
-      }
-    }
-  }
-
-  triggerWillNavigate(handle: ViewHandle, url: string): boolean {
-    const callbacks = this._willNavigateCallbacks.get(handle.id);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        const allow = callback(url);
-        if (!allow) {
-          return false; // Navigation prevented
-        }
-      }
-    }
-    return true; // Navigation allowed
   }
 
   triggerBeforeInputEvent(handle: ViewHandle, input: KeyboardInput): { defaultPrevented: boolean } {
@@ -441,10 +329,6 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
  * const handle = mock.createView({});
  * expect(mock).toHaveView(handle.id);
  *
- * @example Simulating events
- * mock.onDidFinishLoad(handle, () => console.log("loaded"));
- * mock.$.triggerDidFinishLoad(handle);
- *
  * @example Snapshot comparison
  * const before = mock.$.snapshot();
  * mock.createView({});
@@ -483,10 +367,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
         hasWindowOpenHandler: false,
         focused: false,
       });
-      state.didFinishLoadCallbacks.set(id, new Set());
-      state.didFailLoadCallbacks.set(id, new Set());
-      state.domReadyCallbacks.set(id, new Set());
-      state.willNavigateCallbacks.set(id, new Set());
       state.beforeInputEventCallbacks.set(id, new Set());
       state.destroyedCallbacks.set(id, new Set());
       state.uncaughtExceptionCallbacks.set(id, new Set());
@@ -510,10 +390,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
         }
       }
       state.views.delete(handle.id);
-      state.didFinishLoadCallbacks.delete(handle.id);
-      state.didFailLoadCallbacks.delete(handle.id);
-      state.domReadyCallbacks.delete(handle.id);
-      state.willNavigateCallbacks.delete(handle.id);
       state.beforeInputEventCallbacks.delete(handle.id);
       state.destroyedCallbacks.delete(handle.id);
       state.uncaughtExceptionCallbacks.delete(handle.id);
@@ -522,10 +398,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
 
     destroyAll(): void {
       state.views.clear();
-      state.didFinishLoadCallbacks.clear();
-      state.didFailLoadCallbacks.clear();
-      state.domReadyCallbacks.clear();
-      state.willNavigateCallbacks.clear();
       state.beforeInputEventCallbacks.clear();
       state.destroyedCallbacks.clear();
       state.uncaughtExceptionCallbacks.clear();
@@ -538,16 +410,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
       view.url = url;
     },
 
-    getURL(handle: ViewHandle): string {
-      const view = getView(handle);
-      return view.url ?? "";
-    },
-
-    reload(handle: ViewHandle): void {
-      getView(handle); // Validate handle exists
-      // No-op in mock - tests can observe via $.snapshot if needed
-    },
-
     async capturePNG(handle: ViewHandle, _rect?: Rectangle): Promise<Buffer | null> {
       getView(handle); // Validate handle exists
       // Return a tiny non-empty buffer to simulate a successful capture in tests.
@@ -557,11 +419,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
     setBounds(handle: ViewHandle, bounds: Rectangle): void {
       const view = getView(handle);
       view.bounds = bounds;
-    },
-
-    getBounds(handle: ViewHandle): Rectangle {
-      const view = getView(handle);
-      return view.bounds ?? { x: 0, y: 0, width: 0, height: 0 };
     },
 
     setBackgroundColor(handle: ViewHandle, color: string): void {
@@ -579,91 +436,11 @@ export function createViewBoundaryMock(): MockViewBoundary {
       view.focused = true;
     },
 
-    attachToWindow(
-      handle: ViewHandle,
-      windowHandle: WindowHandle,
-      index?: number,
-      options?: { force?: boolean }
-    ): void {
+    attachToWindow(handle: ViewHandle, windowHandle: WindowHandle): void {
       const view = getView(handle);
       const children = getWindowChildren(windowHandle.id);
-      const currentIndex = children.indexOf(handle.id);
-      const isAttached = currentIndex !== -1;
-
-      // Check if already at the correct position (no-op to preserve focus)
-      if (isAttached && !options?.force) {
-        // For "top" position (no index), check if already at end
-        if (index === undefined && currentIndex === children.length - 1) {
-          return; // Already at top
-        }
-        // For explicit index, check if already there
-        if (index !== undefined && currentIndex === index) {
-          return; // Already at correct index
-        }
-      }
-      if (isAttached) {
-        // Need to move (or force re-composite) - remove first
-        children.splice(currentIndex, 1);
-      }
-
-      // Add at specified index or append to top
-      if (index !== undefined) {
-        children.splice(index, 0, handle.id);
-      } else {
-        children.push(handle.id);
-      }
-
+      children.push(handle.id);
       view.attachedTo = windowHandle.id;
-    },
-
-    detachFromWindow(handle: ViewHandle): void {
-      const view = getView(handle);
-      if (view.attachedTo) {
-        const children = state.windowChildren.get(view.attachedTo);
-        if (children) {
-          const idx = children.indexOf(handle.id);
-          if (idx !== -1) {
-            children.splice(idx, 1);
-          }
-        }
-      }
-      view.attachedTo = null;
-    },
-
-    onDidFinishLoad(handle: ViewHandle, callback: () => void): Unsubscribe {
-      getView(handle); // Validate handle exists
-      const callbacks = state.didFinishLoadCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
-    },
-
-    onDidFailLoad(handle: ViewHandle, callback: (details: FailLoadDetails) => void): Unsubscribe {
-      getView(handle); // Validate handle exists
-      const callbacks = state.didFailLoadCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
-    },
-
-    onDomReady(handle: ViewHandle, callback: () => void): Unsubscribe {
-      getView(handle); // Validate handle exists
-      const callbacks = state.domReadyCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
-    },
-
-    onWillNavigate(handle: ViewHandle, callback: (url: string) => boolean): Unsubscribe {
-      getView(handle); // Validate handle exists
-      const callbacks = state.willNavigateCallbacks.get(handle.id);
-      callbacks?.add(callback);
-      return () => {
-        callbacks?.delete(callback);
-      };
     },
 
     setWindowOpenHandler(handle: ViewHandle, handler: WindowOpenHandler | null): void {
@@ -736,11 +513,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
       return () => {};
     },
 
-    onResponsive(handle: ViewHandle, _callback: () => void): Unsubscribe {
-      getView(handle); // Validate handle exists
-      return () => {};
-    },
-
     isAvailable(handle: ViewHandle): boolean {
       return state.views.has(handle.id);
     },
@@ -762,10 +534,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
 
     async dispose(): Promise<void> {
       state.views.clear();
-      state.didFinishLoadCallbacks.clear();
-      state.didFailLoadCallbacks.clear();
-      state.domReadyCallbacks.clear();
-      state.willNavigateCallbacks.clear();
       state.beforeInputEventCallbacks.clear();
       state.destroyedCallbacks.clear();
       state.uncaughtExceptionCallbacks.clear();

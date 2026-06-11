@@ -4,102 +4,14 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  isNavigationKey,
-  isJumpKey,
-  isDialogKey,
-  isActionKey,
   jumpKeyToIndex,
   isShortcutKey,
   SHORTCUT_KEYS,
-  type NavigationKey,
   type JumpKey,
-  type DialogKey,
   type ShortcutKey,
 } from "./shortcuts";
 
 describe("shortcuts type guards", () => {
-  describe("isNavigationKey", () => {
-    it("should-recognize-arrow-up-as-navigation-key", () => {
-      expect(isNavigationKey("ArrowUp")).toBe(true);
-    });
-
-    it("should-recognize-arrow-down-as-navigation-key", () => {
-      expect(isNavigationKey("ArrowDown")).toBe(true);
-    });
-
-    it("should reject other arrow keys as navigation keys", () => {
-      expect(isNavigationKey("ArrowLeft")).toBe(false);
-      expect(isNavigationKey("ArrowRight")).toBe(false);
-    });
-
-    it("should reject non-arrow keys", () => {
-      expect(isNavigationKey("Up")).toBe(false);
-      expect(isNavigationKey("Down")).toBe(false);
-      expect(isNavigationKey("w")).toBe(false);
-      expect(isNavigationKey("s")).toBe(false);
-    });
-  });
-
-  describe("isJumpKey", () => {
-    it("should-recognize-digits-0-9-as-jump-keys", () => {
-      const digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
-      digits.forEach((digit) => {
-        expect(isJumpKey(digit)).toBe(true);
-      });
-    });
-
-    it("should reject non-digit keys", () => {
-      expect(isJumpKey("a")).toBe(false);
-      expect(isJumpKey("10")).toBe(false);
-      expect(isJumpKey("")).toBe(false);
-      expect(isJumpKey("Digit1")).toBe(false);
-    });
-  });
-
-  describe("isDialogKey", () => {
-    it("should-recognize-enter-delete-backspace-as-dialog-keys", () => {
-      expect(isDialogKey("Enter")).toBe(true);
-      expect(isDialogKey("Delete")).toBe(true);
-      expect(isDialogKey("Backspace")).toBe(true);
-    });
-
-    it("should reject other keys", () => {
-      expect(isDialogKey("Return")).toBe(false);
-      expect(isDialogKey("Del")).toBe(false);
-      expect(isDialogKey("Escape")).toBe(false);
-    });
-  });
-
-  describe("isActionKey", () => {
-    it("should-recognize-all-action-keys", () => {
-      // Navigation keys
-      expect(isActionKey("ArrowUp")).toBe(true);
-      expect(isActionKey("ArrowDown")).toBe(true);
-
-      // Jump keys
-      expect(isActionKey("0")).toBe(true);
-      expect(isActionKey("5")).toBe(true);
-      expect(isActionKey("9")).toBe(true);
-
-      // Dialog keys
-      expect(isActionKey("Enter")).toBe(true);
-      expect(isActionKey("Delete")).toBe(true);
-      expect(isActionKey("Backspace")).toBe(true);
-    });
-
-    it("should-reject-non-action-keys", () => {
-      expect(isActionKey("a")).toBe(false);
-      expect(isActionKey("z")).toBe(false);
-      expect(isActionKey("o")).toBe(false);
-      expect(isActionKey("O")).toBe(false);
-      expect(isActionKey("Escape")).toBe(false);
-      expect(isActionKey("Alt")).toBe(false);
-      expect(isActionKey("Control")).toBe(false);
-      expect(isActionKey(" ")).toBe(false);
-      expect(isActionKey("Tab")).toBe(false);
-    });
-  });
-
   describe("jumpKeyToIndex", () => {
     it("should convert keys 1-9 to indices 0-8", () => {
       expect(jumpKeyToIndex("1" as JumpKey)).toBe(0);
@@ -115,29 +27,6 @@ describe("shortcuts type guards", () => {
 
     it("should convert key 0 to index 9 (10th workspace)", () => {
       expect(jumpKeyToIndex("0" as JumpKey)).toBe(9);
-    });
-  });
-
-  describe("type inference", () => {
-    it("should narrow types correctly with type guards", () => {
-      const key = "ArrowUp";
-      if (isNavigationKey(key)) {
-        // TypeScript should infer key as NavigationKey here
-        const navKey: NavigationKey = key;
-        expect(navKey).toBe("ArrowUp");
-      }
-
-      const jumpKey = "5";
-      if (isJumpKey(jumpKey)) {
-        const j: JumpKey = jumpKey;
-        expect(j).toBe("5");
-      }
-
-      const dialogKey = "Enter";
-      if (isDialogKey(dialogKey)) {
-        const d: DialogKey = dialogKey;
-        expect(d).toBe("Enter");
-      }
     });
   });
 

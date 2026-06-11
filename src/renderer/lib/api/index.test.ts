@@ -82,15 +82,6 @@ describe("renderer API layer", () => {
       expect(result).toHaveProperty("id");
     });
 
-    it("workspaces.create returns Workspace", async () => {
-      const api = await import("$lib/api");
-      const result = await api.workspaces.create("test-12345678", "feature", "main");
-
-      expect(mockApi.workspaces.create).toHaveBeenCalledWith("test-12345678", "feature", "main");
-      expect(result).toHaveProperty("projectId");
-      expect(result).toHaveProperty("name");
-    });
-
     // Note: lifecycle.getState removed in app:setup migration
     it("lifecycle.quit calls quit", async () => {
       const api = await import("$lib/api");

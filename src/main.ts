@@ -48,7 +48,7 @@ import { WindowManager } from "./boundaries/shell/window-manager";
 import { UiViewManager } from "./boundaries/shell/ui-view-manager";
 // Services (stayed)
 import { AutoUpdater } from "./modules/auto-updater";
-import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
+import { DefaultArchiveExtractor } from "./boundaries/platform/archive-extractor";
 import type { DownloadDeps } from "./utils/binary-download";
 import {
   getOpencodeBundleDir,
@@ -387,7 +387,6 @@ const windowManager = new WindowManager(
     imageLayer,
     appLayer,
     logger: loggingService.createLogger("window"),
-    platformInfo,
   },
   "CodeHydra",
   pathProvider.appIconPath.toNative()
@@ -462,7 +461,6 @@ const viewModule = createViewModule({
   dialogLayer,
   menuLayer,
   windowManager,
-  buildInfo,
   uiHtmlPath,
   dialogManager,
   dispatcher,

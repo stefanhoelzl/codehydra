@@ -29,14 +29,7 @@ import {
   setActiveWorkspace,
 } from "./projects.svelte";
 import { getStatus } from "./agent-status.svelte";
-import {
-  jumpKeyToIndex,
-  isShortcutKey,
-  type NavigationKey,
-  type JumpKey,
-  type DialogKey,
-  type ShortcutKey,
-} from "@shared/shortcuts";
+import { jumpKeyToIndex, type JumpKey, type ShortcutKey } from "@shared/shortcuts";
 
 // Import from central ui-mode store (one-way dependency: shortcuts → ui-mode)
 import { shortcutModeActive, setModeFromMain, reset as resetUiMode } from "./ui-mode.svelte.js";
@@ -77,7 +70,7 @@ export function handleWindowBlur(): void {
  * Exits shortcut mode and restores normal state.
  * Sets local state immediately for responsive UI, then syncs with main process.
  */
-export function exitShortcutMode(): void {
+function exitShortcutMode(): void {
   // Set local state immediately for responsive UI
   setModeFromMain("workspace");
   // Fire-and-forget pattern - see AGENTS.md IPC Patterns
@@ -117,11 +110,6 @@ export function handleKeyDown(event: KeyboardEvent): void {
  * @param key - Normalized shortcut key from main process (e.g., "up", "down", "enter", "0"-"9")
  */
 export function handleShortcutKey(key: ShortcutKey): void {
-  if (!isShortcutKey(key)) {
-    logger.warn("Unknown shortcut key", { key });
-    return;
-  }
-
   void executeShortcutAction(key);
 }
 
@@ -132,10 +120,10 @@ export function handleShortcutKey(key: ShortcutKey): void {
 async function executeShortcutAction(key: ShortcutKey): Promise<void> {
   switch (key) {
     case "up":
-      await handleNavigation("ArrowUp");
+      await handleNavigation(-1);
       break;
     case "down":
-      await handleNavigation("ArrowDown");
+      await handleNavigation(1);
       break;
     case "left":
       await handleStatusNavigation(-1);
@@ -144,10 +132,10 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
       await handleStatusNavigation(1);
       break;
     case "enter":
-      handleDialog("Enter");
+      handleDialog("enter");
       break;
     case "delete":
-      handleDialog("Delete");
+      handleDialog("delete");
       break;
     case "h":
       await handleHibernateToggle();
@@ -162,15 +150,15 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
 
 /**
  * Handle arrow key navigation between workspaces.
+ * Direction: -1 for previous (up), 1 for next (down).
  * Wraps around at boundaries. No-op if <=1 workspaces or switch in progress.
  * Does not focus workspace to keep shortcut mode active.
  */
-async function handleNavigation(key: NavigationKey): Promise<void> {
+async function handleNavigation(direction: -1 | 1): Promise<void> {
   const workspaces = getAllWorkspaces();
   if (workspaces.length === 0) return;
   if (_switchingWorkspace) return;
 
-  const direction = key === "ArrowUp" ? -1 : 1;
   const currentIndex = findWorkspaceIndex(activeWorkspacePath.value);
   // When the active workspace is null (e.g. coming from the New workspace
   // view), Up → last and Down → first.
@@ -340,13 +328,13 @@ export async function handleHibernateToggle(): Promise<void> {
 }
 
 /**
- * Handle dialog opening keys (Enter, Delete, Backspace).
+ * Handle dialog opening keys.
  * Sets mode to "workspace" locally for immediate UI feedback.
- * - Enter opens the New workspace view.
- * - Delete/Backspace opens the remove dialog for the active workspace.
+ * - "enter" opens the New workspace view.
+ * - "delete" opens the remove dialog for the active workspace.
  */
-function handleDialog(key: DialogKey): void {
-  if (key === "Enter") {
+function handleDialog(key: "enter" | "delete"): void {
+  if (key === "enter") {
     if (newWorkspaceView.isOpen) {
       // Already on the New workspace view: nothing to open. Keyboard submit
       // is Cmd/Ctrl+Enter, owned by the form itself.
@@ -365,7 +353,7 @@ function handleDialog(key: DialogKey): void {
     // workspace view for seconds.
     void api.ui.setMode("hover");
   } else {
-    // Delete or Backspace — opening the New workspace view clears the active
+    // Delete — opening the New workspace view clears the active
     // workspace, so there's nothing to remove from there.
     const workspaceRef = activeWorkspace.value;
     if (!workspaceRef) return;

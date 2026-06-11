@@ -8,7 +8,7 @@
  */
 
 import type { NativeImage } from "electron";
-import type { ImageHandle, ImageSize } from "./image-types";
+import type { ImageHandle } from "./image-types";
 import { createImageHandle } from "./image-types";
 import { PlatformError } from "../../shared/errors/platform-errors";
 import type { Logger } from "../platform/logging";
@@ -35,23 +35,6 @@ export interface ImageBoundary {
   createFromPath(path: string): ImageHandle;
 
   /**
-   * Create an image from a data URL.
-   *
-   * @param dataURL - Base64-encoded data URL (e.g., "data:image/png;base64,...")
-   * @returns Handle to the created image
-   */
-  createFromDataURL(dataURL: string): ImageHandle;
-
-  /**
-   * Create an empty image with the given dimensions.
-   *
-   * @param width - Width in pixels
-   * @param height - Height in pixels
-   * @returns Handle to the created empty image
-   */
-  createEmpty(width: number, height: number): ImageHandle;
-
-  /**
    * Create an image from raw BGRA bitmap data.
    *
    * @param buffer - Raw pixel data in BGRA format
@@ -62,15 +45,6 @@ export interface ImageBoundary {
   createFromBitmap(buffer: Buffer, width: number, height: number): ImageHandle;
 
   /**
-   * Get the size of an image.
-   *
-   * @param handle - Handle to the image
-   * @returns The image dimensions
-   * @throws PlatformError with code IMAGE_LOAD_FAILED if handle is invalid
-   */
-  getSize(handle: ImageHandle): ImageSize;
-
-  /**
    * Check if an image is empty (has no content).
    *
    * @param handle - Handle to the image
@@ -78,15 +52,6 @@ export interface ImageBoundary {
    * @throws PlatformError with code IMAGE_LOAD_FAILED if handle is invalid
    */
   isEmpty(handle: ImageHandle): boolean;
-
-  /**
-   * Convert an image to a data URL.
-   *
-   * @param handle - Handle to the image
-   * @returns Base64-encoded data URL
-   * @throws PlatformError with code IMAGE_LOAD_FAILED if handle is invalid
-   */
-  toDataURL(handle: ImageHandle): string;
 
   /**
    * Release an image handle and free associated resources.
@@ -132,22 +97,6 @@ export class DefaultImageBoundary implements ImageBoundary {
     return createImageHandle(id);
   }
 
-  createFromDataURL(dataURL: string): ImageHandle {
-    const image = nativeImage.createFromDataURL(dataURL);
-    const id = `image-${this.nextId++}`;
-    this.images.set(id, image);
-    this.logger.debug("Image created from data URL", { id });
-    return createImageHandle(id);
-  }
-
-  createEmpty(width: number, height: number): ImageHandle {
-    const image = nativeImage.createEmpty();
-    const id = `image-${this.nextId++}`;
-    this.images.set(id, image);
-    this.logger.debug("Empty image created", { id, width, height });
-    return createImageHandle(id);
-  }
-
   createFromBitmap(buffer: Buffer, width: number, height: number): ImageHandle {
     const image = nativeImage.createFromBitmap(buffer, { width, height });
     const id = `image-${this.nextId++}`;
@@ -156,19 +105,9 @@ export class DefaultImageBoundary implements ImageBoundary {
     return createImageHandle(id);
   }
 
-  getSize(handle: ImageHandle): ImageSize {
-    const image = this.getImage(handle);
-    return image.getSize();
-  }
-
   isEmpty(handle: ImageHandle): boolean {
     const image = this.getImage(handle);
     return image.isEmpty();
-  }
-
-  toDataURL(handle: ImageHandle): string {
-    const image = this.getImage(handle);
-    return image.toDataURL();
   }
 
   release(handle: ImageHandle): void {

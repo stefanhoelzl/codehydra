@@ -22,7 +22,6 @@ import { Path } from "../utils/path/path";
 import { projectDirName } from "../boundaries/platform/paths";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { ProjectConfig } from "../shared/types/project";
-import { CURRENT_PROJECT_VERSION } from "../shared/types/project";
 import { ProjectStoreError, getErrorMessage } from "../shared/errors/service-errors";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import {
@@ -75,7 +74,7 @@ export interface LocalProjectModuleDeps {
   readonly projectsDir: string;
   readonly fs: Pick<
     FileSystemBoundary,
-    "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm" | "rename"
+    "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm"
   >;
   readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
   readonly dialogManager: DialogManager;
@@ -128,7 +127,6 @@ async function saveProject(
   const configPath = nodePath.join(projectDir, "config.json");
 
   const config: ProjectConfig = {
-    version: CURRENT_PROJECT_VERSION,
     path: normalizedPath,
     ...(remoteUrl !== undefined && { remoteUrl }),
   };
@@ -141,11 +139,11 @@ async function saveProject(
   }
 }
 
-async function internalLoadAllProjectConfigs(
+async function loadAllProjectConfigs(
   fs: ProjectFs,
   projectsDir: string
-): Promise<readonly { config: ProjectConfig; entryName: string }[]> {
-  const results: { config: ProjectConfig; entryName: string }[] = [];
+): Promise<readonly ProjectConfig[]> {
+  const results: ProjectConfig[] = [];
 
   try {
     const entries = await fs.readdir(projectsDir);
@@ -173,11 +171,10 @@ async function internalLoadAllProjectConfigs(
             const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
 
             const config: ProjectConfig = {
-              version: (parsed as { version?: number }).version ?? 1,
               path: normalizedPath,
               ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
             };
-            results.push({ config, entryName: entry.name });
+            results.push(config);
           } catch {
             // Invalid path format - skip this entry
             continue;
@@ -194,14 +191,6 @@ async function internalLoadAllProjectConfigs(
   }
 
   return results;
-}
-
-async function loadAllProjectConfigs(
-  fs: ProjectFs,
-  projectsDir: string
-): Promise<readonly ProjectConfig[]> {
-  const internal = await internalLoadAllProjectConfigs(fs, projectsDir);
-  return internal.map((entry) => entry.config);
 }
 
 async function getProjectConfig(
@@ -230,7 +219,6 @@ async function getProjectConfig(
       const rawRemoteUrl = (parsed as { remoteUrl?: string }).remoteUrl;
 
       const config: ProjectConfig = {
-        version: (parsed as { version?: number }).version ?? 1,
         path: new Path(rawPath).toString(),
         ...(rawRemoteUrl !== undefined && { remoteUrl: rawRemoteUrl }),
       };

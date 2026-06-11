@@ -5,12 +5,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WindowManager, type WindowManagerDeps } from "./window-manager";
 import { SILENT_LOGGER } from "../platform/logging";
-import { createMockPlatformInfo } from "../platform/platform-info.test-utils";
 import { createImageBoundaryMock } from "./image.state-mock";
-import {
-  createWindowBoundaryInternalMock,
-  type MockWindowBoundaryInternal,
-} from "./window.state-mock";
+import { createWindowBoundaryMock, type MockWindowBoundary } from "./window.state-mock";
 import { createAppBoundaryMock, type MockAppBoundary } from "./app.state-mock";
 import type { ImageHandle } from "./image-types";
 
@@ -19,14 +15,12 @@ import type { ImageHandle } from "./image-types";
  */
 function createWindowManagerDeps(
   overrides: {
-    platformInfo?: ReturnType<typeof createMockPlatformInfo>;
     imageLayer?: ReturnType<typeof createImageBoundaryMock>;
     appLayer?: MockAppBoundary;
   } = {}
-): WindowManagerDeps & { windowLayer: MockWindowBoundaryInternal; appLayer: MockAppBoundary } {
-  const windowLayer = createWindowBoundaryInternalMock();
+): WindowManagerDeps & { windowLayer: MockWindowBoundary; appLayer: MockAppBoundary } {
+  const windowLayer = createWindowBoundaryMock();
   const imageLayer = overrides.imageLayer ?? createImageBoundaryMock();
-  const platformInfo = overrides.platformInfo ?? createMockPlatformInfo();
   const appLayer = overrides.appLayer ?? createAppBoundaryMock();
 
   return {
@@ -34,7 +28,6 @@ function createWindowManagerDeps(
     imageLayer,
     appLayer,
     logger: SILENT_LOGGER,
-    platformInfo,
   };
 }
 
@@ -256,9 +249,8 @@ describe("WindowManager", () => {
   });
 
   describe("setOverlayIcon", () => {
-    it("calls windowLayer.setOverlayIcon on Windows", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-      const deps = createWindowManagerDeps({ platformInfo });
+    it("delegates to windowLayer.setOverlayIcon", () => {
+      const deps = createWindowManagerDeps();
       const manager = createWindowManager(deps);
       const imageHandle: ImageHandle = { id: "image-1", __brand: "ImageHandle" };
 
@@ -266,45 +258,12 @@ describe("WindowManager", () => {
       expect(() => manager.setOverlayIcon(imageHandle, "3 idle agents")).not.toThrow();
     });
 
-    it("clears overlay when null passed on Windows", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "win32" });
-      const deps = createWindowManagerDeps({ platformInfo });
+    it("clears overlay when null passed", () => {
+      const deps = createWindowManagerDeps();
       const manager = createWindowManager(deps);
 
       // Should not throw
       expect(() => manager.setOverlayIcon(null, "")).not.toThrow();
-    });
-
-    it("no-ops on macOS", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "darwin" });
-      const deps = createWindowManagerDeps({ platformInfo });
-      const manager = createWindowManager(deps);
-      const imageHandle: ImageHandle = { id: "image-1", __brand: "ImageHandle" };
-
-      // Should not throw and not call windowLayer (no-op)
-      expect(() => manager.setOverlayIcon(imageHandle, "3 idle agents")).not.toThrow();
-    });
-
-    it("no-ops on Linux", () => {
-      const platformInfo = createMockPlatformInfo({ platform: "linux" });
-      const deps = createWindowManagerDeps({ platformInfo });
-      const manager = createWindowManager(deps);
-      const imageHandle: ImageHandle = { id: "image-1", __brand: "ImageHandle" };
-
-      // Should not throw and not call windowLayer (no-op)
-      expect(() => manager.setOverlayIcon(imageHandle, "3 idle agents")).not.toThrow();
-    });
-  });
-
-  describe("close", () => {
-    it("closes the window", () => {
-      const deps = createWindowManagerDeps();
-      const manager = createWindowManager(deps);
-      const handle = manager.getWindowHandle();
-
-      manager.close();
-
-      expect(deps.windowLayer.isDestroyed(handle)).toBe(true);
     });
   });
 });

@@ -1,7 +1,6 @@
 /**
  * Tests for TextSection component.
- * Rendering of the text styles (heading, subtitle, mono, default) and the
- * {badge:text} inline-badge syntax.
+ * Rendering of the text styles (heading, subtitle, default).
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -33,14 +32,6 @@ describe("TextSection component", () => {
     expect(subtitle).toHaveTextContent("A subtitle");
   });
 
-  it("renders mono text in pre element", () => {
-    renderSection({ type: "text", content: "some code", style: "mono" });
-
-    const pre = document.querySelector("pre.section-mono");
-    expect(pre).toBeInTheDocument();
-    expect(pre).toHaveTextContent("some code");
-  });
-
   it("renders default text as paragraph", () => {
     renderSection({ type: "text", content: "Normal text" });
 
@@ -55,17 +46,5 @@ describe("TextSection component", () => {
     const icon = document.querySelector(".heading-icon");
     expect(icon).toBeInTheDocument();
     expect(icon).toHaveClass("icon-error");
-  });
-
-  it("renders {badge:text} as a vscode-badge element", () => {
-    renderSection({ type: "text", content: "Version {badge:v1.0} released", style: "heading" });
-
-    const badge = document.querySelector("vscode-badge");
-    expect(badge).toBeInTheDocument();
-    expect(badge).toHaveTextContent("v1.0");
-
-    // Surrounding text should also be present
-    const heading = screen.getByRole("heading", { level: 1 });
-    expect(heading).toHaveTextContent("Version v1.0 released");
   });
 });

@@ -66,10 +66,6 @@ export function createMockNotificationManager(): MockNotificationManager {
             slot.listeners.delete(handler);
           };
         },
-        nextEvent() {
-          return new Promise<NotificationUserEvent>(() => {});
-        },
-        closed: new Promise<void>(() => {}),
       } satisfies NotificationHandle;
     },
     routeEvent() {},

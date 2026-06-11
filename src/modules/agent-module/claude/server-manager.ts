@@ -76,13 +76,6 @@ export type ServerStartedCallback = (workspacePath: string, port: number) => voi
 export type ServerStoppedCallback = (workspacePath: string, isRestart: boolean) => void;
 
 /**
- * Callback for workspace ready events.
- * Triggered when status changes to idle, indicating the workspace
- * should be marked as loaded (clear loading screen).
- */
-export type WorkspaceReadyCallback = (workspacePath: string) => void;
-
-/**
  * Configuration for ClaudeCodeServerManager.
  */
 export interface ClaudeCodeServerManagerConfig {
@@ -140,7 +133,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   /** Callbacks for lifecycle events */
   private readonly startedCallbacks = new Set<ServerStartedCallback>();
   private readonly stoppedCallbacks = new Set<ServerStoppedCallback>();
-  private readonly workspaceReadyCallbacks = new Set<WorkspaceReadyCallback>();
 
   /** Handler called when workspace becomes active (first idle) */
   private markActiveHandler: ((workspacePath: string) => void) | null = null;
@@ -255,7 +247,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       return {
         success: false,
         error: "Workspace not registered",
-        serverStopped: false,
       };
     }
 
@@ -289,46 +280,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
-   * Check if a workspace is being tracked.
-   *
-   * @param workspacePath - Absolute path to the workspace
-   * @returns True if workspace is registered
-   */
-  isRunning(workspacePath: string): boolean {
-    const normalizedPath = new Path(workspacePath).toString();
-    return this.workspaces.has(normalizedPath);
-  }
-
-  /**
-   * Get the bridge server port.
-   * Returns the same port for all workspaces.
-   *
-   * @param workspacePath - Absolute path to the workspace
-   * @returns Port number or undefined if workspace not registered
-   */
-  getPort(workspacePath: string): number | undefined {
-    const normalizedPath = new Path(workspacePath).toString();
-    if (!this.workspaces.has(normalizedPath)) {
-      return undefined;
-    }
-    return this.port ?? undefined;
-  }
-
-  /**
-   * Stop all workspaces for a project.
-   *
-   * @param projectPath - Absolute path to the project
-   */
-  async stopAllForProject(projectPath: string): Promise<void> {
-    const normalizedProjectPath = new Path(projectPath).toString();
-    const workspacesToStop = [...this.workspaces.keys()].filter((path) =>
-      path.startsWith(normalizedProjectPath)
-    );
-
-    await Promise.all(workspacesToStop.map((path) => this.stopServer(path)));
-  }
-
-  /**
    * Subscribe to server started events.
    */
   onServerStarted(callback: ServerStartedCallback): () => void {
@@ -342,19 +293,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   onServerStopped(callback: ServerStoppedCallback): () => void {
     this.stoppedCallbacks.add(callback);
     return () => this.stoppedCallbacks.delete(callback);
-  }
-
-  /**
-   * Subscribe to workspace ready events.
-   * Triggered on WrapperStart (even when status is busy due to an initial prompt)
-   * or when status changes to idle, indicating the loading screen should be cleared.
-   *
-   * @param callback - Callback invoked with workspace path
-   * @returns Unsubscribe function
-   */
-  onWorkspaceReady(callback: WorkspaceReadyCallback): () => void {
-    this.workspaceReadyCallbacks.add(callback);
-    return () => this.workspaceReadyCallbacks.delete(callback);
   }
 
   /**
@@ -383,17 +321,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     state.statusCallbacks.add(callback);
     return () => state.statusCallbacks.delete(callback);
-  }
-
-  /**
-   * Get the current status for a workspace.
-   *
-   * @param workspacePath - Absolute path to the workspace
-   * @returns Current status or "none" if not registered
-   */
-  getStatus(workspacePath: string): AgentStatus {
-    const normalizedPath = new Path(workspacePath).toString();
-    return this.workspaces.get(normalizedPath)?.status ?? "none";
   }
 
   /**
@@ -566,7 +493,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     // Clear callbacks
     this.startedCallbacks.clear();
     this.stoppedCallbacks.clear();
-    this.workspaceReadyCallbacks.clear();
     this.markActiveHandler = null;
   }
 
@@ -693,8 +619,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * Replaces the wrapper's HTTP POST of WrapperStart/WrapperEnd: invoked via the
    * agent:lifecycle intent when the sidekick reports the agent terminal opening
    * ("WrapperStart") or closing ("WrapperEnd"). Routes through the same state
-   * machine as all other hooks (status, markActive, workspace-ready, subagent
-   * cleanup). Idempotent and a no-op for unknown workspaces.
+   * machine as all other hooks (status, markActive, subagent cleanup).
+   * Idempotent and a no-op for unknown workspaces.
    */
   triggerWrapperLifecycle(workspacePath: string, hookName: "WrapperStart" | "WrapperEnd"): void {
     this.handleHook(hookName, { workspacePath });
@@ -879,12 +805,8 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       }
 
       // When status becomes idle, or WrapperStart fires (even if busy due to initial prompt),
-      // notify workspace is ready (clears loading screen) and mark active.
+      // mark the workspace active.
       if (hookName === "WrapperStart" || newStatus === "idle") {
-        for (const callback of this.workspaceReadyCallbacks) {
-          callback(normalizedPath);
-        }
-
         this.markActiveHandler?.(normalizedPath);
       }
     }

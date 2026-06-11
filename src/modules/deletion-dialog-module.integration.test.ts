@@ -15,7 +15,6 @@ import { SILENT_LOGGER } from "../boundaries/platform/logging.test-utils";
 import {
   EVENT_WORKSPACE_DELETION_PROGRESS,
   EVENT_WORKSPACE_DELETED,
-  EVENT_WORKSPACE_DELETE_FAILED,
   INTENT_DELETE_WORKSPACE,
 } from "../intents/delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
@@ -508,16 +507,5 @@ describe("DeletionDialogModule", () => {
     // Switching back to workspace A should not re-open dialog (progress was cleaned up)
     await fireSwitched(WS_PATH_A);
     expect(dialogManager.open).toHaveBeenCalledTimes(1);
-  });
-
-  it("should handle EVENT_WORKSPACE_DELETE_FAILED as no-op", async () => {
-    // The module registers a handler for this event but it's a no-op
-    const { module } = setup;
-
-    // Should not throw
-    await module.events![EVENT_WORKSPACE_DELETE_FAILED]!.handler({
-      type: EVENT_WORKSPACE_DELETE_FAILED,
-      payload: { workspacePath: WS_PATH_A },
-    });
   });
 });

@@ -33,18 +33,6 @@ export function updateStatus(workspacePath: string, status: AgentStatus): void {
 }
 
 /**
- * Set all statuses at once from a record (typically from initial fetch).
- * Clears existing statuses before setting new ones.
- * @param statuses - Record of workspace paths to their statuses
- */
-export function setAllStatuses(statuses: Record<string, AgentStatus>): void {
-  _statuses.clear();
-  for (const [path, status] of Object.entries(statuses)) {
-    _statuses.set(path, status);
-  }
-}
-
-/**
  * Get the status for a specific workspace.
  * @param workspacePath - Path to the workspace
  * @returns Agent status, or 'none' status if not found

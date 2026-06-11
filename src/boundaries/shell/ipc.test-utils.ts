@@ -104,10 +104,6 @@ export function createBehavioralIpcBoundary(): BehavioralIpcBoundary {
       handlers.delete(channel);
     },
 
-    removeAllHandlers(): void {
-      handlers.clear();
-    },
-
     on(channel: string, listener: IpcEventHandler): void {
       const listeners = eventListeners.get(channel) ?? [];
       listeners.push(listener);

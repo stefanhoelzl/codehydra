@@ -46,9 +46,6 @@ export class ClaudeCodeProvider implements AgentProvider {
   /** Unsubscribe function for ServerManager status changes */
   private unsubscribe: (() => void) | null = null;
 
-  /** Whether agent has been marked active (first activity detected) */
-  private active = false;
-
   constructor(deps: ClaudeCodeProviderDeps) {
     this.serverManager = deps.serverManager;
     this.workspacePath = deps.workspacePath;
@@ -88,7 +85,6 @@ export class ClaudeCodeProvider implements AgentProvider {
       this.unsubscribe = null;
     }
     // Keep port for reconnect
-    // Keep active state for reconnect
 
     this.logger.info("Provider disconnected", {
       workspacePath: this.workspacePath,
@@ -186,15 +182,10 @@ export class ClaudeCodeProvider implements AgentProvider {
 
   /**
    * Mark agent as active.
-   * For Claude Code, this is called when the first MCP request is received.
+   * No-op for Claude Code: status comes entirely from ServerManager hooks.
    */
   markActive(): void {
-    if (!this.active) {
-      this.active = true;
-      this.logger.debug("Agent marked active", {
-        workspacePath: this.workspacePath,
-      });
-    }
+    // Intentionally empty (interface conformance)
   }
 
   /**
@@ -208,7 +199,6 @@ export class ClaudeCodeProvider implements AgentProvider {
     }
 
     this.port = null;
-    this.active = false;
     this.statusCallbacks.clear();
 
     this.logger.info("Provider disposed", {

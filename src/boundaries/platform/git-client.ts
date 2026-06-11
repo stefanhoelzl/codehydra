@@ -115,11 +115,11 @@ export interface IGitClient {
   /**
    * Fetch from a remote.
    * @param repoPath Absolute path to the git repository
-   * @param remote Optional remote name (defaults to all remotes)
+   * @param remote Remote name
    * @returns Promise resolving when fetch is complete
    * @throws GitError if remote doesn't exist or network error
    */
-  fetch(repoPath: Path, remote?: string): Promise<void>;
+  fetch(repoPath: Path, remote: string): Promise<void>;
 
   /**
    * List all remotes in repository.
@@ -211,14 +211,6 @@ export interface IGitClient {
    * @throws GitError on network failure, auth failure, invalid URL, or target exists
    */
   clone(url: string, targetPath: Path, onProgress?: CloneProgressCallback): Promise<void>;
-
-  /**
-   * Check if a repository is a bare repository.
-   * @param repoPath Absolute path to the git repository
-   * @returns Promise resolving to true if repository is bare
-   * @throws GitError if not a git repository
-   */
-  isBare(repoPath: Path): Promise<boolean>;
 
   /**
    * Initialize a new git repository at the given path.

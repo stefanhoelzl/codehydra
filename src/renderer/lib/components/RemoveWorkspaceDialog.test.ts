@@ -79,7 +79,6 @@ function getKeepBranchCheckbox(): HTMLElement & { checked?: boolean } {
 
 describe("RemoveWorkspaceDialog component", () => {
   const defaultProps = {
-    open: true,
     workspaceRef: testWorkspaceRef,
   };
 

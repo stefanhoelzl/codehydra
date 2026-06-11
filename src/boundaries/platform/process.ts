@@ -139,7 +139,7 @@ const TIMEOUT_SYMBOL = Symbol("timeout");
 /**
  * SpawnedProcess implementation wrapping an execa subprocess.
  */
-export class ExecaSpawnedProcess implements SpawnedProcess {
+class ExecaSpawnedProcess implements SpawnedProcess {
   private readonly subprocess: ExecaSubprocess;
   private readonly logger: Logger;
   private readonly command: string;

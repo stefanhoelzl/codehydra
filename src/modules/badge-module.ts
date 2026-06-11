@@ -350,7 +350,7 @@ export class BadgeManager {
  * @param statuses - Map of workspace paths to their aggregated statuses
  * @returns Badge state to display
  */
-export function aggregateWorkspaceStates(
+function aggregateWorkspaceStates(
   statuses: ReadonlyMap<WorkspacePath, AggregatedAgentStatus>
 ): BadgeState {
   let hasReady = false;

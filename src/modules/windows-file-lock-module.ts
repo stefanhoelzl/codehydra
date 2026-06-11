@@ -34,20 +34,6 @@ import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/error-utils";
 
 // =============================================================================
-// Error Types
-// =============================================================================
-
-/**
- * Error thrown when user cancels UAC elevation prompt.
- */
-export class UACCancelledError extends Error {
-  constructor() {
-    super("UAC elevation was cancelled by the user");
-    this.name = "UACCancelledError";
-  }
-}
-
-// =============================================================================
 // JSON Output Types
 // =============================================================================
 
@@ -63,11 +49,6 @@ interface DetectOutput {
   error?: string;
 }
 
-/** JSON output from the unified PowerShell script for -Action CloseHandles mode. */
-interface CloseHandlesOutput extends DetectOutput {
-  closed: string[];
-}
-
 // =============================================================================
 // Constants
 // =============================================================================
@@ -77,9 +58,6 @@ const MAX_FILES_PER_PROCESS = 20;
 
 /** Timeout for detect operations */
 const DETECT_TIMEOUT_MS = 30_000;
-
-/** Timeout for closeHandles operation */
-const CLOSE_HANDLES_TIMEOUT_MS = 60_000;
 
 /** Timeout for taskkill */
 const KILL_TIMEOUT_MS = 5_000;
@@ -233,85 +211,6 @@ export async function killBlockingProcesses(
   if (result.exitCode !== 0) {
     const failedPids = pids.join(", ");
     throw new Error(`Failed to kill processes (PIDs: ${failedPids}): ${result.stderr}`);
-  }
-}
-
-/**
- * Close file handles in the given path using elevated PowerShell.
- * Self-elevates via UAC prompt.
- * Exported for boundary tests.
- */
-export async function closeFileHandles(
-  processRunner: ProcessRunner,
-  scriptPath: string,
-  path: Path,
-  logger: Logger
-): Promise<void> {
-  const proc = processRunner.run("powershell", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    scriptPath,
-    "-BasePath",
-    path.toNative(),
-    "-Action",
-    "CloseHandles",
-  ]);
-
-  const result = await proc.wait(CLOSE_HANDLES_TIMEOUT_MS);
-
-  if (result.running) {
-    await proc.kill(1000, 1000);
-    throw new Error("Close handles operation timed out");
-  }
-
-  // Parse JSON output
-  const output = result.stdout.trim();
-  if (!output) {
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to close handles: exit code ${result.exitCode}`);
-    }
-    return;
-  }
-
-  try {
-    const parsed = JSON.parse(output) as CloseHandlesOutput | { error: string };
-
-    // Check for error response
-    if ("error" in parsed && typeof parsed.error === "string") {
-      if (parsed.error.includes("UAC cancelled")) {
-        throw new UACCancelledError();
-      }
-      throw new Error(parsed.error);
-    }
-
-    // Log closed files
-    const closeHandlesOutput = parsed as CloseHandlesOutput;
-    if (closeHandlesOutput.closed && closeHandlesOutput.closed.length > 0) {
-      logger.info("Closed file handles", {
-        path: path.toString(),
-        closedCount: closeHandlesOutput.closed.length,
-      });
-    } else {
-      logger.info("No file handles to close", { path: path.toString() });
-    }
-  } catch (error) {
-    if (error instanceof UACCancelledError) {
-      throw error;
-    }
-    if (error instanceof Error && error.message !== "Unexpected end of JSON input") {
-      throw error;
-    }
-    // JSON parse error with non-JSON output
-    logger.warn("Failed to parse closeHandles output", {
-      stdout: output,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to close handles: exit code ${result.exitCode}`, { cause: error });
-    }
   }
 }
 

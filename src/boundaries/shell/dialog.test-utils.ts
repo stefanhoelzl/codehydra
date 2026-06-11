@@ -7,8 +7,6 @@ import type {
   DialogBoundary,
   OpenDialogOptions,
   OpenDialogResult,
-  SaveDialogOptions,
-  SaveDialogResult,
   DialogMessageBoxOptions,
   MessageBoxResult,
 } from "./dialog";
@@ -28,15 +26,6 @@ export interface OpenDialogResponse {
 }
 
 /**
- * Configured response for save dialog.
- */
-export interface SaveDialogResponse {
-  readonly canceled: boolean;
-  /** File path as string (will be converted to Path object), undefined if canceled */
-  readonly filePath?: string;
-}
-
-/**
  * Configured response for message box.
  */
 export interface MessageBoxResponse {
@@ -48,8 +37,8 @@ export interface MessageBoxResponse {
  * Call record for dialog operations.
  */
 export interface DialogCall {
-  readonly method: "showOpenDialog" | "showSaveDialog" | "showMessageBox" | "showErrorBox";
-  readonly options?: OpenDialogOptions | SaveDialogOptions | DialogMessageBoxOptions;
+  readonly method: "showOpenDialog" | "showMessageBox" | "showErrorBox";
+  readonly options?: OpenDialogOptions | DialogMessageBoxOptions;
   readonly title?: string;
   readonly content?: string;
 }
@@ -62,8 +51,6 @@ export interface DialogBoundaryState {
   readonly calls: readonly DialogCall[];
   /** Count of showOpenDialog calls */
   readonly openDialogCount: number;
-  /** Count of showSaveDialog calls */
-  readonly saveDialogCount: number;
   /** Count of showMessageBox calls */
   readonly messageBoxCount: number;
   /** Count of showErrorBox calls */
@@ -84,12 +71,6 @@ export interface BehavioralDialogBoundary extends DialogBoundary {
    * @param response - Response to return (used once, then returns to default)
    */
   _setNextOpenDialogResponse(response: OpenDialogResponse): void;
-
-  /**
-   * Set the next response for showSaveDialog.
-   * @param response - Response to return (used once, then returns to default)
-   */
-  _setNextSaveDialogResponse(response: SaveDialogResponse): void;
 
   /**
    * Set the next response for showMessageBox.
@@ -140,13 +121,11 @@ export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
   // State tracking
   const calls: DialogCall[] = [];
   let openDialogCount = 0;
-  let saveDialogCount = 0;
   let messageBoxCount = 0;
   let errorBoxCount = 0;
 
   // Pending responses (used once then cleared)
   let nextOpenDialogResponse: OpenDialogResponse | null = null;
-  let nextSaveDialogResponse: SaveDialogResponse | null = null;
   let nextMessageBoxResponse: MessageBoxResponse | null = null;
 
   return {
@@ -161,20 +140,6 @@ export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
       return {
         canceled: response.canceled,
         filePaths: response.filePaths.map((p) => new Path(p)),
-      };
-    },
-
-    async showSaveDialog(options: SaveDialogOptions): Promise<SaveDialogResult> {
-      calls.push({ method: "showSaveDialog", options });
-      saveDialogCount++;
-
-      // Use configured response or default to canceled
-      const response = nextSaveDialogResponse ?? { canceled: true };
-      nextSaveDialogResponse = null;
-
-      return {
-        canceled: response.canceled,
-        filePath: response.filePath ? new Path(response.filePath) : undefined,
       };
     },
 
@@ -201,7 +166,6 @@ export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
       return {
         calls: [...calls],
         openDialogCount,
-        saveDialogCount,
         messageBoxCount,
         errorBoxCount,
       };
@@ -211,10 +175,6 @@ export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
       nextOpenDialogResponse = response;
     },
 
-    _setNextSaveDialogResponse(response: SaveDialogResponse): void {
-      nextSaveDialogResponse = response;
-    },
-
     _setNextMessageBoxResponse(response: MessageBoxResponse): void {
       nextMessageBoxResponse = response;
     },
@@ -222,11 +182,9 @@ export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
     _reset(): void {
       calls.length = 0;
       openDialogCount = 0;
-      saveDialogCount = 0;
       messageBoxCount = 0;
       errorBoxCount = 0;
       nextOpenDialogResponse = null;
-      nextSaveDialogResponse = null;
       nextMessageBoxResponse = null;
     },
   };

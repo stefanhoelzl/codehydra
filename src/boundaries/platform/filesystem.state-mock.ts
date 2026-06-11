@@ -418,9 +418,8 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       state.setEntry(path, file(content));
     },
 
-    async mkdir(pathLike: PathLike, mkdirOptions?): Promise<void> {
+    async mkdir(pathLike: PathLike): Promise<void> {
       const path = normalizePath(pathLike);
-      const recursive = mkdirOptions?.recursive ?? true;
       const existing = state.entries.get(path);
 
       // If directory already exists, no-op
@@ -433,29 +432,17 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
         throw new FileSystemError("EEXIST", path, `File exists at path: ${path}`);
       }
 
-      if (recursive) {
-        // Create all parent directories
-        const segments = path.split("/").filter(Boolean);
-        let current = "";
-        for (const segment of segments) {
-          current = current + "/" + segment;
-          const entry = state.entries.get(current);
-          if (!entry) {
-            state.setEntry(current, directory());
-          } else if (entry.type !== "directory") {
-            throw new FileSystemError("EEXIST", current, `Not a directory: ${current}`);
-          }
+      // Create all parent directories
+      const segments = path.split("/").filter(Boolean);
+      let current = "";
+      for (const segment of segments) {
+        current = current + "/" + segment;
+        const entry = state.entries.get(current);
+        if (!entry) {
+          state.setEntry(current, directory());
+        } else if (entry.type !== "directory") {
+          throw new FileSystemError("EEXIST", current, `Not a directory: ${current}`);
         }
-      } else {
-        // Check parent exists
-        const parent = getParentPath(path);
-        if (parent !== null) {
-          const parentEntry = state.entries.get(parent);
-          if (!parentEntry || parentEntry.type !== "directory") {
-            throw new FileSystemError("ENOENT", path, `Parent directory not found: ${parent}`);
-          }
-        }
-        state.setEntry(path, directory());
       }
     },
 
@@ -560,7 +547,7 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       // Create destination parent directories
       const destParent = getParentPath(destPath);
       if (destParent !== null) {
-        await layer.mkdir(destParent, { recursive: true });
+        await layer.mkdir(destParent);
       }
 
       // Copy the entry
@@ -636,31 +623,6 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       }
 
       state.setEntry(path, file(content));
-    },
-
-    async symlink(target: PathLike, linkPath: PathLike): Promise<void> {
-      const targetPath = normalizePath(target);
-      const link = normalizePath(linkPath);
-
-      // Check if parent exists
-      const parent = getParentPath(link);
-      if (parent !== null) {
-        const parentEntry = state.entries.get(parent);
-        if (!parentEntry) {
-          throw new FileSystemError("ENOENT", link, `Parent directory not found: ${parent}`);
-        }
-        if (parentEntry.type !== "directory") {
-          throw new FileSystemError("ENOENT", link, `Parent is not a directory: ${parent}`);
-        }
-      }
-
-      // Remove existing symlink
-      const existing = state.entries.get(link);
-      if (existing?.type === "symlink") {
-        (state as FileSystemMockStateImpl)["_entries"].delete(link);
-      }
-
-      state.setEntry(link, symlink(targetPath));
     },
 
     async rename(oldPath: PathLike, newPath: PathLike): Promise<void> {
@@ -751,14 +713,6 @@ interface FileSystemMatchers {
    * @param pattern - Substring or regex to match
    */
   toHaveFileContaining(path: string | Path, pattern: string | RegExp): void;
-
-  /**
-   * Assert that a symlink exists with optional target check.
-   *
-   * @param path - Absolute path to symlink
-   * @param target - Optional expected target path
-   */
-  toHaveSymlink(path: string | Path, target?: string | Path): void;
 
   /**
    * Assert that a file is executable.
@@ -890,41 +844,6 @@ export const fileSystemMatchers: MatcherImplementationsFor<
     };
   },
 
-  toHaveSymlink(received, path, target?) {
-    const normalizedPath = normalizePath(path);
-    const entry = received.$.entries.get(normalizedPath);
-
-    if (!entry) {
-      return {
-        pass: false,
-        message: () => `Expected symlink at ${normalizedPath} but it does not exist`,
-      };
-    }
-
-    if (entry.type !== "symlink") {
-      return {
-        pass: false,
-        message: () => `Expected symlink at ${normalizedPath} but found ${entry.type}`,
-      };
-    }
-
-    if (target !== undefined) {
-      const expectedTarget = normalizePath(target);
-      if (entry.target !== expectedTarget) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected symlink ${normalizedPath} to point to ${expectedTarget} but it points to ${entry.target}`,
-        };
-      }
-    }
-
-    return {
-      pass: true,
-      message: () => `Expected ${normalizedPath} not to be a symlink`,
-    };
-  },
-
   toBeExecutable(received, path) {
     const normalizedPath = normalizePath(path);
     const entry = received.$.entries.get(normalizedPath);
@@ -981,7 +900,6 @@ export interface SpyFileSystemBoundary extends FileSystemBoundary {
   copyTree: Mock<FileSystemBoundary["copyTree"]>;
   makeExecutable: Mock<FileSystemBoundary["makeExecutable"]>;
   writeFileBuffer: Mock<FileSystemBoundary["writeFileBuffer"]>;
-  symlink: Mock<FileSystemBoundary["symlink"]>;
   rename: Mock<FileSystemBoundary["rename"]>;
   mkdtemp: Mock<FileSystemBoundary["mkdtemp"]>;
   /** State access for behavioral mock */
@@ -1020,7 +938,6 @@ export function createSpyFileSystemBoundary(
     copyTree: vi.fn(mock.copyTree.bind(mock)),
     makeExecutable: vi.fn(mock.makeExecutable.bind(mock)),
     writeFileBuffer: vi.fn(mock.writeFileBuffer.bind(mock)),
-    symlink: vi.fn(mock.symlink.bind(mock)),
     rename: vi.fn(mock.rename.bind(mock)),
     mkdtemp: vi.fn(mock.mkdtemp.bind(mock)),
     $: mock.$,

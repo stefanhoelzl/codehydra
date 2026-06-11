@@ -35,43 +35,12 @@ describe("ImageBoundary (behavioral mock)", () => {
     });
   });
 
-  describe("createFromDataURL", () => {
-    it("creates an image from data URL", () => {
-      const dataURL = "data:image/png;base64,iVBORw0KGgo=";
-      const handle = imageLayer.createFromDataURL(dataURL);
-      expect(handle.id).toBe("image-1");
-      expect(imageLayer.toDataURL(handle)).toBe(dataURL);
-    });
-  });
-
-  describe("createEmpty", () => {
-    it("creates an empty image with specified dimensions", () => {
-      const handle = imageLayer.createEmpty(32, 32);
-      expect(imageLayer.isEmpty(handle)).toBe(true);
-      expect(imageLayer.getSize(handle)).toEqual({ width: 32, height: 32 });
-    });
-  });
-
   describe("createFromBitmap", () => {
     it("creates an image from bitmap buffer", () => {
       const buffer = Buffer.alloc(16 * 16 * 4); // 16x16 BGRA
       const handle = imageLayer.createFromBitmap(buffer, 16, 16);
       expect(imageLayer.isEmpty(handle)).toBe(false);
-      expect(imageLayer.getSize(handle)).toEqual({ width: 16, height: 16 });
-    });
-  });
-
-  describe("getSize", () => {
-    it("returns correct size for created image", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
-      // Default mock size is 16x16
-      expect(imageLayer.getSize(handle)).toEqual({ width: 16, height: 16 });
-    });
-
-    it("throws for invalid handle", () => {
-      const invalidHandle = createImageHandle("invalid-99");
-      expect(() => imageLayer.getSize(invalidHandle)).toThrow(PlatformError);
-      expect(() => imageLayer.getSize(invalidHandle)).toThrow("Invalid image handle");
+      expect(imageLayer).toHaveImage(handle.id, { size: { width: 16, height: 16 } });
     });
   });
 
@@ -81,27 +50,9 @@ describe("ImageBoundary (behavioral mock)", () => {
       expect(imageLayer.isEmpty(handle)).toBe(false);
     });
 
-    it("returns true for empty images", () => {
-      const handle = imageLayer.createEmpty(16, 16);
-      expect(imageLayer.isEmpty(handle)).toBe(true);
-    });
-
     it("throws for invalid handle", () => {
       const invalidHandle = createImageHandle("invalid-99");
       expect(() => imageLayer.isEmpty(invalidHandle)).toThrow(PlatformError);
-    });
-  });
-
-  describe("toDataURL", () => {
-    it("returns data URL for created image", () => {
-      const handle = imageLayer.createFromPath("/test/icon.png");
-      const dataURL = imageLayer.toDataURL(handle);
-      expect(dataURL).toMatch(/^data:image\/png;base64,/);
-    });
-
-    it("throws for invalid handle", () => {
-      const invalidHandle = createImageHandle("invalid-99");
-      expect(() => imageLayer.toDataURL(invalidHandle)).toThrow(PlatformError);
     });
   });
 
@@ -118,7 +69,7 @@ describe("ImageBoundary (behavioral mock)", () => {
       const handle = imageLayer.createFromPath("/test/icon.png");
       imageLayer.release(handle);
 
-      expect(() => imageLayer.getSize(handle)).toThrow(PlatformError);
+      expect(() => imageLayer.isEmpty(handle)).toThrow(PlatformError);
     });
   });
 
@@ -132,8 +83,8 @@ describe("ImageBoundary (behavioral mock)", () => {
   describe("sequential IDs", () => {
     it("assigns sequential IDs to images", () => {
       const h1 = imageLayer.createFromPath("/a.png");
-      const h2 = imageLayer.createFromDataURL("data:image/png;base64,test");
-      const h3 = imageLayer.createEmpty(8, 8);
+      const h2 = imageLayer.createFromPath("/b.png");
+      const h3 = imageLayer.createFromBitmap(Buffer.alloc(8 * 8 * 4), 8, 8);
 
       expect(h1.id).toBe("image-1");
       expect(h2.id).toBe("image-2");

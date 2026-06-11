@@ -18,8 +18,8 @@ vi.mock("$lib/api", () => ({
   on: vi.fn(() => vi.fn()),
 }));
 
-import { setupDomainEventBindings } from "./setup-domain-event-bindings";
-import type { DomainEventApi, ApiEvents } from "./domain-events";
+import { setupDomainEventBindings, type DomainEventApi } from "./setup-domain-event-bindings";
+import type { ApiEvents } from "@shared/api/interfaces";
 import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";

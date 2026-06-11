@@ -162,13 +162,6 @@ export class OpenCodeClient implements IDisposable {
    */
   private _currentStatus: ClientStatus = "idle";
 
-  /**
-   * Get the current status for this client.
-   */
-  get currentStatus(): ClientStatus {
-    return this._currentStatus;
-  }
-
   constructor(port: number, logger: Logger, sdkFactory: SdkClientFactory = defaultSdkFactory) {
     this.port = port;
     this.baseUrl = `http://127.0.0.1:${port}`;
@@ -189,14 +182,6 @@ export class OpenCodeClient implements IDisposable {
     } catch (error) {
       return err(this.mapSdkError(error));
     }
-  }
-
-  /**
-   * Check if a session ID is a root session.
-   * Used internally for event filtering.
-   */
-  isRootSession(sessionId: string): boolean {
-    return this.rootSessionIds.has(sessionId);
   }
 
   /**
@@ -424,32 +409,6 @@ export class OpenCodeClient implements IDisposable {
       case "permission.replied":
         this.handlePermissionReplied(event.properties);
         break;
-    }
-  }
-
-  /**
-   * Handle incoming SSE message.
-   * Accepts MessageEvent for simulating SSE events in tests.
-   * @internal
-   */
-  handleMessage(event: MessageEvent): void {
-    this.handleRawMessage(event.data as string);
-  }
-
-  /**
-   * Handle incoming raw SSE message data.
-   * Parses the OpenCode wire format and dispatches to appropriate handlers.
-   *
-   * OpenCode wire format: { type: "event.name", properties: { ... } }
-   * @internal - Used for backward compatibility with existing tests
-   */
-  private handleRawMessage(data: string): void {
-    try {
-      const parsed = JSON.parse(data) as SdkEvent;
-      if (!parsed.type) return;
-      this.handleSdkEvent(parsed);
-    } catch {
-      // Ignore parse errors
     }
   }
 

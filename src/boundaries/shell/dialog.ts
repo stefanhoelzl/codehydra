@@ -65,48 +65,6 @@ export interface OpenDialogResult {
 }
 
 /**
- * Options for save file dialogs.
- */
-export interface SaveDialogOptions {
-  /** Title of the dialog window */
-  readonly title?: string;
-  /** Default path/filename to save as */
-  readonly defaultPath?: string;
-  /** Button label for the confirm button */
-  readonly buttonLabel?: string;
-  /** Filter files by type */
-  readonly filters?: readonly DialogFileFilter[];
-  /** Message to show above input boxes (macOS only) */
-  readonly message?: string;
-  /** Custom label for file name text box (macOS only) */
-  readonly nameFieldLabel?: string;
-  /** Show tags input box (macOS only) */
-  readonly showsTagField?: boolean;
-  /** Dialog behavior properties */
-  readonly properties?: readonly SaveDialogProperty[];
-}
-
-/**
- * Properties that control save dialog behavior.
- */
-export type SaveDialogProperty =
-  | "showHiddenFiles"
-  | "createDirectory"
-  | "treatPackageAsDirectory"
-  | "showOverwriteConfirmation"
-  | "dontAddToRecent";
-
-/**
- * Result from a save dialog.
- */
-export interface SaveDialogResult {
-  /** Whether the dialog was canceled */
-  readonly canceled: boolean;
-  /** Selected file path (as Path object), undefined if canceled */
-  readonly filePath: Path | undefined;
-}
-
-/**
  * Options for message box dialogs.
  */
 export interface DialogMessageBoxOptions {
@@ -157,14 +115,6 @@ export interface DialogBoundary {
   showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogResult>;
 
   /**
-   * Show a save file dialog.
-   *
-   * @param options - Dialog options
-   * @returns Result with selected path as Path object
-   */
-  showSaveDialog(options: SaveDialogOptions): Promise<SaveDialogResult>;
-
-  /**
    * Show a message box dialog.
    *
    * @param options - Message box options
@@ -199,26 +149,6 @@ function buildOpenDialogOptions(options: OpenDialogOptions): Electron.OpenDialog
   if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
   if (options.buttonLabel !== undefined) result.buttonLabel = options.buttonLabel;
   if (options.message !== undefined) result.message = options.message;
-  if (options.filters !== undefined) {
-    result.filters = options.filters.map((f) => ({
-      name: f.name,
-      extensions: [...f.extensions],
-    }));
-  }
-  if (options.properties !== undefined) {
-    result.properties = [...options.properties];
-  }
-  return result;
-}
-
-function buildSaveDialogOptions(options: SaveDialogOptions): Electron.SaveDialogOptions {
-  const result: Electron.SaveDialogOptions = {};
-  if (options.title !== undefined) result.title = options.title;
-  if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
-  if (options.buttonLabel !== undefined) result.buttonLabel = options.buttonLabel;
-  if (options.message !== undefined) result.message = options.message;
-  if (options.nameFieldLabel !== undefined) result.nameFieldLabel = options.nameFieldLabel;
-  if (options.showsTagField !== undefined) result.showsTagField = options.showsTagField;
   if (options.filters !== undefined) {
     result.filters = options.filters.map((f) => ({
       name: f.name,
@@ -267,23 +197,6 @@ export class DefaultDialogBoundary implements DialogBoundary {
     return {
       canceled: result.canceled,
       filePaths: result.filePaths.map((p) => new Path(p)),
-    };
-  }
-
-  async showSaveDialog(options: SaveDialogOptions): Promise<SaveDialogResult> {
-    this.logger.debug("Showing save dialog", { title: options.title ?? null });
-
-    const electronOptions = buildSaveDialogOptions(options);
-    const result = await dialog.showSaveDialog(electronOptions);
-
-    this.logger.debug("Save dialog result", {
-      canceled: result.canceled,
-      hasPath: !!result.filePath,
-    });
-
-    return {
-      canceled: result.canceled,
-      filePath: result.filePath ? new Path(result.filePath) : undefined,
     };
   }
 

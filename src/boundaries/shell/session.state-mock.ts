@@ -231,25 +231,22 @@ export function createSessionBoundaryMock(
       return { id, __brand: "SessionHandle" };
     },
 
-    setPermissionRequestHandler(
-      handle: SessionHandle,
-      handler: PermissionRequestHandler | null
-    ): void {
+    setPermissionRequestHandler(handle: SessionHandle, _handler: PermissionRequestHandler): void {
       const session = getSession(handle);
-      session.hasPermissionRequestHandler = handler !== null;
+      session.hasPermissionRequestHandler = true;
     },
 
-    setPermissionCheckHandler(handle: SessionHandle, handler: PermissionCheckHandler | null): void {
+    setPermissionCheckHandler(handle: SessionHandle, _handler: PermissionCheckHandler): void {
       const session = getSession(handle);
-      session.hasPermissionCheckHandler = handler !== null;
+      session.hasPermissionCheckHandler = true;
     },
 
     setHeadersReceivedHandler(
       handle: SessionHandle,
-      handler: ((headers: Record<string, string[]>) => Record<string, string[]>) | null
+      _handler: (headers: Record<string, string[]>) => Record<string, string[]>
     ): void {
       const session = getSession(handle);
-      session.hasHeadersReceivedHandler = handler !== null;
+      session.hasHeadersReceivedHandler = true;
     },
 
     async dispose(): Promise<void> {

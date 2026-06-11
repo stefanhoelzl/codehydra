@@ -1,7 +1,7 @@
 /**
  * Tests for exported functions in WindowsFileLockModule.
  *
- * Tests verify: parseDetectOutput, runDetectAction, killBlockingProcesses, closeFileHandles.
+ * Tests verify: parseDetectOutput, runDetectAction, killBlockingProcesses.
  * Migrated from workspace-lock-handler.test.ts.
  */
 
@@ -10,8 +10,6 @@ import {
   parseDetectOutput,
   runDetectAction,
   killBlockingProcesses,
-  closeFileHandles,
-  UACCancelledError,
 } from "./windows-file-lock-module";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
@@ -38,28 +36,6 @@ function createDetectJson(
       files: p.files ?? [],
       cwd: p.cwd ?? null,
     })),
-  });
-}
-
-function createCloseHandlesJson(
-  blocking: Array<{
-    pid: number;
-    name: string;
-    commandLine: string;
-    files?: string[];
-    cwd?: string | null;
-  }>,
-  closed: string[]
-): string {
-  return JSON.stringify({
-    blocking: blocking.map((p) => ({
-      pid: p.pid,
-      name: p.name,
-      commandLine: p.commandLine,
-      files: p.files ?? [],
-      cwd: p.cwd ?? null,
-    })),
-    closed,
   });
 }
 
@@ -370,95 +346,5 @@ describe.skipIf(process.platform !== "win32")("killBlockingProcesses", () => {
     await expect(killBlockingProcesses(runner, [1234], createMockLogger())).rejects.toThrow(
       "Failed to kill processes"
     );
-  });
-});
-
-// =============================================================================
-// closeFileHandles (Windows-only: uses PowerShell)
-// =============================================================================
-
-describe.skipIf(process.platform !== "win32")("closeFileHandles", () => {
-  let testPath: Path;
-  if (process.platform === "win32") {
-    testPath = new Path("C:\\workspace\\test");
-  }
-
-  it("throws UACCancelledError when UAC is cancelled", async () => {
-    const output = JSON.stringify({ error: "UAC cancelled by user" });
-    const runner = createMockProcessRunner({
-      defaultResult: { stdout: output, exitCode: 1 },
-    });
-
-    await expect(
-      closeFileHandles(runner, SCRIPT_PATH, testPath, createMockLogger())
-    ).rejects.toThrow(UACCancelledError);
-  });
-
-  it("succeeds when closeHandles returns closed files", async () => {
-    const output = createCloseHandlesJson(
-      [{ pid: 1234, name: "node.exe", commandLine: "node" }],
-      ["C:\\workspace\\test\\file1.txt", "C:\\workspace\\test\\file2.txt"]
-    );
-    const runner = createMockProcessRunner({
-      defaultResult: { stdout: output },
-    });
-    const logger = createMockLogger();
-
-    await expect(closeFileHandles(runner, SCRIPT_PATH, testPath, logger)).resolves.toBeUndefined();
-    expect(logger.info).toHaveBeenCalledWith("Closed file handles", {
-      path: testPath.toString(),
-      closedCount: 2,
-    });
-  });
-
-  it("succeeds when no handles to close", async () => {
-    const output = createCloseHandlesJson([], []);
-    const runner = createMockProcessRunner({
-      defaultResult: { stdout: output },
-    });
-    const logger = createMockLogger();
-
-    await expect(closeFileHandles(runner, SCRIPT_PATH, testPath, logger)).resolves.toBeUndefined();
-    expect(logger.info).toHaveBeenCalledWith("No file handles to close", {
-      path: testPath.toString(),
-    });
-  });
-
-  it("throws error when script returns error", async () => {
-    const output = JSON.stringify({ error: "Some internal error" });
-    const runner = createMockProcessRunner({
-      defaultResult: { stdout: output, exitCode: 1 },
-    });
-
-    await expect(
-      closeFileHandles(runner, SCRIPT_PATH, testPath, createMockLogger())
-    ).rejects.toThrow("Some internal error");
-  });
-
-  it("throws error on timeout", async () => {
-    const runner = createMockProcessRunner({
-      onSpawn: () => ({ running: true, exitCode: null }),
-    });
-
-    await expect(
-      closeFileHandles(runner, SCRIPT_PATH, testPath, createMockLogger())
-    ).rejects.toThrow("Close handles operation timed out");
-    expect(runner.$.spawned(0)).toHaveBeenKilled();
-  });
-
-  it("calls script with -Action CloseHandles", async () => {
-    const output = createCloseHandlesJson([], []);
-    const runner = createMockProcessRunner({
-      defaultResult: { stdout: output, stderr: "", exitCode: 0 },
-    });
-
-    await closeFileHandles(runner, SCRIPT_PATH, testPath, createMockLogger());
-
-    expect(runner).toHaveSpawned([
-      {
-        command: "powershell",
-        args: expect.arrayContaining(["-File", SCRIPT_PATH, "-Action", "CloseHandles"]),
-      },
-    ]);
   });
 });

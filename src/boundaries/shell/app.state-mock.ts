@@ -7,11 +7,10 @@
  * Custom matchers:
  * - `toHaveDockBadge(text)` - Assert current dock badge text
  * - `toHaveBadgeCount(count)` - Assert current badge count
- * - `toHaveCommandLineSwitch(key, value?)` - Assert command line switch exists
  */
 
 import { expect } from "vitest";
-import type { AppBoundary, AppPathName, AppDock } from "./app";
+import type { AppBoundary, AppDock } from "./app";
 import type {
   MockState,
   MockWithState,
@@ -22,14 +21,6 @@ import type {
 // =============================================================================
 // State Implementation
 // =============================================================================
-
-/**
- * Command line switch entry.
- */
-interface CommandLineSwitch {
-  readonly key: string;
-  readonly value: string | undefined;
-}
 
 /**
  * Internal state for the AppBoundary mock.
@@ -45,7 +36,6 @@ class AppBoundaryMockStateImpl implements MockState {
   sleepBlockerStarts = 0;
   /** Number of times a blocker transitioned from active → inactive. */
   sleepBlockerStops = 0;
-  readonly commandLineSwitches: CommandLineSwitch[] = [];
   readonly themeUpdatedCallbacks: Set<() => void> = new Set();
 
   triggerThemeUpdated(): void {
@@ -62,10 +52,7 @@ class AppBoundaryMockStateImpl implements MockState {
   }
 
   toString(): string {
-    const switches = this.commandLineSwitches
-      .map((s) => (s.value !== undefined ? `${s.key}=${s.value}` : s.key))
-      .join(", ");
-    return `AppBoundaryMockState { badgeCount: ${this.badgeCount}, dockBadge: "${this.dockBadge}", preventingSleep: ${this.preventingSleep}, switches: [${switches}] }`;
+    return `AppBoundaryMockState { badgeCount: ${this.badgeCount}, dockBadge: "${this.dockBadge}", preventingSleep: ${this.preventingSleep} }`;
   }
 }
 
@@ -100,12 +87,6 @@ export interface MockAppBoundaryOptions {
   platform?: "darwin" | "win32" | "linux";
 
   /**
-   * Custom paths for getPath().
-   * Unmapped paths return a placeholder.
-   */
-  paths?: Partial<Record<AppPathName, string>>;
-
-  /**
    * Initial value reported by shouldUseDarkColors().
    * @default true
    */
@@ -123,7 +104,6 @@ export interface MockAppBoundaryOptions {
  * Use custom matchers for assertions:
  * - `expect(mock).toHaveDockBadge("text")`
  * - `expect(mock).toHaveBadgeCount(5)`
- * - `expect(mock).toHaveCommandLineSwitch("key", "value")`
  *
  * @example Basic usage
  * ```ts
@@ -144,18 +124,9 @@ export interface MockAppBoundaryOptions {
  * appLayer.setBadgeCount(5);
  * expect(appLayer).toHaveBadgeCount(5);
  * ```
- *
- * @example Command line switches
- * ```ts
- * const appLayer = createAppBoundaryMock();
- * appLayer.commandLineAppendSwitch("disable-gpu");
- * appLayer.commandLineAppendSwitch("use-gl", "swiftshader");
- * expect(appLayer).toHaveCommandLineSwitch("disable-gpu");
- * expect(appLayer).toHaveCommandLineSwitch("use-gl", "swiftshader");
- * ```
  */
 export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): MockAppBoundary {
-  const { platform = "darwin", paths = {}, shouldUseDarkColors = true } = options;
+  const { platform = "darwin", shouldUseDarkColors = true } = options;
 
   const state = new AppBoundaryMockStateImpl();
   state.shouldUseDarkColors = shouldUseDarkColors;
@@ -170,23 +141,6 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
         }
       : undefined;
 
-  // Default path values
-  const defaultPaths: Record<AppPathName, string> = {
-    home: "/mock/home",
-    appData: "/mock/appData",
-    userData: "/mock/userData",
-    sessionData: "/mock/sessionData",
-    temp: "/mock/temp",
-    exe: "/mock/exe",
-    desktop: "/mock/desktop",
-    documents: "/mock/documents",
-    downloads: "/mock/downloads",
-    music: "/mock/music",
-    pictures: "/mock/pictures",
-    videos: "/mock/videos",
-    logs: "/mock/logs",
-  };
-
   return {
     $: state,
     dock,
@@ -194,14 +148,6 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
     setBadgeCount(count: number): boolean {
       state.badgeCount = count;
       return true;
-    },
-
-    getPath(name: AppPathName): string {
-      return paths[name] ?? defaultPaths[name];
-    },
-
-    commandLineAppendSwitch(key: string, value?: string): void {
-      state.commandLineSwitches.push({ key, value });
     },
 
     allowPowerSaving(allow: boolean): void {
@@ -254,16 +200,6 @@ export interface AppBoundaryMatchers {
    * @param count - Expected badge count
    */
   toHaveBadgeCount(count: number): void;
-
-  /**
-   * Assert a command line switch exists.
-   * - toHaveCommandLineSwitch("flag") - switch exists (any value)
-   * - toHaveCommandLineSwitch("flag", "val") - switch exists with exact value
-   * - toHaveCommandLineSwitch("flag", undefined) - switch exists with no value
-   * @param key - Switch name
-   * @param value - Optional expected value (if provided, checks exact match)
-   */
-  toHaveCommandLineSwitch(key: string, value?: string): void;
 
   /**
    * Assert that the OS is currently being prevented from sleeping
@@ -337,47 +273,6 @@ const appBoundaryMatchers: MatcherImplementationsFor<
         pass
           ? `Expected sleep blocker start count NOT to be ${count}`
           : `Expected sleep blocker start count to be ${count}, but got ${actual}`,
-    };
-  },
-
-  toHaveCommandLineSwitch(received, key, value?) {
-    const switches = received.$.commandLineSwitches;
-
-    // Check if we're verifying exact value match
-    const checkValue = arguments.length >= 3;
-
-    const found = switches.find((s) => {
-      if (s.key !== key) return false;
-      if (checkValue) return s.value === value;
-      return true;
-    });
-
-    const pass = found !== undefined;
-
-    // Build descriptive message
-    const switchList = switches
-      .map((s) => (s.value !== undefined ? `  ${s.key}=${s.value}` : `  ${s.key}`))
-      .join("\n");
-    const currentSwitches =
-      switches.length > 0 ? `Current switches:\n${switchList}` : "No switches set";
-
-    if (checkValue) {
-      const valueDesc = value !== undefined ? `"${value}"` : "undefined";
-      return {
-        pass,
-        message: () =>
-          pass
-            ? `Expected switch "${key}" with value ${valueDesc} NOT to exist`
-            : `Expected switch "${key}" with value ${valueDesc} to exist.\n${currentSwitches}`,
-      };
-    }
-
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected switch "${key}" NOT to exist`
-          : `Expected switch "${key}" to exist.\n${currentSwitches}`,
     };
   },
 };

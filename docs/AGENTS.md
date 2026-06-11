@@ -174,15 +174,6 @@ interface AgentServerManager {
   /** Restart server for a workspace, preserving the same port */
   restartServer(workspacePath: string): Promise<RestartServerResult>;
 
-  /** Check if server is running for workspace */
-  isRunning(workspacePath: string): boolean;
-
-  /** Get the port for a running workspace server */
-  getPort(workspacePath: string): number | undefined;
-
-  /** Stop all servers for a project */
-  stopAllForProject(projectPath: string): Promise<void>;
-
   /** Callback when server starts successfully */
   onServerStarted(
     callback: (workspacePath: string, port: number, ...args: unknown[]) => void
@@ -636,25 +627,6 @@ export function getAgentSetupInfo(type: AgentType, deps: SetupInfoDeps): AgentSe
       return new MyAgentSetupInfo({ fileSystem: deps.fileSystem, platform: deps.platform });
   }
 }
-
-export function createAgentServerManager(
-  type: AgentType,
-  deps: ServerManagerDeps
-): AgentServerManager {
-  switch (type) {
-    // ... existing cases
-    case "my-agent":
-      return new MyAgentServerManager(deps);
-  }
-}
-
-export function createAgentProvider(type: AgentType, deps: ProviderDeps): AgentProvider {
-  switch (type) {
-    // ... existing cases
-    case "my-agent":
-      return new MyAgentProvider(deps);
-  }
-}
 ```
 
 ### Dependencies
@@ -667,23 +639,6 @@ interface SetupInfoDeps {
   readonly fileSystem: FileSystemBoundary;
   readonly platform: "darwin" | "linux" | "win32";
   readonly arch: SupportedArch;
-}
-
-/** Dependencies for AgentServerManager */
-interface ServerManagerDeps {
-  readonly processRunner: ProcessRunner;
-  readonly portManager: PortManager;
-  readonly httpClient: HttpClient;
-  readonly pathProvider: PathProvider;
-  readonly fileSystem: FileSystemBoundary;
-  readonly logger: Logger;
-}
-
-/** Dependencies for AgentProvider */
-interface ProviderDeps {
-  readonly workspacePath: string;
-  readonly logger: Logger;
-  // Provider-specific optional dependencies
 }
 ```
 

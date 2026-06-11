@@ -98,7 +98,7 @@ export type HookStatusChange = AgentStatus | null;
  * Note: PreToolUse is handled specially in server-manager.ts
  * to only transition to busy after a PermissionRequest (flag-based).
  */
-export const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChange>> = {
+const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChange>> = {
   // Wrapper started, Claude about to be spawned
   WrapperStart: "idle",
   // Wrapper exited, Claude has closed

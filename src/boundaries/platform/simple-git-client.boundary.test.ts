@@ -289,23 +289,12 @@ describe("SimpleGitClient", () => {
   });
 
   describe("fetch", () => {
-    it("does not throw for repo without remotes", async () => {
-      // Fresh repo has no remotes
-      await expect(client.fetch(repoPath)).resolves.not.toThrow();
-    });
-
-    it("fetches from configured origin", async () => {
-      await withTempRepoWithRemote(async (path) => {
-        await expect(client.fetch(new Path(path))).resolves.not.toThrow();
-      });
-    }, 15000);
-
     it("fetches new commits from remote", async () => {
       await withTempRepoWithRemote(async (path, remotePath) => {
         // Create commit in remote
         await createCommitInRemote(remotePath, "Remote commit");
 
-        await client.fetch(new Path(path));
+        await client.fetch(new Path(path), "origin");
 
         // Verify remote ref is updated (origin/main has new commit)
         const git = simpleGit(path);

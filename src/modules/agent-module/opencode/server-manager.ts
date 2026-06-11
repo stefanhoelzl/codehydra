@@ -49,12 +49,6 @@ export type ServerStartedCallback = (
 export type ServerStoppedCallback = (workspacePath: string, isRestart: boolean) => void;
 
 /**
- * Callback for workspace ready events.
- * Triggered when a wrapper start notification is received.
- */
-export type WorkspaceReadyCallback = (workspacePath: string) => void;
-
-/**
  * Server entry in the manager's internal map.
  * Uses a discriminated union to properly model starting, running, and restarting states.
  */
@@ -125,8 +119,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
 
   private mcpConfig: McpConfig | null = null;
 
-  /** Callbacks for workspace ready events (agent terminal opened) */
-  private readonly workspaceReadyCallbacks = new Set<WorkspaceReadyCallback>();
   /** Handler called when workspace becomes active (agent terminal opened) */
   private markActiveHandler: ((workspacePath: string) => void) | null = null;
 
@@ -384,7 +376,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
         .catch(() => ({
           success: false as const,
           error: "Server failed to start",
-          serverStopped: false,
         }));
     }
 
@@ -393,7 +384,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       return Promise.resolve({
         success: false as const,
         error: "Server not running",
-        serverStopped: false,
       });
     }
 
@@ -430,7 +420,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       return {
         success: false,
         error: stopResult.error ?? "Failed to stop server",
-        serverStopped: true,
       };
     }
 
@@ -440,7 +429,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       return { success: true, port: newPort };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message, serverStopped: true };
+      return { success: false, error: message };
     }
   }
 
@@ -472,43 +461,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   }
 
   /**
-   * Stop all servers for a project.
-   * Stops servers whose path starts with the project path.
-   *
-   * @param projectPath - Absolute path to the project
-   */
-  async stopAllForProject(projectPath: string): Promise<void> {
-    const workspaces = [...this.servers.keys()].filter((path) => path.startsWith(projectPath));
-
-    await Promise.all(workspaces.map((path) => this.stopServer(path)));
-  }
-
-  /**
-   * Get the port for a workspace.
-   *
-   * @param workspacePath - Absolute path to the workspace
-   * @returns Port number or undefined if not running
-   */
-  getPort(workspacePath: string): number | undefined {
-    const entry = this.servers.get(workspacePath);
-    if (entry?.state === "running" || entry?.state === "restarting") {
-      return entry.port;
-    }
-    return undefined;
-  }
-
-  /**
-   * Check if server is running for a workspace.
-   *
-   * @param workspacePath - Absolute path to the workspace
-   * @returns True if server is running (including during restart)
-   */
-  isRunning(workspacePath: string): boolean {
-    const entry = this.servers.get(workspacePath);
-    return entry?.state === "running" || entry?.state === "restarting";
-  }
-
-  /**
    * Subscribe to server started events.
    */
   onServerStarted(callback: ServerStartedCallback): Unsubscribe {
@@ -529,29 +481,12 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
    *
    * Replaces the wrapper's WrapperStart HTTP POST: invoked via the
    * agent:lifecycle intent when the sidekick reports the agent terminal opening.
-   * Clears the loading screen (workspace-ready) and marks the workspace active
-   * (TUI attached). Idempotent.
+   * Marks the workspace active (TUI attached). Idempotent.
    */
   triggerWrapperStart(workspacePath: string): void {
     const normalizedPath = new Path(workspacePath).toString();
     this.logger.debug("Agent terminal opened", { workspacePath: normalizedPath });
-    for (const callback of this.workspaceReadyCallbacks) {
-      callback(normalizedPath);
-    }
     this.markActiveHandler?.(normalizedPath);
-  }
-
-  /**
-   * Subscribe to workspace ready events.
-   * Triggered when the agent terminal opens, indicating the loading screen
-   * should be cleared.
-   *
-   * @param callback - Callback invoked with workspace path
-   * @returns Unsubscribe function
-   */
-  onWorkspaceReady(callback: WorkspaceReadyCallback): Unsubscribe {
-    this.workspaceReadyCallbacks.add(callback);
-    return () => this.workspaceReadyCallbacks.delete(callback);
   }
 
   /**
@@ -638,7 +573,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
     await Promise.all(workspaces.map((path) => this.stopServer(path)));
     this.startedCallbacks.clear();
     this.stoppedCallbacks.clear();
-    this.workspaceReadyCallbacks.clear();
     this.markActiveHandler = null;
   }
 }

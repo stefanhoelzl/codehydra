@@ -8,6 +8,14 @@
 import type { StateService } from "./state-service";
 import type { PersistedAccessor, DeprecatedPersistedAccessor } from "./store-definition";
 
+/**
+ * Mock StateService with a test-only inspection helper for the in-memory store.
+ */
+export interface MockStateService extends StateService {
+  /** Test-only: snapshot of all values in the in-memory store. */
+  getEffective(): Record<string, unknown>;
+}
+
 export interface CreateMockStateOptions {
   /** Seed the in-memory store. Mirrored by accessor get()/set() and getEffective(). */
   values?: Record<string, unknown> | undefined;
@@ -24,7 +32,7 @@ export interface CreateMockStateOptions {
  * backed by the shared store, so a module under test reads/writes through it
  * exactly as it would in production. load() is a no-op (values are seeded up front).
  */
-export function createMockState(options?: CreateMockStateOptions): StateService {
+export function createMockState(options?: CreateMockStateOptions): MockStateService {
   const store = new Map<string, unknown>(Object.entries(options?.values ?? {}));
   const overrides = { ...(options?.overrides ?? {}) };
   const defaultsByKey = new Map<string, unknown>();

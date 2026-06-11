@@ -55,6 +55,4 @@ export interface IntentModule {
   readonly events?: EventDeclarations;
   /** Interceptors to add to the dispatcher pipeline */
   readonly interceptors?: readonly IntentInterceptor[];
-  /** Optional cleanup when the module is disposed. */
-  dispose?(): void;
 }

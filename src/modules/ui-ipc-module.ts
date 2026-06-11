@@ -13,7 +13,6 @@ import type { DomainEvent } from "../intents/lib/types";
 import type {
   ProjectOpenPayload,
   ProjectClosePayload,
-  WorkspaceCreatePayload,
   WorkspaceRemovePayload,
   WorkspaceGetStatusPayload,
   UiSwitchWorkspacePayload,
@@ -43,9 +42,7 @@ import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_CREATE_FAILED,
   EVENT_WORKSPACE_LOADING,
-  INTENT_OPEN_WORKSPACE,
 } from "../intents/open-workspace";
-import type { OpenWorkspaceIntent } from "../intents/open-workspace";
 import type {
   WorkspaceDeletedEvent,
   WorkspaceDeletionProgressEvent,
@@ -140,7 +137,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
 
   /**
    * Register an IPC handler on the ipcLayer.
-   * Converts undefined/null payloads to empty objects for handlers expecting EmptyPayload.
+   * Converts undefined/null payloads to empty objects for handlers with no input.
    */
   function registerIpc(channel: string, handler: (payload: unknown) => Promise<unknown>): void {
     deps.ipcLayer.handle(channel, async (_event: unknown, payload: unknown) => {
@@ -367,30 +364,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
       type: INTENT_APP_SHUTDOWN,
       payload: {},
     } as AppShutdownIntent);
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_CREATE, async (payload) => {
-    const p = payload as WorkspaceCreatePayload;
-    if (!p.projectPath) {
-      throw new Error("projectPath is required");
-    }
-    const intent: OpenWorkspaceIntent = {
-      type: INTENT_OPEN_WORKSPACE,
-      payload: {
-        projectPath: p.projectPath,
-        workspaceName: p.name,
-        base: p.base,
-        ...(p.initialPrompt !== undefined && { initialPrompt: p.initialPrompt }),
-        ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
-        ...(p.agent !== undefined && { agent: p.agent }),
-        source: "ui-ipc",
-      },
-    };
-    const result = await dispatcher.dispatch(intent);
-    if (!result) {
-      throw new Error("Create workspace dispatch returned no result");
-    }
-    return result as Workspace;
   });
 
   registerIpc(ApiIpcChannels.WORKSPACE_REMOVE, async (payload) => {

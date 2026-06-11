@@ -8,11 +8,7 @@
  * usage in actual boundary tests.
  */
 
-import * as fs from "fs";
-import * as os from "os";
-import * as path from "path";
 import type { ProcessRunner, SpawnedProcess } from "./process";
-import { delay } from "@shared/test-fixtures";
 
 /**
  * Platform detection constant.
@@ -139,9 +135,6 @@ export function spawnIgnoringSignals(runner: ProcessRunner): SpawnedProcess {
  * The parent prints the child's PID to stdout immediately after spawning.
  * Both parent and child run for `durationMs` unless killed.
  *
- * This is a simpler alternative to `spawnWithChildren` for tests that just
- * need to verify tree killing works (parent + 1 child).
- *
  * @param runner - ProcessRunner to use for spawning
  * @param durationMs - How long both processes should run (default: 30_000)
  * @returns SpawnedProcess handle for the parent
@@ -170,145 +163,4 @@ export function spawnWithChild(runner: ProcessRunner, durationMs: number = 30_00
     setTimeout(() => {}, ${durationMs});
   `;
   return runner.run(process.execPath, ["-e", script]);
-}
-
-/**
- * Handle for a process with children.
- * Use `waitForChildPids()` to get child PIDs (self-synchronizing).
- * Use `cleanup()` in afterEach to ensure all processes are killed.
- */
-export interface ProcessWithChildren {
-  /** The spawned parent process */
-  readonly process: SpawnedProcess;
-
-  /**
-   * Wait for children to spawn and return their PIDs.
-   * Self-synchronizing: waits for parent to output child PIDs to stdout.
-   * @param timeoutMs - Max time to wait for children (default: 5000)
-   * @returns Array of child PIDs (readonly to prevent accidental mutation)
-   * @throws Error if timeout exceeded before children reported
-   */
-  waitForChildPids(timeoutMs?: number): Promise<readonly number[]>;
-
-  /**
-   * Kill parent process and all tracked children.
-   * Call this in afterEach to ensure cleanup.
-   */
-  cleanup(): Promise<void>;
-}
-
-/**
- * Spawn a process that creates N child processes.
- * Cross-platform using Node.js child_process.
- *
- * The parent process writes child PIDs to a temp file, then waits.
- * Use waitForChildPids() to get the PIDs (polls the file until available).
- * Use cleanup() in afterEach to kill parent and all children.
- *
- * @param runner - ProcessRunner to use for spawning
- * @param childCount - Number of child processes to create (must be >= 1)
- * @returns ProcessWithChildren with parent process, PID accessor, and cleanup
- * @throws Error if childCount < 1
- *
- * @example
- * const spawned = spawnWithChildren(runner, 2);
- * const childPids = await spawned.waitForChildPids();
- * // childPids = [12345, 12346] (readonly)
- *
- * // In afterEach:
- * await spawned.cleanup();
- */
-export function spawnWithChildren(runner: ProcessRunner, childCount: number): ProcessWithChildren {
-  if (childCount < 1) {
-    throw new Error("childCount must be at least 1");
-  }
-
-  // Use a temp file to communicate child PIDs from parent process
-  // This avoids issues with stdout not being available until process exits
-  const tempDir = os.tmpdir();
-  const pidFile = path.join(tempDir, `process-tree-test-${Date.now()}-${Math.random()}.json`);
-
-  // Script that spawns N children, writes PIDs to file, then waits
-  // Uses CommonJS syntax because -e eval context doesn't support ESM imports
-  const script = `
-    const { spawn } = require("child_process");
-    const fs = require("fs");
-    const children = [];
-    for (let i = 0; i < ${childCount}; i++) {
-      const child = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {
-        stdio: "ignore",
-        detached: false
-      });
-      children.push(child.pid);
-    }
-    fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify(children));
-    setTimeout(() => {}, 60000);
-  `;
-
-  const proc = runner.run(process.execPath, ["-e", script]);
-  let childPids: readonly number[] | null = null;
-
-  return {
-    process: proc,
-
-    async waitForChildPids(timeoutMs: number = 5000): Promise<readonly number[]> {
-      if (childPids !== null) {
-        return childPids;
-      }
-
-      // Poll the temp file until PIDs are written
-      const startTime = Date.now();
-      const pollInterval = 50;
-
-      while (Date.now() - startTime < timeoutMs) {
-        try {
-          if (fs.existsSync(pidFile)) {
-            const content = fs.readFileSync(pidFile, "utf8");
-            const pids = JSON.parse(content) as number[];
-            childPids = Object.freeze([...pids]);
-
-            // Clean up temp file
-            try {
-              fs.unlinkSync(pidFile);
-            } catch {
-              // Ignore cleanup errors
-            }
-
-            return childPids;
-          }
-        } catch {
-          // File not ready yet, keep polling
-        }
-
-        await delay(pollInterval);
-      }
-
-      throw new Error(`Timeout waiting for child PIDs after ${timeoutMs}ms`);
-    },
-
-    async cleanup(): Promise<void> {
-      // Kill parent first with new API (skip wait for SIGTERM, 100ms wait for SIGKILL)
-      await proc.kill(0, 100);
-
-      // Kill all tracked children
-      if (childPids !== null) {
-        for (const pid of childPids) {
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch {
-            // Process already dead - expected
-          }
-        }
-      }
-
-      // Clean up temp file if it still exists
-      try {
-        if (fs.existsSync(pidFile)) {
-          fs.unlinkSync(pidFile);
-        }
-      } catch {
-        // Ignore cleanup errors
-      }
-    },
-  };
 }

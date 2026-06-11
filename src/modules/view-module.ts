@@ -22,7 +22,7 @@ import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
 import type { ViewBoundary } from "../boundaries/shell/view";
-import type { WindowBoundaryInternal } from "../boundaries/shell/window";
+import type { WindowBoundary } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
 import type { WorkspaceRef } from "../shared/api/types";
 import type { SetModeIntent, SetModeHookResult } from "../intents/set-mode";
@@ -89,14 +89,14 @@ import { SetupError } from "../shared/errors/service-errors";
  * Shell layers are nullable because they may not exist in test environments
  * or when the app quits before full initialization.
  *
- * Lifecycle deps (menuLayer, windowManager, buildInfo, uiHtmlPath) are nullable
+ * Lifecycle deps (menuLayer, windowManager, uiHtmlPath) are nullable
  * so existing call sites that don't need them pass unchanged.
  */
 export interface ViewModuleDeps {
   readonly viewManager: IViewManager & { create(): void };
   readonly logger: Logger;
   readonly viewLayer: ViewBoundary | null;
-  readonly windowLayer: WindowBoundaryInternal | null;
+  readonly windowLayer: WindowBoundary | null;
   readonly sessionLayer: SessionBoundary | null;
   readonly dialogLayer?: Pick<DialogBoundary, "showOpenDialog"> | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
@@ -104,10 +104,6 @@ export interface ViewModuleDeps {
     create(): void;
     maximizeAsync(): Promise<void>;
     focus(): void;
-  } | null;
-  readonly buildInfo?: {
-    isDevelopment: boolean;
-    gitBranch?: string;
   } | null;
   readonly uiHtmlPath?: string | null;
   readonly dialogManager?: DialogManager;

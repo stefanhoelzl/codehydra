@@ -12,7 +12,6 @@ export type ShellErrorCode =
   // Window errors
   | "WINDOW_NOT_FOUND"
   | "WINDOW_DESTROYED"
-  | "WINDOW_HAS_ATTACHED_VIEWS"
   // View errors
   | "VIEW_NOT_FOUND"
   | "VIEW_DESTROYED"

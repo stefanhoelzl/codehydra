@@ -55,15 +55,6 @@ describe("SessionBoundary (integration)", () => {
       expect(sessionLayer).toHaveSession(handle.id, { requestHandler: true });
     });
 
-    it("tracks handler state when cleared", () => {
-      const handle = sessionLayer.fromPartition("persist:permission-req-clear");
-
-      sessionLayer.setPermissionRequestHandler(handle, () => true);
-      sessionLayer.setPermissionRequestHandler(handle, null);
-
-      expect(sessionLayer).toHaveSession(handle.id, { requestHandler: false });
-    });
-
     it("throws SESSION_NOT_FOUND for invalid handle", () => {
       const fakeHandle = { id: "session-999", __brand: "SessionHandle" as const };
 
@@ -80,15 +71,6 @@ describe("SessionBoundary (integration)", () => {
       sessionLayer.setPermissionCheckHandler(handle, () => true);
 
       expect(sessionLayer).toHaveSession(handle.id, { checkHandler: true });
-    });
-
-    it("tracks handler state when cleared", () => {
-      const handle = sessionLayer.fromPartition("persist:permission-check-clear");
-
-      sessionLayer.setPermissionCheckHandler(handle, () => true);
-      sessionLayer.setPermissionCheckHandler(handle, null);
-
-      expect(sessionLayer).toHaveSession(handle.id, { checkHandler: false });
     });
 
     it("throws SESSION_NOT_FOUND for invalid handle", () => {

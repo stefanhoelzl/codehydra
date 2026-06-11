@@ -26,8 +26,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "codehydra.restartOpencodeServer",
-        "title": "Restart OpenCode Server",
+        "command": "codehydra.restartAgentServer",
+        "title": "Restart Agent Server",
         "category": "CodeHydra"
       },
       {
@@ -86,8 +86,8 @@
         "enablement": "codehydra.isDevelopment"
       },
       {
-        "command": "codehydra.debug.getOpencodePort",
-        "title": "CodeHydra Debug: Get OpenCode Port",
+        "command": "codehydra.debug.getAgentSession",
+        "title": "CodeHydra Debug: Get Agent Session",
         "enablement": "codehydra.isDevelopment"
       },
       {

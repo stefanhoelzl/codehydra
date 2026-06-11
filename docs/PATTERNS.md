@@ -189,9 +189,6 @@ The `Icon` component wraps `<vscode-icon>` and provides consistent icon renderin
 <!-- Decorative icon -->
 <Icon name="check" />
 
-<!-- Action icon (button-like) -->
-<Icon name="close" action label="Close" />
-
 <!-- Custom size -->
 <Icon name="warning" size={24} />
 ```
@@ -323,17 +320,15 @@ Remember to recalculate position on window resize when the dropdown is open.
 
 ### FilterableDropdown Shared Component
 
-`FilterableDropdown` is a reusable combobox component with filtering, keyboard navigation, and custom rendering support.
+`FilterableDropdown` is a reusable combobox component with filtering and keyboard navigation.
 
 **Features:**
 
 - Native `<input type="text">` for filtering (documented exception - `<vscode-textfield>` doesn't support combobox pattern)
-- Built-in filtering: case-insensitive substring on the label; headers are shown only while their group has a match (`filterOption` overrides the per-option matching)
-- Debounced filtering (200ms default; `debounceMs: 0` filters synchronously)
+- Built-in filtering: case-insensitive substring on the label; headers are shown only while their group has a match
 - Keyboard navigation (↑↓ navigate, Enter selects the highlighted option — with no highlight it commits typed text/exact match and calls `onEnter`, Escape close, Tab select + move focus)
 - Fixed positioning to escape container overflow
 - ARIA combobox accessibility pattern
-- Snippet slot for custom option rendering
 - Invalid state (`invalid` + `describedBy`) for validation errors
 - Renders the declarative Form's `dropdown` (combobox) sections (see `src/shared/dialog-types.ts`)
 
@@ -353,16 +348,12 @@ interface FilterableDropdownProps {
   options: DropdownOption[];
   value: string;
   onSelect: (value: string) => void;
-  filterOption?: (option: DropdownOption, filterLowercase: string) => boolean; // options only; header visibility is automatic
   disabled?: boolean;
   placeholder?: string;
   id?: string;
-  debounceMs?: number;
-  optionSnippet?: Snippet<[option: DropdownOption, highlighted: boolean]>;
   allowFreeText?: boolean; // Enter with no selection calls onSelect with typed text
   onEnter?: () => void; // Called on Enter with no highlighted option (after any commit)
   onInput?: (value: string) => void; // Called on every input change
-  openOnFocus?: boolean; // Open dropdown on focus (default: true)
   autofocus?: boolean; // Focus input on mount
   invalid?: boolean; // Render as invalid (red border)
   describedBy?: string; // id of the describing element (e.g. a validation error)
@@ -373,26 +364,6 @@ type DropdownOption = {
   label: string;
   value: string;
 };
-```
-
-**Wrapper Component Pattern:**
-
-Domain-specific dropdowns (BranchDropdown, ProjectDropdown) wrap FilterableDropdown to handle data fetching and transformation:
-
-```svelte
-<!-- BranchDropdown.svelte - wraps FilterableDropdown -->
-<script>
-  // 1. Fetch data (async loading, error handling)
-  // 2. Transform to DropdownOption[] (add headers, normalize values)
-  // 3. Optionally provide custom optionSnippet for rendering
-</script>
-
-<FilterableDropdown
-  options={transformedOptions}
-  {value}
-  {onSelect}
-  optionSnippet={branchOptionSnippet}
-/>
 ```
 
 **Header Options (for grouping):**
@@ -410,7 +381,6 @@ const options: DropdownOption[] = [
 
 - Headers are skipped during keyboard navigation
 - Headers are filtered automatically: shown only while at least one option in their group matches
-- Headers should be rendered differently (non-interactive styling) via `optionSnippet`
 
 ---
 
@@ -466,10 +436,9 @@ Use semantic variables for consistent theming:
 | -------- | ------------------------------------------------------------- |
 | Core     | `--ch-foreground`, `--ch-background`                          |
 | Border   | `--ch-border`, `--ch-input-border`, `--ch-input-hover-border` |
-| Buttons  | `--ch-button-bg`, `--ch-button-fg`, `--ch-button-hover-bg`    |
 | Semantic | `--ch-success`, `--ch-danger`, `--ch-warning`                 |
 | Agent    | `--ch-agent-idle`, `--ch-agent-busy` (reference semantic)     |
-| Overlay  | `--ch-overlay-bg`, `--ch-shadow-color`, `--ch-shadow`         |
+| Overlay  | `--ch-overlay-bg`, `--ch-shadow`                              |
 | Focus    | `--ch-focus-border`                                           |
 
 ### Screen Reader Text
@@ -598,18 +567,17 @@ it("cleanup stops updates", () => {
 
 ### Naming Convention
 
-- Use `setup*` prefix (e.g., `setupDomainEvents`, `setupDeletionProgress`)
+- Use `setup*` prefix (e.g., `setupDomainEventBindings`, `setupDeletionProgress`)
 - For one-time async initialization, use `initialize*` (e.g., `initializeApp`)
 - Always return `() => void` cleanup callback for consistent composition
 
 ### Files
 
-| File                             | Purpose                                             |
-| -------------------------------- | --------------------------------------------------- |
-| `setup-deletion-progress.ts`     | Workspace deletion progress event subscription      |
-| `setup-domain-event-bindings.ts` | Domain events wired to stores (wraps domain-events) |
-| `initialize-app.ts`              | App initialization (projects, statuses, focus)      |
-| `domain-events.ts`               | Core domain event subscription helper               |
+| File                             | Purpose                                        |
+| -------------------------------- | ---------------------------------------------- |
+| `setup-deletion-progress.ts`     | Workspace deletion progress event subscription |
+| `setup-domain-event-bindings.ts` | Domain events wired to stores                  |
+| `initialize-app.ts`              | App initialization (projects, statuses, focus) |
 
 ---
 

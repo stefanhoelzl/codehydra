@@ -267,8 +267,6 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
               lastDetectedVersion = version;
             });
 
-            deps.autoUpdater.start();
-
             if (!isEnabled()) return;
 
             // Fire-and-forget background check at startup. Notification appears

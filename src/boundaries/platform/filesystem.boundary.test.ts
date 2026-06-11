@@ -207,20 +207,6 @@ describe("DefaultFileSystemBoundary", () => {
         expect((error as FileSystemError).path).toBe(filePath);
       }
     });
-
-    it("throws ENOENT when recursive is false and parent does not exist", async () => {
-      const dirPath = join(tempDir.path, "non-existent", "new-dir");
-
-      await expect(fs.mkdir(dirPath, { recursive: false })).rejects.toThrow(FileSystemError);
-
-      try {
-        await fs.mkdir(dirPath, { recursive: false });
-      } catch (error) {
-        expect(error).toBeInstanceOf(FileSystemError);
-        expect((error as FileSystemError).fsCode).toBe("ENOENT");
-        expect((error as FileSystemError).path).toBe(dirPath);
-      }
-    });
   });
 
   describe("readdir", () => {

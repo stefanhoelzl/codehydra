@@ -24,7 +24,6 @@ describe("ShellError", () => {
       const codes = [
         "WINDOW_NOT_FOUND",
         "WINDOW_DESTROYED",
-        "WINDOW_HAS_ATTACHED_VIEWS",
         "VIEW_NOT_FOUND",
         "VIEW_DESTROYED",
         "SESSION_NOT_FOUND",

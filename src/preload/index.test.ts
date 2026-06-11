@@ -114,63 +114,6 @@ describe("preload API", () => {
   });
 
   describe("workspaces", () => {
-    it("workspaces.create calls api:workspace:create", async () => {
-      const mockWorkspace = {
-        projectId: "my-app-12345678",
-        name: "feature",
-        branch: "feature",
-        path: "/ws/feature",
-      };
-      mockIpcRenderer.invoke.mockResolvedValue(mockWorkspace);
-
-      const workspaces = exposedApi.workspaces as {
-        create: (
-          projectId: string,
-          name: string,
-          base: string,
-          options?: { initialPrompt?: unknown; keepInBackground?: boolean }
-        ) => Promise<unknown>;
-      };
-      const result = await workspaces.create("my-app-12345678", "feature", "main");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:create", {
-        projectPath: "my-app-12345678",
-        name: "feature",
-        base: "main",
-      });
-      expect(result).toEqual(mockWorkspace);
-    });
-
-    it("workspaces.create forwards options to IPC payload", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue({
-        projectId: "my-app-12345678",
-        name: "feature",
-        branch: "feature",
-        path: "/ws/feature",
-      });
-
-      const workspaces = exposedApi.workspaces as {
-        create: (
-          projectId: string,
-          name: string,
-          base: string,
-          options?: { initialPrompt?: unknown; stealFocus?: boolean }
-        ) => Promise<unknown>;
-      };
-      await workspaces.create("my-app-12345678", "feature", "main", {
-        initialPrompt: { prompt: "Build the login page", agent: "plan" },
-        stealFocus: false,
-      });
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:create", {
-        projectPath: "my-app-12345678",
-        name: "feature",
-        base: "main",
-        initialPrompt: { prompt: "Build the login page", agent: "plan" },
-        stealFocus: false,
-      });
-    });
-
     it("workspaces.remove calls api:workspace:remove", async () => {
       const mockResult = { started: true };
       mockIpcRenderer.invoke.mockResolvedValue(mockResult);

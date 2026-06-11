@@ -14,8 +14,6 @@
     actions?: Snippet;
     titleId: string;
     descriptionId?: string;
-    /** Optional selector for initial focus element. If not provided, focuses first focusable. */
-    initialFocusSelector?: string;
   }
 
   let {
@@ -27,7 +25,6 @@
     actions,
     titleId,
     descriptionId,
-    initialFocusSelector,
   }: DialogProps = $props();
 
   let dialogElement: HTMLDivElement | undefined = $state();
@@ -42,11 +39,7 @@
 
     // Delay focus to allow web components to initialize
     const focusTimeout = setTimeout(() => {
-      if (initialFocusSelector) {
-        trap.focusSelector(initialFocusSelector);
-      } else {
-        trap.focusFirst();
-      }
+      trap.focusSelector("vscode-button");
     }, 0);
 
     return () => {

@@ -29,8 +29,6 @@ import type {
   MatcherResult,
   MatcherImplementationsFor,
 } from "../../../test/state-mock";
-import type { SdkClientFactory as OpenCodeSdkClientFactory } from "./client";
-
 // Re-export SDK types for convenience
 export type { Session, SdkEvent, SdkSessionStatus };
 
@@ -378,7 +376,7 @@ class SdkClientMockStateImpl implements SdkClientMockState {
  * // Events are delivered immediately for test predictability
  * mock.$.emitEvent({ type: 'session.status', properties: { ... } });
  * // Assertions can be made immediately without awaiting
- * expect(client.currentStatus).toBe('busy');
+ * expect(listener).toHaveBeenCalledWith('busy');
  * ```
  */
 export function createSdkClientMock(options?: MockSdkClientOptions): MockSdkClient {
@@ -550,21 +548,6 @@ export function createSdkFactoryMock(mock: MockSdkClient): SdkClientFactory {
   return (_baseUrl: string) => mock;
 }
 
-/**
- * Helper to cast a mock factory to the OpenCodeClient factory type.
- * Use this when injecting the mock into OpenCodeClient or OpenCodeProvider.
- *
- * @example
- * ```ts
- * const mock = createSdkClientMock();
- * const factory = asSdkFactory(createSdkFactoryMock(mock));
- * const client = new OpenCodeClient(8080, logger, factory);
- * ```
- */
-export function asSdkFactory(factory: SdkClientFactory): OpenCodeSdkClientFactory {
-  return factory as unknown as OpenCodeSdkClientFactory;
-}
-
 // =============================================================================
 // Custom Matchers
 // =============================================================================
@@ -678,103 +661,5 @@ export function createTestSession(
     time: overrides.time ?? { created: Date.now(), updated: Date.now() },
     status: overrides.status ?? { type: "idle" },
     ...(overrides.parentID !== undefined && { parentID: overrides.parentID }),
-  };
-}
-
-/**
- * Helper to create a session status event.
- */
-export function createSessionStatusEvent(
-  sessionID: string,
-  status: SdkSessionStatus
-): SdkEvent & { type: "session.status" } {
-  return {
-    type: "session.status",
-    properties: {
-      sessionID,
-      status,
-    },
-  };
-}
-
-/**
- * Helper to create a session.created event.
- */
-export function createSessionCreatedEvent(
-  session: Session
-): SdkEvent & { type: "session.created" } {
-  return {
-    type: "session.created",
-    properties: {
-      info: session,
-    },
-  };
-}
-
-/**
- * Helper to create a session.idle event.
- */
-export function createSessionIdleEvent(sessionID: string): SdkEvent & { type: "session.idle" } {
-  return {
-    type: "session.idle",
-    properties: {
-      sessionID,
-    },
-  };
-}
-
-/**
- * Helper to create a session.deleted event.
- */
-export function createSessionDeletedEvent(
-  session: Session
-): SdkEvent & { type: "session.deleted" } {
-  return {
-    type: "session.deleted",
-    properties: {
-      info: session,
-    },
-  };
-}
-
-/**
- * Helper to create a permission.updated event.
- */
-export function createPermissionUpdatedEvent(permission: {
-  id: string;
-  sessionID: string;
-  type: string;
-  title: string;
-  messageID?: string;
-}): SdkEvent & { type: "permission.updated" } {
-  return {
-    type: "permission.updated",
-    properties: {
-      id: permission.id,
-      sessionID: permission.sessionID,
-      type: permission.type,
-      title: permission.title,
-      messageID: permission.messageID ?? "msg-1",
-      metadata: {},
-      time: { created: Date.now() },
-    },
-  };
-}
-
-/**
- * Helper to create a permission.replied event.
- */
-export function createPermissionRepliedEvent(
-  sessionID: string,
-  permissionID: string,
-  response: "once" | "always" | "reject"
-): SdkEvent & { type: "permission.replied" } {
-  return {
-    type: "permission.replied",
-    properties: {
-      sessionID,
-      permissionID,
-      response,
-    },
   };
 }

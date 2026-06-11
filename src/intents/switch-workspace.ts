@@ -51,9 +51,7 @@ export interface SwitchWorkspaceAutoPayload {
 export type SwitchWorkspacePayload = SwitchWorkspaceTargetPayload | SwitchWorkspaceAutoPayload;
 
 /** Type guard for auto-select mode. */
-export function isAutoSwitch(
-  payload: SwitchWorkspacePayload
-): payload is SwitchWorkspaceAutoPayload {
+function isAutoSwitch(payload: SwitchWorkspacePayload): payload is SwitchWorkspaceAutoPayload {
   return "auto" in payload && payload.auto === true;
 }
 
@@ -157,7 +155,7 @@ export type AgentStatusScorer = (workspacePath: WorkspacePath) => number;
 export function selectNextWorkspace(
   currentWorkspacePath: string,
   candidates: readonly WorkspaceCandidate[],
-  scorer?: AgentStatusScorer
+  scorer: AgentStatusScorer
 ): WorkspaceCandidate | null {
   // Hibernated workspaces are never auto-selected — wake must be deliberate.
   candidates = candidates.filter((c) => !c.hibernated);
@@ -190,12 +188,7 @@ export function selectNextWorkspace(
   const currentIndex = sorted.findIndex((w) => w.workspacePath === currentWorkspacePath);
 
   const getKey = (ws: WorkspaceCandidate, index: number): number => {
-    let statusKey: number;
-    if (scorer) {
-      statusKey = scorer(ws.workspacePath as WorkspacePath);
-    } else {
-      statusKey = 2; // No scorer: treat all as "none"
-    }
+    const statusKey = scorer(ws.workspacePath as WorkspacePath);
     // When currentPath is not in candidates, use score-only (no positional proximity)
     if (currentIndex === -1) return statusKey;
     const positionKey = (index - currentIndex + sorted.length) % sorted.length;

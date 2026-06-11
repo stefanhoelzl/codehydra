@@ -52,12 +52,6 @@ export interface IpcBoundary {
   removeHandler(channel: string): void;
 
   /**
-   * Remove all registered handlers.
-   * This is useful for cleanup during shutdown.
-   */
-  removeAllHandlers(): void;
-
-  /**
    * Register a listener for a fire-and-forget IPC event from the renderer.
    * Unlike handle(), multiple listeners can be registered for the same channel.
    *
@@ -112,13 +106,6 @@ export class DefaultIpcBoundary implements IpcBoundary {
 
     ipcMain.removeHandler(channel);
     this.registeredChannels.delete(channel);
-  }
-
-  removeAllHandlers(): void {
-    for (const channel of this.registeredChannels) {
-      ipcMain.removeHandler(channel);
-    }
-    this.registeredChannels.clear();
   }
 
   on(channel: string, listener: IpcEventHandler): void {

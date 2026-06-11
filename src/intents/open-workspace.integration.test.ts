@@ -152,9 +152,7 @@ interface MockKeepFilesService {
     projectRoot: Path,
     targetPath: Path
   ) => Promise<{
-    configExists: boolean;
     copiedCount: number;
-    skippedCount: number;
     errors: readonly { path: string; message: string }[];
   }>;
   /** State: tracks copy operations for assertions */
@@ -171,9 +169,7 @@ function createMockKeepFilesService(opts?: { throwOnCopy?: boolean }): MockKeepF
       }
       copies.push({ from: projectRoot, to: targetPath });
       return {
-        configExists: true,
         copiedCount: 1,
-        skippedCount: 0,
         errors: [],
       };
     },

@@ -30,7 +30,6 @@ export function createMockApi(): Api {
       close: vi.fn().mockResolvedValue(undefined),
     },
     workspaces: {
-      create: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
       remove: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.removeResult),
       getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
       hibernate: vi.fn().mockResolvedValue({ started: true }),

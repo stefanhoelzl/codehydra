@@ -4,12 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { Mock } from "vitest";
-import {
-  AgentNotificationService,
-  playChimeSound,
-  resetAudioContext,
-  type ChimePlayer,
-} from "./agent-notifications";
+import { AgentNotificationService, playChimeSound, type ChimePlayer } from "./agent-notifications";
 
 // Mock AudioContext
 class MockOscillator {
@@ -48,7 +43,6 @@ describe("AgentNotificationService", () => {
     // Inject mock chime player for testability
     mockPlayChime = vi.fn<ChimePlayer>();
     service = new AgentNotificationService(mockPlayChime);
-    resetAudioContext();
     vi.stubGlobal("AudioContext", MockAudioContext);
   });
 
@@ -96,8 +90,9 @@ describe("AgentNotificationService", () => {
     });
 
     it("does not trigger when idle count decreases", () => {
-      // Seed to establish initial state without triggering first-report chime
-      service.seedInitialCounts({ "/test": { idle: 2, busy: 0 } });
+      // Establish initial state (first report with idle agents chimes; clear it)
+      service.handleStatusChange("/test", { idle: 2, busy: 0 });
+      mockPlayChime.mockClear();
       // Idle decreases from 2 to 1
       service.handleStatusChange("/test", { idle: 1, busy: 1 });
 
@@ -105,8 +100,9 @@ describe("AgentNotificationService", () => {
     });
 
     it("does not trigger when idle count stays the same", () => {
-      // Seed to establish initial state without triggering first-report chime
-      service.seedInitialCounts({ "/test": { idle: 1, busy: 1 } });
+      // Establish initial state (first report with idle agents chimes; clear it)
+      service.handleStatusChange("/test", { idle: 1, busy: 1 });
+      mockPlayChime.mockClear();
       // Idle stays at 1
       service.handleStatusChange("/test", { idle: 1, busy: 2 });
 
@@ -122,38 +118,6 @@ describe("AgentNotificationService", () => {
 
       // Exactly one chime for workspace-a
       expect(mockPlayChime).toHaveBeenCalledTimes(1);
-    });
-
-    it("respects enabled flag", () => {
-      service.handleStatusChange("/test", { idle: 0, busy: 2 });
-      service.setEnabled(false);
-
-      // Even though idle increases, chime should not play
-      service.handleStatusChange("/test", { idle: 1, busy: 1 });
-
-      expect(mockPlayChime).not.toHaveBeenCalled();
-    });
-
-    it("re-enables after being disabled", () => {
-      service.handleStatusChange("/test", { idle: 0, busy: 2 });
-      service.setEnabled(false);
-      service.handleStatusChange("/test", { idle: 0, busy: 2 }); // Reset
-
-      service.setEnabled(true);
-      service.handleStatusChange("/test", { idle: 1, busy: 1 });
-
-      expect(mockPlayChime).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("isEnabled", () => {
-    it("returns true by default", () => {
-      expect(service.isEnabled()).toBe(true);
-    });
-
-    it("returns false after disabling", () => {
-      service.setEnabled(false);
-      expect(service.isEnabled()).toBe(false);
     });
   });
 
@@ -194,88 +158,18 @@ describe("AgentNotificationService", () => {
     });
 
     it("handles counts with large numbers", () => {
-      // Seed to establish initial state without triggering first-report chime
-      service.seedInitialCounts({ "/test": { idle: 50, busy: 50 } });
+      // Establish initial state (first report with idle agents chimes; clear it)
+      service.handleStatusChange("/test", { idle: 50, busy: 50 });
+      mockPlayChime.mockClear();
       service.handleStatusChange("/test", { idle: 100, busy: 0 });
 
       // Chime should trigger (idle increased from 50 to 100)
       expect(mockPlayChime).toHaveBeenCalledTimes(1);
     });
   });
-
-  describe("seedInitialCounts", () => {
-    it("allows chime on first status change after seeding", () => {
-      // Seed with initial busy state (simulating getAllAgentStatuses)
-      service.seedInitialCounts({
-        "/test": { idle: 0, busy: 2 },
-      });
-
-      // First status change event shows agent finished work
-      service.handleStatusChange("/test", { idle: 1, busy: 1 });
-
-      // Chime should trigger because we have seeded previous counts
-      expect(mockPlayChime).toHaveBeenCalledTimes(1);
-    });
-
-    it("seeds multiple workspaces", () => {
-      service.seedInitialCounts({
-        "/workspace-a": { idle: 0, busy: 1 },
-        "/workspace-b": { idle: 0, busy: 2 },
-      });
-
-      // Both workspaces finish work
-      service.handleStatusChange("/workspace-a", { idle: 1, busy: 0 });
-      service.handleStatusChange("/workspace-b", { idle: 2, busy: 0 });
-
-      // Both should trigger chimes
-      expect(mockPlayChime).toHaveBeenCalledTimes(2);
-    });
-
-    it("does not trigger chime when idle count does not increase after seeding", () => {
-      service.seedInitialCounts({
-        "/test": { idle: 2, busy: 0 },
-      });
-
-      // Agent goes busy (idle decreases)
-      service.handleStatusChange("/test", { idle: 1, busy: 1 });
-
-      expect(mockPlayChime).not.toHaveBeenCalled();
-    });
-
-    it("handles empty statuses object", () => {
-      service.seedInitialCounts({});
-
-      // Even without seeding for this workspace, first event with idle > 0 triggers chime
-      // (gray → green transition)
-      service.handleStatusChange("/test", { idle: 1, busy: 0 });
-
-      expect(mockPlayChime).toHaveBeenCalledTimes(1);
-    });
-
-    it("overwrites existing counts when seeding", () => {
-      // First establish some state (triggers first-report chime since idle > 0)
-      service.handleStatusChange("/test", { idle: 5, busy: 0 });
-      expect(mockPlayChime).toHaveBeenCalledTimes(1);
-
-      // Seed overwrites with new state
-      service.seedInitialCounts({
-        "/test": { idle: 0, busy: 2 },
-      });
-
-      // Now idle increases from 0 to 1 (not from 5)
-      service.handleStatusChange("/test", { idle: 1, busy: 1 });
-
-      // Total: 1 (first report) + 1 (increase after seed) = 2
-      expect(mockPlayChime).toHaveBeenCalledTimes(2);
-    });
-  });
 });
 
 describe("playChimeSound", () => {
-  beforeEach(() => {
-    resetAudioContext();
-  });
-
   afterEach(() => {
     vi.unstubAllGlobals();
   });

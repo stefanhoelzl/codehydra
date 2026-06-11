@@ -26,60 +26,6 @@ export const SUPPORTED_VSCODE_TYPES = new Set([
 export type VscodeTypeName = "Uri" | "Position" | "Range" | "Selection" | "Location";
 
 /**
- * Wrapper format for Uri objects.
- */
-export interface VscodeUriWrapper {
-  readonly $vscode: "Uri";
-  readonly value: string;
-}
-
-/**
- * Wrapper format for Position objects.
- */
-export interface VscodePositionWrapper {
-  readonly $vscode: "Position";
-  readonly line: number;
-  readonly character: number;
-}
-
-/**
- * Wrapper format for Range objects.
- */
-export interface VscodeRangeWrapper {
-  readonly $vscode: "Range";
-  readonly start: VscodePositionWrapper;
-  readonly end: VscodePositionWrapper;
-}
-
-/**
- * Wrapper format for Selection objects.
- */
-export interface VscodeSelectionWrapper {
-  readonly $vscode: "Selection";
-  readonly anchor: VscodePositionWrapper;
-  readonly active: VscodePositionWrapper;
-}
-
-/**
- * Wrapper format for Location objects.
- */
-export interface VscodeLocationWrapper {
-  readonly $vscode: "Location";
-  readonly uri: VscodeUriWrapper;
-  readonly range: VscodeRangeWrapper;
-}
-
-/**
- * Discriminated union of all VS Code wrapper types.
- */
-export type VscodeWrapper =
-  | VscodeUriWrapper
-  | VscodePositionWrapper
-  | VscodeRangeWrapper
-  | VscodeSelectionWrapper
-  | VscodeLocationWrapper;
-
-/**
  * Factory functions for creating VS Code objects.
  *
  * Each factory receives the validated wrapper data and returns the actual VS Code object.
