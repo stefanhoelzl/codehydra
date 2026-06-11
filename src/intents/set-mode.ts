@@ -2,7 +2,7 @@
  * SetModeOperation - Orchestrates UI mode changes.
  *
  * Runs the "set" hook point where the handler captures the previous mode,
- * then applies the new mode via WebContentsViewManager. On success, emits a
+ * then applies the new mode via the ViewManager. On success, emits a
  * ui:mode-changed domain event.
  *
  * No provider dependencies - the hook handler does the actual work.

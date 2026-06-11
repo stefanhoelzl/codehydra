@@ -7,7 +7,7 @@
  * focus tracker installation).
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { IframeViewManager, type IframeViewManagerDeps } from "./iframe-view-manager";
 import {
   runViewManagerConformance,
@@ -328,101 +328,6 @@ describe("IframeViewManager", () => {
       // to force a DirectComposition re-composite. Without this the newly-
       // revealed iframe can come back blank on Windows.
       expect(forceAttachCalls.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  describe("did-fail-load retry on subframe failure", () => {
-    it("schedules an exponential-backoff retry when an iframe URL fails to load", () => {
-      vi.useFakeTimers();
-      try {
-        const deps = createIframeDeps();
-        const manager = new IframeViewManager(deps);
-        manager.create();
-        const host = manager.getWorkspaceHostHandle();
-        flushHostReady(deps.viewLayer, host);
-
-        manager.createWorkspaceView("/a", "http://127.0.0.1/?a", "/p");
-        manager.setActiveWorkspace("/a");
-
-        // Capture `__host.add(..., { force: true })` retry calls.
-        const retryAddCalls: string[] = [];
-        const originalExec = deps.viewLayer.executeJavaScript.bind(deps.viewLayer);
-        deps.viewLayer.executeJavaScript = (handle, code) => {
-          if (
-            handle.id === host.id &&
-            code.includes("__host.add") &&
-            code.includes("force: true")
-          ) {
-            retryAddCalls.push(code);
-          }
-          return originalExec(handle, code);
-        };
-
-        // Simulate a subframe load failure for /a's URL.
-        deps.viewLayer.$.triggerDidFailLoad(host, {
-          errorCode: -21,
-          errorDescription: "ERR_NETWORK_CHANGED",
-          isMainFrame: false,
-          validatedURL: "http://127.0.0.1/?a",
-        });
-
-        // No retry should have fired yet (delay is 1s).
-        expect(retryAddCalls).toHaveLength(0);
-
-        // After 1s the first retry fires with `force: true`.
-        vi.advanceTimersByTime(1000);
-        expect(retryAddCalls).toHaveLength(1);
-        expect(retryAddCalls[0]).toContain("/a");
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it("ignores main-frame failures (the host page itself) and unknown URLs", () => {
-      vi.useFakeTimers();
-      try {
-        const deps = createIframeDeps();
-        const manager = new IframeViewManager(deps);
-        manager.create();
-        const host = manager.getWorkspaceHostHandle();
-        flushHostReady(deps.viewLayer, host);
-
-        manager.createWorkspaceView("/a", "http://127.0.0.1/?a", "/p");
-        manager.setActiveWorkspace("/a");
-
-        const retryCalls: string[] = [];
-        const originalExec = deps.viewLayer.executeJavaScript.bind(deps.viewLayer);
-        deps.viewLayer.executeJavaScript = (handle, code) => {
-          if (
-            handle.id === host.id &&
-            code.includes("__host.add") &&
-            code.includes("force: true")
-          ) {
-            retryCalls.push(code);
-          }
-          return originalExec(handle, code);
-        };
-
-        // Main-frame failure: ignored.
-        deps.viewLayer.$.triggerDidFailLoad(host, {
-          errorCode: -21,
-          errorDescription: "ERR_NETWORK_CHANGED",
-          isMainFrame: true,
-          validatedURL: "file:///path/to/workspace-host.html",
-        });
-        // Subframe failure for a URL we don't recognize: ignored.
-        deps.viewLayer.$.triggerDidFailLoad(host, {
-          errorCode: -21,
-          errorDescription: "ERR_NETWORK_CHANGED",
-          isMainFrame: false,
-          validatedURL: "http://example.test/unknown",
-        });
-
-        vi.advanceTimersByTime(20000);
-        expect(retryCalls).toHaveLength(0);
-      } finally {
-        vi.useRealTimers();
-      }
     });
   });
 

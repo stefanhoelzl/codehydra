@@ -2,7 +2,7 @@
  * GetActiveWorkspaceOperation - Orchestrates active workspace queries.
  *
  * Runs the "get" hook point where the handler retrieves the current active
- * workspace from WebContentsViewManager and resolves it to a WorkspaceRef.
+ * workspace from the ViewManager and resolves it to a WorkspaceRef.
  *
  * No provider dependencies - the hook handler does the actual work.
  * No domain events - this is a query operation.

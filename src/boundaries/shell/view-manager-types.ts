@@ -57,22 +57,6 @@ export interface WorkspaceState {
   urlLoaded: boolean;
   /** Partition name for cleanup */
   partitionName: string;
-  /** Current retry attempt count for load failures */
-  retryCount: number;
-  /** Timer handle for scheduled retry, if any */
-  retryTimer: NodeJS.Timeout | null;
-  /**
-   * When true, the next attach will reload this view's webContents before
-   * returning. Set by the render-process-gone handler so the user gets a
-   * fresh page on next attach instead of a dead renderer.
-   */
-  needsReloadOnAttach: boolean;
-  /**
-   * Watchdog timer armed after a resume-triggered loadURL. Cleared when
-   * did-finish-load fires. If it fires, the view is assumed wedged and is
-   * destroyed + recreated from scratch.
-   */
-  reloadWatchdogTimer: NodeJS.Timeout | null;
 }
 
 /**

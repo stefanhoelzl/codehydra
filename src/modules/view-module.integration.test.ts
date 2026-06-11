@@ -69,13 +69,7 @@ import {
 import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import {
-  APP_RESUME_OPERATION_ID,
-  APP_RESUME_HOOK_RESUME,
-  INTENT_APP_RESUME,
-} from "../intents/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
@@ -316,19 +310,12 @@ function createTestSetup(
   options?: {
     nullLayers?: boolean;
     dialogLayer?: ViewModuleDeps["dialogLayer"];
-    configValues?: Record<string, unknown>;
   }
 ): TestSetup {
   const dispatcher = createMockDispatcher();
 
   const viewManager = createMockViewManager();
   const layers = createMockShellLayers();
-  const mockConfig = createMockConfig({
-    defaults: {
-      "experimental.load-on-resume": true,
-      ...options?.configValues,
-    },
-  });
 
   const deps: ViewModuleDeps = {
     viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
@@ -343,7 +330,6 @@ function createTestSetup(
       ? null
       : (layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"]),
     ...(options?.dialogLayer !== undefined && { dialogLayer: options.dialogLayer }),
-    configService: mockConfig,
   };
 
   const module = createViewModule(deps);
@@ -466,7 +452,6 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        configService: createMockConfig(),
         // No dialogManager provided
       });
 
@@ -516,7 +501,6 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        configService: createMockConfig(),
         dialogManager: dialogManager as unknown as NonNullable<ViewModuleDeps["dialogManager"]>,
       });
 
@@ -926,7 +910,6 @@ describe("ViewModule Integration", () => {
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
         windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
-        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -975,7 +958,6 @@ describe("ViewModule Integration", () => {
         viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
         windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
         sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
-        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1022,7 +1004,6 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1068,7 +1049,6 @@ describe("ViewModule Integration", () => {
         menuLayer,
         windowManager,
         uiHtmlPath: "file:///app/ui.html",
-        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1105,7 +1085,6 @@ describe("ViewModule Integration", () => {
         viewLayer: null,
         windowLayer: null,
         sessionLayer: null,
-        configService: createMockConfig(),
       });
 
       dispatcher.registerModule(module);
@@ -1204,50 +1183,6 @@ describe("ViewModule Integration", () => {
       } as AppStartIntent)) as unknown as ShowUIHookResult;
 
       expect(result.waitForRetry).toBeUndefined();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // app:resume hook
-  // -------------------------------------------------------------------------
-  describe("app:resume resume hook", () => {
-    const hookCtx = {
-      intent: { type: INTENT_APP_RESUME, payload: {} },
-    };
-
-    it("calls reloadAllViews when experimental.load-on-resume is true", async () => {
-      const { viewManager, module } = createTestSetup(undefined, {
-        configValues: { "experimental.load-on-resume": true },
-      });
-
-      await module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!.handler(hookCtx);
-
-      expect(viewManager.reloadAllViews).toHaveBeenCalledOnce();
-    });
-
-    it("calls reloadAllViews by default", async () => {
-      const { viewManager, module } = createTestSetup();
-
-      await module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!.handler(hookCtx);
-
-      expect(viewManager.reloadAllViews).toHaveBeenCalledOnce();
-    });
-
-    it("does NOT call reloadAllViews when config is explicitly false", async () => {
-      const { viewManager, module } = createTestSetup(undefined, {
-        configValues: { "experimental.load-on-resume": false },
-      });
-
-      await module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!.handler(hookCtx);
-
-      expect(viewManager.reloadAllViews).not.toHaveBeenCalled();
-    });
-
-    it("declares requires: { codeServerReady: ANY_VALUE }", () => {
-      const { module } = createTestSetup();
-      const hook = module.hooks![APP_RESUME_OPERATION_ID]![APP_RESUME_HOOK_RESUME]!;
-      expect(hook.requires).toBeDefined();
-      expect(hook.requires).toHaveProperty("codeServerReady");
     });
   });
 });

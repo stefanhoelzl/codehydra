@@ -63,7 +63,6 @@ import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { WORKSPACE_LOADING_TIMEOUT_MS } from "../boundaries/shell/view-manager.interface";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import { APP_RESUME_OPERATION_ID, APP_RESUME_HOOK_RESUME } from "../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../intents/setup";
 import { EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../intents/setup";
 import type { SetupProgressEvent, SetupErrorEvent } from "../intents/setup";
@@ -84,8 +83,6 @@ import {
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { Config } from "../boundaries/platform/config";
-import { storeBoolean } from "../boundaries/platform/store-definition";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { LifecycleAgentType } from "../shared/ipc";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
@@ -126,7 +123,6 @@ export interface ViewModuleDeps {
     gitBranch?: string;
   } | null;
   readonly uiHtmlPath?: string | null;
-  readonly configService: Config;
   readonly dialogManager?: DialogManager;
   readonly dispatcher?: Dispatcher;
 }
@@ -142,19 +138,11 @@ export interface ViewModuleDeps {
 export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const { viewManager, logger } = deps;
 
-  // Register config keys
-  const loadOnResumeConfig = deps.configService.register("experimental.load-on-resume", {
-    default: true,
-    description: "Reload workspace views when system resumes from sleep",
-    ...storeBoolean(),
-  });
-
   // Internal state
   let cachedActiveRef: WorkspaceRef | null = null;
   /** Capability: agentType provided by agent-selection handler. */
   let capAgentType: LifecycleAgentType | undefined;
   let loadingChangeCleanupFn: Unsubscribe | null = null;
-  // loadOnResume is read from configService on demand
 
   /**
    * Shared shutdown logic for workspace teardown (used by delete + hibernate).
@@ -645,22 +633,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               return { folderPath: null };
             }
             return { folderPath: result.filePaths[0]!.toString() };
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // app-resume → resume: reload workspace views (gated by config)
-      // Requires codeServerReady from code-server-module so reload only runs
-      // after the server is confirmed healthy (or has been restarted).
-      // -------------------------------------------------------------------
-      [APP_RESUME_OPERATION_ID]: {
-        [APP_RESUME_HOOK_RESUME]: {
-          requires: { codeServerReady: ANY_VALUE },
-          handler: async (): Promise<void> => {
-            if (!loadOnResumeConfig.get()) return;
-            logger.info("Reloading workspace views after system resume");
-            viewManager.reloadAllViews();
           },
         },
       },
