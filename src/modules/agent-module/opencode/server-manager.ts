@@ -19,7 +19,12 @@ import type { IDisposable, Unsubscribe } from "./types";
 import { waitForHealthy } from "../../../utils/health-check";
 import { Path } from "../../../utils/path/path";
 import type { PromptModel } from "../../../shared/api/types";
-import type { AgentServerManager, StopServerResult, RestartServerResult } from "../types";
+import type {
+  AgentServerManager,
+  StopServerResult,
+  RestartServerResult,
+  McpConfig,
+} from "../types";
 import { getOpencodeBundleDir, getOpencodeExecutablePath } from "./setup-info";
 import type { SupportedPlatform } from "../../../boundaries/platform/platform-info";
 import type { PersistedAccessor } from "../../../boundaries/platform/store-definition";
@@ -82,14 +87,6 @@ export interface StartServerOptions {
     readonly agent?: string;
     readonly model?: PromptModel;
   };
-}
-
-/**
- * MCP server configuration for OpenCode integration.
- */
-export interface McpConfig {
-  /** MCP server port */
-  readonly port: number;
 }
 
 /**
@@ -506,13 +503,6 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
   setMcpConfig(config: McpConfig): void {
     this.mcpConfig = config;
     this.logger.debug("MCP config set", { port: config.port });
-  }
-
-  /**
-   * Get the current MCP configuration.
-   */
-  getMcpConfig(): McpConfig | null {
-    return this.mcpConfig;
   }
 
   /**

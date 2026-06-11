@@ -22,6 +22,7 @@ import type {
   StopServerResult,
   RestartServerResult,
   AgentStatus,
+  McpConfig,
 } from "../types";
 import { Path } from "../../../utils/path/path";
 import {
@@ -81,14 +82,6 @@ export type ServerStoppedCallback = (workspacePath: string, isRestart: boolean) 
 export interface ClaudeCodeServerManagerConfig {
   /** Path to the hook-handler.js script */
   readonly hookHandlerPath?: string;
-}
-
-/**
- * MCP server configuration for Claude Code integration.
- */
-export interface McpConfig {
-  /** MCP server port */
-  readonly port: number;
 }
 
 /**
@@ -838,11 +831,11 @@ export class ClaudeCodeServerManager implements AgentServerManager {
 
     // Generate hooks config
     const hooksConfigPath = new Path(workspaceConfigDir, "codehydra-hooks.json");
-    await this.generateHooksConfig(hooksConfigPath, variables);
+    await this.generateConfigFromTemplate(hooksConfigTemplate, hooksConfigPath, variables);
 
     // Generate MCP config
     const mcpConfigPath = new Path(workspaceConfigDir, "codehydra-mcp.json");
-    await this.generateMcpConfig(mcpConfigPath, variables);
+    await this.generateConfigFromTemplate(mcpConfigTemplate, mcpConfigPath, variables);
 
     this.logger.debug("Config files generated", {
       workspacePath,
@@ -872,13 +865,14 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
-   * Generate hooks config file from template.
+   * Generate a config file from a JSON template with variable substitution.
    */
-  private async generateHooksConfig(
+  private async generateConfigFromTemplate(
+    template: unknown,
     targetPath: Path,
     variables: Record<string, string>
   ): Promise<void> {
-    let content = JSON.stringify(hooksConfigTemplate, null, 2);
+    let content = JSON.stringify(template, null, 2);
 
     // Substitute variables
     for (const [key, value] of Object.entries(variables)) {
@@ -890,21 +884,12 @@ export class ClaudeCodeServerManager implements AgentServerManager {
   }
 
   /**
-   * Generate MCP config file from template.
+   * Get the path to a config file in the workspace's config directory.
    */
-  private async generateMcpConfig(
-    targetPath: Path,
-    variables: Record<string, string>
-  ): Promise<void> {
-    let content = JSON.stringify(mcpConfigTemplate, null, 2);
-
-    // Substitute variables
-    for (const [key, value] of Object.entries(variables)) {
-      const pattern = new RegExp(`\\$\\{${key}\\}`, "g");
-      content = content.replace(pattern, value);
-    }
-
-    await this.fileSystem.writeFile(targetPath, content);
+  private configFilePath(workspacePath: string, filename: string): Path {
+    const normalizedPath = new Path(workspacePath).toString();
+    const safeWorkspaceName = this.getConfigDirName(normalizedPath);
+    return new Path(this.pathProvider.dataPath("claude/configs"), safeWorkspaceName, filename);
   }
 
   /**
@@ -912,13 +897,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * This is used by the Provider to set environment variables.
    */
   getHooksConfigPath(workspacePath: string): Path {
-    const normalizedPath = new Path(workspacePath).toString();
-    const safeWorkspaceName = this.getConfigDirName(normalizedPath);
-    return new Path(
-      this.pathProvider.dataPath("claude/configs"),
-      safeWorkspaceName,
-      "codehydra-hooks.json"
-    );
+    return this.configFilePath(workspacePath, "codehydra-hooks.json");
   }
 
   /**
@@ -926,12 +905,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * This is used by the Provider to set environment variables.
    */
   getMcpConfigPath(workspacePath: string): Path {
-    const normalizedPath = new Path(workspacePath).toString();
-    const safeWorkspaceName = this.getConfigDirName(normalizedPath);
-    return new Path(
-      this.pathProvider.dataPath("claude/configs"),
-      safeWorkspaceName,
-      "codehydra-mcp.json"
-    );
+    return this.configFilePath(workspacePath, "codehydra-mcp.json");
   }
 }
