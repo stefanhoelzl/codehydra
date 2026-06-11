@@ -5,8 +5,9 @@
  * CodeHydra (server) and VS Code extensions (clients).
  */
 
+import { z } from "zod/v4";
 import type { WorkspaceStatus, Workspace, InitialPrompt, AgentSession } from "./api/types";
-import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
+import { METADATA_KEY_REGEX, isValidMetadataKey, initialPromptSchema } from "./api/types";
 
 // ============================================================================
 // Result Types
@@ -19,6 +20,74 @@ import { METADATA_KEY_REGEX, isValidMetadataKey } from "./api/types";
 export type PluginResult<T> =
   | { readonly success: true; readonly data: T }
   | { readonly success: false; readonly error: string };
+
+// ============================================================================
+// Validation Infrastructure
+// ============================================================================
+
+/** A string field that must be non-empty after trimming. */
+function nonEmptyString(field: string) {
+  return z.string().refine((value) => value.trim().length > 0, `Field '${field}' cannot be empty`);
+}
+
+/**
+ * Map a zod issue to the protocol's error-message style. Custom messages from
+ * enum/refine checks pass through verbatim; union messages are written without
+ * the field prefix so the path can be prepended here.
+ */
+function formatIssue(issue: z.core.$ZodIssue | undefined): string {
+  if (!issue) {
+    return "Invalid request";
+  }
+  if (issue.path.length === 0) {
+    return issue.code === "invalid_type" ? "Request must be an object" : issue.message;
+  }
+  const field = issue.path.join(".");
+  if (issue.input === undefined) {
+    return `Missing required field: ${field}`;
+  }
+  if (issue.code === "invalid_type") {
+    const expected = issue.expected === "record" ? "object" : issue.expected;
+    const article = expected === "object" || expected === "array" ? "an" : "a";
+    return `Field '${field}' must be ${article} ${expected}`;
+  }
+  if (issue.code === "invalid_union") {
+    return `Field '${field}' ${issue.message}`;
+  }
+  return issue.message;
+}
+
+/**
+ * Adapt a zod schema to a validator returning the parsed (normalized) request.
+ * Only the first issue is reported, matching the fail-fast style of the
+ * previous hand-rolled validators.
+ */
+function parseWith<T>(
+  schema: z.ZodType<T>
+): (payload: unknown) => { valid: true; request: T } | { valid: false; error: string } {
+  return (payload) => {
+    const result = schema.safeParse(payload, { reportInput: true });
+    return result.success
+      ? { valid: true, request: result.data }
+      : { valid: false, error: formatIssue(result.error.issues[0]) };
+  };
+}
+
+/**
+ * Adapt a zod schema to a check-only validator; callers keep using the raw
+ * payload. Used where the schema's inferred output (`field?: T | undefined`)
+ * is not assignable to the hand-written interface (`field?: T`) under
+ * exactOptionalPropertyTypes — those schemas also carry no `satisfies` guard.
+ */
+function validateWith(
+  schema: z.ZodType
+): (payload: unknown) => { valid: true } | { valid: false; error: string } {
+  const parse = parseWith(schema);
+  return (payload) => {
+    const result = parse(payload);
+    return result.valid ? { valid: true } : result;
+  };
+}
 
 // ============================================================================
 // Command Types
@@ -162,40 +231,16 @@ export interface ExecuteCommandRequest {
   readonly args?: readonly unknown[];
 }
 
+const executeCommandRequestSchema = z.object({
+  command: nonEmptyString("command"),
+  args: z.array(z.unknown()).optional(),
+});
+
 /**
  * Runtime validation for ExecuteCommandRequest.
  * Validates that command is a non-empty string and args is an array if present.
- *
- * @param payload - The payload to validate
- * @returns Object with valid boolean and optional error message
  */
-export function validateExecuteCommandRequest(
-  payload: unknown
-): { valid: true } | { valid: false; error: string } {
-  if (typeof payload !== "object" || payload === null) {
-    return { valid: false, error: "Request must be an object" };
-  }
-
-  const request = payload as Record<string, unknown>;
-
-  if (!("command" in request)) {
-    return { valid: false, error: "Missing required field: command" };
-  }
-
-  if (typeof request.command !== "string") {
-    return { valid: false, error: "Field 'command' must be a string" };
-  }
-
-  if (request.command.trim().length === 0) {
-    return { valid: false, error: "Field 'command' cannot be empty" };
-  }
-
-  if ("args" in request && !Array.isArray(request.args)) {
-    return { valid: false, error: "Field 'args' must be an array" };
-  }
-
-  return { valid: true };
-}
+export const validateExecuteCommandRequest = validateWith(executeCommandRequestSchema);
 
 /**
  * The action to perform on a system path.
@@ -214,44 +259,18 @@ export interface OpenSystemPathRequest {
   readonly path: string;
 }
 
+const openSystemPathRequestSchema = z.object({
+  app: z.enum(["default", "explorer"], {
+    error: "Field 'app' must be 'default' or 'explorer'",
+  }),
+  path: nonEmptyString("path"),
+}) satisfies z.ZodType<OpenSystemPathRequest>;
+
 /**
  * Runtime validation for OpenSystemPathRequest.
  * Validates that app is a valid action and path is a non-empty string.
- *
- * @param payload - The payload to validate
- * @returns Object with valid boolean and optional error message
  */
-export function validateOpenSystemPathRequest(
-  payload: unknown
-): { valid: true } | { valid: false; error: string } {
-  if (typeof payload !== "object" || payload === null) {
-    return { valid: false, error: "Request must be an object" };
-  }
-
-  const request = payload as Record<string, unknown>;
-
-  if (!("app" in request)) {
-    return { valid: false, error: "Missing required field: app" };
-  }
-
-  if (request.app !== "default" && request.app !== "explorer") {
-    return { valid: false, error: "Field 'app' must be 'default' or 'explorer'" };
-  }
-
-  if (!("path" in request)) {
-    return { valid: false, error: "Missing required field: path" };
-  }
-
-  if (typeof request.path !== "string") {
-    return { valid: false, error: "Field 'path' must be a string" };
-  }
-
-  if (request.path.trim().length === 0) {
-    return { valid: false, error: "Field 'path' cannot be empty" };
-  }
-
-  return { valid: true };
-}
+export const validateOpenSystemPathRequest = validateWith(openSystemPathRequestSchema);
 
 /**
  * Request payload for deleting a workspace.
@@ -284,154 +303,51 @@ export interface WorkspaceCreateRequest {
   readonly stealFocus?: boolean;
 }
 
+const workspaceCreateRequestSchema = z.object({
+  name: nonEmptyString("name"),
+  base: nonEmptyString("base"),
+  initialPrompt: z
+    .unknown()
+    .refine(
+      (value) => initialPromptSchema.safeParse(value).success,
+      "Field 'initialPrompt' must be a non-empty string or a prompt object"
+    )
+    .optional(),
+  stealFocus: z.boolean().optional(),
+});
+
 /**
  * Runtime validation for WorkspaceCreateRequest.
- * Validates structure and required fields.
- *
- * @param payload - The payload to validate
- * @returns Object with valid boolean and optional error message
+ * Validates structure and required fields. The optional initialPrompt is
+ * checked against initialPromptSchema (including the model field), keeping
+ * this path in sync with the MCP server's validation.
  */
-export function validateWorkspaceCreateRequest(
-  payload: unknown
-): { valid: true } | { valid: false; error: string } {
-  if (typeof payload !== "object" || payload === null) {
-    return { valid: false, error: "Request must be an object" };
-  }
+export const validateWorkspaceCreateRequest = validateWith(workspaceCreateRequestSchema);
 
-  const request = payload as Record<string, unknown>;
-
-  // Validate name
-  if (!("name" in request)) {
-    return { valid: false, error: "Missing required field: name" };
-  }
-
-  if (typeof request.name !== "string") {
-    return { valid: false, error: "Field 'name' must be a string" };
-  }
-
-  if (request.name.trim().length === 0) {
-    return { valid: false, error: "Field 'name' cannot be empty" };
-  }
-
-  // Validate base
-  if (!("base" in request)) {
-    return { valid: false, error: "Missing required field: base" };
-  }
-
-  if (typeof request.base !== "string") {
-    return { valid: false, error: "Field 'base' must be a string" };
-  }
-
-  if (request.base.trim().length === 0) {
-    return { valid: false, error: "Field 'base' cannot be empty" };
-  }
-
-  // Validate initialPrompt (optional)
-  if ("initialPrompt" in request && request.initialPrompt !== undefined) {
-    const prompt = request.initialPrompt;
-    if (typeof prompt === "string") {
-      if (prompt.length === 0) {
-        return { valid: false, error: "Field 'initialPrompt' cannot be empty string" };
-      }
-    } else if (typeof prompt === "object" && prompt !== null) {
-      const promptObj = prompt as Record<string, unknown>;
-      if (typeof promptObj.prompt !== "string" || promptObj.prompt.length === 0) {
-        return { valid: false, error: "Field 'initialPrompt.prompt' must be a non-empty string" };
-      }
-      if ("agent" in promptObj && typeof promptObj.agent !== "string") {
-        return { valid: false, error: "Field 'initialPrompt.agent' must be a string" };
-      }
-    } else {
-      return { valid: false, error: "Field 'initialPrompt' must be a string or object" };
-    }
-  }
-
-  // Validate stealFocus (optional)
-  if ("stealFocus" in request && typeof request.stealFocus !== "boolean") {
-    return { valid: false, error: "Field 'stealFocus' must be a boolean" };
-  }
-
-  return { valid: true };
-}
+const setMetadataRequestSchema = z.object({
+  key: z
+    .string()
+    .refine((key) => key.length > 0, "Field 'key' cannot be empty")
+    .refine(isValidMetadataKey, `Invalid key format: must match ${METADATA_KEY_REGEX.toString()}`),
+  value: z.union([z.string(), z.null()], { error: "must be a string or null" }),
+}) satisfies z.ZodType<SetMetadataRequest>;
 
 /**
  * Runtime validation for SetMetadataRequest.
  * Validates structure and key format against METADATA_KEY_REGEX.
- *
- * @param payload - The payload to validate
- * @returns Object with valid boolean and optional error message
  */
-export function validateSetMetadataRequest(
-  payload: unknown
-): { valid: true } | { valid: false; error: string } {
-  if (typeof payload !== "object" || payload === null) {
-    return { valid: false, error: "Request must be an object" };
-  }
+export const validateSetMetadataRequest = validateWith(setMetadataRequestSchema);
 
-  const request = payload as Record<string, unknown>;
-
-  if (!("key" in request)) {
-    return { valid: false, error: "Missing required field: key" };
-  }
-
-  if (typeof request.key !== "string") {
-    return { valid: false, error: "Field 'key' must be a string" };
-  }
-
-  if (request.key.length === 0) {
-    return { valid: false, error: "Field 'key' cannot be empty" };
-  }
-
-  if (!isValidMetadataKey(request.key)) {
-    return {
-      valid: false,
-      error: `Invalid key format: must match ${METADATA_KEY_REGEX.toString()}`,
-    };
-  }
-
-  if (!("value" in request)) {
-    return { valid: false, error: "Missing required field: value" };
-  }
-
-  if (request.value !== null && typeof request.value !== "string") {
-    return { valid: false, error: "Field 'value' must be a string or null" };
-  }
-
-  return { valid: true };
-}
+const deleteWorkspaceRequestSchema = z
+  .object({ keepBranch: z.boolean().optional() })
+  .nullish()
+  .transform((value): DeleteWorkspaceRequest => value ?? {});
 
 /**
  * Runtime validation for DeleteWorkspaceRequest.
- * Validates structure and keepBranch is boolean if present.
- *
- * @param payload - The payload to validate
- * @returns Object with valid boolean and optional error message
+ * Accepts undefined/null (optional request) and normalizes it to {}.
  */
-export function validateDeleteWorkspaceRequest(
-  payload: unknown
-): { valid: true; request: DeleteWorkspaceRequest } | { valid: false; error: string } {
-  // Allow empty object or undefined (optional request)
-  if (payload === undefined || payload === null) {
-    return { valid: true, request: {} };
-  }
-
-  if (typeof payload !== "object") {
-    return { valid: false, error: "Request must be an object" };
-  }
-
-  const request = payload as Record<string, unknown>;
-
-  if ("keepBranch" in request && typeof request.keepBranch !== "boolean") {
-    return { valid: false, error: "Field 'keepBranch' must be a boolean" };
-  }
-
-  return {
-    valid: true,
-    request: {
-      keepBranch: request.keepBranch as boolean | undefined,
-    },
-  };
-}
+export const validateDeleteWorkspaceRequest = parseWith(deleteWorkspaceRequestSchema);
 
 /**
  * Request to get workspace status.
@@ -443,33 +359,19 @@ export interface GetWorkspaceStatusRequest {
   readonly refresh?: boolean;
 }
 
+const getWorkspaceStatusRequestSchema = z
+  .object({ refresh: z.boolean().optional() })
+  .nullish()
+  .transform(
+    (value): GetWorkspaceStatusRequest =>
+      value?.refresh === undefined ? {} : { refresh: value.refresh }
+  );
+
 /**
  * Runtime validation for GetWorkspaceStatusRequest.
+ * Accepts undefined/null (optional request) and normalizes it to {}.
  */
-export function validateGetWorkspaceStatusRequest(
-  payload: unknown
-): { valid: true; request: GetWorkspaceStatusRequest } | { valid: false; error: string } {
-  if (payload === undefined || payload === null) {
-    return { valid: true, request: {} };
-  }
-
-  if (typeof payload !== "object") {
-    return { valid: false, error: "Request must be an object" };
-  }
-
-  const request = payload as Record<string, unknown>;
-
-  if ("refresh" in request && typeof request.refresh !== "boolean") {
-    return { valid: false, error: "Field 'refresh' must be a boolean" };
-  }
-
-  return {
-    valid: true,
-    request: {
-      ...(typeof request.refresh === "boolean" && { refresh: request.refresh }),
-    },
-  };
-}
+export const validateGetWorkspaceStatusRequest = parseWith(getWorkspaceStatusRequestSchema);
 
 // ============================================================================
 // UI Request/Response Types
@@ -572,27 +474,16 @@ export interface AgentLifecycleRequest {
   readonly event: AgentLifecycleEvent;
 }
 
+const agentLifecycleRequestSchema = z.object({
+  event: z.enum(["open", "close"], {
+    error: (issue) => `Invalid agent lifecycle event: ${String(issue.input)}`,
+  }),
+}) satisfies z.ZodType<AgentLifecycleRequest>;
+
 /**
  * Runtime validation for AgentLifecycleRequest.
- *
- * @param payload - The payload to validate
- * @returns Object with valid boolean and optional error message
  */
-export function validateAgentLifecycleRequest(
-  payload: unknown
-): { valid: true } | { valid: false; error: string } {
-  if (typeof payload !== "object" || payload === null) {
-    return { valid: false, error: "Request must be an object" };
-  }
-
-  const request = payload as Record<string, unknown>;
-
-  if (request.event !== "open" && request.event !== "close") {
-    return { valid: false, error: `Invalid agent lifecycle event: ${String(request.event)}` };
-  }
-
-  return { valid: true };
-}
+export const validateAgentLifecycleRequest = validateWith(agentLifecycleRequestSchema);
 
 // ============================================================================
 // Socket.IO Event Types
@@ -757,75 +648,24 @@ export interface LogRequest {
   readonly context?: LogContext;
 }
 
-/**
- * Valid log levels array for validation.
- * Note: Duplicated from services/logging/types.ts because shared/ cannot import from services/.
- */
-const VALID_LOG_LEVELS = ["silly", "debug", "info", "warn", "error"];
+const logRequestSchema = z.object({
+  // Note: levels duplicated from services/logging/types.ts because shared/ cannot import from services/.
+  level: z.enum(["silly", "debug", "info", "warn", "error"], {
+    error: (issue) => `Invalid log level: ${String(issue.input)}`,
+  }),
+  message: z.string().refine((value) => value.length > 0, "Field 'message' cannot be empty"),
+  context: z
+    .record(
+      z.string(),
+      z.union([z.string(), z.number(), z.boolean(), z.null()], {
+        error: "must be a string, number, boolean, or null",
+      })
+    )
+    .optional(),
+});
 
 /**
  * Runtime validation for LogRequest.
  * Validates structure, level, message, and context value types.
- *
- * @param payload - The payload to validate
- * @returns Object with valid boolean and optional error message
  */
-export function validateLogRequest(
-  payload: unknown
-): { valid: true } | { valid: false; error: string } {
-  if (typeof payload !== "object" || payload === null) {
-    return { valid: false, error: "Request must be an object" };
-  }
-
-  const request = payload as Record<string, unknown>;
-
-  // Validate level
-  if (!("level" in request)) {
-    return { valid: false, error: "Missing required field: level" };
-  }
-
-  if (typeof request.level !== "string") {
-    return { valid: false, error: "Field 'level' must be a string" };
-  }
-
-  if (!VALID_LOG_LEVELS.includes(request.level)) {
-    return { valid: false, error: `Invalid log level: ${request.level}` };
-  }
-
-  // Validate message
-  if (!("message" in request)) {
-    return { valid: false, error: "Missing required field: message" };
-  }
-
-  if (typeof request.message !== "string") {
-    return { valid: false, error: "Field 'message' must be a string" };
-  }
-
-  if (request.message.length === 0) {
-    return { valid: false, error: "Field 'message' cannot be empty" };
-  }
-
-  // Validate context (optional)
-  if ("context" in request && request.context !== undefined) {
-    if (typeof request.context !== "object" || request.context === null) {
-      return { valid: false, error: "Field 'context' must be an object" };
-    }
-
-    // Validate each context value is a primitive
-    const contextObj = request.context as Record<string, unknown>;
-    for (const [key, value] of Object.entries(contextObj)) {
-      if (value === null) {
-        continue; // null is valid
-      }
-      const valueType = typeof value;
-      if (valueType !== "string" && valueType !== "number" && valueType !== "boolean") {
-        return {
-          valid: false,
-          error: `Invalid context value type for key '${key}': expected primitive, got ${valueType === "object" ? (Array.isArray(value) ? "array" : "object") : valueType}`,
-        };
-      }
-    }
-  }
-
-  return { valid: true };
-}
+export const validateLogRequest = validateWith(logRequestSchema);
