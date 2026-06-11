@@ -1059,8 +1059,15 @@
 
   .radio-cards {
     display: flex;
+    /* The form-field wrapper is full-width; center the shrink-wrapped card
+       row in the default (centered) layout, like the pre-wrapper rendering. */
+    justify-content: center;
     gap: 1rem;
     margin: 0.5rem 0;
+  }
+
+  .form.layout-form .radio-cards {
+    justify-content: flex-start;
   }
 
   .radio-cards.errored {
