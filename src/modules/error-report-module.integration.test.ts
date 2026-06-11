@@ -33,47 +33,12 @@ import { createMockViewManager } from "../boundaries/shell/view-manager.test-uti
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { DialogMessageBoxOptions } from "../boundaries/shell/dialog";
 import type { HookContext } from "../intents/lib/operation";
-import type { DialogHandle } from "./dialog-manager";
-import type { DialogUserEvent, DialogConfig } from "../shared/dialog-types";
+import { createMockDialogHandle } from "./dialog-manager.state-mock";
+import type { DialogConfig } from "../shared/dialog-types";
 
 // =============================================================================
 // Helpers
 // =============================================================================
-
-function createMockHandle(): DialogHandle & {
-  _emitEvent(event: DialogUserEvent): void;
-  _emitDismiss(): void;
-} {
-  const listeners = new Set<(event: DialogUserEvent) => void>();
-  const dismissListeners = new Set<() => void>();
-  let closedResolve!: () => void;
-  const closedPromise = new Promise<void>((resolve) => {
-    closedResolve = resolve;
-  });
-
-  return {
-    id: "dlg-test",
-    closed: closedPromise,
-    update: vi.fn(),
-    close: vi.fn(() => closedResolve()),
-    onEvent: vi.fn((handler) => {
-      listeners.add(handler);
-      return () => listeners.delete(handler);
-    }),
-    onChange: vi.fn(() => () => {}),
-    onDismiss: vi.fn((handler: () => void) => {
-      dismissListeners.add(handler);
-      return () => dismissListeners.delete(handler);
-    }),
-    nextEvent: vi.fn(),
-    _emitEvent(event: DialogUserEvent) {
-      for (const listener of listeners) listener(event);
-    },
-    _emitDismiss() {
-      for (const listener of dismissListeners) listener();
-    },
-  };
-}
 
 function defaultReadFile(path: string): Promise<string> {
   if (path === "/logs/test-session.log") return Promise.resolve("test log content\nline 2");
@@ -89,7 +54,7 @@ interface SetupOverrides {
 }
 
 function setup(overrides?: SetupOverrides) {
-  const handle = createMockHandle();
+  const handle = createMockDialogHandle("dlg-test");
   const boundary = createMockPostHogBoundary();
   const logger = createMockLogger();
   const exits: number[] = [];
@@ -99,7 +64,7 @@ function setup(overrides?: SetupOverrides) {
 
   const deps: ErrorReportModuleDeps = {
     dialogManager: {
-      open: vi.fn().mockReturnValue(handle),
+      open: vi.fn().mockReturnValue(handle.handle),
       routeEvent: vi.fn(),
     } as unknown as ErrorReportModuleDeps["dialogManager"],
     fileSystem: { readFile: vi.fn().mockImplementation(defaultReadFile) },
@@ -206,7 +171,7 @@ describe("ErrorReportModule — bug report dialog", () => {
   it("reads logs and dispatches bug-report:submit on 'send'", async () => {
     const { module, deps, handle } = setup();
     await emitKey(module, "b");
-    handle._emitEvent({
+    handle.emitEvent({
       dialogId: "dlg-test",
       actionId: "send",
       data: { description: "It broke" },
@@ -223,22 +188,22 @@ describe("ErrorReportModule — bug report dialog", () => {
         })
       );
     });
-    expect(handle.close).toHaveBeenCalled();
+    expect(handle.handle.close).toHaveBeenCalled();
   });
 
   it("closes without dispatching on 'cancel'", async () => {
     const { module, deps, handle } = setup();
     await emitKey(module, "b");
-    handle._emitEvent({ dialogId: "dlg-test", actionId: "cancel" });
-    expect(handle.close).toHaveBeenCalled();
+    handle.emitEvent({ dialogId: "dlg-test", actionId: "cancel" });
+    expect(handle.handle.close).toHaveBeenCalled();
     expect(deps.dispatcher.dispatch).not.toHaveBeenCalled();
   });
 
   it("Escape (dismiss) discards the draft like Cancel and allows reopening", async () => {
     const { module, deps, handle } = setup();
     await emitKey(module, "b");
-    handle._emitDismiss();
-    expect(handle.close).toHaveBeenCalled();
+    handle.emitDismiss();
+    expect(handle.handle.close).toHaveBeenCalled();
     expect(deps.dispatcher.dispatch).not.toHaveBeenCalled();
 
     // The active-handle guard is cleared — 'b' opens a fresh dialog.
@@ -254,7 +219,7 @@ describe("ErrorReportModule — bug report dialog", () => {
       return Promise.reject(new Error("ENOENT"));
     });
     await emitKey(module, "b");
-    handle._emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
+    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
 
     await vi.waitFor(() => {
       expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(
@@ -267,7 +232,7 @@ describe("ErrorReportModule — bug report dialog", () => {
     const { module, deps, handle } = setup();
     (deps.fileSystem.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ENOENT"));
     await emitKey(module, "b");
-    handle._emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
+    handle.emitEvent({ dialogId: "dlg-test", actionId: "send", data: { description: "x" } });
 
     await vi.waitFor(() => {
       expect(deps.dispatcher.dispatch).toHaveBeenCalledWith(

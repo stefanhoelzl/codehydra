@@ -19,10 +19,9 @@ import {
 } from "../intents/delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { createDeletionDialogModule } from "./deletion-dialog-module";
+import { createMockDialogManager } from "./dialog-manager.state-mock";
 import type { IntentModule } from "../intents/lib/module";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DialogConfig, DialogUserEvent } from "../shared/dialog-types";
 import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
 import type { WorkspaceName, ProjectId } from "../shared/api/types";
@@ -36,74 +35,6 @@ const WS_PATH_B = "/projects/workspace-b" as WorkspacePath;
 const WS_NAME_A = "workspace-a" as WorkspaceName;
 const WS_NAME_B = "workspace-b" as WorkspaceName;
 const PROJECT_ID = "test-project-12345678" as ProjectId;
-
-// =============================================================================
-// Mock DialogManager
-// =============================================================================
-
-interface MockHandle {
-  id: string;
-  config: DialogConfig;
-  closed: boolean;
-  eventListeners: Set<(event: DialogUserEvent) => void>;
-  emitEvent(event: DialogUserEvent): void;
-  emitDismiss(): void;
-}
-
-interface MockDialogManager {
-  handles: MockHandle[];
-  lastHandle: MockHandle | null;
-  open: ReturnType<typeof vi.fn>;
-  routeEvent: () => void;
-}
-
-function createMockDialogManager(): MockDialogManager {
-  const handles: MockHandle[] = [];
-  return {
-    handles,
-    get lastHandle() {
-      return handles[handles.length - 1] ?? null;
-    },
-    open: vi.fn((config: DialogConfig) => {
-      const listeners = new Set<(event: DialogUserEvent) => void>();
-      const dismissListeners = new Set<() => void>();
-      const handle: MockHandle = {
-        id: `dlg-test-${handles.length + 1}`,
-        config,
-        closed: false,
-        eventListeners: listeners,
-        emitEvent(event) {
-          for (const l of listeners) l(event);
-        },
-        emitDismiss() {
-          for (const l of dismissListeners) l();
-        },
-      };
-      handles.push(handle);
-      return {
-        id: handle.id,
-        update: vi.fn((newConfig: DialogConfig) => {
-          handle.config = newConfig;
-        }),
-        close: vi.fn(() => {
-          handle.closed = true;
-        }),
-        onEvent: vi.fn((handler: (event: DialogUserEvent) => void) => {
-          listeners.add(handler);
-          return () => listeners.delete(handler);
-        }),
-        onChange: vi.fn(() => () => {}),
-        onDismiss: vi.fn((handler: () => void) => {
-          dismissListeners.add(handler);
-          return () => dismissListeners.delete(handler);
-        }),
-        nextEvent: vi.fn(),
-        closed: new Promise<void>(() => {}),
-      } as DialogHandle;
-    }),
-    routeEvent() {},
-  } as unknown as MockDialogManager;
-}
 
 // =============================================================================
 // Mock Dispatcher
@@ -156,7 +87,7 @@ function createTestSetup(): TestSetup {
   const dispatcher = createMockDispatcher();
 
   const module = createDeletionDialogModule({
-    dialogManager: dialogManager as unknown as DialogManager,
+    dialogManager: dialogManager.manager,
     dispatcher: dispatcher as unknown as Dispatcher,
     logger: SILENT_LOGGER,
   });
@@ -205,7 +136,7 @@ describe("DeletionDialogModule", () => {
     // Fire deletion progress for workspace A
     await fireProgress(makeProgress());
 
-    expect(dialogManager.open).toHaveBeenCalledTimes(1);
+    expect(dialogManager.manager.open).toHaveBeenCalledTimes(1);
     expect(dialogManager.lastHandle).not.toBeNull();
     expect(dialogManager.lastHandle!.closed).toBe(false);
   });
@@ -219,7 +150,7 @@ describe("DeletionDialogModule", () => {
     // Fire deletion progress for workspace B (not active)
     await fireProgress(makeProgress({ workspacePath: WS_PATH_B, workspaceName: WS_NAME_B }));
 
-    expect(dialogManager.open).not.toHaveBeenCalled();
+    expect(dialogManager.manager.open).not.toHaveBeenCalled();
   });
 
   it("should update existing dialog on progress update", async () => {
@@ -229,7 +160,7 @@ describe("DeletionDialogModule", () => {
     await fireSwitched(WS_PATH_A);
     await fireProgress(makeProgress());
 
-    expect(dialogManager.open).toHaveBeenCalledTimes(1);
+    expect(dialogManager.manager.open).toHaveBeenCalledTimes(1);
     const handle = dialogManager.lastHandle!;
 
     // Fire another progress event
@@ -244,7 +175,7 @@ describe("DeletionDialogModule", () => {
     await fireProgress(updatedProgress);
 
     // Should not open a new dialog, just update
-    expect(dialogManager.open).toHaveBeenCalledTimes(1);
+    expect(dialogManager.manager.open).toHaveBeenCalledTimes(1);
     // The config should have been updated (verify via the mock handle's config)
     expect(handle.config).toBeDefined();
   });
@@ -339,7 +270,7 @@ describe("DeletionDialogModule", () => {
     expect(handleA.closed).toBe(true);
 
     // New dialog should be opened for workspace B
-    expect(dialogManager.open).toHaveBeenCalledTimes(2);
+    expect(dialogManager.manager.open).toHaveBeenCalledTimes(2);
     const handleB = dialogManager.lastHandle!;
     expect(handleB.closed).toBe(false);
   });
@@ -361,7 +292,7 @@ describe("DeletionDialogModule", () => {
     expect(handle.closed).toBe(true);
 
     // No new dialog should be opened
-    expect(dialogManager.open).toHaveBeenCalledTimes(1);
+    expect(dialogManager.manager.open).toHaveBeenCalledTimes(1);
   });
 
   it("should dispatch delete intent on retry", async () => {
@@ -506,6 +437,6 @@ describe("DeletionDialogModule", () => {
 
     // Switching back to workspace A should not re-open dialog (progress was cleaned up)
     await fireSwitched(WS_PATH_A);
-    expect(dialogManager.open).toHaveBeenCalledTimes(1);
+    expect(dialogManager.manager.open).toHaveBeenCalledTimes(1);
   });
 });

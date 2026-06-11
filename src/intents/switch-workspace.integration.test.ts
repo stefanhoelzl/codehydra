@@ -17,12 +17,11 @@
  */
 
 import { createMockDispatcher } from "./lib/dispatcher.test-utils";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentInterceptor } from "./lib/dispatcher";
 
 import {
-  SwitchWorkspaceOperation,
   SWITCH_WORKSPACE_OPERATION_ID,
   INTENT_SWITCH_WORKSPACE,
   EVENT_WORKSPACE_SWITCHED,
@@ -30,25 +29,16 @@ import {
 } from "./switch-workspace";
 import type {
   SwitchWorkspaceIntent,
-  SwitchWorkspaceHookResult,
-  ActivateHookInput,
   WorkspaceSwitchedEvent,
   FindCandidatesHookResult,
   SelectNextHookInput,
   SelectNextHookResult,
 } from "./switch-workspace";
 import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult } from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
+  createTestViewManager,
+  registerTestInfrastructure,
+  workspacesFromProjects,
+} from "./operations.test-utils";
 import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
@@ -153,95 +143,37 @@ function createTestSetup(opts?: {
   projects?: ProjectEntry[];
 }): TestSetup {
   const projects = opts?.projects ?? [createTestProject()];
-  let activePath: string | null = opts?.initialActive ?? null;
-  const setActiveWorkspace = vi.fn((path: string | null) => {
-    activePath = path;
-  });
   const appState = createMockAppState(projects);
 
   const dispatcher = createMockDispatcher();
+  const { viewManager, activeWorkspace } = createTestViewManager(opts?.initialActive ?? null);
 
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
-
-  // ResolveModule: "resolve" hook -- resolves workspacePath → projectPath + workspaceName + active
-  const resolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-            // Reverse lookup: find which project owns this workspace path
-            for (const project of appState.projects) {
-              const workspace = project.workspaces.find((w) => w.path === wsPath);
-              if (workspace) {
-                return {
-                  projectPath: project.path,
-                  workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
-                  active: activePath === wsPath,
-                };
-              }
-            }
-            return {};
-          },
-        },
-      },
+  registerTestInfrastructure(dispatcher, {
+    workspaces: workspacesFromProjects(() => appState.projects),
+    projects: (projectPath) => {
+      const project = appState.getProject(projectPath);
+      if (!project) return undefined;
+      return { projectId: generateProjectId(project.path), projectName: project.name };
     },
-  };
+    viewManager,
+  });
 
-  // ResolveProjectModule: "resolve" hook -- resolves projectPath → projectId + projectName
-  const resolveProjectModule: IntentModule = {
+  // Clear the active surface on workspace:switched(null) (mirrors view-module).
+  const switchedNullModule: IntentModule = {
     name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { projectPath } = ctx as { projectPath: string } & HookContext;
-            const project = appState.getProject(projectPath);
-            if (!project) return {};
-            return { projectId: generateProjectId(project.path), projectName: project.name };
-          },
-        },
-      },
-    },
-  };
-
-  // SwitchViewModule: "activate" hook -- records the active surface
-  // (mirrors view-module's hook). Also subscribes to workspace:switched(null)
-  // to clear it.
-  const switchViewModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        activate: {
-          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath, active } = ctx as ActivateHookInput;
-
-            if (active) {
-              return {};
-            }
-
-            setActiveWorkspace(workspacePath);
-            return { resolvedPath: workspacePath };
-          },
-        },
-      },
-    },
     events: {
       [EVENT_WORKSPACE_SWITCHED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceSwitchedEvent).payload;
           if (payload === null) {
-            setActiveWorkspace(null);
+            viewManager.setActiveWorkspace(null);
           }
         },
       },
     },
   };
 
-  const modules: IntentModule[] = [resolveModule, resolveProjectModule, switchViewModule];
+  const modules: IntentModule[] = [switchedNullModule];
 
   if (opts?.withAutoSelect) {
     const findCandidatesModule: IntentModule = {
@@ -296,7 +228,7 @@ function createTestSetup(opts?: {
   return {
     dispatcher,
     appState,
-    getActivePath: () => activePath,
+    getActivePath: () => activeWorkspace.path,
   };
 }
 

@@ -17,6 +17,7 @@ import type {
   Snapshot,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { CallbackSet, countMatcher, createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // State Implementation
@@ -36,19 +37,14 @@ class AppBoundaryMockStateImpl implements MockState {
   sleepBlockerStarts = 0;
   /** Number of times a blocker transitioned from active → inactive. */
   sleepBlockerStops = 0;
-  readonly themeUpdatedCallbacks: Set<() => void> = new Set();
+  readonly themeUpdatedCallbacks = new CallbackSet();
 
   triggerThemeUpdated(): void {
-    for (const cb of this.themeUpdatedCallbacks) {
-      cb();
-    }
+    this.themeUpdatedCallbacks.trigger();
   }
 
   snapshot(): Snapshot {
-    return {
-      __brand: "Snapshot",
-      value: this.toString(),
-    };
+    return createSnapshot(this);
   }
 
   toString(): string {
@@ -173,10 +169,7 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
     },
 
     onThemeUpdated(callback: () => void) {
-      state.themeUpdatedCallbacks.add(callback);
-      return () => {
-        state.themeUpdatedCallbacks.delete(callback);
-      };
+      return state.themeUpdatedCallbacks.add(callback);
     },
   };
 }
@@ -240,18 +233,10 @@ const appBoundaryMatchers: MatcherImplementationsFor<
     };
   },
 
-  toHaveBadgeCount(received, count) {
-    const actual = received.$.badgeCount;
-    const pass = actual === count;
-
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected badge count NOT to be ${count}`
-          : `Expected badge count to be ${count}, but got ${actual}`,
-    };
-  },
+  toHaveBadgeCount: countMatcher<MockAppBoundary & { $: AppBoundaryMockStateImpl }>(
+    "badge",
+    (mock) => mock.$.badgeCount
+  ),
 
   toBePreventingSleep(received) {
     const actual = received.$.preventingSleep;
@@ -264,17 +249,10 @@ const appBoundaryMatchers: MatcherImplementationsFor<
     };
   },
 
-  toHaveSleepBlockerStartCount(received, count) {
-    const actual = received.$.sleepBlockerStarts;
-    const pass = actual === count;
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected sleep blocker start count NOT to be ${count}`
-          : `Expected sleep blocker start count to be ${count}, but got ${actual}`,
-    };
-  },
+  toHaveSleepBlockerStartCount: countMatcher<MockAppBoundary & { $: AppBoundaryMockStateImpl }>(
+    "sleep blocker start",
+    (mock) => mock.$.sleepBlockerStarts
+  ),
 };
 
 // Register matchers with vitest

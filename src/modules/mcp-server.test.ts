@@ -2,7 +2,6 @@
  * Unit tests for MCP Server.
  */
 
-import { createServer } from "node:net";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   McpServer,
@@ -10,207 +9,32 @@ import {
   SERVER_INSTRUCTIONS,
   type McpServerFactory,
 } from "./mcp-module";
-import { type ProjectId, type DeletionProgress, initialPromptSchema } from "../shared/api/types";
+import { initialPromptSchema } from "../shared/api/types";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Intent } from "../intents/lib/types";
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import { INTENT_HIBERNATE_WORKSPACE } from "../intents/hibernate-workspace";
+import { INTENT_WAKE_WORKSPACE } from "../intents/wake-workspace";
+import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
 import {
-  INTENT_GET_WORKSPACE_STATUS,
-  GET_WORKSPACE_STATUS_OPERATION_ID,
-} from "../intents/get-workspace-status";
-import { INTENT_GET_METADATA, GET_METADATA_OPERATION_ID } from "../intents/get-metadata";
-import { INTENT_SET_METADATA, SET_METADATA_OPERATION_ID } from "../intents/set-metadata";
-import {
-  INTENT_GET_AGENT_SESSION,
-  GET_AGENT_SESSION_OPERATION_ID,
-} from "../intents/get-agent-session";
-import { INTENT_RESTART_AGENT, RESTART_AGENT_OPERATION_ID } from "../intents/restart-agent";
-import {
-  INTENT_RESOLVE_WORKSPACE,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-} from "../intents/resolve-workspace";
-import {
-  INTENT_HIBERNATE_WORKSPACE,
-  HIBERNATE_WORKSPACE_OPERATION_ID,
-} from "../intents/hibernate-workspace";
-import { INTENT_WAKE_WORKSPACE, WAKE_WORKSPACE_OPERATION_ID } from "../intents/wake-workspace";
-import { INTENT_LIST_PROJECTS, LIST_PROJECTS_OPERATION_ID } from "../intents/list-projects";
-import { INTENT_OPEN_WORKSPACE, OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
-import {
-  INTENT_DELETE_WORKSPACE,
-  DELETE_WORKSPACE_OPERATION_ID,
-  EVENT_WORKSPACE_DELETION_PROGRESS,
-  type DeleteWorkspaceIntent,
-} from "../intents/delete-workspace";
-import { INTENT_VSCODE_COMMAND, VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
-import {
-  INTENT_VSCODE_SHOW_MESSAGE,
-  VSCODE_SHOW_MESSAGE_OPERATION_ID,
-} from "../intents/vscode-show-message";
-
-/**
- * Find a free port for testing.
- */
-async function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (addr && typeof addr === "object") {
-        const port = addr.port;
-        server.close(() => resolve(port));
-      } else {
-        reject(new Error("Could not get port"));
-      }
-    });
-    server.on("error", reject);
-  });
-}
-
-/**
- * Create a mock operation that returns a fixed result.
- */
-function createMockOperation<TIntent extends Intent = Intent, TResult = void>(
-  operationId: string,
-  result: TResult
-): Operation<TIntent, TResult> {
-  return {
-    id: operationId,
-    execute: vi.fn(async (): Promise<TResult> => result),
-  };
-}
+  createMockToolOperations,
+  findFreePort,
+  type DeleteControl,
+  type MockToolOperations,
+} from "./mcp-server.test-utils";
 
 /**
  * Create a Dispatcher with mock operations registered for all MCP tool intents.
  */
-interface DeleteControl {
-  mode: "success" | "blocked" | "reject";
-  blockingProcesses?: ReadonlyArray<{ pid: number; name: string }>;
-}
-
 function createMockDispatcher(): {
   dispatcher: Dispatcher;
-  operations: Record<string, ReturnType<typeof vi.fn>>;
+  operations: MockToolOperations["operations"];
   deleteControl: DeleteControl;
 } {
   const dispatcher = createBaseMockDispatcher();
-
-  const getStatusOp = createMockOperation(GET_WORKSPACE_STATUS_OPERATION_ID, {
-    isDirty: false,
-    unmergedCommits: 0,
-    agent: { type: "none" as const },
-  });
-  const getMetadataOp = createMockOperation(GET_METADATA_OPERATION_ID, { base: "main" });
-  const setMetadataOp = createMockOperation(SET_METADATA_OPERATION_ID, undefined);
-  const getAgentSessionOp = createMockOperation(GET_AGENT_SESSION_OPERATION_ID, {
-    port: 14001,
-    sessionId: "test-session",
-  });
-  const restartAgentOp = createMockOperation(RESTART_AGENT_OPERATION_ID, 14001);
-  const listProjectsOp = createMockOperation(LIST_PROJECTS_OPERATION_ID, []);
-  const openWorkspaceOp = createMockOperation(OPEN_WORKSPACE_OPERATION_ID, {
-    name: "test",
-    path: "/path",
-    branch: "main",
-    metadata: { base: "main" },
-    projectId: "test-12345678" as ProjectId,
-  });
-  // workspace_delete waits for a terminal deletion-progress event to learn the
-  // real outcome, so the mock delete op emits one. deleteControl lets tests pick
-  // success / blocked / preflight-reject behavior.
-  const deleteControl: DeleteControl = { mode: "success" };
-  const deleteWorkspaceOp: Operation<DeleteWorkspaceIntent, { started: true }> = {
-    id: DELETE_WORKSPACE_OPERATION_ID,
-    execute: vi.fn(
-      async (ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> => {
-        if (deleteControl.mode === "reject") {
-          throw new Error("Preflight check failed: Workspace has uncommitted changes");
-        }
-        const { workspacePath, keepBranch } = ctx.intent.payload;
-        const hasErrors = deleteControl.mode === "blocked";
-        const progress: DeletionProgress = {
-          workspacePath: workspacePath as DeletionProgress["workspacePath"],
-          workspaceName: "feature-branch" as DeletionProgress["workspaceName"],
-          projectId: "test-12345678" as ProjectId,
-          keepBranch,
-          operations: [
-            {
-              id: "cleanup-workspace",
-              label: "Removing workspace",
-              status: hasErrors ? "error" : "done",
-              ...(hasErrors ? { error: "EBUSY: resource busy or locked" } : {}),
-            },
-          ],
-          completed: true,
-          hasErrors,
-          ...(deleteControl.blockingProcesses
-            ? {
-                blockingProcesses: deleteControl.blockingProcesses.map((p) => ({
-                  pid: p.pid,
-                  name: p.name,
-                  commandLine: p.name,
-                  files: [],
-                  cwd: null,
-                })),
-              }
-            : {}),
-        };
-        await ctx.emit({ type: EVENT_WORKSPACE_DELETION_PROGRESS, payload: progress });
-        return { started: true };
-      }
-    ),
-  };
-  const executeCommandOp = createMockOperation(VSCODE_COMMAND_OPERATION_ID, undefined);
-  const showMessageOp = createMockOperation(VSCODE_SHOW_MESSAGE_OPERATION_ID, null);
-  const resolveWorkspaceOp = createMockOperation(RESOLVE_WORKSPACE_OPERATION_ID, {
-    projectPath: "/home/user/projects/my-app",
-    workspaceName: "feature-branch",
-    active: false,
-  });
-  const hibernateOp = createMockOperation(HIBERNATE_WORKSPACE_OPERATION_ID, { started: true });
-  const wakeOp = createMockOperation(WAKE_WORKSPACE_OPERATION_ID, {
-    name: "test",
-    path: "/path",
-    branch: "main",
-    metadata: { base: "main" },
-    projectId: "test-12345678" as ProjectId,
-  });
-
-  dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, getStatusOp);
-  dispatcher.registerOperation(INTENT_GET_METADATA, getMetadataOp);
-  dispatcher.registerOperation(INTENT_SET_METADATA, setMetadataOp);
-  dispatcher.registerOperation(INTENT_GET_AGENT_SESSION, getAgentSessionOp);
-  dispatcher.registerOperation(INTENT_RESTART_AGENT, restartAgentOp);
-  dispatcher.registerOperation(INTENT_LIST_PROJECTS, listProjectsOp);
-  dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, openWorkspaceOp);
-  dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, deleteWorkspaceOp);
-  dispatcher.registerOperation(INTENT_VSCODE_COMMAND, executeCommandOp);
-  dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, showMessageOp);
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, resolveWorkspaceOp);
-  dispatcher.registerOperation(INTENT_HIBERNATE_WORKSPACE, hibernateOp);
-  dispatcher.registerOperation(INTENT_WAKE_WORKSPACE, wakeOp);
-
-  return {
-    dispatcher,
-    operations: {
-      getStatus: getStatusOp.execute as ReturnType<typeof vi.fn>,
-      getMetadata: getMetadataOp.execute as ReturnType<typeof vi.fn>,
-      setMetadata: setMetadataOp.execute as ReturnType<typeof vi.fn>,
-      getAgentSession: getAgentSessionOp.execute as ReturnType<typeof vi.fn>,
-      restartAgent: restartAgentOp.execute as ReturnType<typeof vi.fn>,
-      listProjects: listProjectsOp.execute as ReturnType<typeof vi.fn>,
-      openWorkspace: openWorkspaceOp.execute as ReturnType<typeof vi.fn>,
-      deleteWorkspace: deleteWorkspaceOp.execute as ReturnType<typeof vi.fn>,
-      executeCommand: executeCommandOp.execute as ReturnType<typeof vi.fn>,
-      showMessage: showMessageOp.execute as ReturnType<typeof vi.fn>,
-      resolveWorkspace: resolveWorkspaceOp.execute as ReturnType<typeof vi.fn>,
-      hibernate: hibernateOp.execute as ReturnType<typeof vi.fn>,
-      wake: wakeOp.execute as ReturnType<typeof vi.fn>,
-    },
-    deleteControl,
-  };
+  const { operations, deleteControl } = createMockToolOperations(dispatcher);
+  return { dispatcher, operations, deleteControl };
 }
 
 /**

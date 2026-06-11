@@ -29,6 +29,14 @@ export interface MockState {
 }
 
 /**
+ * Create a branded Snapshot from the current state's string representation.
+ * State mocks implement `snapshot()` as `return createSnapshot(this);`.
+ */
+export function createSnapshot(stringable: { toString(): string }): Snapshot {
+  return { __brand: "Snapshot", value: stringable.toString() };
+}
+
+/**
  * A mock with inspectable state via the `$` property.
  * This formalizes the existing `_getState()` pattern.
  */
@@ -63,6 +71,115 @@ export type MatcherImplementationsFor<TMock, TMatchers> = {
     ? (received: TMock, ...args: Args) => MatcherResult
     : never;
 };
+
+// =============================================================================
+// Callback Registries
+// =============================================================================
+
+/**
+ * Per-key callback registry for event simulation in behavioral mocks.
+ *
+ * Replaces the hand-rolled `Map<string, Set<callback>>` scaffolding: keys are
+ * created on resource creation (`init`), subscribed via `add` (which returns
+ * an unsubscribe), fired via `trigger`, and torn down via `delete`/`clear`.
+ *
+ * Triggers with custom semantics (short-circuiting, result aggregation,
+ * selective cleanup) compose via `get()` instead of using `trigger()`.
+ */
+export class CallbackRegistry<Args extends readonly unknown[] = []> {
+  private readonly _callbacks = new Map<string, Set<(...args: Args) => void>>();
+
+  /** Create an empty callback set for a key (called on resource creation). */
+  init(id: string): void {
+    this._callbacks.set(id, new Set());
+  }
+
+  /**
+   * Subscribe a callback for a key. Returns an unsubscribe function.
+   * No-op if the key was never initialized (mirrors `callbacks?.add()`).
+   */
+  add(id: string, callback: (...args: Args) => void): () => void {
+    const callbacks = this._callbacks.get(id);
+    callbacks?.add(callback);
+    return () => {
+      callbacks?.delete(callback);
+    };
+  }
+
+  /** Invoke all callbacks registered for a key. */
+  trigger(id: string, ...args: Args): void {
+    const callbacks = this._callbacks.get(id);
+    if (callbacks) {
+      for (const callback of callbacks) {
+        callback(...args);
+      }
+    }
+  }
+
+  /** Access the raw callback set for custom trigger semantics. */
+  get(id: string): ReadonlySet<(...args: Args) => void> | undefined {
+    return this._callbacks.get(id);
+  }
+
+  /** Remove all callbacks for a key (called on resource destruction). */
+  delete(id: string): void {
+    this._callbacks.delete(id);
+  }
+
+  /** Remove all callbacks for all keys (called on destroyAll/dispose). */
+  clear(): void {
+    this._callbacks.clear();
+  }
+}
+
+/**
+ * Non-keyed variant of {@link CallbackRegistry} for global (per-mock) events.
+ */
+export class CallbackSet<Args extends readonly unknown[] = []> {
+  private readonly _callbacks = new Set<(...args: Args) => void>();
+
+  /** Subscribe a callback. Returns an unsubscribe function. */
+  add(callback: (...args: Args) => void): () => void {
+    this._callbacks.add(callback);
+    return () => {
+      this._callbacks.delete(callback);
+    };
+  }
+
+  /** Invoke all registered callbacks. */
+  trigger(...args: Args): void {
+    for (const callback of this._callbacks) {
+      callback(...args);
+    }
+  }
+}
+
+// =============================================================================
+// Matcher Factories
+// =============================================================================
+
+/**
+ * Create a count-assertion matcher implementation (`toHave*Count` family).
+ *
+ * @param noun - What is being counted, singular (used in failure messages)
+ * @param getActual - Extracts the actual count from the received mock
+ */
+export function countMatcher<TMock>(
+  noun: string,
+  getActual: (received: TMock) => number
+): (received: TMock, count: number) => MatcherResult {
+  return (received, count) => {
+    const actual = getActual(received);
+    const pass = actual === count;
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected ${noun} count NOT to be ${count}`
+          : `Expected ${noun} count to be ${count}, but got ${actual}`,
+    };
+  };
+}
 
 // =============================================================================
 // Base Matchers for MockWithState

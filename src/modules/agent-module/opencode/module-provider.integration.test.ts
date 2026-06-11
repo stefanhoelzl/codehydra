@@ -13,11 +13,13 @@ import type { AgentModuleProvider } from "../agent-module-provider";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../../shared/ipc";
 import type { OpenCodeServerManager } from "./server-manager";
 import { SILENT_LOGGER } from "../../../boundaries/platform/logging";
-import type { DownloadDeps, ArchiveExtension } from "../../../utils/binary-download";
-import { createFileSystemMock } from "../../../boundaries/platform/filesystem.state-mock";
-import { createMockHttpClient } from "../../../boundaries/platform/http-client.state-mock";
-import { createArchiveExtractorMock } from "../../../boundaries/platform/archive-extractor.state-mock";
-import { createMockAccessor } from "../../../boundaries/platform/config.test-utils";
+import type { DownloadDeps } from "../../../utils/binary-download";
+import {
+  createBinaryConfig,
+  createDownloadDeps,
+  createMockServerManager as createServerManagerBase,
+  createVersionConfig,
+} from "../module-provider.test-utils";
 import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
 
 // =============================================================================
@@ -113,61 +115,13 @@ function createMockServerManager(): OpenCodeServerManager & {
   _triggerStarted: ServerStartedHandler;
   _triggerStopped: ServerStoppedHandler;
 } {
-  let startedHandler: ServerStartedHandler | null = null;
-  let stoppedHandler: ServerStoppedHandler | null = null;
-
-  return {
-    startServer: vi.fn().mockResolvedValue(8080),
-    stopServer: vi.fn().mockResolvedValue({ success: true }),
-    restartServer: vi.fn().mockResolvedValue({ success: true, port: 8080 }),
-    dispose: vi.fn().mockResolvedValue(undefined),
-    setMcpConfig: vi.fn(),
+  return createServerManagerBase({
     setMarkActiveHandler: vi.fn(),
     triggerWrapperStart: vi.fn(),
-    onServerStarted: vi.fn((cb: ServerStartedHandler) => {
-      startedHandler = cb;
-      return vi.fn();
-    }),
-    onServerStopped: vi.fn((cb: ServerStoppedHandler) => {
-      stoppedHandler = cb;
-      return vi.fn();
-    }),
-    _triggerStarted(workspacePath: string, port: number, pendingPrompt: unknown) {
-      startedHandler?.(workspacePath, port, pendingPrompt);
-    },
-    _triggerStopped(workspacePath: string, isRestart: boolean) {
-      stoppedHandler?.(workspacePath, isRestart);
-    },
-  } as unknown as OpenCodeServerManager & {
+  }) as unknown as OpenCodeServerManager & {
     _triggerStarted: ServerStartedHandler;
     _triggerStopped: ServerStoppedHandler;
   };
-}
-
-/**
- * Create mock download dependencies.
- */
-function createDownloadDeps(): DownloadDeps {
-  return {
-    httpClient: createMockHttpClient(),
-    fileSystemLayer: createFileSystemMock(),
-    archiveExtractor: createArchiveExtractorMock(),
-  };
-}
-
-/**
- * Create a binary config for OpenCode.
- */
-function createBinaryConfig() {
-  return {
-    name: "opencode" as const,
-    executablePath: "opencode",
-    archiveExtension: ".tar.gz" as ArchiveExtension,
-  };
-}
-
-function createVersionConfig(version = "1.0.223") {
-  return createMockAccessor("version.opencode", version);
 }
 
 /**
@@ -201,7 +155,7 @@ describe("OpenCode module provider", () => {
   let serverManager: ReturnType<typeof createMockServerManager>;
   let downloadDeps: DownloadDeps;
   let binaryConfig: ReturnType<typeof createBinaryConfig>;
-  let versionConfig: ReturnType<typeof createVersionConfig>;
+  let versionConfig: ReturnType<typeof createVersionConfig<string>>;
   let pathProvider: ReturnType<typeof createMockPathProvider>;
   let provider: AgentModuleProvider;
 
@@ -211,8 +165,8 @@ describe("OpenCode module provider", () => {
 
     serverManager = createMockServerManager();
     downloadDeps = createDownloadDeps();
-    binaryConfig = createBinaryConfig();
-    versionConfig = createVersionConfig("1.0.223");
+    binaryConfig = createBinaryConfig("opencode");
+    versionConfig = createVersionConfig("version.opencode", "1.0.223");
     pathProvider = createMockPathProvider();
 
     const deps: OpenCodeModuleProviderDeps = {

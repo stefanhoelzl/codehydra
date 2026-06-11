@@ -14,33 +14,19 @@
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
-import {
-  SwitchWorkspaceOperation,
-  INTENT_SWITCH_WORKSPACE,
-  EVENT_WORKSPACE_SWITCHED,
-} from "../intents/switch-workspace";
+import { INTENT_SWITCH_WORKSPACE, EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type {
   SwitchWorkspaceIntent,
-  SwitchWorkspaceHookResult,
   FindCandidatesHookResult,
   WorkspaceCandidate,
   WorkspaceSwitchedEvent,
 } from "../intents/switch-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "../intents/resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../intents/resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "../intents/resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/resolve-project";
+  createTestViewManager,
+  registerTestInfrastructure,
+} from "../intents/operations.test-utils";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import { createWorkspaceSelectionModule } from "./workspace-selection-module";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
@@ -91,69 +77,25 @@ interface TestSetup {
 
 function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup {
   const dispatcher = createMockDispatcher();
+  const { viewManager, activeWorkspace } = createTestViewManager();
 
-  dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
-
-  let activeWorkspacePath: string | null = null;
-
-  // Resolve module: workspace path → project path + workspace name
-  const resolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-            const found = opts.candidates.find((c) => c.workspacePath === wsPath);
-            if (!found) return {};
-            return {
-              projectPath: found.projectPath,
-              workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
-            };
-          },
-        },
+  registerTestInfrastructure(dispatcher, {
+    workspaces: (wsPath) => {
+      const found = opts.candidates.find((c) => c.workspacePath === wsPath);
+      if (!found) return undefined;
+      return {
+        projectPath: found.projectPath,
+        workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
+      };
+    },
+    projects: {
+      [PROJECT_PATH]: {
+        projectId: Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId,
+        projectName: PROJECT_NAME,
       },
     },
-  };
-
-  // Resolve project module
-  const resolveProjectModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { projectPath } = ctx as { projectPath: string } & HookContext;
-            if (projectPath === PROJECT_PATH) {
-              return {
-                projectId: Buffer.from(PROJECT_PATH).toString("base64url") as ProjectId,
-                projectName: PROJECT_NAME,
-              };
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
-
-  // Activate module
-  const activateModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [SWITCH_WORKSPACE_OPERATION_ID]: {
-        activate: {
-          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
-            const { workspacePath } = ctx as { workspacePath: string } & HookContext;
-            activeWorkspacePath = workspacePath;
-            return { resolvedPath: workspacePath };
-          },
-        },
-      },
-    },
-  };
+    viewManager,
+  });
 
   // Find-candidates module (returns fixed candidates)
   const findCandidatesModule: IntentModule = {
@@ -171,20 +113,13 @@ function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup 
 
   const selectionModule = createWorkspaceSelectionModule();
 
-  for (const m of [
-    resolveModule,
-    resolveProjectModule,
-    activateModule,
-    findCandidatesModule,
-    selectionModule,
-  ])
-    dispatcher.registerModule(m);
+  for (const m of [findCandidatesModule, selectionModule]) dispatcher.registerModule(m);
 
   return {
     dispatcher,
     selectionModule,
     get activeWorkspacePath() {
-      return activeWorkspacePath;
+      return activeWorkspace.path;
     },
   };
 }

@@ -17,21 +17,7 @@ import { SetMetadataOperation, INTENT_SET_METADATA } from "../intents/set-metada
 import type { SetMetadataIntent } from "../intents/set-metadata";
 import { GetMetadataOperation, INTENT_GET_METADATA } from "../intents/get-metadata";
 import type { GetMetadataIntent } from "../intents/get-metadata";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "../intents/resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "../intents/resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "../intents/resolve-project";
-import type {
-  ResolveHookResult as ResolveProjectHookResult,
-  ResolveHookInput as ResolveProjectHookInput,
-} from "../intents/resolve-project";
+import { registerTestInfrastructure } from "../intents/operations.test-utils";
 import { createMetadataModule } from "./metadata-module";
 import { createMockGitClient } from "../boundaries/platform/git-client.state-mock";
 import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
@@ -39,8 +25,6 @@ import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provide
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
 
 // =============================================================================
 // Test Constants
@@ -97,50 +81,16 @@ function createTestSetup(): TestSetup {
 
   dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
   dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  // resolve stub: validates workspacePath → returns projectPath + workspaceName
-  const resolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
-            if (wsPath === workspacePath.toString()) {
-              return { projectPath: PROJECT_ROOT.toString(), workspaceName };
-            }
-            return {};
-          },
-        },
-      },
+  registerTestInfrastructure(dispatcher, {
+    workspaces: {
+      [workspacePath.toString()]: { projectPath: PROJECT_ROOT.toString(), workspaceName },
     },
-  };
-
-  // resolve-project stub: resolves projectPath → projectId (for set-metadata commands)
-  const resolveProjectModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
-            const { projectPath } = ctx as ResolveProjectHookInput;
-            if (projectPath === PROJECT_ROOT.toString()) {
-              return { projectId };
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
+    projects: { [PROJECT_ROOT.toString()]: { projectId } },
+  });
 
   // Module under test
   const metadataModule = createMetadataModule({ gitWorktreeProvider });
-
-  dispatcher.registerModule(resolveModule);
-  dispatcher.registerModule(resolveProjectModule);
   dispatcher.registerModule(metadataModule);
 
   return {

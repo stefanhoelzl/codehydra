@@ -5,7 +5,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
-import type { Project, Workspace, ProjectId, WorkspaceName } from "@shared/api/types";
+import type { Project, Workspace, ProjectId } from "@shared/api/types";
+import { createMockProject, createMockWorkspace } from "@shared/test-fixtures";
 
 // API event callbacks - MainView uses api.on() which stores callbacks here
 type EventCallback = (...args: unknown[]) => void;
@@ -209,13 +210,12 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
 
 // Helper to create mock workspace (v2 API format)
 function createWorkspace(name: string, projectPath: string, projectId?: string): Workspace {
-  return {
+  return createMockWorkspace({
     projectId: (projectId ?? "test-12345678") as ProjectId,
-    name: name as WorkspaceName,
+    name,
     path: `${projectPath}/.worktrees/${name}`,
-    branch: name,
     metadata: { base: "main" },
-  };
+  });
 }
 
 // Helper to generate consistent project ID from name
@@ -227,13 +227,13 @@ function projectIdFromName(name: string): ProjectId {
 // Helper to create mock project (v2 API format with ID)
 function createProject(name: string, workspaces: Workspace[] = []): Project {
   const id = projectIdFromName(name);
-  return {
+  return createMockProject({
     id,
     path: `/test/${name}`,
     name,
     // Add projectId to each workspace for v2 format
     workspaces: workspaces.map((ws) => ({ ...ws, projectId: id })),
-  };
+  });
 }
 
 describe("Integration tests", () => {

@@ -52,6 +52,7 @@ import type { ProjectId } from "../shared/api/types";
 import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";
 import type { IntentModule } from "../intents/lib/module";
 import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
+import { createMockDialogManager } from "./dialog-manager.state-mock";
 import { projectDirName } from "../boundaries/platform/paths";
 import nodePath from "path";
 
@@ -66,97 +67,6 @@ const PROJECTS_DIR = "/test/app-data/projects";
 // =============================================================================
 // Mock Factories
 // =============================================================================
-
-interface MockDialogHandle {
-  id: string;
-  config: unknown;
-  closed: boolean;
-  eventListeners: Array<(event: { dialogId: string; actionId: string }) => void>;
-  close(): void;
-  nextEvent(): Promise<{ dialogId: string; actionId?: string; kind?: string }>;
-  onEvent(handler: (event: { dialogId: string; actionId: string }) => void): () => void;
-  onDismiss(handler: () => void): () => void;
-  emitEvent(event: { dialogId: string; actionId: string }): void;
-  emitDismiss(): void;
-  readonly closed_promise: Promise<void>;
-}
-
-function createMockDialogManager(): {
-  dialogManager: LocalProjectModuleDeps["dialogManager"];
-  handles: MockDialogHandle[];
-  lastHandle: MockDialogHandle | null;
-} {
-  const handles: MockDialogHandle[] = [];
-  const state = { lastHandle: null as MockDialogHandle | null };
-
-  const dialogManager = {
-    open: vi.fn().mockImplementation((config: unknown) => {
-      const listeners: Array<(event: { dialogId: string; actionId: string }) => void> = [];
-      const dismissListeners: Array<() => void> = [];
-      let resolveClosed: () => void;
-      const closedPromise = new Promise<void>((resolve) => {
-        resolveClosed = resolve;
-      });
-
-      const handle: MockDialogHandle = {
-        id: `dlg-${handles.length + 1}`,
-        config,
-        closed: false,
-        eventListeners: listeners,
-        close() {
-          this.closed = true;
-          resolveClosed();
-        },
-        nextEvent() {
-          // Mirrors DialogHandle.nextEvent: settles on an action OR a dismiss.
-          return new Promise((resolve) => {
-            listeners.push((event) => resolve(event));
-            dismissListeners.push(() => resolve({ dialogId: handle.id, kind: "dismiss" }));
-          });
-        },
-        onEvent(handler: (event: { dialogId: string; actionId: string }) => void) {
-          listeners.push(handler);
-          return () => {
-            const idx = listeners.indexOf(handler);
-            if (idx >= 0) listeners.splice(idx, 1);
-          };
-        },
-        onDismiss(handler: () => void) {
-          dismissListeners.push(handler);
-          return () => {
-            const idx = dismissListeners.indexOf(handler);
-            if (idx >= 0) dismissListeners.splice(idx, 1);
-          };
-        },
-        emitEvent(event: { dialogId: string; actionId: string }) {
-          for (const listener of [...listeners]) {
-            listener(event);
-          }
-        },
-        emitDismiss() {
-          for (const listener of [...dismissListeners]) {
-            listener();
-          }
-        },
-        get closed_promise() {
-          return closedPromise;
-        },
-      };
-      handles.push(handle);
-      state.lastHandle = handle;
-      return handle;
-    }),
-    routeEvent() {},
-  } as unknown as LocalProjectModuleDeps["dialogManager"];
-
-  return {
-    dialogManager,
-    handles,
-    get lastHandle() {
-      return state.lastHandle;
-    },
-  };
-}
 
 function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]): {
   deps: LocalProjectModuleDeps;
@@ -188,7 +98,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
       projectsDir: PROJECTS_DIR,
       fs,
       gitWorktreeProvider,
-      dialogManager: dialog.dialogManager,
+      dialogManager: dialog.manager,
       gitClient,
     },
     fs,
@@ -795,7 +705,7 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({});
-      expect(dialogManager.dialogManager.open).not.toHaveBeenCalled();
+      expect(dialogManager.manager.open).not.toHaveBeenCalled();
     });
 
     it("skips when project is already open", async () => {
@@ -903,7 +813,7 @@ describe("LocalProjectModule Integration", () => {
       expect(errors).toHaveLength(0);
       expect(results).toHaveLength(1);
       expect(results[0]).toEqual({});
-      expect(dialogManager.dialogManager.open).not.toHaveBeenCalled();
+      expect(dialogManager.manager.open).not.toHaveBeenCalled();
     });
   });
 });

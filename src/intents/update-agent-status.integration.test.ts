@@ -17,22 +17,10 @@ import {
   INTENT_UPDATE_AGENT_STATUS,
   EVENT_AGENT_STATUS_UPDATED,
 } from "./update-agent-status";
-import type { UpdateAgentStatusIntent, AgentStatusUpdatedEvent } from "./update-agent-status";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult as ResolveWorkspaceHookResult } from "./resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "./resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
+import type { AgentStatusUpdatedEvent } from "./update-agent-status";
+import { registerTestInfrastructure, updateStatusIntent } from "./operations.test-utils";
 import type { DomainEvent } from "./lib/types";
-import type { IntentModule } from "./lib/module";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import type { AggregatedAgentStatus } from "../shared/ipc";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
@@ -43,68 +31,23 @@ const TEST_PROJECT_ID = "test-project-id" as ProjectId;
 const TEST_PROJECT_PATH = "/projects/test";
 const TEST_WORKSPACE_NAME = "test-workspace" as WorkspaceName;
 
-/**
- * Mock resolve modules that provide workspace + project resolution
- * for the update-agent-status operation via shared resolve intents.
- */
-function createMockResolveModules(): IntentModule[] {
-  const resolveWorkspaceModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (): Promise<ResolveWorkspaceHookResult> => {
-            return {
-              projectPath: TEST_PROJECT_PATH,
-              workspaceName: TEST_WORKSPACE_NAME,
-            };
-          },
-        },
-      },
-    },
-  };
-
-  const resolveProjectModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (): Promise<ResolveProjectHookResult> => {
-            return { projectId: TEST_PROJECT_ID };
-          },
-        },
-      },
-    },
-  };
-
-  return [resolveWorkspaceModule, resolveProjectModule];
-}
+const TEST_WORKSPACE_ENTRY = {
+  projectPath: TEST_PROJECT_PATH,
+  workspaceName: TEST_WORKSPACE_NAME,
+};
 
 function createTestSetup(): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-  for (const mod of createMockResolveModules()) {
-    dispatcher.registerModule(mod);
-  }
+  registerTestInfrastructure(dispatcher, {
+    // Every workspace path used by the tests resolves to the same project.
+    workspaces: () => TEST_WORKSPACE_ENTRY,
+    projects: { [TEST_PROJECT_PATH]: { projectId: TEST_PROJECT_ID } },
+  });
 
   return { dispatcher };
-}
-
-function updateStatusIntent(
-  workspacePath: string,
-  status: AggregatedAgentStatus
-): UpdateAgentStatusIntent {
-  return {
-    type: INTENT_UPDATE_AGENT_STATUS,
-    payload: {
-      workspacePath: workspacePath as WorkspacePath,
-      status,
-    },
-  };
 }
 
 // =============================================================================
@@ -182,27 +125,10 @@ describe("UpdateAgentStatus Operation", () => {
     it("silently returns when resolve hooks provide no projectPath", async () => {
       const dispatcher = createMockDispatcher();
       dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
-      dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-      dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 
-      // Register resolve modules that return empty — resolve operations will throw,
-      // and update-agent-status catches the error and silently returns.
-      const emptyResolveModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [RESOLVE_WORKSPACE_OPERATION_ID]: {
-            resolve: {
-              handler: async (): Promise<ResolveWorkspaceHookResult> => ({}),
-            },
-          },
-          [RESOLVE_PROJECT_OPERATION_ID]: {
-            resolve: {
-              handler: async (): Promise<ResolveProjectHookResult> => ({}),
-            },
-          },
-        },
-      };
-      dispatcher.registerModule(emptyResolveModule);
+      // Empty lookups — resolve operations will throw, and update-agent-status
+      // catches the error and silently returns.
+      registerTestInfrastructure(dispatcher, { workspaces: {}, projects: {} });
 
       const receivedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_AGENT_STATUS_UPDATED, (event) => {

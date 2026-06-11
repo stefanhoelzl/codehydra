@@ -24,6 +24,7 @@ import type {
   Snapshot,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { countMatcher, createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // State Types
@@ -113,7 +114,7 @@ class SessionBoundaryMockStateImpl implements SessionBoundaryMockState {
   }
 
   snapshot(): Snapshot {
-    return { __brand: "Snapshot", value: this.toString() };
+    return createSnapshot(this);
   }
 
   toString(): string {
@@ -371,21 +372,7 @@ export const sessionBoundaryMatchers: MatcherImplementationsFor<
     };
   },
 
-  toHaveSessionCount(received, count) {
-    const actual = received.$.sessions.size;
-
-    if (actual !== count) {
-      return {
-        pass: false,
-        message: () => `Expected ${count} sessions but found ${actual}`,
-      };
-    }
-
-    return {
-      pass: true,
-      message: () => `Expected not to have ${count} sessions`,
-    };
-  },
+  toHaveSessionCount: countMatcher<MockSessionBoundary>("session", (mock) => mock.$.sessions.size),
 };
 
 // Register matchers with expect

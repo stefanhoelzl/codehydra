@@ -23,41 +23,21 @@ import {
   UpdateAgentStatusOperation,
   INTENT_UPDATE_AGENT_STATUS,
 } from "../intents/update-agent-status";
-import type { UpdateAgentStatusIntent } from "../intents/update-agent-status";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "../intents/resolve-workspace";
-import type {
-  ResolveHookResult as ResolveWorkspaceHookResult,
-  ResolveHookInput as ResolveWorkspaceHookInput,
-} from "../intents/resolve-workspace";
-import {
-  ResolveProjectOperation,
-  RESOLVE_PROJECT_OPERATION_ID,
-  INTENT_RESOLVE_PROJECT,
-} from "../intents/resolve-project";
-import type { ResolveHookResult as ResolveProjectHookResult } from "../intents/resolve-project";
-import {
-  INTENT_DELETE_WORKSPACE,
-  EVENT_WORKSPACE_DELETED,
-  DELETE_WORKSPACE_OPERATION_ID,
-} from "../intents/delete-workspace";
-import type { DeleteWorkspaceIntent, WorkspaceDeletedEvent } from "../intents/delete-workspace";
+import { INTENT_DELETE_WORKSPACE } from "../intents/delete-workspace";
+import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
 } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import { createDeleteEventOperation } from "../intents/lib/operation.test-utils";
+import { registerTestInfrastructure, updateStatusIntent } from "../intents/operations.test-utils";
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
 import type { NotificationManager } from "./notification-manager";
 import { createMockLogging } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
-import { ApiIpcChannels, type WorkspacePath, type AggregatedAgentStatus } from "../shared/ipc";
+import { ApiIpcChannels, type AggregatedAgentStatus } from "../shared/ipc";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { EVENT_WORKSPACE_CREATE_FAILED, EVENT_WORKSPACE_LOADING } from "../intents/open-workspace";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
@@ -68,35 +48,6 @@ import {
 } from "../boundaries/shell/ipc.test-utils";
 
 // =============================================================================
-// Minimal operations that emit events for testing
-// =============================================================================
-
-class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, { started: true }> {
-  readonly id = DELETE_WORKSPACE_OPERATION_ID;
-
-  constructor(
-    private readonly projectId: ProjectId,
-    private readonly workspaceName: WorkspaceName,
-    private readonly projectPath: string
-  ) {}
-
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
-    const { payload } = ctx.intent;
-    const event: WorkspaceDeletedEvent = {
-      type: EVENT_WORKSPACE_DELETED,
-      payload: {
-        projectId: this.projectId,
-        workspaceName: this.workspaceName,
-        workspacePath: payload.workspacePath,
-        projectPath: this.projectPath,
-      },
-    };
-    ctx.emit(event);
-    return { started: true };
-  }
-}
-
-// =============================================================================
 // Test Setup helpers
 // =============================================================================
 
@@ -104,32 +55,6 @@ const TEST_PROJECT_ID = "test-project-12345678" as ProjectId;
 const TEST_PROJECT_PATH = "/projects/test";
 const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
 const TEST_WORKSPACE_PATH = "/projects/test/workspaces/feature-branch";
-
-function createMockResolveModule(): IntentModule {
-  return {
-    name: "test-resolve",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
-            void (ctx as ResolveWorkspaceHookInput);
-            return {
-              projectPath: TEST_PROJECT_PATH,
-              workspaceName: TEST_WORKSPACE_NAME,
-            };
-          },
-        },
-      },
-      [RESOLVE_PROJECT_OPERATION_ID]: {
-        resolve: {
-          handler: async (): Promise<ResolveProjectHookResult> => {
-            return { projectId: TEST_PROJECT_ID };
-          },
-        },
-      },
-    },
-  };
-}
 
 type SendToUIMock = ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
 
@@ -165,32 +90,21 @@ function createStatusTestSetup(): StatusTestSetup {
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
+
+  // Every workspace path resolves to the test workspace.
+  registerTestInfrastructure(dispatcher, {
+    workspaces: () => ({ projectPath: TEST_PROJECT_PATH, workspaceName: TEST_WORKSPACE_NAME }),
+    projects: () => ({ projectId: TEST_PROJECT_ID }),
+  });
 
   const deps = createBridgeDeps({
     dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
   });
   const uiIpcModule = createUiIpcModule(deps);
-  const resolveModule = createMockResolveModule();
 
   dispatcher.registerModule(uiIpcModule);
-  dispatcher.registerModule(resolveModule);
 
   return { dispatcher, sendToUI: deps.sendToUI };
-}
-
-function updateStatusIntent(
-  workspacePath: string,
-  status: AggregatedAgentStatus
-): UpdateAgentStatusIntent {
-  return {
-    type: INTENT_UPDATE_AGENT_STATUS,
-    payload: {
-      workspacePath: workspacePath as WorkspacePath,
-      status,
-    },
-  };
 }
 
 // =============================================================================
@@ -289,7 +203,11 @@ describe("UiIpcModule - workspace:deleted", () => {
 
     dispatcher.registerOperation(
       INTENT_DELETE_WORKSPACE,
-      new MinimalDeleteOperation(TEST_PROJECT_ID, TEST_WORKSPACE_NAME, TEST_PROJECT_PATH)
+      createDeleteEventOperation({
+        projectId: TEST_PROJECT_ID,
+        workspaceName: TEST_WORKSPACE_NAME,
+        projectPath: TEST_PROJECT_PATH,
+      })
     );
     dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 

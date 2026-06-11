@@ -24,7 +24,8 @@ import {
   reset as resetProjects,
 } from "$lib/stores/projects.svelte";
 import { reset as resetUiMode } from "$lib/stores/ui-mode.svelte";
-import type { Project, ProjectId, WorkspaceName } from "@shared/api/types";
+import type { Project } from "@shared/api/types";
+import { asProjectId, createMockProject } from "@shared/test-fixtures";
 
 interface FrameHooks {
   __chFocusActiveFrame?: () => void;
@@ -32,45 +33,38 @@ interface FrameHooks {
 }
 
 function makeProject(): Project {
-  return {
-    id: "test-12345678" as ProjectId,
+  return createMockProject({
+    id: asProjectId("test-12345678"),
     name: "test",
     path: "/projects/test",
     workspaces: [
       {
-        projectId: "test-12345678" as ProjectId,
-        name: "ws1" as WorkspaceName,
+        name: "ws1",
         branch: "main",
-        metadata: {},
         path: "/workspaces/ws1",
         url: "http://127.0.0.1:9000/?folder=/workspaces/ws1",
       },
       {
-        projectId: "test-12345678" as ProjectId,
-        name: "ws2" as WorkspaceName,
+        name: "ws2",
         branch: "feature",
-        metadata: {},
         path: "/workspaces/ws2",
         url: "http://127.0.0.1:9000/?folder=/workspaces/ws2",
       },
       {
-        projectId: "test-12345678" as ProjectId,
-        name: "sleeping" as WorkspaceName,
+        name: "sleeping",
         branch: "old",
         metadata: { hibernated: "true" },
         path: "/workspaces/sleeping",
         url: "http://127.0.0.1:9000/?folder=/workspaces/sleeping",
       },
       {
-        projectId: "test-12345678" as ProjectId,
-        name: "pending" as WorkspaceName,
+        name: "pending",
         branch: null,
-        metadata: {},
         path: "/workspaces/__pending__",
         // no url — placeholder from workspace:loading
       },
     ],
-  };
+  });
 }
 
 function frames(container: HTMLElement): HTMLIFrameElement[] {

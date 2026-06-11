@@ -25,12 +25,7 @@ import type {
   GetStatusHookResult,
   GetStatusHookInput,
 } from "./get-workspace-status";
-import {
-  ResolveWorkspaceOperation,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-  INTENT_RESOLVE_WORKSPACE,
-} from "./resolve-workspace";
-import type { ResolveHookResult } from "./resolve-workspace";
+import { registerTestInfrastructure } from "./operations.test-utils";
 import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { Intent } from "./lib/types";
@@ -80,25 +75,10 @@ function createTestSetup(opts: {
   const dispatcher = createMockDispatcher();
 
   dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
-  dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 
-  // resolve module: validates workspacePath → returns projectPath + workspaceName
-  const resolveModule: IntentModule = {
-    name: "test",
-    hooks: {
-      [RESOLVE_WORKSPACE_OPERATION_ID]: {
-        resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
-            const intent = ctx.intent as { payload: { workspacePath: string } };
-            if (intent.payload.workspacePath === WORKSPACE_PATH) {
-              return { projectPath: PROJECT_ROOT, workspaceName };
-            }
-            return {};
-          },
-        },
-      },
-    },
-  };
+  registerTestInfrastructure(dispatcher, {
+    workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },
+  });
 
   // get module: returns isDirty from mock provider (reads workspacePath from enriched context)
   const getStatusModule: IntentModule = {
@@ -135,7 +115,6 @@ function createTestSetup(opts: {
     },
   };
 
-  dispatcher.registerModule(resolveModule);
   dispatcher.registerModule(getStatusModule);
   dispatcher.registerModule(agentStatusModule);
 
@@ -242,21 +221,10 @@ describe("GetWorkspaceStatus Operation", () => {
       const workspaceName = "feature-x" as WorkspaceName;
 
       dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
-      dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 
-      const resolveModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [RESOLVE_WORKSPACE_OPERATION_ID]: {
-            resolve: {
-              handler: async (): Promise<ResolveHookResult> => ({
-                projectPath: PROJECT_ROOT,
-                workspaceName,
-              }),
-            },
-          },
-        },
-      };
+      registerTestInfrastructure(dispatcher, {
+        workspaces: { [WORKSPACE_PATH]: { projectPath: PROJECT_ROOT, workspaceName } },
+      });
 
       const unmergedModule: IntentModule = {
         name: "test",
@@ -272,7 +240,6 @@ describe("GetWorkspaceStatus Operation", () => {
         },
       };
 
-      dispatcher.registerModule(resolveModule);
       dispatcher.registerModule(unmergedModule);
 
       const result = (await dispatcher.dispatch(statusIntent(WORKSPACE_PATH))) as WorkspaceStatus;

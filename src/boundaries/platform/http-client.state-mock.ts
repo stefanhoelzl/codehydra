@@ -19,6 +19,7 @@ import type {
   MatcherResult,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { countMatcher, createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // Type Definitions
@@ -182,10 +183,7 @@ export function createMockHttpClient(options?: MockHttpClientOptions): MockHttpC
       return networkError;
     },
     snapshot(): Snapshot {
-      return {
-        __brand: "Snapshot" as const,
-        value: this.toString(),
-      };
+      return createSnapshot(this);
     },
     toString(): string {
       const count = requests.length;
@@ -312,18 +310,7 @@ export const httpClientMatchers: MatcherImplementationsFor<MockHttpClient, HttpC
     } satisfies MatcherResult;
   },
 
-  toHaveRequestCount(received, count) {
-    const actual = received.$.requests.length;
-    const pass = actual === count;
-
-    return {
-      pass,
-      message: (): string =>
-        pass
-          ? `Expected not to have ${count} request(s), but did`
-          : `Expected ${count} request(s), but got ${actual}`,
-    } satisfies MatcherResult;
-  },
+  toHaveRequestCount: countMatcher<MockHttpClient>("request", (mock) => mock.$.requests.length),
 
   toHaveNoRequests(received) {
     const count = received.$.requests.length;

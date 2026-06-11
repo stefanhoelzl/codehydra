@@ -13,11 +13,14 @@
 
 import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
 import { join, resolve, dirname, delimiter } from "node:path";
-import { writeFile, mkdir, chmod, access } from "node:fs/promises";
-import { constants, existsSync } from "node:fs";
-import { exec as pkgExec } from "@yao-pkg/pkg";
+import { writeFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createTempDir } from "../../../utils/testing/test-utils";
-import { executeScript } from "../wrapper-boundary-test-utils";
+import {
+  assertCompiledScript,
+  createFakeAgentBinary,
+  executeScript,
+} from "../wrapper-boundary-test-utils";
 
 const isWindows = process.platform === "win32";
 
@@ -74,9 +77,6 @@ function parseAllFakeClaudeOutputs(stdout: string): FakeClaudeOutput[] {
  * and CLAUDE_COUNTER_FILE for tracking invocation count across calls.
  */
 async function createFakeClaudeBinary(binDir: string): Promise<string> {
-  await mkdir(binDir, { recursive: true });
-
-  const fakeScriptPath = join(binDir, "fake-claude.cjs");
   const fakeNodeContent = `#!/usr/bin/env node
 const fs = require("node:fs");
 
@@ -116,19 +116,13 @@ if (exitCodes) {
 console.log(JSON.stringify(output));
 process.exit(isNaN(exitCode) ? 0 : exitCode);
 `;
-  await writeFile(fakeScriptPath, fakeNodeContent);
-
-  if (isWindows) {
-    // Compile to real .exe so shell:false works (no cmd.exe involvement)
-    await pkgExec([fakeScriptPath, "--target", "host", "--output", join(binDir, "claude")]);
-  } else {
-    // Unix: shell script with shebang (kernel handles it, no shell needed)
-    const shellContent = `#!/bin/sh\nexec node "\${0%/*}/fake-claude.cjs" "$@"\n`;
-    await writeFile(join(binDir, "claude"), shellContent);
-    await chmod(join(binDir, "claude"), 0o755);
-  }
-
-  return binDir;
+  // Real .exe on Windows so shell:false works (no cmd.exe involvement)
+  return createFakeAgentBinary({
+    dir: binDir,
+    binaryName: "claude",
+    scriptBody: fakeNodeContent,
+    windowsMode: "exe",
+  });
 }
 
 /**
@@ -143,13 +137,7 @@ describe("ch-claude.cjs boundary tests", () => {
   let fakeBinDir: string;
 
   beforeAll(async () => {
-    try {
-      await access(COMPILED_SCRIPT_PATH, constants.R_OK);
-    } catch {
-      throw new Error(
-        `Compiled script not found at ${COMPILED_SCRIPT_PATH}. Run 'pnpm build:wrappers' first.`
-      );
-    }
+    await assertCompiledScript(COMPILED_SCRIPT_PATH);
   });
 
   beforeEach(async () => {
@@ -518,9 +506,6 @@ describe("ch-claude.cjs boundary tests", () => {
  * global bin shims when no native .exe is present.
  */
 async function createFakeClaudeCmdShim(binDir: string): Promise<string> {
-  await mkdir(binDir, { recursive: true });
-
-  const fakeScriptPath = join(binDir, "fake-claude.cjs");
   const fakeNodeContent = `#!/usr/bin/env node
 const fs = require("node:fs");
 
@@ -553,15 +538,12 @@ if (exitCodes) {
 console.log(JSON.stringify(output));
 process.exit(isNaN(exitCode) ? 0 : exitCode);
 `;
-  await writeFile(fakeScriptPath, fakeNodeContent);
-
-  // Embed the absolute path to fake-claude.cjs rather than relying on
-  // %~dp0 — when a .cmd is invoked through a PATH lookup, %~dp0 can
-  // resolve to the caller's CWD rather than the script's directory.
-  const cmdContent = `@echo off\r\nnode "${fakeScriptPath}" %*\r\n`;
-  await writeFile(join(binDir, "claude.cmd"), cmdContent);
-
-  return binDir;
+  return createFakeAgentBinary({
+    dir: binDir,
+    binaryName: "claude",
+    scriptBody: fakeNodeContent,
+    windowsMode: "cmd-shim",
+  });
 }
 
 describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () => {
@@ -569,13 +551,7 @@ describe.skipIf(!isWindows)("ch-claude.cjs Windows .cmd shim (npm install)", () 
   let cmdBinDir: string;
 
   beforeAll(async () => {
-    try {
-      await access(COMPILED_SCRIPT_PATH, constants.R_OK);
-    } catch {
-      throw new Error(
-        `Compiled script not found at ${COMPILED_SCRIPT_PATH}. Run 'pnpm build:wrappers' first.`
-      );
-    }
+    await assertCompiledScript(COMPILED_SCRIPT_PATH);
   });
 
   beforeEach(async () => {

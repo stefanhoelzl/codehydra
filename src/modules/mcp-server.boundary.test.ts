@@ -4,7 +4,6 @@
  * These tests verify actual HTTP transport behavior using real SDK and HTTP.
  */
 
-import { createServer } from "node:net";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { McpServer, createDefaultMcpServer } from "./mcp-module";
 import { createMockLogger } from "../boundaries/platform/logging";
@@ -12,74 +11,11 @@ import { delay } from "@shared/test-fixtures";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import type { Intent } from "../intents/lib/types";
-import type { OperationContext, Operation } from "../intents/lib/operation";
-import {
-  INTENT_GET_WORKSPACE_STATUS,
-  GET_WORKSPACE_STATUS_OPERATION_ID,
-} from "../intents/get-workspace-status";
-import { INTENT_GET_METADATA, GET_METADATA_OPERATION_ID } from "../intents/get-metadata";
-import { INTENT_SET_METADATA, SET_METADATA_OPERATION_ID } from "../intents/set-metadata";
-import {
-  INTENT_GET_AGENT_SESSION,
-  GET_AGENT_SESSION_OPERATION_ID,
-} from "../intents/get-agent-session";
-import { INTENT_RESTART_AGENT, RESTART_AGENT_OPERATION_ID } from "../intents/restart-agent";
-import {
-  INTENT_RESOLVE_WORKSPACE,
-  RESOLVE_WORKSPACE_OPERATION_ID,
-} from "../intents/resolve-workspace";
-import {
-  INTENT_HIBERNATE_WORKSPACE,
-  HIBERNATE_WORKSPACE_OPERATION_ID,
-} from "../intents/hibernate-workspace";
-import { INTENT_WAKE_WORKSPACE, WAKE_WORKSPACE_OPERATION_ID } from "../intents/wake-workspace";
-import { INTENT_LIST_PROJECTS, LIST_PROJECTS_OPERATION_ID } from "../intents/list-projects";
-import { INTENT_OPEN_WORKSPACE, OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
-import {
-  INTENT_DELETE_WORKSPACE,
-  DELETE_WORKSPACE_OPERATION_ID,
-} from "../intents/delete-workspace";
-import { INTENT_VSCODE_COMMAND, VSCODE_COMMAND_OPERATION_ID } from "../intents/vscode-command";
-import {
-  INTENT_VSCODE_SHOW_MESSAGE,
-  VSCODE_SHOW_MESSAGE_OPERATION_ID,
-} from "../intents/vscode-show-message";
-
-/**
- * Find a free port for testing.
- */
-async function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (addr && typeof addr === "object") {
-        const port = addr.port;
-        server.close(() => resolve(port));
-      } else {
-        reject(new Error("Could not get port"));
-      }
-    });
-    server.on("error", reject);
-  });
-}
-
-/**
- * Create a capturing operation that records intents and returns a mock result.
- */
-function createCapturingOperation<TIntent extends Intent = Intent, TResult = void>(
-  operationId: string,
-  capturedIntents: Intent[],
-  result: TResult
-): Operation<TIntent, TResult> {
-  return {
-    id: operationId,
-    async execute(ctx: OperationContext<TIntent>): Promise<TResult> {
-      capturedIntents.push(ctx.intent);
-      return result;
-    },
-  };
-}
+import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import { INTENT_HIBERNATE_WORKSPACE } from "../intents/hibernate-workspace";
+import { INTENT_WAKE_WORKSPACE } from "../intents/wake-workspace";
+import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
+import { createMockToolOperations, findFreePort } from "./mcp-server.test-utils";
 
 /**
  * Create a Dispatcher with mock operations registered for all MCP tool intents.
@@ -87,77 +23,11 @@ function createCapturingOperation<TIntent extends Intent = Intent, TResult = voi
  */
 function createMockDispatcher(): { dispatcher: Dispatcher; capturedIntents: Intent[] } {
   const dispatcher = createBaseMockDispatcher();
-  const capturedIntents: Intent[] = [];
-
-  dispatcher.registerOperation(
-    INTENT_GET_WORKSPACE_STATUS,
-    createCapturingOperation(GET_WORKSPACE_STATUS_OPERATION_ID, capturedIntents, {
-      isDirty: false,
-      unmergedCommits: 0,
-      agent: { type: "none" as const },
-    })
-  );
-  dispatcher.registerOperation(
-    INTENT_GET_METADATA,
-    createCapturingOperation(GET_METADATA_OPERATION_ID, capturedIntents, { base: "main" })
-  );
-  dispatcher.registerOperation(
-    INTENT_SET_METADATA,
-    createCapturingOperation(SET_METADATA_OPERATION_ID, capturedIntents, undefined as void)
-  );
-  dispatcher.registerOperation(
-    INTENT_GET_AGENT_SESSION,
-    createCapturingOperation(GET_AGENT_SESSION_OPERATION_ID, capturedIntents, null)
-  );
-  dispatcher.registerOperation(
-    INTENT_RESTART_AGENT,
-    createCapturingOperation(RESTART_AGENT_OPERATION_ID, capturedIntents, 14001)
-  );
-  dispatcher.registerOperation(
-    INTENT_LIST_PROJECTS,
-    createCapturingOperation(LIST_PROJECTS_OPERATION_ID, capturedIntents, [])
-  );
-  dispatcher.registerOperation(
-    INTENT_OPEN_WORKSPACE,
-    createCapturingOperation(OPEN_WORKSPACE_OPERATION_ID, capturedIntents, {
-      name: "test",
-      path: "/path",
-    })
-  );
-  dispatcher.registerOperation(
-    INTENT_DELETE_WORKSPACE,
-    createCapturingOperation(DELETE_WORKSPACE_OPERATION_ID, capturedIntents, { started: true })
-  );
-  dispatcher.registerOperation(
-    INTENT_RESOLVE_WORKSPACE,
-    createCapturingOperation(RESOLVE_WORKSPACE_OPERATION_ID, capturedIntents, {
-      projectPath: "/home/user/projects/my-app",
-      workspaceName: "feature-branch",
-      active: false,
-    })
-  );
-  dispatcher.registerOperation(
-    INTENT_HIBERNATE_WORKSPACE,
-    createCapturingOperation(HIBERNATE_WORKSPACE_OPERATION_ID, capturedIntents, { started: true })
-  );
-  dispatcher.registerOperation(
-    INTENT_WAKE_WORKSPACE,
-    createCapturingOperation(WAKE_WORKSPACE_OPERATION_ID, capturedIntents, {
-      name: "test",
-      path: "/path",
-      branch: "main",
-      metadata: {},
-    })
-  );
-  dispatcher.registerOperation(
-    INTENT_VSCODE_COMMAND,
-    createCapturingOperation(VSCODE_COMMAND_OPERATION_ID, capturedIntents, undefined)
-  );
-  dispatcher.registerOperation(
-    INTENT_VSCODE_SHOW_MESSAGE,
-    createCapturingOperation(VSCODE_SHOW_MESSAGE_OPERATION_ID, capturedIntents, null)
-  );
-
+  const { capturedIntents } = createMockToolOperations(dispatcher, {
+    getAgentSession: null,
+    openWorkspace: { name: "test", path: "/path" },
+    wake: { name: "test", path: "/path", branch: "main", metadata: {} },
+  });
   return { dispatcher, capturedIntents };
 }
 

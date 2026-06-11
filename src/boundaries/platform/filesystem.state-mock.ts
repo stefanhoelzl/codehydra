@@ -28,6 +28,7 @@ import type {
   Snapshot,
   MatcherImplementationsFor,
 } from "../../test/state-mock";
+import { createSnapshot } from "../../test/state-mock";
 
 // =============================================================================
 // Entry Types
@@ -276,7 +277,7 @@ class FileSystemMockStateImpl implements FileSystemMockState {
   }
 
   snapshot(): Snapshot {
-    return { __brand: "Snapshot", value: this.toString() } as Snapshot;
+    return createSnapshot(this);
   }
 
   toString(): string {

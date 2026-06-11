@@ -12,6 +12,7 @@ import type {
   WorkspaceName,
   WorkspaceStatus,
 } from "@shared/api/types";
+import { asWorkspaceRef, createMockProject, createMockWorkspace } from "@shared/test-fixtures";
 
 // Mock the API module before importing the setup function
 vi.mock("$lib/api", () => ({
@@ -37,26 +38,25 @@ const TEST_PROJECT_PATH = "/test/project";
 const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
 const TEST_WORKSPACE_PATH = "/test/project/.worktrees/feature";
 
-const TEST_PROJECT: Project = {
+const TEST_PROJECT: Project = createMockProject({
   id: TEST_PROJECT_ID,
   name: "my-project",
   path: TEST_PROJECT_PATH,
   workspaces: [],
-};
+});
 
-const TEST_WORKSPACE: Workspace = {
+const TEST_WORKSPACE: Workspace = createMockWorkspace({
   projectId: TEST_PROJECT_ID,
   name: TEST_WORKSPACE_NAME,
-  branch: "feature-branch",
   metadata: { base: "main" },
   path: TEST_WORKSPACE_PATH,
-};
+});
 
-const TEST_WORKSPACE_REF: WorkspaceRef = {
-  projectId: TEST_PROJECT_ID,
-  workspaceName: TEST_WORKSPACE_NAME,
-  path: TEST_WORKSPACE_PATH,
-};
+const TEST_WORKSPACE_REF: WorkspaceRef = asWorkspaceRef(
+  TEST_PROJECT_ID,
+  TEST_WORKSPACE_NAME,
+  TEST_WORKSPACE_PATH
+);
 
 // =============================================================================
 // Mock API Factory
