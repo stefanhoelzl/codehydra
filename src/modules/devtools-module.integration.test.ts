@@ -33,21 +33,14 @@ function createDevtoolsTarget(id: string) {
 
 function createMockDeps() {
   const uiTarget = createDevtoolsTarget("ui-view");
-  const wsTarget = createDevtoolsTarget("ws-view");
-  let hasActive = true;
 
   const viewManager = {
     getUIDevtoolsTarget: vi.fn(() => uiTarget),
-    getActiveWorkspaceDevtoolsTarget: vi.fn(() => (hasActive ? wsTarget : undefined)),
   };
 
   return {
     viewManager: viewManager as unknown as DevtoolsModuleDeps["viewManager"],
     uiTarget,
-    wsTarget,
-    _setActivePath(path: string | null) {
-      hasActive = path !== null;
-    },
   };
 }
 
@@ -88,47 +81,15 @@ describe("DevtoolsModule", () => {
     expect(mock.uiTarget.isOpen()).toBe(false);
   });
 
-  it("W toggles active workspace DevTools open", async () => {
-    const mock = createMockDeps();
-    const module = createDevtoolsModule(mock);
-
-    await emitKeyEvent(module, "w");
-
-    expect(mock.wsTarget.toggle).toHaveBeenCalledTimes(1);
-    expect(mock.wsTarget.isOpen()).toBe(true);
-  });
-
-  it("W toggles workspace DevTools closed when already open", async () => {
-    const mock = createMockDeps();
-    mock.wsTarget._setOpen(true);
-    const module = createDevtoolsModule(mock);
-
-    await emitKeyEvent(module, "w");
-
-    expect(mock.wsTarget.toggle).toHaveBeenCalledTimes(1);
-    expect(mock.wsTarget.isOpen()).toBe(false);
-  });
-
-  it("W does nothing when no active workspace", async () => {
-    const mock = createMockDeps();
-    mock._setActivePath(null);
-    const module = createDevtoolsModule(mock);
-
-    await emitKeyEvent(module, "w");
-
-    expect(mock.wsTarget.toggle).not.toHaveBeenCalled();
-    expect(mock.uiTarget.toggle).not.toHaveBeenCalled();
-  });
-
   it("ignores unrelated keys", async () => {
     const mock = createMockDeps();
     const module = createDevtoolsModule(mock);
 
     await emitKeyEvent(module, "up");
     await emitKeyEvent(module, "enter");
+    await emitKeyEvent(module, "w");
     await emitKeyEvent(module, "5");
 
     expect(mock.uiTarget.toggle).not.toHaveBeenCalled();
-    expect(mock.wsTarget.toggle).not.toHaveBeenCalled();
   });
 });

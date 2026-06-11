@@ -45,7 +45,7 @@ import { DefaultWindowBoundary } from "./boundaries/shell/window";
 import { DefaultViewBoundary } from "./boundaries/shell/view";
 import { DefaultSessionBoundary } from "./boundaries/shell/session";
 import { WindowManager } from "./boundaries/shell/window-manager";
-import { ViewManager } from "./boundaries/shell/view-manager";
+import { UiViewManager } from "./boundaries/shell/ui-view-manager";
 // Services (stayed)
 import { AutoUpdater } from "./modules/auto-updater";
 import { DefaultArchiveExtractor } from "./boundaries/platform/archive";
@@ -393,10 +393,10 @@ const windowManager = new WindowManager(
   pathProvider.appIconPath.toNative()
 );
 
-// ViewManager construction is cheap (no backend yet). The backend is
-// created inside ViewManager.create(), which runs later from the
-// app-start/init hook, once the window exists.
-const viewManager = new ViewManager({
+// UiViewManager construction is cheap (no Electron resources). The UI view
+// is created inside create(), which runs later from the app-start/init hook,
+// once the window exists.
+const viewManager = new UiViewManager({
   windowManager,
   windowLayer,
   viewLayer,
@@ -404,8 +404,6 @@ const viewManager = new ViewManager({
   appLayer,
   config: {
     uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
-    codeServerPort: 0,
-    workspaceHostHtmlPath: nodePath.join(__dirname, "../renderer/workspace-host.html"),
   },
   logger: loggingService.createLogger("view"),
 });
@@ -462,7 +460,6 @@ const viewModule = createViewModule({
   windowLayer,
   sessionLayer,
   dialogLayer,
-  ipcLayer,
   menuLayer,
   windowManager,
   buildInfo,

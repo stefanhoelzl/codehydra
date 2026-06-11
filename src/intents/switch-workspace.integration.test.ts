@@ -49,8 +49,6 @@ import {
   INTENT_RESOLVE_PROJECT,
 } from "./resolve-project";
 import type { ResolveHookResult as ResolveProjectHookResult } from "./resolve-project";
-import type { IViewManager } from "../boundaries/shell/view-manager.interface";
-import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
@@ -146,7 +144,6 @@ function createMultiWorkspaceProject(): ProjectEntry {
 
 interface TestSetup {
   dispatcher: Dispatcher;
-  viewManager: IViewManager;
   appState: MockAppState;
   getActivePath: () => string | null;
 }
@@ -160,9 +157,6 @@ function createTestSetup(opts?: {
   let activePath: string | null = opts?.initialActive ?? null;
   const setActiveWorkspace = vi.fn((path: string | null) => {
     activePath = path;
-  });
-  const viewManager = createMockViewManager({
-    overrides: { setActiveWorkspace },
   });
   const appState = createMockAppState(projects);
 
@@ -215,8 +209,9 @@ function createTestSetup(opts?: {
     },
   };
 
-  // SwitchViewModule: "activate" hook -- calls setActiveWorkspace
-  // Also subscribes to workspace:switched(null) to clear viewManager.
+  // SwitchViewModule: "activate" hook -- records the active surface
+  // (mirrors view-module's hook). Also subscribes to workspace:switched(null)
+  // to clear it.
   const switchViewModule: IntentModule = {
     name: "test",
     hooks: {
@@ -224,14 +219,12 @@ function createTestSetup(opts?: {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const { workspacePath, active } = ctx as ActivateHookInput;
-            const intent = ctx.intent as SwitchWorkspaceIntent;
 
             if (active) {
               return {};
             }
 
-            const focus = intent.payload.focus ?? true;
-            viewManager.setActiveWorkspace(workspacePath, focus);
+            setActiveWorkspace(workspacePath);
             return { resolvedPath: workspacePath };
           },
         },
@@ -242,7 +235,7 @@ function createTestSetup(opts?: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceSwitchedEvent).payload;
           if (payload === null) {
-            viewManager.setActiveWorkspace(null);
+            setActiveWorkspace(null);
           }
         },
       },
@@ -301,7 +294,6 @@ function createTestSetup(opts?: {
 
   return {
     dispatcher,
-    viewManager,
     appState,
     getActivePath: () => activePath,
   };
@@ -338,7 +330,7 @@ describe("SwitchWorkspace Operation", () => {
       setup = createTestSetup();
     });
 
-    it("sets viewManager activeWorkspacePath to resolved path", async () => {
+    it("sets the active surface to the resolved path", async () => {
       const { dispatcher, getActivePath } = setup;
 
       await dispatcher.dispatch(switchIntent());
@@ -372,25 +364,23 @@ describe("SwitchWorkspace Operation", () => {
     });
   });
 
-  describe("defaults focus to true (#3)", () => {
-    it("sets focusState to true when focus not specified", async () => {
+  describe("activates regardless of focus flag (#3/#4)", () => {
+    it("activates when focus not specified", async () => {
       const setup = createTestSetup();
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       await dispatcher.dispatch(switchIntent(undefined, undefined));
 
-      expect(viewManager.setActiveWorkspace).toHaveBeenLastCalledWith(TEST_WORKSPACE_PATH, true);
+      expect(getActivePath()).toBe(TEST_WORKSPACE_PATH);
     });
-  });
 
-  describe("passes focus=false when specified (#4)", () => {
-    it("sets focusState to false when focus is false", async () => {
+    it("activates when focus is false (focus routing is renderer-side)", async () => {
       const setup = createTestSetup();
-      const { dispatcher, viewManager } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       await dispatcher.dispatch(switchIntent(undefined, false));
 
-      expect(viewManager.setActiveWorkspace).toHaveBeenLastCalledWith(TEST_WORKSPACE_PATH, false);
+      expect(getActivePath()).toBe(TEST_WORKSPACE_PATH);
     });
   });
 
@@ -438,7 +428,7 @@ describe("SwitchWorkspace Operation", () => {
   describe("bridge handler defaults focus (#7)", () => {
     it("dispatches with focus defaulting to true when omitted", async () => {
       const setup = createTestSetup();
-      const { dispatcher, viewManager, getActivePath } = setup;
+      const { dispatcher, getActivePath } = setup;
 
       // Simulate what the bridge handler does: no focus field in payload
       const intent: SwitchWorkspaceIntent = {
@@ -450,7 +440,6 @@ describe("SwitchWorkspace Operation", () => {
       await dispatcher.dispatch(intent);
 
       expect(getActivePath()).toBe(TEST_WORKSPACE_PATH);
-      expect(viewManager.setActiveWorkspace).toHaveBeenLastCalledWith(TEST_WORKSPACE_PATH, true);
     });
   });
 

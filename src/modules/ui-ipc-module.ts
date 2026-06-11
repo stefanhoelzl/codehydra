@@ -185,6 +185,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
             branch: p.branch,
             metadata: p.metadata,
             path: p.workspacePath,
+            url: p.workspaceUrl,
           },
           ...(p.initialPrompt && { hasInitialPrompt: true }),
           ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),

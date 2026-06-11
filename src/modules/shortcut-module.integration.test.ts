@@ -22,7 +22,6 @@ import {
 import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { INTENT_SHORTCUT_KEY, ShortcutKeyOperation } from "../intents/shortcut-key";
-import { EVENT_WORKSPACE_CREATED, type WorkspaceCreatedEvent } from "../intents/open-workspace";
 import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";
@@ -108,20 +107,15 @@ function createMockViewManager(
   initialMode: UIMode = "shortcut"
 ) {
   let currentMode: UIMode = initialMode;
-  const wsHandle = createViewHandle("ws-view");
   const uiTarget = createKeyboardTarget(uiHandle, callbacks);
-  const wsTarget = createKeyboardTarget(wsHandle, callbacks);
 
   return {
     getUIKeyboardTarget: vi.fn(() => uiTarget),
     getMode: vi.fn(() => currentMode),
-    getWorkspaceKeyboardTarget: vi.fn(() => wsTarget),
     _setMode(mode: UIMode) {
       currentMode = mode;
     },
-    _wsHandle: wsHandle,
     _uiTarget: uiTarget,
-    _wsTarget: wsTarget,
   };
 }
 
@@ -269,20 +263,6 @@ describe("ShortcutModule integration", () => {
 
       expect(callbacks.inputUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.destroyedUnsubscribes.get("ui-view")).toHaveBeenCalled();
-    });
-
-    it("registers workspace views on workspace:created event", async () => {
-      const { callbacks, module, viewManager } = await createHarness();
-
-      const wsHandle = viewManager._wsHandle;
-
-      // Call the module's event handler directly (same pattern as devtools-module tests)
-      await module.events![EVENT_WORKSPACE_CREATED]!.handler({
-        type: EVENT_WORKSPACE_CREATED,
-        payload: { workspacePath: "/test/workspace" },
-      } as WorkspaceCreatedEvent);
-
-      expect(callbacks.inputCallbacks.has(wsHandle.id)).toBe(true);
     });
   });
 
@@ -577,13 +557,7 @@ describe("ShortcutModule integration", () => {
     });
 
     it("dispose unregisters all views and window blur handler on shutdown", async () => {
-      const { callbacks, dispatcher, module } = await createHarness();
-
-      // Register an extra view via workspace:created event
-      await module.events![EVENT_WORKSPACE_CREATED]!.handler({
-        type: EVENT_WORKSPACE_CREATED,
-        payload: { workspacePath: "/test/workspace" },
-      } as WorkspaceCreatedEvent);
+      const { callbacks, dispatcher } = await createHarness();
 
       await dispatcher.dispatch({
         type: INTENT_APP_SHUTDOWN,

@@ -3,10 +3,12 @@
  * screenshots for hibernation.
  *
  * Responsibilities:
- * - workspace:hibernate / capture hook → call viewManager.captureWorkspaceView
- *   and write the PNG to <data>/screenshots/<projectId>/<workspaceName>.png.
- *   Best-effort: failures (no view, capture failed, write failed) are logged
- *   and never propagate to the operation.
+ * - workspace:hibernate / capture hook → capture the active workspace iframe
+ *   (full-view capture clipped to its rect; only possible while visible, so
+ *   background hibernations are skipped) and write the PNG to
+ *   <data>/screenshots/<projectId>/<workspaceName>.png.
+ *   Best-effort: failures (not visible, capture failed, write failed) are
+ *   logged and never propagate to the operation.
  * - workspace:wake / cleanup hook → delete the screenshot file (best-effort).
  * - workspace:deleted event → delete the screenshot file (best-effort).
  *
@@ -77,9 +79,16 @@ export function createHibernationScreenshotModule(
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         capture: {
           handler: async (ctx: HookContext): Promise<CaptureHookResult> => {
-            const { workspacePath, projectId, workspaceName } = ctx as HibernatePipelineHookInput;
+            const { active, projectId, workspaceName } = ctx as HibernatePipelineHookInput;
             try {
-              const png = await viewManager.captureWorkspaceView(workspacePath);
+              // Only the visible iframe has pixels to capture; a background
+              // workspace's iframe is display:none. (Previously this captured
+              // the shared host view, which showed the active workspace's
+              // pixels regardless of which workspace was hibernating.)
+              if (!active) {
+                return { captured: false };
+              }
+              const png = await viewManager.captureActiveWorkspaceView();
               if (!png) {
                 return { captured: false };
               }

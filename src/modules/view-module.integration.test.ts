@@ -3,18 +3,10 @@
  * Integration tests for ViewModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
- * Covers all 11 absorbed inline modules:
- * - earlySetModeModule (set-mode/set)
- * - appStartUIModule (app-start/show-ui)
- * - setupUIModule (setup/show-ui + hide-ui)
- * - uiHookModule (get-active-workspace/get + workspace:switched event)
- * - viewModule (workspace:created event)
- * - deleteViewModule (delete-workspace/shutdown)
- * - switchViewModule (switch-workspace/activate + workspace:switched event)
- * - projectViewModule (project:opened event)
- * - viewLifecycleModule (app-start/activate + app-shutdown/stop)
- * - mountModule (app-start/activate)
- * - wrapperReadyViewModule (agent:status-updated event → setWorkspaceLoaded)
+ * Covers: set-mode/set, app-start hooks, setup dialog hooks, active-workspace
+ * bookkeeping (resolve / get-active / switch / delete / hibernate), the
+ * workspace loading dialog (created → agent:status-updated / timeout), and
+ * app-shutdown/stop disposal.
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -61,18 +53,19 @@ import type {
 } from "../intents/delete-workspace";
 import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
 import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../intents/open-workspace";
+import { INTENT_OPEN_PROJECT, OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import type { SelectFolderHookResult } from "../intents/open-project";
 import {
-  INTENT_OPEN_PROJECT,
-  EVENT_PROJECT_OPENED,
-  OPEN_PROJECT_OPERATION_ID,
-} from "../intents/open-project";
-import type { ProjectOpenedEvent, SelectFolderHookResult } from "../intents/open-project";
+  RESOLVE_WORKSPACE_OPERATION_ID,
+  type ResolveHookInput,
+  type ResolveHookResult,
+} from "../intents/resolve-workspace";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
-import type { ProjectId, WorkspaceName, Project } from "../shared/api/types";
+import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 
@@ -238,23 +231,6 @@ class MinimalActivateOperation implements Operation<Intent, void> {
   }
 }
 
-/** Runs "start" hook with codeServerPort capability. */
-class MinimalActivateWithPortsOperation implements Operation<Intent, void> {
-  readonly id = APP_START_OPERATION_ID;
-  private readonly codeServerPort: number | null;
-  constructor(codeServerPort: number | null) {
-    this.codeServerPort = codeServerPort;
-  }
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const hookCtx: HookContext = {
-      intent: ctx.intent,
-      capabilities: { codeServerPort: this.codeServerPort },
-    };
-    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-  }
-}
-
 /** Runs workspace:created event via open-workspace. */
 class MinimalOpenOperation implements Operation<OpenWorkspaceIntent, unknown> {
   readonly id = "open-workspace";
@@ -341,6 +317,18 @@ function createTestSetup(
   dispatcher.registerModule(module);
 
   return { dispatcher, viewManager, layers, module };
+}
+
+/** Run the module's resolve-workspace hook and return the `active` flag. */
+async function resolveActive(module: IntentModule, workspacePath: string): Promise<boolean> {
+  const hookCtx = {
+    intent: { type: "workspace:resolve", payload: { workspacePath } },
+    workspacePath,
+  } as unknown as ResolveHookInput;
+  const result = (await module.hooks![RESOLVE_WORKSPACE_OPERATION_ID]!.resolve!.handler(
+    hookCtx
+  )) as ResolveHookResult;
+  return result.active === true;
 }
 
 // =============================================================================
@@ -519,29 +507,131 @@ describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
   // Test 5: workspace:created → createWorkspaceView + preloadWorkspaceUrl
   // -------------------------------------------------------------------------
-  describe("workspace:created event", () => {
-    it("creates workspace view and preloads URL", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: INTENT_OPEN_WORKSPACE,
-        operation: new MinimalOpenOperation(),
-      });
+  describe("workspace loading dialog", () => {
+    function createLoadingHarness() {
+      const dispatcher = createMockDispatcher();
+      const viewManager = createMockViewManager();
+      const handle = {
+        id: "dlg-loading",
+        update: vi.fn(),
+        close: vi.fn(),
+        onEvent: vi.fn(() => () => {}),
+        nextEvent: vi.fn(),
+        closed: Promise.resolve(),
+      };
+      const dialogManager = { open: vi.fn(() => handle) };
 
+      dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new MinimalOpenOperation());
+      dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new MinimalSwitchOperation());
+
+      const module = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        dialogManager: dialogManager as unknown as NonNullable<ViewModuleDeps["dialogManager"]>,
+      });
+      dispatcher.registerModule(module);
+
+      const emitAgentStatus = async (path: string): Promise<void> => {
+        const event: AgentStatusUpdatedEvent = {
+          type: EVENT_AGENT_STATUS_UPDATED,
+          payload: {
+            workspace: {
+              path: path as WorkspacePath,
+              projectId: "test-project" as ProjectId,
+              name: "ws1" as WorkspaceName,
+              active: true,
+            },
+            status: { status: "idle" } as AggregatedAgentStatus,
+          },
+        };
+        await module.events![EVENT_AGENT_STATUS_UPDATED]!.handler(event);
+      };
+
+      return { dispatcher, dialogManager, handle, module, emitAgentStatus };
+    }
+
+    it("opens for the active workspace and closes on first agent status", async () => {
+      const { dispatcher, dialogManager, handle, emitAgentStatus } = createLoadingHarness();
+
+      // Make ws1 the active workspace (switched event populates cachedActiveRef)
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: "/workspaces/ws1" },
+      } as SwitchWorkspaceIntent);
+
+      // ws1 starts loading → dialog for the active workspace
       await dispatcher.dispatch({
         type: INTENT_OPEN_WORKSPACE,
-        payload: {
-          workspaceName: "ws1",
-          base: "main",
-          projectPath: "/projects/test",
-        },
+        payload: { workspaceName: "ws1", base: "main", projectPath: "/projects/test" },
+      } as OpenWorkspaceIntent);
+      expect(dialogManager.open).toHaveBeenCalledTimes(1);
+
+      // First agent status closes the dialog
+      await emitAgentStatus("/workspaces/ws1");
+      expect(handle.close).toHaveBeenCalled();
+    });
+
+    it("does not open a dialog for background workspaces", async () => {
+      const { dispatcher, dialogManager } = createLoadingHarness();
+
+      // No switch — ws1 loads in the background
+      await dispatcher.dispatch({
+        type: INTENT_OPEN_WORKSPACE,
+        payload: { workspaceName: "ws1", base: "main", projectPath: "/projects/test" },
       } as OpenWorkspaceIntent);
 
-      expect(viewManager.createWorkspaceView).toHaveBeenCalledWith(
-        "/workspaces/ws1",
-        "http://127.0.0.1:0/?folder=/workspaces/ws1",
-        "/projects/test",
-        true
-      );
-      expect(viewManager.preloadWorkspaceUrl).toHaveBeenCalledWith("/workspaces/ws1");
+      expect(dialogManager.open).not.toHaveBeenCalled();
+    });
+
+    it("ignores hibernated workspaces", async () => {
+      const { dispatcher, dialogManager, module } = createLoadingHarness();
+
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: "/workspaces/ws1" },
+      } as SwitchWorkspaceIntent);
+
+      const event: WorkspaceCreatedEvent = {
+        type: EVENT_WORKSPACE_CREATED,
+        payload: {
+          projectId: "test-project" as ProjectId,
+          workspaceName: "ws1" as WorkspaceName,
+          workspacePath: "/workspaces/ws1",
+          projectPath: "/projects/test",
+          branch: "main",
+          base: "main",
+          metadata: { hibernated: "true" },
+          workspaceUrl: "http://127.0.0.1:0/?folder=/workspaces/ws1",
+        },
+      };
+      await module.events![EVENT_WORKSPACE_CREATED]!.handler(event);
+
+      expect(dialogManager.open).not.toHaveBeenCalled();
+    });
+
+    it("falls through on the loading timeout", async () => {
+      vi.useFakeTimers();
+      try {
+        const { dispatcher, dialogManager, handle } = createLoadingHarness();
+
+        await dispatcher.dispatch({
+          type: INTENT_SWITCH_WORKSPACE,
+          payload: { workspacePath: "/workspaces/ws1" },
+        } as SwitchWorkspaceIntent);
+        await dispatcher.dispatch({
+          type: INTENT_OPEN_WORKSPACE,
+          payload: { workspaceName: "ws1", base: "main", projectPath: "/projects/test" },
+        } as OpenWorkspaceIntent);
+        expect(dialogManager.open).toHaveBeenCalledTimes(1);
+
+        vi.runAllTimers();
+        expect(handle.close).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -549,8 +639,8 @@ describe("ViewModule Integration", () => {
   // Test 6: delete-workspace/shutdown → destroyWorkspaceView, returns wasActive
   // -------------------------------------------------------------------------
   describe("delete-workspace/shutdown", () => {
-    it("destroys workspace view and returns wasActive", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
+    it("returns wasActive when the deleted workspace was active", async () => {
+      const { dispatcher } = createTestSetup({
         intentType: INTENT_DELETE_WORKSPACE,
         operation: new MinimalDeleteOperation(true),
       });
@@ -565,34 +655,33 @@ describe("ViewModule Integration", () => {
         },
       } as DeleteWorkspaceIntent);
 
-      expect(viewManager.destroyWorkspaceView).toHaveBeenCalledWith("/workspaces/ws1");
       expect(result).toEqual(expect.objectContaining({ wasActive: true }));
     });
 
-    // -----------------------------------------------------------------------
-    // Test 7: delete-workspace/shutdown force mode → catches error
-    // -----------------------------------------------------------------------
-    it("catches error in force mode", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: INTENT_DELETE_WORKSPACE,
-        operation: new MinimalDeleteOperation(),
+    it("clears the active surface so resolve reports inactive", async () => {
+      const { dispatcher, module } = createTestSetup({
+        intentType: INTENT_SWITCH_WORKSPACE,
+        operation: new MinimalSwitchOperation(),
       });
+      dispatcher.registerOperation(INTENT_DELETE_WORKSPACE, new MinimalDeleteOperation(true));
 
-      (viewManager.destroyWorkspaceView as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error("view gone")
-      );
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: "/workspaces/ws1" },
+      } as SwitchWorkspaceIntent);
+      expect(await resolveActive(module, "/workspaces/ws1")).toBe(true);
 
-      const result = await dispatcher.dispatch({
+      await dispatcher.dispatch({
         type: INTENT_DELETE_WORKSPACE,
         payload: {
           workspacePath: "/workspaces/ws1",
           keepBranch: false,
-          force: true,
+          force: false,
           removeWorktree: true,
         },
       } as DeleteWorkspaceIntent);
 
-      expect(result).toEqual(expect.objectContaining({ error: "view gone" }));
+      expect(await resolveActive(module, "/workspaces/ws1")).toBe(false);
     });
   });
 
@@ -600,8 +689,8 @@ describe("ViewModule Integration", () => {
   // Test 8: switch-workspace/activate → setActiveWorkspace called
   // -------------------------------------------------------------------------
   describe("switch-workspace/activate", () => {
-    it("calls setActiveWorkspace with path and focus", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
+    it("records the new active surface (resolve reports active)", async () => {
+      const { dispatcher, module } = createTestSetup({
         intentType: INTENT_SWITCH_WORKSPACE,
         operation: new MinimalSwitchOperation(),
       });
@@ -613,14 +702,12 @@ describe("ViewModule Integration", () => {
         },
       } as SwitchWorkspaceIntent);
 
-      expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith("/workspaces/ws1", true);
+      expect(await resolveActive(module, "/workspaces/ws1")).toBe(true);
+      expect(await resolveActive(module, "/workspaces/ws2")).toBe(false);
     });
 
-    // -----------------------------------------------------------------------
-    // Test 9: switch no-op when already active
-    // -----------------------------------------------------------------------
-    it("does not call setActiveWorkspace when already active", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
+    it("does not record anything when already active (short-circuit)", async () => {
+      const { dispatcher, module } = createTestSetup({
         intentType: INTENT_SWITCH_WORKSPACE,
         operation: new MinimalSwitchOperation(true),
       });
@@ -632,8 +719,9 @@ describe("ViewModule Integration", () => {
         },
       } as SwitchWorkspaceIntent);
 
-      // setActiveWorkspace should not be called (no-op)
-      expect(viewManager.setActiveWorkspace).not.toHaveBeenCalled();
+      // The hook short-circuited: module state was not updated by activate
+      // (the switched event also isn't emitted in this minimal operation).
+      expect(await resolveActive(module, "/workspaces/ws1")).toBe(false);
     });
   });
 
@@ -643,7 +731,7 @@ describe("ViewModule Integration", () => {
   describe("workspace:switched event (null)", () => {
     it("clears cached ref and sets active workspace to null", async () => {
       // First set up a cached active ref by doing a switch
-      const { dispatcher, viewManager } = createTestSetup({
+      const { dispatcher, module } = createTestSetup({
         intentType: INTENT_SWITCH_WORKSPACE,
         operation: new MinimalSwitchOperation(),
       });
@@ -692,8 +780,8 @@ describe("ViewModule Integration", () => {
       } as GetActiveWorkspaceIntent);
       expect(refAfter).toBeNull();
 
-      // Verify setActiveWorkspace(null) was called
-      expect(viewManager.setActiveWorkspace).toHaveBeenCalledWith(null);
+      // Verify the active surface was cleared too
+      expect(await resolveActive(module, "/workspaces/ws1")).toBe(false);
     });
   });
 
@@ -730,111 +818,10 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 12: project:opened → preloadWorkspaceUrl for workspaces[1..n]
-  // -------------------------------------------------------------------------
-  describe("project:opened event", () => {
-    it("preloads non-first workspaces", async () => {
-      // We need an operation that emits project:opened
-      const projectOpenOp: Operation<Intent, void> = {
-        id: "open-project",
-        async execute(ctx: OperationContext<Intent>): Promise<void> {
-          const event: ProjectOpenedEvent = {
-            type: EVENT_PROJECT_OPENED,
-            payload: {
-              project: {
-                id: "test-project" as ProjectId,
-                name: "test",
-                path: "/projects/test",
-                workspaces: [
-                  {
-                    projectId: "test-project" as ProjectId,
-                    name: "ws1" as WorkspaceName,
-                    path: "/workspaces/ws1",
-                    branch: "main",
-                    metadata: { base: "main" },
-                  },
-                  {
-                    projectId: "test-project" as ProjectId,
-                    name: "ws2" as WorkspaceName,
-                    path: "/workspaces/ws2",
-                    branch: "feature",
-                    metadata: { base: "main" },
-                  },
-                  {
-                    projectId: "test-project" as ProjectId,
-                    name: "ws3" as WorkspaceName,
-                    path: "/workspaces/ws3",
-                    branch: "fix",
-                    metadata: { base: "main" },
-                  },
-                ],
-              } as Project,
-            },
-          };
-          ctx.emit(event);
-        },
-      };
-
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: "project:open",
-        operation: projectOpenOp,
-      });
-
-      await dispatcher.dispatch({
-        type: "project:open",
-        payload: {},
-      });
-
-      // Should preload ws2 and ws3, but NOT ws1 (first workspace)
-      expect(viewManager.preloadWorkspaceUrl).not.toHaveBeenCalledWith("/workspaces/ws1");
-      expect(viewManager.preloadWorkspaceUrl).toHaveBeenCalledWith("/workspaces/ws2");
-      expect(viewManager.preloadWorkspaceUrl).toHaveBeenCalledWith("/workspaces/ws3");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 13: agent:status-updated → setWorkspaceLoaded called
-  // -------------------------------------------------------------------------
-  describe("agent:status-updated event", () => {
-    it("calls setWorkspaceLoaded with workspace path", async () => {
-      const emitOp: Operation<Intent, void> = {
-        id: "emit-agent-status",
-        async execute(ctx: OperationContext<Intent>): Promise<void> {
-          const event: AgentStatusUpdatedEvent = {
-            type: EVENT_AGENT_STATUS_UPDATED,
-            payload: {
-              workspace: {
-                path: "/workspaces/ws1" as WorkspacePath,
-                projectId: "test-project" as ProjectId,
-                name: "ws1" as WorkspaceName,
-                active: false,
-              },
-              status: { status: "idle" } as AggregatedAgentStatus,
-            },
-          };
-          ctx.emit(event);
-        },
-      };
-
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: "test:emit-agent-status",
-        operation: emitOp,
-      });
-
-      await dispatcher.dispatch({
-        type: "test:emit-agent-status",
-        payload: {},
-      });
-
-      expect(viewManager.setWorkspaceLoaded).toHaveBeenCalledWith("/workspaces/ws1");
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // Test 14: app-start/activate → onLoadingChange wired, mount signal set
   // -------------------------------------------------------------------------
   describe("app-start/activate", () => {
-    it("wires onLoadingChange and sends LIFECYCLE_SHOW_MAIN_VIEW", async () => {
+    it("sends LIFECYCLE_SHOW_MAIN_VIEW to mount the renderer", async () => {
       const { dispatcher, viewManager } = createTestSetup({
         intentType: INTENT_APP_START,
         operation: new MinimalActivateOperation(),
@@ -845,41 +832,7 @@ describe("ViewModule Integration", () => {
         payload: {},
       } as AppStartIntent);
 
-      expect(viewManager.onLoadingChange).toHaveBeenCalled();
       expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 14b: app-start/activate → updateCodeServerPort called from context
-  // -------------------------------------------------------------------------
-  describe("app-start/activate (codeServerPort)", () => {
-    it("calls updateCodeServerPort when codeServerPort is set in context", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalActivateWithPortsOperation(9090),
-      });
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(viewManager.updateCodeServerPort).toHaveBeenCalledWith(9090);
-    });
-
-    it("does not call updateCodeServerPort when codeServerPort is null", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalActivateWithPortsOperation(null),
-      });
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(viewManager.updateCodeServerPort).not.toHaveBeenCalled();
     });
   });
 
@@ -924,58 +877,6 @@ describe("ViewModule Integration", () => {
       expect(layers.viewLayer.dispose).toHaveBeenCalled();
       expect(layers.windowLayer.dispose).toHaveBeenCalled();
       expect(layers.sessionLayer.dispose).toHaveBeenCalled();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 16: app-shutdown/stop → loadingChange cleanup called
-  // -------------------------------------------------------------------------
-  describe("app-shutdown/stop cleans up subscriptions", () => {
-    it("calls loading change unsubscribe during shutdown", async () => {
-      const cleanupFn = vi.fn();
-      const quitModule: IntentModule = {
-        name: "test",
-        hooks: {
-          [APP_SHUTDOWN_OPERATION_ID]: {
-            quit: { handler: async () => {} },
-          },
-        },
-      };
-
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-      const layers = createMockShellLayers();
-
-      // onLoadingChange returns our trackable cleanup
-      (viewManager.onLoadingChange as ReturnType<typeof vi.fn>).mockReturnValue(cleanupFn);
-
-      dispatcher.registerOperation(INTENT_APP_START, new MinimalActivateOperation());
-      dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: layers.viewLayer as unknown as ViewModuleDeps["viewLayer"],
-        windowLayer: layers.windowLayer as unknown as ViewModuleDeps["windowLayer"],
-        sessionLayer: layers.sessionLayer as unknown as ViewModuleDeps["sessionLayer"],
-      });
-
-      dispatcher.registerModule(module);
-      dispatcher.registerModule(quitModule);
-
-      // Start app (wires loading change callback)
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      // Shutdown (should call cleanup)
-      await dispatcher.dispatch({
-        type: INTENT_APP_SHUTDOWN,
-        payload: {},
-      } as AppShutdownIntent);
-
-      expect(cleanupFn).toHaveBeenCalled();
     });
   });
 

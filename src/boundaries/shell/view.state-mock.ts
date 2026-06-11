@@ -156,6 +156,11 @@ export interface ViewBoundaryMockState extends MockState {
    */
   triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void;
 
+  /**
+   * Get a read-only snapshot of a view's state for assertions.
+   */
+  getViewSnapshot(id: string): ViewStateSnapshot | undefined;
+
   snapshot(): Snapshot;
   toString(): string;
 }
@@ -543,7 +548,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
       // No-op in mock - tests can observe via $.snapshot if needed
     },
 
-    async capturePNG(handle: ViewHandle): Promise<Buffer | null> {
+    async capturePNG(handle: ViewHandle, _rect?: Rectangle): Promise<Buffer | null> {
       getView(handle); // Validate handle exists
       // Return a tiny non-empty buffer to simulate a successful capture in tests.
       return Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes

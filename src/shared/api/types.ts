@@ -216,6 +216,11 @@ export interface Workspace {
    */
   readonly metadata: Readonly<Record<string, string>>;
   readonly path: string;
+  /**
+   * code-server URL for embedding this workspace as an iframe.
+   * Absent for hibernated workspaces (no runtime) until they wake.
+   */
+  readonly url?: string;
 }
 
 /**
