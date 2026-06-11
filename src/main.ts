@@ -263,12 +263,12 @@ const iframesConfig = configService.register("experimental.iframes", {
 const busyDuringBackgroundShellConfig = configService.register(
   "experimental.busy-during-background-shell",
   {
-    default: false,
+    default: true,
     description:
       "Keep workspace status busy while the agent has a background shell " +
-      "running. true = every background shell; array of regexes (config.json " +
-      "only) = only shells whose command matches (e.g. a CI-wait script), so " +
-      "dev servers don't pin the workspace busy.",
+      "running. true = every background shell; false = never; array of " +
+      "regexes (config.json only) = only shells whose command matches " +
+      "(e.g. a CI-wait script), so dev servers don't pin the workspace busy.",
     ...configBusyDuringBackgroundShell(),
   }
 );
