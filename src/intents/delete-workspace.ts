@@ -39,6 +39,7 @@ import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-wo
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
+import { throwHookErrors, collectErrorMessages } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -181,20 +182,13 @@ interface MergedShutdown {
   readonly errors: readonly string[];
 }
 
-interface MergedRelease {
-  readonly errors: readonly string[];
-}
-
-interface MergedDelete {
+/** Shared shape for hook points that only report errors (release, delete, flush). */
+interface MergedErrors {
   readonly errors: readonly string[];
 }
 
 interface MergedDetect {
   readonly blockingProcesses?: readonly BlockingProcess[];
-  readonly errors: readonly string[];
-}
-
-interface MergedFlush {
   readonly errors: readonly string[];
 }
 
@@ -208,44 +202,18 @@ function mergeShutdown(
 ): MergedShutdown {
   let wasActive = false;
   let serverName: string | undefined;
-  const errors: string[] = [];
-
-  for (const e of collectErrors) errors.push(e.message);
   for (const r of results) {
     if (r.wasActive) wasActive = true;
     if (r.serverName && !serverName) serverName = r.serverName;
-    if (r.error) errors.push(r.error);
   }
-
-  return { wasActive, serverName, errors };
+  return { wasActive, serverName, errors: collectErrorMessages(results, collectErrors) };
 }
 
-function mergeRelease(
-  results: readonly ReleaseHookResult[],
+function mergeErrors(
+  results: readonly { readonly error?: string }[],
   collectErrors: readonly Error[]
-): MergedRelease {
-  const errors: string[] = [];
-
-  for (const e of collectErrors) errors.push(e.message);
-  for (const r of results) {
-    if (r.error) errors.push(r.error);
-  }
-
-  return { errors };
-}
-
-function mergeDelete(
-  results: readonly DeleteHookResult[],
-  collectErrors: readonly Error[]
-): MergedDelete {
-  const errors: string[] = [];
-
-  for (const e of collectErrors) errors.push(e.message);
-  for (const r of results) {
-    if (r.error) errors.push(r.error);
-  }
-
-  return { errors };
+): MergedErrors {
+  return { errors: collectErrorMessages(results, collectErrors) };
 }
 
 function mergeDetect(
@@ -253,32 +221,13 @@ function mergeDetect(
   collectErrors: readonly Error[]
 ): MergedDetect {
   let blockingProcesses: readonly BlockingProcess[] | undefined;
-  const errors: string[] = [];
-
-  for (const e of collectErrors) errors.push(e.message);
   for (const r of results) {
     if (r.blockingProcesses !== undefined) blockingProcesses = r.blockingProcesses;
-    if (r.error) errors.push(r.error);
   }
-
   return {
     ...(blockingProcesses !== undefined && { blockingProcesses }),
-    errors,
+    errors: collectErrorMessages(results, collectErrors),
   };
-}
-
-function mergeFlush(
-  results: readonly FlushHookResult[],
-  collectErrors: readonly Error[]
-): MergedFlush {
-  const errors: string[] = [];
-
-  for (const e of collectErrors) errors.push(e.message);
-  for (const r of results) {
-    if (r.error) errors.push(r.error);
-  }
-
-  return { errors };
 }
 
 // =============================================================================
@@ -293,10 +242,10 @@ type EmitFn = (event: DomainEvent) => Promise<void>;
 
 interface PipelineState {
   readonly shutdown?: MergedShutdown;
-  readonly release?: MergedRelease;
-  readonly del?: MergedDelete;
+  readonly release?: MergedErrors;
+  readonly del?: MergedErrors;
   readonly detect?: MergedDetect;
-  readonly flush?: MergedFlush;
+  readonly flush?: MergedErrors;
 }
 
 // =============================================================================
@@ -437,7 +386,7 @@ export class DeleteWorkspaceOperation implements Operation<
 
       let isDirty = false;
       let unmergedCommits = 0;
-      for (const e of preflightCollectErrors) throw e;
+      throwHookErrors(preflightCollectErrors, "workspace:delete preflight hooks failed");
       for (const r of preflightResults) {
         if (r.isDirty) isDirty = true;
         if (r.unmergedCommits !== undefined && r.unmergedCommits > unmergedCommits)
@@ -500,7 +449,7 @@ export class DeleteWorkspaceOperation implements Operation<
     // --- Release (CWD scan + kill) ---
     const { results: releaseResults, errors: releaseCollectErrors } =
       await ctx.hooks.collect<ReleaseHookResult>("release", pipelineCtx);
-    const release = mergeRelease(releaseResults, releaseCollectErrors);
+    const release = mergeErrors(releaseResults, releaseCollectErrors);
     this.emitPipelineProgress(
       emit,
       identity,
@@ -512,7 +461,7 @@ export class DeleteWorkspaceOperation implements Operation<
     );
 
     // --- Flush (kill provided PIDs from previous attempt) ---
-    let flush: MergedFlush | undefined;
+    let flush: MergedErrors | undefined;
     if (payload.blockingPids && payload.blockingPids.length > 0) {
       this.emitPipelineProgress(
         emit,
@@ -529,13 +478,13 @@ export class DeleteWorkspaceOperation implements Operation<
       };
       const { results: flushResults, errors: flushCollectErrors } =
         await ctx.hooks.collect<FlushHookResult>("flush", flushCtx);
-      flush = mergeFlush(flushResults, flushCollectErrors);
+      flush = mergeErrors(flushResults, flushCollectErrors);
     }
 
     // --- Delete ---
     const { results: deleteResults, errors: deleteCollectErrors } =
       await ctx.hooks.collect<DeleteHookResult>("delete", pipelineCtx);
-    const del = mergeDelete(deleteResults, deleteCollectErrors);
+    const del = mergeErrors(deleteResults, deleteCollectErrors);
 
     const deleteFailed = del.errors.length > 0;
     if (!deleteFailed) {

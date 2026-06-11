@@ -32,7 +32,7 @@ Concrete reference for the intent-based architecture. For conceptual overview an
 
 ### Intent and DomainEvent
 
-Source: `src/main/intents/infrastructure/types.ts`
+Source: `src/intents/lib/types.ts`
 
 ```typescript
 /**
@@ -69,7 +69,7 @@ export interface DomainEvent {
 
 ### DispatchFn, HookContext, HookHandler, HookResult, and ResolvedHooks
 
-Source: `src/main/intents/infrastructure/operation.ts`
+Source: `src/intents/lib/operation.ts`
 
 ```typescript
 /**
@@ -136,7 +136,7 @@ export interface ResolvedHooks {
 
 ### OperationContext and Operation
 
-Source: `src/main/intents/infrastructure/operation.ts`
+Source: `src/intents/lib/operation.ts`
 
 ```typescript
 /**
@@ -165,7 +165,7 @@ export interface Operation<I extends Intent = Intent, R = void> {
 
 ### HookDeclarations, EventDeclarations, and IntentModule
 
-Source: `src/main/intents/infrastructure/module.ts`
+Source: `src/intents/lib/module.ts`
 
 ```typescript
 /**
@@ -200,7 +200,7 @@ export interface IntentModule {
 
 ### IntentHandle, IntentInterceptor, and IDispatcher
 
-Source: `src/main/intents/infrastructure/dispatcher.ts`
+Source: `src/intents/lib/dispatcher.ts`
 
 ```typescript
 /**
@@ -271,9 +271,53 @@ Capabilities accumulate across handlers within a single `collect()` call and are
 
 ---
 
+## Hook Result Policies
+
+Source: `src/intents/lib/hook-helpers.ts`, `src/intents/lib/workspace-operation.ts`
+
+Operations apply a small set of shared policies to `collect()` results. Use these helpers instead of hand-rolling the loops:
+
+| Helper                 | Policy                                                                                                                                                                             |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `throwHookErrors`      | Standard guard for fatal hook points: a lone error is rethrown raw (its message reaches IPC/MCP callers), multiple errors aggregate in an `AggregateError` with the given label    |
+| `lastDefined`          | Last-write-wins extraction of one field across handler results (`null` is a valid value; only `undefined` means "not provided")                                                    |
+| `requireResult`        | Throws the given message when a required hook result is missing                                                                                                                    |
+| `mergeHookResults`     | Conflict-throwing field merge — handlers contribute disjoint field subsets; the same field from two handlers is an error (used by open-workspace, get-project-bases)               |
+| `collectErrorMessages` | Folds thrown handler errors plus per-result `error` strings into one message list for best-effort pipelines that report via progress events instead of throwing (delete-workspace) |
+
+Best-effort hook points (app-shutdown `stop`/`quit`, app-resume `resume`, hibernate/wake teardown, switch-workspace auto-select) intentionally ignore or collect errors — that is documented in each operation header, not a missing guard.
+
+### WorkspaceHookOperation
+
+Workspace-scoped operations that run a single hook point share one skeleton: resolve workspace → optionally resolve project → collect hook → `throwHookErrors` → extract result → optionally emit a domain event. `WorkspaceHookOperation` (in `src/intents/lib/workspace-operation.ts`) implements it; concrete operations subclass with a spec:
+
+```typescript
+export class GetMetadataOperation extends WorkspaceHookOperation<
+  GetMetadataIntent,
+  GetMetadataHookResult,
+  Readonly<Record<string, string>>
+> {
+  constructor() {
+    super(GET_METADATA_OPERATION_ID, {
+      hookPoint: "get",
+      errorLabel: "get-metadata get hooks failed",
+      extract: (results) =>
+        requireResult(
+          lastDefined(results, (r) => r.metadata),
+          "Get metadata hook did not provide metadata result"
+        ),
+    });
+  }
+}
+```
+
+Spec options: `resolveProject` (dispatch `project:resolve` — only needed when the event payload wants `projectId`) and `onSuccess` (build a domain event from `{ intent, resolved, project, result }`). Subclasses: get-agent-session, get-metadata, restart-agent, set-metadata, vscode-command, vscode-show-message.
+
+---
+
 ## Idempotency
 
-Source: `src/main/intents/infrastructure/idempotency-module.ts`
+Source: `src/intents/lib/idempotency-module.ts`
 
 The idempotency module prevents duplicate intent dispatches using a single interceptor that covers multiple rules.
 
@@ -379,29 +423,43 @@ Non-IPC consumers (MCP Server, Plugin API) dispatch intents directly through the
 
 ## Operations Reference
 
-All operations use the intent dispatcher (`Dispatcher` + `HookRegistry`). Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
+All operations use the intent dispatcher. Intents are dispatched through operations that run hook points, with hook modules contributing behavior. This pattern decouples orchestration from implementation.
 
-| Operation              | Intent Type              | Hook Points                                              | Domain Event        |
-| ---------------------- | ------------------------ | -------------------------------------------------------- | ------------------- |
-| `set-metadata`         | `workspace:setMetadata`  | `set`                                                    | --                  |
-| `get-metadata`         | `workspace:getMetadata`  | `get`                                                    | --                  |
-| `get-workspace-status` | `workspace:getStatus`    | `get`                                                    | --                  |
-| `get-agent-session`    | `workspace:getSession`   | `get`                                                    | --                  |
-| `restart-agent`        | `workspace:restartAgent` | `restart`                                                | --                  |
-| `set-mode`             | `ui:setMode`             | `set`                                                    | --                  |
-| `get-active-workspace` | `ui:getActiveWorkspace`  | `get`                                                    | --                  |
-| `create-workspace`     | `workspace:create`       | `create`, `setup`, `finalize`                            | `workspace:created` |
-| `delete-workspace`     | `workspace:delete`       | `shutdown`, `release`, `delete`                          | `workspace:deleted` |
-| `open-project`         | `project:open`           | `open`                                                   | `project:opened`    |
-| `close-project`        | `project:close`          | `close`                                                  | `project:closed`    |
-| `app-start`            | `app:start`              | `before-ready`, `init`, `show-ui`, `check-deps`, `start` | --                  |
-| `app-shutdown`         | `app:shutdown`           | `stop`                                                   | --                  |
-| `app-setup`            | `app:setup`              | `setup`                                                  | --                  |
-| `app-resume`           | `app:resume`             | `resume`                                                 | --                  |
+| Operation              | Intent Type               | Hook Points                                                                                      | Domain Events                                                                 |
+| ---------------------- | ------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `set-metadata`         | `workspace:set-metadata`  | `set`                                                                                            | `workspace:metadata-changed`                                                  |
+| `get-metadata`         | `workspace:get-metadata`  | `get`                                                                                            | --                                                                            |
+| `get-workspace-status` | `workspace:get-status`    | `get`                                                                                            | --                                                                            |
+| `get-agent-session`    | `agent:get-session`       | `get`                                                                                            | --                                                                            |
+| `restart-agent`        | `agent:restart`           | `restart`                                                                                        | `agent:restarted`                                                             |
+| `agent-lifecycle`      | `agent:lifecycle`         | `lifecycle`                                                                                      | --                                                                            |
+| `update-agent-status`  | `agent:update-status`     | --                                                                                               | `agent:status-updated`                                                        |
+| `set-mode`             | `ui:set-mode`             | `set`                                                                                            | `ui:mode-changed`                                                             |
+| `get-active-workspace` | `ui:get-active-workspace` | `get`                                                                                            | --                                                                            |
+| `vscode-command`       | `vscode:command`          | `execute`                                                                                        | --                                                                            |
+| `vscode-show-message`  | `vscode:show-message`     | `show`                                                                                           | --                                                                            |
+| `resolve-workspace`    | `workspace:resolve`       | `resolve`                                                                                        | --                                                                            |
+| `resolve-project`      | `project:resolve`         | `resolve`                                                                                        | --                                                                            |
+| `open-workspace`       | `workspace:open`          | `create`, `setup`, `finalize`                                                                    | `workspace:loading`, `workspace:created`, `workspace:create-failed`           |
+| `delete-workspace`     | `workspace:delete`        | `preflight`, `shutdown`, `release`, `flush`, `delete`, `detect`                                  | `workspace:deleted`, `workspace:delete-failed`, `workspace:deletion-progress` |
+| `hibernate-workspace`  | `workspace:hibernate`     | `capture`, `shutdown`, `release`                                                                 | `workspace:hibernated`, `workspace:hibernate-failed`                          |
+| `wake-workspace`       | `workspace:wake`          | `cleanup`                                                                                        | `workspace:woken`, `workspace:wake-failed`                                    |
+| `switch-workspace`     | `workspace:switch`        | `activate`, `find-candidates`, `select-next`                                                     | `workspace:switched`                                                          |
+| `open-project`         | `project:open`            | `select-folder`, `prepare`, `resolve`, `register`, `discover`                                    | `clone:progress`, `project:opened`, `project:open-failed`                     |
+| `close-project`        | `project:close`           | `resolve`, `close`                                                                               | `project:closed`, `workspace:switched(null)`                                  |
+| `list-projects`        | `project:list`            | `list-projects`, `list-workspaces`                                                               | --                                                                            |
+| `get-project-bases`    | `project:get-bases`       | `list`, `refresh`                                                                                | `bases:updated`                                                               |
+| `app-start`            | `app:start`               | `before-ready`, `init`, `show-ui`, `check-deps`, `start`                                         | --                                                                            |
+| `app-ready`            | `app:ready`               | `available-agents`, `load-projects`                                                              | `app:started`                                                                 |
+| `app-shutdown`         | `app:shutdown`            | `stop`, `quit`                                                                                   | --                                                                            |
+| `setup`                | `app:setup`               | `show-ui`, `register-agents`, `agent-selection`, `save-agent`, `binary`, `extensions`, `hide-ui` | `setup:progress`, `setup:error`                                               |
+| `app-resume`           | `app:resume`              | `resume`                                                                                         | `app:resumed`                                                                 |
+| `shortcut-key`         | `shortcut:key`            | --                                                                                               | `shortcut:key-pressed`                                                        |
+| `submit-bug-report`    | `bug-report:submit`       | --                                                                                               | `bug-report:submitted`                                                        |
 
 IPC handlers in `UiIpcModule` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (UiIpcModule, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
 
-The `create-workspace` operation uses these hook modules:
+The `open-workspace` operation uses these hook modules:
 
 - **create**: WorktreeModule (creates git worktree, or populates context from `existingWorkspace` data when activating discovered workspaces)
 - **setup**: KeepFilesModule (copies .keepfiles), AgentModule (starts agent server) -- both best-effort with internal try/catch
@@ -415,11 +473,9 @@ The `delete-workspace` operation uses these hook modules:
 
 The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), UiIpcModule (emits `workspace:removed` IPC event), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
 
-The `open-project` operation uses these hook modules:
+The `open-project` operation runs `select-folder` (when no path/URL given), `prepare` (e.g. git init), then `resolve` (clone if URL, validate git), `register` (generate ID, store state, persist), and `discover` (find existing workspaces).
 
-- **open**: ProjectResolverModule (clone if URL, validate git, create provider), ProjectDiscoveryModule (discover workspaces, orphan cleanup), ProjectRegistryModule (generate ID, load config, register state, persist)
-
-After the open hook, the operation dispatches `workspace:create` per discovered workspace (best-effort, continues on failure), sets the first workspace as active, and emits `project:opened`. A `ProjectOpenIdempotencyInterceptor` prevents concurrent/duplicate opens of the same project path.
+After the hooks, the operation dispatches `workspace:open` per discovered workspace (best-effort, continues on failure), sets the first workspace as active, and emits `project:opened`. A per-key idempotency rule prevents concurrent/duplicate opens of the same project path.
 
 The `close-project` operation uses these hook modules:
 

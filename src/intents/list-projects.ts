@@ -14,6 +14,7 @@ import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { Project, ProjectId } from "../shared/api/types";
 import type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 /** Re-exported for use by operation integration tests (avoids direct service import). */
 export type { Workspace as InternalWorkspace } from "../boundaries/platform/git-types";
@@ -71,24 +72,14 @@ export class ListProjectsOperation implements Operation<ListProjectsIntent, Proj
       "list-projects",
       hookCtx
     );
-    if (projectsResult.errors.length > 0) {
-      if (projectsResult.errors.length === 1) {
-        throw projectsResult.errors[0]!;
-      }
-      throw new AggregateError(projectsResult.errors, "Multiple errors listing projects");
-    }
+    throwHookErrors(projectsResult.errors, "Multiple errors listing projects");
 
     // Collect workspace data from "list-workspaces" hook
     const workspacesResult = await ctx.hooks.collect<ListWorkspacesHookResult>(
       "list-workspaces",
       hookCtx
     );
-    if (workspacesResult.errors.length > 0) {
-      if (workspacesResult.errors.length === 1) {
-        throw workspacesResult.errors[0]!;
-      }
-      throw new AggregateError(workspacesResult.errors, "Multiple errors listing workspaces");
-    }
+    throwHookErrors(workspacesResult.errors, "Multiple errors listing workspaces");
 
     // Build workspace lookup by projectPath
     const workspaceMap = new Map<string, InternalWorkspace[]>();

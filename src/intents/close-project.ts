@@ -18,6 +18,7 @@ import type { ProjectId } from "../shared/api/types";
 import { INTENT_DELETE_WORKSPACE, type DeleteWorkspaceIntent } from "./delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -105,18 +106,12 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
     };
     const { results: resolveResults, errors: resolveErrors } =
       await ctx.hooks.collect<CloseResolveHookResult>("resolve", hookCtx);
-    if (resolveErrors.length > 0) {
-      throw resolveErrors[0]!;
-    }
+    throwHookErrors(resolveErrors, "close-project resolve hooks failed");
 
     // Merge resolve results — last-write-wins
-    let remoteUrl: string | undefined;
     const removeLocalRepo = payload.removeLocalRepo ?? false;
-    let workspaces: ReadonlyArray<{ path: string }> = [];
-    for (const result of resolveResults) {
-      if (result.remoteUrl !== undefined) remoteUrl = result.remoteUrl;
-      if (result.workspaces !== undefined) workspaces = result.workspaces;
-    }
+    const remoteUrl = lastDefined(resolveResults, (r) => r.remoteUrl);
+    const workspaces = lastDefined(resolveResults, (r) => r.workspaces) ?? [];
 
     // 3. Dispatch workspace:delete per workspace (removeWorktree=false, skipSwitch=true)
     for (const workspace of workspaces) {
@@ -148,15 +143,10 @@ export class CloseProjectOperation implements Operation<CloseProjectIntent, void
       "close",
       closeHookInput
     );
-    if (closeErrors.length > 0) {
-      throw new AggregateError(closeErrors, "close-project close hooks failed");
-    }
+    throwHookErrors(closeErrors, "close-project close hooks failed");
 
     // Merge close results — last-write-wins for otherProjectsExist
-    let otherProjectsExist: boolean | undefined;
-    for (const result of closeResults) {
-      if (result.otherProjectsExist !== undefined) otherProjectsExist = result.otherProjectsExist;
-    }
+    const otherProjectsExist = lastDefined(closeResults, (r) => r.otherProjectsExist);
 
     // 5. Emit workspace:switched(null) if no other projects remain
     if (otherProjectsExist === false) {

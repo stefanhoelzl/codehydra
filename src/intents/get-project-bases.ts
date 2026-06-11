@@ -20,6 +20,7 @@ import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { ProjectId, BaseInfo } from "../shared/api/types";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { throwHookErrors, mergeHookResults } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -88,22 +89,6 @@ export interface RefreshBasesHookInput extends HookContext {
 
 export const GET_PROJECT_BASES_OPERATION_ID = "get-project-bases";
 
-/** Merge hook results field-by-field. Throws if two handlers contribute the same field. */
-function mergeHookResults<T extends object>(results: readonly T[], hookPoint: string): Partial<T> {
-  const merged: Record<string, unknown> = {};
-  for (const result of results) {
-    for (const [key, value] of Object.entries(result)) {
-      if (value !== undefined) {
-        if (key in merged) {
-          throw new Error(`${hookPoint} hook conflict: "${key}" provided by multiple handlers`);
-        }
-        merged[key] = value;
-      }
-    }
-  }
-  return merged as Partial<T>;
-}
-
 export class GetProjectBasesOperation implements Operation<
   GetProjectBasesIntent,
   GetProjectBasesResult
@@ -124,7 +109,7 @@ export class GetProjectBasesOperation implements Operation<
     const { results: listResults, errors: listErrors } =
       await ctx.hooks.collect<ListBasesHookResult>("list", listCtx);
 
-    if (listErrors.length > 0) throw listErrors[0]!;
+    throwHookErrors(listErrors, "project:get-bases list hooks failed");
 
     const listMerged = mergeHookResults(listResults, "list");
     const bases = listMerged.bases ?? [];

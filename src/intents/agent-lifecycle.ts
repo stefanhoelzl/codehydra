@@ -16,6 +16,7 @@
 import type { Intent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { AgentLifecycleEvent } from "../shared/plugin-protocol";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -61,11 +62,6 @@ export class AgentLifecycleOperation implements Operation<AgentLifecycleIntent, 
       event: payload.event,
     };
     const { errors } = await ctx.hooks.collect<void>("lifecycle", lifecycleCtx);
-    if (errors.length === 1) {
-      throw errors[0]!;
-    }
-    if (errors.length > 1) {
-      throw new AggregateError(errors, "agent-lifecycle lifecycle hooks failed");
-    }
+    throwHookErrors(errors, "agent-lifecycle lifecycle hooks failed");
   }
 }

@@ -592,8 +592,10 @@ describe("AppStart Operation", () => {
         createCodeServerModule(state),
       ]);
 
+      // A lone failing handler surfaces its raw error (multiple would aggregate
+      // under "check-deps hooks failed").
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
-        "check-deps hooks failed"
+        "Binary preflight failed"
       );
       expect(state.codeServerStarted).toBe(false);
     });

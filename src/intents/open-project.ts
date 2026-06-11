@@ -28,6 +28,7 @@ import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./ge
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
 import { toIpcWorkspaces } from "../utils/workspace-conversion";
 import { Path } from "../utils/path/path";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -182,12 +183,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       const selectCtx: HookContext = { intent };
       const { results: selectResults, errors: selectErrors } =
         await ctx.hooks.collect<SelectFolderHookResult>("select-folder", selectCtx);
-      if (selectErrors.length === 1) {
-        throw selectErrors[0]!;
-      }
-      if (selectErrors.length > 1) {
-        throw new AggregateError(selectErrors, "project:open select-folder hooks failed");
-      }
+      throwHookErrors(selectErrors, "project:open select-folder hooks failed");
       let folderPath: string | null = null;
       for (const r of selectResults) {
         if (r.folderPath) folderPath = r.folderPath;
@@ -208,12 +204,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       const prepareCtx: HookContext = { intent: effectiveIntent };
       const { results: prepareResults, errors: prepareErrors } =
         await ctx.hooks.collect<PrepareHookResult>("prepare", prepareCtx);
-      if (prepareErrors.length === 1) {
-        throw prepareErrors[0]!;
-      }
-      if (prepareErrors.length > 1) {
-        throw new AggregateError(prepareErrors, "project:open prepare hooks failed");
-      }
+      throwHookErrors(prepareErrors, "project:open prepare hooks failed");
       for (const r of prepareResults) {
         if (r.canceled) return null;
       }
@@ -233,12 +224,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       const resolveCtx: ResolveHookInput = { intent: effectiveIntent, report };
       const { results: resolveResults, errors: resolveErrors } =
         await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
-      if (resolveErrors.length === 1) {
-        throw resolveErrors[0]!;
-      }
-      if (resolveErrors.length > 1) {
-        throw new AggregateError(resolveErrors, "project:open resolve hooks failed");
-      }
+      throwHookErrors(resolveErrors, "project:open resolve hooks failed");
       let projectPath: string | undefined;
       let resolvedRemoteUrl: string | undefined;
       let alreadyOpen = false;
@@ -259,12 +245,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       };
       const { results: registerResults, errors: registerErrors } =
         await ctx.hooks.collect<RegisterHookResult>("register", registerCtx);
-      if (registerErrors.length === 1) {
-        throw registerErrors[0]!;
-      }
-      if (registerErrors.length > 1) {
-        throw new AggregateError(registerErrors, "project:open register hooks failed");
-      }
+      throwHookErrors(registerErrors, "project:open register hooks failed");
       let projectId: ProjectId | undefined;
       let name: string | undefined;
       for (const r of registerResults) {
@@ -280,12 +261,7 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
       const discoverCtx: DiscoverHookInput = { intent: effectiveIntent, projectPath };
       const { results: discoverResults, errors: discoverErrors } =
         await ctx.hooks.collect<DiscoverHookResult>("discover", discoverCtx);
-      if (discoverErrors.length === 1) {
-        throw discoverErrors[0]!;
-      }
-      if (discoverErrors.length > 1) {
-        throw new AggregateError(discoverErrors, "project:open discover hooks failed");
-      }
+      throwHookErrors(discoverErrors, "project:open discover hooks failed");
       const workspaces: InternalWorkspace[] = [];
       let defaultBaseBranch: string | undefined;
       for (const r of discoverResults) {

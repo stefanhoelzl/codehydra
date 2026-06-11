@@ -19,6 +19,7 @@ import { Path } from "../utils/path/path";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -97,7 +98,7 @@ export class AppReadyOperation implements Operation<AppReadyIntent, AppReadyResu
       ctx.hooks.collect<AvailableAgentsResult>("available-agents", hookCtx),
       ctx.hooks.collect<LoadProjectsResult>("load-projects", hookCtx),
     ]);
-    if (projectsResult.errors.length > 0) throw projectsResult.errors[0]!;
+    throwHookErrors(projectsResult.errors, "app:ready load-projects hooks failed");
     // available-agents errors are best-effort: an agent that fails preflight just
     // doesn't appear in the list.
 

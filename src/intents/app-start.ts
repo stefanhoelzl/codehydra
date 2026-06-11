@@ -59,6 +59,7 @@ export interface ExtensionInstallEntry {
   readonly vsixPath: string;
 }
 import { INTENT_SETUP } from "./setup";
+import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -154,7 +155,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // Script declarations, noAsar, data paths, electron flags. All independent.
     const { results: configResults, errors: configErrors } =
       await ctx.hooks.collect<ConfigureResult>("before-ready", hookCtx);
-    if (configErrors.length > 0) throw configErrors[0]!;
+    throwHookErrors(configErrors, "app:start before-ready hooks failed");
     const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
 
     // --- Hook 2: "init" ---
@@ -166,7 +167,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       "init",
       initCtx
     );
-    if (initErrors.length > 0) throw initErrors[0]!;
+    throwHookErrors(initErrors, "app:start init hooks failed");
 
     // Extract extensionRequirements from init results
     const extensionRequirements: ExtensionRequirement[] = [];
@@ -180,13 +181,8 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // Hook 3: "show-ui" -- Show starting screen, capture waitForRetry
     const { results: showUiResults, errors: showUiErrors } =
       await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
-    if (showUiErrors.length > 0) {
-      throw showUiErrors[0]!;
-    }
-    let waitForRetry: (() => Promise<void>) | undefined;
-    for (const result of showUiResults) {
-      if (result.waitForRetry !== undefined) waitForRetry = result.waitForRetry;
-    }
+    throwHookErrors(showUiErrors, "app:start show-ui hooks failed");
+    const waitForRetry = lastDefined(showUiResults, (r) => r.waitForRetry);
 
     // Hook 4: "check-deps" (collect, isolated contexts)
     let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
@@ -234,9 +230,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // read from ctx.capabilities. Capability-based ordering replaces the former
     // separate "activate" hook point.
     const { errors: startErrors } = await ctx.hooks.collect<void>("start", hookCtx);
-    if (startErrors.length > 0) {
-      throw startErrors[0]!;
-    }
+    throwHookErrors(startErrors, "app:start start hooks failed");
   }
 
   /**
@@ -258,9 +252,7 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       "check-deps",
       depsCtx
     );
-    if (depsErrors.length > 0) {
-      throw new AggregateError(depsErrors, "check-deps hooks failed");
-    }
+    throwHookErrors(depsErrors, "check-deps hooks failed");
 
     // Merge dep results (concatenate arrays from all handlers)
     const missingBinaries: BinaryType[] = [];

@@ -10,8 +10,9 @@
  */
 
 import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import type { HookContext } from "./lib/operation";
+import { WorkspaceHookOperation } from "./lib/workspace-operation";
+import { lastDefined, requireResult } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -53,43 +54,20 @@ export interface GetMetadataHookResult {
 // Operation
 // =============================================================================
 
-export class GetMetadataOperation implements Operation<
+export class GetMetadataOperation extends WorkspaceHookOperation<
   GetMetadataIntent,
+  GetMetadataHookResult,
   Readonly<Record<string, string>>
 > {
-  readonly id = GET_METADATA_OPERATION_ID;
-
-  async execute(
-    ctx: OperationContext<GetMetadataIntent>
-  ): Promise<Readonly<Record<string, string>>> {
-    const { payload } = ctx.intent;
-
-    // 1. Dispatch shared workspace resolution
-    await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
-
-    // 2. get — handler performs the actual provider read
-    const getCtx: GetHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results, errors } = await ctx.hooks.collect<GetMetadataHookResult>("get", getCtx);
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
-
-    // Merge results — last-write-wins for metadata
-    let metadata: Readonly<Record<string, string>> | undefined;
-    for (const result of results) {
-      if (result.metadata !== undefined) metadata = result.metadata;
-    }
-
-    if (metadata === undefined) {
-      throw new Error("Get metadata hook did not provide metadata result");
-    }
-
-    return metadata;
+  constructor() {
+    super(GET_METADATA_OPERATION_ID, {
+      hookPoint: "get",
+      errorLabel: "get-metadata get hooks failed",
+      extract: (results) =>
+        requireResult(
+          lastDefined(results, (r) => r.metadata),
+          "Get metadata hook did not provide metadata result"
+        ),
+    });
   }
 }
