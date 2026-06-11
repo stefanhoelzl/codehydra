@@ -7,6 +7,10 @@ import {
   validateSetMetadataRequest,
   validateExecuteCommandRequest,
   validateOpenSystemPathRequest,
+  validateWorkspaceCreateRequest,
+  validateDeleteWorkspaceRequest,
+  validateGetWorkspaceStatusRequest,
+  validateAgentLifecycleRequest,
   validateLogRequest,
   COMMAND_TIMEOUT_MS,
   type ServerToClientEvents,
@@ -68,7 +72,7 @@ describe("validateSetMetadataRequest", () => {
 
     it("rejects array payload", () => {
       const result = validateSetMetadataRequest([]);
-      expect(result).toEqual({ valid: false, error: "Missing required field: key" });
+      expect(result).toEqual({ valid: false, error: "Request must be an object" });
     });
   });
 
@@ -345,6 +349,192 @@ describe("validateOpenSystemPathRequest", () => {
   });
 });
 
+describe("validateWorkspaceCreateRequest", () => {
+  describe("valid requests", () => {
+    it("accepts name and base", () => {
+      const result = validateWorkspaceCreateRequest({ name: "feature-x", base: "main" });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts string initialPrompt", () => {
+      const result = validateWorkspaceCreateRequest({
+        name: "feature-x",
+        base: "main",
+        initialPrompt: "Implement the feature",
+      });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts whitespace-only initialPrompt string (no trim, by design)", () => {
+      const result = validateWorkspaceCreateRequest({
+        name: "feature-x",
+        base: "main",
+        initialPrompt: "   ",
+      });
+      expect(result).toEqual({ valid: true });
+    });
+
+    it("accepts initialPrompt object with agent and model", () => {
+      const result = validateWorkspaceCreateRequest({
+        name: "feature-x",
+        base: "main",
+        initialPrompt: {
+          prompt: "Implement the feature",
+          agent: "build",
+          model: { providerID: "anthropic", modelID: "claude-sonnet" },
+        },
+        stealFocus: false,
+      });
+      expect(result).toEqual({ valid: true });
+    });
+  });
+
+  describe("invalid requests", () => {
+    it("rejects non-object payload", () => {
+      expect(validateWorkspaceCreateRequest(null)).toEqual({
+        valid: false,
+        error: "Request must be an object",
+      });
+    });
+
+    it("rejects missing name", () => {
+      const result = validateWorkspaceCreateRequest({ base: "main" });
+      expect(result).toEqual({ valid: false, error: "Missing required field: name" });
+    });
+
+    it("rejects empty base", () => {
+      const result = validateWorkspaceCreateRequest({ name: "feature-x", base: "  " });
+      expect(result).toEqual({ valid: false, error: "Field 'base' cannot be empty" });
+    });
+
+    it("rejects empty initialPrompt string", () => {
+      const result = validateWorkspaceCreateRequest({
+        name: "feature-x",
+        base: "main",
+        initialPrompt: "",
+      });
+      expect(result).toEqual({
+        valid: false,
+        error: "Field 'initialPrompt' must be a non-empty string or a prompt object",
+      });
+    });
+
+    it("rejects initialPrompt object without prompt", () => {
+      const result = validateWorkspaceCreateRequest({
+        name: "feature-x",
+        base: "main",
+        initialPrompt: { agent: "build" },
+      });
+      expect(result).toEqual({
+        valid: false,
+        error: "Field 'initialPrompt' must be a non-empty string or a prompt object",
+      });
+    });
+
+    it("rejects malformed initialPrompt model", () => {
+      const result = validateWorkspaceCreateRequest({
+        name: "feature-x",
+        base: "main",
+        initialPrompt: { prompt: "Implement", model: { providerID: "anthropic" } },
+      });
+      expect(result).toEqual({
+        valid: false,
+        error: "Field 'initialPrompt' must be a non-empty string or a prompt object",
+      });
+    });
+
+    it("rejects non-boolean stealFocus", () => {
+      const result = validateWorkspaceCreateRequest({
+        name: "feature-x",
+        base: "main",
+        stealFocus: "yes",
+      });
+      expect(result).toEqual({ valid: false, error: "Field 'stealFocus' must be a boolean" });
+    });
+  });
+});
+
+describe("validateDeleteWorkspaceRequest", () => {
+  it("normalizes undefined and null to an empty request", () => {
+    expect(validateDeleteWorkspaceRequest(undefined)).toEqual({ valid: true, request: {} });
+    expect(validateDeleteWorkspaceRequest(null)).toEqual({ valid: true, request: {} });
+  });
+
+  it("passes keepBranch through", () => {
+    expect(validateDeleteWorkspaceRequest({ keepBranch: true })).toEqual({
+      valid: true,
+      request: { keepBranch: true },
+    });
+  });
+
+  it("rejects non-boolean keepBranch", () => {
+    expect(validateDeleteWorkspaceRequest({ keepBranch: "yes" })).toEqual({
+      valid: false,
+      error: "Field 'keepBranch' must be a boolean",
+    });
+  });
+
+  it("rejects non-object payload", () => {
+    expect(validateDeleteWorkspaceRequest("delete")).toEqual({
+      valid: false,
+      error: "Request must be an object",
+    });
+  });
+});
+
+describe("validateGetWorkspaceStatusRequest", () => {
+  it("normalizes undefined and null to an empty request", () => {
+    expect(validateGetWorkspaceStatusRequest(undefined)).toEqual({ valid: true, request: {} });
+    expect(validateGetWorkspaceStatusRequest(null)).toEqual({ valid: true, request: {} });
+  });
+
+  it("passes refresh through and strips explicit undefined", () => {
+    expect(validateGetWorkspaceStatusRequest({ refresh: true })).toEqual({
+      valid: true,
+      request: { refresh: true },
+    });
+    expect(validateGetWorkspaceStatusRequest({ refresh: undefined })).toEqual({
+      valid: true,
+      request: {},
+    });
+  });
+
+  it("rejects non-boolean refresh", () => {
+    expect(validateGetWorkspaceStatusRequest({ refresh: 1 })).toEqual({
+      valid: false,
+      error: "Field 'refresh' must be a boolean",
+    });
+  });
+});
+
+describe("validateAgentLifecycleRequest", () => {
+  it("accepts open and close events", () => {
+    expect(validateAgentLifecycleRequest({ event: "open" })).toEqual({ valid: true });
+    expect(validateAgentLifecycleRequest({ event: "close" })).toEqual({ valid: true });
+  });
+
+  it("rejects unknown events with the received value", () => {
+    expect(validateAgentLifecycleRequest({ event: "pause" })).toEqual({
+      valid: false,
+      error: "Invalid agent lifecycle event: pause",
+    });
+  });
+
+  it("rejects missing event", () => {
+    expect(validateAgentLifecycleRequest({})).toEqual({
+      valid: false,
+      error: "Missing required field: event",
+    });
+  });
+
+  it("rejects non-object payload", () => {
+    expect(validateAgentLifecycleRequest(null)).toEqual({
+      valid: false,
+      error: "Request must be an object",
+    });
+  });
+});
+
 describe("COMMAND_TIMEOUT_MS constant", () => {
   it("exports default timeout of 10 seconds", () => {
     expect(COMMAND_TIMEOUT_MS).toBe(10_000);
@@ -442,7 +632,7 @@ describe("validateLogRequest", () => {
 
     it("rejects non-string level", () => {
       const result = validateLogRequest({ level: 123, message: "test" });
-      expect(result).toEqual({ valid: false, error: "Field 'level' must be a string" });
+      expect(result).toEqual({ valid: false, error: "Invalid log level: 123" });
     });
   });
 
@@ -479,9 +669,10 @@ describe("validateLogRequest", () => {
         message: "test",
         context: { fn: () => {} },
       });
-      expect(result.valid).toBe(false);
-      expect((result as { error: string }).error).toContain("Invalid context value type");
-      expect((result as { error: string }).error).toContain("function");
+      expect(result).toEqual({
+        valid: false,
+        error: "Field 'context.fn' must be a string, number, boolean, or null",
+      });
     });
 
     it("rejects invalid context value (nested object)", () => {
@@ -490,9 +681,10 @@ describe("validateLogRequest", () => {
         message: "test",
         context: { nested: { deep: 1 } },
       });
-      expect(result.valid).toBe(false);
-      expect((result as { error: string }).error).toContain("Invalid context value type");
-      expect((result as { error: string }).error).toContain("object");
+      expect(result).toEqual({
+        valid: false,
+        error: "Field 'context.nested' must be a string, number, boolean, or null",
+      });
     });
 
     it("rejects invalid context value (array)", () => {
@@ -501,9 +693,10 @@ describe("validateLogRequest", () => {
         message: "test",
         context: { arr: [1, 2] },
       });
-      expect(result.valid).toBe(false);
-      expect((result as { error: string }).error).toContain("Invalid context value type");
-      expect((result as { error: string }).error).toContain("array");
+      expect(result).toEqual({
+        valid: false,
+        error: "Field 'context.arr' must be a string, number, boolean, or null",
+      });
     });
   });
 
