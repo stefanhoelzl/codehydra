@@ -467,7 +467,7 @@ Dispatcher delivers to subscribers
 
 The `workspace:switched` event is emitted through the intent dispatcher via `SwitchWorkspaceOperation`:
 
-- `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace, calls `ViewManager.setActiveWorkspace`) then emits `workspace:switched` via `ctx.emit()`
+- `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace; view-module records the new active surface) then emits `workspace:switched` via `ctx.emit()` — the renderer swaps the visible workspace iframe when the event lands
 - Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `OpenWorkspaceOperation` dispatches after creating a workspace)
 - Null deactivation (delete last workspace, close last project) emits `workspace:switched(null)` directly via `ctx.emit()` without going through the intent
 - `UiIpcModule` subscribes to `workspace:switched` and forwards to the renderer via `deps.sendToUI()`
