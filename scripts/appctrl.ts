@@ -6,7 +6,9 @@
  *
  * Architecture: Playwright Electron
  * - _electron.launch() manages process lifecycle, page access, and dialog mocking
- * - electronApp.context().pages() exposes all views (UI + WebContentsViews)
+ * - The app has a single WebContentsView (the UI page); workspaces are
+ *   code-server iframes inside it. Workspace targeting resolves a Playwright
+ *   Frame within the UI page (OOPIFs are fully scriptable through CDP).
  *
  * Usage:
  *   Registered in .mcp.json — agents get the tools automatically.
@@ -16,7 +18,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { _electron, type Page, type ElectronApplication } from "playwright";
+import { _electron, type Frame, type Page, type ElectronApplication } from "playwright";
 import { readFile, readdir, stat, access } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -108,34 +110,84 @@ function killAppSync(): void {
   consoleBuffer.length = 0;
 }
 
-async function findPage(target: string = "workspace"): Promise<Page> {
+function uiPage(): Page {
   requireRunning();
-  const pages = electronApp!.context().pages();
+  const page = electronApp!
+    .context()
+    .pages()
+    .find((p) => p.url().startsWith("file://"));
+  if (!page) throw new Error("UI view not found");
+  return page;
+}
+
+function isWorkspaceUrl(url: string): boolean {
+  return url.includes("127.0.0.1") && (url.includes("folder=") || url.includes("workspace="));
+}
+
+/** True if the frame's <iframe> element carries the .active class. */
+async function isActiveFrame(frame: Frame): Promise<boolean> {
+  try {
+    const el = await frame.frameElement();
+    const active = await el.evaluate((node) => (node as Element).classList.contains("active"));
+    await el.dispose();
+    return active;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolved interaction target. The app has one page (the UI); workspaces are
+ * code-server iframes inside it, addressed as Playwright Frames.
+ */
+interface ResolvedTarget {
+  /** The UI page (host of all frames). Keyboard input is page-level. */
+  page: Page;
+  /** Frame to run selectors/evaluate in. The UI's main frame for target "ui". */
+  frame: Frame;
+  /** True when the target is a workspace iframe (not the UI main frame). */
+  isWorkspaceFrame: boolean;
+}
+
+async function findTarget(target: string = "workspace"): Promise<ResolvedTarget> {
+  const page = uiPage();
 
   if (target === "ui") {
-    const page = pages.find((p) => p.url().startsWith("file://"));
-    if (!page) throw new Error("UI view not found");
-    return page;
+    return { page, frame: page.mainFrame(), isWorkspaceFrame: false };
   }
 
   if (target === "workspace") {
-    const workspaces = pages.filter(
-      (p) =>
-        p.url().includes("127.0.0.1") &&
-        (p.url().includes("folder=") || p.url().includes("workspace="))
-    );
-    if (workspaces.length === 0) throw new Error("No workspace views found");
-    // Prefer focused page
-    for (const p of workspaces) {
-      if (await p.evaluate(() => document.hasFocus())) return p;
+    const frames = page.frames().filter((f) => isWorkspaceUrl(f.url()));
+    if (frames.length === 0) throw new Error("No workspace frames found");
+    // Prefer the visible workspace (its <iframe> has the .active class)
+    for (const f of frames) {
+      if (await isActiveFrame(f)) return { page, frame: f, isWorkspaceFrame: true };
     }
-    return workspaces[0]!;
+    return { page, frame: frames[0]!, isWorkspaceFrame: true };
   }
 
-  // URL substring match
-  const page = pages.find((p) => p.url().includes(target));
-  if (!page) throw new Error(`No view matching "${target}"`);
-  return page;
+  // URL substring match across all frames (main frame included)
+  const frame = page.frames().find((f) => f.url().includes(target));
+  if (!frame) throw new Error(`No view matching "${target}"`);
+  return { page, frame, isWorkspaceFrame: frame !== page.mainFrame() };
+}
+
+/**
+ * Route page-level keyboard input to a workspace frame by focusing its
+ * iframe content first. No-op for the UI main frame.
+ */
+async function focusTargetFrame(resolved: ResolvedTarget): Promise<void> {
+  if (!resolved.isWorkspaceFrame) return;
+  try {
+    const el = await resolved.frame.frameElement();
+    await el.evaluate((node) => (node as HTMLElement).focus());
+    await el.dispose();
+    await resolved.frame.evaluate(() => {
+      window.focus();
+    });
+  } catch {
+    // Best-effort: hidden frames can't take focus
+  }
 }
 
 function subscribePageConsole(page: Page): void {
@@ -179,7 +231,7 @@ const server = new McpServer(
       '  target: "ui", code: "(() => { document.querySelector(\'nav.sidebar\')' +
       "?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })); " +
       "return 'expanded'; })()\"\n\n" +
-      "CODE-SERVER: Workspace views run code-server, NOT VS Code extensions. " +
+      "CODE-SERVER: Workspaces are code-server iframes inside the single UI view, NOT VS Code extensions. " +
       "acquireVsCodeApi is NOT available. dispatchEvent(new KeyboardEvent(...)) does NOT work. " +
       "Use appctrl_key for shortcuts (Control+p, Control+Shift+p, Enter, Escape) " +
       "and appctrl_type for text input.\n\n" +
@@ -295,7 +347,9 @@ server.registerTool(
   {
     description:
       "Capture a screenshot of a CodeHydra view. Returns the image directly. " +
-      'Target: "ui" for sidebar, "workspace" (default) for active workspace, or a URL substring to match a specific view.',
+      'Target: "ui" for the whole window (sidebar + active workspace), ' +
+      '"workspace" (default) for just the active workspace iframe, ' +
+      "or a URL substring to match a specific frame.",
     inputSchema: z.object({
       target: z
         .string()
@@ -305,9 +359,17 @@ server.registerTool(
   },
   async ({ target }) => {
     try {
-      requireRunning();
-      const page = await findPage(target);
-      const buffer = await page.screenshot({ type: "png" });
+      const resolved = await findTarget(target);
+      let buffer: Buffer;
+      if (resolved.isWorkspaceFrame) {
+        // Screenshot the <iframe> element from the host page (clips the page
+        // capture to the frame's box — frames have no direct screenshot API).
+        const el = await resolved.frame.frameElement();
+        buffer = await el.screenshot({ type: "png" });
+        await el.dispose();
+      } else {
+        buffer = await resolved.page.screenshot({ type: "png" });
+      }
       const base64 = buffer.toString("base64");
       return {
         content: [{ type: "image" as const, data: base64, mimeType: "image/png" as const }],
@@ -339,9 +401,8 @@ server.registerTool(
   },
   async ({ selector = "body", target }) => {
     try {
-      requireRunning();
-      const page = await findPage(target);
-      const snapshot = await page.locator(selector).ariaSnapshot();
+      const { frame } = await findTarget(target);
+      const snapshot = await frame.locator(selector).ariaSnapshot();
       return { content: [{ type: "text" as const, text: snapshot }] };
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
@@ -373,9 +434,8 @@ server.registerTool(
   },
   async ({ selector, target }) => {
     try {
-      requireRunning();
-      const page = await findPage(target);
-      await page.click(selector);
+      const { frame } = await findTarget(target);
+      await frame.click(selector);
       return textResult({ clicked: selector });
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
@@ -406,12 +466,13 @@ server.registerTool(
   },
   async ({ text, selector, target }) => {
     try {
-      requireRunning();
-      const page = await findPage(target);
+      const resolved = await findTarget(target);
       if (selector) {
-        await page.fill(selector, text);
+        await resolved.frame.fill(selector, text);
       } else {
-        await page.keyboard.type(text);
+        // Keyboard input is page-level; route it into workspace frames.
+        await focusTargetFrame(resolved);
+        await resolved.page.keyboard.type(text);
       }
       return textResult({ typed: text });
     } catch (err) {
@@ -442,9 +503,10 @@ server.registerTool(
   },
   async ({ key, target }) => {
     try {
-      requireRunning();
-      const page = await findPage(target);
-      await page.keyboard.press(key);
+      const resolved = await findTarget(target);
+      // Keyboard input is page-level; route it into workspace frames.
+      await focusTargetFrame(resolved);
+      await resolved.page.keyboard.press(key);
       return textResult({ pressed: key });
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
@@ -479,9 +541,8 @@ server.registerTool(
   },
   async ({ code, target }) => {
     try {
-      requireRunning();
-      const page = await findPage(target);
-      const result = await page.evaluate(code);
+      const { frame } = await findTarget(target);
+      const result = await frame.evaluate(code);
       return textResult(result);
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
@@ -649,22 +710,26 @@ server.registerTool(
   "appctrl_targets",
   {
     description:
-      "List all CDP targets (views) in the running CodeHydra instance. " +
-      'UI view has a file:// URL, workspace views have code-server URLs with "folder=" or "workspace=" parameter.',
+      "List the UI view and all workspace iframes in the running CodeHydra instance. " +
+      "The UI is the single page (file:// URL); workspaces are code-server iframes " +
+      'inside it (URLs with "folder=" or "workspace=" parameter; `active` marks the visible one).',
     inputSchema: z.object({}),
   },
   async () => {
     try {
-      requireRunning();
-      const pages = electronApp!.context().pages();
-      const targets = pages.map((p) => ({
-        url: p.url(),
-        title: p.url().startsWith("file://")
-          ? "UI (sidebar)"
-          : p.url().includes("folder=") || p.url().includes("workspace=")
-            ? "Workspace"
-            : "Other",
-      }));
+      const page = uiPage();
+      const targets: Array<{ url: string; title: string; active?: boolean }> = [
+        { url: page.url(), title: "UI (single view; workspaces are iframes inside it)" },
+      ];
+      for (const frame of page.frames()) {
+        if (frame === page.mainFrame()) continue;
+        const workspace = isWorkspaceUrl(frame.url());
+        targets.push({
+          url: frame.url(),
+          title: workspace ? "Workspace (iframe)" : "Other (iframe)",
+          ...(workspace && { active: await isActiveFrame(frame) }),
+        });
+      }
       return textResult(targets);
     } catch (err) {
       return errorResult(err instanceof Error ? err.message : String(err));
@@ -693,10 +758,12 @@ server.registerResource(
           "# AppCtrl Debugging Guide",
           "",
           "## Views",
-          "Each WebContentsView is a separate CDP target:",
-          '- **UI (sidebar)**: `file://` URL — the Svelte app (target: "ui")',
-          '- **Workspace**: `http://127.0.0.1:{port}/?workspace=...` — code-server (target: "workspace")',
-          "- Only previously-visited workspaces have their URLs loaded",
+          "The app has a single WebContentsView (the UI page); workspaces are",
+          "code-server iframes inside it, addressed as Playwright Frames:",
+          '- **UI**: `file://` URL — the Svelte app, hosts everything (target: "ui")',
+          '- **Workspace**: `http://127.0.0.1:{port}/?workspace=...` — a code-server iframe (target: "workspace" = the visible one)',
+          "- All non-hibernated workspaces have mounted iframes; only the active one is visible",
+          '- `appctrl_screenshot target="ui"` captures the whole window; target="workspace" clips to the active iframe',
           "",
           "## Typical Workflow",
           "1. `appctrl_start` — launches app (headless by default). Requires `pnpm build` first.",
@@ -786,7 +853,7 @@ server.registerResource(
           '- Use `appctrl_logs({ scope: "git", level: "info" })` to filter app logs',
           '- Use `appctrl_evaluate({ target: "ui", code: "..." })` to inspect sidebar state',
           "- Console errors often reveal the root cause",
-          '- Use `appctrl_targets` to see all views if "workspace" target fails',
+          '- Use `appctrl_targets` to see the UI page + workspace iframes if "workspace" target fails',
         ].join("\n"),
       },
     ],

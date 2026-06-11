@@ -99,14 +99,14 @@ Some components use external libraries directly without abstraction layers. Thes
 
 ### Tech Stack
 
-| Layer           | Technology                               |
-| --------------- | ---------------------------------------- |
-| Desktop         | Electron (BaseWindow + WebContentsViews) |
-| Frontend        | Svelte 5 + TypeScript + @vscode-elements |
-| Backend         | Node.js services                         |
-| Testing         | Vitest                                   |
-| Build           | Vite                                     |
-| Package Manager | pnpm                                     |
+| Layer           | Technology                                                                    |
+| --------------- | ----------------------------------------------------------------------------- |
+| Desktop         | Electron (BaseWindow + one WebContentsView; workspaces are iframes inside it) |
+| Frontend        | Svelte 5 + TypeScript + @vscode-elements                                      |
+| Backend         | Node.js services                                                              |
+| Testing         | Vitest                                                                        |
+| Build           | Vite                                                                          |
+| Package Manager | pnpm                                                                          |
 
 ### Essential Commands
 
@@ -152,14 +152,14 @@ The `app:start` and `app:shutdown` intents orchestrate application lifecycle. Co
 
 ## Key Concepts
 
-| Concept         | Description                                                                                                                |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Project         | Git repository path (container, not viewable). Can be local path or cloned from URL.                                       |
-| Workspace       | Git worktree (viewable in code-server) - NOT the main directory                                                            |
-| Remote Project  | Project cloned from git URL. Has `remoteUrl` field in config. Stored as bare clone in app-data.                            |
-| WebContentsView | Electron view for embedding (not iframe)                                                                                   |
-| Shortcut Mode   | Alt+X activates keyboard navigation. Keys: ↑↓ navigate, ←→ navigate idle, 1-0 jump, Enter new, Delete remove, Escape exits |
-| .keepfiles      | Config listing files to copy to new workspaces. Gitignore syntax with **inverted semantics**                               |
+| Concept        | Description                                                                                                                |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Project        | Git repository path (container, not viewable). Can be local path or cloned from URL.                                       |
+| Workspace      | Git worktree (viewable in code-server) - NOT the main directory                                                            |
+| Remote Project | Project cloned from git URL. Has `remoteUrl` field in config. Stored as bare clone in app-data.                            |
+| UI View        | The app's single WebContentsView (Svelte UI). Workspaces render as code-server iframes inside its DOM (WorkspaceFrames)    |
+| Shortcut Mode  | Alt+X activates keyboard navigation. Keys: ↑↓ navigate, ←→ navigate idle, 1-0 jump, Enter new, Delete remove, Escape exits |
+| .keepfiles     | Config listing files to copy to new workspaces. Gitignore syntax with **inverted semantics**                               |
 
 ---
 

@@ -27,21 +27,22 @@
 ├──────────────────────────────────────────────────────────────────────────┤
 │  Main Process (Electron)                                                 │
 │  ┌───────────────┐  ┌───────────────┐  ┌───────────────────────────────┐│
-│  │Window Manager │  │ View Manager  │  │ App Services                  ││
-│  │ BaseWindow    │  │WebContentsView│  │ ├─ Git Worktree Provider      ││
-│  │ resize/bounds │  │ create/destroy│  │ ├─ Code-Server Manager        ││
-│  │               │  │ bounds/z-order│  │ ├─ Project Store              ││
+│  │Window Manager │  │ UiViewManager │  │ App Services                  ││
+│  │ BaseWindow    │  │ single UI view│  │ ├─ Git Worktree Provider      ││
+│  │ resize/bounds │  │ session/focus │  │ ├─ Code-Server Manager        ││
+│  │               │  │ mode/devtools │  │ ├─ Project Store              ││
 │  └───────────────┘  └───────────────┘  │ └─ Agent Server Managers      ││
 │                                        └───────────────────────────────┘│
 ├──────────────────────────────────────────────────────────────────────────┤
-│  UI Layer (WebContentsView with transparent background)                  │
-│  Bounds change based on state: sidebar-only OR full-window              │
-├──────────────────────────────────────────────────────────────────────────┤
-│  Workspace Views (code-server WebContentsViews)                          │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                        │
-│  │ Workspace 1 │ │ Workspace 2 │ │ Workspace 3 │                        │
-│  │ (visible)   │ │ (hidden)    │ │ (hidden)    │                        │
-│  └─────────────┘ └─────────────┘ └─────────────┘                        │
+│  UI Layer (the single WebContentsView — Svelte renderer)                 │
+│  ┌─────────┐ ┌──────────────────────────────────────────────────┐       │
+│  │ Sidebar │ │ Workspace iframes (code-server, one per          │       │
+│  │ dialogs │ │ non-hibernated workspace; only .active visible)  │       │
+│  │ overlays│ │ ┌───────────┐ ┌───────────┐ ┌───────────┐        │       │
+│  │         │ │ │Workspace 1│ │Workspace 2│ │Workspace 3│        │       │
+│  │         │ │ │ (visible) │ │ (hidden)  │ │ (hidden)  │        │       │
+│  │         │ │ └───────────┘ └───────────┘ └───────────┘        │       │
+│  └─────────┘ └──────────────────────────────────────────────────┘       │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -115,102 +116,58 @@ Projects can be created by cloning from a git URL. These "remote projects" have 
 - Trailing slashes removed
 - Port numbers preserved
 
-## WebContentsView Architecture
+## View Architecture
 
-### View Management
+The app owns exactly **one WebContentsView**: the UI layer (Svelte renderer).
+Workspaces render as `<iframe>` elements inside its DOM (`WorkspaceFrames`
+component), derived declaratively from the renderer's projects store:
 
-- **Create**: When workspace added, create WebContentsView (detached, URL preloaded in parallel)
-- **Activate (first)**: Attach to contentView, set bounds (URL already loaded)
-- **Activate (subsequent)**: Attach to contentView, set bounds (URL already loaded)
-- **Hide**: Detach from contentView (not attached, no bounds needed)
-- **Destroy**: When workspace removed, destroy WebContentsView
-- **Z-order**: Controlled by `contentView.addChildView(view)` (last added = front)
+- **Mount**: every non-hibernated workspace with a code-server URL gets an
+  iframe, eagerly (instant switching). URLs arrive on workspace payloads
+  (`workspace:created`, `project:opened`).
+- **Visibility**: only the active workspace's iframe is `display: block`
+  (`.active` class). Inactive iframes are `display: none`, so Chromium
+  suspends their paint/layout. Iframes are cross-origin OOPIFs — each keeps
+  its own renderer process, so the memory profile matches the previous
+  shared-host design.
+- **Unmount**: hibernating a workspace (metadata flip) or removing it
+  (`workspace:removed`) drops the iframe from the DOM.
+- **Focus**: switching to a workspace focuses its iframe (rAF-deferred past
+  layout); an injected in-frame tracker (`installChildFrameScript`) restores
+  the last-focused element inside code-server. Focus is routed by mode —
+  entering shortcut mode blurs the frame so navigation keys stay in the UI.
+- **Loading indication**: the main process shows a "Loading workspace..."
+  dialog from `workspace:created` until the agent's first status report (or
+  a 10s timeout). No view-level load tracking exists.
 
-### View Lifecycle
+The main process side is a slim `UiViewManager`: UI view lifecycle
+(create/load/bounds-on-resize/destroy), the shared session's
+header/permission handlers, `window.open` interception, keyboard and
+devtools capability targets (webContents-level, so they see input typed in
+iframes), pure mode state, mode-routed focus, and active-workspace
+screenshot capture (full-view capture clipped to the iframe's rect via a
+renderer hook).
 
-```
-[not created] ──createWorkspaceView()──► [created/detached/loading]
-                                               │
-                                               │ URL preloaded, not in contentView
-                                               │ 10-second timeout started
-                                               │
-                                       setActiveWorkspace() [first time]
-                                               │
-                                               ▼
-                                      ┌────────────────────┐
-                                      │  [loading/attached]│
-                                      │  URL already loaded│
-                                      │  in contentView    │
-                                      │  loading overlay   │
-                                      └────────┬───────────┘
-                                               │
-                               first MCP request OR 10s timeout
-                                               │
-                                               ▼
-                                      ┌────────────────────┐
-                                      │  [active/attached] │
-                                      │  URL loaded        │
-                                      │  bounds: content   │
-                                      │  unthrottled       │
-                                      └────────┬───────────┘
-                                               │
-                                       setActiveWorkspace(other/null)
-                                               │
-                                               ▼
-                                      ┌────────────────────┐
-                                      │  [detached]        │
-                                      │  URL loaded        │◄───────┐
-                                      │  not in contentView│        │
-                                      │  throttled (async) │        │
-                                      └────────┬───────────┘        │
-                                               │                    │
-                        ┌──────────────────────┼────────────────────┘
-                        │                      │
-              setActiveWorkspace()    destroyWorkspaceView()
-                        │                      │
-                        │                      ▼
-                        └──────────────► [destroyed]
-```
+### UI Modes
 
-- **Loading state**: New workspaces show a loading overlay until first MCP request is received (indicating TUI attachment) or 10-second timeout. The view URL is loaded but the view remains detached (not attached to contentView).
-- **Detached views** retain their VS Code state (no reload when shown again)
-- **Detachment** (vs zero-bounds) reduces GPU usage when many workspaces are open
-- **URL preloading**: All workspace URLs are loaded in parallel when a project opens. This eliminates loading delays when switching between workspaces.
-
-### UI Layer State Machine
-
-The application uses a **detachment-based visibility approach**:
-
-- **UI layer**: Always attached with full-window bounds. Visibility controlled by z-order.
-- **Workspace views**: Only active view is attached with content bounds. Inactive views are detached from contentView entirely (not attached, no bounds, no GPU usage).
-
-| State   | UI Z-Order                  | Focus    | Description                  |
-| ------- | --------------------------- | -------- | ---------------------------- |
-| Normal  | Behind workspace views      | VS Code  | User working in editor       |
-| Overlay | In front of workspace views | UI layer | Shortcut mode or dialog open |
-
-**State transitions:**
-
-- Normal → Overlay: User activates shortcut mode (Alt+X) or opens dialog
-- Overlay → Normal: User releases Alt, presses Escape, closes dialog, or window loses focus
-
-**Implementation:**
-
-- UI transparency: `setBackgroundColor('#00000000')`
-- Z-order front: `contentView.addChildView(view)` (no index = add to end = top)
-- Z-order back: `contentView.addChildView(view, 0)` (index 0 = bottom)
+Modes (`workspace`/`shortcut`/`dialog`/`hover`) are plain state on the
+UiViewManager — the Alt+X keyboard interceptor consumes them synchronously
+in main, and the renderer mirrors them over IPC (`api:ui:set-mode` /
+`api:ui:mode-changed`). Since everything is one DOM tree, "raising the UI"
+is CSS stacking, not view z-order: the sidebar, overlays, panel, and dialogs
+simply have higher z-index than the frames container.
 
 ## Component Architecture
 
 ### Main Process Components
 
-| Component       | Responsibility                                                      |
-| --------------- | ------------------------------------------------------------------- |
-| Window Manager  | BaseWindow lifecycle, resize handling, minimum size, overlay icons  |
-| View Manager    | WebContentsView create/destroy, bounds calculation, z-order         |
-| Badge Manager   | App icon badge showing count of idle workspaces (platform-specific) |
-| IPC Handlers    | Bridge between renderer and services                                |
-| Preload Scripts | Secure IPC exposure, keyboard capture                               |
+| Component       | Responsibility                                                         |
+| --------------- | ---------------------------------------------------------------------- |
+| Window Manager  | BaseWindow lifecycle, resize handling, minimum size, overlay icons     |
+| UiViewManager   | Single UI view lifecycle, session handlers, mode state, focus, capture |
+| Badge Manager   | App icon badge showing count of idle workspaces (platform-specific)    |
+| IPC Handlers    | Bridge between renderer and services                                   |
+| Preload Scripts | Secure IPC exposure, keyboard capture                                  |
 
 ### Preload Scripts
 
@@ -218,7 +175,7 @@ The application uses a **detachment-based visibility approach**:
 | ---------------- | -------- | -------------------------------------------------- |
 | preload/index.ts | UI layer | Expose IPC API for sidebar, dialogs, shortcut mode |
 
-**Note**: Workspace views intentionally have NO preload script. Keyboard capture is handled via main-process `before-input-event` for simplicity and security.
+**Note**: Workspace iframes have NO preload script (preload scripts do not run in subframes), so code-server content cannot reach `window.api`. Keyboard capture is handled via main-process `before-input-event` on the UI view's webContents, which sees input typed inside iframes.
 
 ### App Services (pure Node.js, no Electron deps)
 
@@ -253,7 +210,7 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
      4. Terminates the extension host process
    - If the workspace is not connected or operations time out, the step is marked as done and deletion continues
 
-2. **Close VS Code view**: Navigates to `about:blank`, clears session storage, and destroys the WebContentsView.
+2. **Unmount the iframe**: The renderer drops the workspace's iframe from the DOM when the `workspace:removed` event lands (DOM removal destroys the frame's renderer).
 
 3. **Remove worktree**: Executes `git worktree remove --force` to remove the git worktree.
 
@@ -265,8 +222,8 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 │  remove() ──► switchToNextWorkspace() ──► executeDeletion()        │
 │                     │                           │                   │
 │                     ▼                           ▼                   │
-│              View detached          ┌───────────────────────┐       │
-│              (still exists)         │ Op 1: kill-terminals  │       │
+│              iframe hidden          ┌───────────────────────┐       │
+│              (still mounted)        │ Op 1: kill-terminals  │       │
 │                     │               │ "Terminating processes"│       │
 │                     │               │ (PluginServer command) │       │
 │                     │               └───────────┬───────────┘       │
@@ -274,7 +231,8 @@ The Git Worktree Provider includes resilient deletion and orphaned workspace cle
 │                     │               ┌───────────────────────┐       │
 │                     │               │ Op 2: cleanup-vscode  │       │
 │                     │               │ "Closing VS Code view"│       │
-│                     │               │ (ViewManager destroy)  │       │
+│                     │               │ (renderer unmounts     │       │
+│                     │               │  iframe on removed)    │       │
 │                     │               └───────────┬───────────┘       │
 │                     │                           │                   │
 │                     │               ┌───────────────────────┐       │
@@ -330,7 +288,7 @@ All workspaces share a single global Electron session to enable extension storag
 
 **Key Points:**
 
-- All WebContentsViews share the same Electron session (`persist:codehydra-global`)
+- The UI view uses the `persist:codehydra-global` session partition; workspace iframes inherit the embedding page's session, so all workspaces share it
 - Session storage (IndexedDB, localStorage, cookies) is global
 - code-server distinguishes workspaces via the `?folder=` URL parameter
 - VS Code's workspace-specific state uses the folder path, not browser storage
@@ -338,19 +296,9 @@ All workspaces share a single global Electron session to enable extension storag
 
 **View Destruction Cleanup:**
 
-When a workspace is deleted, the ViewManager performs these cleanup steps:
-
-1. **Navigate to about:blank**: Releases any resources held by the loaded page
-2. **Close view**: Destroys the WebContentsView
-
-```typescript
-// Cleanup sequence in ViewManager.destroyWorkspaceView()
-await view.webContents.loadURL("about:blank"); // Wait with timeout
-view.webContents.close();
-// NOTE: Session storage is NOT cleared - it's shared with other workspaces
-```
-
-**Note:** The `about:blank` navigation uses a timeout to prevent hanging if the view is unresponsive.
+When a workspace is deleted, the renderer unmounts its iframe (DOM removal
+destroys the frame's renderer process). Session storage is NOT cleared — it
+is shared with the other workspaces.
 
 ### Git Configuration Storage (Workspace Metadata)
 
