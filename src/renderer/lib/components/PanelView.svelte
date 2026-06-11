@@ -19,7 +19,7 @@
 -->
 <script lang="ts">
   import type { DialogConfig, DialogUserEvent } from "@shared/dialog-types";
-  import Form from "./Form.svelte";
+  import Form from "./form/Form.svelte";
   import { sendDialogEvent } from "$lib/api";
   import { trapTabKey } from "$lib/utils/focus-trap";
 
