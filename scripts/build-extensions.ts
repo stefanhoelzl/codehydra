@@ -26,6 +26,8 @@ import { createHash } from "node:crypto";
 const EXTENSIONS_DIR = path.join(process.cwd(), "extensions");
 const DIST_DIR = path.join(process.cwd(), "dist", "extensions");
 const EXTERNAL_JSON = path.join(EXTENSIONS_DIR, "external.json");
+/** Extensions import shared code/types from here; changes must bust the build cache. */
+const SHARED_DIR = path.join(process.cwd(), "src", "shared");
 
 /** Verbose mode: enabled by --verbose flag or CI environment */
 const verbose = process.argv.includes("--verbose") || !!process.env.CI;
@@ -372,6 +374,10 @@ async function main(): Promise<void> {
   const cache = useCache ? readBuildCache() : {};
   const updatedCache: BuildCache = {};
 
+  // Extensions import from src/shared (types and values), so shared changes
+  // must invalidate every extension's cache entry and dev version hash.
+  const sharedHash = await hashExtensionFolder(SHARED_DIR);
+
   // Build local extensions
   for (const extDir of extDirs) {
     const pkg = readExtensionPackageJson(extDir);
@@ -380,7 +386,11 @@ async function main(): Promise<void> {
     const major = pkg.version.split(".")[0] ?? "1";
 
     const extPath = path.join(EXTENSIONS_DIR, extDir);
-    const hash = await hashExtensionFolder(extPath);
+    const hash = createHash("sha256")
+      .update(await hashExtensionFolder(extPath))
+      .update(sharedHash)
+      .digest("hex")
+      .slice(0, 8);
 
     // Check cache: skip build if hash matches and .vsix exists on disk
     const cached = cache[id];

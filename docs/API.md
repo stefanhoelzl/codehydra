@@ -45,16 +45,18 @@ Both methods provide the same API contract - only the transport differs.
 
 All methods operate on the **connected workspace**.
 
-| Method               | Signature                                                                              | Description                                                     |
-| -------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `getStatus`          | `() => Promise<WorkspaceStatus>`                                                       | Get workspace status (dirty flag, agent status)                 |
-| `getOpenCodeSession` | `() => Promise<OpenCodeSession \| null>`                                               | Get OpenCode session info (port + sessionId, null if not ready) |
-| `restartAgentServer` | `() => Promise<number>`                                                                | Restart agent server, preserving port, returns port             |
-| `getMetadata`        | `() => Promise<Record<string, string>>`                                                | Get all metadata (always includes `base` key)                   |
-| `setMetadata`        | `(key: string, value: string \| null) => Promise<void>`                                | Set or delete a metadata key                                    |
-| `executeCommand`     | `(command: string, args?: unknown[]) => Promise<unknown>`                              | Execute a VS Code command (10-second timeout)                   |
-| `delete`             | `(options?: { keepBranch?: boolean }) => Promise<{ started: true }>`                   | Delete the workspace (terminates OpenCode, async)               |
-| `create`             | `(name: string, base: string, options?: WorkspaceCreateOptions) => Promise<Workspace>` | Create a new workspace in the same project                      |
+| Method               | Signature                                                                              | Description                                                           |
+| -------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `getStatus`          | `(options?: { refresh?: boolean }) => Promise<WorkspaceStatus>`                        | Get workspace status (dirty flag, unmerged commits, agent status)     |
+| `getAgentSession`    | `() => Promise<AgentSession \| null>`                                                  | Get agent session info (port + sessionId, null if server not running) |
+| `restartAgentServer` | `() => Promise<number>`                                                                | Restart agent server, preserving port, returns port                   |
+| `getMetadata`        | `() => Promise<Record<string, string>>`                                                | Get all metadata (always includes `base` key)                         |
+| `setMetadata`        | `(key: string, value: string \| null) => Promise<void>`                                | Set or delete a metadata key                                          |
+| `getTags`            | `() => Promise<readonly WorkspaceTag[]>`                                               | Get all tags (metadata entries with the `tags.` prefix)               |
+| `setTag`             | `(name: string, options?: { color?: string }) => Promise<void>`                        | Set or update a tag                                                   |
+| `deleteTag`          | `(name: string) => Promise<void>`                                                      | Delete a tag                                                          |
+| `executeCommand`     | `(command: string, args?: readonly unknown[]) => Promise<unknown>`                     | Execute a VS Code command (10-second timeout)                         |
+| `create`             | `(name: string, base: string, options?: WorkspaceCreateOptions) => Promise<Workspace>` | Create a new workspace in the same project                            |
 
 #### `log` Namespace
 
@@ -107,14 +109,14 @@ switch (status.agent.type) {
 }
 ```
 
-#### Connect to OpenCode Server
+#### Connect to the Agent Server
 
 ```typescript
-const session = await api.workspace.getOpenCodeSession();
+const session = await api.workspace.getAgentSession();
 if (session !== null) {
-  // Connect to OpenCode API at http://localhost:${session.port}
+  // Connect to the agent server at http://127.0.0.1:${session.port}
   // Primary session ID is available as session.sessionId
-  const response = await fetch(`http://localhost:${session.port}/api/sessions`);
+  const response = await fetch(`http://127.0.0.1:${session.port}/api/sessions`);
   const sessions = await response.json();
 }
 ```
@@ -146,19 +148,6 @@ console.log("Note:", metadata.note);
 // Delete metadata
 await api.workspace.setMetadata("note", null);
 ```
-
-#### Delete Current Workspace
-
-```typescript
-// Delete workspace (removes worktree and branch)
-const result = await api.workspace.delete();
-console.log("Deletion started:", result.started);
-
-// Delete workspace but keep the git branch
-const result = await api.workspace.delete({ keepBranch: true });
-```
-
-**Note:** Deletion is async - the Promise resolves immediately with `{ started: true }`. The actual cleanup happens in the background.
 
 #### Create a New Workspace
 
@@ -297,7 +286,7 @@ export async function activate(context: vscode.ExtensionContext) {
 ### Type Declarations
 
 For TypeScript support, copy the type declarations from:  
-`extensions/codehydra-sidekick/api.d.ts`
+`extensions/sidekick/api.d.ts`
 
 Or use these inline definitions:
 
@@ -316,10 +305,16 @@ type AgentStatus =
 
 interface WorkspaceStatus {
   readonly isDirty: boolean;
+  readonly unmergedCommits: number;
   readonly agent: AgentStatus;
 }
 
-type InitialPrompt = string | { prompt: string; agent?: string };
+interface PromptModel {
+  readonly providerID: string;
+  readonly modelID: string;
+}
+
+type InitialPrompt = string | { prompt: string; agent?: string; model?: PromptModel };
 
 interface WorkspaceCreateOptions {
   initialPrompt?: InitialPrompt;
@@ -327,24 +322,35 @@ interface WorkspaceCreateOptions {
 }
 
 interface Workspace {
-  name: string;
-  path: string;
-  base: string;
+  readonly projectId: string;
+  readonly name: string;
+  readonly branch: string | null;
+  /** Always contains a `base` key with the base branch */
+  readonly metadata: Readonly<Record<string, string>>;
+  readonly path: string;
+  readonly url?: string;
 }
 
-interface OpenCodeSession {
+interface AgentSession {
   readonly port: number;
   readonly sessionId: string;
 }
 
+interface WorkspaceTag {
+  readonly name: string;
+  readonly color?: string;
+}
+
 interface WorkspaceApi {
-  getStatus(): Promise<WorkspaceStatus>;
-  getOpenCodeSession(): Promise<OpenCodeSession | null>;
+  getStatus(options?: { refresh?: boolean }): Promise<WorkspaceStatus>;
+  getAgentSession(): Promise<AgentSession | null>;
   restartAgentServer(): Promise<number>;
   getMetadata(): Promise<Readonly<Record<string, string>>>;
   setMetadata(key: string, value: string | null): Promise<void>;
+  getTags(): Promise<readonly WorkspaceTag[]>;
+  setTag(name: string, options?: { color?: string }): Promise<void>;
+  deleteTag(name: string): Promise<void>;
   executeCommand(command: string, args?: readonly unknown[]): Promise<unknown>;
-  delete(options?: { keepBranch?: boolean }): Promise<{ started: boolean }>;
   create(name: string, base: string, options?: WorkspaceCreateOptions): Promise<Workspace>;
 }
 
@@ -417,24 +423,34 @@ socket.on("connect_error", (error) => {
 
 All events use acknowledgment callbacks for request/response pattern.
 
-| Event                              | Request Payload          | Response                                |
-| ---------------------------------- | ------------------------ | --------------------------------------- |
-| `api:workspace:getStatus`          | None                     | `PluginResult<WorkspaceStatus>`         |
-| `api:workspace:getOpenCodeSession` | None                     | `PluginResult<OpenCodeSession \| null>` |
-| `api:workspace:restartAgentServer` | None                     | `PluginResult<number>`                  |
-| `api:workspace:getMetadata`        | None                     | `PluginResult<Record<string, string>>`  |
-| `api:workspace:setMetadata`        | `SetMetadataRequest`     | `PluginResult<void>`                    |
-| `api:workspace:executeCommand`     | `ExecuteCommandRequest`  | `PluginResult<unknown>`                 |
-| `api:workspace:delete`             | `DeleteWorkspaceRequest` | `PluginResult<DeleteWorkspaceResponse>` |
-| `api:workspace:create`             | `WorkspaceCreateRequest` | `PluginResult<Workspace>`               |
+| Event                              | Request Payload                        | Response                                |
+| ---------------------------------- | -------------------------------------- | --------------------------------------- |
+| `api:workspace:getStatus`          | `GetWorkspaceStatusRequest` (optional) | `PluginResult<WorkspaceStatus>`         |
+| `api:workspace:getAgentSession`    | None                                   | `PluginResult<AgentSession \| null>`    |
+| `api:workspace:restartAgentServer` | None                                   | `PluginResult<number>`                  |
+| `api:workspace:getMetadata`        | None                                   | `PluginResult<Record<string, string>>`  |
+| `api:workspace:setMetadata`        | `SetMetadataRequest`                   | `PluginResult<void>`                    |
+| `api:workspace:executeCommand`     | `ExecuteCommandRequest`                | `PluginResult<unknown>`                 |
+| `api:workspace:openSystemPath`     | `OpenSystemPathRequest`                | `PluginResult<void>`                    |
+| `api:workspace:delete`             | `DeleteWorkspaceRequest` (optional)    | `PluginResult<DeleteWorkspaceResponse>` |
+| `api:workspace:create`             | `WorkspaceCreateRequest`               | `PluginResult<Workspace>`               |
+| `api:workspace:agentLifecycle`     | `AgentLifecycleRequest`                | (none, fire-and-forget)                 |
+| `api:log`                          | `LogRequest`                           | (none, fire-and-forget)                 |
 
 ### Event Channels (Server → Client)
 
-| Event      | Request Payload  | Response                | Description                                     |
-| ---------- | ---------------- | ----------------------- | ----------------------------------------------- |
-| `config`   | `PluginConfig`   | (none)                  | Configuration sent after connection             |
-| `command`  | `CommandRequest` | `PluginResult<unknown>` | Execute VS Code command                         |
-| `shutdown` | None             | `PluginResult<void>`    | Terminate extension host for workspace deletion |
+| Event                 | Request Payload           | Response                                 | Description                                     |
+| --------------------- | ------------------------- | ---------------------------------------- | ----------------------------------------------- |
+| `config`              | `PluginConfig`            | (none)                                   | Configuration sent after connection             |
+| `command`             | `CommandRequest`          | `PluginResult<unknown>`                  | Execute VS Code command                         |
+| `shutdown`            | None                      | `PluginResult<void>`                     | Terminate extension host for workspace deletion |
+| `ui:showNotification` | `ShowNotificationRequest` | `PluginResult<ShowNotificationResponse>` | Show a notification in VS Code                  |
+| `ui:statusBarUpdate`  | `StatusBarUpdateRequest`  | `PluginResult<void>`                     | Create or update a status bar item              |
+| `ui:statusBarDispose` | `StatusBarDisposeRequest` | `PluginResult<void>`                     | Dispose a status bar item                       |
+| `ui:showQuickPick`    | `ShowQuickPickRequest`    | `PluginResult<ShowQuickPickResponse>`    | Show a quick pick list                          |
+| `ui:showInputBox`     | `ShowInputBoxRequest`     | `PluginResult<ShowInputBoxResponse>`     | Show an input box                               |
+
+The authoritative declarations for all events and payloads are in `src/shared/plugin-protocol.ts` (compiled by both the CodeHydra server and the sidekick extension).
 
 ### Response Format
 
@@ -463,7 +479,12 @@ interface DeleteWorkspaceResponse {
   started: boolean; // True if deletion was started (deletion is async)
 }
 
-type InitialPrompt = string | { prompt: string; agent?: string };
+interface PromptModel {
+  providerID: string;
+  modelID: string;
+}
+
+type InitialPrompt = string | { prompt: string; agent?: string; model?: PromptModel };
 
 interface WorkspaceCreateRequest {
   name: string; // Name for the new workspace (becomes branch name)
@@ -472,15 +493,32 @@ interface WorkspaceCreateRequest {
   stealFocus?: boolean; // If true, switch to the new workspace. Default: false for API calls
 }
 
-interface WorkspaceCreateOptions {
-  initialPrompt?: InitialPrompt;
-  stealFocus?: boolean;
+interface GetWorkspaceStatusRequest {
+  refresh?: boolean; // If true, fetch the remote before reading status (best-effort)
+}
+
+interface OpenSystemPathRequest {
+  app: "default" | "explorer"; // "explorer" = show in file manager, "default" = open with default app
+  path: string; // Absolute path to the file or folder
+}
+
+interface AgentLifecycleRequest {
+  event: "open" | "close"; // Agent terminal opened/closed
+}
+
+interface LogRequest {
+  level: string; // silly | debug | info | warn | error
+  message: string;
+  context?: Record<string, string | number | boolean | null>;
 }
 
 interface Workspace {
+  projectId: string; // Identifier of the project this workspace belongs to
   name: string; // Workspace name (also the branch name)
+  branch: string | null; // Current branch, or null for detached HEAD
+  metadata: Readonly<Record<string, string>>; // Always contains a `base` key with the base branch
   path: string; // Absolute path to the workspace directory
-  base: string; // Base branch this workspace was created from
+  url?: string; // code-server URL; absent while the workspace is hibernated
 }
 ```
 
@@ -531,8 +569,8 @@ class CodehydraClient {
     return this.emit("api:workspace:getStatus");
   }
 
-  async getOpenCodeSession(): Promise<OpenCodeSession | null> {
-    return this.emit("api:workspace:getOpenCodeSession");
+  async getAgentSession(): Promise<AgentSession | null> {
+    return this.emit("api:workspace:getAgentSession");
   }
 
   async getMetadata(): Promise<Record<string, string>> {
@@ -1109,11 +1147,11 @@ These variables are set when using the Claude agent provider.
 
 ## Source Files
 
-| Purpose              | File                                     |
-| -------------------- | ---------------------------------------- |
-| Core Interface       | `src/shared/api/interfaces.ts`           |
-| Type Definitions     | `src/shared/api/types.ts`                |
-| IPC Channels         | `src/shared/ipc.ts`                      |
-| Preload (window.api) | `src/preload/index.ts`                   |
-| Plugin Protocol      | `src/shared/plugin-protocol.ts`          |
-| External API Types   | `extensions/codehydra-sidekick/api.d.ts` |
+| Purpose              | File                            |
+| -------------------- | ------------------------------- |
+| Core Interface       | `src/shared/api/interfaces.ts`  |
+| Type Definitions     | `src/shared/api/types.ts`       |
+| IPC Channels         | `src/shared/ipc.ts`             |
+| Preload (window.api) | `src/preload/index.ts`          |
+| Plugin Protocol      | `src/shared/plugin-protocol.ts` |
+| External API Types   | `extensions/sidekick/api.d.ts`  |
