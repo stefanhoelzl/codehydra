@@ -18,15 +18,13 @@
  *
  * - style "heading": large + bold (h1-like)
  * - style "subtitle": small + dim
- * - style "mono": monospace font
  * - default: normal paragraph
  * - icon: codicon name rendered before text (e.g., "error" for danger styling)
- * - Supports {badge:text} syntax for inline badges
  */
 interface TextSection {
   readonly type: "text";
   readonly content: string;
-  readonly style?: "heading" | "subtitle" | "mono";
+  readonly style?: "heading" | "subtitle";
   readonly icon?: string;
 }
 
@@ -170,10 +168,8 @@ interface TableSection {
  *   resize vertically). Without it the textarea gets a tall viewport-relative
  *   default height.
  * - initialValue seeds the field on first render only; later edits are preserved
- * - cursorOffset places the caret at this character offset after seeding
- *   (only applied when initialValue is set)
  * - selectInitialValue selects the seeded text instead of placing a caret, so
- *   the first keystroke replaces it (overrides cursorOffset)
+ *   the first keystroke replaces it
  * - Input values are included in DialogUserEvent.data keyed by field id when actions fire
  * - changeEvent: opt in to emit a field-change event as the user types
  *   (debounced 200ms by default; see FieldChangeConfig).
@@ -184,7 +180,6 @@ interface InputSection extends FieldSection {
   readonly multiline?: boolean;
   readonly rows?: number;
   readonly initialValue?: string;
-  readonly cursorOffset?: number;
   readonly selectInitialValue?: boolean;
   readonly changeEvent?: FieldChangeConfig;
 }
