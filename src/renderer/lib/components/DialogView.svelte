@@ -9,7 +9,7 @@
 <script lang="ts">
   import type { DialogConfig } from "@shared/dialog-types";
   import Logo from "./Logo.svelte";
-  import Form from "./Form.svelte";
+  import Form from "./form/Form.svelte";
   import { trapTabKey } from "$lib/utils/focus-trap";
 
   interface Props {

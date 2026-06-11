@@ -1,0 +1,423 @@
+<!--
+  Form.svelte
+
+  Generic declarative form renderer: renders a DialogConfig's sections
+  through the shared Section dispatcher (one leaf component per section type;
+  GroupSection re-enters the dispatcher for its items) and owns everything
+  form-global:
+
+  - field values (and dropdown display text), reconciled against config pushes
+  - the field-change channel (per-field debounce, cancel-on-submit)
+  - autofocus placement and focus-follow on config updates
+  - primary-action resolution (Enter submit) and action/change event emission
+
+  Leaves are controlled components: they receive their narrowed section config
+  plus current value and report raw interactions back via callbacks; Form
+  decides timing and payloads. Every button click emits an action event with
+  the button's id and the full field-values snapshot.
+
+  Surface-agnostic: the wrapping surface (e.g. DialogView's modal card, or the
+  panel shell) provides the chrome and text alignment. Form only lays the
+  sections out in a vertical flow. `config.layout` switches the section
+  layout: "centered" (default) is the centered stack; "form" is left-aligned
+  labeled rows.
+-->
+<script lang="ts">
+  import type { DialogConfig, DialogSection, DialogUserEvent } from "@shared/dialog-types";
+  import { onMount, onDestroy, untrack } from "svelte";
+  import { sendDialogEvent } from "$lib/api";
+  import Section from "./Section.svelte";
+  import type { ButtonItem, DropdownSectionConfig, FieldSectionConfig } from "./types";
+
+  let formRef: HTMLElement | undefined;
+
+  interface Props {
+    dialogId: string;
+    config: DialogConfig;
+  }
+
+  const { dialogId, config }: Props = $props();
+
+  /**
+   * All field sections of the config in declaration order — top-level
+   * input/radio/dropdown sections plus input/dropdown items nested in groups.
+   */
+  function fieldSectionsOf(cfg: DialogConfig): FieldSectionConfig[] {
+    const fields: FieldSectionConfig[] = [];
+    for (const section of cfg.sections) {
+      if (section.type === "input" || section.type === "radio" || section.type === "dropdown") {
+        fields.push(section);
+      } else if (section.type === "group") {
+        for (const item of section.items) {
+          if (item.type === "input" || item.type === "dropdown") {
+            fields.push(item);
+          }
+        }
+      }
+    }
+    return fields;
+  }
+
+  // Section layout: "centered" (default) keeps the centered stack; "form" lays
+  // fields out as left-aligned labeled rows with right-aligned actions.
+  const layout = $derived(config.layout ?? "centered");
+
+  // Track all field values (radio + dropdown + input) keyed by field id.
+  let fieldValues = $state<Record<string, string>>({});
+
+  // Dropdown display text keyed by field id: what the combobox input shows,
+  // which can differ from the reported value after a suggestion pick (the
+  // input displays the suggestion's label while the field reports its value).
+  let dropdownDisplay = $state<Record<string, string>>({});
+
+  /** A dropdown section's suggestions flattened across groups. */
+  function flatSuggestions(
+    section: DropdownSectionConfig
+  ): readonly { value: string; label: string }[] {
+    return section.suggestions.flatMap((group) => group.items);
+  }
+
+  /** The label of the suggestion with this value, or the value itself. */
+  function suggestionLabel(section: DropdownSectionConfig, value: string): string {
+    return flatSuggestions(section).find((o) => o.value === value)?.label ?? value;
+  }
+
+  // Last backend-pushed `value` adopted per dropdown field. A deliberately
+  // non-reactive record: only the reconcile effect reads/writes it, to decide
+  // whether a config's `value` is new (adopt) or a re-send (preserve edits).
+  const adoptedValues: Record<string, string> = {};
+
+  // Reconcile field values whenever the config changes: rebuild the map so it
+  // mirrors the current field sections (dropping removed-field keys) while
+  // preserving values for fields that remain.
+  // - radio: keep the existing choice if still a valid option id, else the
+  //   first option's id.
+  // - dropdown (controlled): when the config carries a `value` the renderer
+  //   has not adopted yet, adopt it (strict mode falls back below when it
+  //   names no suggestion). Re-sends of the same value preserve user edits.
+  // - dropdown (freeText): like input — keep existing edits/picks, else seed
+  //   from initialValue on first sight.
+  // - dropdown (strict): keep the existing choice if still a valid suggestion
+  //   value; on first sight start at initialValue when it names a suggestion;
+  //   else the first suggestion's value. Display text follows the value
+  //   (suggestion label) unless the value is unchanged (preserving what the
+  //   user sees, e.g. typed free text).
+  // - input: keep existing edits/seeded value; otherwise seed from initialValue
+  //   on first sight (a later initialValue change does not re-seed).
+  // Existing values are read via untrack to avoid a write -> retrigger loop.
+  $effect(() => {
+    const next: Record<string, string> = {};
+    const nextDisplay: Record<string, string> = {};
+    for (const section of fieldSectionsOf(config)) {
+      if (section.type === "radio") {
+        const existing = untrack(() => fieldValues[section.id]);
+        const stillValid = existing !== undefined && section.options.some((o) => o.id === existing);
+        next[section.id] = stillValid ? existing : (section.options[0]?.id ?? "");
+      } else if (section.type === "dropdown") {
+        const existing = untrack(() => fieldValues[section.id]);
+        const pushed =
+          section.value !== undefined && section.value !== adoptedValues[section.id]
+            ? section.value
+            : undefined;
+        if (pushed !== undefined) {
+          adoptedValues[section.id] = pushed;
+        }
+        if (section.freeText) {
+          next[section.id] = pushed ?? existing ?? section.initialValue ?? "";
+        } else {
+          const isValid = (v: string | undefined): v is string =>
+            v !== undefined && flatSuggestions(section).some((o) => o.value === v);
+          next[section.id] = isValid(pushed)
+            ? pushed
+            : pushed === undefined && isValid(existing)
+              ? existing
+              : existing === undefined && pushed === undefined && isValid(section.initialValue)
+                ? section.initialValue
+                : (flatSuggestions(section)[0]?.value ?? "");
+        }
+        const existingDisplay = untrack(() => dropdownDisplay[section.id]);
+        nextDisplay[section.id] =
+          next[section.id] === existing && existingDisplay !== undefined && pushed === undefined
+            ? existingDisplay
+            : suggestionLabel(section, next[section.id]!);
+      } else if (section.type === "input") {
+        const existing = untrack(() => fieldValues[section.id]);
+        next[section.id] = existing ?? section.initialValue ?? "";
+      }
+    }
+    fieldValues = next;
+    dropdownDisplay = nextDisplay;
+  });
+
+  // ---- Field-change channel ----
+  // Per-field debounce timers, keyed by field id. A deliberately non-reactive
+  // plain record (never read in a reactive context). Emission is driven ONLY by
+  // user-interaction handlers (clicks, keystrokes), never by the reconcile
+  // effect above — so backend-driven config updates never re-emit (no loop).
+  const changeTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
+  /**
+   * Effective debounce (ms) for a field's change-event opt-in, or null when the
+   * field does not opt in. Default debounce per field type: continuous editing
+   * (input, dropdown typing) 200ms, radio (discrete) 0ms (immediate).
+   * Dropdown suggestion picks bypass this entirely (see handleDropdownSelect).
+   */
+  function changeDebounceMs(section: FieldSectionConfig): number | null {
+    const cfg = section.changeEvent;
+    if (!cfg) return null;
+    const fallback = section.type === "radio" ? 0 : 200;
+    if (cfg === true) return fallback;
+    return cfg.debounceMs ?? fallback;
+  }
+
+  /** Whether the dialog still has a field with this id. */
+  function hasField(fieldId: string): boolean {
+    return fieldSectionsOf(config).some((s) => s.id === fieldId);
+  }
+
+  /** Send a field-change event with the full keyed-values snapshot. */
+  function emitChange(fieldId: string): void {
+    // A config update may have removed the field while its timer was pending.
+    if (!hasField(fieldId)) return;
+    const event: DialogUserEvent = {
+      kind: "change",
+      dialogId,
+      fieldId,
+      data: getValues(),
+    };
+    sendDialogEvent(event);
+  }
+
+  /**
+   * Emit a change event for a field per its opt-in: immediately when the
+   * effective debounce is 0, otherwise on the trailing edge of a per-field
+   * timer. No-op for fields that did not opt in.
+   */
+  function scheduleChange(section: FieldSectionConfig): void {
+    const debounce = changeDebounceMs(section);
+    if (debounce === null) return;
+    const fieldId = section.id;
+    const pending = changeTimers[fieldId];
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      delete changeTimers[fieldId];
+    }
+    if (debounce <= 0) {
+      emitChange(fieldId);
+      return;
+    }
+    changeTimers[fieldId] = setTimeout(() => {
+      delete changeTimers[fieldId];
+      emitChange(fieldId);
+    }, debounce);
+  }
+
+  /** Cancel all pending change timers (on submit or unmount). */
+  function cancelChangeTimers(): void {
+    for (const [fieldId, timer] of Object.entries(changeTimers)) {
+      clearTimeout(timer);
+      delete changeTimers[fieldId];
+    }
+  }
+
+  onDestroy(() => {
+    cancelChangeTimers();
+  });
+
+  /** Focus the control marked data-autofocus (after a tick for mounting). */
+  function focusAutofocusTarget(): void {
+    setTimeout(() => {
+      const target = formRef?.querySelector<HTMLElement>("[data-autofocus]");
+      target?.focus();
+    }, 0);
+  }
+
+  /** The id of the control carrying the autofocus flag, or null. */
+  function autofocusIdOf(cfg: DialogConfig): string | null {
+    for (const section of cfg.sections) {
+      if (section.type === "group") {
+        for (const item of section.items) {
+          if (item.autofocus) return item.id;
+        }
+      } else if (
+        (section.type === "input" || section.type === "dropdown" || section.type === "radio") &&
+        section.autofocus
+      ) {
+        return section.id;
+      }
+    }
+    return null;
+  }
+
+  // Auto-focus on mount: an explicit autofocus control wins, else the
+  // selected radio card (for keyboard navigation).
+  onMount(() => {
+    setTimeout(() => {
+      const explicit = formRef?.querySelector<HTMLElement>("[data-autofocus]");
+      if (explicit) {
+        explicit.focus();
+        return;
+      }
+      const selected = formRef?.querySelector("[aria-checked='true']") as HTMLElement | null;
+      selected?.focus();
+    }, 0);
+  });
+
+  // Focus follows when a config update MOVES the autofocus flag to a
+  // different control (e.g. picker button -> name field once a project
+  // exists). Re-sends of the same target never steal focus; the initial
+  // target is handled by onMount.
+  let lastAutofocusId: string | null | undefined;
+  $effect(() => {
+    const id = autofocusIdOf(config);
+    if (lastAutofocusId === undefined) {
+      lastAutofocusId = id;
+      return;
+    }
+    if (id !== null && id !== lastAutofocusId) {
+      focusAutofocusTarget();
+    }
+    lastAutofocusId = id;
+  });
+
+  /** Snapshot every field's current value, keyed by field id. */
+  function getValues(): Record<string, string> {
+    const values: Record<string, string> = {};
+    for (const section of fieldSectionsOf(config)) {
+      values[section.id] = fieldValues[section.id] ?? "";
+    }
+    return values;
+  }
+
+  /**
+   * A field reported a new value (input typing, radio selection): track it and
+   * emit a change event per the field's opt-in (debounced for typing,
+   * immediate for radio).
+   */
+  function handleFieldValue(section: FieldSectionConfig, value: string): void {
+    fieldValues = { ...fieldValues, [section.id]: value };
+    scheduleChange(section);
+  }
+
+  /**
+   * A suggestion was picked (or free text committed via Enter/Tab): report the
+   * picked value, display its label, and emit immediately — a pick is a
+   * discrete action, so it bypasses the typing debounce (cancelling any
+   * pending typing emit so the backend never sees stale text after the pick).
+   */
+  function handleDropdownSelect(section: DropdownSectionConfig, value: string): void {
+    fieldValues = { ...fieldValues, [section.id]: value };
+    dropdownDisplay = { ...dropdownDisplay, [section.id]: suggestionLabel(section, value) };
+    if (!section.changeEvent) return;
+    const pending = changeTimers[section.id];
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      delete changeTimers[section.id];
+    }
+    emitChange(section.id);
+  }
+
+  /**
+   * The user typed in a dropdown. In free-text mode the typed text IS the
+   * field value (debounced change). In strict mode typing only filters the
+   * suggestion list — purely presentational, never reported.
+   */
+  function handleDropdownInput(section: DropdownSectionConfig, text: string): void {
+    if (!section.freeText) return;
+    fieldValues = { ...fieldValues, [section.id]: text };
+    dropdownDisplay = { ...dropdownDisplay, [section.id]: text };
+    scheduleChange(section);
+  }
+
+  /**
+   * Activate the form's primary button: the first button declared with an
+   * explicit variant "primary". Without one this does nothing — a positional
+   * fallback could land on a field-attached side-flow button.
+   */
+  function triggerPrimaryAction(): void {
+    const primaryButton = findPrimaryButton(config);
+    if (primaryButton) handleButton(primaryButton);
+  }
+
+  /**
+   * Activate the form's primary button as if clicked. Exposed for hosting
+   * surfaces that bind keyboard submit shortcuts (e.g. the panel shell's
+   * Cmd/Ctrl+Enter); same selection rule as Enter on a radio card. No-op
+   * without an explicit primary button.
+   */
+  export function submitPrimary(): void {
+    triggerPrimaryAction();
+  }
+
+  /** Handle a button click: emit an action event with the values snapshot. */
+  function handleButton(button: ButtonItem): void {
+    if (button.disabled || button.busy) return;
+    // The action event carries the full snapshot, so any pending debounced
+    // change is redundant — cancel it to avoid a stray emit after submit.
+    cancelChangeTimers();
+    const event: DialogUserEvent = {
+      dialogId,
+      actionId: button.id,
+      data: getValues(),
+    };
+    sendDialogEvent(event);
+  }
+
+  /**
+   * The button Enter activates from a radio group: the first button declared
+   * with an explicit variant "primary". Without one, Enter does nothing — a
+   * positional fallback could land on a field-attached side-flow button.
+   */
+  function findPrimaryButton(cfg: DialogConfig): ButtonItem | undefined {
+    for (const section of cfg.sections) {
+      if (section.type !== "group") continue;
+      for (const item of section.items) {
+        if (item.type === "button" && item.variant === "primary") return item;
+      }
+    }
+    return undefined;
+  }
+</script>
+
+<div class="form" class:layout-form={layout === "form"} bind:this={formRef}>
+  <!-- The recursive section snippet: GroupSection renders its items through
+       it, re-entering the dispatcher without importing it (acyclic imports). -->
+  {#snippet renderSection(section: DialogSection | ButtonItem)}
+    <Section
+      {section}
+      {layout}
+      values={fieldValues}
+      displays={dropdownDisplay}
+      renderItem={renderSection}
+      onInput={handleFieldValue}
+      onSelect={handleFieldValue}
+      onPick={handleDropdownSelect}
+      onType={handleDropdownInput}
+      onAction={handleButton}
+      onSubmit={triggerPrimaryAction}
+    />
+  {/snippet}
+  {#each config.sections as section, sectionIndex (sectionIndex)}
+    {@render renderSection(section)}
+  {/each}
+</div>
+
+<style>
+  /* ---- Form root (inner layout) ---- */
+  /* Surface chrome + text alignment come from the wrapping surface (e.g. the
+     modal card in DialogView). Form only stacks sections vertically. */
+
+  .form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+  }
+
+  /* Form-layout mode: left-aligned labeled rows. */
+  .form.layout-form {
+    align-items: stretch;
+    text-align: left;
+  }
+</style>

@@ -190,22 +190,23 @@ interface InputSection extends FieldSection {
 }
 
 /**
- * Group section - a horizontal row composing field controls and buttons.
+ * Group section - a horizontal row composing field sections and buttons.
  *
  * - items render in declaration order (which is also the tab order): field
- *   controls (input/dropdown) stretch, buttons size to their content.
+ *   sections (input/dropdown) stretch, buttons size to their content. Child
+ *   fields render as ordinary sections — their own label/error, when set,
+ *   appear inline in their cell (mind the row geometry).
  * - A group whose items are all buttons is the footer/action-row form (e.g.
  *   submit/cancel); a group mixing a field with buttons attaches side-flow
  *   buttons to that field's row.
- * - label: row label rendered above the row. Child fields' own labels are not
- *   rendered inside a group — use the group label.
+ * - label: row label rendered above the row, associated with the first field
+ *   item for accessibility.
  * - align: horizontal alignment of the row content when it does not fill the
  *   row. Defaults to the layout's natural alignment: "center" in the
  *   "centered" layout, "left" in the "form" layout.
  * - reverse: render the items visually reversed while keeping declaration
  *   order for tabbing — the dialog-footer convention where the primary button
  *   is tabbed first but sits on the right (declare [primary, cancel]).
- * - Child field errors render below the whole row.
  */
 interface GroupSection {
   readonly type: "group";
