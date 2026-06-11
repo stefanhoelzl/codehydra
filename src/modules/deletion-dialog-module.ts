@@ -160,6 +160,20 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
 
   /** Wire retry/dismiss event handlers on a dialog handle. */
   function wireEvents(handle: DialogHandle, workspacePath: string): void {
+    function dismiss(): void {
+      deps.logger.debug("Deletion dismiss", { workspace: workspacePath });
+      handle.close();
+      activeDialog = null;
+      progressMap.delete(workspacePath);
+      dispatchDelete(deps.dispatcher, {
+        workspacePath,
+        keepBranch: false,
+        force: true,
+        removeWorktree: true,
+        ignoreWarnings: true,
+      });
+    }
+
     handle.onEvent((evt) => {
       const progress = progressMap.get(workspacePath);
       if (!progress) return;
@@ -177,18 +191,16 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
           ...(pids && { blockingPids: pids }),
         });
       } else if (evt.actionId === "dismiss") {
-        deps.logger.debug("Deletion dismiss", { workspace: workspacePath });
-        handle.close();
-        activeDialog = null;
-        progressMap.delete(workspacePath);
-        dispatchDelete(deps.dispatcher, {
-          workspacePath,
-          keepBranch: false,
-          force: true,
-          removeWorktree: true,
-          ignoreWarnings: true,
-        });
+        dismiss();
       }
+    });
+
+    // Escape acts like the Dismiss button, but only in the states where that
+    // button is rendered (completed with errors); mid-deletion it's a no-op.
+    handle.onDismiss(() => {
+      const progress = progressMap.get(workspacePath);
+      if (!progress || !progress.completed || !progress.hasErrors) return;
+      dismiss();
     });
   }
 

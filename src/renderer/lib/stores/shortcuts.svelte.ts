@@ -15,7 +15,6 @@ import {
   newWorkspaceView,
   openNewWorkspaceView,
   closeNewWorkspaceView,
-  requestSubmit,
 } from "./new-workspace-view.svelte";
 import { getLifecycle } from "./workspace-lifecycle.svelte";
 import {
@@ -343,14 +342,14 @@ export async function handleHibernateToggle(): Promise<void> {
 /**
  * Handle dialog opening keys (Enter, Delete, Backspace).
  * Sets mode to "workspace" locally for immediate UI feedback.
- * - Enter opens the New workspace view, or creates the workspace if it's already open.
+ * - Enter opens the New workspace view.
  * - Delete/Backspace opens the remove dialog for the active workspace.
  */
 function handleDialog(key: DialogKey): void {
   if (key === "Enter") {
     if (newWorkspaceView.isOpen) {
-      // Already on the New workspace view: Alt+X+Enter creates the workspace.
-      requestSubmit();
+      // Already on the New workspace view: nothing to open. Keyboard submit
+      // is Cmd/Ctrl+Enter, owned by the form itself.
       return;
     }
     // Deactivate shortcut mode locally for immediate UI feedback. The New

@@ -9,19 +9,18 @@
   Shell behaviour (renderer-owned; the backend owns the form session):
   - Docked over the content area (sidebar stays visible), z-index 1 so modal
     dialogs (z 900) stack above.
-  - Escape emits a "dismiss" event; the backend decides what dismissing means
-    (typically close + reopen with fresh config = clear).
-  - Cmd/Ctrl+Enter fires the primary action; Enter in fields does not submit.
-  - Tab/Shift+Tab is trapped at the panel boundaries so focus doesn't leak
-    into the sidebar.
+  - Keyboard (Escape -> dismiss, Cmd/Ctrl+Enter -> primary, Tab trap) is owned
+    by Form — shared with the modal surface.
+  - When the last modal stacked above the panel closes, the panel re-places
+    focus on the form's autofocus control (focus would otherwise be lost to
+    <body>, leaving the keyboard flow dead).
   - Form is keyed by dialogId: a backend close + reopen remounts it with fresh
     field values (the reset gesture).
 -->
 <script lang="ts">
-  import type { DialogConfig, DialogUserEvent } from "@shared/dialog-types";
+  import type { DialogConfig } from "@shared/dialog-types";
   import Form from "./form/Form.svelte";
-  import { sendDialogEvent } from "$lib/api";
-  import { trapTabKey } from "$lib/utils/focus-trap";
+  import { dialogs } from "$lib/stores/dialog-framework.svelte";
 
   interface Props {
     dialogId: string;
@@ -30,7 +29,6 @@
 
   const { dialogId, config }: Props = $props();
 
-  let sectionRef: HTMLElement | undefined = $state();
   let formRef: Form | undefined = $state();
 
   /** Derive heading text from sections for the accessible name. */
@@ -39,42 +37,19 @@
     return headingSection?.type === "text" ? headingSection.content : "Panel";
   });
 
-  /**
-   * Activate the form's primary action. Exposed so hosting code can bind
-   * keyboard shortcuts (e.g. Alt+X+Enter) to the panel form's submit.
-   */
-  export function submitPrimary(): void {
-    formRef?.submitPrimary();
-  }
-
-  // Escape -> dismiss intent to the backend; Cmd/Ctrl+Enter -> primary action;
-  // Tab/Shift+Tab trapped at the panel boundaries (shared focus-trap util,
-  // including vscode-elements).
-  function handleKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault();
-      formRef?.submitPrimary();
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      const dismiss: DialogUserEvent = { kind: "dismiss", dialogId };
-      sendDialogEvent(dismiss);
-      return;
-    }
-    if (sectionRef) {
-      trapTabKey(event, sectionRef);
-    }
-  }
+  // Refocus the form when the last modal above the panel closes (modals steal
+  // focus while open; on close the panel is the active surface again).
+  const modalAbove = $derived(
+    [...dialogs.value.values()].some((entry) => entry.surface === "modal")
+  );
+  let hadModalAbove = false;
+  $effect(() => {
+    if (hadModalAbove && !modalAbove) formRef?.refocus();
+    hadModalAbove = modalAbove;
+  });
 </script>
 
-<section
-  bind:this={sectionRef}
-  class="panel-view"
-  aria-label={heading}
-  onkeydowncapture={handleKeydown}
->
+<section class="panel-view" aria-label={heading}>
   <div class="panel-card">
     {#key dialogId}
       <Form bind:this={formRef} {dialogId} {config} />

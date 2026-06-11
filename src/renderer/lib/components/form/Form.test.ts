@@ -863,6 +863,152 @@ describe("Form component", () => {
     });
   });
 
+  // ---- Form-global keyboard contract ----
+
+  describe("keyboard contract", () => {
+    const keyConfig: DialogConfig = {
+      sections: [
+        { type: "input", id: "name", label: "Name" },
+        {
+          type: "group",
+          items: [
+            { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+            { type: "button", id: "create", label: "Create", variant: "primary" },
+          ],
+        },
+      ],
+    };
+
+    it("Escape emits a dismiss event for the session", async () => {
+      renderForm(keyConfig, { dialogId: "kb-1" });
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-1" });
+    });
+
+    it("Escape bubbles up from inside a field to dismiss", async () => {
+      renderForm(keyConfig, { dialogId: "kb-2" });
+
+      await fireEvent.keyDown(document.getElementById("name")!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-2" });
+    });
+
+    it("an open dropdown consumes the first Escape; the second dismisses", async () => {
+      renderForm(
+        {
+          sections: [
+            {
+              type: "dropdown",
+              id: "region",
+              suggestions: [{ items: [{ value: "us-east", label: "US East" }] }],
+            },
+          ],
+        },
+        { dialogId: "kb-3" }
+      );
+
+      const input = screen.getByRole("combobox");
+      await fireEvent.focus(input);
+      expect(input).toHaveAttribute("aria-expanded", "true");
+
+      // First Escape closes the dropdown without dismissing the session.
+      await fireEvent.keyDown(input, { key: "Escape" });
+      expect(input).toHaveAttribute("aria-expanded", "false");
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+
+      // Second Escape reaches the form and dismisses.
+      await fireEvent.keyDown(input, { key: "Escape" });
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-3" });
+    });
+
+    it("Cmd/Ctrl+Enter activates the primary button with the values snapshot", async () => {
+      renderForm(keyConfig, { dialogId: "kb-4" });
+
+      const field = document.getElementById("name")!;
+      await fireEvent.input(field, { target: { value: "ws" } });
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Enter", ctrlKey: true });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "kb-4",
+        actionId: "create",
+        data: { name: "ws" },
+      });
+    });
+
+    it("Ctrl+Enter inside a single-line input submits exactly once", async () => {
+      renderForm(keyConfig, { dialogId: "kb-5" });
+
+      // The input's own Enter handler consumes the key (defaultPrevented);
+      // the form-level handler must not fire a second action.
+      await fireEvent.keyDown(document.getElementById("name")!, { key: "Enter", ctrlKey: true });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ actionId: "create" })
+      );
+    });
+
+    it("Cmd/Ctrl+Enter does nothing without an explicit primary button", async () => {
+      renderForm({
+        sections: [
+          { type: "text", content: "Working", style: "heading" },
+          { type: "group", items: [{ type: "button", id: "go", label: "Go" }] },
+        ],
+      });
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Enter", metaKey: true });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("plain Enter on the form root does not submit", async () => {
+      renderForm(keyConfig);
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Enter" });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    describe("Tab trap", () => {
+      // Multiline inputs render as native <textarea>s — focusable in happy-dom,
+      // unlike the vscode-elements web components whose internals aren't wired.
+      const trapConfig: DialogConfig = {
+        sections: [
+          { type: "input", id: "first", label: "First", multiline: true },
+          { type: "input", id: "last", label: "Last", multiline: true },
+        ],
+      };
+
+      function getTextareas(): [HTMLTextAreaElement, HTMLTextAreaElement] {
+        const areas = document.querySelectorAll("textarea");
+        return [areas[0] as HTMLTextAreaElement, areas[1] as HTMLTextAreaElement];
+      }
+
+      it("Tab on the last control wraps to the first", async () => {
+        renderForm(trapConfig);
+        const [first, last] = getTextareas();
+
+        last.focus();
+        await fireEvent.keyDown(last, { key: "Tab" });
+
+        expect(document.activeElement).toBe(first);
+      });
+
+      it("Shift+Tab on the first control wraps to the last", async () => {
+        renderForm(trapConfig);
+        const [first, last] = getTextareas();
+
+        first.focus();
+        await fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+
+        expect(document.activeElement).toBe(last);
+      });
+    });
+  });
+
   // ---- Autofocus ----
 
   describe("autofocus", () => {

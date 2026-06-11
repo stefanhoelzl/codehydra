@@ -40,8 +40,12 @@ import type { DialogUserEvent, DialogConfig } from "../shared/dialog-types";
 // Helpers
 // =============================================================================
 
-function createMockHandle(): DialogHandle & { _emitEvent(event: DialogUserEvent): void } {
+function createMockHandle(): DialogHandle & {
+  _emitEvent(event: DialogUserEvent): void;
+  _emitDismiss(): void;
+} {
   const listeners = new Set<(event: DialogUserEvent) => void>();
+  const dismissListeners = new Set<() => void>();
   let closedResolve!: () => void;
   const closedPromise = new Promise<void>((resolve) => {
     closedResolve = resolve;
@@ -57,10 +61,16 @@ function createMockHandle(): DialogHandle & { _emitEvent(event: DialogUserEvent)
       return () => listeners.delete(handler);
     }),
     onChange: vi.fn(() => () => {}),
-    onDismiss: vi.fn(() => () => {}),
+    onDismiss: vi.fn((handler: () => void) => {
+      dismissListeners.add(handler);
+      return () => dismissListeners.delete(handler);
+    }),
     nextEvent: vi.fn(),
     _emitEvent(event: DialogUserEvent) {
       for (const listener of listeners) listener(event);
+    },
+    _emitDismiss() {
+      for (const listener of dismissListeners) listener();
     },
   };
 }
@@ -222,6 +232,18 @@ describe("ErrorReportModule — bug report dialog", () => {
     handle._emitEvent({ dialogId: "dlg-test", actionId: "cancel" });
     expect(handle.close).toHaveBeenCalled();
     expect(deps.dispatcher.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("Escape (dismiss) discards the draft like Cancel and allows reopening", async () => {
+    const { module, deps, handle } = setup();
+    await emitKey(module, "b");
+    handle._emitDismiss();
+    expect(handle.close).toHaveBeenCalled();
+    expect(deps.dispatcher.dispatch).not.toHaveBeenCalled();
+
+    // The active-handle guard is cleared — 'b' opens a fresh dialog.
+    await emitKey(module, "b");
+    expect(deps.dialogManager.open).toHaveBeenCalledTimes(2);
   });
 
   it("includes rotated archive log alongside the current log", async () => {

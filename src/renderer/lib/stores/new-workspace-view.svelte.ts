@@ -19,10 +19,6 @@ import { setActiveWorkspace } from "./projects.svelte.js";
 
 let _isOpen = $state(false);
 
-// Submit handler registered by MainView while the panel is shown, so keyboard
-// shortcuts (Alt+X+Enter) can trigger the panel form's primary action.
-let _submitHandler: (() => void) | null = null;
-
 // ============ Getters ============
 
 export const newWorkspaceView = {
@@ -52,24 +48,8 @@ export function closeNewWorkspaceView(): void {
 }
 
 /**
- * Register (or clear with null) the submit handler from the mounted view.
- */
-export function registerSubmitHandler(handler: (() => void) | null): void {
-  _submitHandler = handler;
-}
-
-/**
- * Trigger the view's Create action (used by Alt+X+Enter while the view is open).
- * No-op if the view isn't mounted/registered or the form is invalid.
- */
-export function requestSubmit(): void {
-  _submitHandler?.();
-}
-
-/**
  * Reset store to initial state. Used for testing.
  */
 export function reset(): void {
   _isOpen = false;
-  _submitHandler = null;
 }

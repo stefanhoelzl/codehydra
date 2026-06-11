@@ -3,14 +3,14 @@
 
   Modal surface for the declarative dialog framework.
   Renders the chrome — faded logo backdrop + centered card — and delegates the
-  sections + actions to <Form>. One DialogView is rendered per active dialog by
-  DialogHost.
+  sections + actions to <Form>, which owns the keyboard contract (Escape ->
+  dismiss, Cmd/Ctrl+Enter -> primary, Tab trap). One DialogView is rendered
+  per active dialog by DialogHost.
 -->
 <script lang="ts">
   import type { DialogConfig } from "@shared/dialog-types";
   import Logo from "./Logo.svelte";
   import Form from "./form/Form.svelte";
-  import { trapTabKey } from "$lib/utils/focus-trap";
 
   interface Props {
     dialogId: string;
@@ -21,30 +21,14 @@
 
   const { dialogId, config, workspaceArea = false }: Props = $props();
 
-  let rootRef: HTMLElement | undefined = $state();
-
   /** Derive heading text from sections for aria-label. */
   const heading = $derived.by(() => {
     const headingSection = config.sections.find((s) => s.type === "text" && s.style === "heading");
     return headingSection?.type === "text" ? headingSection.content : "Dialog";
   });
-
-  // Tab/Shift+Tab cycles within the dialog so focus never leaves the form.
-  function handleKeydown(event: KeyboardEvent): void {
-    if (rootRef) {
-      trapTabKey(event, rootRef);
-    }
-  }
 </script>
 
-<div
-  bind:this={rootRef}
-  class="dialog-view"
-  class:workspace-area={workspaceArea}
-  role="dialog"
-  aria-label={heading}
-  onkeydowncapture={handleKeydown}
->
+<div class="dialog-view" class:workspace-area={workspaceArea} role="dialog" aria-label={heading}>
   <div class="backdrop" aria-hidden="true">
     <Logo size={128} />
   </div>

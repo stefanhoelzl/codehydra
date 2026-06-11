@@ -914,6 +914,67 @@ describe("CreationModule", () => {
       await flush();
       expect(clone.closed).toBe(true);
     });
+
+    it("Escape (dismiss) closes the dialog when not cloning", async () => {
+      const s = setup();
+      const panel = await s.start();
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+
+      clone.emitDismiss();
+      await flush();
+      expect(clone.closed).toBe(true);
+    });
+
+    it("Escape (dismiss) after a failed clone closes the dialog", async () => {
+      const s = setup();
+      const panel = await s.start();
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+      s.dispatcher.results.set(INTENT_OPEN_PROJECT, () => Promise.reject(new Error("nope")));
+
+      clone.emitChange("url", { url: "org/repo" });
+      await flush();
+      clone.emitAction("do-clone", { url: "org/repo" });
+      await flush();
+      await flush();
+
+      clone.emitDismiss();
+      await flush();
+      expect(clone.closed).toBe(true);
+    });
+
+    it("Escape (dismiss) mid-clone detaches like 'Continue in background'", async () => {
+      const s = setup({ projects: [PROJECT_A, PROJECT_B] });
+      const panel = await s.start();
+      const seededProject = field(panel.config, "project")["value"];
+
+      panel.emitAction("clone", {});
+      await flush();
+      const clone = s.dialogs.modalHandles()[0]!;
+
+      let resolveClone: (value: Project) => void = () => {};
+      s.dispatcher.results.set(
+        INTENT_OPEN_PROJECT,
+        () => new Promise<Project>((resolve) => (resolveClone = resolve))
+      );
+      clone.emitChange("url", { url: "org/repo" });
+      await flush();
+      clone.emitAction("do-clone", { url: "org/repo" });
+      await flush();
+
+      clone.emitDismiss();
+      await flush();
+      expect(clone.closed).toBe(true);
+
+      // The detached clone completing must NOT hijack the form selection.
+      resolveClone(PROJECT_B);
+      await flush();
+      await flush();
+      expect(field(panel.config, "project")["value"]).toBe(seededProject);
+    });
   });
 
   describe("seeding from domain events", () => {

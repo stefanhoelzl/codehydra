@@ -36,7 +36,6 @@ const mockNewWorkspaceView = vi.hoisted(() => ({
   newWorkspaceView: { isOpen: false as boolean },
   openNewWorkspaceView: vi.fn(),
   closeNewWorkspaceView: vi.fn(),
-  requestSubmit: vi.fn(),
 }));
 
 // Create mock workspace type for testing
@@ -885,18 +884,17 @@ describe("shortcuts store", () => {
 
         // Opens the New workspace view with no project pre-fill (no args).
         expect(mockNewWorkspaceView.openNewWorkspaceView).toHaveBeenCalledWith();
-        expect(mockNewWorkspaceView.requestSubmit).not.toHaveBeenCalled();
         expect(shortcutModeActive.value).toBe(false);
       });
 
-      it("should-create-workspace-on-enter-when-view-already-open", () => {
-        // Already on the New workspace view: Alt+X+Enter triggers Create.
+      it("should-do-nothing-on-enter-when-view-already-open", () => {
+        // Already on the New workspace view: keyboard submit is Cmd/Ctrl+Enter
+        // (owned by the form), not Alt+X+Enter.
         mockNewWorkspaceView.newWorkspaceView.isOpen = true;
 
         enableShortcutMode();
         handleShortcutKey("enter");
 
-        expect(mockNewWorkspaceView.requestSubmit).toHaveBeenCalled();
         expect(mockNewWorkspaceView.openNewWorkspaceView).not.toHaveBeenCalled();
       });
 

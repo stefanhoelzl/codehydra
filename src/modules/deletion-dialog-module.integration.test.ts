@@ -48,6 +48,7 @@ interface MockHandle {
   closed: boolean;
   eventListeners: Set<(event: DialogUserEvent) => void>;
   emitEvent(event: DialogUserEvent): void;
+  emitDismiss(): void;
 }
 
 interface MockDialogManager {
@@ -66,6 +67,7 @@ function createMockDialogManager(): MockDialogManager {
     },
     open: vi.fn((config: DialogConfig) => {
       const listeners = new Set<(event: DialogUserEvent) => void>();
+      const dismissListeners = new Set<() => void>();
       const handle: MockHandle = {
         id: `dlg-test-${handles.length + 1}`,
         config,
@@ -73,6 +75,9 @@ function createMockDialogManager(): MockDialogManager {
         eventListeners: listeners,
         emitEvent(event) {
           for (const l of listeners) l(event);
+        },
+        emitDismiss() {
+          for (const l of dismissListeners) l();
         },
       };
       handles.push(handle);
@@ -89,7 +94,10 @@ function createMockDialogManager(): MockDialogManager {
           return () => listeners.delete(handler);
         }),
         onChange: vi.fn(() => () => {}),
-        onDismiss: vi.fn(() => () => {}),
+        onDismiss: vi.fn((handler: () => void) => {
+          dismissListeners.add(handler);
+          return () => dismissListeners.delete(handler);
+        }),
         nextEvent: vi.fn(),
         closed: new Promise<void>(() => {}),
       } as DialogHandle;
@@ -440,6 +448,45 @@ describe("DeletionDialogModule", () => {
     expect(payload.workspacePath).toBe(WS_PATH_A);
     expect(payload.force).toBe(true);
     expect(payload.ignoreWarnings).toBe(true);
+  });
+
+  it("Escape (dismiss event) acts like the Dismiss button when completed with errors", async () => {
+    const { dialogManager, dispatcher, fireProgress, fireSwitched } = setup;
+
+    await fireSwitched(WS_PATH_A);
+    await fireProgress(
+      makeProgress({
+        completed: true,
+        hasErrors: true,
+        operations: [
+          { id: "cleanup-workspace", label: "Removing workspace", status: "error", error: "EBUSY" },
+        ],
+      })
+    );
+
+    const handle = dialogManager.lastHandle!;
+    handle.emitDismiss();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(handle.closed).toBe(true);
+    const forceIntent = dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE);
+    expect(forceIntent).toBeDefined();
+    expect((forceIntent!.payload as Record<string, unknown>).force).toBe(true);
+  });
+
+  it("Escape (dismiss event) is a no-op while deletion is in progress", async () => {
+    const { dialogManager, dispatcher, fireProgress, fireSwitched } = setup;
+
+    await fireSwitched(WS_PATH_A);
+    // In progress: no Dismiss button is rendered.
+    await fireProgress(makeProgress());
+
+    const handle = dialogManager.lastHandle!;
+    handle.emitDismiss();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(handle.closed).toBe(false);
+    expect(dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE)).toBeUndefined();
   });
 
   it("should clean up on EVENT_WORKSPACE_DELETED", async () => {

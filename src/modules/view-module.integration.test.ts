@@ -503,6 +503,61 @@ describe("ViewModule Integration", () => {
       expect(result.selectedAgent).toBe("opencode");
       expect(dialogManager.open).toHaveBeenCalled();
     });
+
+    it("ignores dismiss (Escape) and keeps waiting for a selection", async () => {
+      const availableAgents: RegisterAgentResult[] = [
+        { agent: "claude", label: "Claude", icon: "sparkle" },
+        { agent: "opencode", label: "OpenCode", icon: "terminal" },
+      ];
+
+      const dispatcher = createMockDispatcher();
+      const viewManager = createMockViewManager();
+
+      dispatcher.registerOperation(
+        INTENT_SETUP,
+        new MinimalAgentSelectionOperation(availableAgents)
+      );
+
+      // Selection is mandatory: a dismiss response must not pick a fallback
+      // agent — the module re-awaits until an action arrives.
+      const nextEvent = vi
+        .fn()
+        .mockResolvedValueOnce({ kind: "dismiss", dialogId: "dlg-agent" })
+        .mockResolvedValueOnce({
+          dialogId: "dlg-agent",
+          actionId: "select",
+          data: { agent: "opencode" },
+        });
+      const dialogManager = {
+        open: vi.fn(() => ({
+          id: "dlg-agent",
+          update: vi.fn(),
+          close: vi.fn(),
+          onEvent: vi.fn(() => () => {}),
+          nextEvent,
+          closed: Promise.resolve(),
+        })),
+      };
+
+      const module = createViewModule({
+        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
+        logger: SILENT_LOGGER,
+        viewLayer: null,
+        windowLayer: null,
+        sessionLayer: null,
+        dialogManager: dialogManager as unknown as NonNullable<ViewModuleDeps["dialogManager"]>,
+      });
+
+      dispatcher.registerModule(module);
+
+      const result = (await dispatcher.dispatch({
+        type: INTENT_SETUP,
+        payload: {},
+      } as SetupIntent)) as unknown as AgentSelectionResult;
+
+      expect(result.selectedAgent).toBe("opencode");
+      expect(nextEvent).toHaveBeenCalledTimes(2);
+    });
   });
 
   // -------------------------------------------------------------------------
