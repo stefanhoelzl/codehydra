@@ -15,8 +15,27 @@ import type { ClaudeCodeServerManager } from "./server-manager";
 import { ClaudeCodeProvider } from "./provider";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import type { SupportedPlatform, SupportedArch } from "../../../boundaries/platform/platform-info";
-import { getClaudeUrlForVersion, getClaudeSubPath } from "./setup-info";
+import type { ProcessRunner } from "../../../boundaries/platform/process";
+import { getClaudeUrlForVersion, getClaudeSubPath, getClaudeExecutablePath } from "./setup-info";
 import { createAgentModuleProvider } from "../module-provider";
+import { getErrorMessage } from "../../../shared/error-utils";
+
+/**
+ * Matches the `(choices: ...)` list on the `--permission-mode` line of
+ * `claude --help` — parsed rather than hardcoded so the form tracks whatever
+ * the installed Claude version supports.
+ */
+const PERMISSION_MODE_CHOICES_REGEX = /--permission-mode\b[\s\S]*?\(choices:\s*([^)]*)\)/;
+
+/** Parse the permission-mode choices from `claude --help` output ([] if none). */
+function parsePermissionModes(helpText: string): string[] {
+  const match = PERMISSION_MODE_CHOICES_REGEX.exec(helpText);
+  if (match === null || match[1] === undefined) return [];
+  return match[1]
+    .split(",")
+    .map((entry) => entry.trim().replace(/^["']|["']$/g, ""))
+    .filter((entry) => entry.length > 0);
+}
 
 // =============================================================================
 // Dependency Interface
@@ -38,6 +57,8 @@ export interface ClaudeModuleProviderDeps {
   readonly platform: SupportedPlatform;
   readonly arch: SupportedArch;
   readonly logger: Logger;
+  /** Process runner used to detect permission modes via `claude --help`. */
+  readonly processRunner: Pick<ProcessRunner, "run">;
 }
 
 // =============================================================================
@@ -57,7 +78,26 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
     platform,
     arch,
     logger,
+    processRunner,
   } = deps;
+
+  // Owned by the module: parse `claude --help` once (cached) for the permission
+  // modes the creation form offers. Pinned version.claude relies on the binary
+  // being on PATH; otherwise detection degrades to the default mode only. A
+  // failed run is not cached, so a later call can retry.
+  let permissionModesCache: readonly string[] | undefined;
+  const detectPermissionModes = async (): Promise<readonly string[]> => {
+    if (permissionModesCache !== undefined) return permissionModesCache;
+    try {
+      const proc = processRunner.run(getClaudeExecutablePath(platform), ["--help"]);
+      const { stdout } = await proc.wait();
+      permissionModesCache = parsePermissionModes(stdout);
+      return permissionModesCache;
+    } catch (error) {
+      logger.warn("Failed to detect Claude permission modes", { error: getErrorMessage(error) });
+      return [];
+    }
+  };
 
   return createAgentModuleProvider<ClaudeCodeProvider>(
     {
@@ -120,6 +160,9 @@ export function createClaudeModuleProvider(deps: ClaudeModuleProviderDeps): Agen
           event === "open" ? "WrapperStart" : "WrapperEnd"
         );
       },
+
+      // --- Launch options ---
+      getLaunchOptions: async () => ({ permissionModes: await detectPermissionModes() }),
     },
     { logger, downloadDeps, binaryName: binaryConfig.name }
   );

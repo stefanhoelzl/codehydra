@@ -882,7 +882,8 @@ describe("ClaudeCodeServerManager integration", () => {
 
       await serverManager.setInitialPrompt("/workspace/feature-a", {
         prompt: "Test prompt",
-        agent: "coder",
+        agentName: "coder",
+        permissionMode: "plan",
         model: { providerID: "anthropic", modelID: "claude-sonnet" },
       });
 
@@ -894,7 +895,8 @@ describe("ClaudeCodeServerManager integration", () => {
       const parsed = JSON.parse(content);
 
       expect(parsed.prompt).toBe("Test prompt");
-      expect(parsed.agent).toBe("coder");
+      expect(parsed.agentName).toBe("coder");
+      expect(parsed.permissionMode).toBe("plan");
       expect(parsed.model).toBe("claude-sonnet"); // modelID only, not full object
     });
 
@@ -959,20 +961,40 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["busy"]);
     });
 
-    it("WrapperStart with plan initial prompt sets status to idle", async () => {
+    it("WrapperStart with a plan-mode prompt still sets status to busy (mode is irrelevant)", async () => {
       await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
         statusChanges.push(status);
       });
 
-      // Set initial prompt with plan agent
+      const markActiveHandler = vi.fn();
+      serverManager.setMarkActiveHandler(markActiveHandler);
+
+      // A prompt is given — the agent works on it regardless of permission mode.
       await serverManager.setInitialPrompt("/workspace/feature-a", {
         prompt: "Plan a feature",
-        agent: "plan",
+        permissionMode: "plan",
       });
 
-      // WrapperStart should set status to idle (normal behavior)
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
+
+      expect(statusChanges).toEqual(["busy"]);
+    });
+
+    it("WrapperStart with an agent/mode-only prompt (empty text) sets status to idle", async () => {
+      await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Only an agent name was chosen — no prompt text to process.
+      await serverManager.setInitialPrompt("/workspace/feature-a", {
+        prompt: "",
+        agentName: "reviewer",
+      });
+
       serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperStart");
 
       expect(statusChanges).toEqual(["idle"]);

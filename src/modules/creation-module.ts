@@ -66,6 +66,11 @@ import {
   INTENT_GET_ACTIVE_WORKSPACE,
   type GetActiveWorkspaceIntent,
 } from "../intents/get-active-workspace";
+import {
+  INTENT_GET_LAUNCH_OPTIONS,
+  type GetLaunchOptionsIntent,
+  type LaunchOptionsResult,
+} from "../intents/agent-launch-options";
 
 // =============================================================================
 // Dependencies
@@ -91,7 +96,8 @@ const FIELD_NAME = "name";
 const FIELD_BASE = "base";
 const FIELD_PROMPT = "prompt";
 const FIELD_AGENT = "agent";
-const FIELD_AGENT_MODE = "agent-mode";
+const FIELD_AGENT_NAME = "agent-name";
+const FIELD_PERMISSION_MODE = "permission-mode";
 const ACTION_OPEN_FOLDER = "open-folder";
 const ACTION_CLONE = "clone";
 const ACTION_CREATE = "create";
@@ -136,6 +142,17 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   let projects: readonly Project[] = [];
   /** Agents available at the last session (re)open. */
   let availableAgents: readonly AgentInfo[] = [];
+  /** Backend the form currently targets (drives the per-backend fields). */
+  let selectedAgentType: LifecycleAgentType | null = null;
+  /**
+   * Launch options the selected backend reported (via agent:get-launch-options).
+   * The form is agent-agnostic: it renders whatever options come back. Re-fetched
+   * on every form open / backend switch; the heavy work (e.g. parsing
+   * `claude --help`) is cached inside the provider, so re-querying is cheap.
+   */
+  let launchOptions: LaunchOptionsResult | null = null;
+  /** The backend whose launch options are currently being fetched (if any). */
+  let loadingLaunchOptionsFor: LifecycleAgentType | null = null;
   let selectedProjectPath: string | null = null;
   let branches: readonly BaseInfo[] = [];
   let branchesLoading = false;
@@ -165,9 +182,77 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     return projects.find((p) => p.path === selectedProjectPath);
   }
 
+  /** The configured global default agent (already validated by the store). */
   function defaultAgent(): LifecycleAgentType | null {
-    const raw = deps.agentConfig.get();
-    return raw === "claude" || raw === "opencode" ? raw : null;
+    return deps.agentConfig.get();
+  }
+
+  /** Narrow a raw field value to a currently-available agent. */
+  function isAvailableAgent(value: string): value is LifecycleAgentType {
+    return availableAgents.some((a) => a.agent === value);
+  }
+
+  /** Backend to target on a fresh form: configured default, else first available. */
+  function resolveInitialAgentType(): LifecycleAgentType | null {
+    const configured = defaultAgent();
+    if (configured !== null && availableAgents.some((a) => a.agent === configured)) {
+      return configured;
+    }
+    return availableAgents[0]?.agent ?? null;
+  }
+
+  /** Permission modes reported by the currently selected backend. */
+  function currentPermissionModes(): readonly string[] {
+    return launchOptions?.permissionModes ?? [];
+  }
+
+  /** True while the selected backend's launch options are being fetched. */
+  function launchOptionsLoading(): boolean {
+    return loadingLaunchOptionsFor !== null && loadingLaunchOptionsFor === selectedAgentType;
+  }
+
+  /** Permission-mode suggestions: the default entry plus the backend's modes. */
+  function permissionModeSuggestions(): DropdownSuggestionGroup[] {
+    const items = [
+      { value: "", label: "default" },
+      ...currentPermissionModes()
+        .filter((mode) => mode !== "default")
+        .map((mode) => ({ value: mode, label: mode })),
+    ];
+    return [{ items }];
+  }
+
+  /**
+   * Fetch the selected backend's launch options. Agent-agnostic: the form just
+   * asks the backend what it offers. Called on every form open and backend
+   * switch — the provider caches the heavy work, so re-querying is cheap. The
+   * stale options are cleared up front so the form never shows another backend's
+   * values, and a late response is ignored if the backend changed meanwhile.
+   */
+  async function loadLaunchOptions(): Promise<void> {
+    const backend = selectedAgentType;
+    launchOptions = null;
+    if (backend === null) {
+      pushConfig();
+      return;
+    }
+    loadingLaunchOptionsFor = backend;
+    pushConfig();
+    try {
+      const intent: GetLaunchOptionsIntent = {
+        type: INTENT_GET_LAUNCH_OPTIONS,
+        payload: { backend },
+      };
+      const result = await dispatcher.dispatch(intent);
+      if (selectedAgentType === backend) launchOptions = result;
+    } catch (error) {
+      logger.warn("Creation form: launch options fetch failed", {
+        error: getErrorMessage(error),
+      });
+    } finally {
+      if (loadingLaunchOptionsFor === backend) loadingLaunchOptionsFor = null;
+      pushConfig();
+    }
   }
 
   /**
@@ -349,24 +434,34 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         label: "Agent",
         searchable: false,
         suggestions: [{ items: availableAgents.map((a) => ({ value: a.agent, label: a.label })) }],
-        ...(defaultAgent() !== null && { initialValue: defaultAgent()! }),
+        value: selectedAgentType ?? "",
+        changeEvent: true,
       });
     }
 
+    // Named agent/persona — free text for any backend (maps to the backend's
+    // named-agent option). Empty reports "" and omits the flag.
     sections.push({
-      type: "dropdown",
-      id: FIELD_AGENT_MODE,
-      label: "Agent mode",
-      searchable: false,
-      suggestions: [
-        {
-          items: [
-            { value: "", label: "Full permissions" },
-            { value: "plan", label: "Plan mode (read-only)" },
-          ],
-        },
-      ],
+      type: "input",
+      id: FIELD_AGENT_NAME,
+      label: "Agent name",
+      placeholder: "default",
     });
+
+    // Permission mode is driven by the backend's reported launch options: shown
+    // while loading or when the backend offers any modes, hidden otherwise (the
+    // form stays agent-agnostic — it never special-cases a backend). The
+    // "default" entry reports "" and omits the flag.
+    if (launchOptionsLoading() || currentPermissionModes().length > 0) {
+      sections.push({
+        type: "dropdown",
+        id: FIELD_PERMISSION_MODE,
+        label: "Permission mode",
+        searchable: false,
+        suggestions: permissionModeSuggestions(),
+        loading: launchOptionsLoading(),
+      });
+    }
 
     if (formError !== null) {
       sections.push({ type: "text", content: formError, icon: "error" });
@@ -493,9 +588,12 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     baseValue = "";
     pickerBusy = false;
     formError = null;
+    launchOptions = null;
+    loadingLaunchOptionsFor = null;
 
     await refreshProjects();
     availableAgents = await deps.getAvailableAgents();
+    selectedAgentType = resolveInitialAgentType();
     const seed = await computeSeedProject();
     if (seed !== null) {
       selectedProjectPath = seed;
@@ -507,6 +605,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     const newHandle = dialogManager.open(config, { surface: "panel" });
     handle = newHandle;
     wireSession(newHandle);
+
+    // Fetch the selected backend's launch options for the opening form.
+    void loadLaunchOptions();
 
     // Kick the branch load for the seeded project (re-selects to fetch).
     if (seed !== null) {
@@ -549,6 +650,15 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       } else if (event.fieldId === FIELD_BASE) {
         baseValue = data[FIELD_BASE] ?? "";
         pushConfig();
+      } else if (event.fieldId === FIELD_AGENT) {
+        const next = data[FIELD_AGENT] ?? "";
+        if (isAvailableAgent(next) && next !== selectedAgentType) {
+          selectedAgentType = next;
+          // Fetch the new backend's launch options; loadLaunchOptions clears the
+          // stale options and re-renders (which drives whether the
+          // permission-mode field appears).
+          void loadLaunchOptions();
+        }
       }
     });
 
@@ -591,18 +701,26 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     }
 
     const prompt = (data[FIELD_PROMPT] ?? "").trim();
-    const agentMode = data[FIELD_AGENT_MODE] ?? "";
+    // Permission mode is absent from the data when the backend doesn't offer it
+    // (the field isn't rendered); "" means the default (omit the flag).
+    const permissionMode = data[FIELD_PERMISSION_MODE] ?? "";
+    const agentName = (data[FIELD_AGENT_NAME] ?? "").trim();
     const agentSelection = data[FIELD_AGENT] ?? "";
 
     let initialPrompt: InitialPrompt | undefined;
-    if (prompt !== "" || agentMode === "plan") {
-      initialPrompt = agentMode === "plan" ? { prompt, agent: "plan" } : prompt;
+    const hasAgentOptions = permissionMode !== "" || agentName !== "";
+    if (prompt !== "" || hasAgentOptions) {
+      initialPrompt = hasAgentOptions
+        ? {
+            prompt,
+            ...(permissionMode !== "" && { permissionMode }),
+            ...(agentName !== "" && { agentName }),
+          }
+        : prompt;
     }
 
     const agent =
-      (agentSelection === "claude" || agentSelection === "opencode") &&
-      agentSelection !== defaultAgent() &&
-      availableAgents.some((a) => a.agent === agentSelection)
+      isAvailableAgent(agentSelection) && agentSelection !== defaultAgent()
         ? agentSelection
         : undefined;
 

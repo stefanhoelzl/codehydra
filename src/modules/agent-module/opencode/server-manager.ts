@@ -84,7 +84,8 @@ export interface StartServerOptions {
   /** Initial prompt to send after server becomes healthy */
   readonly initialPrompt?: {
     readonly prompt: string;
-    readonly agent?: string;
+    /** Named agent to run (OpenCode's agent, e.g. "build"/"plan"/custom). */
+    readonly agentName?: string;
     readonly model?: PromptModel;
   };
 }
@@ -155,7 +156,7 @@ export class OpenCodeServerManager implements AgentServerManager, IDisposable {
       this.setPendingPrompt(
         workspacePath,
         options.initialPrompt.prompt,
-        options.initialPrompt.agent,
+        options.initialPrompt.agentName,
         options.initialPrompt.model
       );
     }

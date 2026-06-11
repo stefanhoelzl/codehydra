@@ -25,6 +25,7 @@ import {
   createVersionConfig,
 } from "../module-provider.test-utils";
 import { createMockPathProvider } from "../../../boundaries/platform/path-provider.test-utils";
+import { createMockProcessRunner } from "../../../boundaries/platform/process.state-mock";
 
 // =============================================================================
 // Mock ClaudeCodeProvider via vi.mock
@@ -90,7 +91,9 @@ describe("createClaudeModuleProvider", () => {
     pathProvider = createMockPathProvider();
   });
 
-  function createProvider() {
+  function createProvider(
+    helpStdout = '--permission-mode <mode>  mode (choices: "plan", "acceptEdits")'
+  ) {
     return createClaudeModuleProvider({
       serverManager: mockServerManager,
       downloadDeps,
@@ -100,6 +103,7 @@ describe("createClaudeModuleProvider", () => {
       platform: "linux",
       arch: "x64",
       logger: SILENT_LOGGER,
+      processRunner: createMockProcessRunner({ defaultResult: { stdout: helpStdout } }),
     });
   }
 
@@ -133,6 +137,35 @@ describe("createClaudeModuleProvider", () => {
   // ---------------------------------------------------------------------------
   // Binary delegation
   // ---------------------------------------------------------------------------
+
+  describe("launch options", () => {
+    it("parses permission modes from `claude --help`", async () => {
+      const provider = createProvider();
+
+      expect(await provider.getLaunchOptions?.()).toEqual({
+        permissionModes: ["plan", "acceptEdits"],
+      });
+    });
+
+    it("parses a multi-line choices list", async () => {
+      const help = [
+        "  --permission-mode <mode>  Permission mode to use",
+        '                            (choices: "acceptEdits", "auto",',
+        '                            "bypassPermissions", "default", "plan")',
+      ].join("\n");
+      const provider = createProvider(help);
+
+      expect(await provider.getLaunchOptions?.()).toEqual({
+        permissionModes: ["acceptEdits", "auto", "bypassPermissions", "default", "plan"],
+      });
+    });
+
+    it("reports no modes when the help output has no choices list", async () => {
+      const provider = createProvider("usage: claude [options]");
+
+      expect(await provider.getLaunchOptions?.()).toEqual({ permissionModes: [] });
+    });
+  });
 
   describe("binary management", () => {
     it("binaryType returns the name from binaryConfig", () => {

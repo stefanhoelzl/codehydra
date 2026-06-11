@@ -14,6 +14,10 @@ import type { Operation, OperationContext, HookContext } from "../../intents/lib
 import type { Intent } from "../../intents/lib/types";
 import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
 import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import {
+  AgentLaunchOptionsOperation,
+  INTENT_GET_LAUNCH_OPTIONS,
+} from "../../intents/agent-launch-options";
 import type {
   ConfigureResult,
   CheckDepsResult,
@@ -347,6 +351,54 @@ async function activateModule(
 describe("createAgentModule", () => {
   beforeEach(() => {
     capturedStatusCallback = null;
+  });
+
+  // ---------------------------------------------------------------------------
+  // launch options
+  // ---------------------------------------------------------------------------
+
+  describe("agent:get-launch-options", () => {
+    it("fills in the matching backend's permission modes via the hook", async () => {
+      const { dispatcher } = createTestSetup({
+        type: "claude",
+        getLaunchOptions: async () => ({ permissionModes: ["plan", "acceptEdits"] }),
+      });
+      dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
+
+      const result = await dispatcher.dispatch({
+        type: INTENT_GET_LAUNCH_OPTIONS,
+        payload: { backend: "claude" },
+      });
+
+      expect(result).toEqual({ permissionModes: ["plan", "acceptEdits"] });
+    });
+
+    it("contributes nothing when the requested backend doesn't match the provider", async () => {
+      const { dispatcher } = createTestSetup({
+        type: "claude",
+        getLaunchOptions: async () => ({ permissionModes: ["plan"] }),
+      });
+      dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
+
+      const result = await dispatcher.dispatch({
+        type: INTENT_GET_LAUNCH_OPTIONS,
+        payload: { backend: "opencode" },
+      });
+
+      expect(result).toEqual({ permissionModes: [] });
+    });
+
+    it("returns empty when the provider exposes no launch options", async () => {
+      const { dispatcher } = createTestSetup({ type: "claude" });
+      dispatcher.registerOperation(INTENT_GET_LAUNCH_OPTIONS, new AgentLaunchOptionsOperation());
+
+      const result = await dispatcher.dispatch({
+        type: INTENT_GET_LAUNCH_OPTIONS,
+        payload: { backend: "claude" },
+      });
+
+      expect(result).toEqual({ permissionModes: [] });
+    });
   });
 
   // ---------------------------------------------------------------------------

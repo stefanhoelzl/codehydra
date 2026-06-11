@@ -29,6 +29,14 @@ export interface WorkspaceStartResult {
 }
 
 /**
+ * Launch options the agent contributes to the creation form (e.g. Claude
+ * permission modes). Empty arrays mean "nothing to offer beyond the default".
+ */
+export interface AgentLaunchOptions {
+  readonly permissionModes: readonly string[];
+}
+
+/**
  * Unified agent provider interface for the generic module factory.
  *
  * Each agent implementation (Claude, OpenCode) provides one of these.
@@ -100,6 +108,12 @@ export interface AgentModuleProvider {
   applyTerminalLifecycle(workspacePath: string, event: AgentLifecycleEvent): void;
 
   // --- Query ---
+
+  /**
+   * Launch options this agent offers the creation form (e.g. Claude permission
+   * modes). Optional — agents without dynamic options omit it.
+   */
+  getLaunchOptions?(): Promise<AgentLaunchOptions>;
 
   /** Get aggregated status for a workspace */
   getStatus(workspacePath: WorkspacePath): AggregatedAgentStatus;

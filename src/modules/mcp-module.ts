@@ -154,9 +154,10 @@ export const SERVER_INSTRUCTIONS = [
   "CodeHydra manages workspaces as git worktrees, each with its own AI agent session.",
   "",
   "When creating a workspace with workspace_create, the initialPrompt parameter controls what the new workspace's agent will do.",
-  "Use the object form { prompt, agent } to control the agent's permission mode:",
-  '- agent: "plan" — the agent starts in read-only/plan mode. Use this when the task requires planning, research, or exploration before making changes.',
-  "- No agent field — the agent starts with full permissions. Use this when the task should proceed directly to implementation.",
+  "Use the object form { prompt, permissionMode, agentName } to control how the agent starts:",
+  '- permissionMode: "plan" — the agent starts in read-only/plan mode (Claude). Use this when the task requires planning, research, or exploration before making changes.',
+  "- No permissionMode field — the agent starts in its default mode. Use this when the task should proceed directly to implementation.",
+  '- agentName — run a named agent/persona (e.g. "build" on OpenCode, or a Claude custom agent). Omit to use the default agent.',
   "",
   "The model is automatically propagated from your current session — you do not need to specify it.",
   "",
@@ -712,9 +713,11 @@ export class McpServer {
             .optional()
             .describe(
               "Optional initial prompt to send after workspace is created. " +
-                "Can be a string or { prompt, agent? }. " +
-                'Set agent to "plan" for read-only/planning mode, ' +
-                "or omit agent for full-permission implementation mode."
+                "Can be a string or { prompt, permissionMode?, agentName? }. " +
+                'Set permissionMode to "plan" for read-only/planning mode (Claude), ' +
+                "or omit it for the default mode. " +
+                'Set agentName to run a named agent (e.g. "build" on OpenCode, ' +
+                "or a Claude custom agent)."
             ),
           stealFocus: z
             .boolean()
@@ -734,13 +737,15 @@ export class McpServer {
           const tracking = args.tracking as string | undefined;
           const rawInitialPrompt = args.initialPrompt as
             | string
-            | { prompt: string; agent?: string; model?: PromptModel }
+            | { prompt: string; permissionMode?: string; agentName?: string; model?: PromptModel }
             | undefined;
           // Default to false for API calls (stay in background)
           const stealFocus = (args.stealFocus as boolean | undefined) ?? false;
 
           // If initialPrompt provided, resolve model from caller's session if not specified
-          let finalPrompt: { prompt: string; agent?: string; model?: PromptModel } | undefined;
+          let finalPrompt:
+            | { prompt: string; permissionMode?: string; agentName?: string; model?: PromptModel }
+            | undefined;
           if (rawInitialPrompt !== undefined) {
             const normalized = normalizeInitialPrompt(rawInitialPrompt);
 
@@ -752,8 +757,11 @@ export class McpServer {
 
             // Build final prompt with model if available
             finalPrompt = { prompt: normalized.prompt };
-            if (normalized.agent !== undefined) {
-              finalPrompt = { ...finalPrompt, agent: normalized.agent };
+            if (normalized.permissionMode !== undefined) {
+              finalPrompt = { ...finalPrompt, permissionMode: normalized.permissionMode };
+            }
+            if (normalized.agentName !== undefined) {
+              finalPrompt = { ...finalPrompt, agentName: normalized.agentName };
             }
             if (model !== undefined) {
               finalPrompt = { ...finalPrompt, model };
