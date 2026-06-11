@@ -28,7 +28,6 @@ import type {
 } from "../shared/api/types";
 import type { AgentType } from "../shared/plugin-protocol";
 import { normalizeInitialPrompt } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
@@ -306,8 +305,12 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       throw new Error("Finalize hook did not provide workspaceUrl");
     }
 
-    // Build Workspace return value
-    const resolvedWorkspaceName = extractWorkspaceName(workspacePath);
+    // Build Workspace return value. The name comes from the payload, NOT from
+    // the basename of workspacePath: the hook returns a normalized Path
+    // string, which is lowercased on Windows and would break the renderer's
+    // case-sensitive name matching (loading event vs created event).
+    const resolvedWorkspaceName = (ctx.intent.payload.existingWorkspace?.name ??
+      ctx.intent.payload.workspaceName) as WorkspaceName;
     const projectId = resolvedProjectId;
 
     const workspace: Workspace = {

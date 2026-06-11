@@ -28,7 +28,6 @@ import {
   type ResolveHookInput,
   type ResolveHookResult,
 } from "../intents/resolve-workspace";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { WorkspaceName } from "../shared/api/types";
 import { SETUP_OPERATION_ID, type BinaryHookInput } from "../intents/setup";
 import type { NotificationManager, NotificationHandle } from "./notification-manager";
@@ -88,11 +87,8 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         delete: {
           handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
             if (!isActive("debug.blocking-pids")) return {};
-            const { projectPath, workspacePath } = ctx as DeletePipelineHookInput;
-            debugWorkspaces.set(workspacePath, {
-              projectPath,
-              workspaceName: extractWorkspaceName(workspacePath),
-            });
+            const { projectPath, workspacePath, workspaceName } = ctx as DeletePipelineHookInput;
+            debugWorkspaces.set(workspacePath, { projectPath, workspaceName });
             return { error: "Debug: simulated file lock" };
           },
         },

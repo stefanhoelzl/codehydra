@@ -64,7 +64,6 @@ import {
   type ListWorkspacesHookResult,
   type ListWorkspacesHookEntry,
 } from "../intents/list-projects";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import { Path } from "../utils/path/path";
 import { getErrorMessage, WorkspaceError } from "../shared/errors/service-errors";
 import type { DomainEvent } from "../intents/lib/types";
@@ -124,7 +123,10 @@ export function createGitWorktreeWorkspaceModule(
         if (ws.path.toString() === normalizedPath) {
           return {
             projectPath: projectKey,
-            workspaceName: extractWorkspaceName(ws.path.toString()),
+            // The stored name, NOT the basename of ws.path: Path lowercases
+            // on Windows, so a path-derived name breaks the renderer's
+            // case-sensitive name matching for uppercase workspace names.
+            workspaceName: ws.name as WorkspaceName,
             branch: ws.branch,
           };
         }
@@ -438,6 +440,7 @@ export function createGitWorktreeWorkspaceModule(
               projectPath: string;
               projectName: string;
               workspacePath: string;
+              workspaceName: string;
               hibernated?: boolean;
             }> = [];
             for (const [key, wsList] of getMergedWorkspaces()) {
@@ -448,6 +451,7 @@ export function createGitWorktreeWorkspaceModule(
                   projectPath: key,
                   projectName,
                   workspacePath: ws.path.toString(),
+                  workspaceName: ws.name,
                   ...(hibernated && { hibernated: true }),
                 });
               }

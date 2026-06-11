@@ -113,6 +113,8 @@ export interface WorkspaceCandidate {
   readonly projectPath: string;
   readonly projectName: string;
   readonly workspacePath: string;
+  /** Stored workspace name (original case) — used for alphabetical ordering. */
+  readonly workspaceName: string;
   /** True when the candidate is hibernated. Hibernated candidates are excluded
    *  from auto-switch — hibernation is always opt-in to wake. */
   readonly hibernated?: boolean;
@@ -155,7 +157,6 @@ export type AgentStatusScorer = (workspacePath: WorkspacePath) => number;
 export function selectNextWorkspace(
   currentWorkspacePath: string,
   candidates: readonly WorkspaceCandidate[],
-  extractName: (path: string) => string,
   scorer?: AgentStatusScorer
 ): WorkspaceCandidate | null {
   // Hibernated workspaces are never auto-selected — wake must be deliberate.
@@ -179,11 +180,9 @@ export function selectNextWorkspace(
   const sorted: WorkspaceCandidate[] = [];
   for (const pp of sortedProjectPaths) {
     const list = byProject.get(pp)!;
-    list.sort((a, b) => {
-      const nameA = extractName(a.workspacePath);
-      const nameB = extractName(b.workspacePath);
-      return nameA.localeCompare(nameB, undefined, { caseFirst: "upper" });
-    });
+    list.sort((a, b) =>
+      a.workspaceName.localeCompare(b.workspaceName, undefined, { caseFirst: "upper" })
+    );
     sorted.push(...list);
   }
 

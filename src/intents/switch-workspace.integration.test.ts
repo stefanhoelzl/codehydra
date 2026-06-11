@@ -53,7 +53,6 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 
 // =============================================================================
 // Behavioral Mocks
@@ -180,7 +179,7 @@ function createTestSetup(opts?: {
               if (workspace) {
                 return {
                   projectPath: project.path,
-                  workspaceName: extractWorkspaceName(wsPath),
+                  workspaceName: wsPath.slice(wsPath.lastIndexOf("/") + 1) as WorkspaceName,
                   active: activePath === wsPath,
                 };
               }
@@ -255,6 +254,7 @@ function createTestSetup(opts?: {
                 projectPath: string;
                 projectName: string;
                 workspacePath: string;
+                workspaceName: string;
               }> = [];
               for (const project of appState.projects) {
                 for (const ws of project.workspaces) {
@@ -262,6 +262,7 @@ function createTestSetup(opts?: {
                     projectPath: project.path,
                     projectName: project.name,
                     workspacePath: ws.path,
+                    workspaceName: ws.path.slice(ws.path.lastIndexOf("/") + 1),
                   });
                 }
               }
@@ -280,7 +281,7 @@ function createTestSetup(opts?: {
           "select-next": {
             handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
               const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
-              const result = selectNextWorkspace(currentPath, candidates, extractWorkspaceName);
+              const result = selectNextWorkspace(currentPath, candidates);
               return result ? { selected: result } : {};
             },
           },
@@ -303,7 +304,7 @@ function createTestSetup(opts?: {
 // Helpers
 // =============================================================================
 
-/** Resolve project path from project ID using the same logic as id-utils */
+/** Generate a project ID from a path (base64url, matching production). */
 function generateProjectId(path: string): ProjectId {
   return Buffer.from(path).toString("base64url") as ProjectId;
 }

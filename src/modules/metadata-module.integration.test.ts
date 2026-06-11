@@ -39,7 +39,6 @@ import { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provide
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 
@@ -92,7 +91,7 @@ function createTestSetup(): TestSetup {
   gitWorktreeProvider.ensureWorkspaceRegistered(workspacePath, PROJECT_ROOT);
 
   const projectId = "project-ea0135bc" as ProjectId;
-  const workspaceName = extractWorkspaceName(workspacePath.toString()) as WorkspaceName;
+  const workspaceName = "feature-x" as WorkspaceName;
 
   const dispatcher = createMockDispatcher();
 

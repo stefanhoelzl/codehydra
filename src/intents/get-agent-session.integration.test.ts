@@ -30,7 +30,6 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, AgentSession } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 
 // =============================================================================
 // Test Constants
@@ -58,7 +57,7 @@ interface TestSetup {
 }
 
 function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup {
-  const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+  const workspaceName = "feature-x" as WorkspaceName;
 
   const dispatcher = createMockDispatcher();
 

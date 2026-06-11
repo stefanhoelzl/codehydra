@@ -204,6 +204,7 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, Shutdow
       intent: ctx.intent,
       projectPath: "/projects/test",
       workspacePath: payload.workspacePath,
+      workspaceName: "test-workspace" as WorkspaceName,
       active: this.active,
     };
     const { results, errors } = await ctx.hooks.collect<ShutdownHookResult>("shutdown", hookCtx);

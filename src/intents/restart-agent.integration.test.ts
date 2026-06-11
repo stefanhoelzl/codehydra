@@ -46,7 +46,6 @@ import type { IntentModule } from "./lib/module";
 import type { HookContext } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 
 // =============================================================================
 // Test Constants
@@ -87,7 +86,7 @@ interface TestSetup {
 
 function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestSetup {
   const projectId = "project-ea0135bc" as ProjectId;
-  const workspaceName = extractWorkspaceName(WORKSPACE_PATH) as WorkspaceName;
+  const workspaceName = "feature-x" as WorkspaceName;
 
   const dispatcher = createMockDispatcher();
 

@@ -139,6 +139,7 @@ class MinimalPreflightOperation implements Operation<DeleteWorkspaceIntent, Pref
       intent: ctx.intent,
       projectPath: resolvedProjectPath,
       workspacePath: payload.workspacePath,
+      workspaceName: "test-workspace" as WorkspaceName,
       active: false,
     };
     const { results, errors } = await ctx.hooks.collect<PreflightHookResult>(
@@ -181,6 +182,7 @@ class MinimalDeleteWorkspaceOperation implements Operation<DeleteWorkspaceIntent
       intent: ctx.intent,
       projectPath: resolvedProjectPath,
       workspacePath: payload.workspacePath,
+      workspaceName: "test-workspace" as WorkspaceName,
       active: false,
     };
     const { results: deleteResults, errors: deleteErrors } =
@@ -845,6 +847,29 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
         const result = await dispatchResolveWorkspace(dispatcher, "/nonexistent/path");
         expect(result.projectPath).toBeUndefined();
+      });
+
+      it("returns the stored workspace name, not the path basename", async () => {
+        // Regression: on Windows, Path normalization lowercases the path, so a
+        // name re-derived from the path ("sdk-214") diverges from the stored
+        // branch-cased name ("SDK-214") and breaks the renderer's
+        // case-sensitive name matching for metadata updates.
+        const { dispatcher, provider } = setup;
+        const projectPath = "/projects/my-app";
+        const ws: Workspace = {
+          name: "SDK-214",
+          path: new Path(`${projectPath}/.worktrees/sdk-214`),
+          branch: "SDK-214",
+          metadata: { base: "origin/main" },
+        };
+        provider.discover.mockResolvedValue([ws]);
+        await dispatchOpenProject(dispatcher, projectPath);
+
+        const result = await dispatchResolveWorkspace(
+          dispatcher,
+          `${projectPath}/.worktrees/sdk-214`
+        );
+        expect(result.workspaceName).toBe("SDK-214");
       });
     });
 

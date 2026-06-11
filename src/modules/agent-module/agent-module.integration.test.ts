@@ -47,6 +47,7 @@ import type { AgentModuleProvider, WorkspaceStartResult } from "./agent-module-p
 import { SILENT_LOGGER } from "../../boundaries/platform/logging";
 import { SetupError } from "../../shared/errors/service-errors";
 import type { WorkspacePath, AggregatedAgentStatus } from "../../shared/ipc";
+import type { WorkspaceName } from "../../shared/api/types";
 import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../../boundaries/platform/config";
 import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
@@ -286,6 +287,7 @@ class MinimalShutdownOperation implements Operation<
       intent: ctx.intent,
       projectPath: "/test/project",
       workspacePath: payload.workspacePath ?? "/test/workspace",
+      workspaceName: "test-workspace" as WorkspaceName,
       active: false,
       ...(this.agentCapability !== null && {
         capabilities: { agent: this.agentCapability },

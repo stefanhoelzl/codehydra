@@ -21,7 +21,6 @@ import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
-import { extractWorkspaceName } from "../shared/api/id-utils";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 
 export function createWorkspaceSelectionModule(): IntentModule {
@@ -41,12 +40,7 @@ export function createWorkspaceSelectionModule(): IntentModule {
         "select-next": {
           handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
             const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
-            const result = selectNextWorkspace(
-              currentPath,
-              candidates,
-              extractWorkspaceName,
-              scorer
-            );
+            const result = selectNextWorkspace(currentPath, candidates, scorer);
             return result ? { selected: result } : {};
           },
         },

@@ -102,6 +102,7 @@ describe("DebugModule Integration", () => {
         intent: { type: "workspace:delete", payload: {} },
         projectPath,
         workspacePath,
+        workspaceName: workspacePath.split("/").pop(),
       } as unknown as HookContext;
     }
 

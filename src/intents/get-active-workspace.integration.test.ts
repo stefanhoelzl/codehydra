@@ -28,8 +28,7 @@ import type {
 import type { IntentModule } from "./lib/module";
 import type { Intent } from "./lib/types";
 import type { WorkspaceRef } from "../shared/api/types";
-import { extractWorkspaceName } from "../shared/api/id-utils";
-import type { ProjectId } from "../shared/api/types";
+import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
 const PROJECT_ID = "project-ea0135bc" as ProjectId;
 
@@ -92,7 +91,7 @@ describe("GetActiveWorkspace Operation", () => {
 
     const expectedRef: WorkspaceRef = {
       projectId: PROJECT_ID,
-      workspaceName: extractWorkspaceName(WORKSPACE_PATH),
+      workspaceName: "feature-x" as WorkspaceName,
       path: WORKSPACE_PATH,
     };
 
@@ -126,7 +125,7 @@ describe("GetActiveWorkspace Operation", () => {
     it("cancellation prevents operation execution (#14)", async () => {
       const expectedRef: WorkspaceRef = {
         projectId: PROJECT_ID,
-        workspaceName: extractWorkspaceName(WORKSPACE_PATH),
+        workspaceName: "feature-x" as WorkspaceName,
         path: WORKSPACE_PATH,
       };
       const setup = createTestSetup(expectedRef);
