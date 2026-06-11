@@ -15,6 +15,7 @@ import type { WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_GET_PROJECT_BASES, type GetProjectBasesIntent } from "./get-project-bases";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -98,9 +99,7 @@ export class GetWorkspaceStatusOperation implements Operation<
       workspacePath: payload.workspacePath,
     };
     const { results, errors } = await ctx.hooks.collect<GetStatusHookResult>("get", getCtx);
-    if (errors.length > 0) {
-      throw new AggregateError(errors, "get-workspace-status get hooks failed");
-    }
+    throwHookErrors(errors, "get-workspace-status get hooks failed");
 
     // Merge results — isDirty uses OR, unmergedCommits uses max
     let isDirty = false;

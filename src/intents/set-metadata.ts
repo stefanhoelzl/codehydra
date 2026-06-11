@@ -10,10 +10,9 @@
  */
 
 import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import type { HookContext } from "./lib/operation";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { WorkspaceHookOperation } from "./lib/workspace-operation";
 
 // =============================================================================
 // Intent + Event Types
@@ -63,45 +62,24 @@ export interface SetHookInput extends HookContext {
 // Operation
 // =============================================================================
 
-export class SetMetadataOperation implements Operation<SetMetadataIntent, void> {
-  readonly id = SET_METADATA_OPERATION_ID;
-
-  async execute(ctx: OperationContext<SetMetadataIntent>): Promise<void> {
-    const { payload } = ctx.intent;
-
-    // 1. Dispatch shared workspace resolution
-    const { projectPath, workspaceName } = await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
-
-    // 2. Dispatch shared project resolution
-    const { projectId } = await ctx.dispatch({
-      type: INTENT_RESOLVE_PROJECT,
-      payload: { projectPath },
-    } as ResolveProjectIntent);
-
-    // 3. set — handler performs the actual provider write
-    const setCtx: SetHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { errors } = await ctx.hooks.collect<void>("set", setCtx);
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
-
-    // Emit domain event for subscribers (e.g., UiIpcModule)
-    const event: MetadataChangedEvent = {
-      type: EVENT_METADATA_CHANGED,
-      payload: {
-        projectId,
-        workspaceName,
-        workspacePath: payload.workspacePath,
-        key: payload.key,
-        value: payload.value,
-      },
-    };
-    ctx.emit(event);
+export class SetMetadataOperation extends WorkspaceHookOperation<SetMetadataIntent, void, void> {
+  constructor() {
+    super(SET_METADATA_OPERATION_ID, {
+      hookPoint: "set",
+      resolveProject: true,
+      errorLabel: "set-metadata set hooks failed",
+      extract: () => undefined,
+      onSuccess: ({ intent, resolved, project }) =>
+        ({
+          type: EVENT_METADATA_CHANGED,
+          payload: {
+            projectId: project!.projectId,
+            workspaceName: resolved.workspaceName,
+            workspacePath: intent.payload.workspacePath,
+            key: intent.payload.key,
+            value: intent.payload.value,
+          },
+        }) satisfies MetadataChangedEvent,
+    });
   }
 }

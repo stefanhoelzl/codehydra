@@ -22,6 +22,7 @@ import type { ConfigAgentType, SetupRowId, SetupRowStatus } from "../shared/api/
 import type { BinaryType } from "../utils/binary-resolution/types";
 import type { ExtensionInstallEntry } from "./app-start";
 import type { LifecycleAgentType } from "../shared/ipc";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -158,9 +159,7 @@ export class SetupOperation implements Operation<SetupIntent, void> {
     try {
       // Hook 1: "show-ui" -- Show setup screen
       const { errors: showUiErrors } = await ctx.hooks.collect<void>("show-ui", hookCtx);
-      if (showUiErrors.length > 0) {
-        throw showUiErrors[0]!;
-      }
+      throwHookErrors(showUiErrors, "app:setup show-ui hooks failed");
 
       // Hook 2: "agent-selection" -- (conditional) Collect agent info + show UI
       let selectedAgent: ConfigAgentType | undefined;
@@ -168,9 +167,7 @@ export class SetupOperation implements Operation<SetupIntent, void> {
         // 2a: Collect available agents from per-agent modules
         const { results: agentInfos, errors: registerErrors } =
           await ctx.hooks.collect<RegisterAgentResult>("register-agents", hookCtx);
-        if (registerErrors.length > 0) {
-          throw registerErrors[0]!;
-        }
+        throwHookErrors(registerErrors, "app:setup register-agents hooks failed");
 
         // 2b: Show agent selection UI with collected agents
         const selectionCtx: AgentSelectionHookContext = { ...hookCtx, availableAgents: agentInfos };
@@ -178,9 +175,7 @@ export class SetupOperation implements Operation<SetupIntent, void> {
           "agent-selection",
           selectionCtx
         );
-        if (agentErrors.length > 0) {
-          throw agentErrors[0]!;
-        }
+        throwHookErrors(agentErrors, "app:setup agent-selection hooks failed");
         selectedAgent = agentCaps.agentType as ConfigAgentType | undefined;
       }
 
@@ -191,9 +186,7 @@ export class SetupOperation implements Operation<SetupIntent, void> {
           selectedAgent,
         };
         const { errors: saveErrors } = await ctx.hooks.collect<void>("save-agent", saveAgentInput);
-        if (saveErrors.length > 0) {
-          throw saveErrors[0]!;
-        }
+        throwHookErrors(saveErrors, "app:setup save-agent hooks failed");
       }
 
       // Create progress reporter that emits domain events
@@ -217,9 +210,7 @@ export class SetupOperation implements Operation<SetupIntent, void> {
         ...(payload.missingBinaries !== undefined && { missingBinaries: payload.missingBinaries }),
       };
       const { errors: binaryErrors } = await ctx.hooks.collect<void>("binary", binaryInput);
-      if (binaryErrors.length > 0) {
-        throw binaryErrors[0]!;
-      }
+      throwHookErrors(binaryErrors, "app:setup binary hooks failed");
 
       // Hook 5: "extensions" -- Update extension progress (installs if needed)
       const extensionsInput: ExtensionsHookInput = {
@@ -233,15 +224,11 @@ export class SetupOperation implements Operation<SetupIntent, void> {
         "extensions",
         extensionsInput
       );
-      if (extensionsErrors.length > 0) {
-        throw extensionsErrors[0]!;
-      }
+      throwHookErrors(extensionsErrors, "app:setup extensions hooks failed");
 
       // Hook 6: "hide-ui" -- Hide setup screen (return to starting screen)
       const { errors: hideUiErrors } = await ctx.hooks.collect<void>("hide-ui", hookCtx);
-      if (hideUiErrors.length > 0) {
-        throw hideUiErrors[0]!;
-      }
+      throwHookErrors(hideUiErrors, "app:setup hide-ui hooks failed");
 
       // Control returns to AppStartOperation (no dispatch)
     } catch (error) {

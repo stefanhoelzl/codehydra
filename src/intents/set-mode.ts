@@ -11,6 +11,7 @@
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { UIMode } from "../shared/ipc";
+import { throwHookErrors, lastDefined, requireResult } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -67,19 +68,13 @@ export class SetModeOperation implements Operation<SetModeIntent, void> {
 
     // Run "set" hook -- handler captures previousMode and applies new mode
     const { results, errors } = await ctx.hooks.collect<SetModeHookResult>("set", hookCtx);
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
+    throwHookErrors(errors, "set-mode set hooks failed");
 
     // Merge results — last-write-wins for previousMode
-    let previousMode: UIMode | undefined;
-    for (const result of results) {
-      if (result.previousMode !== undefined) previousMode = result.previousMode;
-    }
-
-    if (previousMode === undefined) {
-      throw new Error("Set mode hook did not provide previousMode result");
-    }
+    const previousMode = requireResult(
+      lastDefined(results, (r) => r.previousMode),
+      "Set mode hook did not provide previousMode result"
+    );
 
     // Emit domain event only when mode actually changed (defense against oscillation)
     if (ctx.intent.payload.mode !== previousMode) {

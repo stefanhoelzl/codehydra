@@ -31,6 +31,7 @@ import { normalizeInitialPrompt } from "../shared/api/types";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
+import { throwHookErrors, mergeHookResults } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -186,22 +187,6 @@ export interface FinalizeHookInput extends HookContext {
   readonly agentType: AgentType | null;
 }
 
-/** Merge hook results field-by-field. Throws if two handlers contribute the same field. */
-function mergeHookResults<T extends object>(results: readonly T[], hookPoint: string): Partial<T> {
-  const merged: Record<string, unknown> = {};
-  for (const result of results) {
-    for (const [key, value] of Object.entries(result)) {
-      if (value !== undefined) {
-        if (key in merged) {
-          throw new Error(`${hookPoint} hook conflict: "${key}" provided by multiple handlers`);
-        }
-        merged[key] = value;
-      }
-    }
-  }
-  return merged as Partial<T>;
-}
-
 export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, OpenWorkspaceResult> {
   readonly id = OPEN_WORKSPACE_OPERATION_ID;
 
@@ -257,7 +242,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     const { results: createResults, errors: createErrors } =
       await ctx.hooks.collect<CreateHookResult>("create", createCtx);
 
-    if (createErrors.length > 0) throw createErrors[0]!;
+    throwHookErrors(createErrors, "workspace:open create hooks failed");
 
     const create = mergeHookResults(createResults, "create");
     const { workspacePath, branch, metadata, resolvedBase } = create;
@@ -273,7 +258,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
     };
     const setupResult = await ctx.hooks.collect<SetupHookResult>("setup", setupCtx);
 
-    if (setupResult.errors.length > 0) throw setupResult.errors[0]!;
+    throwHookErrors(setupResult.errors, "workspace:open setup hooks failed");
 
     // Accumulate env vars from all setup hook results (multiple modules can contribute)
     const envVars: Record<string, string> = {};
@@ -298,7 +283,7 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       finalizeCtx
     );
 
-    if (finalizeErrors.length > 0) throw finalizeErrors[0]!;
+    throwHookErrors(finalizeErrors, "workspace:open finalize hooks failed");
 
     const workspaceUrl = finalizeCaps.workspaceUrl as string | undefined;
     if (!workspaceUrl) {

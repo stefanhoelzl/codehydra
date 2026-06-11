@@ -12,10 +12,10 @@
  */
 
 import type { Intent, DomainEvent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import type { HookContext } from "./lib/operation";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { WorkspaceHookOperation } from "./lib/workspace-operation";
+import { lastDefined, requireResult } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -73,62 +73,31 @@ export interface RestartAgentHookResult {
 // Operation
 // =============================================================================
 
-export class RestartAgentOperation implements Operation<RestartAgentIntent, number> {
-  readonly id = RESTART_AGENT_OPERATION_ID;
-
-  async execute(ctx: OperationContext<RestartAgentIntent>): Promise<number> {
-    const { payload } = ctx.intent;
-
-    // 1. Dispatch shared workspace resolution
-    const { projectPath, workspaceName } = await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
-
-    // 2. Dispatch shared project resolution
-    const { projectId } = await ctx.dispatch({
-      type: INTENT_RESOLVE_PROJECT,
-      payload: { projectPath },
-    } as ResolveProjectIntent);
-
-    // 3. restart — handler restarts the server
-    const restartCtx: RestartAgentHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results, errors } = await ctx.hooks.collect<RestartAgentHookResult>(
-      "restart",
-      restartCtx
-    );
-    if (errors.length === 1) {
-      throw errors[0]!;
-    }
-    if (errors.length > 1) {
-      throw new AggregateError(errors, "restart-agent restart hooks failed");
-    }
-
-    // Merge results — last-write-wins for port
-    let port: number | undefined;
-    for (const result of results) {
-      if (result.port !== undefined) port = result.port;
-    }
-
-    if (port === undefined) {
-      throw new Error("Restart agent hook did not provide port result");
-    }
-
-    // Emit domain event for subscribers (e.g., UiIpcModule)
-    const event: AgentRestartedEvent = {
-      type: EVENT_AGENT_RESTARTED,
-      payload: {
-        projectId,
-        workspaceName,
-        path: payload.workspacePath,
-        port,
-      },
-    };
-    ctx.emit(event);
-
-    return port;
+export class RestartAgentOperation extends WorkspaceHookOperation<
+  RestartAgentIntent,
+  RestartAgentHookResult,
+  number
+> {
+  constructor() {
+    super(RESTART_AGENT_OPERATION_ID, {
+      hookPoint: "restart",
+      resolveProject: true,
+      errorLabel: "restart-agent restart hooks failed",
+      extract: (results) =>
+        requireResult(
+          lastDefined(results, (r) => r.port),
+          "Restart agent hook did not provide port result"
+        ),
+      onSuccess: ({ intent, resolved, project, result }) =>
+        ({
+          type: EVENT_AGENT_RESTARTED,
+          payload: {
+            projectId: project!.projectId,
+            workspaceName: resolved.workspaceName,
+            path: intent.payload.workspacePath,
+            port: result,
+          },
+        }) satisfies AgentRestartedEvent,
+    });
   }
 }

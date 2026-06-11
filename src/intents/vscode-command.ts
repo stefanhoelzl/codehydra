@@ -10,8 +10,9 @@
  */
 
 import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import type { HookContext } from "./lib/operation";
+import { WorkspaceHookOperation } from "./lib/workspace-operation";
+import { lastDefined } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -50,34 +51,17 @@ export interface ExecuteHookResult {
 // Operation
 // =============================================================================
 
-export class VscodeCommandOperation implements Operation<VscodeCommandIntent, unknown> {
-  readonly id = VSCODE_COMMAND_OPERATION_ID;
-
-  async execute(ctx: OperationContext<VscodeCommandIntent>): Promise<unknown> {
-    const { payload } = ctx.intent;
-
-    // 1. Dispatch shared workspace resolution
-    await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
-
-    // 2. execute — handler performs the actual command
-    const executeCtx: ExecuteHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results, errors } = await ctx.hooks.collect<ExecuteHookResult>("execute", executeCtx);
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
-
-    // Extract result — last-write-wins
-    let result: unknown;
-    for (const r of results) {
-      if (r.result !== undefined) result = r.result;
-    }
-
-    return result;
+export class VscodeCommandOperation extends WorkspaceHookOperation<
+  VscodeCommandIntent,
+  ExecuteHookResult,
+  unknown
+> {
+  constructor() {
+    super(VSCODE_COMMAND_OPERATION_ID, {
+      hookPoint: "execute",
+      errorLabel: "vscode-command execute hooks failed",
+      // No required result — a command may legitimately return undefined.
+      extract: (results) => lastDefined(results, (r) => r.result),
+    });
   }
 }

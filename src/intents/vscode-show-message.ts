@@ -13,8 +13,9 @@
  */
 
 import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import type { HookContext } from "./lib/operation";
+import { WorkspaceHookOperation } from "./lib/workspace-operation";
+import { lastDefined } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -62,37 +63,16 @@ export interface ShowHookResult {
 // Operation
 // =============================================================================
 
-export class VscodeShowMessageOperation implements Operation<
+export class VscodeShowMessageOperation extends WorkspaceHookOperation<
   VscodeShowMessageIntent,
+  ShowHookResult,
   string | null
 > {
-  readonly id = VSCODE_SHOW_MESSAGE_OPERATION_ID;
-
-  async execute(ctx: OperationContext<VscodeShowMessageIntent>): Promise<string | null> {
-    const { payload } = ctx.intent;
-
-    // 1. Dispatch shared workspace resolution
-    await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
-
-    // 2. show — handler performs the actual VS Code UI call
-    const showCtx: ShowHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results, errors } = await ctx.hooks.collect<ShowHookResult>("show", showCtx);
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
-
-    // Extract result — last-write-wins
-    let result: string | null | undefined;
-    for (const r of results) {
-      if (r.result !== undefined) result = r.result;
-    }
-
-    return result ?? null;
+  constructor() {
+    super(VSCODE_SHOW_MESSAGE_OPERATION_ID, {
+      hookPoint: "show",
+      errorLabel: "vscode-show-message show hooks failed",
+      extract: (results) => lastDefined(results, (r) => r.result) ?? null,
+    });
   }
 }

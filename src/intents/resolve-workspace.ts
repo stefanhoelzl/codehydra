@@ -14,6 +14,7 @@
 import type { Intent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { WorkspaceName } from "../shared/api/types";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -75,12 +76,7 @@ export class ResolveWorkspaceOperation implements Operation<
       workspacePath: payload.workspacePath,
     };
     const { results, errors } = await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
-    if (errors.length === 1) {
-      throw errors[0]!;
-    }
-    if (errors.length > 1) {
-      throw new AggregateError(errors, "workspace:resolve hooks failed");
-    }
+    throwHookErrors(errors, "workspace:resolve hooks failed");
 
     let projectPath: string | undefined;
     let workspaceName: WorkspaceName | undefined;

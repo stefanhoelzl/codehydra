@@ -10,9 +10,10 @@
  */
 
 import type { Intent } from "./lib/types";
-import type { Operation, OperationContext, HookContext } from "./lib/operation";
+import type { HookContext } from "./lib/operation";
 import type { AgentSession } from "../shared/api/types";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
+import { WorkspaceHookOperation } from "./lib/workspace-operation";
+import { lastDefined, requireResult } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -53,44 +54,20 @@ export interface GetAgentSessionHookResult {
 // Operation
 // =============================================================================
 
-export class GetAgentSessionOperation implements Operation<
+export class GetAgentSessionOperation extends WorkspaceHookOperation<
   GetAgentSessionIntent,
+  GetAgentSessionHookResult,
   AgentSession | null
 > {
-  readonly id = GET_AGENT_SESSION_OPERATION_ID;
-
-  async execute(ctx: OperationContext<GetAgentSessionIntent>): Promise<AgentSession | null> {
-    const { payload } = ctx.intent;
-
-    // 1. Dispatch shared workspace resolution
-    await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
-
-    // 2. get — handler retrieves session info
-    const getCtx: GetAgentSessionHookInput = {
-      intent: ctx.intent,
-      workspacePath: payload.workspacePath,
-    };
-    const { results, errors } = await ctx.hooks.collect<GetAgentSessionHookResult>("get", getCtx);
-    if (errors.length === 1) {
-      throw errors[0]!;
-    }
-    if (errors.length > 1) {
-      throw new AggregateError(errors, "get-agent-session get hooks failed");
-    }
-
-    // Merge results — last-write-wins for session
-    let session: AgentSession | null | undefined;
-    for (const result of results) {
-      if (result.session !== undefined) session = result.session;
-    }
-
-    if (session === undefined) {
-      throw new Error("Get agent session hook did not provide session result");
-    }
-
-    return session;
+  constructor() {
+    super(GET_AGENT_SESSION_OPERATION_ID, {
+      hookPoint: "get",
+      errorLabel: "get-agent-session get hooks failed",
+      extract: (results) =>
+        requireResult(
+          lastDefined(results, (r) => r.session),
+          "Get agent session hook did not provide session result"
+        ),
+    });
   }
 }

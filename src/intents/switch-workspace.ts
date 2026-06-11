@@ -25,6 +25,7 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -252,18 +253,10 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
     };
     const { results: activateResults, errors: activateErrors } =
       await ctx.hooks.collect<SwitchWorkspaceHookResult>("activate", activateCtx);
-    if (activateErrors.length === 1) {
-      throw activateErrors[0]!;
-    }
-    if (activateErrors.length > 1) {
-      throw new AggregateError(activateErrors, "workspace:switch activate hooks failed");
-    }
+    throwHookErrors(activateErrors, "workspace:switch activate hooks failed");
 
     // Merge results — last-write-wins for resolvedPath
-    let resolvedPath: string | undefined;
-    for (const result of activateResults) {
-      if (result.resolvedPath !== undefined) resolvedPath = result.resolvedPath;
-    }
+    const resolvedPath = lastDefined(activateResults, (r) => r.resolvedPath);
 
     // No-op: hook resolved workspace but it was already active
     // (resolvedPath left unset intentionally)

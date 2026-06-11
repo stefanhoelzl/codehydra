@@ -11,6 +11,7 @@
 import type { Intent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { WorkspaceRef } from "../shared/api/types";
+import { throwHookErrors, lastDefined, requireResult } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -54,20 +55,12 @@ export class GetActiveWorkspaceOperation implements Operation<
       "get",
       hookCtx
     );
-    if (errors.length > 0) {
-      throw errors[0]!;
-    }
+    throwHookErrors(errors, "get-active-workspace get hooks failed");
 
     // Merge results — last-write-wins for workspaceRef
-    let workspaceRef: WorkspaceRef | null | undefined;
-    for (const result of results) {
-      if (result.workspaceRef !== undefined) workspaceRef = result.workspaceRef;
-    }
-
-    if (workspaceRef === undefined) {
-      throw new Error("Get active workspace hook did not provide workspaceRef result");
-    }
-
-    return workspaceRef;
+    return requireResult(
+      lastDefined(results, (r) => r.workspaceRef),
+      "Get active workspace hook did not provide workspaceRef result"
+    );
   }
 }
