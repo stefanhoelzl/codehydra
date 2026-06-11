@@ -1,13 +1,13 @@
 /**
  * Tests for PanelView component (the persistent panel surface).
- * Section/action rendering lives in Form.test.ts — these cover only the
- * panel shell: accessible name, Escape -> dismiss event, Cmd/Ctrl+Enter ->
- * primary action, the Tab trap at the panel boundaries, and the
- * dialogId-keyed Form remount (the reset gesture).
+ * Section/action rendering and the keyboard contract (Escape, Cmd/Ctrl+Enter,
+ * Tab trap) live in Form.test.ts — these cover only the panel shell:
+ * accessible name, the dialogId-keyed Form remount (the reset gesture), and
+ * refocusing the form when the last modal stacked above the panel closes.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import type { DialogConfig } from "@shared/dialog-types";
 
 // Mock setup - must be hoisted
@@ -24,6 +24,7 @@ vi.mock("$lib/api", () => ({
 
 // Import after mock setup
 import PanelView from "./PanelView.svelte";
+import { processCommand, reset as resetDialogs } from "$lib/stores/dialog-framework.svelte";
 
 function createConfig(overrides?: Partial<DialogConfig>): DialogConfig {
   return {
@@ -50,6 +51,7 @@ function renderPanel(config: DialogConfig, dialogId = "panel-1") {
 describe("PanelView component (panel surface)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDialogs();
   });
 
   afterEach(() => {
@@ -77,109 +79,65 @@ describe("PanelView component (panel surface)", () => {
     });
   });
 
-  describe("Escape", () => {
-    it("emits a dismiss event for the session", async () => {
-      renderPanel(createConfig(), "panel-42");
-
-      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
-        key: "Escape",
-      });
-
-      expect(mockSendDialogEvent).toHaveBeenCalledWith({
-        kind: "dismiss",
-        dialogId: "panel-42",
-      });
-    });
-  });
-
-  describe("Cmd/Ctrl+Enter", () => {
-    it("fires the primary action with the field-values snapshot", async () => {
-      renderPanel(createConfig(), "panel-1");
-
-      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
-        key: "Enter",
-        ctrlKey: true,
-      });
-
-      expect(mockSendDialogEvent).toHaveBeenCalledWith({
-        dialogId: "panel-1",
-        actionId: "create",
-        data: { name: "" },
-      });
-    });
-
-    it("plain Enter on the shell does not submit", async () => {
-      renderPanel(createConfig());
-
-      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
-        key: "Enter",
-      });
-
-      expect(mockSendDialogEvent).not.toHaveBeenCalled();
-    });
-
-    it("does nothing when the config has no actions", async () => {
-      renderPanel({
-        layout: "form",
-        sections: [{ type: "text", content: "New Workspace", style: "heading" }],
-      });
-
-      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
-        key: "Enter",
-        metaKey: true,
-      });
-
-      expect(mockSendDialogEvent).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("Tab trap", () => {
-    // Multiline inputs render as native <textarea>s — focusable in happy-dom,
-    // unlike the vscode-elements web components whose internals aren't wired.
-    const trapConfig: DialogConfig = {
-      layout: "form",
+  describe("refocus on modal close", () => {
+    // A multiline autofocus input renders as a native <textarea> with
+    // data-autofocus — focusable in happy-dom, unlike vscode-elements.
+    const autofocusConfig = createConfig({
       sections: [
         { type: "text", content: "New Workspace", style: "heading" },
-        { type: "input", id: "first", label: "First", multiline: true },
-        { type: "input", id: "last", label: "Last", multiline: true },
+        { type: "input", id: "note", label: "Note", multiline: true, autofocus: true },
       ],
-    };
-
-    function getTextareas(): [HTMLTextAreaElement, HTMLTextAreaElement] {
-      const areas = document.querySelectorAll("textarea");
-      return [areas[0] as HTMLTextAreaElement, areas[1] as HTMLTextAreaElement];
-    }
-
-    it("Tab on the last control wraps to the first", async () => {
-      renderPanel(trapConfig);
-      const [first, last] = getTextareas();
-
-      last.focus();
-      await fireEvent.keyDown(last, { key: "Tab" });
-
-      expect(document.activeElement).toBe(first);
     });
 
-    it("Shift+Tab on the first control wraps to the last", async () => {
-      renderPanel(trapConfig);
-      const [first, last] = getTextareas();
+    it("re-places focus on the autofocus control when the last modal above closes", async () => {
+      renderPanel(autofocusConfig);
+      const textarea = document.querySelector("textarea")!;
+      await waitFor(() => expect(document.activeElement).toBe(textarea));
 
-      first.focus();
-      await fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+      // A modal opens above the panel and takes focus elsewhere.
+      processCommand({ action: "open", dialogId: "modal-1", config: { sections: [] } });
+      textarea.blur();
+      await waitFor(() => expect(document.activeElement).not.toBe(textarea));
 
-      expect(document.activeElement).toBe(last);
+      // Modal closes — the panel is the active surface again.
+      processCommand({ action: "close", dialogId: "modal-1" });
+
+      await waitFor(() => expect(document.activeElement).toBe(textarea));
     });
 
-    it("Tab pulls focus back in when it sits outside the panel", async () => {
-      renderPanel(trapConfig);
-      const [first] = getTextareas();
+    it("does not refocus while a modal is still open above", async () => {
+      renderPanel(autofocusConfig);
+      const textarea = document.querySelector("textarea")!;
+      await waitFor(() => expect(document.activeElement).toBe(textarea));
 
-      (document.activeElement as HTMLElement | null)?.blur();
-      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
-        key: "Tab",
+      processCommand({ action: "open", dialogId: "modal-1", config: { sections: [] } });
+      processCommand({ action: "open", dialogId: "modal-2", config: { sections: [] } });
+      textarea.blur();
+
+      // Only one of the two modals closes.
+      processCommand({ action: "close", dialogId: "modal-1" });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(document.activeElement).not.toBe(textarea);
+    });
+
+    it("a panel-surface session does not count as a modal above", async () => {
+      renderPanel(autofocusConfig);
+      const textarea = document.querySelector("textarea")!;
+      await waitFor(() => expect(document.activeElement).toBe(textarea));
+
+      processCommand({
+        action: "open",
+        dialogId: "panel-x",
+        config: { sections: [] },
+        surface: "panel",
       });
+      textarea.blur();
+      processCommand({ action: "close", dialogId: "panel-x" });
+      await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(document.activeElement).toBe(first);
+      // No modal ever closed above the panel — focus is left alone.
+      expect(document.activeElement).not.toBe(textarea);
     });
   });
 
@@ -202,10 +160,7 @@ describe("PanelView component (panel surface)", () => {
 
       const textarea = document.querySelector("textarea")!;
       await fireEvent.input(textarea, { target: { value: "draft text" } });
-      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
-        key: "Enter",
-        ctrlKey: true,
-      });
+      await fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true });
       expect(mockSendDialogEvent).toHaveBeenCalledWith(
         expect.objectContaining({ data: { note: "draft text" } })
       );
@@ -214,10 +169,7 @@ describe("PanelView component (panel surface)", () => {
       // Backend reset: close + reopen arrives as a new dialogId.
       await rerender({ dialogId: "panel-2", config });
 
-      await fireEvent.keyDown(screen.getByRole("region", { name: "New Workspace" }), {
-        key: "Enter",
-        ctrlKey: true,
-      });
+      await fireEvent.keyDown(document.querySelector("textarea")!, { key: "Enter", ctrlKey: true });
       expect(mockSendDialogEvent).toHaveBeenCalledWith(
         expect.objectContaining({ dialogId: "panel-2", data: { note: "" } })
       );

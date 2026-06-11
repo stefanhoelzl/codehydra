@@ -127,6 +127,42 @@ describe("DialogView component (modal surface)", () => {
     });
   });
 
+  describe("keyboard (owned by the wrapped Form)", () => {
+    const config: DialogConfig = {
+      sections: [
+        { type: "text", content: "Clone from Git Repository", style: "heading" },
+        { type: "input", id: "url" },
+        {
+          type: "group",
+          items: [
+            { type: "button", id: "do-clone", label: "Clone", variant: "primary" },
+            { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+          ],
+        },
+      ],
+    };
+
+    it("Escape emits a dismiss event for the modal session", async () => {
+      renderDialog(config, { dialogId: "clone-1" });
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "clone-1" });
+    });
+
+    it("Cmd/Ctrl+Enter fires the primary action", async () => {
+      renderDialog(config, { dialogId: "clone-1" });
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Enter", metaKey: true });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "clone-1",
+        actionId: "do-clone",
+        data: { url: "" },
+      });
+    });
+  });
+
   describe("tab trap", () => {
     const config: DialogConfig = {
       sections: [

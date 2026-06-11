@@ -223,8 +223,7 @@ describe("DialogManager", () => {
       manager.routeEvent({ dialogId: handle.id, actionId: "first" });
       manager.routeEvent({ dialogId: handle.id, actionId: "second" });
 
-      const result = await promise;
-      expect(result.actionId).toBe("first");
+      await expect(promise).resolves.toMatchObject({ actionId: "first" });
     });
 
     it("should reject after timeout when no event arrives", async () => {
@@ -241,8 +240,7 @@ describe("DialogManager", () => {
       const promise = handle.nextEvent(5000);
       manager.routeEvent({ dialogId: handle.id, actionId: "ok" });
 
-      const result = await promise;
-      expect(result.actionId).toBe("ok");
+      await expect(promise).resolves.toMatchObject({ actionId: "ok" });
     });
 
     it("should not timeout when no timeout is specified", async () => {
@@ -318,8 +316,7 @@ describe("DialogManager", () => {
       manager.routeEvent({ kind: "change", dialogId: handle.id, fieldId: "f", data: { f: "x" } });
       manager.routeEvent({ dialogId: handle.id, actionId: "go" });
 
-      const result = await promise;
-      expect(result.actionId).toBe("go");
+      await expect(promise).resolves.toMatchObject({ actionId: "go" });
     });
   });
 
@@ -363,15 +360,27 @@ describe("DialogManager", () => {
       expect(onDismiss).not.toHaveBeenCalled();
     });
 
-    it("nextEvent ignores dismiss events and resolves on the next action", async () => {
+    it("nextEvent resolves on a dismiss event (callers loop if they need an action)", async () => {
       const handle = manager.open(createConfig("Test"));
 
       const promise = handle.nextEvent();
       manager.routeEvent({ kind: "dismiss", dialogId: handle.id });
-      manager.routeEvent({ dialogId: handle.id, actionId: "go" });
 
       const result = await promise;
-      expect(result.actionId).toBe("go");
+      expect(result.kind).toBe("dismiss");
+    });
+
+    it("nextEvent unsubscribes both channels once settled", async () => {
+      const handle = manager.open(createConfig("Test"));
+
+      const first = handle.nextEvent();
+      manager.routeEvent({ dialogId: handle.id, actionId: "go" });
+      await expect(first).resolves.toMatchObject({ actionId: "go" });
+
+      // A later dismiss only settles the NEW wait, not stale listeners.
+      const second = handle.nextEvent();
+      manager.routeEvent({ kind: "dismiss", dialogId: handle.id });
+      expect((await second).kind).toBe("dismiss");
     });
   });
 

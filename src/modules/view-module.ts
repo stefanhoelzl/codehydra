@@ -472,7 +472,12 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             };
 
             const handle = deps.dialogManager.open(config);
-            const event = await handle.nextEvent(5 * 60_000);
+            // Agent selection is mandatory: Escape (dismiss) is ignored — keep
+            // waiting until the user confirms a selection.
+            let event = await handle.nextEvent(5 * 60_000);
+            while (event.kind === "dismiss") {
+              event = await handle.nextEvent(5 * 60_000);
+            }
             handle.close();
 
             const selectedAgent = event.data?.["agent"] ?? availableAgents[0]?.agent;

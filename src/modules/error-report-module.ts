@@ -403,6 +403,12 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
       }
     });
 
+    // Escape discards the draft, same as Cancel.
+    handle.onDismiss(() => {
+      handle.close();
+      activeHandle = null;
+    });
+
     void handle.closed.then(() => {
       activeHandle = null;
     });

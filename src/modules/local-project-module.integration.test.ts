@@ -74,9 +74,11 @@ interface MockDialogHandle {
   closed: boolean;
   eventListeners: Array<(event: { dialogId: string; actionId: string }) => void>;
   close(): void;
-  nextEvent(): Promise<{ dialogId: string; actionId: string }>;
+  nextEvent(): Promise<{ dialogId: string; actionId?: string; kind?: string }>;
   onEvent(handler: (event: { dialogId: string; actionId: string }) => void): () => void;
+  onDismiss(handler: () => void): () => void;
   emitEvent(event: { dialogId: string; actionId: string }): void;
+  emitDismiss(): void;
   readonly closed_promise: Promise<void>;
 }
 
@@ -91,6 +93,7 @@ function createMockDialogManager(): {
   const dialogManager = {
     open: vi.fn().mockImplementation((config: unknown) => {
       const listeners: Array<(event: { dialogId: string; actionId: string }) => void> = [];
+      const dismissListeners: Array<() => void> = [];
       let resolveClosed: () => void;
       const closedPromise = new Promise<void>((resolve) => {
         resolveClosed = resolve;
@@ -106,8 +109,10 @@ function createMockDialogManager(): {
           resolveClosed();
         },
         nextEvent() {
+          // Mirrors DialogHandle.nextEvent: settles on an action OR a dismiss.
           return new Promise((resolve) => {
             listeners.push((event) => resolve(event));
+            dismissListeners.push(() => resolve({ dialogId: handle.id, kind: "dismiss" }));
           });
         },
         onEvent(handler: (event: { dialogId: string; actionId: string }) => void) {
@@ -117,9 +122,21 @@ function createMockDialogManager(): {
             if (idx >= 0) listeners.splice(idx, 1);
           };
         },
+        onDismiss(handler: () => void) {
+          dismissListeners.push(handler);
+          return () => {
+            const idx = dismissListeners.indexOf(handler);
+            if (idx >= 0) dismissListeners.splice(idx, 1);
+          };
+        },
         emitEvent(event: { dialogId: string; actionId: string }) {
           for (const listener of [...listeners]) {
             listener(event);
+          }
+        },
+        emitDismiss() {
+          for (const listener of [...dismissListeners]) {
+            listener();
           }
         },
         get closed_promise() {
@@ -845,6 +862,28 @@ describe("LocalProjectModule Integration", () => {
         dialogId: dialogManager.lastHandle!.id,
         actionId: "cancel",
       });
+
+      const { results, errors } = await preparePromise;
+
+      expect(errors).toHaveLength(0);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({ canceled: true });
+      expect(gitClient.init).not.toHaveBeenCalled();
+      expect(dialogManager.lastHandle!.closed).toBe(true);
+    });
+
+    it("returns canceled on Escape (dismiss), same as Cancel", async () => {
+      const { openHooks, dialogManager, gitClient } = createTestSetup();
+      vi.mocked(gitClient.isRepositoryRoot).mockResolvedValue(false);
+
+      // Start the prepare hook (will block on the dialog)
+      const preparePromise = openHooks.collect<PrepareHookResult>("prepare", {
+        intent: openLocalIntent(PROJECT_PATH),
+      });
+
+      // Simulate the user pressing Escape
+      await vi.waitFor(() => expect(dialogManager.lastHandle).not.toBeNull());
+      dialogManager.lastHandle!.emitDismiss();
 
       const { results, errors } = await preparePromise;
 

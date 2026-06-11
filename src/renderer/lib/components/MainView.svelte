@@ -35,7 +35,6 @@
     newWorkspaceView,
     openNewWorkspaceView,
     closeNewWorkspaceView,
-    registerSubmitHandler,
   } from "$lib/stores/new-workspace-view.svelte.js";
   import {
     shortcutModeActive,
@@ -165,15 +164,6 @@
       showDismissPending = false;
       api.sendDialogEvent({ kind: "dismiss", dialogId: session.dialogId });
     }
-  });
-
-  // Expose Create to keyboard shortcuts (Alt+X+Enter) while the panel is
-  // shown: forward to the panel form's primary action.
-  let panelViewRef: PanelView | undefined = $state();
-  $effect(() => {
-    if (!newWorkspaceView.isOpen || !panelDialog.value) return;
-    registerSubmitHandler(() => panelViewRef?.submitPrimary());
-    return () => registerSubmitHandler(null);
   });
 
   // Auto-open the New workspace view as the empty state: when no workspaces
@@ -369,11 +359,7 @@
        the empty state). The creation form is the only panel-surface session
        today; revisit the gating if another panel session appears. -->
   {#if newWorkspaceView.isOpen && panelDialog.value}
-    <PanelView
-      bind:this={panelViewRef}
-      dialogId={panelDialog.value.dialogId}
-      config={panelDialog.value.config}
-    />
+    <PanelView dialogId={panelDialog.value.dialogId} config={panelDialog.value.config} />
   {/if}
 
   <!-- Backdrop shown when no workspace is active and the panel is closed -->

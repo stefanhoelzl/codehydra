@@ -10,6 +10,9 @@
   - the field-change channel (per-field debounce, cancel-on-submit)
   - autofocus placement and focus-follow on config updates
   - primary-action resolution (Enter submit) and action/change event emission
+  - the form-global keyboard contract: Escape emits a "dismiss" event (the
+    session owner decides what dismissing means), Cmd/Ctrl+Enter fires the
+    primary action, Tab/Shift+Tab is trapped at the form boundary
 
   Leaves are controlled components: they receive their narrowed section config
   plus current value and report raw interactions back via callbacks; Form
@@ -26,6 +29,7 @@
   import type { DialogConfig, DialogSection, DialogUserEvent } from "@shared/dialog-types";
   import { onMount, onDestroy, untrack } from "svelte";
   import { sendDialogEvent } from "$lib/api";
+  import { trapTabKey } from "$lib/utils/focus-trap";
   import Section from "./Section.svelte";
   import type { ButtonItem, DropdownSectionConfig, FieldSectionConfig } from "./types";
 
@@ -232,6 +236,15 @@
     }, 0);
   }
 
+  /**
+   * Re-place focus on the autofocus control. Exposed for hosting surfaces
+   * that regain focus ownership (e.g. the panel when the last modal stacked
+   * above it closes and focus would otherwise be lost to <body>).
+   */
+  export function refocus(): void {
+    focusAutofocusTarget();
+  }
+
   /** The id of the control carrying the autofocus flag, or null. */
   function autofocusIdOf(cfg: DialogConfig): string | null {
     for (const section of cfg.sections) {
@@ -339,16 +352,6 @@
     if (primaryButton) handleButton(primaryButton);
   }
 
-  /**
-   * Activate the form's primary button as if clicked. Exposed for hosting
-   * surfaces that bind keyboard submit shortcuts (e.g. the panel shell's
-   * Cmd/Ctrl+Enter); same selection rule as Enter on a radio card. No-op
-   * without an explicit primary button.
-   */
-  export function submitPrimary(): void {
-    triggerPrimaryAction();
-  }
-
   /** Handle a button click: emit an action event with the values snapshot. */
   function handleButton(button: ButtonItem): void {
     if (button.disabled || button.busy) return;
@@ -377,9 +380,50 @@
     }
     return undefined;
   }
+
+  /**
+   * Form-global keyboard contract, on the bubble phase so field-level handlers
+   * run first — e.g. an open dropdown consumes Escape (stopPropagation) to
+   * close itself; only a second Escape reaches the form and dismisses the
+   * session. Must be a template handler: Svelte delegates template keydowns to
+   * the app root and replays them target-to-root, so only a delegated handler
+   * keeps that ordering with the field components' handlers.
+   * - Escape emits a "dismiss" event; the session owner decides what
+   *   dismissing means (owners without a dismiss listener ignore it).
+   * - Cmd/Ctrl+Enter activates the primary button from anywhere in the form.
+   * - Tab/Shift+Tab is trapped at the form boundary so focus never leaks out.
+   */
+  function handleKeydown(event: KeyboardEvent): void {
+    // A field-level handler that consumed the key (dropdown Enter/Escape,
+    // input Enter, radio Enter) marks it defaultPrevented — stay out.
+    if (event.defaultPrevented) return;
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      triggerPrimaryAction();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      const dismiss: DialogUserEvent = { kind: "dismiss", dialogId };
+      sendDialogEvent(dismiss);
+      return;
+    }
+    if (formRef) {
+      trapTabKey(event, formRef);
+    }
+  }
 </script>
 
-<div class="form" class:layout-form={layout === "form"} bind:this={formRef}>
+<!-- role="none": the form root is pure layout; the keydown handler is the
+     form-global keyboard contract, not a widget interaction. -->
+<div
+  class="form"
+  class:layout-form={layout === "form"}
+  role="none"
+  bind:this={formRef}
+  onkeydown={handleKeydown}
+>
   <!-- The recursive section snippet: GroupSection renders its items through
        it, re-entering the dispatcher without importing it (acyclic imports). -->
   {#snippet renderSection(section: DialogSection | ButtonItem)}

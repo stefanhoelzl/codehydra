@@ -42,8 +42,13 @@ export interface DialogHandle {
    * function.
    */
   onDismiss(handler: (event: DialogDismissEvent) => void): () => void;
-  /** Await next action event (for sequential hook flows). Rejects on timeout if specified. */
-  nextEvent(timeoutMs?: number): Promise<DialogActionEvent>;
+  /**
+   * Await the next user response: an action (button click) or a dismiss
+   * (Escape). For sequential hook flows. Callers that require a specific
+   * action must loop until they get it (e.g. a mandatory selection ignoring
+   * dismisses). Rejects on timeout if specified.
+   */
+  nextEvent(timeoutMs?: number): Promise<DialogActionEvent | DialogDismissEvent>;
   /** Promise that resolves when the dialog closes. */
   readonly closed: Promise<void>;
 }
@@ -170,12 +175,15 @@ class DialogHandleImpl implements DialogHandle {
     };
   }
 
-  nextEvent(timeoutMs?: number): Promise<DialogActionEvent> {
-    const eventPromise = new Promise<DialogActionEvent>((resolve) => {
-      const unsub = this.onEvent((event) => {
-        unsub();
+  nextEvent(timeoutMs?: number): Promise<DialogActionEvent | DialogDismissEvent> {
+    const eventPromise = new Promise<DialogActionEvent | DialogDismissEvent>((resolve) => {
+      const settle = (event: DialogActionEvent | DialogDismissEvent): void => {
+        unsubAction();
+        unsubDismiss();
         resolve(event);
-      });
+      };
+      const unsubAction = this.onEvent(settle);
+      const unsubDismiss = this.onDismiss(settle);
     });
     if (timeoutMs === undefined) return eventPromise;
     return Promise.race([

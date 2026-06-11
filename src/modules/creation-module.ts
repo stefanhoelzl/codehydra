@@ -842,6 +842,16 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       }
     });
 
+    cloneHandle.onDismiss(() => {
+      if (cloneDialog !== state) return;
+      if (state.cloneUrl !== null) {
+        // Mid-clone, Escape detaches like "Continue in background": the clone
+        // keeps running and project:opened lands silently.
+        logger.debug("Clone continuing in background", { url: state.cloneUrl });
+      }
+      closeCloneDialog();
+    });
+
     cloneHandle.onEvent((event) => {
       if (cloneDialog !== state) return;
       state.url = event.data?.[CLONE_FIELD_URL] ?? state.url;
