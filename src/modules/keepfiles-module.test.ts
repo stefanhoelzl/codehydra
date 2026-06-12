@@ -4,23 +4,18 @@
  * Uses mocked FileSystemBoundary to test the service logic.
  */
 
-import { join } from "path";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { KeepFilesService } from "./keepfiles-module";
 import {
   createFileSystemMock,
+  createSpyFileSystemBoundary,
   file,
   directory,
   symlink,
-  createDirEntry,
 } from "../boundaries/platform/filesystem.state-mock";
 import { FileSystemError } from "../shared/errors/service-errors";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { Path } from "../utils/path/path";
-
-/** Normalize path separators for cross-platform mock comparisons */
-const normalizePath = (p: string) => p.replace(/\\/g, "/");
 
 describe("KeepFilesService", () => {
   describe("copyToWorkspace", () => {
@@ -114,52 +109,28 @@ describe("KeepFilesService", () => {
 
     describe("directory pattern", () => {
       it("copies entire directory tree by scanning files", async () => {
-        const readFileFn = vi.fn().mockResolvedValue(".vscode/");
-        // Use join() for path construction, normalizePath() for comparisons
-        // This handles Windows backslashes vs Unix forward slashes
-        const projectRoot = "/project";
-        const vscodeDir = join(projectRoot, ".vscode");
-        const vscodeSubdir = join(projectRoot, ".vscode", "subdir");
-        const readdirFn = vi.fn().mockImplementation((pathArg: string) => {
-          const normalized = normalizePath(pathArg);
-          if (normalized === normalizePath(projectRoot)) {
-            return Promise.resolve([createDirEntry(".vscode", { isDirectory: true })]);
-          }
-          if (normalized === normalizePath(vscodeDir)) {
-            return Promise.resolve([
-              createDirEntry("settings.json", { isFile: true }),
-              createDirEntry("extensions.json", { isFile: true }),
-              createDirEntry("subdir", { isDirectory: true }),
-            ]);
-          }
-          if (normalized === normalizePath(vscodeSubdir)) {
-            return Promise.resolve([createDirEntry("config.json", { isFile: true })]);
-          }
-          return Promise.resolve([]);
+        const mockFs = createSpyFileSystemBoundary({
+          entries: {
+            "/project": directory(),
+            "/project/.keepfiles": file(".vscode/"),
+            "/project/.vscode": directory(),
+            "/project/.vscode/settings.json": file("{}"),
+            "/project/.vscode/extensions.json": file("[]"),
+            "/project/.vscode/subdir": directory(),
+            "/project/.vscode/subdir/config.json": file("{}"),
+            "/workspace": directory(),
+          },
         });
-        const copyTreeFn = vi.fn().mockResolvedValue({ copiedCount: 1, skippedSymlinks: [] });
-
-        const mockFs: FileSystemBoundary = {
-          readFile: readFileFn,
-          readdir: readdirFn,
-          copyTree: copyTreeFn,
-          writeFile: vi.fn(),
-          writeFileBuffer: vi.fn(),
-          readFileBuffer: vi.fn(),
-          mkdir: vi.fn(),
-          unlink: vi.fn(),
-          rm: vi.fn(),
-          makeExecutable: vi.fn(),
-          rename: vi.fn(),
-          mkdtemp: vi.fn(),
-        };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace(new Path(projectRoot), new Path("/workspace"));
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         // Each file is copied individually (3 files total)
         expect(result.copiedCount).toBe(3);
-        expect(copyTreeFn).toHaveBeenCalledTimes(3);
+        expect(mockFs.copyTree).toHaveBeenCalledTimes(3);
+        expect(mockFs).toHaveFile("/workspace/.vscode/settings.json", "{}");
+        expect(mockFs).toHaveFile("/workspace/.vscode/extensions.json", "[]");
+        expect(mockFs).toHaveFile("/workspace/.vscode/subdir/config.json", "{}");
       });
     });
 
@@ -189,76 +160,42 @@ describe("KeepFilesService", () => {
 
     describe("negation", () => {
       it("excludes files with negation pattern", async () => {
-        const projectRoot = "/project";
-        const secretsDir = join(projectRoot, "secrets");
-        const readdirFn = vi.fn().mockImplementation((pathArg: string) => {
-          const normalized = normalizePath(pathArg);
-          if (normalized === normalizePath(projectRoot)) {
-            return Promise.resolve([createDirEntry("secrets", { isDirectory: true })]);
-          }
-          if (normalized === normalizePath(secretsDir)) {
-            return Promise.resolve([
-              createDirEntry("api-key.txt", { isFile: true }),
-              createDirEntry("README.md", { isFile: true }),
-            ]);
-          }
-          return Promise.resolve([]);
+        const mockFs = createSpyFileSystemBoundary({
+          entries: {
+            "/project": directory(),
+            "/project/.keepfiles": file("secrets/*\n!secrets/README.md"),
+            "/project/secrets": directory(),
+            "/project/secrets/api-key.txt": file("key"),
+            "/project/secrets/README.md": file("# secrets"),
+            "/workspace": directory(),
+          },
         });
-        const copyTreeFn = vi.fn().mockResolvedValue({ copiedCount: 1, skippedSymlinks: [] });
-
-        const mockFs: FileSystemBoundary = {
-          readFile: vi.fn().mockResolvedValue("secrets/*\n!secrets/README.md"),
-          readdir: readdirFn,
-          copyTree: copyTreeFn,
-          writeFile: vi.fn(),
-          writeFileBuffer: vi.fn(),
-          readFileBuffer: vi.fn(),
-          mkdir: vi.fn(),
-          unlink: vi.fn(),
-          rm: vi.fn(),
-          makeExecutable: vi.fn(),
-          rename: vi.fn(),
-          mkdtemp: vi.fn(),
-        };
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
-        const result = await service.copyToWorkspace(new Path(projectRoot), new Path("/workspace"));
+        const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
 
         expect(result.copiedCount).toBe(1);
-        expect(copyTreeFn).toHaveBeenCalledTimes(1);
+        expect(mockFs.copyTree).toHaveBeenCalledTimes(1);
+        expect(mockFs).toHaveFile("/workspace/secrets/api-key.txt", "key");
+        expect(mockFs).not.toHaveFile("/workspace/secrets/README.md");
       });
     });
 
     describe("error handling", () => {
       it("collects copy errors without stopping other copies", async () => {
-        const readFileFn = vi.fn().mockResolvedValue(".env\n.env.local");
-        const readdirFn = vi
-          .fn()
-          .mockResolvedValue([
-            createDirEntry(".env", { isFile: true }),
-            createDirEntry(".env.local", { isFile: true }),
-          ]);
-        const copyTreeFn = vi
-          .fn()
-          .mockRejectedValueOnce(
-            new FileSystemError("EACCES", "/project/.env", "Permission denied")
-          )
-          .mockResolvedValueOnce({ copiedCount: 1, skippedSymlinks: [] });
-
-        const mockFs: FileSystemBoundary = {
-          readFile: readFileFn,
-          readdir: readdirFn,
-          copyTree: copyTreeFn,
-          writeFile: vi.fn(),
-          writeFileBuffer: vi.fn(),
-          readFileBuffer: vi.fn(),
-          mkdir: vi.fn(),
-          unlink: vi.fn(),
-          rm: vi.fn(),
-          makeExecutable: vi.fn(),
-          rename: vi.fn(),
-          mkdtemp: vi.fn(),
-        };
+        const mockFs = createSpyFileSystemBoundary({
+          entries: {
+            "/project": directory(),
+            "/project/.keepfiles": file(".env\n.env.local"),
+            "/project/.env": file("ENV=value"),
+            "/project/.env.local": file("LOCAL=value"),
+            "/workspace": directory(),
+          },
+        });
+        // First copy (.env) fails; the second falls through to the mock and succeeds.
+        mockFs.copyTree.mockRejectedValueOnce(
+          new FileSystemError("EACCES", "/project/.env", "Permission denied")
+        );
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
@@ -267,32 +204,24 @@ describe("KeepFilesService", () => {
         expect(result.errors).toHaveLength(1);
         expect(result.errors[0]?.path).toBe(".env");
         expect(result.errors[0]?.message).toContain("Permission denied");
+        expect(mockFs).toHaveFile("/workspace/.env.local", "LOCAL=value");
       });
     });
 
     describe("security - path traversal", () => {
       it("detects path traversal in destination and adds to errors", async () => {
-        const readFileFn = vi.fn().mockResolvedValue("normal.txt");
-        const readdirFn = vi
-          .fn()
-          .mockResolvedValue([
-            { name: "../escape.txt", isFile: true, isDirectory: false, isSymbolicLink: false },
-          ]);
-
-        const mockFs: FileSystemBoundary = {
-          readFile: readFileFn,
-          readdir: readdirFn,
-          copyTree: vi.fn().mockResolvedValue(undefined),
-          writeFile: vi.fn(),
-          writeFileBuffer: vi.fn(),
-          readFileBuffer: vi.fn(),
-          mkdir: vi.fn(),
-          unlink: vi.fn(),
-          rm: vi.fn(),
-          makeExecutable: vi.fn(),
-          rename: vi.fn(),
-          mkdtemp: vi.fn(),
-        };
+        const mockFs = createSpyFileSystemBoundary({
+          entries: {
+            "/project": directory(),
+            "/project/.keepfiles": file("normal.txt"),
+            "/workspace": directory(),
+          },
+        });
+        // A virtual tree cannot contain a "../" name, so simulate a hostile
+        // filesystem by overriding readdir.
+        mockFs.readdir.mockResolvedValue([
+          { name: "../escape.txt", isFile: true, isDirectory: false, isSymbolicLink: false },
+        ]);
         const service = new KeepFilesService(mockFs, SILENT_LOGGER);
 
         const result = await service.copyToWorkspace(new Path("/project"), new Path("/workspace"));
