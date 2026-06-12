@@ -2,13 +2,11 @@
   import { onDestroy } from "svelte";
   import * as api from "$lib/api";
   import type { ProjectId, WorkspaceRef, WorkspaceName } from "$lib/api";
+  import type { UiProjectRow } from "@shared/ui-state";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
   import Icon from "./Icon.svelte";
   import NotificationStack from "./NotificationStack.svelte";
-  import { extractTags } from "@shared/api/types";
-  import { getCounts } from "$lib/stores/agent-status.svelte.js";
-  import { getLifecycle } from "$lib/stores/workspace-lifecycle.svelte.js";
   import {
     desiredMode,
     hoverExpansionEligible,
@@ -21,15 +19,13 @@
     getStatusText,
   } from "$lib/utils/sidebar-utils.js";
   import { createLogger } from "$lib/logging";
-  import type { Project } from "$lib/api";
 
   const logger = createLogger("ui");
 
   interface SidebarProps {
-    projects: readonly Project[];
-    activeWorkspacePath: string | null;
+    /** Render-ready project rows from the UiState snapshot. */
+    projects: readonly UiProjectRow[];
     shortcutModeActive?: boolean;
-    totalWorkspaces: number;
     /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
     newWorkspaceViewOpen?: boolean;
     onCloseProject: (projectId: ProjectId) => void;
@@ -40,15 +36,17 @@
 
   let {
     projects,
-    activeWorkspacePath,
     shortcutModeActive = false,
-    totalWorkspaces,
     newWorkspaceViewOpen = false,
     onCloseProject,
     onSwitchWorkspace,
     onOpenNewWorkspace,
     onOpenRemoveDialog,
   }: SidebarProps = $props();
+
+  const totalWorkspaces = $derived(
+    projects.reduce((sum, project) => sum + project.workspaces.length, 0)
+  );
 
   // ============ Expansion State ============
 
@@ -218,47 +216,45 @@
     </button>
 
     <ul class="project-list">
-      {#each projects as project, projectIndex (project.path)}
+      {#each projects as project, projectIndex (project.id)}
         {#if projectIndex > 0}
           <vscode-divider></vscode-divider>
         {/if}
-        {@const projectTitle = project.remoteUrl ?? project.path}
         <li class="project-item">
           <div class="project-header ch-label-cell">
-            <span class="project-icon" title={projectTitle}>
-              <Icon name={project.remoteUrl ? "source-control" : "folder-opened"} size={14} />
+            <span class="project-icon" title={project.title}>
+              <Icon name={project.remote ? "source-control" : "folder-opened"} size={14} />
             </span>
-            <span class="project-name" title={projectTitle}>{project.name}</span>
+            <span class="project-name" title={project.title}>{project.name}</span>
             <div class="project-actions">
               <button
                 type="button"
                 class="action-btn"
                 id={`close-project-${project.id}`}
                 aria-label="Close project"
-                onclick={() => onCloseProject(project.id)}
+                onclick={() => onCloseProject(project.id as ProjectId)}
               >
                 <Icon name="trash" size={14} />
               </button>
             </div>
           </div>
           <ul class="workspace-list">
-            {#each project.workspaces as workspace, workspaceIndex (workspace.path)}
+            {#each project.workspaces as workspace, workspaceIndex (workspace.key)}
               {@const globalIndex = getWorkspaceGlobalIndex(projects, projectIndex, workspaceIndex)}
               {@const displayIndex = formatIndexDisplay(globalIndex)}
               {@const shortcutHint = getShortcutHint(globalIndex)}
-              {@const agentCounts = getCounts(workspace.path)}
+              {@const agentCounts =
+                "counts" in workspace.agent ? workspace.agent.counts : { idle: 0, busy: 0 }}
               {@const statusText = getStatusText(agentCounts.idle, agentCounts.busy)}
-              {@const isActive = workspace.path === activeWorkspacePath}
-              {@const lifecycle = getLifecycle(workspace.path)}
+              {@const isActive = workspace.active}
+              {@const status = workspace.status}
               {@const workspaceRef = {
-                projectId: project.id,
+                projectId: project.id as ProjectId,
                 workspaceName: workspace.name as WorkspaceName,
                 path: workspace.path,
               }}
-              {@const hasTags = workspace.metadata
-                ? extractTags(workspace.metadata).length > 0
-                : false}
-              {@const hibernated = workspace.metadata?.["hibernated"] === "true"}
+              {@const hasTags = workspace.tags.length > 0}
+              {@const hibernated = workspace.hibernated}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
               <li
                 class="workspace-item"
@@ -267,7 +263,7 @@
                 class:hibernated
                 aria-current={isActive ? "true" : undefined}
                 onclick={() => {
-                  if (lifecycle !== "creating") onSwitchWorkspace(workspaceRef);
+                  if (status !== "creating") onSwitchWorkspace(workspaceRef);
                 }}
               >
                 <div class="workspace-row">
@@ -288,7 +284,7 @@
                       {/if}
                       {workspace.name}
                     </button>
-                    {#if lifecycle === "none"}
+                    {#if status === "ready"}
                       <button
                         type="button"
                         class="action-btn remove-btn"
@@ -310,18 +306,18 @@
                   <button
                     type="button"
                     class="ch-icon-cell status-cell"
-                    aria-label={`${workspace.name} in ${project.name} - ${lifecycle === "creating" ? "Creating" : lifecycle === "deleting" ? "Deleting" : lifecycle === "delete-failed" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
+                    aria-label={`${workspace.name} in ${project.name} - ${status === "creating" ? "Creating" : status === "deleting" ? "Deleting" : status === "delete-failed" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
                     aria-current={isActive ? "true" : undefined}
                     onclick={() => {
                       if (hibernated) handleWakeWorkspace(workspace.path);
                     }}
                   >
-                    {#if lifecycle === "creating"}
+                    {#if status === "creating"}
                       <!-- Creating: show red "busy" immediately (work is queued) -->
                       <AgentStatusIndicator idleCount={0} busyCount={1} />
-                    {:else if lifecycle === "deleting"}
+                    {:else if status === "deleting"}
                       <vscode-progress-ring class="deletion-spinner"></vscode-progress-ring>
-                    {:else if lifecycle === "delete-failed"}
+                    {:else if status === "delete-failed"}
                       <span class="deletion-error" role="img" aria-label="Deletion failed">
                         <Icon name="warning" size={14} />
                       </span>
@@ -340,7 +336,7 @@
                 </div>
                 {#if hasTags}
                   <div class="workspace-tags-row">
-                    <WorkspaceTags metadata={workspace.metadata} />
+                    <WorkspaceTags tags={workspace.tags} />
                   </div>
                 {/if}
               </li>

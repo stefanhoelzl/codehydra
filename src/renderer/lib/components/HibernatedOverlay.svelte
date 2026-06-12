@@ -2,43 +2,28 @@
   HibernatedOverlay.svelte
 
   Shown over the workspace pane when the active workspace is hibernated.
-  Renders the saved screenshot (if any) plus a centered pause indicator.
-  The screenshot file may not exist; the <img> onerror handler hides the
-  image and the placeholder layer shows through.
+  Renders the saved screenshot (inline data URL from the UiState snapshot;
+  null while loading or when no screenshot exists) plus a centered pause
+  indicator. The onerror handler hides a broken image so the placeholder
+  layer shows through.
 -->
 <script lang="ts">
-  import * as api from "$lib/api";
   import Icon from "./Icon.svelte";
   import { handleHibernateToggle } from "$lib/stores/shortcuts.svelte";
-  import type { WorkspaceRef } from "$lib/api";
 
   interface Props {
-    workspaceRef: WorkspaceRef;
+    /** Inline screenshot data URL from the snapshot (null = none/loading). */
+    screenshot: string | null;
   }
 
-  let { workspaceRef }: Props = $props();
+  let { screenshot }: Props = $props();
 
-  let screenshotUrl = $state<string | null>(null);
   let imageBroken = $state(false);
-
-  $effect(() => {
-    const ref = workspaceRef;
-    imageBroken = false;
-    screenshotUrl = null;
-    void api.workspaces
-      .getScreenshot(ref.projectId, ref.workspaceName)
-      .then((result) => {
-        screenshotUrl = result.url;
-      })
-      .catch(() => {
-        screenshotUrl = null;
-      });
-  });
 </script>
 
 <div class="hibernated-overlay">
-  {#if screenshotUrl && !imageBroken}
-    <img class="screenshot" src={screenshotUrl} alt="" onerror={() => (imageBroken = true)} />
+  {#if screenshot && !imageBroken}
+    <img class="screenshot" src={screenshot} alt="" onerror={() => (imageBroken = true)} />
   {/if}
   <div class="dim" aria-hidden="true"></div>
   <button

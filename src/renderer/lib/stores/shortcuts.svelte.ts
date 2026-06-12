@@ -7,28 +7,13 @@
  */
 
 import * as api from "$lib/api";
+import type { ProjectId, WorkspaceName, WorkspaceRef } from "$lib/api";
 import { createLogger } from "$lib/logging";
 import { getErrorMessage } from "@shared/error-utils";
 import type { UIModeChangedEvent } from "@shared/ipc";
+import type { UiWorkspaceRow } from "@shared/ui-state";
 import { openRemoveDialog } from "./dialogs.svelte";
-import {
-  newWorkspaceView,
-  openNewWorkspaceView,
-  closeNewWorkspaceView,
-} from "./new-workspace-view.svelte";
-import { getLifecycle } from "./workspace-lifecycle.svelte";
-import {
-  getAllWorkspaces,
-  getWorkspaceRefByIndex,
-  getAwakeWorkspaceRefByIndex,
-  findWorkspaceIndex,
-  wrapIndex,
-  activeWorkspacePath,
-  activeWorkspace,
-  projects,
-  setActiveWorkspace,
-} from "./projects.svelte";
-import { getStatus } from "./agent-status.svelte";
+import { uiState } from "./ui-state.svelte";
 import { jumpKeyToIndex, type JumpKey, type ShortcutKey } from "@shared/shortcuts";
 
 // Import from central ui-mode store (one-way dependency: shortcuts → ui-mode)
@@ -36,6 +21,44 @@ import { shortcutModeActive, setModeFromMain, reset as resetUiMode } from "./ui-
 
 // Create logger for this module
 const logger = createLogger("ui");
+
+// ============ Snapshot access ============
+
+/** A workspace row plus its owning project's id (for WorkspaceRef building). */
+interface NavEntry {
+  readonly row: UiWorkspaceRow;
+  readonly projectId: string;
+}
+
+/** All workspace rows in sidebar display order (matches visual navigation). */
+function allEntries(): NavEntry[] {
+  const projects = uiState.value?.sidebar.projects ?? [];
+  return projects.flatMap((project) =>
+    project.workspaces.map((row) => ({ row, projectId: project.id }))
+  );
+}
+
+function activeEntry(): NavEntry | undefined {
+  return allEntries().find((entry) => entry.row.active);
+}
+
+function refOf(entry: NavEntry): WorkspaceRef {
+  return {
+    projectId: entry.projectId as ProjectId,
+    workspaceName: entry.row.name as WorkspaceName,
+    path: entry.row.path,
+  };
+}
+
+/** True while the creation panel is the main view (nothing selected). */
+function creationPanelShown(): boolean {
+  return uiState.value?.main.kind === "creation";
+}
+
+/** Wrap an index into [0, length). */
+function wrapIndex(index: number, length: number): number {
+  return ((index % length) + length) % length;
+}
 
 // ============ Actions ============
 
@@ -155,35 +178,30 @@ async function executeShortcutAction(key: ShortcutKey): Promise<void> {
  * Does not focus workspace to keep shortcut mode active.
  */
 async function handleNavigation(direction: -1 | 1): Promise<void> {
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length === 0) return;
+  const entries = allEntries();
+  if (entries.length === 0) return;
   if (_switchingWorkspace) return;
 
-  const currentIndex = findWorkspaceIndex(activeWorkspacePath.value);
-  // When the active workspace is null (e.g. coming from the New workspace
-  // view), Up → last and Down → first.
+  const currentIndex = entries.findIndex((entry) => entry.row.active);
+  // When no workspace is active (e.g. coming from the creation panel),
+  // Up → last and Down → first.
   const nextIndex =
     currentIndex === -1
       ? direction === 1
         ? 0
-        : workspaces.length - 1
-      : wrapIndex(currentIndex + direction, workspaces.length);
+        : entries.length - 1
+      : wrapIndex(currentIndex + direction, entries.length);
   // No-op when the only workspace is already current.
   if (nextIndex === currentIndex) return;
-  const targetWorkspaceRef = getWorkspaceRefByIndex(nextIndex);
-
-  if (!targetWorkspaceRef) return;
-
-  // Leaving the New workspace view by navigating to a workspace.
-  // Set active eagerly so the sidebar/empty-backdrop don't flicker during the
-  // IPC round-trip to the main process.
-  closeNewWorkspaceView();
-  setActiveWorkspace(targetWorkspaceRef.path);
+  const target = entries[nextIndex];
+  if (!target) return;
 
   _switchingWorkspace = true;
   try {
-    // Pass false to keep UI focused (shortcut mode active)
-    await api.ui.switchWorkspace(targetWorkspaceRef.path, false);
+    // Pass false to keep UI focused (shortcut mode active). The snapshot
+    // push following workspace:switched updates sidebar + frame (and leaves
+    // the creation panel when it was showing).
+    await api.ui.switchWorkspace(target.row.path, false);
   } catch (error) {
     logWorkspaceSwitchError("switch workspace", error);
   } finally {
@@ -200,34 +218,29 @@ async function handleNavigation(direction: -1 | 1): Promise<void> {
 async function handleStatusNavigation(direction: -1 | 1): Promise<void> {
   if (_switchingWorkspace) return;
 
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length === 0) return;
+  const entries = allEntries();
+  if (entries.length === 0) return;
 
-  const currentIndex = findWorkspaceIndex(activeWorkspacePath.value);
+  const currentIndex = entries.findIndex((entry) => entry.row.active);
 
   // Try idle first, fall back to busy only when the current workspace isn't
-  // already idle (or when there's no current workspace — e.g. from the New
-  // workspace view — in which case we always allow the busy fallback).
-  let targetIndex = findNextByStatusType(workspaces, currentIndex, direction, "idle");
+  // already idle (or when there's no current workspace — e.g. from the
+  // creation panel — in which case we always allow the busy fallback).
+  let targetIndex = findNextByStatusType(entries, currentIndex, direction, "idle");
   if (targetIndex === -1) {
-    const currentPath = currentIndex === -1 ? undefined : workspaces[currentIndex]?.path;
-    const currentStatus = currentPath ? getStatus(currentPath) : undefined;
+    const currentStatus = currentIndex === -1 ? undefined : entries[currentIndex]?.row.agent;
     if (currentStatus?.type !== "idle") {
-      targetIndex = findNextByStatusType(workspaces, currentIndex, direction, "busy");
+      targetIndex = findNextByStatusType(entries, currentIndex, direction, "busy");
     }
   }
   if (targetIndex === -1) return;
 
-  const targetWorkspaceRef = getWorkspaceRefByIndex(targetIndex);
-  if (!targetWorkspaceRef) return;
-
-  // Leaving the New workspace view by navigating to a workspace.
-  closeNewWorkspaceView();
-  setActiveWorkspace(targetWorkspaceRef.path);
+  const target = entries[targetIndex];
+  if (!target) return;
 
   _switchingWorkspace = true;
   try {
-    await api.ui.switchWorkspace(targetWorkspaceRef.path, false);
+    await api.ui.switchWorkspace(target.row.path, false);
   } catch (error) {
     logWorkspaceSwitchError("navigate workspace", error);
   } finally {
@@ -242,12 +255,12 @@ async function handleStatusNavigation(direction: -1 | 1): Promise<void> {
  * Returns -1 if no matching workspace exists.
  */
 function findNextByStatusType(
-  workspaces: { path: string; metadata?: Readonly<Record<string, string>> }[],
+  entries: readonly NavEntry[],
   currentIndex: number,
   direction: -1 | 1,
   statusType: string
 ): number {
-  const count = workspaces.length;
+  const count = entries.length;
   // No active workspace: iterate ALL `count` indices starting from the end
   // appropriate for the direction (Right → 0, Left → last).
   // Active workspace: iterate the other `count - 1` indices, skipping current.
@@ -260,11 +273,10 @@ function findNextByStatusType(
   const iterations = currentIndex === -1 ? count : count - 1;
   for (let i = 0; i < iterations; i++) {
     const index = wrapIndex(startIndex + i * direction, count);
-    const workspace = workspaces[index];
-    if (!workspace) continue;
-    if (workspace.metadata?.["hibernated"] === "true") continue;
-    const status = getStatus(workspace.path);
-    if (status.type === statusType) {
+    const entry = entries[index];
+    if (!entry) continue;
+    if (entry.row.hibernated) continue;
+    if (entry.row.agent.type === statusType) {
       return index;
     }
   }
@@ -279,18 +291,15 @@ function findNextByStatusType(
  */
 async function handleJump(key: JumpKey): Promise<void> {
   const index = jumpKeyToIndex(key);
-  const workspaceRef = getAwakeWorkspaceRefByIndex(index);
-  if (!workspaceRef) return;
+  // The Nth awake workspace (hibernated workspaces are unnumbered).
+  const target = allEntries().filter((entry) => !entry.row.hibernated)[index];
+  if (!target) return;
   if (_switchingWorkspace) return;
-
-  // Leaving the New workspace view by jumping to a workspace.
-  closeNewWorkspaceView();
-  setActiveWorkspace(workspaceRef.path);
 
   _switchingWorkspace = true;
   try {
     // Pass false to keep UI focused (shortcut mode active)
-    await api.ui.switchWorkspace(workspaceRef.path, false);
+    await api.ui.switchWorkspace(target.row.path, false);
   } catch (error) {
     logWorkspaceSwitchError("jump to workspace", error);
   } finally {
@@ -304,23 +313,19 @@ async function handleJump(key: JumpKey): Promise<void> {
  * Hibernated → wake + re-open via workspace:open existingWorkspace flow.
  */
 export async function handleHibernateToggle(): Promise<void> {
-  // Opening the New workspace view clears the active workspace, so this is
+  // The creation panel shows when no workspace is active, so this is
   // naturally inert while the panel is showing.
-  const ref = activeWorkspace.value;
-  if (!ref) return;
+  const entry = activeEntry();
+  if (!entry) return;
 
-  const project = projects.value.find((p) => p.id === ref.projectId);
-  const workspace = project?.workspaces.find((w) => w.path === ref.path);
-  if (!workspace) return;
-
-  const isHibernated = workspace.metadata?.["hibernated"] === "true";
+  const isHibernated = entry.row.hibernated;
   try {
     if (isHibernated) {
       // wake clears the hibernated flag AND brings the workspace back online
       // (the operation reopens it internally), so a single call suffices.
-      await api.workspaces.wake(ref.path);
+      await api.workspaces.wake(entry.row.path);
     } else {
-      await api.workspaces.hibernate(ref.path);
+      await api.workspaces.hibernate(entry.row.path);
     }
   } catch (error) {
     logWorkspaceSwitchError(isHibernated ? "wake workspace" : "hibernate workspace", error);
@@ -335,15 +340,16 @@ export async function handleHibernateToggle(): Promise<void> {
  */
 function handleDialog(key: "enter" | "delete"): void {
   if (key === "enter") {
-    if (newWorkspaceView.isOpen) {
-      // Already on the New workspace view: nothing to open. Keyboard submit
+    if (creationPanelShown()) {
+      // Already on the creation panel: nothing to open. Keyboard submit
       // is Cmd/Ctrl+Enter, owned by the form itself.
       return;
     }
-    // Deactivate shortcut mode locally for immediate UI feedback. The New
-    // workspace view forces hover-level z-order (UI on top) via ui-mode.
+    // Deactivate shortcut mode locally for immediate UI feedback. Deselecting
+    // (switch to null) makes the creation panel the main view; it forces
+    // hover-level z-order (UI on top) via ui-mode.
     setModeFromMain("workspace");
-    openNewWorkspaceView();
+    void api.ui.switchWorkspace(null);
     // Push hover mode to main eagerly (don't wait for the syncMode microtask).
     // Otherwise: when the user releases Alt, main's keyUp still sees
     // currentMode === "shortcut" and dispatches setMode("workspace"), which
@@ -353,16 +359,15 @@ function handleDialog(key: "enter" | "delete"): void {
     // workspace view for seconds.
     void api.ui.setMode("hover");
   } else {
-    // Delete — opening the New workspace view clears the active
-    // workspace, so there's nothing to remove from there.
-    const workspaceRef = activeWorkspace.value;
-    if (!workspaceRef) return;
+    // Delete — the creation panel shows when no workspace is active, so
+    // there's nothing to remove from there.
+    const entry = activeEntry();
+    if (!entry) return;
     // Skip if the workspace is still creating or already being deleted
     // (delete-failed stays allowed so the user can retry).
-    const lifecycle = getLifecycle(workspaceRef.path);
-    if (lifecycle === "creating" || lifecycle === "deleting") return;
+    if (entry.row.status === "creating" || entry.row.status === "deleting") return;
     setModeFromMain("workspace");
-    openRemoveDialog(workspaceRef);
+    openRemoveDialog(refOf(entry));
   }
 }
 

@@ -105,9 +105,9 @@ describe("renderer API layer", () => {
     it("exports emitEvent for invoke-less signals", async () => {
       const api = await import("$lib/api");
 
-      api.emitEvent({ kind: "panel-visibility", open: true });
+      api.emitEvent({ kind: "hover", region: "sidebar" });
 
-      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "panel-visibility", open: true });
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "hover", region: "sidebar" });
     });
   });
 

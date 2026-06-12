@@ -3,16 +3,18 @@
   import Icon from "./Icon.svelte";
   import { workspaces, type WorkspaceRef } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
-  import { getAllWorkspaces } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
 
   const logger = createLogger("ui");
 
   interface RemoveWorkspaceDialogProps {
     workspaceRef: WorkspaceRef;
+    /** Base branch of the workspace (from its UiState row), for the
+     *  unmerged-commits warning text. */
+    baseBranch?: string | undefined;
   }
 
-  let { workspaceRef }: RemoveWorkspaceDialogProps = $props();
+  let { workspaceRef, baseBranch }: RemoveWorkspaceDialogProps = $props();
 
   // Form state
   let keepBranch = $state(false);
@@ -22,12 +24,6 @@
 
   // Extract workspace name from ref
   const workspaceName = $derived(workspaceRef.workspaceName);
-
-  // Get the base branch name from workspace metadata
-  const baseBranch = $derived(() => {
-    const ws = getAllWorkspaces().find((w) => w.path === workspaceRef.path);
-    return ws?.metadata?.base;
-  });
 
   // Check workspace status on mount. refresh:true tells the operation to fetch
   // remotes first so unmerged-commit counts reflect server-merged branches.
@@ -106,7 +102,7 @@
           <span class="ch-alert-box-icon">
             <Icon name="warning" />
           </span>
-          This branch has {unmergedCommits} commit{unmergedCommits === 1 ? "" : "s"} not merged into {baseBranch() ??
+          This branch has {unmergedCommits} commit{unmergedCommits === 1 ? "" : "s"} not merged into {baseBranch ??
             "base"}.
         </div>
       {/if}

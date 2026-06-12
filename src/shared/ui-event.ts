@@ -27,7 +27,6 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("open-project") }),
   // projectId is backend-minted and merely echoed back by the renderer.
   z.object({ kind: z.literal("close-project"), projectId: z.string() }),
-  z.object({ kind: z.literal("panel-visibility"), open: z.boolean() }),
   // Debounced semantic hover (sidebar expanded by pointer), not raw mouse moves.
   z.object({ kind: z.literal("hover"), region: z.literal("sidebar").nullable() }),
   z.object({

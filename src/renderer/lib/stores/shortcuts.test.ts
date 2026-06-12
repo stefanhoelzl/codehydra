@@ -1,12 +1,15 @@
 /**
  * Tests for the shortcuts store.
  * Tests shortcut mode state and handlers.
+ *
+ * Since the read cutover the handlers read the UiState snapshot holder
+ * (workspace rows in display order, agent status and lifecycle inline), so
+ * the tests populate the holder with row fixtures instead of mocking stores.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Create mock API functions with vi.hoisted for proper hoisting
-// Uses flat API namespace (no longer nested under v2)
 const mockApi = vi.hoisted(() => ({
   emitEvent: vi.fn(),
   ui: {
@@ -19,12 +22,10 @@ const mockApi = vi.hoisted(() => ({
   workspaces: {
     hibernate: vi.fn().mockResolvedValue(undefined),
     wake: vi.fn().mockResolvedValue(undefined),
-    reopen: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
 // Create mock dialog state with vi.hoisted
-// Using Record<string, unknown> to allow flexible reassignment in tests
 const mockDialogState = vi.hoisted(() => ({
   dialogState: {
     value: { type: "closed" } as Record<string, unknown>,
@@ -32,86 +33,11 @@ const mockDialogState = vi.hoisted(() => ({
   openRemoveDialog: vi.fn(),
 }));
 
-// Mock the New workspace view store
-const mockNewWorkspaceView = vi.hoisted(() => ({
-  newWorkspaceView: { isOpen: false as boolean },
-  openNewWorkspaceView: vi.fn(),
-  closeNewWorkspaceView: vi.fn(),
-}));
-
-// Create mock workspace type for testing
-interface MockWorkspace {
-  path: string;
-  name: string;
-  branch: string | null;
-}
-
-// WorkspaceRef type for mocking
-interface MockWorkspaceRef {
-  projectId: string;
-  workspaceName: string;
-  path: string;
-}
-
-// Create mock projects store functions
-const mockProjectsStore = vi.hoisted(() => ({
-  getAllWorkspaces: vi.fn((): MockWorkspace[] => []),
-  getWorkspaceRefByIndex: vi.fn((index: number): MockWorkspaceRef | undefined => {
-    void index;
-    return undefined;
-  }),
-  getAwakeWorkspaceRefByIndex: vi.fn((index: number): MockWorkspaceRef | undefined => {
-    void index;
-    return undefined;
-  }),
-  findWorkspaceIndex: vi.fn((path: string | null): number => {
-    void path;
-    return -1;
-  }),
-  wrapIndex: vi.fn((i: number, l: number) => ((i % l) + l) % l),
-  activeWorkspacePath: { value: null as string | null },
-  // activeWorkspace is now used for remove dialog
-  activeWorkspace: { value: null as MockWorkspaceRef | null },
-  projects: { value: [] as { id: string; path: string }[] },
-  // Eager set used by navigation handlers to avoid empty-backdrop flicker
-  // after the New workspace view cleared the active workspace on open.
-  setActiveWorkspace: vi.fn(),
-}));
-
 // Mock the API module before any imports use it
 vi.mock("$lib/api", () => mockApi);
 
 // Mock the dialogs store
 vi.mock("./dialogs.svelte", () => mockDialogState);
-
-// Mock the New workspace view store
-vi.mock("./new-workspace-view.svelte", () => mockNewWorkspaceView);
-
-// Mock the projects store
-vi.mock("./projects.svelte", () => mockProjectsStore);
-
-// Create mock workspace lifecycle store with vi.hoisted
-const mockLifecycleStore = vi.hoisted(() => ({
-  getLifecycle: vi.fn(() => "none" as "none" | "creating" | "deleting" | "delete-failed"),
-}));
-
-// Mock the workspace lifecycle store
-vi.mock("./workspace-lifecycle.svelte", () => mockLifecycleStore);
-
-// AgentStatus type for mock return values
-type AgentStatus =
-  | { type: "none" }
-  | { type: "idle"; counts: { idle: number; busy: number; total: number } }
-  | { type: "busy"; counts: { idle: number; busy: number; total: number } }
-  | { type: "mixed"; counts: { idle: number; busy: number; total: number } };
-
-// Create mock agent status store with vi.hoisted
-const mockAgentStatusStore = vi.hoisted(() => ({
-  getStatus: vi.fn().mockReturnValue({ type: "none" } as AgentStatus),
-}));
-
-// Mock the agent status store
-vi.mock("./agent-status.svelte", () => mockAgentStatusStore);
 
 // Import after mock setup
 import {
@@ -122,6 +48,9 @@ import {
   reset,
 } from "./shortcuts.svelte";
 import { shortcutModeActive, uiMode } from "./ui-mode.svelte";
+import { setUiState, resetUiState } from "./ui-state.svelte";
+import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
+import type { UiWorkspaceRow } from "@shared/ui-state";
 
 // Helper to enable shortcut mode via ui:mode-changed event
 function enableShortcutMode(): void {
@@ -133,16 +62,38 @@ function disableShortcutMode(): void {
   handleModeChange({ mode: "workspace", previousMode: "shortcut" });
 }
 
+/** Row fixture with stable /wsN paths matching the original test data. */
+function ws(name: string, overrides?: Partial<UiWorkspaceRow>): UiWorkspaceRow {
+  return makeUiWorkspaceRow(name, {
+    path: `/${name}`,
+    key: `test-project-12345678/${name}`,
+    ...overrides,
+  });
+}
+
+/**
+ * Populate the snapshot holder. The active row (if any) drives `main`
+ * (workspace view); with no active row the creation panel is the main view
+ * (ground state) — exactly what the presenter would produce.
+ */
+function setRows(rows: UiWorkspaceRow[], options?: { activePath?: string | null }): void {
+  const activePath = options?.activePath ?? null;
+  const marked = rows.map((row) => ({ ...row, active: row.path === activePath }));
+  const activeRow = marked.find((row) => row.active);
+  setUiState(
+    makeUiState([makeUiProjectRow(marked)], {
+      main: activeRow ? { kind: "workspace", frameKey: activeRow.key } : { kind: "creation" },
+    })
+  );
+}
+
 describe("shortcuts store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     reset(); // Reset store state between tests
+    resetUiState();
     // Reset dialog state to closed
     mockDialogState.dialogState.value = { type: "closed" };
-    // Reset New workspace view to closed
-    mockNewWorkspaceView.newWorkspaceView.isOpen = false;
-    // Reset lifecycle status to "none"
-    mockLifecycleStore.getLifecycle.mockReturnValue("none");
   });
 
   describe("initial state", () => {
@@ -240,19 +191,7 @@ describe("shortcuts store", () => {
 
     // NOTE: These tests use handleShortcutKey to trigger navigation/jump which sets _switchingWorkspace
     it("should-not-exit-shortcut-mode-on-blur-during-navigation", async () => {
-      // Setup workspaces for navigation
-      const workspaces = [
-        { path: "/ws1", name: "ws1", branch: null },
-        { path: "/ws2", name: "ws2", branch: null },
-      ];
-      const workspaceRefs: MockWorkspaceRef[] = [
-        { projectId: "test-project-12345678", workspaceName: "ws1", path: "/ws1" },
-        { projectId: "test-project-12345678", workspaceName: "ws2", path: "/ws2" },
-      ];
-      mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-      mockProjectsStore.getWorkspaceRefByIndex.mockImplementation((i: number) => workspaceRefs[i]);
-      mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-      mockProjectsStore.activeWorkspacePath.value = "/ws1";
+      setRows([ws("ws1"), ws("ws2")], { activePath: "/ws1" });
 
       // Make switchWorkspace slow so we can test blur during switch
       let resolveSwitch: () => void;
@@ -282,19 +221,7 @@ describe("shortcuts store", () => {
     });
 
     it("should-not-exit-shortcut-mode-on-blur-during-jump", async () => {
-      // Setup workspaces for jump
-      const workspaces = [
-        { path: "/ws1", name: "ws1", branch: null },
-        { path: "/ws2", name: "ws2", branch: null },
-      ];
-      const workspaceRefs: MockWorkspaceRef[] = [
-        { projectId: "test-project-12345678", workspaceName: "ws1", path: "/ws1" },
-        { projectId: "test-project-12345678", workspaceName: "ws2", path: "/ws2" },
-      ];
-      mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-      mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
-        (i: number) => workspaceRefs[i]
-      );
+      setRows([ws("ws1"), ws("ws2")]);
 
       // Make switchWorkspace slow so we can test blur during switch
       let resolveSwitch: () => void;
@@ -374,14 +301,6 @@ describe("shortcuts store", () => {
   describe("handleKeyDown", () => {
     // NOTE: handleKeyDown now ONLY handles Escape key. All other action keys
     // come via handleShortcutKey from main process events (Stage 2).
-    beforeEach(() => {
-      // Reset projects store mocks
-      mockProjectsStore.getAllWorkspaces.mockReturnValue([]);
-      mockProjectsStore.getWorkspaceRefByIndex.mockReturnValue(undefined);
-      mockProjectsStore.findWorkspaceIndex.mockReturnValue(-1);
-      mockProjectsStore.activeWorkspacePath.value = null;
-      mockProjectsStore.projects.value = [];
-    });
 
     it("should-ignore-keydown-when-shortcut-mode-inactive", () => {
       const event = new KeyboardEvent("keydown", { key: "Escape" });
@@ -417,28 +336,11 @@ describe("shortcuts store", () => {
     });
 
     describe("navigation actions", () => {
-      const createWorkspaces = () => [
-        { path: "/ws1", name: "ws1", branch: null },
-        { path: "/ws2", name: "ws2", branch: null },
-        { path: "/ws3", name: "ws3", branch: null },
-      ];
-
-      const createWorkspaceRefs = (): MockWorkspaceRef[] => [
-        { projectId: "test-project-12345678", workspaceName: "ws1", path: "/ws1" },
-        { projectId: "test-project-12345678", workspaceName: "ws2", path: "/ws2" },
-        { projectId: "test-project-12345678", workspaceName: "ws3", path: "/ws3" },
-      ];
+      const threeRows = (): UiWorkspaceRow[] => [ws("ws1"), ws("ws2"), ws("ws3")];
 
       it("should-navigate-from-no-active-workspace-down → first (panel open)", async () => {
-        // When the New workspace view is the current tab, activeWorkspacePath is null.
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(-1);
-        mockProjectsStore.activeWorkspacePath.value = null;
+        // When the creation panel is the current tab, no row is active.
+        setRows(threeRows());
 
         enableShortcutMode();
         handleShortcutKey("down");
@@ -449,14 +351,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-navigate-from-no-active-workspace-up → last (panel open)", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(-1);
-        mockProjectsStore.activeWorkspacePath.value = null;
+        setRows(threeRows());
 
         enableShortcutMode();
         handleShortcutKey("up");
@@ -467,14 +362,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-navigate-to-next-workspace-on-down", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+        setRows(threeRows(), { activePath: "/ws1" });
 
         enableShortcutMode();
         handleShortcutKey("down");
@@ -489,14 +377,7 @@ describe("shortcuts store", () => {
       // NOTE: Navigation tests use handleShortcutKey with normalized keys ("up", "down")
       // since key normalization happens in main process before event is sent.
       it("should-navigate-to-previous-workspace-on-arrow-up", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(1);
-        mockProjectsStore.activeWorkspacePath.value = "/ws2";
+        setRows(threeRows(), { activePath: "/ws2" });
 
         enableShortcutMode();
         handleShortcutKey("up");
@@ -508,14 +389,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-wrap-to-last-workspace-when-navigating-up-from-first", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+        setRows(threeRows(), { activePath: "/ws1" });
 
         enableShortcutMode();
         handleShortcutKey("up");
@@ -527,14 +401,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-wrap-to-first-workspace-when-navigating-down-from-last", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(2);
-        mockProjectsStore.activeWorkspacePath.value = "/ws3";
+        setRows(threeRows(), { activePath: "/ws3" });
 
         enableShortcutMode();
         handleShortcutKey("down");
@@ -546,7 +413,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-not-navigate-when-no-workspaces", () => {
-        mockProjectsStore.getAllWorkspaces.mockReturnValue([]);
+        setRows([]);
 
         enableShortcutMode();
         handleShortcutKey("down");
@@ -555,9 +422,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-not-navigate-when-single-workspace", () => {
-        mockProjectsStore.getAllWorkspaces.mockReturnValue([
-          { path: "/ws1", name: "ws1", branch: null },
-        ]);
+        setRows([ws("ws1")], { activePath: "/ws1" });
 
         enableShortcutMode();
         handleShortcutKey("down");
@@ -566,21 +431,15 @@ describe("shortcuts store", () => {
       });
 
       it("should-navigate-to-idle-workspace-on-left-arrow", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(1);
-        mockProjectsStore.activeWorkspacePath.value = "/ws2";
-
         // ws1 is idle, ws2 is current, ws3 is busy
-        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
-          if (path === "/ws1") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
-          if (path === "/ws3") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
-          return { type: "none" };
-        });
+        setRows(
+          [
+            ws("ws1", { agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } } }),
+            ws("ws2"),
+            ws("ws3", { agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } }),
+          ],
+          { activePath: "/ws2" }
+        );
 
         enableShortcutMode();
         handleShortcutKey("left");
@@ -591,21 +450,15 @@ describe("shortcuts store", () => {
       });
 
       it("should-navigate-to-idle-workspace-on-right-arrow", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
-
         // ws1 is current, ws2 is busy, ws3 is idle
-        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
-          if (path === "/ws2") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
-          if (path === "/ws3") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
-          return { type: "none" };
-        });
+        setRows(
+          [
+            ws("ws1"),
+            ws("ws2", { agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } }),
+            ws("ws3", { agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } } }),
+          ],
+          { activePath: "/ws1" }
+        );
 
         enableShortcutMode();
         handleShortcutKey("right");
@@ -617,22 +470,15 @@ describe("shortcuts store", () => {
       });
 
       it("should-navigate-to-busy-workspace-when-no-idle-exist", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
-
         // All other workspaces are busy - should fall back to busy navigation
-        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
-          if (path === "/ws2" || path === "/ws3") {
-            return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
-          }
-          return { type: "none" };
-        });
+        setRows(
+          [
+            ws("ws1"),
+            ws("ws2", { agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } }),
+            ws("ws3", { agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } }),
+          ],
+          { activePath: "/ws1" }
+        );
 
         enableShortcutMode();
         handleShortcutKey("left");
@@ -644,21 +490,15 @@ describe("shortcuts store", () => {
       });
 
       it("should-prefer-idle-over-busy-when-both-exist", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
-
         // ws2 is busy, ws3 is idle - should navigate to idle ws3
-        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
-          if (path === "/ws2") return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
-          if (path === "/ws3") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
-          return { type: "none" };
-        });
+        setRows(
+          [
+            ws("ws1"),
+            ws("ws2", { agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } }),
+            ws("ws3", { agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } } }),
+          ],
+          { activePath: "/ws1" }
+        );
 
         enableShortcutMode();
         handleShortcutKey("right");
@@ -670,20 +510,15 @@ describe("shortcuts store", () => {
       });
 
       it("should-not-fall-back-to-busy-when-current-workspace-is-idle", () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
-
         // ws1 (current) is idle, others are busy - should NOT jump to busy
-        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
-          if (path === "/ws1") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
-          return { type: "busy", counts: { idle: 0, busy: 1, total: 1 } };
-        });
+        setRows(
+          [
+            ws("ws1", { agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } } }),
+            ws("ws2", { agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } }),
+            ws("ws3", { agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } } }),
+          ],
+          { activePath: "/ws1" }
+        );
 
         enableShortcutMode();
         handleShortcutKey("right");
@@ -692,17 +527,8 @@ describe("shortcuts store", () => {
       });
 
       it("should-not-navigate-when-all-workspaces-are-none", () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
-
         // All workspaces have no agent status
-        mockAgentStatusStore.getStatus.mockReturnValue({ type: "none" });
+        setRows([ws("ws1"), ws("ws2"), ws("ws3")], { activePath: "/ws1" });
 
         enableShortcutMode();
         handleShortcutKey("left");
@@ -710,18 +536,31 @@ describe("shortcuts store", () => {
         expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
       });
 
-      it("should-find-newly-idle-workspace-after-status-change", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
+      it("should-skip-hibernated-workspaces-in-status-navigation", async () => {
+        // ws2 is hibernated and idle — idle nav must skip it and reach ws3.
+        setRows(
+          [
+            ws("ws1"),
+            ws("ws2", {
+              hibernated: true,
+              agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } },
+            }),
+            ws("ws3", { agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } } }),
+          ],
+          { activePath: "/ws1" }
         );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
 
+        enableShortcutMode();
+        handleShortcutKey("right");
+
+        await vi.waitFor(() => {
+          expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/ws3", false);
+        });
+      });
+
+      it("should-find-newly-idle-workspace-after-status-change", async () => {
         // Initially all workspaces have no agents
-        mockAgentStatusStore.getStatus.mockReturnValue({ type: "none" });
+        setRows([ws("ws1"), ws("ws2"), ws("ws3")], { activePath: "/ws1" });
 
         enableShortcutMode();
         handleShortcutKey("right");
@@ -729,11 +568,15 @@ describe("shortcuts store", () => {
         // No idle or busy workspaces, so no navigation
         expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
 
-        // Now ws2 becomes idle (simulate status change)
-        mockAgentStatusStore.getStatus.mockImplementation((path: string) => {
-          if (path === "/ws2") return { type: "idle", counts: { idle: 1, busy: 0, total: 1 } };
-          return { type: "none" };
-        });
+        // Now ws2 becomes idle (a new snapshot push arrives)
+        setRows(
+          [
+            ws("ws1"),
+            ws("ws2", { agent: { type: "idle", counts: { idle: 1, busy: 0, total: 1 } } }),
+            ws("ws3"),
+          ],
+          { activePath: "/ws1" }
+        );
 
         // Press right again - should now find ws2
         handleShortcutKey("right");
@@ -744,14 +587,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-prevent-concurrent-navigation-during-rapid-keypresses", async () => {
-        const workspaces = createWorkspaces();
-        const workspaceRefs = createWorkspaceRefs();
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+        setRows([ws("ws1"), ws("ws2"), ws("ws3")], { activePath: "/ws1" });
 
         // Make switchWorkspace slow
         let resolveSwitch: () => void;
@@ -781,27 +617,11 @@ describe("shortcuts store", () => {
     describe("jump actions", () => {
       // NOTE: Jump tests use handleShortcutKey with digit keys ("0"-"9")
       // since these come from main process events.
-      const createWorkspaces = (count: number) =>
-        Array.from({ length: count }, (_, i) => ({
-          path: `/ws${i + 1}`,
-          name: `ws${i + 1}`,
-          branch: null,
-        }));
-
-      const createWorkspaceRefs = (count: number): MockWorkspaceRef[] =>
-        Array.from({ length: count }, (_, i) => ({
-          projectId: "test-project-12345678",
-          workspaceName: `ws${i + 1}`,
-          path: `/ws${i + 1}`,
-        }));
+      const manyRows = (count: number): UiWorkspaceRow[] =>
+        Array.from({ length: count }, (_, i) => ws(`ws${i + 1}`));
 
       it("should-jump-to-workspace-1-through-9", async () => {
-        const workspaces = createWorkspaces(9);
-        const workspaceRefs = createWorkspaceRefs(9);
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
+        setRows(manyRows(9));
 
         enableShortcutMode();
 
@@ -815,12 +635,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-jump-to-workspace-10-on-key-0", async () => {
-        const workspaces = createWorkspaces(10);
-        const workspaceRefs = createWorkspaceRefs(10);
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
+        setRows(manyRows(10));
 
         enableShortcutMode();
         handleShortcutKey("0");
@@ -832,12 +647,7 @@ describe("shortcuts store", () => {
       });
 
       it("should-not-jump-when-index-out-of-range", () => {
-        const workspaces = createWorkspaces(3);
-        const workspaceRefs = createWorkspaceRefs(3);
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
+        setRows(manyRows(3));
 
         enableShortcutMode();
         // Try to jump to workspace 5 when only 3 exist
@@ -847,17 +657,9 @@ describe("shortcuts store", () => {
       });
 
       it("should-target-awake-list-skipping-hibernated", async () => {
-        // 4 workspaces in list; getAwakeWorkspaceRefByIndex resolves index 1
-        // to ws3 (the second awake workspace) — proves jump uses the awake-only mapping.
-        const workspaces = createWorkspaces(4);
-        const workspaceRefs = createWorkspaceRefs(4);
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getAwakeWorkspaceRefByIndex.mockImplementation((i: number) => {
-          // index 0 -> ws1, index 1 -> ws3 (skipping hibernated ws2)
-          if (i === 0) return workspaceRefs[0];
-          if (i === 1) return workspaceRefs[2];
-          return undefined;
-        });
+        // ws2 is hibernated: the awake list is [ws1, ws3, ws4], so key "2"
+        // (awake index 1) targets ws3.
+        setRows([ws("ws1"), ws("ws2", { hibernated: true }), ws("ws3"), ws("ws4")]);
 
         enableShortcutMode();
         handleShortcutKey("2");
@@ -871,51 +673,49 @@ describe("shortcuts store", () => {
     describe("dialog actions", () => {
       // NOTE: Dialog tests use handleShortcutKey with normalized keys ("enter", "delete")
       // since these come from main process events. Backspace is normalized to "delete" by main process.
-      it("should-open-new-workspace-view-on-enter (no project pre-fill)", () => {
-        mockNewWorkspaceView.newWorkspaceView.isOpen = false;
+      it("should-deselect-on-enter (creation panel becomes the main view)", () => {
+        setRows([ws("ws1")], { activePath: "/ws1" });
 
         enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
         handleShortcutKey("enter");
 
-        // Opens the New workspace view with no project pre-fill (no args).
-        expect(mockNewWorkspaceView.openNewWorkspaceView).toHaveBeenCalledWith();
+        // Deselect: switch to null makes the creation panel the main view.
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(null);
         expect(shortcutModeActive.value).toBe(false);
       });
 
-      it("should-do-nothing-on-enter-when-view-already-open", () => {
-        // Already on the New workspace view: keyboard submit is Cmd/Ctrl+Enter
+      it("should-do-nothing-on-enter-when-panel-already-shown", () => {
+        // Already on the creation panel: keyboard submit is Cmd/Ctrl+Enter
         // (owned by the form), not Alt+X+Enter.
-        mockNewWorkspaceView.newWorkspaceView.isOpen = true;
+        setRows([ws("ws1")]);
 
         enableShortcutMode();
         handleShortcutKey("enter");
 
-        expect(mockNewWorkspaceView.openNewWorkspaceView).not.toHaveBeenCalled();
+        expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
       });
 
       it("should-open-remove-dialog-on-delete", () => {
-        // Now uses activeWorkspace (WorkspaceRef) instead of activeWorkspacePath
-        const workspaceRef = {
-          projectId: "project-12345678",
-          workspaceName: "feature",
-          path: "/workspace",
-        };
-        mockProjectsStore.activeWorkspace.value = workspaceRef;
+        setRows([ws("feature", { path: "/workspace" })], { activePath: "/workspace" });
 
         enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
         handleShortcutKey("delete");
 
-        // Now passes WorkspaceRef instead of path
-        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith(workspaceRef);
+        // Passes a WorkspaceRef built from the active row
+        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith({
+          projectId: "test-project-12345678",
+          workspaceName: "feature",
+          path: "/workspace",
+        });
         expect(shortcutModeActive.value).toBe(false);
       });
 
       it("should-not-open-remove-dialog-when-no-active-workspace", () => {
-        mockProjectsStore.activeWorkspace.value = null;
+        setRows([ws("ws1")]);
 
         enableShortcutMode();
         handleShortcutKey("delete");
@@ -924,14 +724,9 @@ describe("shortcuts store", () => {
       });
 
       it("should-not-open-remove-dialog-when-deletion-in-progress", () => {
-        const workspaceRef = {
-          projectId: "project-12345678",
-          workspaceName: "feature",
-          path: "/workspace",
-        };
-        mockProjectsStore.activeWorkspace.value = workspaceRef;
-        // Mock getLifecycle to return "deleting"
-        mockLifecycleStore.getLifecycle.mockReturnValue("deleting");
+        setRows([ws("feature", { path: "/workspace", status: "deleting" })], {
+          activePath: "/workspace",
+        });
 
         enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
@@ -945,13 +740,9 @@ describe("shortcuts store", () => {
       });
 
       it("should-not-open-remove-dialog-while-workspace-is-creating", () => {
-        const workspaceRef = {
-          projectId: "project-12345678",
-          workspaceName: "feature",
-          path: "__pending__//project/feature",
-        };
-        mockProjectsStore.activeWorkspace.value = workspaceRef;
-        mockLifecycleStore.getLifecycle.mockReturnValue("creating");
+        setRows([ws("feature", { path: "__pending__//project/feature", status: "creating" })], {
+          activePath: "__pending__//project/feature",
+        });
 
         enableShortcutMode();
         handleShortcutKey("delete");
@@ -962,22 +753,24 @@ describe("shortcuts store", () => {
       });
 
       it("should-open-remove-dialog-when-previous-deletion-failed", () => {
-        const workspaceRef = {
-          projectId: "project-12345678",
-          workspaceName: "feature",
-          path: "/workspace",
-        };
-        mockProjectsStore.activeWorkspace.value = workspaceRef;
-        mockLifecycleStore.getLifecycle.mockReturnValue("delete-failed");
+        setRows([ws("feature", { path: "/workspace", status: "delete-failed" })], {
+          activePath: "/workspace",
+        });
 
         enableShortcutMode();
         handleShortcutKey("delete");
 
         // Retry must stay possible after a failed deletion
-        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith(workspaceRef);
+        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith({
+          projectId: "test-project-12345678",
+          workspaceName: "feature",
+          path: "/workspace",
+        });
       });
 
       it("should-deactivate-shortcut-mode-before-opening-dialog", () => {
+        setRows([ws("ws1")], { activePath: "/ws1" });
+
         enableShortcutMode();
         expect(shortcutModeActive.value).toBe(true);
 
@@ -987,24 +780,45 @@ describe("shortcuts store", () => {
       });
     });
 
+    describe("hibernate toggle", () => {
+      it("hibernates the active awake workspace on H", async () => {
+        setRows([ws("ws1")], { activePath: "/ws1" });
+
+        enableShortcutMode();
+        handleShortcutKey("h");
+
+        await vi.waitFor(() => {
+          expect(mockApi.workspaces.hibernate).toHaveBeenCalledWith("/ws1");
+        });
+      });
+
+      it("wakes the active hibernated workspace on H", async () => {
+        setRows([ws("ws1", { hibernated: true })], { activePath: "/ws1" });
+
+        enableShortcutMode();
+        handleShortcutKey("h");
+
+        await vi.waitFor(() => {
+          expect(mockApi.workspaces.wake).toHaveBeenCalledWith("/ws1");
+        });
+      });
+
+      it("is inert while the creation panel is showing (nothing active)", () => {
+        setRows([ws("ws1")]);
+
+        enableShortcutMode();
+        handleShortcutKey("h");
+
+        expect(mockApi.workspaces.hibernate).not.toHaveBeenCalled();
+        expect(mockApi.workspaces.wake).not.toHaveBeenCalled();
+      });
+    });
+
     describe("error handling", () => {
       // NOTE: Uses handleShortcutKey with normalized key "down" (not "ArrowDown")
       // since key normalization happens in main process before event is sent.
       it("handles workspace switch failure gracefully", async () => {
-        const workspaces = [
-          { path: "/ws1", name: "ws1", branch: null },
-          { path: "/ws2", name: "ws2", branch: null },
-        ];
-        const workspaceRefs: MockWorkspaceRef[] = [
-          { projectId: "test-project-12345678", workspaceName: "ws1", path: "/ws1" },
-          { projectId: "test-project-12345678", workspaceName: "ws2", path: "/ws2" },
-        ];
-        mockProjectsStore.getAllWorkspaces.mockReturnValue(workspaces);
-        mockProjectsStore.getWorkspaceRefByIndex.mockImplementation(
-          (i: number) => workspaceRefs[i]
-        );
-        mockProjectsStore.findWorkspaceIndex.mockReturnValue(0);
-        mockProjectsStore.activeWorkspacePath.value = "/ws1";
+        setRows([ws("ws1"), ws("ws2")], { activePath: "/ws1" });
         mockApi.ui.switchWorkspace.mockRejectedValue(new Error("Switch failed"));
 
         enableShortcutMode();

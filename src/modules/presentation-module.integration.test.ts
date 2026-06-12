@@ -160,13 +160,11 @@ describe("PresentationModule - ui:event intake", () => {
     createPresentationModule(deps);
 
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "switch-workspace" });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "panel-visibility", open: true });
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: "sidebar" });
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "close-project", projectId: "p-1234" });
 
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "switch-workspace" });
-    expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "panel-visibility" });
     expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "hover" });
     expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "close-project" });
     expect(logger?.warn).not.toHaveBeenCalled();
@@ -177,9 +175,12 @@ describe("PresentationModule - ui:event intake", () => {
     createPresentationModule(deps);
 
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "not-a-real-event" });
+    // panel-visibility left the schema with the read cutover (the creation
+    // panel is derived state); a stale emitter is dropped like any unknown.
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "panel-visibility", open: true });
 
     const logger = deps.loggingService.getLogger("presenter");
-    expect(logger?.warn).toHaveBeenCalledTimes(1);
+    expect(logger?.warn).toHaveBeenCalledTimes(2);
     expect(logger?.debug).not.toHaveBeenCalled();
   });
 
@@ -187,7 +188,7 @@ describe("PresentationModule - ui:event intake", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "panel-visibility", open: "yes" });
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "log", level: "shout", logger: "ui" });
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: "main" });
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, "not an object");
 
@@ -312,6 +313,7 @@ describe("PresentationModule - ui:state snapshots", () => {
             path: PROJECT_PATH,
             name: "alpha",
             title: PROJECT_PATH,
+            remote: false,
             workspaces: [
               {
                 key: `${PROJECT_ID}/main`,
@@ -387,24 +389,6 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
   });
 
-  it("accepts panel-visibility events but ignores them (panel state is derived)", async () => {
-    const deps = createDeps();
-    const module = await startModule(deps);
-    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
-    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
-    await flush();
-    const before = snapshots(deps);
-
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "panel-visibility", open: true });
-    await flush();
-
-    // No push, no change: the event no longer feeds the view-model.
-    expect(snapshots(deps)).toEqual(before);
-    const logger = deps.loggingService.getLogger("presenter");
-    expect(logger?.warn).not.toHaveBeenCalled();
-  });
-
   it("workspace:loading inserts a creating placeholder and activates it (leaving the panel)", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
@@ -424,6 +408,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         // Placeholder rows carry the renderer-compatible synthetic path.
         path: `__pending__/${PROJECT_PATH}/feat`,
         name: "feat",
+        base: "main",
         status: "creating",
         hibernated: false,
         agent: { type: "none" },
@@ -462,6 +447,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         key: `${PROJECT_ID}/feat`,
         path: `${PROJECT_PATH}/.worktrees/feat`,
         name: "feat",
+        base: "main",
         status: "ready",
         hibernated: false,
         agent: { type: "none" },
@@ -618,6 +604,56 @@ describe("PresentationModule - ui:state snapshots", () => {
     await flush();
 
     expect(lastSnapshot(deps).main).toEqual({ kind: "hibernated", screenshot: null });
+  });
+
+  it("tag metadata changes update the row tags (add, recolor, remove)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    const change = (key: string, value: string | null): Promise<void> =>
+      emit(module, EVENT_METADATA_CHANGED, {
+        projectId: PROJECT_ID,
+        workspaceName: workspace.name,
+        workspacePath: workspace.path,
+        key,
+        value,
+      });
+
+    await change("tags.bugfix", "{}");
+    await change("tags.wip", '{"color":"#ff0"}');
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.tags).toEqual([
+      { name: "bugfix" },
+      { name: "wip", color: "#ff0" },
+    ]);
+
+    await change("tags.bugfix", null);
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.tags).toEqual([
+      { name: "wip", color: "#ff0" },
+    ]);
+  });
+
+  it("ignores metadata keys the UI does not care about (no push)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await flush();
+    const before = snapshots(deps).length;
+
+    await emit(module, EVENT_METADATA_CHANGED, {
+      projectId: PROJECT_ID,
+      workspaceName: workspace.name,
+      workspacePath: workspace.path,
+      key: "some-plugin-key",
+      value: "whatever",
+    });
+    await flush();
+
+    expect(snapshots(deps).length).toBe(before);
   });
 
   it("workspace:switched null deselects: creation panel shows, no row active", async () => {

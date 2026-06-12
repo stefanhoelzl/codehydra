@@ -30,8 +30,8 @@ import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Theme } from "../boundaries/shell/window-manager";
 import type { Unsubscribe } from "../shared/api/interfaces";
-import type { AgentStatus, DeletionProgress } from "../shared/api/types";
-import { extractTags } from "../shared/api/types";
+import type { AgentStatus, DeletionProgress, WorkspaceTag } from "../shared/api/types";
+import { extractTags, TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
 import { EVENT_PROJECT_OPENED, type ProjectOpenedEvent } from "../intents/open-project";
@@ -92,13 +92,31 @@ function toLoggerName(name: string): LoggerName {
 // Internal view-model
 // =============================================================================
 
+/**
+ * Semantic workspace view-model. The UI cares about meanings, not metadata:
+ * domain metadata is interpreted once at event intake (hibernated flag, base
+ * branch, tags) and raw metadata is never stored.
+ */
 interface WorkspaceModel {
   readonly name: string;
   /** Real worktree path; null while the workspace is still being created. */
   path: string | null;
-  metadata: Record<string, string>;
+  hibernated: boolean;
+  base: string | undefined;
+  tags: WorkspaceTag[];
   url: string | undefined;
   creating: boolean;
+}
+
+/** Interpret a workspace's domain metadata into the semantic model fields. */
+function fromMetadata(
+  metadata: Readonly<Record<string, string>>
+): Pick<WorkspaceModel, "hibernated" | "base" | "tags"> {
+  return {
+    hibernated: metadata["hibernated"] === "true",
+    base: metadata["base"],
+    tags: extractTags(metadata),
+  };
 }
 
 interface ProjectModel {
@@ -191,10 +209,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     return "ready";
   }
 
-  function isHibernated(workspace: WorkspaceModel): boolean {
-    return workspace.metadata["hibernated"] === "true";
-  }
-
   /**
    * Resolve the hibernation screenshot for the active workspace. Reads are
    * async: the first snapshot carries null and a re-push follows once the
@@ -232,7 +246,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     if (activeKey === null) return { kind: "creation" };
     const active = findByKey(activeKey);
     if (!active) return { kind: "creation" };
-    if (isHibernated(active.workspace)) {
+    if (active.workspace.hibernated) {
       return {
         kind: "hibernated",
         screenshot: resolveScreenshot(activeKey, active.project, active.workspace),
@@ -249,6 +263,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         path: project.path,
         name: project.name,
         title: project.remoteUrl ?? project.path,
+        remote: project.remoteUrl !== undefined,
         workspaces: [...project.workspaces.values()]
           .sort((a, b) => compareDisplayNames(a.name, b.name))
           .map((workspace): UiWorkspaceRow => {
@@ -257,12 +272,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
               key,
               path: workspace.path ?? pendingPath(project.path, workspace.name),
               name: workspace.name,
+              ...(workspace.base !== undefined && { base: workspace.base }),
               status: rowStatus(workspace),
-              hibernated: isHibernated(workspace),
+              hibernated: workspace.hibernated,
               agent:
                 (workspace.path === null ? undefined : agentStatuses.get(workspace.path)) ??
                 AGENT_NONE,
-              tags: extractTags(workspace.metadata),
+              // Copy: the model array mutates on tag changes; snapshots are
+              // immutable values.
+              tags: [...workspace.tags],
               active: key === activeKey,
             };
           }),
@@ -271,7 +289,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     const frames: Record<string, string> = {};
     for (const project of projects.values()) {
       for (const workspace of project.workspaces.values()) {
-        if (workspace.url !== undefined && !isHibernated(workspace)) {
+        if (workspace.url !== undefined && !workspace.hibernated) {
           frames[workspaceKey(project.id, workspace.name)] = workspace.url;
         }
       }
@@ -317,9 +335,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       }
       return;
     }
-    // NOTE: panel-visibility is accepted but ignored — the creation panel is
-    // now derived state (activeKey === null). The schema variant and its
-    // renderer emitters are removed together in the read-cutover flip.
     logger.debug("ui event", { kind: event.kind });
   };
 
@@ -345,7 +360,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
               {
                 name: workspace.name,
                 path: workspace.path,
-                metadata: { ...workspace.metadata },
+                ...fromMetadata(workspace.metadata),
                 url: workspace.url,
                 creating: false,
               },
@@ -388,7 +403,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
           project.workspaces.set(p.workspaceName as string, {
             name: p.workspaceName,
             path: p.workspacePath,
-            metadata: { ...p.metadata },
+            ...fromMetadata(p.metadata),
             url: p.workspaceUrl,
             creating: false,
           });
@@ -415,7 +430,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         project.workspaces.set(p.workspaceName, {
           name: p.workspaceName,
           path: null,
-          metadata: {},
+          hibernated: false,
+          base: p.base,
+          tags: [],
           url: undefined,
           creating: true,
         });
@@ -494,14 +511,23 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         const p = (event as MetadataChangedEvent).payload;
         const workspace = projects.get(p.projectId)?.workspaces.get(p.workspaceName as string);
         if (!workspace) return;
-        if (p.value === null) {
-          delete workspace.metadata[p.key];
-        } else {
-          workspace.metadata[p.key] = p.value;
-        }
+        // Metadata is interpreted, never stored: only the keys the UI cares
+        // about mutate the model (and push); everything else is ignored.
         if (p.key === "hibernated") {
+          workspace.hibernated = p.value === "true";
           // Flag flips invalidate the cached screenshot (deleted on wake).
           screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
+        } else if (p.key === "base") {
+          workspace.base = p.value ?? undefined;
+        } else if (p.key.startsWith(TAGS_METADATA_KEY_PREFIX)) {
+          const name = p.key.slice(TAGS_METADATA_KEY_PREFIX.length);
+          workspace.tags = workspace.tags.filter((tag) => tag.name !== name);
+          if (p.value !== null) {
+            // extractTags owns the parsing (color JSON, empty-name guard).
+            workspace.tags.push(...extractTags({ [p.key]: p.value }));
+          }
+        } else {
+          return;
         }
         scheduleUpdate();
       },

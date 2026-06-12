@@ -1,54 +1,53 @@
 /**
- * Integration tests for MainView.
- * Tests the interaction between MainView and its child dialogs.
+ * Integration tests for MainView: the close-project flow from sidebar click
+ * through the dialog to the API calls.
+ *
+ * Workspace/project data arrives as UiState snapshots pushed through the
+ * captured onState callback (real holder, real components).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/svelte";
-import type { WorkspaceName } from "@shared/api/types";
-import { asProjectId } from "@shared/test-fixtures";
+import type { UiState } from "@shared/ui-state";
 
-// Create mock API functions with vi.hoisted for proper hoisting
-const mockApi = vi.hoisted(() => ({
-  emitEvent: vi.fn(),
-  // Setup API methods (top-level)
-  setupReady: vi.fn().mockResolvedValue({ ready: true }),
-  setupRetry: vi.fn().mockResolvedValue(undefined),
-  setupQuit: vi.fn().mockResolvedValue(undefined),
-  onSetupProgress: vi.fn(() => vi.fn()),
-  onSetupComplete: vi.fn(() => vi.fn()),
-  onSetupError: vi.fn(() => vi.fn()),
-  // Flat API structure - projects namespace
-  projects: {
-    list: vi.fn().mockResolvedValue([]),
-    open: vi.fn().mockResolvedValue({}),
-    close: vi.fn().mockResolvedValue(undefined),
-    get: vi.fn().mockResolvedValue(undefined),
-  },
-  // Flat API structure - workspaces namespace
-  workspaces: {
-    remove: vi.fn().mockResolvedValue({ branchDeleted: true }),
-    getStatus: vi
-      .fn()
-      .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
-    get: vi.fn().mockResolvedValue(undefined),
-  },
-  // Flat API structure - ui namespace
-  ui: {
-    getActiveWorkspace: vi.fn().mockResolvedValue(null),
-    switchWorkspace: vi.fn().mockResolvedValue(undefined),
-    setMode: vi.fn().mockResolvedValue(undefined),
-  },
-  // Flat API structure - lifecycle namespace
-  lifecycle: {
-    ready: vi.fn().mockResolvedValue(undefined),
-    quit: vi.fn().mockResolvedValue(undefined),
-  },
-  // on() for event subscriptions
-  on: vi.fn(() => vi.fn()),
-}));
+type StateCallback = (state: UiState) => void;
+const { mockApi, stateCallbacks } = vi.hoisted(() => {
+  const stateCallbacks: Array<(state: unknown) => void> = [];
+  return {
+    stateCallbacks,
+    mockApi: {
+      emitEvent: vi.fn(),
+      projects: {
+        open: vi.fn().mockResolvedValue({}),
+        close: vi.fn().mockResolvedValue(undefined),
+      },
+      workspaces: {
+        remove: vi.fn().mockResolvedValue({ started: true }),
+        getStatus: vi
+          .fn()
+          .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
+        hibernate: vi.fn().mockResolvedValue({ started: true }),
+        wake: vi.fn().mockResolvedValue(null),
+      },
+      ui: {
+        switchWorkspace: vi.fn().mockResolvedValue(undefined),
+        setMode: vi.fn().mockResolvedValue(undefined),
+      },
+      lifecycle: {
+        ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
+        quit: vi.fn().mockResolvedValue(undefined),
+      },
+      on: vi.fn(() => vi.fn()),
+      onState: vi.fn((callback: (state: unknown) => void) => {
+        stateCallbacks.push(callback);
+        return vi.fn();
+      }),
+      sendDialogEvent: vi.fn(),
+      sendNotificationEvent: vi.fn(),
+    },
+  };
+});
 
-// Mock the API module before any imports use it
 vi.mock("$lib/api", () => mockApi);
 
 // Mock AgentNotificationService
@@ -67,92 +66,63 @@ vi.mock("$lib/services/agent-notifications", () => ({
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import * as projectsStore from "$lib/stores/projects.svelte.js";
-import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
-import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
+import { resetUiState } from "$lib/stores/ui-state.svelte.js";
+import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
+import { asProjectId } from "@shared/test-fixtures";
+
+function pushState(state: UiState): void {
+  expect(stateCallbacks.length).toBeGreaterThan(0);
+  for (const callback of stateCallbacks as StateCallback[]) {
+    callback(state);
+  }
+}
+
+const projectWithWorkspaces = makeUiProjectRow(
+  [
+    makeUiWorkspaceRow("feature-1", { path: "/test/.worktrees/feature-1" }),
+    makeUiWorkspaceRow("feature-2", { path: "/test/.worktrees/feature-2" }),
+  ],
+  { id: "test-project-12345678", path: "/test/project", name: "test-project" }
+);
+
+const projectWithoutWorkspaces = makeUiProjectRow([], {
+  id: "empty-project-87654321",
+  path: "/test/empty-project",
+  name: "empty-project",
+});
+
+const SNAPSHOT = makeUiState([projectWithWorkspaces, projectWithoutWorkspaces]);
+
+async function renderWithSnapshot(): Promise<void> {
+  render(MainView);
+  await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+  pushState(SNAPSHOT);
+  await waitFor(() => expect(screen.getByText("test-project")).toBeInTheDocument());
+}
 
 describe("MainView close project integration", () => {
-  const projectWithWorkspaces = {
-    id: asProjectId("test-project-12345678"),
-    path: "/test/project",
-    name: "test-project",
-    workspaces: [
-      {
-        projectId: asProjectId("test-project-12345678"),
-        path: "/test/.worktrees/feature-1",
-        name: "feature-1" as WorkspaceName,
-        branch: "feature-1",
-      },
-      {
-        projectId: asProjectId("test-project-12345678"),
-        path: "/test/.worktrees/feature-2",
-        name: "feature-2" as WorkspaceName,
-        branch: "feature-2",
-      },
-    ],
-  };
-
-  const projectWithoutWorkspaces = {
-    id: asProjectId("empty-project-87654321"),
-    path: "/test/empty-project",
-    name: "empty-project",
-    workspaces: [],
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
-    // Reset stores before each test
-    projectsStore.reset();
-    bootstrapStore.resetBootstrap();
+    stateCallbacks.length = 0;
+    resetUiState();
     dialogsStore.reset();
     shortcutsStore.reset();
-    agentStatusStore.reset();
-    // Default mock responses
-    mockApi.projects.list.mockResolvedValue([projectWithWorkspaces, projectWithoutWorkspaces]);
-    mockApi.ui.getActiveWorkspace.mockResolvedValue(null);
-    mockApi.projects.close.mockResolvedValue(undefined);
-    mockApi.workspaces.remove.mockResolvedValue({ branchDeleted: true });
-    // Configure lifecycle.ready to simulate event-driven store population
-    mockApi.lifecycle.ready.mockImplementation(async () => {
-      const projectList = await mockApi.projects.list();
-      for (const p of projectList) {
-        projectsStore.addProject(p);
-      }
-      const activeRef = await mockApi.ui.getActiveWorkspace();
-      projectsStore.setActiveWorkspace(activeRef?.path ?? null);
-      return { defaultAgent: null, availableAgents: [] };
-    });
   });
 
   afterEach(() => {
-    vi.useRealTimers();
     document.body.innerHTML = "";
   });
 
   describe("handleCloseProject behavior", () => {
     it("opens close-project dialog when clicking close on project with workspaces", async () => {
-      render(MainView);
+      await renderWithSnapshot();
 
-      // Wait for projects to load
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-      await vi.runAllTimersAsync();
-
-      // Expand sidebar (project header buttons are only in DOM when expanded)
-      const sidebar = document.querySelector(".sidebar")!;
-      await fireEvent.mouseEnter(sidebar);
-
-      // Find and click the close button for the project with workspaces
       // Button has id="close-project-${project.id}"
       const closeButton = document.getElementById(`close-project-${projectWithWorkspaces.id}`);
       expect(closeButton).toBeInTheDocument();
       await fireEvent.click(closeButton!);
-
-      await vi.runAllTimersAsync();
 
       // Dialog should be open
       expect(dialogsStore.dialogState.value.type).toBe("close-project");
@@ -162,47 +132,28 @@ describe("MainView close project integration", () => {
     });
 
     it("shows dialog when clicking close on project with no workspaces", async () => {
-      render(MainView);
+      await renderWithSnapshot();
 
-      // Wait for projects to load
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-      await vi.runAllTimersAsync();
-
-      // Expand sidebar (project header buttons are only in DOM when expanded)
-      const sidebar = document.querySelector(".sidebar")!;
-      await fireEvent.mouseEnter(sidebar);
-
-      // Find and click the close button for the empty project
       const closeButton = document.getElementById(`close-project-${projectWithoutWorkspaces.id}`);
       expect(closeButton).toBeInTheDocument();
       await fireEvent.click(closeButton!);
-
-      await vi.runAllTimersAsync();
 
       // Should open dialog even for empty projects - user confirms closing
       expect(mockApi.projects.close).not.toHaveBeenCalled();
       expect(dialogsStore.dialogState.value.type).toBe("close-project");
     });
 
-    it("handles project not found in store (race condition)", async () => {
-      // Start with projects
+    it("ignores close for a project missing from the snapshot (race condition)", async () => {
       render(MainView);
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+      pushState(SNAPSHOT);
+      await waitFor(() => expect(screen.getByText("test-project")).toBeInTheDocument());
 
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-      await vi.runAllTimersAsync();
+      // The project disappears (e.g. closed elsewhere) before the click lands.
+      const closeButton = document.getElementById(`close-project-${projectWithWorkspaces.id}`);
+      pushState(makeUiState([projectWithoutWorkspaces]));
+      await fireEvent.click(closeButton!);
 
-      // Clear the store to simulate race condition
-      projectsStore.setProjects([]);
-
-      // Try to close a non-existent project by calling the handler directly
-      // (can't click button since project is gone from UI)
-      // This tests the guard in handleCloseProject
-
-      // The API should not be called since project isn't in store
       expect(mockApi.projects.close).not.toHaveBeenCalled();
       expect(dialogsStore.dialogState.value.type).toBe("closed");
     });
@@ -210,50 +161,35 @@ describe("MainView close project integration", () => {
 
   describe("CloseProjectDialog rendering", () => {
     it("renders CloseProjectDialog when dialog type is close-project", async () => {
-      render(MainView);
+      await renderWithSnapshot();
+
+      dialogsStore.openCloseProjectDialog(asProjectId(projectWithWorkspaces.id));
 
       await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: "Close Project" })).toBeInTheDocument();
+        expect(screen.getByText(/2 workspaces/)).toBeInTheDocument();
       });
-      await vi.runAllTimersAsync();
-
-      // Open close-project dialog
-      dialogsStore.openCloseProjectDialog(projectWithWorkspaces.id);
-
-      await vi.runAllTimersAsync();
-
-      const dialog = screen.getByRole("dialog");
-      expect(dialog).toBeInTheDocument();
-      // Use heading role to be more specific (title)
-      expect(screen.getByRole("heading", { name: "Close Project" })).toBeInTheDocument();
-      expect(screen.getByText(/2 workspaces/)).toBeInTheDocument();
     });
   });
 
   describe("full close flow without removeAll", () => {
     it("closes project without removing workspaces when checkbox unchecked", async () => {
-      render(MainView);
+      await renderWithSnapshot();
 
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-      await vi.runAllTimersAsync();
+      dialogsStore.openCloseProjectDialog(asProjectId(projectWithWorkspaces.id));
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
 
-      // Open close-project dialog
-      dialogsStore.openCloseProjectDialog(projectWithWorkspaces.id);
-      await vi.runAllTimersAsync();
-
-      // Get the dialog and find the "Close Project" button within it
       const dialog = screen.getByRole("dialog");
       const closeButton = within(dialog).getByRole("button", { name: /close project/i });
       await fireEvent.click(closeButton);
 
-      await vi.runAllTimersAsync();
-
+      await waitFor(() => {
+        expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.path, undefined);
+      });
       // Should only call close, not remove
       expect(mockApi.workspaces.remove).not.toHaveBeenCalled();
-      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.path, undefined);
-
       // Dialog should be closed
       expect(dialogsStore.dialogState.value.type).toBe("closed");
     });
@@ -261,16 +197,10 @@ describe("MainView close project integration", () => {
 
   describe("full close flow with removeAll", () => {
     it("removes all workspaces then closes project when checkbox checked", async () => {
-      render(MainView);
+      await renderWithSnapshot();
 
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-      await vi.runAllTimersAsync();
-
-      // Open close-project dialog
-      dialogsStore.openCloseProjectDialog(projectWithWorkspaces.id);
-      await vi.runAllTimersAsync();
+      dialogsStore.openCloseProjectDialog(asProjectId(projectWithWorkspaces.id));
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
 
       // Check the checkbox
       const checkbox = document.querySelector("vscode-checkbox") as HTMLElement & {
@@ -279,16 +209,13 @@ describe("MainView close project integration", () => {
       checkbox.checked = true;
       await fireEvent(checkbox, new Event("change", { bubbles: true }));
 
-      await vi.runAllTimersAsync();
-
       // Button should now say "Remove & Close"
-      expect(screen.getByRole("button", { name: /remove & close/i })).toBeInTheDocument();
-
-      // Click "Remove & Close" button
-      const removeButton = screen.getByRole("button", { name: /remove & close/i });
+      const removeButton = await screen.findByRole("button", { name: /remove & close/i });
       await fireEvent.click(removeButton);
 
-      await vi.runAllTimersAsync();
+      await waitFor(() => {
+        expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.path, undefined);
+      });
 
       // Should call remove for each workspace with keepBranch=false (using workspace path)
       expect(mockApi.workspaces.remove).toHaveBeenCalledTimes(2);
@@ -299,9 +226,6 @@ describe("MainView close project integration", () => {
         keepBranch: false,
       });
 
-      // Then close the project
-      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.path, undefined);
-
       // Dialog should be closed
       expect(dialogsStore.dialogState.value.type).toBe("closed");
     });
@@ -309,19 +233,13 @@ describe("MainView close project integration", () => {
     it("closes project even when some workspace removals fail", async () => {
       // First removal succeeds, second fails
       mockApi.workspaces.remove
-        .mockResolvedValueOnce({ branchDeleted: true })
+        .mockResolvedValueOnce({ started: true })
         .mockRejectedValueOnce(new Error("Branch in use"));
 
-      render(MainView);
+      await renderWithSnapshot();
 
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-      await vi.runAllTimersAsync();
-
-      // Open close-project dialog
-      dialogsStore.openCloseProjectDialog(projectWithWorkspaces.id);
-      await vi.runAllTimersAsync();
+      dialogsStore.openCloseProjectDialog(asProjectId(projectWithWorkspaces.id));
+      await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
 
       // Check the checkbox
       const checkbox = document.querySelector("vscode-checkbox") as HTMLElement & {
@@ -330,26 +248,18 @@ describe("MainView close project integration", () => {
       checkbox.checked = true;
       await fireEvent(checkbox, new Event("change", { bubbles: true }));
 
-      // Get dialog and click "Remove & Close" within it
       const dialog = screen.getByRole("dialog");
-      const removeButton = within(dialog).getByRole("button", { name: /remove & close/i });
+      const removeButton = await within(dialog).findByRole("button", { name: /remove & close/i });
       await fireEvent.click(removeButton);
 
-      await vi.runAllTimersAsync();
-
+      await waitFor(() => {
+        // Project should still be closed despite partial failure
+        expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.path, undefined);
+      });
       // Both workspaces should have removal attempted
       expect(mockApi.workspaces.remove).toHaveBeenCalledTimes(2);
-
-      // Project should still be closed despite partial failure
-      expect(mockApi.projects.close).toHaveBeenCalledWith(projectWithWorkspaces.path, undefined);
-
       // Dialog should be closed
       expect(dialogsStore.dialogState.value.type).toBe("closed");
     });
   });
 });
-
-// Note: Open project error handling is now done within the Create Workspace dialog
-// when using the folder icon to open a new project. The error is shown as a submit
-// error in the dialog, not as a separate error dialog. Tests for this behavior are
-// in CreateWorkspaceDialog.test.ts.

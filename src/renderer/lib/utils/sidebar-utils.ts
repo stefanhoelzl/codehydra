@@ -1,4 +1,7 @@
-import type { Project } from "$lib/api";
+/** Minimal row shape needed for global-index math (UiProjectRow-compatible). */
+interface IndexableProject {
+  readonly workspaces: ReadonlyArray<{ readonly hibernated: boolean }>;
+}
 
 /**
  * Calculate the global index of a workspace across all projects, counting
@@ -6,22 +9,22 @@ import type { Project } from "$lib/api";
  * and the function returns null when the target workspace itself is hibernated.
  */
 export function getWorkspaceGlobalIndex(
-  projects: readonly Project[],
+  projects: readonly IndexableProject[],
   projectIndex: number,
   workspaceIndex: number
 ): number | null {
   const target = projects[projectIndex]?.workspaces[workspaceIndex];
-  if (target?.metadata?.["hibernated"] === "true") return null;
+  if (target?.hibernated) return null;
 
   let globalIndex = 0;
   for (let p = 0; p < projectIndex; p++) {
     for (const w of projects[p]?.workspaces ?? []) {
-      if (w.metadata?.["hibernated"] !== "true") globalIndex++;
+      if (!w.hibernated) globalIndex++;
     }
   }
   const currentProjectWorkspaces = projects[projectIndex]?.workspaces ?? [];
   for (let i = 0; i < workspaceIndex; i++) {
-    if (currentProjectWorkspaces[i]?.metadata?.["hibernated"] !== "true") globalIndex++;
+    if (!currentProjectWorkspaces[i]?.hibernated) globalIndex++;
   }
   return globalIndex;
 }

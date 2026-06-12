@@ -1,51 +1,54 @@
 /**
  * Tests for the App component.
- * Tests initialization, store integration, and dialog rendering.
+ *
+ * App owns mode routing (initializing → ready), global shortcut wiring, and
+ * ARIA announcements. Workspace/project data arrives as UiState snapshots
+ * pushed through the captured onState callback.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/svelte";
-import { asProjectId, asProjectPath, asWorkspaceRef, delay } from "@shared/test-fixtures";
+import { delay } from "@shared/test-fixtures";
+import type { UiState } from "@shared/ui-state";
 
 // API event callbacks - must be hoisted with mockApi so it's available when mock runs
 type EventCallback = (...args: unknown[]) => void;
-const { mockApi, eventCallbacks } = vi.hoisted(() => {
+const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
   const callbacks = new Map<string, EventCallback>();
+  const stateCallbacks: Array<(state: unknown) => void> = [];
   return {
     eventCallbacks: callbacks,
+    stateCallbacks,
     mockApi: {
       emitEvent: vi.fn(),
-      // Normal API (flat structure)
       workspaces: {
-        remove: vi.fn().mockResolvedValue({ branchDeleted: true }),
+        remove: vi.fn().mockResolvedValue({ started: true }),
         getStatus: vi
           .fn()
           .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
-        get: vi.fn().mockResolvedValue(undefined),
+        hibernate: vi.fn().mockResolvedValue({ started: true }),
+        wake: vi.fn().mockResolvedValue(null),
       },
       projects: {
-        list: vi.fn().mockResolvedValue([]),
         open: vi.fn().mockResolvedValue(undefined),
         close: vi.fn().mockResolvedValue(undefined),
-        get: vi.fn().mockResolvedValue(undefined),
       },
       ui: {
-        getActiveWorkspace: vi.fn().mockResolvedValue(null),
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
         setMode: vi.fn().mockResolvedValue(undefined),
       },
-      // Note: lifecycle.getState, lifecycle.setup, lifecycle.startServices, lifecycle.setAgent
-      // have been removed - setup is now handled via app:setup intent in main process.
-      // Renderer is passive and waits for lifecycle:show-main-view IPC event.
       lifecycle: {
-        ready: vi.fn().mockResolvedValue(undefined),
+        ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
         quit: vi.fn().mockResolvedValue(undefined),
       },
-      sendAgentSelected: vi.fn(),
       // on() captures callbacks by event name for tests to fire events
       on: vi.fn((event: string, callback: EventCallback) => {
         callbacks.set(event, callback);
         return vi.fn(); // unsubscribe
+      }),
+      onState: vi.fn((callback: (state: unknown) => void) => {
+        stateCallbacks.push(callback);
+        return vi.fn();
       }),
       // onModeChange captures callback for ui:mode-changed events
       onModeChange: vi.fn((callback: EventCallback) => {
@@ -57,8 +60,8 @@ const { mockApi, eventCallbacks } = vi.hoisted(() => {
         callbacks.set("shortcut:key", callback);
         return vi.fn(); // unsubscribe
       }),
-      // Dialog event channel (panel dismiss-on-show)
       sendDialogEvent: vi.fn(),
+      sendNotificationEvent: vi.fn(),
     },
   };
 });
@@ -76,16 +79,17 @@ function fireEvent(event: string, payload?: unknown): void {
   }
 }
 
-// Helper to clear event callbacks between tests
-function clearEventCallbacks(): void {
-  eventCallbacks.clear();
+/** Deliver a snapshot through the captured onState callback (real holder). */
+function pushState(state: UiState): void {
+  for (const callback of stateCallbacks as Array<(state: UiState) => void>) {
+    callback(state);
+  }
 }
 
 /**
  * Trigger the main view to show.
- * With the new passive renderer flow, App starts in "initializing" mode and waits
- * for the main process to send "lifecycle:show-main-view" event before rendering MainView.
- * Call this after render() to simulate the main process completing startup.
+ * App starts in "initializing" mode and waits for the main process to send
+ * "lifecycle:show-main-view" before rendering MainView.
  */
 function showMainView(): void {
   fireEvent("lifecycle:show-main-view");
@@ -96,17 +100,33 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "./App.svelte";
-import * as projectsStore from "$lib/stores/projects.svelte.js";
-import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
 import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
-import * as newWorkspaceViewStore from "$lib/stores/new-workspace-view.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
-import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
+import { resetUiState } from "$lib/stores/ui-state.svelte.js";
+import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
+import type { UiWorkspaceRow } from "@shared/ui-state";
 
-// Simulate the backend creation module's always-alive panel session: the
-// "New workspace" panel renders only while a panel-surface dialog session
-// exists AND the renderer's isOpen flag is set.
+/** Push a snapshot with the given rows; active row drives main. */
+async function pushRows(rows: UiWorkspaceRow[], activePath?: string): Promise<void> {
+  await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+  const marked = rows.map((row) => ({ ...row, active: row.path === activePath }));
+  const activeRow = marked.find((row) => row.active);
+  pushState(
+    makeUiState([makeUiProjectRow(marked)], {
+      main: activeRow ? { kind: "workspace", frameKey: activeRow.key } : { kind: "creation" },
+    })
+  );
+}
+
+function ws(name: string): UiWorkspaceRow {
+  return makeUiWorkspaceRow(name, {
+    path: `/test/.worktrees/${name}`,
+    key: `test-project-12345678/${name}`,
+  });
+}
+
+// Simulate the backend creation module's always-alive panel session.
 function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
   dialogFrameworkStore.processCommand({
     action: "open",
@@ -118,45 +138,24 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
     surface: "panel",
   });
 }
+
 describe("App component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset stores before each test
-    projectsStore.reset();
-    bootstrapStore.resetBootstrap();
+    eventCallbacks.clear();
+    stateCallbacks.length = 0;
+    resetUiState();
     dialogsStore.reset();
-    newWorkspaceViewStore.reset();
     shortcutsStore.reset();
-    agentStatusStore.reset();
     dialogFrameworkStore.reset();
-    // Reset v2 event callbacks
-    clearEventCallbacks();
-    // Reset v2.on implementation to capture callbacks (some tests override it)
-    mockApi.on.mockImplementation((event: string, callback: EventCallback) => {
-      eventCallbacks.set(event, callback);
-      return vi.fn();
-    });
-    // Reset onModeChange implementation to capture callbacks (some tests override it)
+    // Restore capture implementations (the unmount test overrides return values)
     mockApi.onModeChange.mockImplementation((callback: EventCallback) => {
       eventCallbacks.set("ui:mode-changed", callback);
       return vi.fn();
     });
-    // Reset onShortcut implementation to capture callbacks
     mockApi.onShortcut.mockImplementation((callback: EventCallback) => {
       eventCallbacks.set("shortcut:key", callback);
       return vi.fn();
-    });
-    // Default to returning empty projects
-    mockApi.projects.list.mockResolvedValue([]);
-    // Configure lifecycle.ready to simulate event-driven store population
-    mockApi.lifecycle.ready.mockImplementation(async () => {
-      const projectList = await mockApi.projects.list();
-      for (const p of projectList) {
-        projectsStore.addProject(p);
-      }
-      const activeRef = await mockApi.ui.getActiveWorkspace();
-      projectsStore.setActiveWorkspace(activeRef?.path ?? null);
-      return { defaultAgent: null, availableAgents: [] };
     });
   });
 
@@ -164,831 +163,23 @@ describe("App component", () => {
     document.body.innerHTML = "";
   });
 
-  describe("rendering", () => {
-    it("renders Sidebar component", async () => {
-      render(App);
-      showMainView();
+  describe("mode routing", () => {
+    it("starts in initializing mode (no MainView)", () => {
+      const { container } = render(App);
 
-      // Sidebar has a nav with aria-label="Projects"
-      const nav = await screen.findByRole("navigation", { name: "Projects" });
-      expect(nav).toBeInTheDocument();
+      expect(container.querySelector(".initializing-container")).toBeInTheDocument();
+      expect(container.querySelector(".main-view")).not.toBeInTheDocument();
     });
 
-    it("renders the creation panel (PanelView) when the New workspace view opens", async () => {
-      openCreationPanelSession();
-      render(App);
-      showMainView();
-
-      // Open the New workspace view (panel, not a modal dialog)
-      newWorkspaceViewStore.openNewWorkspaceView();
-
-      // Wait for the panel heading to appear
-      await waitFor(() => {
-        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
-      });
-    });
-
-    it("renders RemoveWorkspaceDialog when dialog type is 'remove'", async () => {
-      render(App);
-      showMainView();
-
-      // Open remove dialog
-      dialogsStore.openRemoveDialog(
-        asWorkspaceRef("test-project-12345678", "feature", "/test/.worktrees/feature")
-      );
-
-      // Wait for dialog to appear
-      await waitFor(() => {
-        const dialog = screen.getByRole("dialog");
-        expect(dialog).toBeInTheDocument();
-      });
-
-      // Verify it's the remove dialog
-      expect(screen.getByText("Remove Workspace")).toBeInTheDocument();
-    });
-
-    it("does not render dialogs when dialog type is 'closed'", async () => {
-      render(App);
-      showMainView();
-
-      // Dialog state is closed by default after reset
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    });
-  });
-
-  describe("initialization", () => {
-    it("calls listProjects on mount to initialize", async () => {
-      render(App);
+    it("renders MainView after lifecycle:show-main-view", async () => {
+      const { container } = render(App);
       showMainView();
 
       await waitFor(() => {
-        // Now uses v2 API
-        expect(mockApi.projects.list).toHaveBeenCalledTimes(1);
+        expect(container.querySelector(".main-view")).toBeInTheDocument();
       });
+      expect(container.querySelector(".initializing-container")).not.toBeInTheDocument();
     });
-
-    it("marks bootstrap initialized after successful listProjects", async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [],
-        },
-      ];
-      // Now uses v2 API
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      // Wait for loading to complete
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-      });
-    });
-  });
-
-  describe("event subscriptions", () => {
-    it("subscribes to all domain events via api.on() on mount", async () => {
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        // Uses api.on() for domain events
-        expect(mockApi.on).toHaveBeenCalledWith("project:opened", expect.any(Function));
-        expect(mockApi.on).toHaveBeenCalledWith("project:closed", expect.any(Function));
-        expect(mockApi.on).toHaveBeenCalledWith("workspace:created", expect.any(Function));
-        expect(mockApi.on).toHaveBeenCalledWith("workspace:removed", expect.any(Function));
-        expect(mockApi.on).toHaveBeenCalledWith("workspace:switched", expect.any(Function));
-      });
-    });
-
-    it("unsubscribes from all v2 events on unmount", async () => {
-      // Track unsubscribe functions per event
-      const unsubFunctions = new Map<string, ReturnType<typeof vi.fn>>();
-      mockApi.on.mockImplementation((event: string, callback: EventCallback) => {
-        // Still populate eventCallbacks so showMainView() works
-        eventCallbacks.set(event, callback);
-        const unsub = vi.fn();
-        unsubFunctions.set(event, unsub);
-        return unsub;
-      });
-
-      const { unmount } = render(App);
-      showMainView();
-
-      // Wait for subscriptions to be set up
-      await waitFor(() => {
-        expect(mockApi.on).toHaveBeenCalledWith("project:opened", expect.any(Function));
-      });
-
-      // Unmount the component
-      unmount();
-
-      // Verify domain event unsubscribe functions were called
-      expect(unsubFunctions.get("project:opened")).toHaveBeenCalledTimes(1);
-      expect(unsubFunctions.get("project:closed")).toHaveBeenCalledTimes(1);
-      expect(unsubFunctions.get("workspace:created")).toHaveBeenCalledTimes(1);
-      expect(unsubFunctions.get("workspace:removed")).toHaveBeenCalledTimes(1);
-      expect(unsubFunctions.get("workspace:switched")).toHaveBeenCalledTimes(1);
-    });
-
-    it("handles project:opened event by adding project to store", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for subscriptions
-      await waitFor(() => {
-        expect(getEventCallback("project:opened")).toBeDefined();
-      });
-
-      // Simulate v2 project opened event (includes id)
-      const newProject = {
-        id: asProjectId("new-project-12345678"),
-        path: asProjectPath("/test/new-project"),
-        name: "new-project",
-        workspaces: [],
-      };
-      fireEvent("project:opened", { project: newProject });
-
-      // Verify project was added (check path since projects now have generated id)
-      const addedProject = projectsStore.projects.value.find((p) => p.path === newProject.path);
-      expect(addedProject).toBeDefined();
-      expect(addedProject?.name).toBe(newProject.name);
-    });
-
-    it("handles project:closed event by removing project from store", async () => {
-      // Pre-populate store with a project - use v2 API format with ID
-      const existingProject = {
-        id: asProjectId("existing-12345678"),
-        path: asProjectPath("/test/existing"),
-        name: "existing",
-        workspaces: [],
-      };
-      mockApi.projects.list.mockResolvedValue([existingProject]);
-
-      render(App);
-      showMainView();
-
-      // Wait for initial load and subscriptions
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("project:closed")).toBeDefined();
-      });
-
-      // Get the actual project ID from the store (ID is regenerated from path)
-      const actualProjectId = projectsStore.projects.value[0]!.id;
-
-      // Simulate v2 project closed event (uses projectId not path)
-      fireEvent("project:closed", { projectId: actualProjectId });
-
-      // Verify project was removed
-      expect(projectsStore.projects.value).toHaveLength(0);
-    });
-
-    it("handles workspace:switched event by updating active workspace", async () => {
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(getEventCallback("workspace:switched")).toBeDefined();
-      });
-
-      // Simulate v2 workspace switched event (uses WorkspaceRef)
-      fireEvent(
-        "workspace:switched",
-        asWorkspaceRef("test-12345678", "feature", "/test/.worktrees/feature")
-      );
-
-      expect(projectsStore.activeWorkspacePath.value).toBe("/test/.worktrees/feature");
-    });
-  });
-
-  describe("shortcut mode handling", () => {
-    it("should-render-shortcut-overlay-component: ShortcutOverlay is rendered", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for normal app mode to be active (after listProjects resolves)
-      await waitFor(() => {
-        // The overlay should be in the DOM when in normal app mode (hidden when inactive)
-        // Find the shortcut overlay by its unique class
-        const overlay = document.querySelector(".shortcut-overlay");
-        expect(overlay).toBeInTheDocument();
-        expect(overlay).toHaveAttribute("role", "status");
-      });
-    });
-
-    it("should-pass-active-prop-to-overlay: overlay shows when shortcut mode active", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for subscription
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Trigger shortcut mode via ui:mode-changed event
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Overlay should now be active (aria-hidden=false)
-      await waitFor(() => {
-        const overlay = screen.getByRole("status");
-        expect(overlay).toHaveClass("active");
-      });
-    });
-
-    // NOTE: Alt keyup handling was moved to main process in Stage 2 of SHORTCUT_MODE_REFACTOR.
-    // The main process detects Alt release via before-input-event and emits ui:mode-changed.
-    // The renderer no longer listens to keyup events for Alt.
-
-    it("should-wire-blur-handler-to-window: window blur exits shortcut mode", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for subscription
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Enable shortcut mode first via ui:mode-changed event
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Simulate window blur - should call setMode("workspace") via fire-and-forget
-      window.dispatchEvent(new Event("blur"));
-
-      // In the new architecture, window blur calls api.ui.setMode("workspace")
-      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
-    });
-
-    it("does not call setMode when shortcut mode is not active", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for component to mount
-      await waitFor(() => {
-        expect(mockApi.onModeChange).toHaveBeenCalled();
-      });
-
-      // Clear any previous calls
-      mockApi.ui.setMode.mockClear();
-
-      // Simulate Alt keyup without shortcut mode being enabled
-      window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt" }));
-
-      // setMode should not be called when shortcut mode is not active
-      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
-    });
-
-    // NOTE: Test "Alt keyup in shortcut mode calls api.ui.setMode('workspace') as fallback" removed.
-    // The renderer fallback for Alt keyup was removed in favor of focusing the UI layer
-    // during shortcut mode, which ensures the main process's before-input-event handler
-    // reliably receives Alt keyup events.
-
-    // NOTE: Test "should-connect-handleKeyDown-to-window" removed in Stage 2.6
-    // It tested old keyboard-based action handling which is now replaced by:
-    // - Main process detects keys and emits shortcut:key events
-    // - Tests: "shortcut '1'-'9' jumps to workspace by index" etc.
-
-    it("should-pass-shortcutModeActive-to-sidebar: sidebar shows index numbers when active", async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [{ path: "/test/.worktrees/ws1", name: "ws1", branch: "main" }],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Enable shortcut mode via ui:mode-changed event
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Sidebar should show the index number
-      await waitFor(() => {
-        expect(screen.getByText("1")).toBeInTheDocument();
-      });
-    });
-
-    it("should-pass-all-context-props-to-overlay: overlay hides hints when no context", async () => {
-      // Empty projects = no workspaces, no active project/workspace
-      mockApi.projects.list.mockResolvedValue([]);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Enable shortcut mode via ui:mode-changed event
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // With no workspaces, navigate and jump hints should be hidden
-      await waitFor(() => {
-        const navigateHint = screen.getByLabelText("Up and Down arrows to navigate");
-        expect(navigateHint).toHaveClass("shortcut-hint--hidden");
-
-        const jumpHint = screen.getByLabelText("Number keys 1 through 0 to jump");
-        expect(jumpHint).toHaveClass("shortcut-hint--hidden");
-      });
-    });
-
-    // ============ Step 1.6: ui:mode-changed event tests ============
-
-    it("should-subscribe-to-mode-change-on-mount: subscribes to onModeChange via $effect", async () => {
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(mockApi.onModeChange).toHaveBeenCalledWith(expect.any(Function));
-      });
-    });
-
-    it("should-show-overlay-on-shortcut-mode: onModeChange with mode=shortcut shows overlay", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for subscription
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Fire ui:mode-changed event with mode=shortcut
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Overlay should now be active
-      await waitFor(() => {
-        const overlay = screen.getByRole("status");
-        expect(overlay).toHaveClass("active");
-      });
-    });
-
-    it("should-hide-overlay-on-workspace-mode: onModeChange with mode=workspace hides overlay", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for subscription
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // First activate shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      await waitFor(() => {
-        const overlay = document.querySelector(".shortcut-overlay");
-        expect(overlay).toHaveClass("active");
-      });
-
-      // Then deactivate with workspace mode
-      fireEvent("ui:mode-changed", { mode: "workspace", previousMode: "shortcut" });
-
-      // Overlay should be hidden (check class directly since role query may have timing issues)
-      await waitFor(() => {
-        const overlay = document.querySelector(".shortcut-overlay");
-        expect(overlay).toBeDefined();
-        expect(overlay).not.toHaveClass("active");
-      });
-    });
-
-    it("should-cleanup-mode-subscription-on-unmount: unsubscribe called when component unmounts", async () => {
-      const unsubModeChange = vi.fn();
-      mockApi.onModeChange.mockReturnValue(unsubModeChange);
-
-      const { unmount } = render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(mockApi.onModeChange).toHaveBeenCalledWith(expect.any(Function));
-      });
-
-      unmount();
-
-      expect(unsubModeChange).toHaveBeenCalledTimes(1);
-    });
-
-    it("should-announce-shortcut-mode-for-screen-readers: ARIA live region announces mode change", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for loading to complete and subscription to be ready.
-      // This ensures the "Application ready." announcement has already fired
-      // before we trigger shortcut mode.
-      await waitFor(() => {
-        expect(bootstrapStore.bootstrap.initialized).toBe(true);
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Fire ui:mode-changed event with mode=shortcut
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Should have ARIA live announcement
-      await waitFor(() => {
-        const liveRegion = document.querySelector('[aria-live="polite"]');
-        expect(liveRegion).toHaveTextContent("Shortcut mode active");
-      });
-    });
-
-    // ============ Stage 2.5: Shortcut key events from main process ============
-
-    it("subscribes to onShortcut on mount", async () => {
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(mockApi.onShortcut).toHaveBeenCalledWith(expect.any(Function));
-      });
-    });
-
-    it('shortcut "up" navigates to previous workspace', async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [
-            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
-            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
-          ],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Set active workspace to second one
-      projectsStore.setActiveWorkspace("/test/.worktrees/ws2");
-
-      // Enable shortcut mode first (via mode change event)
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "up"
-      fireEvent("shortcut:key", "up");
-
-      await waitFor(() => {
-        // Should navigate to first workspace (ws1) using workspacePath
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws1", false);
-      });
-    });
-
-    it('shortcut "down" navigates to next workspace', async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [
-            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
-            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
-          ],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Set active workspace to first one
-      projectsStore.setActiveWorkspace("/test/.worktrees/ws1");
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "down"
-      fireEvent("shortcut:key", "down");
-
-      await waitFor(() => {
-        // Should navigate to second workspace (ws2) using workspacePath
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2", false);
-      });
-    });
-
-    it('shortcut "1"-"9" jumps to workspace by index (1=first, 9=ninth)', async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [
-            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
-            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
-            { path: "/test/.worktrees/ws3", name: "ws3", branch: "bugfix" },
-          ],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "2" to jump to second workspace
-      fireEvent("shortcut:key", "2");
-
-      await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2", false);
-      });
-    });
-
-    it('shortcut "0" jumps to workspace 10 (index 9)', async () => {
-      // Create 10 workspaces with zero-padded names for correct sorting
-      // ws01, ws02, ..., ws10 sort correctly: ws01 at index 0, ws10 at index 9
-      const workspaces = Array.from({ length: 10 }, (_, i) => ({
-        path: `/test/.worktrees/ws${String(i + 1).padStart(2, "0")}`,
-        name: `ws${String(i + 1).padStart(2, "0")}`,
-        branch: `branch${i + 1}`,
-      }));
-
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces,
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "0" to jump to 10th workspace
-      fireEvent("shortcut:key", "0");
-
-      await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws10", false);
-      });
-    });
-
-    it("shortcut number beyond workspace count is ignored", async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [
-            { path: "/test/.worktrees/ws1", name: "ws1", branch: "main" },
-            { path: "/test/.worktrees/ws2", name: "ws2", branch: "feature" },
-          ],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Clear any previous calls
-      mockApi.ui.switchWorkspace.mockClear();
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "5" (only 2 workspaces exist)
-      fireEvent("shortcut:key", "5");
-
-      // Should NOT call switchWorkspace (index out of range)
-      await delay(50); // Short wait
-      expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
-    });
-
-    it('shortcut "enter" opens the New workspace view', async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [{ path: "/test/.worktrees/ws1", name: "ws1", branch: "main" }],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-      openCreationPanelSession();
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Set active workspace so we have an active project
-      projectsStore.setActiveWorkspace("/test/.worktrees/ws1");
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "enter"
-      fireEvent("shortcut:key", "enter");
-
-      // Should open the New workspace view
-      await waitFor(() => {
-        expect(newWorkspaceViewStore.newWorkspaceView.isOpen).toBe(true);
-      });
-      expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
-    });
-
-    it('shortcut "delete" opens remove workspace dialog', async () => {
-      const mockProjects = [
-        {
-          id: asProjectId("test-project-12345678"),
-          path: asProjectPath("/test/project"),
-          name: "test-project",
-          workspaces: [{ path: "/test/.worktrees/ws1", name: "ws1", branch: "main" }],
-        },
-      ];
-      mockApi.projects.list.mockResolvedValue(mockProjects);
-
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(projectsStore.projects.value).toHaveLength(1);
-        expect(getEventCallback("shortcut:key")).toBeDefined();
-      });
-
-      // Set active workspace so we have something to delete
-      projectsStore.setActiveWorkspace("/test/.worktrees/ws1");
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Fire shortcut:key event with "delete"
-      fireEvent("shortcut:key", "delete");
-
-      // Should open remove dialog
-      await waitFor(() => {
-        const dialog = screen.getByRole("dialog");
-        expect(dialog).toBeInTheDocument();
-        expect(screen.getByText("Remove Workspace")).toBeInTheDocument();
-      });
-    });
-
-    // Note: "o" key shortcut for opening project was removed in OPEN_PROJECT_UX_REDESIGN.
-    // Opening a project is now done via the folder icon in the Create Workspace dialog.
-
-    it("unsubscribes from shortcut events on unmount", async () => {
-      const unsubShortcut = vi.fn();
-      mockApi.onShortcut.mockReturnValue(unsubShortcut);
-
-      const { unmount } = render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(mockApi.onShortcut).toHaveBeenCalledWith(expect.any(Function));
-      });
-
-      unmount();
-
-      expect(unsubShortcut).toHaveBeenCalledTimes(1);
-    });
-
-    // ============ Stage 2.6: Escape key still handled in renderer ============
-
-    it("Escape key in shortcut mode calls api.ui.setMode('workspace')", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for subscription
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Enable shortcut mode
-      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-
-      // Clear any previous setMode calls
-      mockApi.ui.setMode.mockClear();
-
-      // Press Escape - should call setMode("workspace")
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-
-      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
-    });
-
-    it("Escape key when not in shortcut mode does not call setMode", async () => {
-      render(App);
-      showMainView();
-
-      // Wait for subscription
-      await waitFor(() => {
-        expect(getEventCallback("ui:mode-changed")).toBeDefined();
-      });
-
-      // Make sure we're NOT in shortcut mode (mode is workspace by default)
-      mockApi.ui.setMode.mockClear();
-
-      // Press Escape - should NOT call setMode
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-
-      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("agent status handling", () => {
-    it("subscribes to workspace:status-changed via v2.on() on mount", async () => {
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(mockApi.on).toHaveBeenCalledWith("workspace:status-changed", expect.any(Function));
-      });
-    });
-
-    it("updates store on workspace:status-changed v2 event", async () => {
-      render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(getEventCallback("workspace:status-changed")).toBeDefined();
-      });
-
-      // Simulate v2 workspace:status-changed event (uses WorkspaceRef + WorkspaceStatus)
-      fireEvent("workspace:status-changed", {
-        projectId: asProjectId("test-12345678"),
-        workspaceName: "feature",
-        path: "/test/.worktrees/feature",
-        status: {
-          isDirty: false,
-          agent: { type: "busy", counts: { idle: 0, busy: 3, total: 3 } },
-        },
-      });
-
-      // Verify status was stored directly as v2 AgentStatus (no conversion)
-      expect(agentStatusStore.getStatus("/test/.worktrees/feature")).toEqual({
-        type: "busy",
-        counts: { idle: 0, busy: 3, total: 3 },
-      });
-    });
-
-    it("unsubscribes from workspace:status-changed v2 event on unmount", async () => {
-      // Track unsubscribe functions per event
-      const unsubFunctions = new Map<string, ReturnType<typeof vi.fn>>();
-      mockApi.on.mockImplementation((event: string, callback: EventCallback) => {
-        // Still populate eventCallbacks so showMainView() works
-        eventCallbacks.set(event, callback);
-        const unsub = vi.fn();
-        unsubFunctions.set(event, unsub);
-        return unsub;
-      });
-
-      const { unmount } = render(App);
-      showMainView();
-
-      await waitFor(() => {
-        expect(mockApi.on).toHaveBeenCalledWith("workspace:status-changed", expect.any(Function));
-      });
-
-      unmount();
-
-      expect(unsubFunctions.get("workspace:status-changed")).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe("startup overlay", () => {
-    // The renderer's projects-loading overlay was removed; the main process
-    // now keeps a single startup splash visible until the first workspace's
-    // agent reports status. The renderer no longer marks the main-view
-    // container inert during loading.
 
     it("announces 'Application ready' when the main view becomes visible", async () => {
       render(App);
@@ -1001,10 +192,212 @@ describe("App component", () => {
     });
   });
 
-  // ============================================================================
-  // NOTE: "setup flow handling" tests have been removed.
-  // Setup is now handled via app:setup intent in the main process. The renderer
-  // is passive and waits for lifecycle:show-main-view IPC event before showing
-  // MainView. See APP_SETUP_MIGRATION.md for details.
-  // ============================================================================
+  describe("rendering from snapshots", () => {
+    it("renders Sidebar rows from a pushed snapshot", async () => {
+      render(App);
+      showMainView();
+      await pushRows([ws("ws1")]);
+
+      await waitFor(() => {
+        expect(screen.getByText("ws1")).toBeInTheDocument();
+      });
+    });
+
+    it("renders the creation panel when the snapshot says creation and the session exists", async () => {
+      render(App);
+      showMainView();
+      openCreationPanelSession();
+      await pushRows([ws("ws1")]); // no active → creation
+
+      await waitFor(() => {
+        expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("shortcut mode handling", () => {
+    it("subscribes to onModeChange and onShortcut on mount", async () => {
+      render(App);
+      showMainView();
+
+      await waitFor(() => {
+        expect(mockApi.onModeChange).toHaveBeenCalledWith(expect.any(Function));
+        expect(mockApi.onShortcut).toHaveBeenCalledWith(expect.any(Function));
+      });
+    });
+
+    it("shows the shortcut overlay when mode becomes shortcut and hides it on workspace", async () => {
+      const { container } = render(App);
+      showMainView();
+      await pushRows([ws("ws1")], "/test/.worktrees/ws1");
+
+      await waitFor(() => expect(getEventCallback("ui:mode-changed")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      await waitFor(() => {
+        expect(container.querySelector(".shortcut-overlay.active")).toBeInTheDocument();
+      });
+
+      fireEvent("ui:mode-changed", { mode: "workspace", previousMode: "shortcut" });
+      await waitFor(() => {
+        expect(container.querySelector(".shortcut-overlay.active")).not.toBeInTheDocument();
+      });
+    });
+
+    it("announces shortcut mode for screen readers", async () => {
+      render(App);
+      showMainView();
+      await waitFor(() => expect(getEventCallback("ui:mode-changed")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+
+      await waitFor(() => {
+        const region = document.querySelector('[aria-live="polite"]');
+        expect(region).toHaveTextContent(/shortcut mode active/i);
+      });
+    });
+
+    it("window blur exits shortcut mode", async () => {
+      render(App);
+      showMainView();
+      await waitFor(() => expect(getEventCallback("ui:mode-changed")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      window.dispatchEvent(new Event("blur"));
+
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
+    });
+
+    it("Escape key in shortcut mode calls api.ui.setMode('workspace')", async () => {
+      render(App);
+      showMainView();
+      await waitFor(() => expect(getEventCallback("ui:mode-changed")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      mockApi.ui.setMode.mockClear();
+
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
+    });
+
+    it("Escape key when not in shortcut mode does not call setMode", async () => {
+      render(App);
+      showMainView();
+      await waitFor(() => expect(getEventCallback("ui:mode-changed")).toBeDefined());
+
+      mockApi.ui.setMode.mockClear();
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+
+      expect(mockApi.ui.setMode).not.toHaveBeenCalled();
+    });
+
+    it("unsubscribes from mode and shortcut events on unmount", async () => {
+      const unsubMode = vi.fn();
+      const unsubShortcut = vi.fn();
+      mockApi.onModeChange.mockImplementation((callback: EventCallback) => {
+        eventCallbacks.set("ui:mode-changed", callback);
+        return unsubMode;
+      });
+      mockApi.onShortcut.mockImplementation((callback: EventCallback) => {
+        eventCallbacks.set("shortcut:key", callback);
+        return unsubShortcut;
+      });
+
+      const { unmount } = render(App);
+      showMainView();
+      await waitFor(() => expect(mockApi.onShortcut).toHaveBeenCalled());
+
+      unmount();
+
+      expect(unsubMode).toHaveBeenCalledTimes(1);
+      expect(unsubShortcut).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("shortcut key flows (snapshot-driven)", () => {
+    it('shortcut "up" navigates to previous workspace', async () => {
+      render(App);
+      showMainView();
+      await pushRows([ws("ws1"), ws("ws2")], "/test/.worktrees/ws2");
+      await waitFor(() => expect(getEventCallback("shortcut:key")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      fireEvent("shortcut:key", "up");
+
+      await waitFor(() => {
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws1", false);
+      });
+    });
+
+    it('shortcut "down" navigates to next workspace', async () => {
+      render(App);
+      showMainView();
+      await pushRows([ws("ws1"), ws("ws2")], "/test/.worktrees/ws1");
+      await waitFor(() => expect(getEventCallback("shortcut:key")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      fireEvent("shortcut:key", "down");
+
+      await waitFor(() => {
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2", false);
+      });
+    });
+
+    it('shortcut "2" jumps to the second workspace', async () => {
+      render(App);
+      showMainView();
+      await pushRows([ws("ws1"), ws("ws2"), ws("ws3")]);
+      await waitFor(() => expect(getEventCallback("shortcut:key")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      fireEvent("shortcut:key", "2");
+
+      await waitFor(() => {
+        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2", false);
+      });
+    });
+
+    it("shortcut number beyond workspace count is ignored", async () => {
+      render(App);
+      showMainView();
+      await pushRows([ws("ws1"), ws("ws2")]);
+      await waitFor(() => expect(getEventCallback("shortcut:key")).toBeDefined());
+
+      mockApi.ui.switchWorkspace.mockClear();
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      fireEvent("shortcut:key", "5");
+
+      await delay(50);
+      expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
+    });
+
+    it('shortcut "enter" deselects so the creation panel becomes the main view', async () => {
+      render(App);
+      showMainView();
+      await pushRows([ws("ws1")], "/test/.worktrees/ws1");
+      await waitFor(() => expect(getEventCallback("shortcut:key")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      fireEvent("shortcut:key", "enter");
+
+      expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(null);
+    });
+
+    it('shortcut "delete" opens remove workspace dialog', async () => {
+      render(App);
+      showMainView();
+      await pushRows([ws("ws1")], "/test/.worktrees/ws1");
+      await waitFor(() => expect(getEventCallback("shortcut:key")).toBeDefined());
+
+      fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
+      fireEvent("shortcut:key", "delete");
+
+      await waitFor(() => {
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toBeInTheDocument();
+        expect(screen.getByText("Remove Workspace")).toBeInTheDocument();
+      });
+    });
+  });
 });

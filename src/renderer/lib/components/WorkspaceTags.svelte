@@ -1,13 +1,11 @@
 <script lang="ts">
-  import { extractTags } from "@shared/api/types";
+  import type { WorkspaceTag } from "@shared/api/types";
 
   interface WorkspaceTagsProps {
-    metadata: Readonly<Record<string, string>>;
+    tags: readonly WorkspaceTag[];
   }
 
-  let { metadata }: WorkspaceTagsProps = $props();
-
-  const tags = $derived(extractTags(metadata));
+  let { tags }: WorkspaceTagsProps = $props();
 </script>
 
 {#if tags.length > 0}

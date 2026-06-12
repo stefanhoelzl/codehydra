@@ -1,41 +1,33 @@
 <!--
   MainView.svelte
-  
+
   Main application content component that renders when setup is complete.
-  Owns IPC initialization for domain events (projects, workspaces, agents).
-  
+  Renders from the UiState snapshot (read cutover): the main process presenter
+  pushes the full render-ready view-model on api:ui:state; this component is a
+  render function over it plus the renderer-local stores that have not yet
+  migrated (dialogs, ui-mode, notifications).
+
   Note: This component renders inside App.svelte's <main> element.
   It does NOT render its own <main> landmark - App.svelte owns that.
-  
+
   Responsibilities:
-  - Initialize IPC calls on mount via initializeApp
-  - Subscribe to domain events via setupDomainEventBindings
-  - Subscribe to deletion progress via setupDeletionProgress
+  - Initialize IPC on mount via initializeApp (subscribes to ui:state, then
+    signals lifecycle.ready())
+  - Subscribe to the surviving domain events (notification chimes) via
+    setupDomainEventBindings
   - Sync dialog state with main process z-order
-  - Render Sidebar, dialogs, and ShortcutOverlay
+  - Render Sidebar, WorkspaceFrames, dialogs, panel, and ShortcutOverlay
 -->
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import * as api from "$lib/api";
-  import {
-    projects,
-    activeWorkspacePath,
-    activeWorkspace,
-    getAllWorkspaces,
-    setActiveWorkspace,
-  } from "$lib/stores/projects.svelte.js";
-  import { bootstrap } from "$lib/stores/bootstrap.svelte.js";
+  import { uiState } from "$lib/stores/ui-state.svelte.js";
   import {
     dialogState,
     openRemoveDialog,
     openCloseProjectDialog,
     closeDialog,
   } from "$lib/stores/dialogs.svelte.js";
-  import {
-    newWorkspaceView,
-    openNewWorkspaceView,
-    closeNewWorkspaceView,
-  } from "$lib/stores/new-workspace-view.svelte.js";
   import {
     shortcutModeActive,
     setDialogOpen,
@@ -47,7 +39,6 @@
   import { createLogger } from "$lib/logging";
 
   // Setup functions
-  import { setupDeletionProgress } from "$lib/utils/setup-deletion-progress";
   import { setupDomainEventBindings } from "$lib/utils/setup-domain-event-bindings";
   import { initializeApp } from "$lib/utils/initialize-app";
 
@@ -59,11 +50,7 @@
   import CloseProjectDialog from "./CloseProjectDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
-  import Logo from "./Logo.svelte";
 
-  import { getLifecycle, lifecycleEntries } from "$lib/stores/workspace-lifecycle.svelte.js";
-  import { hasSpinnerNotifications } from "$lib/stores/notification-store.svelte.js";
-  import { getStatus } from "$lib/stores/agent-status.svelte.js";
   import {
     dialogs,
     panelDialog,
@@ -77,8 +64,40 @@
   // Container ref for focus management
   let containerRef: HTMLElement;
 
+  // ============ Snapshot-derived views ============
+  // uiState is null until the genesis push arrives (milliseconds after
+  // lifecycle.ready()); until then the sidebar is empty and main shows
+  // nothing — same as today's pre-population frame.
+
+  const ui = $derived(uiState.value);
+  const projectRows = $derived(ui?.sidebar.projects ?? []);
+  const main = $derived(ui?.main ?? null);
+  /** The creation panel is the ground state: shown whenever main says so. */
+  const creationShown = $derived(main?.kind === "creation");
+
+  /** All workspace rows in sidebar display order. */
+  const allRows = $derived(projectRows.flatMap((project) => project.workspaces));
+  const totalWorkspaces = $derived(allRows.length);
+  const idleWorkspaceCount = $derived(allRows.filter((row) => row.agent.type === "idle").length);
+  const activeRow = $derived(allRows.find((row) => row.active) ?? null);
+
+  // Frames with accessible titles: the snapshot's frames region carries only
+  // key → URL; the iframe title (workspace name) is joined from the sidebar
+  // rows. Display-only transitional join.
+  const frameEntries = $derived.by(() => {
+    const names = new Map(allRows.map((row) => [row.key, row.name]));
+    return Object.entries(ui?.frames ?? {}).map(([key, url]) => ({
+      key,
+      url,
+      title: names.get(key) ?? "workspace",
+    }));
+  });
+  const activeFrameKey = $derived(main?.kind === "workspace" ? main.frameKey : null);
+
+  // ============ ui-mode sync ============
+
   // Sync dialog state to central ui-mode store
-  // Includes both renderer-side dialogs (create/remove) and declarative framework dialogs
+  // Includes both renderer-side dialogs (remove/close-project) and declarative framework dialogs
   $effect(() => {
     const hasModalFrameworkDialog = [...dialogs.value.values()].some((entry) => entry.config.modal);
     const isDialogOpen = dialogState.value.type !== "closed" || hasModalFrameworkDialog;
@@ -102,58 +121,44 @@
     syncMode();
   });
 
-  // Effective workspace count excludes workspaces with active (non-failed) deletions.
-  // This lets us show the Create Workspace dialog as soon as the last workspace's
-  // deletion begins, rather than waiting for the full deletion pipeline to complete.
-  const effectiveWorkspaceCount = $derived.by(() => {
-    const allWorkspaces = getAllWorkspaces();
-    const entries = lifecycleEntries.value;
-    return allWorkspaces.filter((ws) => {
-      const entry = entries.get(ws.path);
-      if (!entry || entry.kind === "creating") return true;
-      if (entry.progress.completed && entry.progress.hasErrors) return true;
-      return false;
-    }).length;
-  });
-
   // Keep the central ui-mode store informed so the UI layer stays on top (at
-  // hover level, which still allows Alt+X) while the New workspace view is shown.
+  // hover level, which still allows Alt+X) while the creation panel is shown.
   $effect(() => {
-    setNewWorkspaceViewOpen(newWorkspaceView.isOpen);
+    setNewWorkspaceViewOpen(creationShown);
   });
 
-  // At the moment the New workspace panel is shown, dismiss MODAL framework
+  // At the moment the creation panel is shown, dismiss MODAL framework
   // dialogs the main process opened in the meantime (most notably the
   // "Loading workspace..." progress dialog triggered by `workspace:loading`).
   // They render inside the UI's DialogHost, so without this they would cover
   // the panel. Transition-based (not continuous): modal dialogs opened WHILE
   // the panel is shown — e.g. the creation module's git-clone sub-dialog —
   // must stay. Panel-surface sessions are left alone.
-  let prevOpenForModalSweep = false;
+  let prevShownForModalSweep = false;
   $effect(() => {
-    const open = newWorkspaceView.isOpen;
-    if (open && !prevOpenForModalSweep) {
+    const shown = creationShown;
+    if (shown && !prevShownForModalSweep) {
       for (const entry of untrack(() => [...dialogs.value.values()])) {
         if (entry.surface !== "modal") continue;
         processFrameworkDialog({ action: "close", dialogId: entry.dialogId });
       }
     }
-    prevOpenForModalSweep = open;
+    prevShownForModalSweep = shown;
   });
 
   // Request a fresh form whenever the panel is (re)shown: send a dismiss
   // event so the backend creation module resets its session (close + reopen
   // with fresh config = new dialogId). Sent once per show transition, also
-  // covering the startup race where the flag flips before the always-alive
-  // session has arrived. NOT re-sent when the dialogId changes mid-show —
-  // that change IS the reset.
+  // covering the startup race where the snapshot shows the panel before the
+  // always-alive session has arrived. NOT re-sent when the dialogId changes
+  // mid-show — that change IS the reset.
   let showDismissPending = false;
-  let prevOpenForDismiss = false;
+  let prevShownForDismiss = false;
   $effect(() => {
-    const open = newWorkspaceView.isOpen;
-    if (open && !prevOpenForDismiss) showDismissPending = true;
-    if (!open) showDismissPending = false;
-    prevOpenForDismiss = open;
+    const shown = creationShown;
+    if (shown && !prevShownForDismiss) showDismissPending = true;
+    if (!shown) showDismissPending = false;
+    prevShownForDismiss = shown;
     const session = panelDialog.value;
     if (showDismissPending && session) {
       showDismissPending = false;
@@ -161,76 +166,11 @@
     }
   });
 
-  // Auto-open the New workspace view as the empty state: when no workspaces
-  // exist (real count minus active deletions), it's the natural landing spot.
-  // Replaces the old auto-shown Create Workspace dialog + logo backdrop.
-  // Debounced to avoid flicker during rapid state changes (e.g., after deletion).
-  // Never auto-closes: creating in the background leaves the user on the view.
-  let autoOpenTimeout: ReturnType<typeof setTimeout> | null = null;
-  $effect(() => {
-    const effectiveCount = effectiveWorkspaceCount;
-    const initialized = bootstrap.initialized;
-    const dialog = dialogState.value;
-
-    if (autoOpenTimeout !== null) {
-      clearTimeout(autoOpenTimeout);
-      autoOpenTimeout = null;
-    }
-
-    // Suppress while a clone runs (a project is about to appear silently) or a
-    // MODAL framework dialog is open (e.g. git init confirmation). The
-    // always-alive panel-surface session must not suppress — it IS the panel
-    // this effect opens.
-    const cloneRunning = hasSpinnerNotifications.value;
-    const hasFrameworkDialog = [...dialogs.value.values()].some(
-      (entry) => entry.surface === "modal"
-    );
-    if (
-      effectiveCount === 0 &&
-      initialized &&
-      dialog.type === "closed" &&
-      !cloneRunning &&
-      !hasFrameworkDialog &&
-      !newWorkspaceView.isOpen
-    ) {
-      autoOpenTimeout = setTimeout(() => {
-        openNewWorkspaceView();
-      }, 100);
-    }
-
-    return () => {
-      if (autoOpenTimeout !== null) {
-        clearTimeout(autoOpenTimeout);
-      }
-    };
-  });
-
-  // Leaving the New workspace view is handled explicitly where navigation
-  // originates: clicking a workspace (handleSwitchWorkspace) and the shortcut-mode
-  // navigation handlers both call closeNewWorkspaceView(). Creating in the
-  // background intentionally does NOT switch, so the view stays open afterwards.
-
-  // Derive count of idle workspaces for shortcut overlay
-  const idleWorkspaceCount = $derived(
-    getAllWorkspaces().filter((ws) => getStatus(ws.path).type === "idle").length
-  );
-
-  // The active workspace is hibernated when its metadata flag is set.
-  // Looked up against the workspace list because activeWorkspace is just a ref.
-  const activeHibernated = $derived.by(() => {
-    const ref = activeWorkspace.value;
-    if (!ref) return false;
-    const project = projects.value.find((p) => p.id === ref.projectId);
-    const workspace = project?.workspaces.find((w) => w.path === ref.path);
-    return workspace?.metadata?.["hibernated"] === "true";
-  });
-
   // Initialize and subscribe to events on mount
   onMount(() => {
     const notificationService = new AgentNotificationService();
 
-    // Compose setup functions - each returns cleanup callback
-    const cleanupDeletion = setupDeletionProgress();
+    // Surviving domain-event bindings (notification chimes)
     const cleanupDomainEvents = setupDomainEventBindings(notificationService);
 
     // Initialize app (async with no-op cleanup for consistent composition)
@@ -243,7 +183,6 @@
 
     // Combined cleanup
     return () => {
-      cleanupDeletion();
       cleanupDomainEvents();
       cleanupInit();
     };
@@ -251,8 +190,7 @@
 
   // Handle closing a project
   function handleCloseProject(projectId: ProjectId): void {
-    const project = projects.value.find((p) => p.id === projectId);
-    if (!project) {
+    if (!projectRows.some((project) => project.id === projectId)) {
       return;
     }
     // Always show dialog for closing projects, even if empty
@@ -261,21 +199,19 @@
     openCloseProjectDialog(projectId);
   }
 
-  // Handle switching workspace
+  // Handle switching workspace. No eager local state: the snapshot push
+  // following workspace:switched flips the frame (and leaves the panel when
+  // it was showing — selecting a workspace deselects the panel by design).
   async function handleSwitchWorkspace(workspaceRef: WorkspaceRef): Promise<void> {
     logger.debug("Workspace selected", { workspaceName: workspaceRef.workspaceName });
-    // Leaving the New workspace view by selecting a workspace.
-    closeNewWorkspaceView();
-    // Set active eagerly so the empty-backdrop doesn't flash during the IPC
-    // round-trip — opening the panel cleared the previous active workspace.
-    setActiveWorkspace(workspaceRef.path);
     await api.ui.switchWorkspace(workspaceRef.path);
   }
 
-  // Handle opening the New workspace view (global sidebar entry)
+  // Handle opening the creation panel (global sidebar entry): deselect.
+  // No workspace active = the panel is the main view (ground state).
   function handleOpenNewWorkspace(): void {
     logger.debug("New workspace view opened");
-    openNewWorkspaceView();
+    void api.ui.switchWorkspace(null);
   }
 
   // Handle opening remove dialog
@@ -286,14 +222,12 @@
 </script>
 
 <div class="main-view" bind:this={containerRef}>
-  <WorkspaceFrames />
+  <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} />
   <NotificationHost />
   <Sidebar
-    projects={projects.value}
-    activeWorkspacePath={activeWorkspacePath.value}
+    projects={projectRows}
     shortcutModeActive={shortcutModeActive.value}
-    totalWorkspaces={getAllWorkspaces().length}
-    newWorkspaceViewOpen={newWorkspaceView.isOpen}
+    newWorkspaceViewOpen={creationShown}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
     onOpenNewWorkspace={handleOpenNewWorkspace}
@@ -301,38 +235,36 @@
   />
 
   {#if dialogState.value.type === "remove"}
-    <RemoveWorkspaceDialog workspaceRef={dialogState.value.workspaceRef} />
+    {@const removePath = dialogState.value.workspaceRef.path}
+    <RemoveWorkspaceDialog
+      workspaceRef={dialogState.value.workspaceRef}
+      baseBranch={allRows.find((row) => row.path === removePath)?.base}
+    />
   {:else if dialogState.value.type === "close-project"}
-    <CloseProjectDialog projectId={dialogState.value.projectId} />
+    {@const closeId = dialogState.value.projectId}
+    <CloseProjectDialog project={projectRows.find((project) => project.id === closeId)} />
   {/if}
 
   <ShortcutOverlay
     active={shortcutModeActive.value}
-    workspaceCount={getAllWorkspaces().length}
-    hasActiveWorkspace={activeWorkspacePath.value !== null}
-    {activeHibernated}
-    activeWorkspaceDeletionInProgress={activeWorkspacePath.value !== null &&
-      getLifecycle(activeWorkspacePath.value) === "deleting"}
+    workspaceCount={totalWorkspaces}
+    hasActiveWorkspace={activeRow !== null}
+    activeHibernated={main?.kind === "hibernated"}
+    activeWorkspaceDeletionInProgress={activeRow !== null && activeRow.status === "deleting"}
     {idleWorkspaceCount}
   />
 
-  <!-- New workspace panel: the backend creation module's always-alive form
-       session, shown while the renderer's isOpen flag is set (also serves as
-       the empty state). The creation form is the only panel-surface session
-       today; revisit the gating if another panel session appears. -->
-  {#if newWorkspaceView.isOpen && panelDialog.value}
+  <!-- Creation panel: the backend creation module's always-alive form
+       session, shown while the snapshot's main view is "creation" (the
+       ground state when no workspace is active). The creation form is the
+       only panel-surface session today; revisit the gating if another panel
+       session appears. -->
+  {#if creationShown && panelDialog.value}
     <PanelView dialogId={panelDialog.value.dialogId} config={panelDialog.value.config} />
   {/if}
 
-  <!-- Backdrop shown when no workspace is active and the panel is closed -->
-  {#if activeWorkspacePath.value === null && !newWorkspaceView.isOpen}
-    <div class="empty-backdrop" aria-hidden="true">
-      <div class="backdrop-logo">
-        <Logo />
-      </div>
-    </div>
-  {:else if activeWorkspacePath.value !== null && activeHibernated && activeWorkspace.value}
-    <HibernatedOverlay workspaceRef={activeWorkspace.value} />
+  {#if main?.kind === "hibernated"}
+    <HibernatedOverlay screenshot={main.screenshot} />
   {/if}
 </div>
 
@@ -344,27 +276,5 @@
     height: 100vh;
     color: var(--ch-foreground);
     background: transparent; /* Allow VS Code to show through UI layer */
-  }
-
-  .empty-backdrop {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: var(--ch-sidebar-minimized-width, 20px);
-    background: var(--ch-surface-0, var(--ch-background));
-    z-index: -1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .backdrop-logo {
-    opacity: var(--ch-logo-backdrop-opacity, 0.15);
-  }
-
-  .backdrop-logo :global(img) {
-    width: min(256px, 30vw);
-    height: min(256px, 30vw);
   }
 </style>

@@ -3,18 +3,18 @@
   import Icon from "./Icon.svelte";
   import { projects as projectsApi, workspaces, emitEvent } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
-  import { projects } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
   import { getErrorMessage } from "@shared/error-utils";
-  import type { ProjectId } from "@shared/api/types";
+  import type { UiProjectRow } from "@shared/ui-state";
 
   const logger = createLogger("ui");
 
   interface CloseProjectDialogProps {
-    projectId: ProjectId;
+    /** The project's UiState row (reactive - undefined once removed elsewhere). */
+    project: UiProjectRow | undefined;
   }
 
-  let { projectId }: CloseProjectDialogProps = $props();
+  let { project }: CloseProjectDialogProps = $props();
 
   // Form state
   let removeAll = $state(false);
@@ -22,13 +22,11 @@
   let submitError = $state<string | null>(null);
   let isSubmitting = $state(false);
 
-  // Derive project from store (reactive - handles project removal elsewhere)
-  const project = $derived(projects.value.find((p) => p.id === projectId));
   const workspaceCount = $derived(project?.workspaces.length ?? 0);
   const workspaceText = $derived(
     workspaceCount === 1 ? "1 workspace" : `${workspaceCount} workspaces`
   );
-  const isRemoteProject = $derived(Boolean(project?.remoteUrl));
+  const isRemoteProject = $derived(project?.remote ?? false);
   const shouldDeleteRepo = $derived(isRemoteProject && !keepLocalRepo);
 
   // Dynamic button label
@@ -42,6 +40,12 @@
   // Handle form submission
   async function handleSubmit(): Promise<void> {
     if (isSubmitting) return;
+    // The project vanished from the snapshot (closed elsewhere): nothing to do.
+    if (!project) {
+      closeDialog();
+      return;
+    }
+    const target = project;
 
     submitError = null;
     isSubmitting = true;
@@ -50,8 +54,8 @@
 
     try {
       // If removeAll or shouldDeleteRepo, remove all workspaces first
-      if ((shouldDeleteRepo || removeAll) && project && project.workspaces.length > 0) {
-        const removalPromises = project.workspaces.map((workspace) =>
+      if ((shouldDeleteRepo || removeAll) && target.workspaces.length > 0) {
+        const removalPromises = target.workspaces.map((workspace) =>
           workspaces
             .remove(workspace.path, { keepBranch: false })
             .then(() => ({ name: workspace.name, success: true as const }))
@@ -81,9 +85,9 @@
 
       // Always close the project (even if some removals failed)
       // Pass removeLocalRepo option if checked (and project is remote)
-      emitEvent({ kind: "close-project", projectId });
+      emitEvent({ kind: "close-project", projectId: target.id });
       await projectsApi.close(
-        project!.path,
+        target.path,
         shouldDeleteRepo ? { removeLocalRepo: true } : undefined
       );
       closeDialog();
@@ -158,8 +162,10 @@
             <Icon name="warning" />
           </span>
           <span class="warning-text">
-            This will permanently delete the cloned repository and all workspaces. You can clone it
-            again from: {project?.remoteUrl}
+            <!-- For remote projects (the only case this renders) the row's
+                 title is the remote URL. -->
+            This will permanently delete the cloned repository and all workspaces. You can clone it again
+            from: {project?.title}
           </span>
         </div>
       {/if}
