@@ -7,6 +7,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { UIModeChangedEvent } from "../shared/ipc";
 import type { UiEvent } from "../shared/ui-event";
+import type { UiState } from "../shared/ui-state";
 import type { DialogUserEvent } from "../shared/dialog-types";
 import type { NotificationUserEvent } from "../shared/notification-types";
 import type { ShortcutKey } from "../shared/shortcuts";
@@ -98,6 +99,11 @@ contextBridge.exposeInMainWorld("api", {
   emitEvent: (event: UiEvent) => {
     ipcRenderer.send(ApiIpcChannels.UI_EVENT, event);
   },
+  /**
+   * Subscribe to UI state snapshots (main → renderer). The presenter pushes
+   * the full render-ready UiState on every change.
+   */
+  onState: createEventSubscription<UiState>(ApiIpcChannels.UI_STATE),
   // Event subscription using api: prefixed channels
   on: <T>(event: string, callback: (event: T) => void): Unsubscribe => {
     const channel = `api:${event}`;
