@@ -54,12 +54,13 @@ export interface UiProjectRow {
 /**
  * What the main view shows. The hibernated screen carries no workspace
  * identity: it always shows the active workspace, which main knows.
+ * The creation panel is the ground state: it shows whenever no workspace is
+ * active (there is no separate empty state).
  */
 export type UiMainView =
   | { readonly kind: "workspace"; readonly frameKey: string }
   | { readonly kind: "hibernated"; readonly screenshot: string | null }
-  | { readonly kind: "creation" }
-  | { readonly kind: "empty" };
+  | { readonly kind: "creation" };
 
 export interface UiState {
   readonly sidebar: { readonly projects: readonly UiProjectRow[] };

@@ -281,12 +281,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshots(deps)).toHaveLength(0);
   });
 
-  it("pushes an empty initial snapshot at app:started and debug-logs it", async () => {
+  it("pushes the ground-state snapshot (creation panel) at app:started and debug-logs it", async () => {
     const deps = createDeps();
     await startModule(deps);
 
     expect(snapshots(deps)).toEqual([
-      { sidebar: { projects: [] }, frames: {}, main: { kind: "empty" }, theme: "dark" },
+      { sidebar: { projects: [] }, frames: {}, main: { kind: "creation" }, theme: "dark" },
     ]);
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.debug).toHaveBeenCalledWith("ui:state push", {
@@ -376,22 +376,39 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshots(deps).length).toBe(before + 1);
   });
 
-  it("shows the creation panel when the renderer reports it open", async () => {
+  it("shows the creation panel whenever no workspace is active (ground state)", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
-    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("main")]) });
+    await flush();
+
+    // A project is open but nothing is active: the panel is the main view.
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+  });
+
+  it("accepts panel-visibility events but ignores them (panel state is derived)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+    const before = snapshots(deps);
 
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "panel-visibility", open: true });
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+    // No push, no change: the event no longer feeds the view-model.
+    expect(snapshots(deps)).toEqual(before);
+    const logger = deps.loggingService.getLogger("presenter");
+    expect(logger?.warn).not.toHaveBeenCalled();
   });
 
-  it("workspace:loading inserts a creating placeholder, activates it, and closes the panel", async () => {
+  it("workspace:loading inserts a creating placeholder and activates it (leaving the panel)", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "panel-visibility", open: true });
 
     await emit(module, EVENT_WORKSPACE_LOADING, {
       workspaceName: "feat",
@@ -488,7 +505,7 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     const snapshot = lastSnapshot(deps);
     expect(snapshot.sidebar.projects[0]!.workspaces).toEqual([]);
-    expect(snapshot.main).toEqual({ kind: "empty" });
+    expect(snapshot.main).toEqual({ kind: "creation" });
   });
 
   it("deletion progress drives deleting / delete-failed / removal", async () => {
@@ -603,7 +620,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).main).toEqual({ kind: "hibernated", screenshot: null });
   });
 
-  it("workspace:switched null empties the main view", async () => {
+  it("workspace:switched null deselects: creation panel shows, no row active", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
@@ -613,8 +630,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, null);
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({ kind: "empty" });
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.active).toBe(false);
+    // The frame stays mounted: deselecting must not tear down the workspace.
+    expect(lastSnapshot(deps).frames).toEqual({
+      [`${PROJECT_ID}/feat`]: "http://127.0.0.1:1/feat",
+    });
   });
 
   it("project:closed falls back to the first remaining workspace", async () => {

@@ -358,6 +358,46 @@ describe("SwitchWorkspace Operation", () => {
     });
   });
 
+  describe("deselect (workspacePath: null)", () => {
+    it("clears the active workspace and emits workspace:switched(null)", async () => {
+      const setup = createTestSetup({ initialActive: TEST_WORKSPACE_PATH });
+      const { dispatcher, getActivePath } = setup;
+
+      const receivedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: null },
+      } as SwitchWorkspaceIntent);
+
+      expect(getActivePath()).toBeNull();
+      expect(receivedEvents).toHaveLength(1);
+      expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
+    });
+
+    it("emits switched(null) even when nothing was active (idempotent, not no-op-guarded)", async () => {
+      const setup = createTestSetup();
+      const { dispatcher, getActivePath } = setup;
+
+      const receivedEvents: DomainEvent[] = [];
+      dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
+        receivedEvents.push(event);
+      });
+
+      await dispatcher.dispatch({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: null },
+      } as SwitchWorkspaceIntent);
+
+      expect(getActivePath()).toBeNull();
+      expect(receivedEvents).toHaveLength(1);
+      expect((receivedEvents[0] as WorkspaceSwitchedEvent).payload).toBeNull();
+    });
+  });
+
   describe("bridge handler defaults focus (#7)", () => {
     it("dispatches with focus defaulting to true when omitted", async () => {
       const setup = createTestSetup();

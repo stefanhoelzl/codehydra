@@ -8,6 +8,9 @@
  * 2. Dispatch project:resolve — resolve projectPath → projectId + projectName
  * 3. "activate" hook — call viewManager.setActiveWorkspace()
  *
+ * `workspacePath: null` deselects: skips resolution, runs "activate" with a
+ * null target (clears main-side bookkeeping), emits workspace:switched(null).
+ *
  * **Auto-select** ({ auto: true, currentPath }):
  * Used when the active workspace is being deleted. Runs a "find-candidates"
  * hook to gather all available workspaces, applies a selection algorithm
@@ -31,9 +34,12 @@ import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
 // Intent Types
 // =============================================================================
 
-/** Specific-target payload: switch to a known workspace. */
+/** Specific-target payload: switch to a known workspace, or deselect.
+ *  `workspacePath: null` deselects the active workspace — no workspace is
+ *  active afterwards and the creation panel becomes the main view (it is the
+ *  ground state when nothing is selected). `focus` is ignored for null. */
 export interface SwitchWorkspaceTargetPayload {
-  readonly workspacePath: string;
+  readonly workspacePath: string | null;
   readonly focus?: boolean;
 }
 
@@ -88,9 +94,10 @@ export const EVENT_WORKSPACE_SWITCHED = "workspace:switched" as const;
 
 export const SWITCH_WORKSPACE_OPERATION_ID = "switch-workspace";
 
-/** Input context for the "activate" hook point. */
+/** Input context for the "activate" hook point. `workspacePath: null` =
+ *  deselect (clear the active workspace). */
 export interface ActivateHookInput extends HookContext {
-  readonly workspacePath: string;
+  readonly workspacePath: string | null;
   readonly active: boolean;
 }
 
@@ -233,6 +240,31 @@ export class SwitchWorkspaceOperation implements Operation<SwitchWorkspaceIntent
     ctx: OperationContext<SwitchWorkspaceIntent>,
     payload: SwitchWorkspaceTargetPayload
   ): Promise<void> {
+    // Deselect: no workspace to resolve. Run the activate hooks with a null
+    // target so main-side bookkeeping clears (otherwise switching back to the
+    // deselected workspace would no-op as already-active), then announce.
+    // Deliberately NOT no-op-guarded: switched(null) is emitted even when
+    // nothing was active (deselect is idempotent; consumers tolerate it).
+    if (payload.workspacePath === null) {
+      const deselectCtx: ActivateHookInput = {
+        intent: ctx.intent,
+        workspacePath: null,
+        active: false,
+      };
+      const { errors } = await ctx.hooks.collect<SwitchWorkspaceHookResult>(
+        "activate",
+        deselectCtx
+      );
+      throwHookErrors(errors, "workspace:switch activate hooks failed");
+
+      const nullEvent: WorkspaceSwitchedEvent = {
+        type: EVENT_WORKSPACE_SWITCHED,
+        payload: null,
+      };
+      ctx.emit(nullEvent);
+      return;
+    }
+
     // 1. Dispatch shared workspace resolution
     const { projectPath, workspaceName, active } = await ctx.dispatch({
       type: INTENT_RESOLVE_WORKSPACE,

@@ -559,6 +559,13 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const { workspacePath, active } = ctx as ActivateHookInput;
 
+            // Deselect: clear the active-workspace bookkeeping so a later
+            // switch back to it isn't short-circuited as already-active.
+            if (workspacePath === null) {
+              activeWorkspacePath = null;
+              return {};
+            }
+
             if (active) {
               return {};
             }

@@ -284,6 +284,11 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
         handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
           const { workspacePath, active } = ctx as ActivateHookInput;
           const intent = ctx.intent as SwitchWorkspaceIntent;
+          // Deselect: mirrors the production view-module null branch.
+          if (workspacePath === null) {
+            vm.setActiveWorkspace(null);
+            return {};
+          }
           if (active) {
             return {};
           }
