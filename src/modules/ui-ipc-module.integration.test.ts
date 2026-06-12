@@ -3,7 +3,7 @@
  * Integration tests for UiIpcModule.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> domain event -> sendToUI.
- * Also covers IPC handler registration, log listeners, and shutdown cleanup.
+ * Also covers IPC handler registration and shutdown cleanup.
  *
  * Test plan items covered:
  * #2a: Renderer receives workspace status (idle)
@@ -11,8 +11,7 @@
  * #2c: Renderer receives workspace status (mixed)
  * #2d: Renderer receives workspace status (none)
  * workspace:deleted sends workspace:removed to UI
- * app:shutdown removes IPC handlers and log listeners
- * log listeners delegate to LoggingService
+ * app:shutdown removes IPC handlers
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -35,7 +34,6 @@ import { createDeleteEventOperation } from "../intents/lib/operation.test-utils"
 import { registerTestInfrastructure, updateStatusIntent } from "../intents/operations.test-utils";
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
 import type { NotificationManager } from "./notification-manager";
-import { createMockLogging } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
 import { ApiIpcChannels, type AggregatedAgentStatus } from "../shared/ipc";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
@@ -70,7 +68,6 @@ function createBridgeDeps(
     viewManager: { sendToUI },
     logger: SILENT_LOGGER,
     dispatcher: {} as unknown as UiIpcModuleDeps["dispatcher"],
-    loggingService: overrides?.loggingService ?? createMockLogging(),
     pathProvider: overrides?.pathProvider ?? ({} as unknown as UiIpcModuleDeps["pathProvider"]),
     ...overrides,
   };
@@ -591,126 +588,5 @@ describe("UiIpcModule - executeCommand", () => {
     const state = ipcLayer._getState();
     const channels = [...state.handlers.keys()];
     expect(channels.every((ch) => !ch.includes("execute-command"))).toBe(true);
-  });
-});
-
-// =============================================================================
-// Tests - log listeners
-// =============================================================================
-
-describe("UiIpcModule - log listeners", () => {
-  it("registers listeners on all four log channels", () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const deps = createBridgeDeps({ ipcLayer });
-    createUiIpcModule(deps);
-
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_DEBUG)).toHaveLength(1);
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_INFO)).toHaveLength(1);
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_WARN)).toHaveLength(1);
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_ERROR)).toHaveLength(1);
-  });
-
-  it("delegates log messages to the correct logger method", () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const loggingService = createMockLogging();
-    const deps = createBridgeDeps({ ipcLayer, loggingService });
-    createUiIpcModule(deps);
-
-    ipcLayer._emit(ApiIpcChannels.LOG_INFO, {
-      logger: "ui",
-      message: "test message",
-      context: { key: "value" },
-    });
-
-    expect(loggingService.createLogger).toHaveBeenCalledWith("ui");
-    const logger = loggingService.getLogger("ui");
-    expect(logger?.info).toHaveBeenCalledWith("test message", { key: "value" });
-  });
-
-  it("falls back to 'ui' logger for invalid logger names", () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const loggingService = createMockLogging();
-    const deps = createBridgeDeps({ ipcLayer, loggingService });
-    createUiIpcModule(deps);
-
-    ipcLayer._emit(ApiIpcChannels.LOG_WARN, {
-      logger: "invalid-name",
-      message: "fallback test",
-    });
-
-    expect(loggingService.createLogger).toHaveBeenCalledWith("ui");
-    const logger = loggingService.getLogger("ui");
-    expect(logger?.warn).toHaveBeenCalledWith("fallback test", undefined);
-  });
-
-  it("accepts 'api' as a valid renderer logger name", () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const loggingService = createMockLogging();
-    const deps = createBridgeDeps({ ipcLayer, loggingService });
-    createUiIpcModule(deps);
-
-    ipcLayer._emit(ApiIpcChannels.LOG_DEBUG, {
-      logger: "api",
-      message: "api log",
-    });
-
-    expect(loggingService.createLogger).toHaveBeenCalledWith("api");
-  });
-
-  it("swallows errors from logging service", () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const loggingService = createMockLogging();
-    loggingService.createLogger = vi.fn(() => {
-      throw new Error("logging broke");
-    });
-    const deps = createBridgeDeps({ ipcLayer, loggingService });
-    createUiIpcModule(deps);
-
-    // Should not throw
-    expect(() => {
-      ipcLayer._emit(ApiIpcChannels.LOG_ERROR, {
-        logger: "ui",
-        message: "should not crash",
-      });
-    }).not.toThrow();
-  });
-
-  it("removes log listeners on app:shutdown", async () => {
-    const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-
-    const ipcLayer = createBehavioralIpcBoundary();
-    const deps = createBridgeDeps({
-      ipcLayer,
-      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
-    });
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const quitModule: IntentModule = {
-      name: "test-quit",
-      hooks: {
-        [APP_SHUTDOWN_OPERATION_ID]: {
-          quit: { handler: async () => {} },
-        },
-      },
-    };
-
-    dispatcher.registerModule(uiIpcModule);
-    dispatcher.registerModule(quitModule);
-
-    // Verify listeners are registered
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_DEBUG)).toHaveLength(1);
-
-    // Shutdown
-    await dispatcher.dispatch({
-      type: INTENT_APP_SHUTDOWN,
-      payload: {},
-    } as AppShutdownIntent);
-
-    // All log listeners should be removed
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_DEBUG)).toHaveLength(0);
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_INFO)).toHaveLength(0);
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_WARN)).toHaveLength(0);
-    expect(ipcLayer._getListeners(ApiIpcChannels.LOG_ERROR)).toHaveLength(0);
   });
 });

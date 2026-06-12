@@ -4,27 +4,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 
-interface MockLogApi {
-  debug: Mock;
-  info: Mock;
-  warn: Mock;
-  error: Mock;
-}
-
 describe("createLogger", () => {
   const originalWindow = global.window;
-  let mockLog: MockLogApi;
+  let mockEmitEvent: Mock;
 
   beforeEach(() => {
     // Set up mock window.api
-    mockLog = {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    };
+    mockEmitEvent = vi.fn();
     global.window = {
-      api: { log: mockLog },
+      api: { emitEvent: mockEmitEvent },
     } as unknown as Window & typeof globalThis;
   });
 
@@ -50,56 +38,52 @@ describe("createLogger", () => {
     expect(typeof logger.error).toBe("function");
   });
 
-  it("includes logger name in IPC calls", async () => {
+  it("includes logger name in emitted log events", async () => {
     const createLogger = await getCreateLogger();
     const logger = createLogger("ui");
 
     logger.info("Test message");
 
-    expect(mockLog.info).toHaveBeenCalledWith("ui", "Test message", undefined);
+    expect(mockEmitEvent).toHaveBeenCalledWith({
+      kind: "log",
+      level: "info",
+      logger: "ui",
+      message: "Test message",
+    });
   });
 
-  it("passes context to IPC calls", async () => {
+  it("passes context in emitted log events", async () => {
     const createLogger = await getCreateLogger();
     const logger = createLogger("ui");
 
     logger.debug("Test", { key: "value", count: 42 });
 
-    expect(mockLog.debug).toHaveBeenCalledWith("ui", "Test", { key: "value", count: 42 });
+    expect(mockEmitEvent).toHaveBeenCalledWith({
+      kind: "log",
+      level: "debug",
+      logger: "ui",
+      message: "Test",
+      context: { key: "value", count: 42 },
+    });
   });
 
   describe("log level methods", () => {
-    it("debug calls api.log.debug", async () => {
-      const createLogger = await getCreateLogger();
-      const logger = createLogger("ui");
+    it.each(["debug", "info", "warn", "error"] as const)(
+      "%s emits a log event with that level",
+      async (level) => {
+        const createLogger = await getCreateLogger();
+        const logger = createLogger("ui");
 
-      logger.debug("Debug message");
-      expect(mockLog.debug).toHaveBeenCalledWith("ui", "Debug message", undefined);
-    });
+        logger[level]("message");
 
-    it("info calls api.log.info", async () => {
-      const createLogger = await getCreateLogger();
-      const logger = createLogger("ui");
-
-      logger.info("Info message");
-      expect(mockLog.info).toHaveBeenCalledWith("ui", "Info message", undefined);
-    });
-
-    it("warn calls api.log.warn", async () => {
-      const createLogger = await getCreateLogger();
-      const logger = createLogger("ui");
-
-      logger.warn("Warn message");
-      expect(mockLog.warn).toHaveBeenCalledWith("ui", "Warn message", undefined);
-    });
-
-    it("error calls api.log.error", async () => {
-      const createLogger = await getCreateLogger();
-      const logger = createLogger("ui");
-
-      logger.error("Error message");
-      expect(mockLog.error).toHaveBeenCalledWith("ui", "Error message", undefined);
-    });
+        expect(mockEmitEvent).toHaveBeenCalledWith({
+          kind: "log",
+          level,
+          logger: "ui",
+          message: "message",
+        });
+      }
+    );
   });
 
   describe("error handling", () => {
@@ -108,7 +92,7 @@ describe("createLogger", () => {
       const logger = createLogger("ui");
 
       // Make IPC throw
-      mockLog.info.mockImplementation(() => {
+      mockEmitEvent.mockImplementation(() => {
         throw new Error("IPC error");
       });
 
@@ -116,8 +100,8 @@ describe("createLogger", () => {
       expect(() => logger.info("Test")).not.toThrow();
     });
 
-    it("handles missing api.log gracefully", async () => {
-      // Set up window without log
+    it("handles missing api.emitEvent gracefully", async () => {
+      // Set up window without emitEvent
       global.window = {
         api: {},
       } as unknown as Window & typeof globalThis;
@@ -136,7 +120,9 @@ describe("createLogger", () => {
       const logger = createLogger("ui");
 
       logger.info("From UI");
-      expect(mockLog.info).toHaveBeenCalledWith("ui", "From UI", undefined);
+      expect(mockEmitEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ logger: "ui", message: "From UI" })
+      );
     });
 
     it("accepts api logger name", async () => {
@@ -144,7 +130,9 @@ describe("createLogger", () => {
       const logger = createLogger("api");
 
       logger.info("From API");
-      expect(mockLog.info).toHaveBeenCalledWith("api", "From API", undefined);
+      expect(mockEmitEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ logger: "api", message: "From API" })
+      );
     });
   });
 });

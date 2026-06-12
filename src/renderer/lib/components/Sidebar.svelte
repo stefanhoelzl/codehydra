@@ -105,6 +105,7 @@
         if (!hoverExpansionEligible.value) return;
         logger.debug("sidebar hover: expand");
         isHovering = true;
+        api.emitEvent({ kind: "hover", region: "sidebar" });
         setSidebarExpanded(true);
       }, HOVER_DELAY_MS);
     }
@@ -151,6 +152,7 @@
       collapseTimeout = null;
       logger.debug("sidebar hover: collapse");
       isHovering = false;
+      api.emitEvent({ kind: "hover", region: null });
       setSidebarExpanded(false);
     }, HOVER_DELAY_MS);
   }

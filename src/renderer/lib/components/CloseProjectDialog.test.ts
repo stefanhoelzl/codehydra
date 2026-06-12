@@ -17,6 +17,7 @@ const { mockCloseProject, mockRemoveWorkspace, mockCloseDialog, mockProjects } =
 
 // Mock $lib/api
 vi.mock("$lib/api", () => ({
+  emitEvent: vi.fn(),
   projects: {
     close: mockCloseProject,
   },

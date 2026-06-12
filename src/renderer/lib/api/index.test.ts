@@ -34,16 +34,80 @@ describe("renderer API layer", () => {
       window.api = mockApi;
     });
 
-    it("exports domain API namespaces from window.api", async () => {
+    it("exports domain API namespaces delegating to window.api", async () => {
       const api = await import("$lib/api");
 
-      expect(api.projects).toBe(mockApi.projects);
-      expect(api.workspaces).toBe(mockApi.workspaces);
-      expect(api.ui).toBe(mockApi.ui);
+      await api.projects.close("/test/project");
+      await api.workspaces.getStatus("/test/ws");
+      await api.ui.setMode("workspace");
+
+      expect(mockApi.projects.close).toHaveBeenCalledWith("/test/project", undefined);
+      expect(mockApi.workspaces.getStatus).toHaveBeenCalledWith("/test/ws", undefined);
+      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
       expect(api.lifecycle).toBe(mockApi.lifecycle);
       expect(api.on).toBe(mockApi.on);
       expect(api.onModeChange).toBe(mockApi.onModeChange);
       expect(api.onShortcut).toBe(mockApi.onShortcut);
+    });
+  });
+
+  // =============================================================================
+  // Phase A dual-fire: wrappers emit observational UiEvents
+  // =============================================================================
+
+  describe("UI event dual-fire", () => {
+    let mockApi: Api;
+
+    beforeEach(() => {
+      mockApi = createMockApi();
+      window.api = mockApi;
+    });
+
+    it("emits matching events alongside the invokes", async () => {
+      const api = await import("$lib/api");
+
+      await api.projects.open("/test");
+      await api.workspaces.remove("/test/ws");
+      await api.workspaces.hibernate("/test/ws");
+      await api.workspaces.wake("/test/ws");
+      await api.ui.switchWorkspace("/test/ws");
+
+      expect(vi.mocked(mockApi.emitEvent).mock.calls.map(([event]) => event)).toEqual([
+        { kind: "open-project" },
+        { kind: "remove-workspace" },
+        { kind: "hibernate-workspace" },
+        { kind: "wake-workspace" },
+        { kind: "switch-workspace" },
+      ]);
+    });
+
+    it("does not emit events for request/response invokes", async () => {
+      const api = await import("$lib/api");
+
+      await api.workspaces.getStatus("/test/ws");
+      await api.workspaces.getScreenshot("p-1", "ws");
+      await api.ui.setMode("workspace");
+      await api.projects.close("/test/project");
+
+      expect(mockApi.emitEvent).not.toHaveBeenCalled();
+    });
+
+    it("emitEvent failures never break the invoke", async () => {
+      mockApi.emitEvent = vi.fn(() => {
+        throw new Error("channel broke");
+      });
+      const api = await import("$lib/api");
+
+      await expect(api.workspaces.wake("/test/ws")).resolves.toBeDefined();
+      expect(mockApi.workspaces.wake).toHaveBeenCalledWith("/test/ws");
+    });
+
+    it("exports emitEvent for invoke-less signals", async () => {
+      const api = await import("$lib/api");
+
+      api.emitEvent({ kind: "panel-visibility", open: true });
+
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "panel-visibility", open: true });
     });
   });
 

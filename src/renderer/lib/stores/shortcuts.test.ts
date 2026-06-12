@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Create mock API functions with vi.hoisted for proper hoisting
 // Uses flat API namespace (no longer nested under v2)
 const mockApi = vi.hoisted(() => ({
+  emitEvent: vi.fn(),
   ui: {
     switchWorkspace: vi.fn().mockResolvedValue(undefined),
     setMode: vi.fn().mockResolvedValue(undefined),

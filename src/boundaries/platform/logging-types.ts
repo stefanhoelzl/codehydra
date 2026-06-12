@@ -54,6 +54,7 @@ export type LoggerName =
   | "updater" // AutoUpdater - auto-update service
   | "agent" // AgentServerManager - agent lifecycle
   | "shortcut" // ShortcutController - keyboard shortcut detection
+  | "presenter" // PresentationModule - ui:event intake (later: UiState presenter)
   | "dispatcher" // Dispatcher - intent dispatch pipeline
   | "auto-workspace" // AutoWorkspaceModule - auto-workspace orchestrator
   | "auto-workspace:github" // GitHubSource - GitHub PR polling

@@ -75,34 +75,36 @@ export interface RendererLogger {
  * ```
  */
 export function createLogger(name: RendererLoggerName): RendererLogger {
+  function send(
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    context?: LogContext
+  ): void {
+    try {
+      window.api.emitEvent({
+        kind: "log",
+        level,
+        logger: name,
+        message,
+        ...(context !== undefined && { context }),
+      });
+    } catch {
+      // Never throw from logging
+    }
+  }
+
   return {
     debug(message: string, context?: LogContext): void {
-      try {
-        window.api.log.debug(name, message, context);
-      } catch {
-        // Never throw from logging
-      }
+      send("debug", message, context);
     },
     info(message: string, context?: LogContext): void {
-      try {
-        window.api.log.info(name, message, context);
-      } catch {
-        // Never throw from logging
-      }
+      send("info", message, context);
     },
     warn(message: string, context?: LogContext): void {
-      try {
-        window.api.log.warn(name, message, context);
-      } catch {
-        // Never throw from logging
-      }
+      send("warn", message, context);
     },
     error(message: string, context?: LogContext): void {
-      try {
-        window.api.log.error(name, message, context);
-      } catch {
-        // Never throw from logging
-      }
+      send("error", message, context);
     },
   };
 }

@@ -184,6 +184,7 @@ import { createDevtoolsModule } from "./modules/devtools-module";
 import { createThemeModule } from "./modules/theme-module";
 import { createDebugModule } from "./modules/debug-module";
 import { createUiIpcModule } from "./modules/ui-ipc-module";
+import { createPresentationModule } from "./modules/presentation-module";
 import { DialogManager } from "./modules/dialog-manager";
 import { NotificationManager } from "./modules/notification-manager";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
@@ -854,10 +855,16 @@ const uiIpcModule = createUiIpcModule({
   viewManager,
   logger: apiLogger,
   dispatcher,
-  loggingService,
   dialogManager,
   notificationManager,
   pathProvider,
+});
+
+// Create presentation module (owns the api:ui:event channel; Phase A of the
+// UI-state architecture — stateless intake, renderer log routing)
+const presentationModule = createPresentationModule({
+  ipcLayer,
+  loggingService,
 });
 
 const hibernationScreenshotModule = createHibernationScreenshotModule({
@@ -908,6 +915,7 @@ dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
 dispatcher.registerModule(hibernationScreenshotModule);
 dispatcher.registerModule(uiIpcModule);
+dispatcher.registerModule(presentationModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)
 try {

@@ -23,6 +23,7 @@ const eventCallbacks = new Map<string, EventCallback>();
 
 // Create mock API functions with vi.hoisted for proper hoisting
 const mockApi = vi.hoisted(() => ({
+  emitEvent: vi.fn(),
   // Flat API structure - projects namespace
   projects: {
     list: vi.fn().mockResolvedValue([]),

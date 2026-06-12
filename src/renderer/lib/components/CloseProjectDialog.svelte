@@ -1,7 +1,7 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
   import Icon from "./Icon.svelte";
-  import { projects as projectsApi, workspaces } from "$lib/api";
+  import { projects as projectsApi, workspaces, emitEvent } from "$lib/api";
   import { closeDialog } from "$lib/stores/dialogs.svelte.js";
   import { projects } from "$lib/stores/projects.svelte.js";
   import { createLogger } from "$lib/logging";
@@ -81,6 +81,7 @@
 
       // Always close the project (even if some removals failed)
       // Pass removeLocalRepo option if checked (and project is remote)
+      emitEvent({ kind: "close-project", projectId });
       await projectsApi.close(
         project!.path,
         shouldDeleteRepo ? { removeLocalRepo: true } : undefined

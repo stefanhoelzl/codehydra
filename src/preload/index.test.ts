@@ -224,6 +224,16 @@ describe("preload API", () => {
     });
   });
 
+  describe("emitEvent", () => {
+    it("sends ui:event IPC event with the UiEvent payload", () => {
+      const emitEvent = exposedApi.emitEvent as (event: unknown) => void;
+      const event = { kind: "log", level: "info", logger: "ui", message: "hi" };
+      emitEvent(event);
+
+      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:ui:event", event);
+    });
+  });
+
   describe("sendDialogEvent", () => {
     it("sends dialog:event IPC event with dialog user event payload", () => {
       const sendDialogEvent = exposedApi.sendDialogEvent as (event: unknown) => void;
