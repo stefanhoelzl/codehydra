@@ -40,19 +40,6 @@ vi.mock("$lib/stores/dialogs.svelte.js", () => ({
   closeDialog: mockCloseDialog,
 }));
 
-// Mock $lib/stores/projects.svelte.js
-vi.mock("$lib/stores/projects.svelte.js", () => ({
-  getAllWorkspaces: () => [
-    {
-      name: "feature-branch",
-      path: "/test/project/.worktrees/feature-branch",
-      branch: "feature-branch",
-      metadata: { base: "main" },
-      projectId: "test-project-12345678",
-    },
-  ],
-}));
-
 // Import component after mocks
 import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
 import { workspaces } from "$lib/api";

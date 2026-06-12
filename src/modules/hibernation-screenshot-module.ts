@@ -12,8 +12,8 @@
  * - workspace:wake / cleanup hook → delete the screenshot file (best-effort).
  * - workspace:deleted event → delete the screenshot file (best-effort).
  *
- * Provides a `getScreenshotPath()` helper used by the IPC layer to expose the
- * screenshot URL to the renderer.
+ * Provides a `buildScreenshotPath()` helper used by the presenter to inline
+ * the screenshot into UiState snapshots.
  */
 
 import type { IntentModule } from "../intents/lib/module";

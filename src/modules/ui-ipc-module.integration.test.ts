@@ -68,7 +68,6 @@ function createBridgeDeps(
     viewManager: { sendToUI },
     logger: SILENT_LOGGER,
     dispatcher: {} as unknown as UiIpcModuleDeps["dispatcher"],
-    pathProvider: overrides?.pathProvider ?? ({} as unknown as UiIpcModuleDeps["pathProvider"]),
     ...overrides,
   };
   return { ...base, ipcLayer, sendToUI };

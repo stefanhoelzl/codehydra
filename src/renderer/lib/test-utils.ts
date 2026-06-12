@@ -89,7 +89,6 @@ export function createMockApi(): Api {
       getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
       hibernate: vi.fn().mockResolvedValue({ started: true }),
       wake: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
-      getScreenshot: vi.fn().mockResolvedValue({ url: null }),
     },
     ui: {
       switchWorkspace: vi.fn().mockResolvedValue(undefined),

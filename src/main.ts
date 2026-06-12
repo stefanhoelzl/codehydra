@@ -857,7 +857,6 @@ const uiIpcModule = createUiIpcModule({
   dispatcher,
   dialogManager,
   notificationManager,
-  pathProvider,
 });
 
 // Create presentation module (owns the api:ui:event + api:ui:state channels;

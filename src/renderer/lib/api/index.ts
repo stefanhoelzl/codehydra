@@ -57,8 +57,6 @@ export const workspaces: Api["workspaces"] = {
     emitEvent({ kind: "wake-workspace" });
     return api.workspaces.wake(workspacePath);
   },
-  getScreenshot: (projectId, workspaceName) =>
-    api.workspaces.getScreenshot(projectId, workspaceName),
 };
 
 export const ui: Api["ui"] = {

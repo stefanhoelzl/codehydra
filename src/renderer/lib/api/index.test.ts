@@ -85,7 +85,6 @@ describe("renderer API layer", () => {
       const api = await import("$lib/api");
 
       await api.workspaces.getStatus("/test/ws");
-      await api.workspaces.getScreenshot("p-1", "ws");
       await api.ui.setMode("workspace");
       await api.projects.close("/test/project");
 
