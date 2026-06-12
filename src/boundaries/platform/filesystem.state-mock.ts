@@ -395,6 +395,29 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       return fileContent.toString("utf-8");
     },
 
+    async readFileBuffer(pathLike: PathLike): Promise<Buffer> {
+      const path = normalizePath(pathLike);
+      const entry = state.entries.get(path);
+
+      if (!entry) {
+        throw new FileSystemError("ENOENT", path, `File not found: ${path}`);
+      }
+
+      throwIfError(entry, path);
+
+      if (entry.type === "directory") {
+        throw new FileSystemError("EISDIR", path, `Is a directory: ${path}`);
+      }
+
+      if (entry.type === "symlink") {
+        // Mock does NOT follow symlinks - just return error for now
+        throw new FileSystemError("ENOENT", path, `Symlink target not resolved: ${path}`);
+      }
+
+      const fileContent: string | Buffer = entry.content;
+      return typeof fileContent === "string" ? Buffer.from(fileContent, "utf-8") : fileContent;
+    },
+
     async writeFile(pathLike: PathLike, content: string): Promise<void> {
       const path = normalizePath(pathLike);
       const existing = state.entries.get(path);
@@ -901,6 +924,7 @@ export interface SpyFileSystemBoundary extends FileSystemBoundary {
   copyTree: Mock<FileSystemBoundary["copyTree"]>;
   makeExecutable: Mock<FileSystemBoundary["makeExecutable"]>;
   writeFileBuffer: Mock<FileSystemBoundary["writeFileBuffer"]>;
+  readFileBuffer: Mock<FileSystemBoundary["readFileBuffer"]>;
   rename: Mock<FileSystemBoundary["rename"]>;
   mkdtemp: Mock<FileSystemBoundary["mkdtemp"]>;
   /** State access for behavioral mock */
@@ -939,6 +963,7 @@ export function createSpyFileSystemBoundary(
     copyTree: vi.fn(mock.copyTree.bind(mock)),
     makeExecutable: vi.fn(mock.makeExecutable.bind(mock)),
     writeFileBuffer: vi.fn(mock.writeFileBuffer.bind(mock)),
+    readFileBuffer: vi.fn(mock.readFileBuffer.bind(mock)),
     rename: vi.fn(mock.rename.bind(mock)),
     mkdtemp: vi.fn(mock.mkdtemp.bind(mock)),
     $: mock.$,

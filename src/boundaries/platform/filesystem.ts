@@ -225,6 +225,19 @@ export interface FileSystemBoundary {
   writeFileBuffer(path: PathLike, content: Buffer): Promise<void>;
 
   /**
+   * Read binary content from file.
+   *
+   * @param path - Absolute path to file (Path object or string)
+   * @throws FileSystemError with code ENOENT if file not found
+   * @throws FileSystemError with code EACCES if permission denied
+   * @throws FileSystemError with code EISDIR if path is a directory
+   *
+   * @example Read binary data
+   * const png = await fs.readFileBuffer('/path/to/image.png');
+   */
+  readFileBuffer(path: PathLike): Promise<Buffer>;
+
+  /**
    * Rename (move) a file or directory atomically.
    * This is the standard pattern for atomic file writes:
    * 1. Write to a temp file
@@ -484,6 +497,16 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     this.logger.debug("WriteBuffer", { path: nativePath, size: content.length });
     try {
       await fs.writeFile(nativePath, content);
+    } catch (error) {
+      throw mapError(error, nativePath);
+    }
+  }
+
+  async readFileBuffer(filePath: PathLike): Promise<Buffer> {
+    const nativePath = toNativePath(filePath);
+    this.logger.debug("ReadBuffer", { path: nativePath });
+    try {
+      return await fs.readFile(nativePath);
     } catch (error) {
       throw mapError(error, nativePath);
     }
