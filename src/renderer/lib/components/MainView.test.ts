@@ -24,13 +24,8 @@ const { mockApi, stateCallbacks } = vi.hoisted(() => {
       emitEvent: vi.fn(),
       projects: {
         open: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
       },
       workspaces: {
-        remove: vi.fn().mockResolvedValue({ started: true }),
-        getStatus: vi
-          .fn()
-          .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
         hibernate: vi.fn().mockResolvedValue({ started: true }),
         wake: vi.fn().mockResolvedValue(null),
       },
@@ -57,12 +52,10 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
-import { asProjectId, asWorkspaceRef } from "@shared/test-fixtures";
 
 /** Deliver a snapshot through the captured onState callback (real holder). */
 function pushState(state: UiState): void {
@@ -92,7 +85,7 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
   });
 }
 
-const WS1 = makeUiWorkspaceRow("feature-1", { base: "main" });
+const WS1 = makeUiWorkspaceRow("feature-1");
 const WS1_ACTIVE = { ...WS1, active: true };
 const PROJECT = makeUiProjectRow([WS1]);
 
@@ -101,7 +94,6 @@ describe("MainView component", () => {
     vi.clearAllMocks();
     stateCallbacks.length = 0;
     resetUiState();
-    dialogsStore.reset();
     shortcutsStore.reset();
     dialogFrameworkStore.reset();
   });
@@ -197,33 +189,6 @@ describe("MainView component", () => {
     });
   });
 
-  describe("dialogs", () => {
-    it("renders RemoveWorkspaceDialog when dialog type is 'remove'", async () => {
-      await renderMainView();
-      pushState(makeUiState([PROJECT]));
-
-      dialogsStore.openRemoveDialog(asWorkspaceRef(asProjectId(PROJECT.id), WS1.name, WS1.path));
-
-      await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        expect(screen.getByRole("heading", { name: /remove workspace/i })).toBeInTheDocument();
-      });
-    });
-
-    it("renders CloseProjectDialog with the snapshot project row", async () => {
-      await renderMainView();
-      pushState(makeUiState([PROJECT]));
-
-      dialogsStore.openCloseProjectDialog(asProjectId(PROJECT.id));
-
-      await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
-        // Workspace count comes from the snapshot row
-        expect(screen.getByText(/1 workspace/)).toBeInTheDocument();
-      });
-    });
-  });
-
   describe("actions", () => {
     it("clicking a workspace invokes switchWorkspace without eager local state", async () => {
       await renderMainView();
@@ -252,15 +217,29 @@ describe("MainView component", () => {
       expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(null);
     });
 
-    it("close-project opens the confirm dialog", async () => {
+    it("close-project emits the close-project ui:event (dialog opens main-side)", async () => {
       await renderMainView();
       pushState(makeUiState([PROJECT]));
       await waitFor(() => expect(screen.getByText("test-project")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByLabelText(/close project/i));
 
-      await waitFor(() => {
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "close-project",
+        projectId: PROJECT.id,
+      });
+    });
+
+    it("the workspace remove button emits the remove-workspace ui:event", async () => {
+      await renderMainView();
+      pushState(makeUiState([PROJECT]));
+      await waitFor(() => expect(screen.getByText("feature-1")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole("button", { name: "Remove workspace" }));
+
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "remove-workspace",
+        key: WS1.key,
       });
     });
   });
@@ -276,7 +255,7 @@ describe("MainView component", () => {
       });
     });
 
-    it("pushes dialog mode when a renderer dialog opens and workspace mode when it closes", async () => {
+    it("pushes dialog mode when a modal framework dialog opens and workspace mode when it closes", async () => {
       await renderMainView();
       pushState(
         makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
@@ -284,12 +263,19 @@ describe("MainView component", () => {
         })
       );
 
-      dialogsStore.openRemoveDialog(asWorkspaceRef(asProjectId(PROJECT.id), WS1.name, WS1.path));
+      dialogFrameworkStore.processCommand({
+        action: "open",
+        dialogId: "dlg-confirm-1",
+        config: {
+          modal: true,
+          sections: [{ type: "text", content: "Remove Workspace", style: "heading" }],
+        },
+      });
       await waitFor(() => {
         expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
       });
 
-      dialogsStore.closeDialog();
+      dialogFrameworkStore.processCommand({ action: "close", dialogId: "dlg-confirm-1" });
       await waitFor(() => {
         expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
       });

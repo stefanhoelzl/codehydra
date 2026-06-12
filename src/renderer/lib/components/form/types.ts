@@ -11,6 +11,7 @@ export type RadioSectionConfig = Extract<DialogSection, { type: "radio" }>;
 export type DropdownSectionConfig = Extract<DialogSection, { type: "dropdown" }>;
 export type TableSectionConfig = Extract<DialogSection, { type: "table" }>;
 export type InputSectionConfig = Extract<DialogSection, { type: "input" }>;
+export type CheckboxSectionConfig = Extract<DialogSection, { type: "checkbox" }>;
 export type GroupSectionConfig = Extract<DialogSection, { type: "group" }>;
 
 export type GroupItem = GroupSectionConfig["items"][number];
@@ -19,7 +20,7 @@ export type ButtonItem = Extract<GroupItem, { type: "button" }>;
 /** Sections that hold a user-editable value (top-level or nested in groups). */
 export type FieldSectionConfig = Extract<
   DialogSection | GroupItem,
-  { type: "input" | "radio" | "dropdown" }
+  { type: "input" | "radio" | "dropdown" | "checkbox" }
 >;
 
 /** Section layout mode; see DialogConfig.layout. */
@@ -40,6 +41,8 @@ export interface SectionHandlers {
   readonly onPick: (section: DropdownSectionConfig, value: string) => void;
   /** A dropdown's text was typed (every keystroke). */
   readonly onType: (section: DropdownSectionConfig, text: string) => void;
+  /** A checkbox section was toggled. */
+  readonly onToggle: (section: CheckboxSectionConfig, checked: boolean) => void;
   /** A button was clicked. */
   readonly onAction: (button: ButtonItem) => void;
   /** A field requested the primary action (Enter). */

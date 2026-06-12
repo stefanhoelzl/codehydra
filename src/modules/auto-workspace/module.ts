@@ -682,7 +682,12 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       },
       [EVENT_WORKSPACE_DELETED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
+          const { workspacePath, worktreeRemoved } = (event as WorkspaceDeletedEvent).payload;
+
+          // Runtime-only teardown (e.g. the per-workspace teardown during
+          // project:close) is not a deletion: the worktree stays on disk and
+          // tracking must survive a close/reopen cycle.
+          if (!worktreeRemoved) return;
 
           for (const [key, entry] of Object.entries(entries)) {
             if (entry?.workspacePath === workspacePath) {

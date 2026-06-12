@@ -128,7 +128,13 @@ import {
   EVENT_PROJECT_OPEN_FAILED,
 } from "./intents/open-project";
 import type { OpenProjectPayload } from "./intents/open-project";
-import { CloseProjectOperation, INTENT_CLOSE_PROJECT } from "./intents/close-project";
+import {
+  CloseProjectOperation,
+  INTENT_CLOSE_PROJECT,
+  EVENT_PROJECT_CLOSED,
+  EVENT_PROJECT_CLOSE_FAILED,
+  type CloseProjectPayload,
+} from "./intents/close-project";
 import {
   SwitchWorkspaceOperation,
   INTENT_SWITCH_WORKSPACE,
@@ -447,6 +453,13 @@ const idempotencyModule = createIdempotencyModule([
       return undefined; // select-folder case: no dedup
     },
     resetOn: [EVENT_PROJECT_OPENED, EVENT_PROJECT_OPEN_FAILED],
+  },
+  {
+    // An interactive close parks on its confirm dialog; the guard keeps a
+    // second close gesture from opening a second dialog meanwhile.
+    intentType: INTENT_CLOSE_PROJECT,
+    getKey: (p) => (p as CloseProjectPayload).projectPath,
+    resetOn: [EVENT_PROJECT_CLOSED, EVENT_PROJECT_CLOSE_FAILED],
   },
 ]);
 
@@ -869,6 +882,8 @@ const presentationModule = createPresentationModule({
   windowManager,
   fileSystem: fileSystemLayer,
   pathProvider,
+  dialogManager,
+  dispatcher,
 });
 
 const hibernationScreenshotModule = createHibernationScreenshotModule({

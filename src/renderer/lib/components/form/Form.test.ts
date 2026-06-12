@@ -521,6 +521,97 @@ describe("Form component", () => {
 
   // ---- Buttons (action events) ----
 
+  // ---- Checkbox value semantics ----
+
+  describe("checkbox value semantics", () => {
+    function checkboxConfig(options?: { value?: boolean; changeEvent?: boolean }): DialogConfig {
+      return {
+        sections: [
+          {
+            type: "checkbox",
+            id: "keep",
+            label: "Keep branch",
+            ...(options?.value !== undefined && { value: options.value }),
+            ...(options?.changeEvent !== undefined && { changeEvent: options.changeEvent }),
+          },
+          {
+            type: "group",
+            items: [{ type: "button", id: "confirm", label: "Confirm", variant: "primary" }],
+          },
+        ],
+      };
+    }
+
+    function getCheckbox(): HTMLElement & { checked: boolean } {
+      return document.querySelector("vscode-checkbox") as HTMLElement & { checked: boolean };
+    }
+
+    async function toggle(checked: boolean): Promise<void> {
+      const checkbox = getCheckbox();
+      checkbox.checked = checked;
+      await fireEvent(checkbox, new Event("change", { bubbles: true }));
+    }
+
+    async function submittedValue(): Promise<string | undefined> {
+      await fireEvent.click(screen.getByText("Confirm"));
+      const call = mockSendDialogEvent.mock.calls.at(-1)?.[0] as
+        | { data?: Record<string, string> }
+        | undefined;
+      return call?.data?.["keep"];
+    }
+
+    it("defaults to false and reports the string form in action data", async () => {
+      renderForm(checkboxConfig(), { dialogId: "cb" });
+
+      expect(await submittedValue()).toBe("false");
+    });
+
+    it("a toggle is tracked and reported as true", async () => {
+      renderForm(checkboxConfig(), { dialogId: "cb" });
+
+      await toggle(true);
+
+      expect(await submittedValue()).toBe("true");
+    });
+
+    it("changeEvent: true emits an immediate field-change with the snapshot", async () => {
+      renderForm(checkboxConfig({ changeEvent: true }), { dialogId: "cb" });
+
+      await toggle(true);
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        kind: "change",
+        dialogId: "cb",
+        fieldId: "keep",
+        data: { keep: "true" },
+      });
+    });
+
+    it("re-sending the same pushed value preserves the user's toggle", async () => {
+      const { rerender } = renderForm(checkboxConfig({ value: false }), { dialogId: "cb" });
+
+      await toggle(true);
+      // Backend re-sends value: false (e.g. alongside an unrelated update).
+      await rerender({ dialogId: "cb", config: checkboxConfig({ value: false }) });
+
+      expect(await submittedValue()).toBe("true");
+    });
+
+    it("pushing a DIFFERENT value adopts it over the user's toggle", async () => {
+      const { rerender } = renderForm(checkboxConfig({ value: false }), { dialogId: "cb" });
+
+      await toggle(true);
+      // Backend forces the box off (e.g. a checkbox interlock): true -> false
+      // only adopts when the pushed value differs from the last adopted one,
+      // so the backend echoes its model: push true (tracking the toggle),
+      // then push false (the forced state).
+      await rerender({ dialogId: "cb", config: checkboxConfig({ value: true }) });
+      await rerender({ dialogId: "cb", config: checkboxConfig({ value: false }) });
+
+      expect(await submittedValue()).toBe("false");
+    });
+  });
+
   describe("buttons", () => {
     it("clicking a button calls sendDialogEvent with correct dialogId and actionId", async () => {
       const config: DialogConfig = {
@@ -1066,6 +1157,63 @@ describe("Form component", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(document.activeElement?.id).toBe("b-input");
+    });
+
+    it("keeps focus when an update inserts sections above the focused control (stable keys)", async () => {
+      // Mirrors a confirm dialog whose async warnings arrive while the Cancel
+      // button holds focus: the group keeps its identity-derived key, so its
+      // DOM survives the insertion and focus never leaves.
+      const buttonConfig = (withWarning: boolean): DialogConfig => ({
+        sections: [
+          ...(withWarning ? [{ type: "text", content: "Careful", style: "warning" } as const] : []),
+          {
+            type: "group",
+            items: [
+              { type: "button", id: "ok", label: "OK", variant: "primary" },
+              { type: "button", id: "cancel", label: "Cancel", autofocus: true },
+            ],
+          },
+        ],
+      });
+      const { rerender } = renderForm(buttonConfig(false));
+
+      await waitFor(() => {
+        expect(document.activeElement?.textContent).toContain("Cancel");
+      });
+      const focusedBefore = document.activeElement;
+
+      await rerender({ dialogId: "test-dialog", config: buttonConfig(true) });
+
+      // Synchronous, same node: focus was never dropped (no restore needed).
+      expect(document.activeElement).toBe(focusedBefore);
+    });
+
+    it("restores the autofocus target when an update genuinely orphans focus", async () => {
+      // The group's identity changes (different sibling button id), so its
+      // DOM is recreated and focus drops to <body>; the safety net restores
+      // the autofocus target.
+      const groupConfig = (okId: string): DialogConfig => ({
+        sections: [
+          {
+            type: "group",
+            items: [
+              { type: "button", id: okId, label: "OK", variant: "primary" },
+              { type: "button", id: "cancel", label: "Cancel", autofocus: true },
+            ],
+          },
+        ],
+      });
+      const { rerender } = renderForm(groupConfig("ok"));
+
+      await waitFor(() => {
+        expect(document.activeElement?.textContent).toContain("Cancel");
+      });
+
+      await rerender({ dialogId: "test-dialog", config: groupConfig("proceed") });
+
+      await waitFor(() => {
+        expect(document.activeElement?.textContent).toContain("Cancel");
+      });
     });
   });
 

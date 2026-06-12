@@ -1,12 +1,10 @@
 /**
  * UI state contract: the full semantic UI snapshot pushed main → renderer on
- * the api:ui:state channel (Phase B of planning/UI_STATE_ARCHITECTURE.md).
+ * the api:ui:state channel (planning/UI_STATE_ARCHITECTURE.md).
  *
- * Phase B is a shadow: the presenter builds and pushes snapshots, but the
- * renderer does not consume them yet. The shape is the final render-ready
- * view-model: regions are self-contained (the renderer never joins), rows
- * carry presenter-assigned opaque keys, and `main` describes what the main
- * view shows.
+ * The shape is the final render-ready view-model: regions are self-contained
+ * (the renderer never joins), rows carry presenter-assigned opaque keys, and
+ * `main` describes what the main view shows.
  *
  * NOTE: This file must be browser-compatible (no Node.js imports).
  */
@@ -24,19 +22,13 @@ export interface UiWorkspaceRow {
    */
   readonly key: string;
   /**
-   * TRANSITIONAL (read-cutover only): real worktree path, echoed back into
-   * the path-keyed write invokes the renderer still makes. Creating
-   * placeholders carry a synthetic `__pending__/...` path. Deleted in the
-   * write-path phase, when ui:events carry `key` instead.
+   * TRANSITIONAL (until the write-path phase): real worktree path, echoed
+   * back into the path-keyed write invokes the renderer still makes (switch,
+   * hibernate, wake). Creating placeholders carry a synthetic
+   * `__pending__/...` path. Deleted when those ui:events carry `key` instead.
    */
   readonly path: string;
   readonly name: string;
-  /**
-   * TRANSITIONAL (until dialogs move to main): base branch the workspace was
-   * created from, shown by the renderer-local remove dialog's unmerged-commits
-   * warning.
-   */
-  readonly base?: string;
   readonly status: "creating" | "ready" | "deleting" | "delete-failed";
   readonly hibernated: boolean;
   readonly agent: AgentStatus;
@@ -46,15 +38,10 @@ export interface UiWorkspaceRow {
 
 export interface UiProjectRow {
   readonly id: string;
-  /**
-   * TRANSITIONAL (read-cutover only): project path, echoed back into the
-   * path-keyed `projects.close` invoke. Deleted in the write-path phase.
-   */
-  readonly path: string;
   readonly name: string;
   /** Tooltip text: the project's remote URL when cloned, else its local path. */
   readonly title: string;
-  /** True for projects cloned from a git URL (drives icon + close-dialog options). */
+  /** True for projects cloned from a git URL (drives the project icon). */
   readonly remote: boolean;
   readonly workspaces: readonly UiWorkspaceRow[];
 }

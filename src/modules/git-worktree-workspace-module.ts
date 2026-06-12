@@ -42,7 +42,11 @@ import type {
   PreflightHookResult,
 } from "../intents/delete-workspace";
 import type { DiscoverHookResult, DiscoverHookInput } from "../intents/open-project";
-import type { CloseHookInput } from "../intents/close-project";
+import type {
+  CloseHookInput,
+  CloseResolveHookResult,
+  CloseProjectIntent,
+} from "../intents/close-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
@@ -227,8 +231,20 @@ export function createGitWorktreeWorkspaceModule(
         },
       },
 
-      // close-project -> close
+      // close-project -> resolve + close
       [CLOSE_PROJECT_OPERATION_ID]: {
+        // resolve: contribute the project's workspace list. The operation
+        // tears each down (runtime teardown), upgrades to full deletion on a
+        // confirmed removeAll, and the confirm dialog shows the count.
+        resolve: {
+          handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
+            const intent = ctx.intent as CloseProjectIntent;
+            const key = new Path(intent.payload.projectPath).toString();
+            const list = workspaces.get(key) ?? [];
+            // IPC-shaped contract: paths cross the hook boundary as strings.
+            return { workspaces: list.map((workspace) => ({ path: workspace.path.toString() })) };
+          },
+        },
         close: {
           handler: async (ctx: HookContext): Promise<Record<string, never>> => {
             const { projectPath } = ctx as CloseHookInput;

@@ -16,18 +16,14 @@
   - Subscribe to the surviving domain events (notification chimes) via
     setupDomainEventBindings
   - Sync dialog state with main process z-order
-  - Render Sidebar, WorkspaceFrames, dialogs, panel, and ShortcutOverlay
+  - Render Sidebar, WorkspaceFrames, panel, and ShortcutOverlay. The remove
+    and close-project confirmations are main-side declarative dialogs now:
+    the gestures emit ui:events and the dialogs arrive via the framework.
 -->
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import * as api from "$lib/api";
   import { uiState } from "$lib/stores/ui-state.svelte.js";
-  import {
-    dialogState,
-    openRemoveDialog,
-    openCloseProjectDialog,
-    closeDialog,
-  } from "$lib/stores/dialogs.svelte.js";
   import {
     shortcutModeActive,
     setDialogOpen,
@@ -46,8 +42,6 @@
   import Sidebar from "./Sidebar.svelte";
   import WorkspaceFrames from "./WorkspaceFrames.svelte";
   import NotificationHost from "./NotificationHost.svelte";
-  import RemoveWorkspaceDialog from "./RemoveWorkspaceDialog.svelte";
-  import CloseProjectDialog from "./CloseProjectDialog.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
 
@@ -57,7 +51,7 @@
     processCommand as processFrameworkDialog,
   } from "$lib/stores/dialog-framework.svelte.js";
   import PanelView from "./PanelView.svelte";
-  import type { ProjectId, WorkspaceRef } from "$lib/api";
+  import type { WorkspaceRef } from "$lib/api";
 
   const logger = createLogger("ui");
 
@@ -96,21 +90,11 @@
 
   // ============ ui-mode sync ============
 
-  // Sync dialog state to central ui-mode store
-  // Includes both renderer-side dialogs (remove/close-project) and declarative framework dialogs
+  // Sync dialog state to central ui-mode store (modal framework dialogs are
+  // the only dialogs left — the confirmations are framework sessions now).
   $effect(() => {
     const hasModalFrameworkDialog = [...dialogs.value.values()].some((entry) => entry.config.modal);
-    const isDialogOpen = dialogState.value.type !== "closed" || hasModalFrameworkDialog;
-    setDialogOpen(isDialogOpen);
-  });
-
-  // Close renderer-side dialog when a modal framework dialog opens
-  // (framework dialogs have lower z-index and would be hidden otherwise)
-  $effect(() => {
-    const hasModalFrameworkDialog = [...dialogs.value.values()].some((entry) => entry.config.modal);
-    if (hasModalFrameworkDialog && dialogState.value.type !== "closed") {
-      closeDialog();
-    }
+    setDialogOpen(hasModalFrameworkDialog);
   });
 
   // Sync desiredMode with main process (single IPC sync point)
@@ -188,15 +172,14 @@
     };
   });
 
-  // Handle closing a project
-  function handleCloseProject(projectId: ProjectId): void {
+  // Handle closing a project: request the flow from main (the confirmation
+  // dialog opens main-side, parking the project:close dispatch).
+  function handleCloseProject(projectId: string): void {
     if (!projectRows.some((project) => project.id === projectId)) {
       return;
     }
-    // Always show dialog for closing projects, even if empty
-    // User should confirm they want to stop tracking the project
-    logger.debug("Dialog opened", { type: "close-project" });
-    openCloseProjectDialog(projectId);
+    logger.debug("Close project requested", { projectId });
+    api.emitEvent({ kind: "close-project", projectId });
   }
 
   // Handle switching workspace. No eager local state: the snapshot push
@@ -214,10 +197,12 @@
     void api.ui.switchWorkspace(null);
   }
 
-  // Handle opening remove dialog
-  function handleOpenRemoveDialog(workspaceRef: WorkspaceRef): void {
-    logger.debug("Dialog opened", { type: "remove-workspace" });
-    openRemoveDialog(workspaceRef);
+  // Handle removing a workspace: request the flow from main with the row's
+  // snapshot key (the confirmation dialog opens main-side, parking the
+  // workspace:delete dispatch).
+  function handleRemoveWorkspace(key: string): void {
+    logger.debug("Remove workspace requested", { key });
+    api.emitEvent({ kind: "remove-workspace", key });
   }
 </script>
 
@@ -231,19 +216,8 @@
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
     onOpenNewWorkspace={handleOpenNewWorkspace}
-    onOpenRemoveDialog={handleOpenRemoveDialog}
+    onRemoveWorkspace={handleRemoveWorkspace}
   />
-
-  {#if dialogState.value.type === "remove"}
-    {@const removePath = dialogState.value.workspaceRef.path}
-    <RemoveWorkspaceDialog
-      workspaceRef={dialogState.value.workspaceRef}
-      baseBranch={allRows.find((row) => row.path === removePath)?.base}
-    />
-  {:else if dialogState.value.type === "close-project"}
-    {@const closeId = dialogState.value.projectId}
-    <CloseProjectDialog project={projectRows.find((project) => project.id === closeId)} />
-  {/if}
 
   <ShortcutOverlay
     active={shortcutModeActive.value}

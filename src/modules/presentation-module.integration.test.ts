@@ -34,7 +34,8 @@ import type { Project, ProjectId, Workspace, WorkspaceName } from "../shared/api
 import type { WorkspacePath } from "../shared/ipc";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
 import { EVENT_PROJECT_OPENED } from "../intents/open-project";
-import { EVENT_PROJECT_CLOSED } from "../intents/close-project";
+import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
+import type { CloseConfirmHookResult } from "../intents/close-project";
 import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
@@ -48,6 +49,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
 import { createPresentationModule } from "./presentation-module";
+import { createMockDialogManager } from "./dialog-manager.state-mock";
 
 // =============================================================================
 // Test setup helpers
@@ -57,6 +59,7 @@ const PROJECT_ID = "alpha-12345678" as ProjectId;
 const PROJECT_PATH = "/projects/alpha";
 
 function createDeps() {
+  const dialogs = createMockDialogManager();
   return {
     ipcLayer: createBehavioralIpcBoundary(),
     loggingService: createMockLogging(),
@@ -75,6 +78,10 @@ function createDeps() {
     pathProvider: {
       dataPath: (subpath: string) => new Path(`/data/${subpath}`),
     } as unknown as PathProvider,
+    dialogManager: dialogs.manager,
+    dispatcher: createMockDispatcher(),
+    /** Test-side view of dialogs the presenter opened. */
+    dialogs,
   };
 }
 type Deps = ReturnType<typeof createDeps>;
@@ -161,12 +168,10 @@ describe("PresentationModule - ui:event intake", () => {
 
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "switch-workspace" });
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: "sidebar" });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "close-project", projectId: "p-1234" });
 
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "switch-workspace" });
     expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "hover" });
-    expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "close-project" });
     expect(logger?.warn).not.toHaveBeenCalled();
   });
 
@@ -310,7 +315,6 @@ describe("PresentationModule - ui:state snapshots", () => {
         projects: [
           {
             id: PROJECT_ID,
-            path: PROJECT_PATH,
             name: "alpha",
             title: PROJECT_PATH,
             remote: false,
@@ -408,7 +412,6 @@ describe("PresentationModule - ui:state snapshots", () => {
         // Placeholder rows carry the renderer-compatible synthetic path.
         path: `__pending__/${PROJECT_PATH}/feat`,
         name: "feat",
-        base: "main",
         status: "creating",
         hibernated: false,
         agent: { type: "none" },
@@ -447,7 +450,6 @@ describe("PresentationModule - ui:state snapshots", () => {
         key: `${PROJECT_ID}/feat`,
         path: `${PROJECT_PATH}/.worktrees/feat`,
         name: "feat",
-        base: "main",
         status: "ready",
         hibernated: false,
         agent: { type: "none" },
@@ -752,5 +754,262 @@ describe("PresentationModule - shutdown", () => {
     } as AppShutdownIntent);
 
     expect(deps.ipcLayer._getListeners(ApiIpcChannels.UI_EVENT)).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// Load-bearing ui:event routing (remove-workspace / close-project)
+// =============================================================================
+
+describe("PresentationModule - ui:event routing", () => {
+  /** Replace the deps dispatcher with a recording stub. */
+  function recordDispatches(deps: Deps): Array<{ type: string; payload: unknown }> {
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+    } as unknown as Deps["dispatcher"];
+    return dispatched;
+  }
+
+  it("remove-workspace resolves the key and dispatches an interactive delete", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "remove-workspace",
+      key: `${PROJECT_ID}/main`,
+    });
+
+    expect(dispatched).toEqual([
+      {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: workspace.path,
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+          interactive: true,
+        },
+      },
+    ]);
+  });
+
+  it("drops remove-workspace for a stale key with a warning", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "remove-workspace",
+      key: `${PROJECT_ID}/vanished`,
+    });
+
+    expect(dispatched).toHaveLength(0);
+    const logger = deps.loggingService.getLogger("presenter");
+    expect(logger?.warn).toHaveBeenCalledWith("Dropped remove-workspace for unknown key", {
+      key: `${PROJECT_ID}/vanished`,
+    });
+  });
+
+  it("drops remove-workspace for a creating placeholder (nothing to delete yet)", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "feat",
+      projectPath: PROJECT_PATH,
+    });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "remove-workspace",
+      key: `${PROJECT_ID}/feat`,
+    });
+
+    expect(dispatched).toHaveLength(0);
+  });
+
+  it("close-project resolves the projectId and dispatches an interactive close", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "close-project",
+      projectId: PROJECT_ID,
+    });
+
+    expect(dispatched).toEqual([
+      {
+        type: "project:close",
+        payload: { projectPath: PROJECT_PATH, interactive: true },
+      },
+    ]);
+  });
+
+  it("drops close-project for an unknown projectId with a warning", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    createPresentationModule(deps);
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "close-project",
+      projectId: "ghost-00000000",
+    });
+
+    expect(dispatched).toHaveLength(0);
+    const logger = deps.loggingService.getLogger("presenter");
+    expect(logger?.warn).toHaveBeenCalledWith("Dropped close-project for unknown project", {
+      projectId: "ghost-00000000",
+    });
+  });
+});
+
+// =============================================================================
+// Close-project confirmation dialog (the "confirm" hook on project:close)
+// =============================================================================
+
+describe("PresentationModule - close confirm", () => {
+  function runConfirm(
+    deps: Deps,
+    input: { remoteUrl?: string; workspaceCount?: number }
+  ): Promise<CloseConfirmHookResult> {
+    const module = createPresentationModule(deps);
+    const workspaces = Array.from({ length: input.workspaceCount ?? 2 }, (_, i) => ({
+      path: `${PROJECT_PATH}/.worktrees/ws${i + 1}`,
+    }));
+    const hookInput = {
+      intent: {
+        type: "project:close",
+        payload: { projectPath: PROJECT_PATH, interactive: true },
+      },
+      projectPath: PROJECT_PATH,
+      ...(input.remoteUrl !== undefined && { remoteUrl: input.remoteUrl }),
+      workspaces,
+    };
+    return module.hooks![CLOSE_PROJECT_OPERATION_ID]!["confirm"]!.handler(
+      hookInput as never
+    ) as Promise<CloseConfirmHookResult>;
+  }
+
+  function buttonLabel(config: { sections: readonly unknown[] }): string | undefined {
+    for (const section of config.sections as Array<{
+      type: string;
+      items?: Array<{ type: string; id: string; label?: string }>;
+    }>) {
+      if (section.type !== "group") continue;
+      return section.items?.find((item) => item.id === "close")?.label;
+    }
+    return undefined;
+  }
+
+  function checkbox(
+    config: { sections: readonly unknown[] },
+    id: string
+  ): { value?: boolean; disabled?: boolean } | undefined {
+    return (
+      config.sections as Array<{ type: string; id?: string; value?: boolean; disabled?: boolean }>
+    ).find((s) => s.type === "checkbox" && s.id === id);
+  }
+
+  it("local project: workspace count, remove-all checkbox, Close Project button", async () => {
+    const deps = createDeps();
+    const pending = runConfirm(deps, { workspaceCount: 2 });
+    const handle = deps.dialogs.lastHandle!;
+
+    expect(handle.config.modal).toBe(true);
+    const texts = (handle.config.sections as Array<{ type: string; content?: string }>)
+      .filter((s) => s.type === "text")
+      .map((s) => s.content);
+    expect(texts).toContain("Close Project");
+    expect(texts).toContain(
+      "This project has 2 workspaces that will remain on disk after closing."
+    );
+    expect(checkbox(handle.config, "remove-all")).toMatchObject({ value: false });
+    expect(checkbox(handle.config, "keep-repo")).toBeUndefined();
+    expect(buttonLabel(handle.config)).toBe("Close Project");
+
+    handle.emitAction("close");
+    await expect(pending).resolves.toEqual({ removeAll: false, removeLocalRepo: false });
+    expect(handle.closed).toBe(true);
+  });
+
+  it("checking remove-all updates the warning and button label, and submits removeAll", async () => {
+    const deps = createDeps();
+    const pending = runConfirm(deps, { workspaceCount: 1 });
+    const handle = deps.dialogs.lastHandle!;
+
+    handle.emitChange("remove-all", { "remove-all": "true" });
+
+    expect(buttonLabel(handle.config)).toBe("Remove & Close");
+    const texts = (handle.config.sections as Array<{ type: string; content?: string }>)
+      .filter((s) => s.type === "text")
+      .map((s) => s.content);
+    expect(texts).toContain(
+      "All workspaces and their branches will be removed, including any uncommitted changes."
+    );
+
+    handle.emitAction("close");
+    await expect(pending).resolves.toEqual({ removeAll: true, removeLocalRepo: false });
+  });
+
+  it("remote project defaults to deleting the repo (remove-all forced + disabled)", async () => {
+    const deps = createDeps();
+    const pending = runConfirm(deps, { remoteUrl: "https://example.com/repo.git" });
+    const handle = deps.dialogs.lastHandle!;
+
+    expect(checkbox(handle.config, "remove-all")).toMatchObject({ value: true, disabled: true });
+    expect(checkbox(handle.config, "keep-repo")).toMatchObject({ value: false });
+    expect(buttonLabel(handle.config)).toBe("Delete & Close");
+    const texts = (handle.config.sections as Array<{ type: string; content?: string }>)
+      .filter((s) => s.type === "text")
+      .map((s) => s.content);
+    expect(
+      texts.some(
+        (t) => t?.includes("permanently delete") && t.includes("https://example.com/repo.git")
+      )
+    ).toBe(true);
+
+    handle.emitAction("close");
+    await expect(pending).resolves.toEqual({ removeAll: true, removeLocalRepo: true });
+  });
+
+  it("keeping the cloned repository withdraws the implied remove-all (interlock)", async () => {
+    const deps = createDeps();
+    const pending = runConfirm(deps, { remoteUrl: "https://example.com/repo.git" });
+    const handle = deps.dialogs.lastHandle!;
+
+    handle.emitChange("keep-repo", { "keep-repo": "true", "remove-all": "true" });
+
+    expect(checkbox(handle.config, "remove-all")).toMatchObject({ value: false });
+    expect(checkbox(handle.config, "remove-all")!.disabled).toBeFalsy();
+    expect(buttonLabel(handle.config)).toBe("Close Project");
+
+    handle.emitAction("close");
+    await expect(pending).resolves.toEqual({ removeAll: false, removeLocalRepo: false });
+  });
+
+  it("Cancel and Escape resolve canceled", async () => {
+    const deps = createDeps();
+    const viaCancel = runConfirm(deps, {});
+    const cancelHandle = deps.dialogs.lastHandle!;
+    cancelHandle.emitAction("cancel");
+    await expect(viaCancel).resolves.toEqual({ canceled: true });
+    expect(cancelHandle.closed).toBe(true);
+
+    const deps2 = createDeps();
+    const viaDismiss = runConfirm(deps2, {});
+    const dismissHandle = deps2.dialogs.lastHandle!;
+    dismissHandle.emitDismiss();
+    await expect(viaDismiss).resolves.toEqual({ canceled: true });
+    expect(dismissHandle.closed).toBe(true);
   });
 });

@@ -45,8 +45,8 @@ describe("ApiIpcChannels (v2 API)", () => {
   });
 
   describe("Workspace commands", () => {
-    it("has WORKSPACE_GET_STATUS channel", () => {
-      expect(ApiIpcChannels.WORKSPACE_GET_STATUS).toBe("api:workspace:get-status");
+    it("has WORKSPACE_HIBERNATE channel", () => {
+      expect(ApiIpcChannels.WORKSPACE_HIBERNATE).toBe("api:workspace:hibernate");
     });
   });
 

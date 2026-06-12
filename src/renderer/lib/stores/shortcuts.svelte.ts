@@ -7,12 +7,10 @@
  */
 
 import * as api from "$lib/api";
-import type { ProjectId, WorkspaceName, WorkspaceRef } from "$lib/api";
 import { createLogger } from "$lib/logging";
 import { getErrorMessage } from "@shared/error-utils";
 import type { UIModeChangedEvent } from "@shared/ipc";
 import type { UiWorkspaceRow } from "@shared/ui-state";
-import { openRemoveDialog } from "./dialogs.svelte";
 import { uiState } from "./ui-state.svelte";
 import { jumpKeyToIndex, type JumpKey, type ShortcutKey } from "@shared/shortcuts";
 
@@ -40,14 +38,6 @@ function allEntries(): NavEntry[] {
 
 function activeEntry(): NavEntry | undefined {
   return allEntries().find((entry) => entry.row.active);
-}
-
-function refOf(entry: NavEntry): WorkspaceRef {
-  return {
-    projectId: entry.projectId as ProjectId,
-    workspaceName: entry.row.name as WorkspaceName,
-    path: entry.row.path,
-  };
 }
 
 /** True while the creation panel is the main view (nothing selected). */
@@ -367,7 +357,9 @@ function handleDialog(key: "enter" | "delete"): void {
     // (delete-failed stays allowed so the user can retry).
     if (entry.row.status === "creating" || entry.row.status === "deleting") return;
     setModeFromMain("workspace");
-    openRemoveDialog(refOf(entry));
+    // Request the remove flow from main: the confirmation dialog opens as a
+    // modal framework session (which drives dialog mode via DialogHost).
+    api.emitEvent({ kind: "remove-workspace", key: entry.row.key });
   }
 }
 

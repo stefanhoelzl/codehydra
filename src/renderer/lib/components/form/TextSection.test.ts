@@ -48,3 +48,41 @@ describe("TextSection component", () => {
     expect(icon).toHaveClass("icon-error");
   });
 });
+
+describe("TextSection alert styles", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("renders warning style as an alert box with the warning class", () => {
+    renderSection({ type: "text", content: "Careful now", style: "warning" });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("section-alert", "warning");
+    expect(alert).toHaveTextContent("Careful now");
+  });
+
+  it("renders error style as an alert box with the error class", () => {
+    renderSection({ type: "text", content: "It broke", style: "error" });
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("section-alert", "error");
+    expect(alert).toHaveTextContent("It broke");
+  });
+
+  it("alert styles default to the warning icon and honor an explicit icon", () => {
+    renderSection({ type: "text", content: "Default icon", style: "warning" });
+    // Svelte assigns custom-element properties, not attributes.
+    const defaultIcon = document.querySelector(".alert-icon vscode-icon") as HTMLElement & {
+      name: string;
+    };
+    expect(defaultIcon.name).toBe("warning");
+
+    document.body.innerHTML = "";
+    renderSection({ type: "text", content: "Custom icon", style: "error", icon: "flame" });
+    const customIcon = document.querySelector(".alert-icon vscode-icon") as HTMLElement & {
+      name: string;
+    };
+    expect(customIcon.name).toBe("flame");
+  });
+});

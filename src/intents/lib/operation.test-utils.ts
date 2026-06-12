@@ -93,6 +93,7 @@ export function createDeleteEventOperation(
           projectId: fields.projectId ?? ("test-12345678" as ProjectId),
           workspaceName: fields.workspaceName ?? ("ws" as WorkspaceName),
           workspacePath: ctx.intent.payload.workspacePath,
+          worktreeRemoved: ctx.intent.payload.removeWorktree,
           projectPath: fields.projectPath ?? "/projects/test",
         },
       };

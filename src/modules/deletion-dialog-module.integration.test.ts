@@ -16,11 +16,16 @@ import {
   EVENT_WORKSPACE_DELETION_PROGRESS,
   EVENT_WORKSPACE_DELETED,
   INTENT_DELETE_WORKSPACE,
+  DELETE_WORKSPACE_OPERATION_ID,
 } from "../intents/delete-workspace";
+import type { ConfirmHookResult } from "../intents/delete-workspace";
+import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
+import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { createDeletionDialogModule } from "./deletion-dialog-module";
 import { createMockDialogManager } from "./dialog-manager.state-mock";
 import type { IntentModule } from "../intents/lib/module";
+import type { HookContext } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
@@ -438,5 +443,198 @@ describe("DeletionDialogModule", () => {
     // Switching back to workspace A should not re-open dialog (progress was cleaned up)
     await fireSwitched(WS_PATH_A);
     expect(dialogManager.manager.open).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// Remove confirmation (the "confirm" hook on workspace:delete)
+// =============================================================================
+
+describe("DeletionDialogModule - remove confirm", () => {
+  interface ConfirmSetup {
+    dialogManager: ReturnType<typeof createMockDialogManager>;
+    /** Resolve the background status/metadata dispatches. */
+    resolveStatus(status: { isDirty: boolean; unmergedCommits: number }): void;
+    resolveMetadata(metadata: Record<string, string>): void;
+    rejectStatus(error: Error): void;
+    /** Run the confirm hook (parks until the dialog answers). */
+    confirm(): Promise<ConfirmHookResult>;
+  }
+
+  function createConfirmSetup(): ConfirmSetup {
+    const dialogManager = createMockDialogManager();
+
+    let resolveStatusFn!: (status: unknown) => void;
+    let rejectStatusFn!: (error: Error) => void;
+    const statusPromise = new Promise((resolve, reject) => {
+      resolveStatusFn = resolve;
+      rejectStatusFn = reject;
+    });
+    let resolveMetadataFn!: (metadata: unknown) => void;
+    const metadataPromise = new Promise((resolve) => {
+      resolveMetadataFn = resolve;
+    });
+
+    const dispatcher = {
+      dispatch: vi.fn((intent: { type: string }) => {
+        if (intent.type === INTENT_GET_WORKSPACE_STATUS) return statusPromise;
+        if (intent.type === INTENT_GET_METADATA) return metadataPromise;
+        return Promise.resolve();
+      }),
+    };
+
+    const module = createDeletionDialogModule({
+      dialogManager: dialogManager.manager,
+      dispatcher: dispatcher as unknown as Dispatcher,
+      logger: SILENT_LOGGER,
+    });
+
+    const confirm = (): Promise<ConfirmHookResult> =>
+      module.hooks![DELETE_WORKSPACE_OPERATION_ID]!["confirm"]!.handler({
+        intent: {
+          type: INTENT_DELETE_WORKSPACE,
+          payload: {
+            workspacePath: WS_PATH_A,
+            keepBranch: false,
+            force: false,
+            removeWorktree: true,
+            interactive: true,
+          },
+        },
+        projectPath: "/projects",
+        workspacePath: WS_PATH_A,
+        workspaceName: WS_NAME_A,
+        active: true,
+      } as unknown as HookContext) as Promise<ConfirmHookResult>;
+
+    return {
+      dialogManager,
+      resolveStatus: (status) => resolveStatusFn(status),
+      resolveMetadata: (metadata) => resolveMetadataFn(metadata),
+      rejectStatus: (error) => rejectStatusFn(error),
+      confirm,
+    };
+  }
+
+  /** Flatten the dialog's text contents for assertions. */
+  function textsOf(config: { sections: readonly { type: string }[] }): string[] {
+    return config.sections
+      .filter((s): s is { type: "text"; content: string } => s.type === "text")
+      .map((s) => s.content);
+  }
+
+  it("opens the dialog immediately with a checking notice and keep-branch checkbox", async () => {
+    const setup = createConfirmSetup();
+
+    const pending = setup.confirm();
+
+    const handle = setup.dialogManager.lastHandle!;
+    expect(handle).toBeTruthy();
+    expect(handle.config.modal).toBe(true);
+    expect(textsOf(handle.config)).toEqual([
+      "Remove Workspace",
+      `Remove workspace "${WS_NAME_A}"?`,
+      "Checking workspace status...",
+    ]);
+    expect(handle.config.sections).toContainEqual({
+      type: "checkbox",
+      id: "keep-branch",
+      label: "Keep branch",
+    });
+
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("fills warnings in when the background status check lands", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+
+    setup.resolveStatus({ isDirty: true, unmergedCommits: 2 });
+    setup.resolveMetadata({ base: "develop" });
+    await vi.waitFor(() => {
+      const handle = setup.dialogManager.lastHandle!;
+      expect(handle.configs.length).toBeGreaterThan(1);
+    });
+
+    const handle = setup.dialogManager.lastHandle!;
+    const texts = textsOf(handle.config);
+    expect(texts).toContain("This workspace has uncommitted changes that will be lost.");
+    expect(texts).toContain("This branch has 2 commits not merged into develop.");
+    expect(texts).not.toContain("Checking workspace status...");
+    // Warnings carry the warning style.
+    const warnings = handle.config.sections.filter(
+      (s) => s.type === "text" && "style" in s && s.style === "warning"
+    );
+    expect(warnings).toHaveLength(2);
+
+    handle.emitAction("cancel");
+    await pending;
+  });
+
+  it("falls back to no warnings when the status check fails", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+
+    setup.rejectStatus(new Error("git broke"));
+    await vi.waitFor(() => {
+      expect(setup.dialogManager.lastHandle!.configs.length).toBeGreaterThan(1);
+    });
+
+    const texts = textsOf(setup.dialogManager.lastHandle!.config);
+    expect(texts).toEqual(["Remove Workspace", `Remove workspace "${WS_NAME_A}"?`]);
+
+    setup.dialogManager.lastHandle!.emitAction("cancel");
+    await pending;
+  });
+
+  it("Remove resolves with the keep-branch answer and closes the dialog", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    const handle = setup.dialogManager.lastHandle!;
+
+    handle.emitAction("remove", { "keep-branch": "true" });
+
+    await expect(pending).resolves.toEqual({ keepBranch: true });
+    expect(handle.closed).toBe(true);
+  });
+
+  it("Cancel resolves canceled and closes the dialog", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    const handle = setup.dialogManager.lastHandle!;
+
+    handle.emitAction("cancel", { "keep-branch": "false" });
+
+    await expect(pending).resolves.toEqual({ canceled: true });
+    expect(handle.closed).toBe(true);
+  });
+
+  it("Escape (dismiss) resolves canceled", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    const handle = setup.dialogManager.lastHandle!;
+
+    handle.emitDismiss();
+
+    await expect(pending).resolves.toEqual({ canceled: true });
+    expect(handle.closed).toBe(true);
+  });
+
+  it("a status result landing after the answer does not update the closed dialog", async () => {
+    const setup = createConfirmSetup();
+    const pending = setup.confirm();
+    const handle = setup.dialogManager.lastHandle!;
+
+    handle.emitAction("remove", { "keep-branch": "false" });
+    await pending;
+    const configCount = handle.configs.length;
+
+    setup.resolveStatus({ isDirty: true, unmergedCommits: 1 });
+    setup.resolveMetadata({});
+    // Give the background task a chance to (incorrectly) update.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(handle.configs.length).toBe(configCount);
   });
 });
