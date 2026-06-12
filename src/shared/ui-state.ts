@@ -31,6 +31,12 @@ export interface UiWorkspaceRow {
    */
   readonly path: string;
   readonly name: string;
+  /**
+   * TRANSITIONAL (until dialogs move to main): base branch the workspace was
+   * created from, shown by the renderer-local remove dialog's unmerged-commits
+   * warning.
+   */
+  readonly base?: string;
   readonly status: "creating" | "ready" | "deleting" | "delete-failed";
   readonly hibernated: boolean;
   readonly agent: AgentStatus;
@@ -48,6 +54,8 @@ export interface UiProjectRow {
   readonly name: string;
   /** Tooltip text: the project's remote URL when cloned, else its local path. */
   readonly title: string;
+  /** True for projects cloned from a git URL (drives icon + close-dialog options). */
+  readonly remote: boolean;
   readonly workspaces: readonly UiWorkspaceRow[];
 }
 

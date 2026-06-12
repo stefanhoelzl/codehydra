@@ -74,6 +74,8 @@ export const {
   lifecycle,
   // Event subscriptions
   on,
+  // UI state snapshots (main process → renderer)
+  onState,
   // UI mode change event
   onModeChange,
   // Shortcut key event (main process → renderer)

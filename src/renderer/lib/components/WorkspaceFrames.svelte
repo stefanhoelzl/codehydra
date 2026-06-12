@@ -2,8 +2,8 @@
   WorkspaceFrames.svelte
 
   Renders one <iframe> per mountable workspace (has a code-server URL and is
-  not hibernated), derived from the projects store. All frames mount eagerly
-  so switching is instant; only the active workspace's frame is visible.
+  not hibernated), from the UiState snapshot's `frames` region. All frames
+  mount eagerly so switching is instant; only the active frame is visible.
 
   Inactive frames are display:none so Chromium suspends their paint/layout.
   visibility:hidden would seem equivalent but makes elements non-focusable,
@@ -32,7 +32,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { projects, activeWorkspacePath } from "$lib/stores/projects.svelte.js";
   import { uiMode } from "$lib/stores/ui-mode.svelte.js";
 
   interface FrameHooks {
@@ -41,30 +40,38 @@
     __chReloadFrames?: () => void;
   }
 
+  /** One mountable workspace frame from the UiState snapshot. */
+  export interface FrameEntry {
+    readonly key: string;
+    readonly url: string;
+    /** Accessible iframe title (workspace name). */
+    readonly title: string;
+  }
+
+  interface WorkspaceFramesProps {
+    /** Mounted frames (snapshot `frames`, joined with names by MainView). */
+    frames: readonly FrameEntry[];
+    /** Frame currently shown (snapshot main.frameKey), null when main shows
+     *  something else (panel, hibernated screen). */
+    activeKey: string | null;
+  }
+
+  let { frames, activeKey }: WorkspaceFramesProps = $props();
+
   const frameEls = new SvelteMap<string, HTMLIFrameElement>();
 
-  // All mountable workspaces: a code-server URL exists and not hibernated.
-  // Hibernating a workspace unmounts its frame (metadata flip); waking
-  // remounts it (workspace:created delivers a fresh URL).
-  const frames = $derived(
-    projects.value
-      .flatMap((p) => p.workspaces)
-      .filter((w) => w.url !== undefined && w.metadata?.["hibernated"] !== "true")
-  );
-
-  function registerFrame(el: HTMLIFrameElement, path: string): { destroy(): void } {
-    frameEls.set(path, el);
+  function registerFrame(el: HTMLIFrameElement, key: string): { destroy(): void } {
+    frameEls.set(key, el);
     return {
       destroy() {
-        frameEls.delete(path);
+        frameEls.delete(key);
       },
     };
   }
 
   function activeFrame(): HTMLIFrameElement | undefined {
-    const path = activeWorkspacePath.value;
-    if (path === null) return undefined;
-    return frameEls.get(path);
+    if (activeKey === null) return undefined;
+    return frameEls.get(activeKey);
   }
 
   /** requestAnimationFrame that tolerates a torn-down frame (unmount, tests). */
@@ -118,9 +125,9 @@
   // flushes layout; the transient transform forces a compositor layer
   // rebuild, which is cleared on the next frame.
   $effect(() => {
-    const path = activeWorkspacePath.value;
-    if (path === null) return;
-    const el = frameEls.get(path);
+    const key = activeKey;
+    if (key === null) return;
+    const el = frameEls.get(key);
     if (!el) return;
 
     void el.offsetHeight;
@@ -174,13 +181,13 @@
 </script>
 
 <div class="workspace-frames">
-  {#each frames as workspace (workspace.path)}
+  {#each frames as frame (frame.key)}
     <iframe
-      use:registerFrame={workspace.path}
-      src={workspace.url}
-      title="Workspace {workspace.name}"
-      data-path={workspace.path}
-      class:active={workspace.path === activeWorkspacePath.value}
+      use:registerFrame={frame.key}
+      src={frame.url}
+      title="Workspace {frame.title}"
+      data-key={frame.key}
+      class:active={frame.key === activeKey}
       allow="clipboard-read; clipboard-write; fullscreen; cross-origin-isolated; autoplay; camera; microphone; display-capture"
       allowfullscreen
     ></iframe>

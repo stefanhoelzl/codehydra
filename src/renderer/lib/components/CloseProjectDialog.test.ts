@@ -4,15 +4,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { Project, ProjectId, Workspace } from "@shared/api/types";
-import { createMockProject, createMockWorkspace } from "@shared/test-fixtures";
+import type { ProjectId } from "@shared/api/types";
+import type { UiProjectRow, UiWorkspaceRow } from "@shared/ui-state";
+import { makeUiProjectRow, makeUiWorkspaceRow } from "../test-utils";
 
 // Create mock functions with vi.hoisted
-const { mockCloseProject, mockRemoveWorkspace, mockCloseDialog, mockProjects } = vi.hoisted(() => ({
+const { mockCloseProject, mockRemoveWorkspace, mockCloseDialog } = vi.hoisted(() => ({
   mockCloseProject: vi.fn(),
   mockRemoveWorkspace: vi.fn(),
   mockCloseDialog: vi.fn(),
-  mockProjects: vi.fn(),
 }));
 
 // Mock $lib/api
@@ -31,37 +31,27 @@ vi.mock("$lib/stores/dialogs.svelte.js", () => ({
   closeDialog: mockCloseDialog,
 }));
 
-// Mock $lib/stores/projects.svelte.js
-vi.mock("$lib/stores/projects.svelte.js", () => ({
-  projects: {
-    get value() {
-      return mockProjects();
-    },
-  },
-}));
-
 // Import component after mocks
 import CloseProjectDialog from "./CloseProjectDialog.svelte";
 
 // Test data
 const testProjectId = "test-project-12345678" as ProjectId;
 
-function createWorkspace(name: string, projectId: ProjectId): Workspace {
-  return createMockWorkspace({ name, projectId, metadata: { base: "main" } });
+function createWorkspace(name: string): UiWorkspaceRow {
+  return makeUiWorkspaceRow(name, { base: "main" });
 }
 
 function createProject(
   id: ProjectId,
   name: string,
-  workspaces: Workspace[] = [],
+  workspaces: UiWorkspaceRow[] = [],
   remoteUrl?: string
-): Project {
-  return createMockProject({
+): UiProjectRow {
+  return makeUiProjectRow(workspaces, {
     id,
     name,
     path: `/test/projects/${name}`,
-    workspaces,
-    ...(remoteUrl !== undefined && { remoteUrl }),
+    ...(remoteUrl !== undefined && { remote: true, title: remoteUrl }),
   });
 }
 
@@ -101,13 +91,13 @@ function getKeepRepoCheckbox(): HTMLElement & { checked?: boolean } {
 
 describe("CloseProjectDialog component", () => {
   const testProject = createProject(testProjectId, "test-project", [
-    createWorkspace("ws1", testProjectId),
-    createWorkspace("ws2", testProjectId),
-    createWorkspace("ws3", testProjectId),
+    createWorkspace("ws1"),
+    createWorkspace("ws2"),
+    createWorkspace("ws3"),
   ]);
 
   const defaultProps = {
-    projectId: testProjectId,
+    project: testProject as UiProjectRow | undefined,
   };
 
   beforeEach(() => {
@@ -115,7 +105,7 @@ describe("CloseProjectDialog component", () => {
     vi.useFakeTimers();
     mockCloseProject.mockResolvedValue(undefined);
     mockRemoveWorkspace.mockResolvedValue({ started: true });
-    mockProjects.mockReturnValue([testProject]);
+    defaultProps.project = testProject;
   });
 
   afterEach(() => {
@@ -140,9 +130,9 @@ describe("CloseProjectDialog component", () => {
 
     it("renders correct pluralization for single workspace", async () => {
       const singleWsProject = createProject(testProjectId, "test-project", [
-        createWorkspace("ws1", testProjectId),
+        createWorkspace("ws1"),
       ]);
-      mockProjects.mockReturnValue([singleWsProject]);
+      defaultProps.project = singleWsProject;
 
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
@@ -162,7 +152,7 @@ describe("CloseProjectDialog component", () => {
 
     it("hides workspace info and checkbox when project has no workspaces", async () => {
       const emptyProject = createProject(testProjectId, "test-project", []);
-      mockProjects.mockReturnValue([emptyProject]);
+      defaultProps.project = emptyProject;
 
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
@@ -182,7 +172,7 @@ describe("CloseProjectDialog component", () => {
 
     it("closes empty project directly without removal calls", async () => {
       const emptyProject = createProject(testProjectId, "test-project", []);
-      mockProjects.mockReturnValue([emptyProject]);
+      defaultProps.project = emptyProject;
 
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
@@ -460,7 +450,7 @@ describe("CloseProjectDialog component", () => {
 
   describe("edge cases", () => {
     it("handles project not found gracefully", async () => {
-      mockProjects.mockReturnValue([]); // Empty projects list
+      defaultProps.project = undefined; // Project already removed elsewhere
 
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();
@@ -473,7 +463,7 @@ describe("CloseProjectDialog component", () => {
     it("handles project becoming undefined during operation", async () => {
       mockCloseProject.mockImplementation(async () => {
         // Simulate project being removed during close
-        mockProjects.mockReturnValue([]);
+        defaultProps.project = undefined;
         return undefined;
       });
 
@@ -491,16 +481,16 @@ describe("CloseProjectDialog component", () => {
   });
 
   describe("remote project (cloned from URL)", () => {
-    const remoteProject: Project = createProject(
+    const remoteProject: UiProjectRow = createProject(
       testProjectId,
       "test-project",
-      [createWorkspace("ws1", testProjectId)],
+      [createWorkspace("ws1")],
       "https://github.com/org/test-repo.git"
     );
 
     beforeEach(() => {
       // Override the global beforeEach mock setup (global beforeEach runs first, then this)
-      mockProjects.mockReturnValue([remoteProject]);
+      defaultProps.project = remoteProject;
     });
 
     it("shows keep repo checkbox for remote projects", async () => {
@@ -512,10 +502,8 @@ describe("CloseProjectDialog component", () => {
     });
 
     it("hides keep repo checkbox for local projects", async () => {
-      const localProject = createProject(testProjectId, "test-project", [
-        createWorkspace("ws1", testProjectId),
-      ]);
-      mockProjects.mockReturnValue([localProject]);
+      const localProject = createProject(testProjectId, "test-project", [createWorkspace("ws1")]);
+      defaultProps.project = localProject;
 
       render(CloseProjectDialog, { props: defaultProps });
       await vi.runAllTimersAsync();

@@ -2,8 +2,8 @@
 /**
  * Tests for the WorkspaceFrames component.
  *
- * Frames derive from the projects store: one iframe per workspace that has a
- * code-server URL and isn't hibernated; only the active workspace's frame is
+ * Frames come pre-filtered from the UiState snapshot (the presenter only
+ * includes mountable workspaces); only the frame matching activeKey is
  * visible (.active). Focus side effects (rAF + contentWindow.focus) are not
  * observable in happy-dom — the tests cover mounting, visibility, and the
  * window hooks the main process calls.
@@ -18,14 +18,7 @@ vi.mock("$lib/api", () => ({
 }));
 
 import WorkspaceFrames from "./WorkspaceFrames.svelte";
-import {
-  setProjects,
-  setActiveWorkspace,
-  reset as resetProjects,
-} from "$lib/stores/projects.svelte";
 import { reset as resetUiMode } from "$lib/stores/ui-mode.svelte";
-import type { Project } from "@shared/api/types";
-import { asProjectId, createMockProject } from "@shared/test-fixtures";
 
 interface FrameHooks {
   __chFocusActiveFrame?: () => void;
@@ -33,40 +26,10 @@ interface FrameHooks {
   __chReloadFrames?: () => void;
 }
 
-function makeProject(): Project {
-  return createMockProject({
-    id: asProjectId("test-12345678"),
-    name: "test",
-    path: "/projects/test",
-    workspaces: [
-      {
-        name: "ws1",
-        branch: "main",
-        path: "/workspaces/ws1",
-        url: "http://127.0.0.1:9000/?folder=/workspaces/ws1",
-      },
-      {
-        name: "ws2",
-        branch: "feature",
-        path: "/workspaces/ws2",
-        url: "http://127.0.0.1:9000/?folder=/workspaces/ws2",
-      },
-      {
-        name: "sleeping",
-        branch: "old",
-        metadata: { hibernated: "true" },
-        path: "/workspaces/sleeping",
-        url: "http://127.0.0.1:9000/?folder=/workspaces/sleeping",
-      },
-      {
-        name: "pending",
-        branch: null,
-        path: "/workspaces/__pending__",
-        // no url — placeholder from workspace:loading
-      },
-    ],
-  });
-}
+const FRAMES = [
+  { key: "test-12345678/ws1", url: "http://127.0.0.1:9000/?folder=/workspaces/ws1", title: "ws1" },
+  { key: "test-12345678/ws2", url: "http://127.0.0.1:9000/?folder=/workspaces/ws2", title: "ws2" },
+];
 
 function frames(container: HTMLElement): HTMLIFrameElement[] {
   return [...container.querySelectorAll("iframe")];
@@ -74,62 +37,60 @@ function frames(container: HTMLElement): HTMLIFrameElement[] {
 
 describe("WorkspaceFrames", () => {
   beforeEach(() => {
-    resetProjects();
     resetUiMode();
     document.body.innerHTML = "";
   });
 
-  it("mounts an iframe per workspace with a URL, skipping hibernated and url-less ones", () => {
-    setProjects([makeProject()]);
-    const { container } = render(WorkspaceFrames);
+  it("mounts one iframe per frame entry", () => {
+    const { container } = render(WorkspaceFrames, {
+      props: { frames: FRAMES, activeKey: null },
+    });
 
     const els = frames(container);
     expect(els).toHaveLength(2);
-    expect(els.map((el) => el.dataset.path).sort()).toEqual(["/workspaces/ws1", "/workspaces/ws2"]);
+    expect(els.map((el) => el.dataset.key).sort()).toEqual([
+      "test-12345678/ws1",
+      "test-12345678/ws2",
+    ]);
     expect(els[0]!.src).toContain("folder=/workspaces/ws1");
+    expect(els[0]!.title).toBe("Workspace ws1");
   });
 
-  it("marks only the active workspace's frame as active", async () => {
-    setProjects([makeProject()]);
-    setActiveWorkspace("/workspaces/ws2");
-    const { container } = render(WorkspaceFrames);
+  it("marks only the active frame as active", () => {
+    const { container } = render(WorkspaceFrames, {
+      props: { frames: FRAMES, activeKey: "test-12345678/ws2" },
+    });
 
     const active = frames(container).filter((el) => el.classList.contains("active"));
     expect(active).toHaveLength(1);
-    expect(active[0]!.dataset.path).toBe("/workspaces/ws2");
+    expect(active[0]!.dataset.key).toBe("test-12345678/ws2");
   });
 
-  it("shows no active frame when no workspace is active", () => {
-    setProjects([makeProject()]);
-    const { container } = render(WorkspaceFrames);
+  it("shows no active frame when activeKey is null", () => {
+    const { container } = render(WorkspaceFrames, {
+      props: { frames: FRAMES, activeKey: null },
+    });
 
     expect(frames(container).some((el) => el.classList.contains("active"))).toBe(false);
   });
 
-  it("unmounts a frame when its workspace becomes hibernated", async () => {
-    const project = makeProject();
-    setProjects([project]);
-    const { container, rerender } = render(WorkspaceFrames);
+  it("unmounts a frame when it leaves the snapshot (hibernation)", async () => {
+    const { container, rerender } = render(WorkspaceFrames, {
+      props: { frames: FRAMES, activeKey: null },
+    });
     expect(frames(container)).toHaveLength(2);
 
-    setProjects([
-      {
-        ...project,
-        workspaces: project.workspaces.map((w) =>
-          w.path === "/workspaces/ws2" ? { ...w, metadata: { hibernated: "true" } } : w
-        ),
-      },
-    ]);
-    await rerender({});
+    await rerender({ frames: [FRAMES[0]!], activeKey: null });
 
     expect(frames(container)).toHaveLength(1);
-    expect(frames(container)[0]!.dataset.path).toBe("/workspaces/ws1");
+    expect(frames(container)[0]!.dataset.key).toBe("test-12345678/ws1");
   });
 
   it("registers the main-process window hooks and removes them on unmount", () => {
-    setProjects([makeProject()]);
     const hooks = window as FrameHooks;
-    const { unmount } = render(WorkspaceFrames);
+    const { unmount } = render(WorkspaceFrames, {
+      props: { frames: FRAMES, activeKey: null },
+    });
 
     expect(typeof hooks.__chFocusActiveFrame).toBe("function");
     expect(typeof hooks.__chActiveFrameRect).toBe("function");
@@ -169,9 +130,8 @@ describe("WorkspaceFrames", () => {
     }
   });
 
-  it("__chActiveFrameRect returns null when no workspace is active", () => {
-    setProjects([makeProject()]);
-    render(WorkspaceFrames);
+  it("__chActiveFrameRect returns null when no frame is active", () => {
+    render(WorkspaceFrames, { props: { frames: FRAMES, activeKey: null } });
 
     const hooks = window as FrameHooks;
     expect(hooks.__chActiveFrameRect!()).toBeNull();

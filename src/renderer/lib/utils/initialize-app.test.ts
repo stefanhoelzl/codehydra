@@ -4,57 +4,44 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { Project, Workspace, ProjectId, WorkspaceName } from "@shared/api/types";
-import { createMockProject, createMockWorkspace } from "@shared/test-fixtures";
+import type { UiState } from "@shared/ui-state";
+import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 
 vi.mock("$lib/api", () => ({
   lifecycle: { ready: vi.fn() },
+  onState: vi.fn(() => vi.fn()),
 }));
 
 import { initializeApp, type InitializeAppApi, type InitializeAppOptions } from "./initialize-app";
-import * as projectsStore from "$lib/stores/projects.svelte.js";
 import * as bootstrapStore from "$lib/stores/bootstrap.svelte.js";
-import * as agentStatusStore from "$lib/stores/agent-status.svelte.js";
+import { uiState, resetUiState } from "$lib/stores/ui-state.svelte.js";
 
-const TEST_PROJECT_ID = "my-project-a1b2c3d4" as ProjectId;
-const TEST_PROJECT_PATH = "/test/project";
-const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
-const TEST_WORKSPACE_PATH = "/test/project/.worktrees/feature";
+const TEST_SNAPSHOT: UiState = makeUiState([
+  makeUiProjectRow([makeUiWorkspaceRow("feature-branch", { active: true })]),
+]);
 
-const TEST_WORKSPACE: Workspace = createMockWorkspace({
-  projectId: TEST_PROJECT_ID,
-  name: TEST_WORKSPACE_NAME,
-  metadata: { base: "main" },
-  path: TEST_WORKSPACE_PATH,
-});
-
-const TEST_PROJECT: Project = createMockProject({
-  id: TEST_PROJECT_ID,
-  name: "my-project",
-  path: TEST_PROJECT_PATH,
-  workspaces: [TEST_WORKSPACE],
-});
-
-function createMockApi(config?: {
-  projects?: Project[];
-  activeWorkspace?: { path: string } | null;
-  projectsError?: Error;
-}): InitializeAppApi {
-  const projectList = config?.projects ?? [TEST_PROJECT];
-  const activeWorkspace =
-    config && "activeWorkspace" in config ? config.activeWorkspace : { path: TEST_WORKSPACE_PATH };
+function createMockApi(config?: { readyError?: Error; pushOnReady?: UiState }): InitializeAppApi {
+  let listener: ((state: UiState) => void) | null = null;
+  const unsubscribe = vi.fn(() => {
+    listener = null;
+  });
 
   return {
+    onState: vi.fn((callback: (state: UiState) => void) => {
+      listener = callback;
+      return unsubscribe;
+    }),
     lifecycle: {
       ready: vi.fn(async () => {
-        if (config?.projectsError) {
-          throw config.projectsError;
+        if (config?.readyError) {
+          throw config.readyError;
         }
-        // Simulate event-driven store population (what event handlers do)
-        for (const p of projectList) {
-          projectsStore.addProject(p);
+        // The genesis push is causally downstream of ready() (app:ready emits
+        // app:started). Deliver it through whatever listener is registered —
+        // a listener registered too late would miss it.
+        if (config?.pushOnReady) {
+          listener?.(config.pushOnReady);
         }
-        projectsStore.setActiveWorkspace(activeWorkspace?.path ?? null);
         return { defaultAgent: null, availableAgents: [] };
       }),
     },
@@ -82,61 +69,44 @@ function createMockContainer(focusableElement?: string): HTMLElement {
 
 describe("initializeApp", () => {
   beforeEach(() => {
-    projectsStore.reset();
     bootstrapStore.resetBootstrap();
-    agentStatusStore.reset();
+    resetUiState();
   });
 
   afterEach(() => {
-    projectsStore.reset();
     bootstrapStore.resetBootstrap();
-    agentStatusStore.reset();
+    resetUiState();
     vi.restoreAllMocks();
     document.body.innerHTML = "";
   });
 
-  describe("project loading", () => {
-    it("loads projects into store via lifecycle.ready()", async () => {
-      const api = createMockApi({ projects: [TEST_PROJECT] });
+  describe("snapshot subscription", () => {
+    it("subscribes before ready() so the genesis snapshot lands in the holder", async () => {
+      const api = createMockApi({ pushOnReady: TEST_SNAPSHOT });
       const options: InitializeAppOptions = { containerRef: undefined };
 
       await initializeApp(options, api);
 
-      expect(projectsStore.projects.value).toContainEqual(TEST_PROJECT);
+      expect(uiState.value).toEqual(TEST_SNAPSHOT);
       expect(bootstrapStore.bootstrap.initialized).toBe(true);
     });
 
-    it("sets active workspace from events", async () => {
-      const api = createMockApi({
-        projects: [TEST_PROJECT],
-        activeWorkspace: { path: TEST_WORKSPACE_PATH },
-      });
+    it("keeps the subscription alive after ready() failures", async () => {
+      const api = createMockApi({ readyError: new Error("ready failed") });
       const options: InitializeAppOptions = { containerRef: undefined };
 
       await initializeApp(options, api);
 
-      expect(projectsStore.activeWorkspacePath.value).toBe(TEST_WORKSPACE_PATH);
-    });
-
-    it("handles null active workspace", async () => {
-      projectsStore.reset();
-
-      const api = createMockApi({
-        projects: [TEST_PROJECT],
-        activeWorkspace: null,
-      });
-      const options: InitializeAppOptions = { containerRef: undefined };
-
-      await initializeApp(options, api);
-
-      expect(projectsStore.activeWorkspacePath.value).toBeNull();
+      expect(bootstrapStore.bootstrap.initialized).toBe(false);
+      // The listener registered before ready() is still wired.
+      expect(api.onState).toHaveBeenCalledTimes(1);
     });
   });
 
   describe("focus management", () => {
     it("focuses vscode-button element", async () => {
       const container = createMockContainer("vscode-button");
-      const api = createMockApi({ projects: [TEST_PROJECT] });
+      const api = createMockApi();
       const options: InitializeAppOptions = { containerRef: container };
 
       await initializeApp(options, api);
@@ -146,7 +116,7 @@ describe("initializeApp", () => {
 
     it("focuses native button element", async () => {
       const container = createMockContainer("button");
-      const api = createMockApi({ projects: [TEST_PROJECT] });
+      const api = createMockApi();
       const options: InitializeAppOptions = { containerRef: container };
 
       await initializeApp(options, api);
@@ -156,7 +126,7 @@ describe("initializeApp", () => {
 
     it("focuses input element", async () => {
       const container = createMockContainer("input");
-      const api = createMockApi({ projects: [TEST_PROJECT] });
+      const api = createMockApi();
       const options: InitializeAppOptions = { containerRef: container };
 
       await initializeApp(options, api);
@@ -165,7 +135,7 @@ describe("initializeApp", () => {
     });
 
     it("handles missing container gracefully", async () => {
-      const api = createMockApi({ projects: [TEST_PROJECT] });
+      const api = createMockApi();
       const options: InitializeAppOptions = { containerRef: undefined };
 
       await expect(initializeApp(options, api)).resolves.not.toThrow();
@@ -173,14 +143,24 @@ describe("initializeApp", () => {
   });
 
   describe("cleanup", () => {
-    it("returns cleanup function for consistent composition", async () => {
-      const api = createMockApi({ projects: [TEST_PROJECT] });
+    it("cleanup unsubscribes the snapshot listener", async () => {
+      const pushes: Array<(state: UiState) => void> = [];
+      const unsubscribe = vi.fn();
+      const api: InitializeAppApi = {
+        onState: vi.fn((callback: (state: UiState) => void) => {
+          pushes.push(callback);
+          return unsubscribe;
+        }),
+        lifecycle: {
+          ready: vi.fn(async () => ({ defaultAgent: null, availableAgents: [] })),
+        },
+      };
       const options: InitializeAppOptions = { containerRef: undefined };
 
       const cleanup = await initializeApp(options, api);
+      cleanup();
 
-      expect(typeof cleanup).toBe("function");
-      expect(() => cleanup()).not.toThrow();
+      expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
   });
 });
