@@ -75,7 +75,12 @@ export interface Api {
     getScreenshot(projectId: string, workspaceName: string): Promise<{ url: string | null }>;
   };
   ui: {
-    switchWorkspace(workspacePath: string, focus?: boolean): Promise<void>;
+    /**
+     * Switch to a workspace, or deselect with `null` — no workspace is active
+     * afterwards and the creation panel becomes the main view (`focus` is
+     * ignored for null).
+     */
+    switchWorkspace(workspacePath: string | null, focus?: boolean): Promise<void>;
     setMode(mode: UIMode): Promise<void>;
   };
   lifecycle: {

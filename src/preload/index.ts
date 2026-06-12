@@ -70,7 +70,7 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_SCREENSHOT, { projectId, workspaceName }),
   },
   ui: {
-    switchWorkspace: (workspacePath: string, focus?: boolean) =>
+    switchWorkspace: (workspacePath: string | null, focus?: boolean) =>
       ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { workspacePath, focus }),
     setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),
   },

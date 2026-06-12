@@ -5,9 +5,8 @@
  * Owns both UI wires of the target architecture:
  *
  * - api:ui:event (renderer → main): zod-validated intake. `log` events are
- *   load-bearing (replacement for the former api:log:* channels) and
- *   `panel-visibility` feeds the view-model; the remaining events are
- *   observational for now.
+ *   load-bearing (replacement for the former api:log:* channels); the
+ *   remaining events are observational for now.
  * - api:ui:state (main → renderer): full UiState snapshots rebuilt from
  *   domain events and pushed coalesced per microtask. Phase B is a shadow:
  *   the renderer does not subscribe yet; each push is debug-logged so the
@@ -15,9 +14,11 @@
  *
  * The view-model mirrors today's renderer store semantics (projects store,
  * creating placeholders, deletion lifecycle, agent status, active workspace,
- * panel visibility, theme). Workspace keys are presenter-assigned and opaque
- * to the renderer. Pushing starts at the app:started event, which fires after
- * the initial project:open dispatches complete.
+ * theme). The creation panel is derived, not tracked: it is the main view's
+ * ground state whenever no workspace is active. Workspace keys are
+ * presenter-assigned and opaque to the renderer. Pushing starts at the
+ * app:started event, which fires after the initial project:open dispatches
+ * complete.
  */
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
@@ -128,7 +129,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   const screenshots = new Map<string, string | null>();
   const screenshotLoads = new Set<string>();
   let activeKey: string | null = null;
-  let panelOpen = false;
   let theme: Theme = "dark";
   let started = false;
   let pushScheduled = false;
@@ -227,10 +227,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   }
 
   function buildMain(): UiMainView {
-    if (panelOpen) return { kind: "creation" };
-    if (activeKey === null) return { kind: "empty" };
+    // The creation panel is the ground state: shown whenever nothing is
+    // active (including a stale activeKey whose workspace is gone).
+    if (activeKey === null) return { kind: "creation" };
     const active = findByKey(activeKey);
-    if (!active) return { kind: "empty" };
+    if (!active) return { kind: "creation" };
     if (isHibernated(active.workspace)) {
       return {
         kind: "hibernated",
@@ -316,10 +317,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       }
       return;
     }
-    if (event.kind === "panel-visibility") {
-      panelOpen = event.open;
-      scheduleUpdate();
-    }
+    // NOTE: panel-visibility is accepted but ignored — the creation panel is
+    // now derived state (activeKey === null). The schema variant and its
+    // renderer emitters are removed together in the read-cutover flip.
     logger.debug("ui event", { kind: event.kind });
   };
 
@@ -420,9 +420,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
           creating: true,
         });
         // Landing in the creating placeholder is the visual confirmation the
-        // workspace is being made; the creation panel closes.
+        // workspace is being made (activating it also leaves the creation
+        // panel, which only shows while nothing is active).
         activeKey = workspaceKey(project.id, p.workspaceName);
-        panelOpen = false;
         scheduleUpdate();
       },
     },

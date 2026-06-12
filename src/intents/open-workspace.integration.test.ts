@@ -212,7 +212,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
         activate: {
           handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
             const { workspacePath } = ctx as ActivateHookInput;
-            return { resolvedPath: workspacePath };
+            return workspacePath === null ? {} : { resolvedPath: workspacePath };
           },
         },
       },
@@ -945,7 +945,7 @@ describe("OpenWorkspace Operation", () => {
             activate: {
               handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
                 const { workspacePath } = ctx as ActivateHookInput;
-                return { resolvedPath: workspacePath };
+                return workspacePath === null ? {} : { resolvedPath: workspacePath };
               },
             },
           },

@@ -662,7 +662,7 @@ function createTestHarness(options?: {
             const { workspacePath, active } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
-            if (active) {
+            if (workspacePath === null || active) {
               return {};
             }
             const focus = intent.payload.focus ?? true;

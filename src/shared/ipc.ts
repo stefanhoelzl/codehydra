@@ -104,9 +104,10 @@ export interface WorkspaceGetStatusPayload {
   readonly refresh?: boolean;
 }
 
-/** ui.switchWorkspace */
+/** ui.switchWorkspace. `workspacePath: null` = deselect (no active workspace;
+ *  the creation panel becomes the main view). */
 export interface UiSwitchWorkspacePayload {
-  readonly workspacePath: string;
+  readonly workspacePath: string | null;
   readonly focus?: boolean;
 }
 
