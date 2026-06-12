@@ -23,6 +23,7 @@ window.api = mockApi;
 
 // Mock $lib/api to avoid import-time window.api check
 vi.mock("$lib/api", () => ({
+  emitEvent: vi.fn(),
   sendNotificationEvent: vi.fn(),
   on: vi.fn(() => () => {}),
   workspaces: {

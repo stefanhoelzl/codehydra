@@ -44,12 +44,7 @@ export function createMockApi(): Api {
       ready: vi.fn().mockResolvedValue(undefined),
       quit: vi.fn().mockResolvedValue(undefined),
     },
-    log: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    emitEvent: vi.fn(),
     on: vi.fn(() => vi.fn()),
     onModeChange: vi.fn(() => vi.fn()),
     onShortcut: vi.fn(() => vi.fn()),

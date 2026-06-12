@@ -4,8 +4,7 @@
  * This is an IntentModule that:
  * 1. Subscribes to domain events and forwards them to sendToUI for IPC
  * 2. Registers IPC handlers (intent dispatch bridges) directly on ipcLayer
- * 3. Registers fire-and-forget log listeners for renderer logging
- * 4. On app:shutdown, removes all registered handlers and listeners
+ * 3. On app:shutdown, removes all registered handlers and listeners
  */
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
@@ -24,8 +23,7 @@ import type { DialogUserEvent } from "../shared/dialog-types";
 import type { NotificationUserEvent } from "../shared/notification-types";
 import type { DialogManager } from "./dialog-manager";
 import type { NotificationManager } from "./notification-manager";
-import type { Logger, Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
-import type { ApiLogPayload } from "../shared/ipc";
+import type { Logger } from "../boundaries/platform/logging";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
@@ -106,7 +104,6 @@ export interface UiIpcModuleDeps {
   readonly viewManager: Pick<IViewManager, "sendToUI">;
   readonly logger: Logger;
   readonly dispatcher: Dispatcher;
-  readonly loggingService: Pick<Logging, "createLogger">;
   readonly dialogManager?: DialogManager;
   readonly notificationManager?: NotificationManager;
   /** Path provider used to resolve hibernation screenshot URLs. */
@@ -114,18 +111,8 @@ export interface UiIpcModuleDeps {
 }
 
 /**
- * Validate and convert logger name from renderer to LoggerName type.
- * Returns "ui" if the provided name is not a valid LoggerName.
- */
-const VALID_RENDERER_LOGGER_NAMES = new Set<string>(["ui", "api"]);
-function toLoggerName(name: string): LoggerName {
-  return VALID_RENDERER_LOGGER_NAMES.has(name) ? (name as LoggerName) : "ui";
-}
-
-/**
  * Create a UiIpc module that handles all bidirectional IPC between main
- * process and renderer: domain event forwarding, request-response handlers,
- * and fire-and-forget log listeners.
+ * process and renderer: domain event forwarding and request-response handlers.
  *
  * @param deps - Module dependencies
  * @returns IntentModule with event subscriptions and lifecycle hooks
@@ -493,34 +480,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
   });
 
   // ---------------------------------------------------------------------------
-  // Fire-and-forget log listeners
-  // ---------------------------------------------------------------------------
-
-  const LOG_LEVEL_CHANNELS = [
-    { level: "debug", channel: ApiIpcChannels.LOG_DEBUG },
-    { level: "info", channel: ApiIpcChannels.LOG_INFO },
-    { level: "warn", channel: ApiIpcChannels.LOG_WARN },
-    { level: "error", channel: ApiIpcChannels.LOG_ERROR },
-  ] as const;
-
-  const logListeners: Array<{ channel: string; listener: IpcEventHandler }> = [];
-
-  for (const { level, channel } of LOG_LEVEL_CHANNELS) {
-    const listener: IpcEventHandler = (_event: unknown, payload: unknown) => {
-      try {
-        const p = payload as ApiLogPayload;
-        const loggerName = toLoggerName(p.logger);
-        const loggerInstance = deps.loggingService.createLogger(loggerName);
-        loggerInstance[level](p.message, p.context as LogContext | undefined);
-      } catch {
-        // Swallow errors - logging should never crash the app
-      }
-    };
-    deps.ipcLayer.on(channel, listener);
-    logListeners.push({ channel, listener });
-  }
-
-  // ---------------------------------------------------------------------------
   // Dialog event routing (renderer → main)
   // ---------------------------------------------------------------------------
 
@@ -574,13 +533,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
                 deps.ipcLayer.removeHandler(channel);
               } catch {
                 // Continue cleanup even if a handler was already removed
-              }
-            }
-            for (const { channel, listener } of logListeners) {
-              try {
-                deps.ipcLayer.removeListener(channel, listener);
-              } catch {
-                // Continue cleanup even if a listener was already removed
               }
             }
           },

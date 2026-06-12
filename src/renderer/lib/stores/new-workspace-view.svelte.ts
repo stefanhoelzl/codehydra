@@ -13,6 +13,7 @@
  * creation module in the main process.
  */
 
+import { emitEvent } from "$lib/api";
 import { setActiveWorkspace } from "./projects.svelte.js";
 
 // ============ State ============
@@ -33,6 +34,9 @@ export const newWorkspaceView = {
  * Open the New workspace view.
  */
 export function openNewWorkspaceView(): void {
+  if (!_isOpen) {
+    emitEvent({ kind: "panel-visibility", open: true });
+  }
   _isOpen = true;
   // The New workspace view IS the current tab: no workspace is selected while
   // it's open. This keeps H/Del naturally inert (they target the active
@@ -44,6 +48,9 @@ export function openNewWorkspaceView(): void {
  * Close the New workspace view (e.g. when navigating to a workspace).
  */
 export function closeNewWorkspaceView(): void {
+  if (_isOpen) {
+    emitEvent({ kind: "panel-visibility", open: false });
+  }
   _isOpen = false;
 }
 

@@ -36,6 +36,7 @@ function showMainView(): void {
 }
 
 const mockApi = vi.hoisted(() => ({
+  emitEvent: vi.fn(),
   // Normal API (flat structure)
   workspaces: {
     remove: vi.fn().mockResolvedValue({ branchDeleted: true }),

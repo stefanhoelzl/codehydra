@@ -16,6 +16,7 @@ import { asWorkspaceRef, createMockProject, createMockWorkspace } from "@shared/
 
 // Mock the API module before importing the setup function
 vi.mock("$lib/api", () => ({
+  emitEvent: vi.fn(),
   on: vi.fn(() => vi.fn()),
 }));
 

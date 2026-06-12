@@ -18,23 +18,23 @@ testable headlessly in main.
 
 ## Decisions
 
-| Branch | Decision |
-| --- | --- |
-| State line | Semantic state in main; ephemeral (hover, in-flight edits, focus/scroll/animation) stays renderer-local. Rule: if two components or main+renderer both care, it's main's. |
-| Sync model | Single full-`UiState`-snapshot push, coalesced per microtask. No diffs, no versioning. |
-| Up channel | One generic `ui:event` discriminated union, zod-validated at the boundary. `log` is a variant of it (no separate channel). |
-| Snapshot type | Dedicated `UiState` view-model in `src/shared` — NOT domain types. Render-ready: sorted projects, inline flags. |
-| Lifecycle | Each workspace entry carries `status: creating\|ready\|deleting\|delete-failed\|hibernated` + optional `deletionProgress`. Presenter inserts/swaps `creating` placeholders internally. |
-| UI mode | Computed only in main from state it owns (dialogs, panel, shortcut) + a hover `ui:event`. The setMode/mode-changed feedback loop dies. |
-| Shortcuts | Main interprets keys directly against its own state. `shortcut:key` push channel and renderer shortcuts logic die. |
-| Switching | Strict round-trip (keypress → ui:event → main → snapshot → iframe swap). No optimistic highlight. |
-| Gathering | Central presenter subscribes to domain events (no slice-contribution model). Registered before `app:start` ⇒ witnesses events from genesis, no initial pull. |
-| Module shape | ONE presentation module: owns IPC, view-model, mode, shortcut interpretation, domain-event→dialog/notification mapping, dispatches intents from ui:events. Absorbs WindowManager/ViewManager (boundaries stay as seams). |
-| Dialog framework | DialogManager/NotificationManager DISSOLVE. Domain modules become UI-agnostic and emit domain events only; presenter maps them to dialogs/notifications. Creation-form logic becomes a presenter sub-module. |
-| Confirmations | Parked dispatch: intent payload carries `interactive`; the operation calls a `UserInteraction` capability (presenter-provided, **new approved interface**) that opens the dialog and resolves with the user's answers (keepBranch, force, blocking PIDs). |
-| Local dialogs | RemoveWorkspaceDialog / CloseProjectDialog migrate into this model (no renderer-local dialogs remain). |
-| Renderer state | NO stores. `App.svelte` holds `let ui = $state.raw(...)`, reassigned by `api.onState`; props all the way down. `stores/` directory is deleted. |
-| IPC names | `api:ui:state` (main→renderer), `api:ui:event` (renderer→main). Preload: `window.api = { onState(cb), send(event) }` + existing `__ch*` window hooks. **User-approved IPC change.** |
+| Branch           | Decision                                                                                                                                                                                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| State line       | Semantic state in main; ephemeral (hover, in-flight edits, focus/scroll/animation) stays renderer-local. Rule: if two components or main+renderer both care, it's main's.                                                                                 |
+| Sync model       | Single full-`UiState`-snapshot push, coalesced per microtask. No diffs, no versioning.                                                                                                                                                                    |
+| Up channel       | One generic `ui:event` discriminated union, zod-validated at the boundary. `log` is a variant of it (no separate channel).                                                                                                                                |
+| Snapshot type    | Dedicated `UiState` view-model in `src/shared` — NOT domain types. Render-ready: sorted projects, inline flags.                                                                                                                                           |
+| Lifecycle        | Each workspace entry carries `status: creating\|ready\|deleting\|delete-failed\|hibernated` + optional `deletionProgress`. Presenter inserts/swaps `creating` placeholders internally.                                                                    |
+| UI mode          | Computed only in main from state it owns (dialogs, panel, shortcut) + a hover `ui:event`. The setMode/mode-changed feedback loop dies.                                                                                                                    |
+| Shortcuts        | Main interprets keys directly against its own state. `shortcut:key` push channel and renderer shortcuts logic die.                                                                                                                                        |
+| Switching        | Strict round-trip (keypress → ui:event → main → snapshot → iframe swap). No optimistic highlight.                                                                                                                                                         |
+| Gathering        | Central presenter subscribes to domain events (no slice-contribution model). Registered before `app:start` ⇒ witnesses events from genesis, no initial pull.                                                                                              |
+| Module shape     | ONE presentation module: owns IPC, view-model, mode, shortcut interpretation, domain-event→dialog/notification mapping, dispatches intents from ui:events. Absorbs WindowManager/ViewManager (boundaries stay as seams).                                  |
+| Dialog framework | DialogManager/NotificationManager DISSOLVE. Domain modules become UI-agnostic and emit domain events only; presenter maps them to dialogs/notifications. Creation-form logic becomes a presenter sub-module.                                              |
+| Confirmations    | Parked dispatch: intent payload carries `interactive`; the operation calls a `UserInteraction` capability (presenter-provided, **new approved interface**) that opens the dialog and resolves with the user's answers (keepBranch, force, blocking PIDs). |
+| Local dialogs    | RemoveWorkspaceDialog / CloseProjectDialog migrate into this model (no renderer-local dialogs remain).                                                                                                                                                    |
+| Renderer state   | NO stores. `App.svelte` holds `let ui = $state.raw(...)`, reassigned by `api.onState`; props all the way down. `stores/` directory is deleted.                                                                                                            |
+| IPC names        | `api:ui:state` (main→renderer), `api:ui:event` (renderer→main). Preload: `window.api = { onState(cb), send(event) }` + existing `__ch*` window hooks. **User-approved IPC change.**                                                                       |
 
 ## Wire diagrams
 
@@ -209,7 +209,7 @@ the renderer only ever renders the array.
   If profiling ever shows re-evaluation cost, split into a few root `$derived` slices
   (reference-equality short-circuit); hold in reserve, don't start there.
 - **Shutdown resolves parked interactions**: on `app:shutdown`, every pending
-  `UserInteraction` resolves as *dismissed*; operations abort cleanly (typed abort
+  `UserInteraction` resolves as _dismissed_; operations abort cleanly (typed abort
   outcome, not an error). No hung dispatch can block quit.
 - **Idempotency covers parked re-dispatch**: a second `workspace:delete` for the same
   key while the first is parked is handled by the existing per-key idempotency rules.

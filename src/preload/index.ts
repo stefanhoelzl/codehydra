@@ -5,7 +5,8 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
-import type { UIModeChangedEvent, LogContext } from "../shared/ipc";
+import type { UIModeChangedEvent } from "../shared/ipc";
+import type { UiEvent } from "../shared/ui-event";
 import type { DialogUserEvent } from "../shared/dialog-types";
 import type { NotificationUserEvent } from "../shared/notification-types";
 import type { ShortcutKey } from "../shared/shortcuts";
@@ -90,16 +91,12 @@ contextBridge.exposeInMainWorld("api", {
   sendNotificationEvent: (event: NotificationUserEvent) => {
     ipcRenderer.send(ApiIpcChannels.NOTIFICATION_EVENT, event);
   },
-  // Log API (renderer → main, fire-and-forget)
-  log: {
-    debug: (logger: string, message: string, context?: LogContext) =>
-      ipcRenderer.send(ApiIpcChannels.LOG_DEBUG, { logger, message, context }),
-    info: (logger: string, message: string, context?: LogContext) =>
-      ipcRenderer.send(ApiIpcChannels.LOG_INFO, { logger, message, context }),
-    warn: (logger: string, message: string, context?: LogContext) =>
-      ipcRenderer.send(ApiIpcChannels.LOG_WARN, { logger, message, context }),
-    error: (logger: string, message: string, context?: LogContext) =>
-      ipcRenderer.send(ApiIpcChannels.LOG_ERROR, { logger, message, context }),
+  /**
+   * Emit a UI event to the main process (renderer → main, fire-and-forget).
+   * Validated with zod on the main side; invalid events are dropped there.
+   */
+  emitEvent: (event: UiEvent) => {
+    ipcRenderer.send(ApiIpcChannels.UI_EVENT, event);
   },
   // Event subscription using api: prefixed channels
   on: <T>(event: string, callback: (event: T) => void): Unsubscribe => {

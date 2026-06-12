@@ -3,11 +3,12 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { UIModeChangedEvent, LogContext, LifecycleAgentType, AgentInfo } from "./ipc";
+import type { UIModeChangedEvent, LifecycleAgentType, AgentInfo } from "./ipc";
 import type { UIMode } from "./ipc";
 import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
 import type { NotificationUserEvent } from "./notification-types";
+import type { UiEvent } from "./ui-event";
 
 import type { Project, Workspace, WorkspaceStatus } from "./api/types";
 
@@ -92,15 +93,10 @@ export interface Api {
     quit(): Promise<void>;
   };
   /**
-   * Log API for renderer-to-main process logging.
+   * Emit a UI event to the main process (api:ui:event channel).
    * Fire-and-forget - does not return a promise.
    */
-  log: {
-    debug(logger: string, message: string, context?: LogContext): void;
-    info(logger: string, message: string, context?: LogContext): void;
-    warn(logger: string, message: string, context?: LogContext): void;
-    error(logger: string, message: string, context?: LogContext): void;
-  };
+  emitEvent(event: UiEvent): void;
   /**
    * Subscribe to API events.
    * @param event - Event name (without api: prefix)

@@ -147,11 +147,8 @@ export const ApiIpcChannels = {
   // Notification framework (main ↔ renderer)
   NOTIFICATION_COMMAND: "api:notification:command",
   NOTIFICATION_EVENT: "api:notification:event",
-  // Log commands (renderer → main)
-  LOG_DEBUG: "api:log:debug",
-  LOG_INFO: "api:log:info",
-  LOG_WARN: "api:log:warn",
-  LOG_ERROR: "api:log:error",
+  // UI events (renderer → main, fire-and-forget; zod-validated union)
+  UI_EVENT: "api:ui:event",
   // Events (main → renderer)
   PROJECT_OPENED: "api:project:opened",
   PROJECT_CLOSED: "api:project:closed",
@@ -198,15 +195,3 @@ export interface AgentInfo {
  * Constrained to primitive types for serialization safety.
  */
 export type LogContext = Record<string, string | number | boolean | null>;
-
-/**
- * Payload for api:log:* commands.
- */
-export interface ApiLogPayload {
-  /** Logger name/scope (e.g., 'ui', 'api') */
-  readonly logger: string;
-  /** Log message */
-  readonly message: string;
-  /** Optional context data */
-  readonly context?: LogContext;
-}

@@ -10,6 +10,7 @@ import { asProjectId } from "@shared/test-fixtures";
 
 // Create mock API functions with vi.hoisted for proper hoisting
 const mockApi = vi.hoisted(() => ({
+  emitEvent: vi.fn(),
   // Setup API methods (top-level)
   setupReady: vi.fn().mockResolvedValue({ ready: true }),
   setupRetry: vi.fn().mockResolvedValue(undefined),
