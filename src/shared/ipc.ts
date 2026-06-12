@@ -149,6 +149,8 @@ export const ApiIpcChannels = {
   NOTIFICATION_EVENT: "api:notification:event",
   // UI events (renderer → main, fire-and-forget; zod-validated union)
   UI_EVENT: "api:ui:event",
+  // UI state snapshots (main → renderer; Phase B shadow — renderer not yet subscribed)
+  UI_STATE: "api:ui:state",
   // Events (main → renderer)
   PROJECT_OPENED: "api:project:opened",
   PROJECT_CLOSED: "api:project:closed",

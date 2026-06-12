@@ -860,11 +860,16 @@ const uiIpcModule = createUiIpcModule({
   pathProvider,
 });
 
-// Create presentation module (owns the api:ui:event channel; Phase A of the
-// UI-state architecture — stateless intake, renderer log routing)
+// Create presentation module (owns the api:ui:event + api:ui:state channels;
+// Phases A+B of the UI-state architecture — event intake, renderer log
+// routing, shadow UiState snapshots)
 const presentationModule = createPresentationModule({
   ipcLayer,
   loggingService,
+  viewManager,
+  windowManager,
+  fileSystem: fileSystemLayer,
+  pathProvider,
 });
 
 const hibernationScreenshotModule = createHibernationScreenshotModule({

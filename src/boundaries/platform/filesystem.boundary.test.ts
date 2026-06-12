@@ -106,6 +106,39 @@ describe("DefaultFileSystemBoundary", () => {
     });
   });
 
+  describe("readFileBuffer", () => {
+    it("reads binary content as a Buffer", async () => {
+      const filePath = join(tempDir.path, "image.bin");
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x10]);
+      await nodeWriteFile(filePath, bytes);
+
+      const content = await fs.readFileBuffer(filePath);
+
+      expect(Buffer.isBuffer(content)).toBe(true);
+      expect(content.equals(bytes)).toBe(true);
+    });
+
+    it("throws FileSystemError with ENOENT for missing file", async () => {
+      const filePath = join(tempDir.path, "missing.bin");
+
+      await expect(fs.readFileBuffer(filePath)).rejects.toThrow(FileSystemError);
+      try {
+        await fs.readFileBuffer(filePath);
+      } catch (error) {
+        expect((error as FileSystemError).code).toBe("ENOENT");
+      }
+    });
+
+    it("throws FileSystemError with EISDIR for directory", async () => {
+      await expect(fs.readFileBuffer(tempDir.path)).rejects.toThrow(FileSystemError);
+      try {
+        await fs.readFileBuffer(tempDir.path);
+      } catch (error) {
+        expect((error as FileSystemError).code).toBe("EISDIR");
+      }
+    });
+  });
+
   describe("writeFile", () => {
     it("writes file content", async () => {
       const filePath = join(tempDir.path, "test.txt");
