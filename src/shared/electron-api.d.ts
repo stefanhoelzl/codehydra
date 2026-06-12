@@ -67,12 +67,6 @@ export interface Api {
      * Returns the reopened Workspace, or null if a concurrent wake was deduped.
      */
     wake(workspacePath: string): Promise<Workspace | null>;
-    /**
-     * Get a file:// URL pointing at the saved hibernation screenshot for a
-     * workspace. The returned URL may not exist on disk; consumers should
-     * handle <img> error events as a missing-screenshot fallback.
-     */
-    getScreenshot(projectId: string, workspaceName: string): Promise<{ url: string | null }>;
   };
   ui: {
     /**

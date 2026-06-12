@@ -66,8 +66,6 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_HIBERNATE, { workspacePath }),
     wake: (workspacePath: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_WAKE, { workspacePath }),
-    getScreenshot: (projectId: string, workspaceName: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_SCREENSHOT, { projectId, workspaceName }),
   },
   ui: {
     switchWorkspace: (workspacePath: string | null, focus?: boolean) =>

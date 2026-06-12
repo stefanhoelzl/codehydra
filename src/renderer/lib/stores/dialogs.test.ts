@@ -22,26 +22,6 @@ function createWorkspaceRef(
   };
 }
 
-// Create mock functions for projects store
-const { mockActiveWorkspace, mockProjects } = vi.hoisted(() => ({
-  mockActiveWorkspace: vi.fn(),
-  mockProjects: vi.fn(),
-}));
-
-// Mock $lib/stores/projects.svelte.js - uses activeWorkspace now, not activeProject
-vi.mock("./projects.svelte.js", () => ({
-  activeWorkspace: {
-    get value() {
-      return mockActiveWorkspace();
-    },
-  },
-  projects: {
-    get value() {
-      return mockProjects();
-    },
-  },
-}));
-
 // Import after mocks
 import {
   dialogState,

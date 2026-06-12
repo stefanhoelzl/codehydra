@@ -132,7 +132,6 @@ export const ApiIpcChannels = {
   WORKSPACE_REMOVE: "api:workspace:remove",
   WORKSPACE_HIBERNATE: "api:workspace:hibernate",
   WORKSPACE_WAKE: "api:workspace:wake",
-  WORKSPACE_GET_SCREENSHOT: "api:workspace:get-screenshot",
   WORKSPACE_GET_STATUS: "api:workspace:get-status",
   // UI commands
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",

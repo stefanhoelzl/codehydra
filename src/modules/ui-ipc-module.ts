@@ -93,8 +93,6 @@ import {
   type WorkspaceWokenEvent,
   type WorkspaceWakeFailedEvent,
 } from "../intents/wake-workspace";
-import { buildScreenshotPath } from "./hibernation-screenshot-module";
-import type { PathProvider } from "../boundaries/platform/path-provider";
 
 /**
  * Dependencies for the UiIpc module.
@@ -106,8 +104,6 @@ export interface UiIpcModuleDeps {
   readonly dispatcher: Dispatcher;
   readonly dialogManager?: DialogManager;
   readonly notificationManager?: NotificationManager;
-  /** Path provider used to resolve hibernation screenshot URLs. */
-  readonly pathProvider: PathProvider;
 }
 
 /**
@@ -407,12 +403,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     // was deduped by the idempotency interceptor.
     const result = await dispatcher.dispatch(intent);
     return (result ?? null) as Workspace | null;
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_GET_SCREENSHOT, async (payload) => {
-    const p = payload as { projectId: string; workspaceName: string };
-    const filePath = buildScreenshotPath(deps.pathProvider, p.projectId, p.workspaceName);
-    return { url: `file://${filePath.toNative()}` };
   });
 
   registerIpc(ApiIpcChannels.WORKSPACE_GET_STATUS, async (payload) => {
