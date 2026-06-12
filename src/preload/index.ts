@@ -39,29 +39,8 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke(ApiIpcChannels.PROJECT_OPEN, {
         ...(path !== undefined && { path }),
       }),
-    close: (projectPath: string, options?: { removeLocalRepo?: boolean }) =>
-      ipcRenderer.invoke(ApiIpcChannels.PROJECT_CLOSE, { projectPath, ...options }),
   },
   workspaces: {
-    remove: (
-      workspacePath: string,
-      options?: {
-        keepBranch?: boolean;
-        skipSwitch?: boolean;
-        force?: boolean;
-        ignoreWarnings?: boolean;
-        blockingPids?: readonly number[];
-      }
-    ): Promise<{ started: boolean }> =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_REMOVE, {
-        workspacePath,
-        ...options,
-      }),
-    getStatus: (workspacePath: string, options?: { refresh?: boolean }) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_GET_STATUS, {
-        workspacePath,
-        ...(options?.refresh !== undefined && { refresh: options.refresh }),
-      }),
     hibernate: (workspacePath: string) =>
       ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_HIBERNATE, { workspacePath }),
     wake: (workspacePath: string) =>

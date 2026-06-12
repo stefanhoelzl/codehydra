@@ -11,7 +11,7 @@ import type { NotificationUserEvent } from "./notification-types";
 import type { UiEvent } from "./ui-event";
 import type { UiState } from "./ui-state";
 
-import type { Project, Workspace, WorkspaceStatus } from "./api/types";
+import type { Project, Workspace } from "./api/types";
 
 /**
  * Function to unsubscribe from an event.
@@ -29,30 +29,13 @@ export interface Api {
   // Primary API backed by intent dispatcher.
   // Lifecycle handlers are registered in bootstrap(), others in startServices().
 
+  // Workspace removal and project closing are NOT invokes: the renderer
+  // emits remove-workspace / close-project ui:events and main owns the
+  // confirmation dialogs and dispatches.
   projects: {
     open(path?: string): Promise<Project | null>;
-    close(projectPath: string, options?: { removeLocalRepo?: boolean }): Promise<void>;
   };
   workspaces: {
-    /**
-     * Start workspace removal (fire-and-forget).
-     * Progress is emitted via workspace:deletion-progress events.
-     * Returns { started: true } on success, { started: false } if blocked by idempotency.
-     *
-     * @param workspacePath Absolute path to the workspace to remove
-     * @param options Optional removal options
-     */
-    remove(
-      workspacePath: string,
-      options?: {
-        keepBranch?: boolean;
-        skipSwitch?: boolean;
-        force?: boolean;
-        ignoreWarnings?: boolean;
-        blockingPids?: readonly number[];
-      }
-    ): Promise<{ started: boolean }>;
-    getStatus(workspacePath: string, options?: { refresh?: boolean }): Promise<WorkspaceStatus>;
     /**
      * Start hibernating a workspace (fire-and-forget).
      * Tears down the view + agent server, persists `hibernated="true"` metadata,

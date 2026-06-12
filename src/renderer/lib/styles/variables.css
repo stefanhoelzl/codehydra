@@ -69,6 +69,10 @@
   --ch-error-fg: var(--vscode-errorForeground, #f87171);
   --ch-error-bg: var(--vscode-inputValidation-errorBackground, rgba(248, 113, 113, 0.12));
 
+  /* Warning colors (cautions, not failures) */
+  --ch-warning-fg: var(--vscode-editorWarning-foreground, #cca700);
+  --ch-warning-bg: var(--vscode-inputValidation-warningBackground, rgba(204, 167, 0, 0.12));
+
   /* Semantic colors */
   --ch-success: var(--vscode-terminal-ansiGreen, #4ade80);
   --ch-danger: var(--vscode-errorForeground, #f14c4c);
@@ -222,6 +226,10 @@
   /* Error colors */
   --ch-error-fg: var(--vscode-errorForeground, #dc3545);
   --ch-error-bg: var(--vscode-inputValidation-errorBackground, rgba(220, 53, 69, 0.08));
+
+  /* Warning colors (cautions, not failures) */
+  --ch-warning-fg: var(--vscode-editorWarning-foreground, #b07d00);
+  --ch-warning-bg: var(--vscode-inputValidation-warningBackground, rgba(176, 125, 0, 0.08));
 
   /* Semantic colors */
   --ch-success: var(--vscode-terminal-ansiGreen, #1a9a4e);

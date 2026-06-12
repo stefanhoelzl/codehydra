@@ -25,6 +25,13 @@
   </h1>
 {:else if section.style === "subtitle"}
   <p class="section-subtitle">{section.content}</p>
+{:else if section.style === "warning" || section.style === "error"}
+  <div class="section-alert {section.style}" role="alert">
+    <span class="alert-icon">
+      <Icon name={section.icon ?? "warning"} />
+    </span>
+    <span class="alert-text">{section.content}</span>
+  </div>
 {:else}
   <p class="section-text">{section.content}</p>
 {/if}
@@ -57,5 +64,40 @@
   .section-text {
     margin: 0;
     font-size: 0.875rem;
+  }
+
+  /* Alert box: icon + tinted background, colored by semantic style. */
+  .section-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: var(--ch-radius-sm);
+    font-size: 13px;
+    text-align: left;
+    word-break: break-word;
+  }
+
+  .section-alert.error {
+    background: var(--ch-error-bg);
+    color: var(--ch-error-fg);
+  }
+
+  .section-alert.error .alert-icon {
+    --vscode-icon-foreground: var(--ch-error-fg);
+  }
+
+  .section-alert.warning {
+    background: var(--ch-warning-bg);
+    color: var(--ch-warning-fg);
+  }
+
+  .section-alert.warning .alert-icon {
+    --vscode-icon-foreground: var(--ch-warning-fg);
+  }
+
+  .alert-icon {
+    flex-shrink: 0;
   }
 </style>

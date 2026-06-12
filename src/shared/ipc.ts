@@ -75,35 +75,6 @@ export interface ProjectOpenPayload {
   readonly path?: string;
 }
 
-/** projects.close */
-export interface ProjectClosePayload {
-  readonly projectPath: string;
-  /** If true and project has remoteUrl, delete the entire project directory including cloned repo */
-  readonly removeLocalRepo?: boolean;
-}
-
-/** workspaces.remove */
-export interface WorkspaceRemovePayload {
-  readonly workspacePath: string;
-  readonly keepBranch?: boolean;
-  /** If true, don't switch away from this workspace when it's active. Used for retry. */
-  readonly skipSwitch?: boolean;
-  /** If true, force remove (skip cleanup, ignore errors). Replaces old forceRemove. */
-  readonly force?: boolean;
-  /** If true, skip preflight checks for uncommitted changes and unmerged commits. */
-  readonly ignoreWarnings?: boolean;
-  /** PIDs from a previous failed attempt. Flush hook kills these before re-attempting delete. */
-  readonly blockingPids?: readonly number[];
-}
-
-/** workspaces.getStatus */
-export interface WorkspaceGetStatusPayload {
-  readonly workspacePath: string;
-  /** If true, fetch remotes before reading status so unmerged-commit counts
-   * reflect server-merged branches. Best-effort. */
-  readonly refresh?: boolean;
-}
-
 /** ui.switchWorkspace. `workspacePath: null` = deselect (no active workspace;
  *  the creation panel becomes the main view). */
 export interface UiSwitchWorkspacePayload {
@@ -125,14 +96,13 @@ export interface UiSetModePayload {
  * All channels use the api: prefix convention.
  */
 export const ApiIpcChannels = {
-  // Project commands
+  // Project commands (close is NOT an invoke: the close-project ui:event
+  // requests the flow; main owns the confirmation dialog and dispatch)
   PROJECT_OPEN: "api:project:open",
-  PROJECT_CLOSE: "api:project:close",
-  // Workspace commands
-  WORKSPACE_REMOVE: "api:workspace:remove",
+  // Workspace commands (remove likewise goes through the remove-workspace
+  // ui:event)
   WORKSPACE_HIBERNATE: "api:workspace:hibernate",
   WORKSPACE_WAKE: "api:workspace:wake",
-  WORKSPACE_GET_STATUS: "api:workspace:get-status",
   // UI commands
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
   UI_SET_MODE: "api:ui:set-mode",
@@ -149,7 +119,7 @@ export const ApiIpcChannels = {
   NOTIFICATION_EVENT: "api:notification:event",
   // UI events (renderer → main, fire-and-forget; zod-validated union)
   UI_EVENT: "api:ui:event",
-  // UI state snapshots (main → renderer; Phase B shadow — renderer not yet subscribed)
+  // UI state snapshots (main → renderer)
   UI_STATE: "api:ui:state",
   // Events (main → renderer)
   PROJECT_OPENED: "api:project:opened",

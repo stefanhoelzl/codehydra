@@ -88,7 +88,7 @@ describe("Sidebar component", () => {
     onCloseProject: vi.fn(),
     onSwitchWorkspace: vi.fn(),
     onOpenNewWorkspace: vi.fn(),
-    onOpenRemoveDialog: vi.fn(),
+    onRemoveWorkspace: vi.fn(),
   };
 
   beforeEach(() => {
@@ -189,23 +189,19 @@ describe("Sidebar component", () => {
       expect(onCloseProject).toHaveBeenCalledWith(project.id);
     });
 
-    it("[x] on workspace opens remove dialog with WorkspaceRef", async () => {
-      const onOpenRemoveDialog = vi.fn();
+    it("[x] on workspace requests the remove flow with the row key", async () => {
+      const onRemoveWorkspace = vi.fn();
       const ws = makeUiWorkspaceRow("ws1");
       const project = makeUiProjectRow([ws]);
 
       render(Sidebar, {
-        props: { ...defaultProps, projects: [project], onOpenRemoveDialog },
+        props: { ...defaultProps, projects: [project], onRemoveWorkspace },
       });
 
       const removeButton = screen.getByLabelText(/remove workspace/i);
       await fireEvent.click(removeButton);
 
-      expect(onOpenRemoveDialog).toHaveBeenCalledWith({
-        projectId: project.id,
-        workspaceName: ws.name,
-        path: ws.path,
-      });
+      expect(onRemoveWorkspace).toHaveBeenCalledWith(ws.key);
     });
 
     it("clicking workspace calls switchWorkspace", async () => {
@@ -284,12 +280,10 @@ describe("Sidebar component", () => {
     it("should-number-workspaces-globally-across-projects", () => {
       const project1 = makeUiProjectRow([makeUiWorkspaceRow("ws1"), makeUiWorkspaceRow("ws2")], {
         id: "p1-12345678",
-        path: "/p1",
         name: "p1",
       });
       const project2 = makeUiProjectRow([makeUiWorkspaceRow("ws3")], {
         id: "p2-12345678",
-        path: "/p2",
         name: "p2",
       });
 
@@ -554,7 +548,6 @@ describe("Sidebar component", () => {
       const mkProject = (name: string): ReturnType<typeof makeUiProjectRow> =>
         makeUiProjectRow([makeUiWorkspaceRow("ws", { path: `/${name}/ws`, key: `${name}/ws` })], {
           id: `${name}-12345678`,
-          path: `/${name}`,
           name,
         });
 
@@ -1020,12 +1013,10 @@ describe("Sidebar component", () => {
     it("vscode-divider has no inert attribute", () => {
       const project1 = makeUiProjectRow([makeUiWorkspaceRow("ws1")], {
         id: "p1-12345678",
-        path: "/test",
         name: "test",
       });
       const project2 = makeUiProjectRow([makeUiWorkspaceRow("ws2", { path: "/test2/ws2" })], {
         id: "p2-12345678",
-        path: "/test2",
         name: "test2",
       });
 

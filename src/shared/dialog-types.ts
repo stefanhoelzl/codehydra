@@ -18,13 +18,17 @@
  *
  * - style "heading": large + bold (h1-like)
  * - style "subtitle": small + dim
+ * - style "warning" / "error": alert box (icon + tinted background). The two
+ *   styles state semantic intent — a caution the user should weigh vs. a
+ *   failure — and map to the warning/error theme colors.
  * - default: normal paragraph
- * - icon: codicon name rendered before text (e.g., "error" for danger styling)
+ * - icon: codicon name rendered before text (e.g., "error" for danger
+ *   styling). Alert styles default to the "warning" icon when unset.
  */
 interface TextSection {
   readonly type: "text";
   readonly content: string;
-  readonly style?: "heading" | "subtitle";
+  readonly style?: "heading" | "subtitle" | "warning" | "error";
   readonly icon?: string;
 }
 
@@ -185,6 +189,28 @@ interface InputSection extends FieldSection {
 }
 
 /**
+ * Checkbox section - a single checkbox with an inline label. Extends
+ * FieldSection (id/error/disabled), but renders `label` BESIDE the box (the
+ * native checkbox convention), not above the control.
+ *
+ * - value: controlled value push with the dropdown's adopt-once semantics —
+ *   the renderer adopts a pushed value it has not seen yet; re-sending the
+ *   same value preserves the user's toggles. A backend that needs to force
+ *   the box (e.g. one checkbox disabling another) must track the field via
+ *   changeEvent and echo its model value on every update. Absent = starts
+ *   unchecked, edits preserved.
+ * - Reported in DialogUserEvent.data as the string "true" or "false" (field
+ *   values are strings). A disabled checkbox still reports its current value.
+ * - changeEvent: opt in to emit a field-change event on toggle (a discrete
+ *   action — immediate by default, like radio).
+ */
+interface CheckboxSection extends FieldSection {
+  readonly type: "checkbox";
+  readonly value?: boolean;
+  readonly changeEvent?: FieldChangeConfig;
+}
+
+/**
  * Group section - a horizontal row composing field sections and buttons.
  *
  * - items render in declaration order (which is also the tab order): field
@@ -220,6 +246,7 @@ export type DialogSection =
   | DropdownSection
   | TableSection
   | InputSection
+  | CheckboxSection
   | GroupSection;
 
 // ---- Progress Items ----
@@ -359,8 +386,8 @@ export type DialogCommand =
  * stable id (input.id, radio.id, dropdown.id, ...), including fields nested in
  * group sections. Field ids must be unique within a DialogConfig. Every field
  * is present; an empty/unset field reports "" (a key being absent means the
- * field is not part of this dialog). Values are strings; widening the value
- * type is a shared-type change.
+ * field is not part of this dialog). Values are strings; a checkbox reports
+ * "true"/"false". Widening the value type is a shared-type change.
  */
 type FieldValues = Readonly<Record<string, string>>;
 

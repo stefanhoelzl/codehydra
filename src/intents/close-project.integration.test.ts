@@ -28,13 +28,17 @@ import {
   CLOSE_PROJECT_OPERATION_ID,
   INTENT_CLOSE_PROJECT,
   EVENT_PROJECT_CLOSED,
+  EVENT_PROJECT_CLOSE_FAILED,
 } from "./close-project";
 import type {
   CloseProjectIntent,
   CloseResolveHookResult,
+  CloseConfirmHookInput,
+  CloseConfirmHookResult,
   CloseHookInput,
   CloseHookResult,
   ProjectClosedEvent,
+  ProjectCloseFailedEvent,
 } from "./close-project";
 import {
   DeleteWorkspaceOperation,
@@ -518,5 +522,157 @@ describe("CloseProjectOperation", () => {
     const event = switchedEvents[0] as WorkspaceSwitchedEvent;
     expect(event.type).toBe(EVENT_WORKSPACE_SWITCHED);
     expect(event.payload).toBeNull();
+  });
+});
+
+// =============================================================================
+// Interactive confirm hook
+// =============================================================================
+
+describe("CloseProjectOperation.interactiveConfirm", () => {
+  /** Register an extra confirm-hook module on the harness dispatcher. */
+  function registerConfirm(
+    harness: TestHarness,
+    impl: (ctx: CloseConfirmHookInput) => Promise<CloseConfirmHookResult> | CloseConfirmHookResult
+  ): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(impl);
+    const module: IntentModule = {
+      name: "test",
+      hooks: {
+        [CLOSE_PROJECT_OPERATION_ID]: {
+          confirm: {
+            handler: async (ctx: HookContext): Promise<CloseConfirmHookResult> =>
+              spy(ctx as CloseConfirmHookInput),
+          },
+        },
+      },
+    };
+    harness.dispatcher.registerModule(module);
+    return spy;
+  }
+
+  /** Record the payloads of full-pipeline deletes (the "delete" hook only
+   *  runs when removeWorktree is true). */
+  function recordFullDeletes(harness: TestHarness): DeleteWorkspaceIntent["payload"][] {
+    const payloads: DeleteWorkspaceIntent["payload"][] = [];
+    const module: IntentModule = {
+      name: "test",
+      hooks: {
+        [DELETE_WORKSPACE_OPERATION_ID]: {
+          delete: {
+            handler: async (ctx: HookContext) => {
+              payloads.push((ctx.intent as DeleteWorkspaceIntent).payload);
+              return {};
+            },
+          },
+        },
+      },
+    };
+    harness.dispatcher.registerModule(module);
+    return payloads;
+  }
+
+  it("confirm receives the resolved workspaces and remoteUrl", async () => {
+    const harness = createTestHarness({ withRemoteUrl: true });
+    const confirm = registerConfirm(harness, () => ({}));
+
+    await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    const input = confirm.mock.calls[0]![0] as CloseConfirmHookInput;
+    expect(input.projectPath).toBe(PROJECT_PATH);
+    expect(input.remoteUrl).toBe("https://github.com/org/repo.git");
+    expect(input.workspaces.map((w) => w.path)).toEqual([WORKSPACE_A_PATH, WORKSPACE_B_PATH]);
+  });
+
+  it("a canceled confirm aborts cleanly and emits project:close-failed", async () => {
+    const harness = createTestHarness();
+    registerConfirm(harness, () => ({ canceled: true }));
+
+    const closeFailed: DomainEvent[] = [];
+    const closed: DomainEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_PROJECT_CLOSE_FAILED, (e) => closeFailed.push(e));
+    harness.dispatcher.subscribe(EVENT_PROJECT_CLOSED, (e) => closed.push(e));
+
+    await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
+
+    // Nothing closed, nothing torn down.
+    expect(harness.state.deregisteredProjects).toHaveLength(0);
+    expect(harness.state.destroyedViews).toHaveLength(0);
+    expect(closed).toHaveLength(0);
+    // close-failed resets the per-projectPath idempotency guard.
+    expect(closeFailed).toHaveLength(1);
+    expect((closeFailed[0] as ProjectCloseFailedEvent).payload).toEqual({
+      projectPath: PROJECT_PATH,
+    });
+  });
+
+  it("a confirmed removeAll upgrades teardown to full deletion (branches + warnings included)", async () => {
+    const harness = createTestHarness();
+    registerConfirm(harness, () => ({ removeAll: true }));
+    const fullDeletes = recordFullDeletes(harness);
+
+    await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
+
+    expect(fullDeletes.map((p) => p.workspacePath)).toEqual([WORKSPACE_A_PATH, WORKSPACE_B_PATH]);
+    for (const payload of fullDeletes) {
+      expect(payload).toMatchObject({
+        removeWorktree: true,
+        keepBranch: false,
+        ignoreWarnings: true,
+        skipSwitch: true,
+      });
+    }
+    // The close still completes.
+    expect(harness.state.deregisteredProjects).toContain(PROJECT_PATH);
+  });
+
+  it("a confirmed close without removeAll keeps the runtime-teardown deletes", async () => {
+    const harness = createTestHarness();
+    registerConfirm(harness, () => ({}));
+    const fullDeletes = recordFullDeletes(harness);
+
+    await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
+
+    // No full-pipeline deletes ran; workspaces were torn down runtime-only.
+    expect(fullDeletes).toHaveLength(0);
+    expect(harness.state.destroyedViews).toContain(WORKSPACE_A_PATH);
+    expect(harness.state.deregisteredProjects).toContain(PROJECT_PATH);
+  });
+
+  it("a confirmed removeLocalRepo overrides the payload", async () => {
+    const harness = createTestHarness({ withRemoteUrl: true });
+    registerConfirm(harness, () => ({ removeLocalRepo: true }));
+
+    // Payload carries no removeLocalRepo; the dialog answer provides it.
+    await harness.dispatcher.dispatch(buildCloseIntent({ interactive: true }));
+
+    expect(harness.state.deletedProjectDirectories).toContain(PROJECT_PATH);
+  });
+
+  it("emits project:close-failed before rethrowing on errors", async () => {
+    const harness = createTestHarness({ projectNotFound: true });
+
+    const closeFailed: DomainEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_PROJECT_CLOSE_FAILED, (e) => closeFailed.push(e));
+
+    await expect(
+      harness.dispatcher.dispatch(buildCloseIntent({ projectPath: "/nonexistent/project" }))
+    ).rejects.toThrow("Project not found");
+
+    expect(closeFailed).toHaveLength(1);
+    expect((closeFailed[0] as ProjectCloseFailedEvent).payload).toEqual({
+      projectPath: "/nonexistent/project",
+    });
+  });
+
+  it("non-interactive dispatches never run the confirm hook", async () => {
+    const harness = createTestHarness();
+    const confirm = registerConfirm(harness, () => ({ canceled: true }));
+
+    await harness.dispatcher.dispatch(buildCloseIntent());
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(harness.state.deregisteredProjects).toContain(PROJECT_PATH);
   });
 });

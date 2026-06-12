@@ -34,6 +34,7 @@ import type {
 } from "./delete-workspace";
 import type {
   DeleteWorkspaceIntent,
+  ConfirmHookResult,
   PreflightHookResult,
   ShutdownHookResult,
   ReleaseHookResult,
@@ -1511,6 +1512,21 @@ describe("DeleteWorkspaceOperation.removeWorktree", () => {
       workspacePath: WORKSPACE_PATH,
     });
   });
+
+  it("workspace:deleted carries worktreeRemoved matching the dispatch mode", async () => {
+    const harness = createTestHarness();
+    const deleted: WorkspaceDeletedEvent[] = [];
+    harness.dispatcher.subscribe(EVENT_WORKSPACE_DELETED, (event) => {
+      deleted.push(event as WorkspaceDeletedEvent);
+    });
+
+    await harness.dispatcher.dispatch(buildDeleteIntent({ removeWorktree: false }));
+    await harness.dispatcher.dispatch(
+      buildDeleteIntent({ workspacePath: WORKSPACE_PATH_B, removeWorktree: true })
+    );
+
+    expect(deleted.map((event) => event.payload.worktreeRemoved)).toEqual([false, true]);
+  });
 });
 
 describe("DeleteWorkspaceOperation.resolveHooks", () => {
@@ -1868,5 +1884,111 @@ describe("DeleteWorkspaceOperation.preflight", () => {
     );
 
     expect(harness.progressCaptures).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// Interactive confirm hook
+// =============================================================================
+
+describe("DeleteWorkspaceOperation.interactiveConfirm", () => {
+  /** Register an extra confirm-hook module on the harness dispatcher. */
+  function registerConfirm(
+    harness: TestHarness,
+    impl: (ctx: DeletePipelineHookInput) => Promise<ConfirmHookResult> | ConfirmHookResult
+  ): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(impl);
+    const module: IntentModule = {
+      name: "test",
+      hooks: {
+        [DELETE_WORKSPACE_OPERATION_ID]: {
+          confirm: {
+            handler: async (ctx: HookContext): Promise<ConfirmHookResult> =>
+              spy(ctx as DeletePipelineHookInput),
+          },
+        },
+      },
+    };
+    harness.dispatcher.registerModule(module);
+    return spy;
+  }
+
+  it("a confirmed dispatch proceeds with the user's keepBranch answer", async () => {
+    const harness = createTestHarness();
+    // Spy on the worktree removal to observe the deleteBranch argument.
+    const removeWorkspace = vi.fn().mockResolvedValue(undefined);
+    harness.gitWorktreeProviderMock.gitWorktreeProvider.removeWorkspace = removeWorkspace;
+    // Payload says keepBranch: true; the user unchecks it in the dialog.
+    const confirm = registerConfirm(harness, () => ({ keepBranch: false }));
+    const intent = buildDeleteIntent({ interactive: true, keepBranch: true });
+
+    const result = await harness.dispatcher.dispatch(intent);
+
+    expect(result).toEqual({ started: true });
+    // Confirm received the resolved identity for its dialog content.
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0]![0]).toMatchObject({
+      workspacePath: WORKSPACE_PATH,
+      workspaceName: WORKSPACE_NAME,
+      projectPath: PROJECT_PATH,
+    });
+    // The delete hook saw the confirmed keepBranch (deleteBranch = true).
+    expect(removeWorkspace).toHaveBeenCalledWith(expect.anything(), expect.anything(), true);
+    expect(harness.testState.worktreeRemoved).toBe(true);
+  });
+
+  it("a canceled dispatch runs nothing, returns started:false, and resets idempotency", async () => {
+    const harness = createTestHarness();
+    registerConfirm(harness, () => ({ canceled: true }));
+    const intent = buildDeleteIntent({ interactive: true });
+
+    const result = await harness.dispatcher.dispatch(intent);
+
+    expect(result).toEqual({ started: false });
+    // Nothing ran: no shutdown, no worktree removal, no progress events.
+    expect(harness.testState.serverStopped).toBe(false);
+    expect(harness.testState.worktreeRemoved).toBe(false);
+    expect(harness.progressCaptures).toHaveLength(0);
+    expect(harness.testState.removedWorkspaces).toHaveLength(0);
+    // delete-failed reset the per-key guard: the workspace can be
+    // delete-requested again.
+    expect(harness.inProgressDeletions.has(WORKSPACE_PATH)).toBe(false);
+  });
+
+  it("after a cancel the same workspace can be removed again", async () => {
+    const harness = createTestHarness();
+    let answer: ConfirmHookResult = { canceled: true };
+    registerConfirm(harness, () => answer);
+
+    await harness.dispatcher.dispatch(buildDeleteIntent({ interactive: true }));
+    expect(harness.testState.worktreeRemoved).toBe(false);
+
+    answer = { keepBranch: true };
+    const result = await harness.dispatcher.dispatch(buildDeleteIntent({ interactive: true }));
+
+    expect(result).toEqual({ started: true });
+    expect(harness.testState.worktreeRemoved).toBe(true);
+  });
+
+  it("a confirmed interactive dispatch skips preflight (the user saw the warnings)", async () => {
+    // Dirty workspace would fail preflight on a plain dispatch.
+    const harness = createTestHarness({ isDirty: true, unmergedCommits: 2 });
+    registerConfirm(harness, () => ({}));
+    const intent = buildDeleteIntent({ interactive: true });
+
+    const result = await harness.dispatcher.dispatch(intent);
+
+    expect(result).toEqual({ started: true });
+    expect(harness.testState.worktreeRemoved).toBe(true);
+  });
+
+  it("non-interactive dispatches never run the confirm hook", async () => {
+    const harness = createTestHarness();
+    const confirm = registerConfirm(harness, () => ({ canceled: true }));
+
+    await harness.dispatcher.dispatch(buildDeleteIntent());
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(harness.testState.worktreeRemoved).toBe(true);
   });
 });

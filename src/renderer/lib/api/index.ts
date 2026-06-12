@@ -6,9 +6,11 @@
  * Renderer subscribes to lifecycle events and responds to agent selection.
  * lifecycle.ready() signals readiness, lifecycle.quit() exits the app.
  *
- * Phase A of the UI-state architecture: the domain API wrappers dual-fire —
- * each emits the matching observational UiEvent, then performs the invoke
- * unchanged. The invokes stay load-bearing; the events are not (yet).
+ * Transitional state of the write path: remove-workspace and close-project
+ * are pure ui:events (emitted where the gesture happens; main owns their
+ * confirmation dialogs and dispatches). The remaining domain wrappers still
+ * dual-fire — an observational UiEvent, then the load-bearing invoke — until
+ * the write-path phase flips them too.
  */
 
 import type { Api } from "@shared/electron-api";
@@ -38,17 +40,9 @@ export const projects: Api["projects"] = {
     emitEvent({ kind: "open-project" });
     return api.projects.open(path);
   },
-  // close-project is emitted by CloseProjectDialog, which knows the
-  // backend-minted projectId (this wrapper only receives the path).
-  close: (projectPath, options?) => api.projects.close(projectPath, options),
 };
 
 export const workspaces: Api["workspaces"] = {
-  remove: (workspacePath, options?) => {
-    emitEvent({ kind: "remove-workspace" });
-    return api.workspaces.remove(workspacePath, options);
-  },
-  getStatus: (workspacePath, options?) => api.workspaces.getStatus(workspacePath, options),
   hibernate: (workspacePath) => {
     emitEvent({ kind: "hibernate-workspace" });
     return api.workspaces.hibernate(workspacePath);

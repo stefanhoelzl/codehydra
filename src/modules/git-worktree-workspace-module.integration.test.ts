@@ -14,8 +14,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
 import type { Intent, DomainEvent } from "../intents/lib/types";
+import type { IntentModule } from "../intents/lib/module";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import { createMockPathProvider } from "../boundaries/platform/path-provider.test-utils";
@@ -338,6 +339,7 @@ interface TestSetup {
   dispatcher: Dispatcher;
   provider: ReturnType<typeof createMockGitWorktreeProvider>;
   pathProvider: PathProvider;
+  module: IntentModule;
 }
 
 function createTestSetup(): TestSetup {
@@ -368,10 +370,10 @@ function createTestSetup(): TestSetup {
   );
   dispatcher.registerModule(module);
 
-  return { dispatcher, provider, pathProvider };
+  return { dispatcher, provider, pathProvider, module };
 }
 
-function createPreflightTestSetup(): TestSetup {
+function createPreflightTestSetup(): Omit<TestSetup, "module"> {
   const provider = createMockGitWorktreeProvider();
   const pathProvider = createMockPathProvider({
     getProjectWorkspacesDir: () => new Path("/workspaces"),
@@ -573,6 +575,27 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
         `${projectPath}/.worktrees/feature-1`
       );
       expect(resolveResult.projectPath).toBeUndefined();
+    });
+
+    it("contributes the project's workspaces to the close resolve hook", async () => {
+      const { dispatcher, provider, module } = setup;
+      const projectPath = "/projects/my-app";
+      provider.discover.mockResolvedValue([
+        makeWorkspace("feature-1", projectPath),
+        makeWorkspace("feature-2", projectPath),
+      ]);
+      await dispatchOpenProject(dispatcher, projectPath);
+
+      // The CloseProjectOperation collects this hook to drive its
+      // per-workspace teardown (and the close confirm dialog's count).
+      const result = (await module.hooks![CLOSE_PROJECT_OPERATION_ID]!["resolve"]!.handler({
+        intent: { type: "project:close", payload: { projectPath } },
+      } as HookContext)) as { workspaces: ReadonlyArray<{ path: string }> };
+
+      expect(result.workspaces.map((workspace) => workspace.path)).toEqual([
+        `${projectPath}/.worktrees/feature-1`,
+        `${projectPath}/.worktrees/feature-2`,
+      ]);
     });
   });
 

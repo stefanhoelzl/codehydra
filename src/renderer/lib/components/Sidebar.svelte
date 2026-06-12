@@ -2,6 +2,8 @@
   import { onDestroy } from "svelte";
   import * as api from "$lib/api";
   import type { ProjectId, WorkspaceRef, WorkspaceName } from "$lib/api";
+  // (ProjectId/WorkspaceName casts remain only for the WorkspaceRef passed to
+  // onSwitchWorkspace — that invoke is still path-based until the write phase.)
   import type { UiProjectRow } from "@shared/ui-state";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
@@ -28,10 +30,11 @@
     shortcutModeActive?: boolean;
     /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
     newWorkspaceViewOpen?: boolean;
-    onCloseProject: (projectId: ProjectId) => void;
+    onCloseProject: (projectId: string) => void;
     onSwitchWorkspace: (workspaceRef: WorkspaceRef) => void;
     onOpenNewWorkspace: () => void;
-    onOpenRemoveDialog: (workspaceRef: WorkspaceRef) => void;
+    /** Request the remove flow for a workspace by its snapshot row key. */
+    onRemoveWorkspace: (key: string) => void;
   }
 
   let {
@@ -41,7 +44,7 @@
     onCloseProject,
     onSwitchWorkspace,
     onOpenNewWorkspace,
-    onOpenRemoveDialog,
+    onRemoveWorkspace,
   }: SidebarProps = $props();
 
   const totalWorkspaces = $derived(
@@ -163,10 +166,6 @@
 
   // ============ Actions ============
 
-  function handleRemoveWorkspace(workspaceRef: WorkspaceRef): void {
-    onOpenRemoveDialog(workspaceRef);
-  }
-
   function handleWakeWorkspace(path: string): void {
     api.workspaces.wake(path).catch((error: unknown) => {
       logger.error("Failed to wake workspace", { path, error: String(error) });
@@ -232,7 +231,7 @@
                 class="action-btn"
                 id={`close-project-${project.id}`}
                 aria-label="Close project"
-                onclick={() => onCloseProject(project.id as ProjectId)}
+                onclick={() => onCloseProject(project.id)}
               >
                 <Icon name="trash" size={14} />
               </button>
@@ -288,11 +287,11 @@
                       <button
                         type="button"
                         class="action-btn remove-btn"
-                        id={`remove-ws-${workspace.path}`}
+                        id={`remove-ws-${workspace.key}`}
                         aria-label="Remove workspace"
                         onclick={(e) => {
                           e.stopPropagation();
-                          handleRemoveWorkspace(workspaceRef);
+                          onRemoveWorkspace(workspace.key);
                         }}
                       >
                         <Icon name="trash" size={14} />

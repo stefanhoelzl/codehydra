@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import type { UiState, UiWorkspaceRow } from "@shared/ui-state";
 
 type EventCallback = (...args: unknown[]) => void;
@@ -21,16 +21,11 @@ const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
     mockApi: {
       emitEvent: vi.fn(),
       workspaces: {
-        remove: vi.fn().mockResolvedValue({ started: true }),
-        getStatus: vi
-          .fn()
-          .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
         hibernate: vi.fn().mockResolvedValue({ started: true }),
         wake: vi.fn().mockResolvedValue(null),
       },
       projects: {
         open: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
       },
       ui: {
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -66,7 +61,6 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "../App.svelte";
-import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
@@ -122,7 +116,6 @@ describe("Integration tests", () => {
     eventCallbacks.clear();
     stateCallbacks.length = 0;
     resetUiState();
-    dialogsStore.reset();
     shortcutsStore.reset();
     dialogFrameworkStore.reset();
   });
@@ -152,27 +145,21 @@ describe("Integration tests", () => {
   });
 
   describe("remove workspace flow", () => {
-    it("click [×] → dialog → confirm → fire-and-forget remove → pushed snapshot drops the row", async () => {
+    it("click [×] → remove-workspace ui:event → pushed snapshots show deletion and drop the row", async () => {
       await renderApp(snapshotOf([ws("ws1"), ws("ws2")], "ws1"));
       await waitFor(() => expect(screen.getByText("ws2")).toBeInTheDocument());
       await expandSidebar();
 
-      // Open the remove dialog for ws2
-      const removeButton = document.getElementById("remove-ws-/test/.worktrees/ws2");
+      // Request the remove flow for ws2 (the confirmation dialog is a
+      // main-side framework session now; this test covers the renderer's
+      // part: the gesture emits the keyed event).
+      const removeButton = document.getElementById("remove-ws-test-project-12345678/ws2");
       expect(removeButton).toBeInTheDocument();
       await fireEvent.click(removeButton!);
 
-      const dialog = await screen.findByRole("dialog");
-      const confirmButton = within(dialog).getByRole("button", { name: /^remove$/i });
-      await fireEvent.click(confirmButton);
-
-      // Fire-and-forget: invoke called, dialog closes immediately
-      expect(mockApi.workspaces.remove).toHaveBeenCalledWith("/test/.worktrees/ws2", {
-        keepBranch: false,
-        ignoreWarnings: true,
-      });
-      await waitFor(() => {
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "remove-workspace",
+        key: "test-project-12345678/ws2",
       });
 
       // Deletion progress + removal arrive as snapshots

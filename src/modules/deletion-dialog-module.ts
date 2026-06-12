@@ -1,14 +1,20 @@
 /**
- * DeletionDialogModule - Shows deletion progress dialog only when the
- * workspace being deleted is the active (selected) workspace.
+ * DeletionDialogModule - Owns the dialogs of the workspace-deletion flow:
  *
- * Subscribes to EVENT_WORKSPACE_DELETION_PROGRESS, EVENT_WORKSPACE_DELETED,
- * and EVENT_WORKSPACE_SWITCHED. Opens/closes the dialog based on which
- * workspace is currently active — behaves like a workspace view replacement.
+ * 1. Remove confirmation: the "confirm" hook on workspace:delete (interactive
+ *    dispatches). Opens instantly, runs the dirty/unmerged status check in
+ *    the background and updates the warnings in, parks the dispatch until the
+ *    user answers (keepBranch or cancel).
+ * 2. Deletion progress: shown only when the workspace being deleted is the
+ *    active (selected) workspace. Subscribes to
+ *    EVENT_WORKSPACE_DELETION_PROGRESS, EVENT_WORKSPACE_DELETED, and
+ *    EVENT_WORKSPACE_SWITCHED — behaves like a workspace view replacement,
+ *    with retry/dismiss on failure.
  */
 
-import type { IntentModule, EventDeclarations } from "../intents/lib/module";
+import type { IntentModule, EventDeclarations, HookDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
+import type { HookContext } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type {
@@ -23,15 +29,24 @@ import {
   EVENT_WORKSPACE_DELETION_PROGRESS,
   EVENT_WORKSPACE_DELETED,
   INTENT_DELETE_WORKSPACE,
+  DELETE_WORKSPACE_OPERATION_ID,
 } from "../intents/delete-workspace";
 import type {
   WorkspaceDeletionProgressEvent,
   WorkspaceDeletedEvent,
   DeleteWorkspaceIntent,
+  DeletePipelineHookInput,
+  ConfirmHookResult,
 } from "../intents/delete-workspace";
+import {
+  INTENT_GET_WORKSPACE_STATUS,
+  type GetWorkspaceStatusIntent,
+} from "../intents/get-workspace-status";
+import { INTENT_GET_METADATA, type GetMetadataIntent } from "../intents/get-metadata";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import type { Logger } from "../boundaries/platform/logging";
+import { getErrorMessage } from "../shared/error-utils";
 
 /**
  * Dependencies for the deletion dialog module.
@@ -125,6 +140,59 @@ function buildConfig(progress: DeletionProgress): DialogConfig {
   }
 
   return { sections };
+}
+
+/** Display state of the remove confirmation dialog. */
+interface RemoveConfirmState {
+  readonly workspaceName: string;
+  /** The background dirty/unmerged status check is still running. */
+  readonly checking: boolean;
+  readonly isDirty: boolean;
+  readonly unmergedCommits: number;
+  /** Base branch name (workspace metadata), for the unmerged warning text. */
+  readonly base: string | undefined;
+}
+
+/** Build the remove confirmation DialogConfig from its display state. */
+function buildRemoveConfirmConfig(state: RemoveConfirmState): DialogConfig {
+  const sections: DialogSection[] = [
+    { type: "text", content: "Remove Workspace", style: "heading" },
+    { type: "text", content: `Remove workspace "${state.workspaceName}"?` },
+  ];
+
+  if (state.checking) {
+    sections.push({ type: "text", content: "Checking workspace status...", style: "subtitle" });
+  } else {
+    if (state.isDirty) {
+      sections.push({
+        type: "text",
+        content: "This workspace has uncommitted changes that will be lost.",
+        style: "warning",
+      });
+    }
+    if (state.unmergedCommits > 0) {
+      const plural = state.unmergedCommits === 1 ? "" : "s";
+      sections.push({
+        type: "text",
+        content: `This branch has ${state.unmergedCommits} commit${plural} not merged into ${state.base ?? "base"}.`,
+        style: "warning",
+      });
+    }
+  }
+
+  sections.push({ type: "checkbox", id: "keep-branch", label: "Keep branch" });
+  sections.push({
+    type: "group",
+    items: [
+      { type: "button", id: "remove", label: "Remove", variant: "primary" },
+      // autofocus places focus inside the form so its keyboard contract
+      // (Escape = dismiss, Tab trap) engages; Cancel is the safe default
+      // for a destructive confirmation.
+      { type: "button", id: "cancel", label: "Cancel", variant: "secondary", autofocus: true },
+    ],
+  });
+
+  return { sections, modal: true };
 }
 
 function truncate(str: string, max: number): string {
@@ -275,8 +343,79 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     },
   };
 
+  /**
+   * The "confirm" hook on workspace:delete (interactive dispatches only):
+   * opens the confirmation dialog immediately, fills the dirty/unmerged
+   * warnings in when the background status check lands, and parks the
+   * dispatch until the user answers.
+   */
+  async function confirmRemove(ctx: HookContext): Promise<ConfirmHookResult> {
+    const input = ctx as DeletePipelineHookInput;
+    let state: RemoveConfirmState = {
+      workspaceName: input.workspaceName,
+      checking: true,
+      isDirty: false,
+      unmergedCommits: 0,
+      base: undefined,
+    };
+
+    const handle = deps.dialogManager.open(buildRemoveConfirmConfig(state));
+    let dialogOpen = true;
+
+    // Background status check (refresh fetches remotes — slow). Never blocks
+    // the dialog; failures fall back to "no warnings", like the old renderer
+    // dialog did.
+    void (async (): Promise<void> => {
+      try {
+        const [status, metadata] = await Promise.all([
+          deps.dispatcher.dispatch({
+            type: INTENT_GET_WORKSPACE_STATUS,
+            payload: { workspacePath: input.workspacePath, refresh: true },
+          } as GetWorkspaceStatusIntent),
+          deps.dispatcher.dispatch({
+            type: INTENT_GET_METADATA,
+            payload: { workspacePath: input.workspacePath },
+          } as GetMetadataIntent),
+        ]);
+        state = {
+          ...state,
+          checking: false,
+          isDirty: status.isDirty,
+          unmergedCommits: status.unmergedCommits,
+          base: metadata["base"],
+        };
+      } catch (error) {
+        deps.logger.debug("Remove-confirm status check failed", {
+          workspace: input.workspacePath,
+          error: getErrorMessage(error),
+        });
+        state = { ...state, checking: false };
+      }
+      if (dialogOpen) {
+        handle.update(buildRemoveConfirmConfig(state));
+      }
+    })();
+
+    try {
+      const event = await handle.nextEvent();
+      if (event.kind !== "dismiss" && event.actionId === "remove") {
+        return { keepBranch: event.data?.["keep-branch"] === "true" };
+      }
+      // Cancel button or Escape.
+      return { canceled: true };
+    } finally {
+      dialogOpen = false;
+      handle.close();
+    }
+  }
+
   return {
     name: "deletion-dialog",
+    hooks: {
+      [DELETE_WORKSPACE_OPERATION_ID]: {
+        confirm: { handler: confirmRemove },
+      },
+    } satisfies HookDeclarations,
     events,
   };
 }

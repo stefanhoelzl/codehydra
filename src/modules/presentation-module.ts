@@ -4,13 +4,19 @@
  *
  * Owns both UI wires of the target architecture:
  *
- * - api:ui:event (renderer → main): zod-validated intake. `log` events are
- *   load-bearing (replacement for the former api:log:* channels); the
- *   remaining events are observational for now.
+ * - api:ui:event (renderer → main): zod-validated intake. `log` is the
+ *   renderer's logging channel; `remove-workspace` and `close-project` are
+ *   load-bearing requests — the presenter resolves their snapshot identity
+ *   (key / projectId) against its model and dispatches the matching intent
+ *   with `interactive: true`, fire-and-forget (parking and failure surfacing
+ *   are the operations' business). The remaining events are observational
+ *   for now.
  * - api:ui:state (main → renderer): full UiState snapshots rebuilt from
- *   domain events and pushed coalesced per microtask. Phase B is a shadow:
- *   the renderer does not subscribe yet; each push is debug-logged so the
- *   stream can be analyzed offline (log.level=debug:presenter).
+ *   domain events and pushed coalesced per microtask.
+ *
+ * Also registers the "confirm" hook on project:close — the close
+ * confirmation dialog (the presenter's first dialog ownership; the remove
+ * confirm lives with the rest of the deletion flow in deletion-dialog-module).
  *
  * The view-model mirrors today's renderer store semantics (projects store,
  * creating placeholders, deletion lifecycle, agent status, active workspace,
@@ -23,6 +29,8 @@
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
+import type { HookContext } from "../intents/lib/operation";
+import type { IDispatcher } from "../intents/lib/dispatcher";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
 import type { Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
@@ -35,7 +43,15 @@ import { extractTags, TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
 import { EVENT_PROJECT_OPENED, type ProjectOpenedEvent } from "../intents/open-project";
-import { EVENT_PROJECT_CLOSED, type ProjectClosedEvent } from "../intents/close-project";
+import {
+  EVENT_PROJECT_CLOSED,
+  INTENT_CLOSE_PROJECT,
+  CLOSE_PROJECT_OPERATION_ID,
+  type ProjectClosedEvent,
+  type CloseProjectIntent,
+  type CloseConfirmHookInput,
+  type CloseConfirmHookResult,
+} from "../intents/close-project";
 import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
@@ -47,6 +63,8 @@ import {
 import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
+  INTENT_DELETE_WORKSPACE,
+  type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
   type WorkspaceDeletionProgressEvent,
 } from "../intents/delete-workspace";
@@ -57,6 +75,7 @@ import {
 } from "../intents/update-agent-status";
 import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
 import { ApiIpcChannels } from "../shared/ipc";
+import type { DialogConfig, DialogSection } from "../shared/dialog-types";
 import { uiEventSchema } from "../shared/ui-event";
 import {
   compareDisplayNames,
@@ -66,6 +85,8 @@ import {
   type UiWorkspaceRow,
 } from "../shared/ui-state";
 import { buildScreenshotPath } from "./hibernation-screenshot-module";
+import type { DialogManager } from "./dialog-manager";
+import { getErrorMessage } from "../shared/error-utils";
 
 export interface PresentationModuleDeps {
   readonly ipcLayer: Pick<IpcBoundary, "on" | "removeListener">;
@@ -77,6 +98,8 @@ export interface PresentationModuleDeps {
   };
   readonly fileSystem: Pick<FileSystemBoundary, "readFileBuffer">;
   readonly pathProvider: PathProvider;
+  readonly dialogManager: Pick<DialogManager, "open">;
+  readonly dispatcher: Pick<IDispatcher, "dispatch">;
 }
 
 /**
@@ -94,15 +117,14 @@ function toLoggerName(name: string): LoggerName {
 
 /**
  * Semantic workspace view-model. The UI cares about meanings, not metadata:
- * domain metadata is interpreted once at event intake (hibernated flag, base
- * branch, tags) and raw metadata is never stored.
+ * domain metadata is interpreted once at event intake (hibernated flag,
+ * tags) and raw metadata is never stored.
  */
 interface WorkspaceModel {
   readonly name: string;
   /** Real worktree path; null while the workspace is still being created. */
   path: string | null;
   hibernated: boolean;
-  base: string | undefined;
   tags: WorkspaceTag[];
   url: string | undefined;
   creating: boolean;
@@ -111,10 +133,9 @@ interface WorkspaceModel {
 /** Interpret a workspace's domain metadata into the semantic model fields. */
 function fromMetadata(
   metadata: Readonly<Record<string, string>>
-): Pick<WorkspaceModel, "hibernated" | "base" | "tags"> {
+): Pick<WorkspaceModel, "hibernated" | "tags"> {
   return {
     hibernated: metadata["hibernated"] === "true",
-    base: metadata["base"],
     tags: extractTags(metadata),
   };
 }
@@ -129,6 +150,98 @@ interface ProjectModel {
 }
 
 const AGENT_NONE: AgentStatus = { type: "none" };
+
+// =============================================================================
+// Close-project confirmation dialog
+// =============================================================================
+
+/** User-driven state of the close-project confirmation dialog. */
+interface CloseConfirmState {
+  removeAll: boolean;
+  keepRepo: boolean;
+}
+
+/**
+ * Build the close confirmation DialogConfig. Remote projects delete the
+ * cloned repository by default ("Keep cloned repository" unchecked), which
+ * implies removing all workspaces — the remove-all checkbox is then forced
+ * checked and disabled. Both checkboxes opt into change events and the
+ * backend echoes its model on every update (the checkbox adopt-once
+ * contract).
+ */
+function buildCloseConfirmConfig(
+  state: CloseConfirmState,
+  workspaceCount: number,
+  remoteUrl: string | undefined
+): DialogConfig {
+  const isRemote = remoteUrl !== undefined;
+  const shouldDeleteRepo = isRemote && !state.keepRepo;
+  const removeAll = state.removeAll || shouldDeleteRepo;
+
+  const sections: DialogSection[] = [{ type: "text", content: "Close Project", style: "heading" }];
+
+  if (workspaceCount > 0) {
+    const workspaceText = workspaceCount === 1 ? "1 workspace" : `${workspaceCount} workspaces`;
+    sections.push({
+      type: "text",
+      content: `This project has ${workspaceText} that will remain on disk after closing.`,
+    });
+    sections.push({
+      type: "checkbox",
+      id: "remove-all",
+      label: "Remove all workspaces and their branches",
+      value: removeAll,
+      disabled: shouldDeleteRepo,
+      changeEvent: true,
+    });
+  }
+
+  if (isRemote) {
+    sections.push({
+      type: "checkbox",
+      id: "keep-repo",
+      label: "Keep cloned repository",
+      value: state.keepRepo,
+      changeEvent: true,
+    });
+    if (shouldDeleteRepo) {
+      sections.push({
+        type: "text",
+        content:
+          "This will permanently delete the cloned repository and all workspaces, " +
+          `including any uncommitted changes. You can clone it again from: ${remoteUrl}`,
+        style: "warning",
+      });
+    }
+  }
+
+  if (!shouldDeleteRepo && removeAll && workspaceCount > 0) {
+    sections.push({
+      type: "text",
+      content:
+        "All workspaces and their branches will be removed, including any uncommitted changes.",
+      style: "warning",
+    });
+  }
+
+  const closeLabel = shouldDeleteRepo
+    ? "Delete & Close"
+    : removeAll
+      ? "Remove & Close"
+      : "Close Project";
+  sections.push({
+    type: "group",
+    items: [
+      { type: "button", id: "close", label: closeLabel, variant: "primary" },
+      // autofocus places focus inside the form so its keyboard contract
+      // (Escape = dismiss, Tab trap) engages; Cancel is the safe default
+      // for a destructive confirmation.
+      { type: "button", id: "cancel", label: "Cancel", variant: "secondary", autofocus: true },
+    ],
+  });
+
+  return { sections, modal: true };
+}
 
 export function createPresentationModule(deps: PresentationModuleDeps): IntentModule {
   const logger = deps.loggingService.createLogger("presenter");
@@ -260,7 +373,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       .sort((a, b) => compareDisplayNames(a.name, b.name))
       .map((project) => ({
         id: project.id,
-        path: project.path,
         name: project.name,
         title: project.remoteUrl ?? project.path,
         remote: project.remoteUrl !== undefined,
@@ -272,7 +384,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
               key,
               path: workspace.path ?? pendingPath(project.path, workspace.name),
               name: workspace.name,
-              ...(workspace.base !== undefined && { base: workspace.base }),
               status: rowStatus(workspace),
               hibernated: workspace.hibernated,
               agent:
@@ -317,6 +428,17 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   // ui:event intake (renderer → main)
   // ---------------------------------------------------------------------------
 
+  /** Dispatch fire-and-forget: the intake must never await a parked confirm. */
+  function dispatchDetached(intent: DeleteWorkspaceIntent | CloseProjectIntent): void {
+    const handle = deps.dispatcher.dispatch(intent);
+    void handle.catch((error: unknown) => {
+      logger.debug("ui-event dispatch rejected", {
+        intent: intent.type,
+        error: getErrorMessage(error),
+      });
+    });
+  }
+
   const listener: IpcEventHandler = (_event: unknown, ...args: unknown[]) => {
     const result = uiEventSchema.safeParse(args[0]);
     if (!result.success) {
@@ -333,6 +455,39 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       } catch {
         // Swallow errors - logging should never crash the app
       }
+      return;
+    }
+    if (event.kind === "remove-workspace") {
+      // Resolve the echoed snapshot key against the model; a stale key (the
+      // workspace vanished since the snapshot) is dropped, like stale
+      // metadata. Placeholders (path null) have nothing to delete yet.
+      const found = findByKey(event.key);
+      if (!found || found.workspace.path === null) {
+        logger.warn("Dropped remove-workspace for unknown key", { key: event.key });
+        return;
+      }
+      dispatchDetached({
+        type: INTENT_DELETE_WORKSPACE,
+        payload: {
+          workspacePath: found.workspace.path,
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+          interactive: true,
+        },
+      });
+      return;
+    }
+    if (event.kind === "close-project") {
+      const project = projects.get(event.projectId);
+      if (!project) {
+        logger.warn("Dropped close-project for unknown project", { projectId: event.projectId });
+        return;
+      }
+      dispatchDetached({
+        type: INTENT_CLOSE_PROJECT,
+        payload: { projectPath: project.path, interactive: true },
+      });
       return;
     }
     logger.debug("ui event", { kind: event.kind });
@@ -431,7 +586,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
           name: p.workspaceName,
           path: null,
           hibernated: false,
-          base: p.base,
           tags: [],
           url: undefined,
           creating: true,
@@ -517,8 +671,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
           workspace.hibernated = p.value === "true";
           // Flag flips invalidate the cached screenshot (deleted on wake).
           screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
-        } else if (p.key === "base") {
-          workspace.base = p.value ?? undefined;
         } else if (p.key.startsWith(TAGS_METADATA_KEY_PREFIX)) {
           const name = p.key.slice(TAGS_METADATA_KEY_PREFIX.length);
           workspace.tags = workspace.tags.filter((tag) => tag.name !== name);
@@ -545,10 +697,57 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     },
   };
 
+  /**
+   * The "confirm" hook on project:close (interactive dispatches only): parks
+   * the dispatch on the close confirmation dialog. Checkbox changes round-trip
+   * through the backend model (interlock: keeping the cloned repository
+   * unchecks remove-all; deleting it forces remove-all on).
+   */
+  async function confirmClose(ctx: HookContext): Promise<CloseConfirmHookResult> {
+    const input = ctx as CloseConfirmHookInput;
+    const isRemote = input.remoteUrl !== undefined;
+    const state: CloseConfirmState = { removeAll: false, keepRepo: false };
+    const buildConfig = (): DialogConfig =>
+      buildCloseConfirmConfig(state, input.workspaces.length, input.remoteUrl);
+
+    const handle = deps.dialogManager.open(buildConfig());
+    const unsubscribe = handle.onChange((change) => {
+      if (change.fieldId === "remove-all") {
+        state.removeAll = change.data["remove-all"] === "true";
+      } else if (change.fieldId === "keep-repo") {
+        state.keepRepo = change.data["keep-repo"] === "true";
+        if (state.keepRepo) {
+          // Keeping the repository withdraws the implied remove-all.
+          state.removeAll = false;
+        }
+      }
+      handle.update(buildConfig());
+    });
+
+    try {
+      const event = await handle.nextEvent();
+      if (event.kind !== "dismiss" && event.actionId === "close") {
+        const shouldDeleteRepo = isRemote && !state.keepRepo;
+        return {
+          removeAll: state.removeAll || shouldDeleteRepo,
+          removeLocalRepo: shouldDeleteRepo,
+        };
+      }
+      // Cancel button or Escape.
+      return { canceled: true };
+    } finally {
+      unsubscribe();
+      handle.close();
+    }
+  }
+
   return {
     name: "presentation",
     events,
     hooks: {
+      [CLOSE_PROJECT_OPERATION_ID]: {
+        confirm: { handler: confirmClose },
+      },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async (): Promise<void> => {

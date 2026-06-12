@@ -22,16 +22,11 @@ const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
     mockApi: {
       emitEvent: vi.fn(),
       workspaces: {
-        remove: vi.fn().mockResolvedValue({ started: true }),
-        getStatus: vi
-          .fn()
-          .mockResolvedValue({ isDirty: false, unmergedCommits: 0, agent: { type: "none" } }),
         hibernate: vi.fn().mockResolvedValue({ started: true }),
         wake: vi.fn().mockResolvedValue(null),
       },
       projects: {
         open: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn().mockResolvedValue(undefined),
       },
       ui: {
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
@@ -100,7 +95,6 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "./App.svelte";
-import * as dialogsStore from "$lib/stores/dialogs.svelte.js";
 import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
@@ -145,7 +139,6 @@ describe("App component", () => {
     eventCallbacks.clear();
     stateCallbacks.length = 0;
     resetUiState();
-    dialogsStore.reset();
     shortcutsStore.reset();
     dialogFrameworkStore.reset();
     // Restore capture implementations (the unmount test overrides return values)
@@ -384,7 +377,7 @@ describe("App component", () => {
       expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(null);
     });
 
-    it('shortcut "delete" opens remove workspace dialog', async () => {
+    it('shortcut "delete" requests the remove flow for the active workspace', async () => {
       render(App);
       showMainView();
       await pushRows([ws("ws1")], "/test/.worktrees/ws1");
@@ -393,10 +386,11 @@ describe("App component", () => {
       fireEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       fireEvent("shortcut:key", "delete");
 
-      await waitFor(() => {
-        const dialog = screen.getByRole("dialog");
-        expect(dialog).toBeInTheDocument();
-        expect(screen.getByText("Remove Workspace")).toBeInTheDocument();
+      // The confirmation dialog is a main-side framework session now; the
+      // renderer's part ends at the keyed ui:event.
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "remove-workspace",
+        key: "test-project-12345678/ws1",
       });
     });
   });

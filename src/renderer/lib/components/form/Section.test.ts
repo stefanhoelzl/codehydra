@@ -30,6 +30,7 @@ function renderSection(section: DialogSection | ButtonItem) {
       onSelect: vi.fn(),
       onPick: vi.fn(),
       onType: vi.fn(),
+      onToggle: vi.fn(),
       onAction: vi.fn(),
       onSubmit: vi.fn(),
     },

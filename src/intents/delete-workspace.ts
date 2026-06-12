@@ -39,7 +39,7 @@ import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-wo
 import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
-import { throwHookErrors, collectErrorMessages } from "./lib/hook-helpers";
+import { throwHookErrors, collectErrorMessages, lastDefined } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -56,9 +56,17 @@ export interface DeleteWorkspacePayload {
   readonly ignoreWarnings?: boolean;
   /** PIDs from a previous failed attempt. When present, flush hook kills these before delete. */
   readonly blockingPids?: readonly number[];
+  /**
+   * The dispatch is user-interactive: the "confirm" hook point runs before the
+   * pipeline, parking the dispatch on a confirmation dialog that contributes
+   * keepBranch or cancels. Programmatic callers (MCP, plugin, auto-workspace)
+   * omit it and never see a dialog. Only honored on the full-pipeline path
+   * (removeWorktree, not force).
+   */
+  readonly interactive?: boolean;
 }
 
-export interface DeleteWorkspaceIntent extends Intent<{ started: true }> {
+export interface DeleteWorkspaceIntent extends Intent<{ started: boolean }> {
   readonly type: "workspace:delete";
   readonly payload: DeleteWorkspacePayload;
 }
@@ -74,6 +82,13 @@ export interface WorkspaceDeletedPayload {
   readonly workspaceName: WorkspaceName;
   readonly workspacePath: string;
   readonly projectPath: string;
+  /**
+   * True when the dispatch removed (or force-abandoned) the git worktree;
+   * false for runtime-only teardown (removeWorktree: false — e.g. the
+   * per-workspace teardown during project:close). Consumers that track real
+   * deletions (auto-workspace dismissal) must ignore teardown events.
+   */
+  readonly worktreeRemoved: boolean;
 }
 
 export interface WorkspaceDeletedEvent extends DomainEvent {
@@ -106,6 +121,20 @@ export interface WorkspaceDeletionProgressEvent extends DomainEvent {
 // =============================================================================
 
 export const DELETE_WORKSPACE_OPERATION_ID = "delete-workspace";
+
+/**
+ * Per-handler result for the "confirm" hook point (interactive dispatches
+ * only). The handler opens a confirmation dialog and parks until the user
+ * answers: canceled aborts the dispatch (workspace:delete-failed is emitted
+ * so the per-key idempotency guard resets — the event means "ended without
+ * deletion", not only errors); otherwise keepBranch overrides the payload and
+ * the pipeline proceeds with ignoreWarnings semantics (the user just saw the
+ * warnings).
+ */
+export interface ConfirmHookResult {
+  readonly canceled?: boolean;
+  readonly keepBranch?: boolean;
+}
 
 /**
  * Per-handler result for the "preflight" hook point.
@@ -263,15 +292,17 @@ interface ResolvedIdentity {
 interface PipelineResult {
   readonly hasErrors: boolean;
   readonly identity: ResolvedIdentity;
+  /** The interactive confirm hook canceled the dispatch (nothing ran). */
+  readonly canceled?: boolean;
 }
 
 export class DeleteWorkspaceOperation implements Operation<
   DeleteWorkspaceIntent,
-  { started: true }
+  { started: boolean }
 > {
   readonly id = DELETE_WORKSPACE_OPERATION_ID;
 
-  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: true }> {
+  async execute(ctx: OperationContext<DeleteWorkspaceIntent>): Promise<{ started: boolean }> {
     const { payload } = ctx.intent;
 
     const emitEvent = (identity: ResolvedIdentity): void => {
@@ -282,6 +313,7 @@ export class DeleteWorkspaceOperation implements Operation<
           workspaceName: identity.workspaceName,
           workspacePath: payload.workspacePath,
           projectPath: identity.projectPath,
+          worktreeRemoved: payload.removeWorktree,
         },
       };
       ctx.emit(event);
@@ -301,6 +333,19 @@ export class DeleteWorkspaceOperation implements Operation<
     } else {
       try {
         const result = await this.runPipeline(ctx, ctx.emit);
+
+        if (result.canceled) {
+          // User declined the interactive confirm: nothing ran. Emit
+          // delete-failed so the per-key idempotency guard resets (the event
+          // means "dispatch ended without deletion"), and skip the
+          // auto-switch — no workspace went away.
+          const failedEvent: WorkspaceDeleteFailedEvent = {
+            type: EVENT_WORKSPACE_DELETE_FAILED,
+            payload: { workspacePath: payload.workspacePath },
+          };
+          ctx.emit(failedEvent);
+          return { started: false };
+        }
 
         if (result.hasErrors) {
           // Emit delete-failed to reset idempotency, allowing retry dispatch
@@ -347,9 +392,39 @@ export class DeleteWorkspaceOperation implements Operation<
 
     const identity: ResolvedIdentity = { projectId, workspaceName, projectPath };
 
-    // Build enriched context for downstream hooks
+    // --- Confirm (interactive dispatches only) ---
+    // Parks on the confirmation dialog BEFORE any pipeline work or progress
+    // emission (and outside the safety net below — a confirm failure aborts
+    // like a preflight failure, it never fakes a terminal progress event).
+    // A confirmed dispatch proceeds with the user's keepBranch answer and
+    // ignoreWarnings semantics: the dialog just showed the warnings.
+    let effectivePayload = payload;
+    if (payload.interactive && payload.removeWorktree && !payload.force) {
+      const confirmCtx: DeletePipelineHookInput = {
+        intent: ctx.intent,
+        projectPath,
+        workspacePath: payload.workspacePath,
+        workspaceName,
+        active,
+      };
+      const { results: confirmResults, errors: confirmErrors } =
+        await ctx.hooks.collect<ConfirmHookResult>("confirm", confirmCtx);
+      throwHookErrors(confirmErrors, "workspace:delete confirm hooks failed");
+      if (confirmResults.some((r) => r.canceled)) {
+        return { hasErrors: false, identity, canceled: true };
+      }
+      effectivePayload = {
+        ...payload,
+        keepBranch: lastDefined(confirmResults, (r) => r.keepBranch) ?? payload.keepBranch,
+        ignoreWarnings: true,
+      };
+    }
+
+    // Build enriched context for downstream hooks. The intent carries the
+    // effective payload so hooks (e.g. the delete hook's keepBranch) see the
+    // confirmed values.
     const pipelineCtx: DeletePipelineHookInput = {
-      intent: ctx.intent,
+      intent: { ...ctx.intent, payload: effectivePayload },
       projectPath,
       workspacePath: payload.workspacePath,
       workspaceName,
@@ -361,12 +436,12 @@ export class DeleteWorkspaceOperation implements Operation<
     // Without this, an unexpected throw after the first progress emission
     // leaves the UI permanently stuck on "Removing workspace".
     try {
-      return await this.runPipelineBody(ctx, emit, identity, pipelineCtx);
+      return await this.runPipelineBody(ctx, emit, identity, pipelineCtx, effectivePayload);
     } catch (error) {
       // Preflight errors must propagate (no progress events emitted yet)
       if (error instanceof Error && error.message.startsWith("Preflight check failed:"))
         throw error;
-      this.emitPipelineProgress(emit, identity, payload, {}, true, true);
+      this.emitPipelineProgress(emit, identity, effectivePayload, {}, true, true);
       return { hasErrors: true, identity };
     }
   }
@@ -375,10 +450,9 @@ export class DeleteWorkspaceOperation implements Operation<
     ctx: OperationContext<DeleteWorkspaceIntent>,
     emit: EmitFn,
     identity: ResolvedIdentity,
-    pipelineCtx: DeletePipelineHookInput
+    pipelineCtx: DeletePipelineHookInput,
+    payload: DeleteWorkspacePayload
   ): Promise<PipelineResult> {
-    const { payload } = ctx.intent;
-
     // --- Preflight (dirty/unmerged check) ---
     if (payload.removeWorktree && !payload.force && !payload.ignoreWarnings) {
       const { results: preflightResults, errors: preflightCollectErrors } =

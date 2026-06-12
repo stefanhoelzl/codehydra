@@ -15,6 +15,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import CheckboxSection from "./CheckboxSection.svelte";
   import DropdownSection from "./DropdownSection.svelte";
   import FormButton from "./FormButton.svelte";
   import GroupSection from "./GroupSection.svelte";
@@ -47,6 +48,7 @@
     onSelect,
     onPick,
     onType,
+    onToggle,
     onAction,
     onSubmit,
   }: Props = $props();
@@ -78,6 +80,12 @@
     value={values[section.id] ?? ""}
     onInput={(value) => onInput(section, value)}
     {onSubmit}
+  />
+{:else if section.type === "checkbox"}
+  <CheckboxSection
+    {section}
+    value={values[section.id] ?? ""}
+    onToggle={(checked) => onToggle(section, checked)}
   />
 {:else if section.type === "group"}
   <GroupSection {section} {layout} {renderItem} />

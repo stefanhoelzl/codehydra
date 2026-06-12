@@ -152,6 +152,7 @@ class TrackingDeleteWorkspaceOperation implements Operation<
           workspaceName: "auto-ws" as WorkspaceName,
           workspacePath: ctx.intent.payload.workspacePath,
           projectPath: "/home/user/projects/repo",
+          worktreeRemoved: ctx.intent.payload.removeWorktree,
         },
       };
       ctx.emit(event);
@@ -1133,6 +1134,40 @@ describe("AutoWorkspaceModule Integration", () => {
       // Workspace should NOT be recreated
       expect(openProjectOp.dispatched).toHaveLength(0);
       expect(openWorkspaceOp.dispatched).toHaveLength(0);
+    });
+
+    it("runtime-only teardown (project close) does not dismiss tracking", async () => {
+      const wsPath = "/home/user/projects/repo/item-1";
+      const existingState = JSON.stringify({
+        version: 1,
+        entries: {
+          "test-source/item-1": {
+            workspacePath: wsPath,
+            workspaceName: "item-1",
+            createdAt: "2026-02-27T10:00:00Z",
+          },
+        },
+      });
+      const { dispatcher, source, listProjectsOp, state } = createTestSetup({ existingState });
+      listProjectsOp.projects = [trackedProject(wsPath)];
+      source.pollResult = { activeKeys: new Set(["item-1"]), newItems: [] };
+      await dispatcher.dispatch(startIntent());
+
+      // project:close tears the workspace down WITHOUT removing the worktree
+      // (workspace:deleted with worktreeRemoved: false). Tracking must
+      // survive a close/reopen cycle.
+      await dispatcher.dispatch({
+        type: INTENT_DELETE_WORKSPACE,
+        payload: {
+          workspacePath: wsPath,
+          keepBranch: true,
+          force: true,
+          removeWorktree: false,
+          skipSwitch: true,
+        },
+      } as DeleteWorkspaceIntent);
+
+      expect(entriesOf(state)["test-source/item-1"]).toMatchObject({ workspacePath: wsPath });
     });
   });
 

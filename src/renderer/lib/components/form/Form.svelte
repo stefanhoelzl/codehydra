@@ -31,7 +31,12 @@
   import { sendDialogEvent } from "$lib/api";
   import { trapTabKey } from "$lib/utils/focus-trap";
   import Section from "./Section.svelte";
-  import type { ButtonItem, DropdownSectionConfig, FieldSectionConfig } from "./types";
+  import type {
+    ButtonItem,
+    CheckboxSectionConfig,
+    DropdownSectionConfig,
+    FieldSectionConfig,
+  } from "./types";
 
   let formRef: HTMLElement | undefined;
 
@@ -49,7 +54,12 @@
   function fieldSectionsOf(cfg: DialogConfig): FieldSectionConfig[] {
     const fields: FieldSectionConfig[] = [];
     for (const section of cfg.sections) {
-      if (section.type === "input" || section.type === "radio" || section.type === "dropdown") {
+      if (
+        section.type === "input" ||
+        section.type === "radio" ||
+        section.type === "dropdown" ||
+        section.type === "checkbox"
+      ) {
         fields.push(section);
       } else if (section.type === "group") {
         for (const item of section.items) {
@@ -65,6 +75,36 @@
   // Section layout: "centered" (default) keeps the centered stack; "form" lays
   // fields out as left-aligned labeled rows with right-aligned actions.
   const layout = $derived(config.layout ?? "centered");
+
+  /**
+   * Stable keys for the sections each-block, so a config push that inserts or
+   * removes sections (e.g. async warnings arriving above the button row) does
+   * NOT recreate the DOM of the sections below it — recreating the focused
+   * control drops focus to <body>, where the form-global keyboard contract
+   * can't see it. Field sections key on their unique id; groups on their
+   * items' ids; anonymous sections (text/progress/table) fall back to
+   * type + occurrence — they shift on insertions but never hold focus.
+   * The occurrence counter also guarantees key uniqueness.
+   */
+  function sectionKeysOf(sections: readonly (DialogSection | ButtonItem)[]): string[] {
+    const counters: Record<string, number> = {};
+    return sections.map((section) => {
+      const base =
+        section.type === "input" ||
+        section.type === "radio" ||
+        section.type === "dropdown" ||
+        section.type === "checkbox"
+          ? `field:${section.id}`
+          : section.type === "group"
+            ? `group:${section.items.map((item) => item.id).join("+")}`
+            : section.type;
+      const occurrence = counters[base] ?? 0;
+      counters[base] = occurrence + 1;
+      return occurrence === 0 ? base : `${base}:${occurrence}`;
+    });
+  }
+
+  const sectionKeys = $derived(sectionKeysOf(config.sections));
 
   // Track all field values (radio + dropdown + input) keyed by field id.
   let fieldValues = $state<Record<string, string>>({});
@@ -147,6 +187,20 @@
       } else if (section.type === "input") {
         const existing = untrack(() => fieldValues[section.id]);
         next[section.id] = existing ?? section.initialValue ?? "";
+      } else if (section.type === "checkbox") {
+        // Controlled push with the dropdown's adopt-once semantics: adopt a
+        // pushed value the renderer has not seen yet; re-sends preserve the
+        // user's toggles. Absent value = starts unchecked.
+        const existing = untrack(() => fieldValues[section.id]);
+        const pushedRaw = section.value === undefined ? undefined : String(section.value);
+        const pushed =
+          pushedRaw !== undefined && pushedRaw !== adoptedValues[section.id]
+            ? pushedRaw
+            : undefined;
+        if (pushed !== undefined) {
+          adoptedValues[section.id] = pushed;
+        }
+        next[section.id] = pushed ?? existing ?? "false";
       }
     }
     fieldValues = next;
@@ -163,13 +217,14 @@
   /**
    * Effective debounce (ms) for a field's change-event opt-in, or null when the
    * field does not opt in. Default debounce per field type: continuous editing
-   * (input, dropdown typing) 200ms, radio (discrete) 0ms (immediate).
-   * Dropdown suggestion picks bypass this entirely (see handleDropdownSelect).
+   * (input, dropdown typing) 200ms, discrete fields (radio, checkbox) 0ms
+   * (immediate). Dropdown suggestion picks bypass this entirely (see
+   * handleDropdownSelect).
    */
   function changeDebounceMs(section: FieldSectionConfig): number | null {
     const cfg = section.changeEvent;
     if (!cfg) return null;
-    const fallback = section.type === "radio" ? 0 : 200;
+    const fallback = section.type === "radio" || section.type === "checkbox" ? 0 : 200;
     if (cfg === true) return fallback;
     return cfg.debounceMs ?? fallback;
   }
@@ -253,7 +308,10 @@
           if (item.autofocus) return item.id;
         }
       } else if (
-        (section.type === "input" || section.type === "dropdown" || section.type === "radio") &&
+        (section.type === "input" ||
+          section.type === "dropdown" ||
+          section.type === "radio" ||
+          section.type === "checkbox") &&
         section.autofocus
       ) {
         return section.id;
@@ -291,6 +349,22 @@
       focusAutofocusTarget();
     }
     lastAutofocusId = id;
+
+    // Safety net: stable section keys keep the focused control's DOM alive
+    // across ordinary shape changes, but an update can still replace the
+    // node holding focus (the control's section left the config, or its
+    // group's identity changed), dropping focus to <body> — where the form's
+    // keyboard contract (Escape, Tab trap) can no longer see it. When an
+    // update orphans focus, restore the autofocus target. Focus parked
+    // anywhere real (a field, the workspace iframe) is left alone.
+    if (id !== null) {
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (active === document.body || active === null) {
+          focusAutofocusTarget();
+        }
+      }, 0);
+    }
   });
 
   /** Snapshot every field's current value, keyed by field id. */
@@ -340,6 +414,14 @@
     fieldValues = { ...fieldValues, [section.id]: text };
     dropdownDisplay = { ...dropdownDisplay, [section.id]: text };
     scheduleChange(section);
+  }
+
+  /**
+   * A checkbox was toggled: track the new state as "true"/"false" and emit a
+   * change event per the field's opt-in (immediate — a toggle is discrete).
+   */
+  function handleCheckboxToggle(section: CheckboxSectionConfig, checked: boolean): void {
+    handleFieldValue(section, checked ? "true" : "false");
   }
 
   /**
@@ -437,11 +519,12 @@
       onSelect={handleFieldValue}
       onPick={handleDropdownSelect}
       onType={handleDropdownInput}
+      onToggle={handleCheckboxToggle}
       onAction={handleButton}
       onSubmit={triggerPrimaryAction}
     />
   {/snippet}
-  {#each config.sections as section, sectionIndex (sectionIndex)}
+  {#each config.sections as section, sectionIndex (sectionKeys[sectionIndex])}
     {@render renderSection(section)}
   {/each}
 </div>

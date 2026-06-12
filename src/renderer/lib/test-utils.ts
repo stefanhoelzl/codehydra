@@ -30,20 +30,18 @@ export function makeUiWorkspaceRow(
   };
 }
 
-/** Build a project row with sensible defaults (local project).
- *  `title` defaults to the (possibly overridden) path. */
+/** Build a project row with sensible defaults (local project). */
 export function makeUiProjectRow(
   workspaces: readonly UiWorkspaceRow[],
   overrides?: Partial<UiProjectRow>
 ): UiProjectRow {
-  const path = overrides?.path ?? "/test/project";
   return {
     id: "test-project-12345678",
     name: "test-project",
     remote: false,
     ...overrides,
-    path,
-    title: overrides?.title ?? (overrides?.remote ? "https://example.com/repo.git" : path),
+    title:
+      overrides?.title ?? (overrides?.remote ? "https://example.com/repo.git" : "/test/project"),
     workspaces,
   };
 }
@@ -74,7 +72,7 @@ export function makeUiState(
  */
 export function createMockApi(): Api {
   return {
-    // Domain APIs
+    // Domain APIs (remove/close are ui:events now, not invokes)
     projects: {
       open: vi.fn().mockResolvedValue({
         id: "test-12345678",
@@ -82,11 +80,8 @@ export function createMockApi(): Api {
         path: "/test",
         workspaces: [],
       }),
-      close: vi.fn().mockResolvedValue(undefined),
     },
     workspaces: {
-      remove: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.removeResult),
-      getStatus: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.status),
       hibernate: vi.fn().mockResolvedValue({ started: true }),
       wake: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
     },

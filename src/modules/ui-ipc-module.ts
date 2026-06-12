@@ -9,14 +9,7 @@
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type {
-  ProjectOpenPayload,
-  ProjectClosePayload,
-  WorkspaceRemovePayload,
-  WorkspaceGetStatusPayload,
-  UiSwitchWorkspacePayload,
-  UiSetModePayload,
-} from "../shared/ipc";
+import type { ProjectOpenPayload, UiSwitchWorkspacePayload, UiSetModePayload } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
 import { agentSpecHasPrompt } from "../shared/api/types";
 import type { DialogUserEvent } from "../shared/dialog-types";
@@ -49,15 +42,12 @@ import type {
 import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
-  INTENT_DELETE_WORKSPACE,
 } from "../intents/delete-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type { ProjectOpenedEvent } from "../intents/open-project";
 import { EVENT_PROJECT_OPENED, INTENT_OPEN_PROJECT } from "../intents/open-project";
 import type { OpenProjectIntent } from "../intents/open-project";
 import type { ProjectClosedEvent } from "../intents/close-project";
-import { EVENT_PROJECT_CLOSED, INTENT_CLOSE_PROJECT } from "../intents/close-project";
-import type { CloseProjectIntent } from "../intents/close-project";
+import { EVENT_PROJECT_CLOSED } from "../intents/close-project";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import { EVENT_WORKSPACE_SWITCHED, INTENT_SWITCH_WORKSPACE } from "../intents/switch-workspace";
 import type { SwitchWorkspaceIntent } from "../intents/switch-workspace";
@@ -69,8 +59,6 @@ import type { ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { isShortcutKey } from "../shared/shortcuts";
 import type { WorkspaceStatus, Workspace } from "../shared/api/types";
-import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
-import type { GetWorkspaceStatusIntent } from "../intents/get-workspace-status";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { INTENT_APP_READY } from "../intents/app-ready";
@@ -350,29 +338,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     } as AppShutdownIntent);
   });
 
-  registerIpc(ApiIpcChannels.WORKSPACE_REMOVE, async (payload) => {
-    const p = payload as WorkspaceRemovePayload;
-    const intent: DeleteWorkspaceIntent = {
-      type: INTENT_DELETE_WORKSPACE,
-      payload: {
-        workspacePath: p.workspacePath,
-        keepBranch: p.keepBranch ?? true,
-        force: p.force ?? false,
-        removeWorktree: true,
-        ignoreWarnings: p.ignoreWarnings ?? false,
-        ...(p.skipSwitch !== undefined && { skipSwitch: p.skipSwitch }),
-        ...(p.blockingPids !== undefined && { blockingPids: p.blockingPids }),
-      },
-    };
-
-    const handle = dispatcher.dispatch(intent);
-    if (!(await handle.accepted)) {
-      return { started: false };
-    }
-    void handle.catch(() => {}); // Errors communicated via domain events
-    return { started: true };
-  });
-
   registerIpc(ApiIpcChannels.WORKSPACE_HIBERNATE, async (payload) => {
     const p = payload as { workspacePath: string };
     const intent: HibernateWorkspaceIntent = {
@@ -403,22 +368,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     // was deduped by the idempotency interceptor.
     const result = await dispatcher.dispatch(intent);
     return (result ?? null) as Workspace | null;
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_GET_STATUS, async (payload) => {
-    const p = payload as WorkspaceGetStatusPayload;
-    const intent: GetWorkspaceStatusIntent = {
-      type: INTENT_GET_WORKSPACE_STATUS,
-      payload: {
-        workspacePath: p.workspacePath,
-        ...(p.refresh !== undefined && { refresh: p.refresh }),
-      },
-    };
-    const result = await dispatcher.dispatch(intent);
-    if (!result) {
-      throw new Error("Get workspace status dispatch returned no result");
-    }
-    return result;
   });
 
   registerIpc(ApiIpcChannels.UI_SET_MODE, async (payload) => {
@@ -455,18 +404,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
       throw new Error("Project open already in progress");
     }
     return await handle;
-  });
-
-  registerIpc(ApiIpcChannels.PROJECT_CLOSE, async (payload) => {
-    const p = payload as ProjectClosePayload;
-    const intent: CloseProjectIntent = {
-      type: INTENT_CLOSE_PROJECT,
-      payload: {
-        projectPath: p.projectPath,
-        ...(p.removeLocalRepo !== undefined && { removeLocalRepo: p.removeLocalRepo }),
-      },
-    };
-    await dispatcher.dispatch(intent);
   });
 
   // ---------------------------------------------------------------------------

@@ -100,55 +100,21 @@ describe("preload API", () => {
       });
       expect(result).toEqual(mockProject);
     });
-
-    it("projects.close calls api:project:close with projectPath", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue(undefined);
-
-      const projects = exposedApi.projects as { close: (projectPath: string) => Promise<void> };
-      await projects.close("/test/my-app");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:close", {
-        projectPath: "/test/my-app",
-      });
-    });
   });
 
   describe("workspaces", () => {
-    it("workspaces.remove calls api:workspace:remove", async () => {
-      const mockResult = { started: true };
-      mockIpcRenderer.invoke.mockResolvedValue(mockResult);
+    it("workspaces.hibernate calls api:workspace:hibernate", async () => {
+      mockIpcRenderer.invoke.mockResolvedValue({ started: true });
 
       const workspaces = exposedApi.workspaces as {
-        remove: (
-          workspacePath: string,
-          options?: { keepBranch?: boolean; blockingPids?: readonly number[] }
-        ) => Promise<unknown>;
+        hibernate: (workspacePath: string) => Promise<unknown>;
       };
-      const result = await workspaces.remove("/test/.worktrees/feature", { keepBranch: true });
+      const result = await workspaces.hibernate("/test/.worktrees/feature");
 
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:remove", {
-        workspacePath: "/test/.worktrees/feature",
-        keepBranch: true,
-      });
-      expect(result).toEqual(mockResult);
-    });
-
-    it("workspaces.getStatus calls api:workspace:get-status", async () => {
-      const mockStatus = {
-        isDirty: true,
-        agent: { type: "busy", counts: { idle: 0, busy: 1, total: 1 } },
-      };
-      mockIpcRenderer.invoke.mockResolvedValue(mockStatus);
-
-      const workspaces = exposedApi.workspaces as {
-        getStatus: (workspacePath: string) => Promise<unknown>;
-      };
-      const result = await workspaces.getStatus("/test/.worktrees/feature");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:get-status", {
+      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:hibernate", {
         workspacePath: "/test/.worktrees/feature",
       });
-      expect(result).toEqual(mockStatus);
+      expect(result).toEqual({ started: true });
     });
   });
 

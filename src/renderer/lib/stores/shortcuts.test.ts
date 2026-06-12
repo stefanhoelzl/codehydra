@@ -25,19 +25,8 @@ const mockApi = vi.hoisted(() => ({
   },
 }));
 
-// Create mock dialog state with vi.hoisted
-const mockDialogState = vi.hoisted(() => ({
-  dialogState: {
-    value: { type: "closed" } as Record<string, unknown>,
-  },
-  openRemoveDialog: vi.fn(),
-}));
-
 // Mock the API module before any imports use it
 vi.mock("$lib/api", () => mockApi);
-
-// Mock the dialogs store
-vi.mock("./dialogs.svelte", () => mockDialogState);
 
 // Import after mock setup
 import {
@@ -92,8 +81,6 @@ describe("shortcuts store", () => {
     vi.clearAllMocks();
     reset(); // Reset store state between tests
     resetUiState();
-    // Reset dialog state to closed
-    mockDialogState.dialogState.value = { type: "closed" };
   });
 
   describe("initial state", () => {
@@ -697,7 +684,7 @@ describe("shortcuts store", () => {
         expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
       });
 
-      it("should-open-remove-dialog-on-delete", () => {
+      it("should-request-remove-flow-on-delete", () => {
         setRows([ws("feature", { path: "/workspace" })], { activePath: "/workspace" });
 
         enableShortcutMode();
@@ -705,25 +692,25 @@ describe("shortcuts store", () => {
 
         handleShortcutKey("delete");
 
-        // Passes a WorkspaceRef built from the active row
-        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith({
-          projectId: "test-project-12345678",
-          workspaceName: "feature",
-          path: "/workspace",
+        // Emits the remove-workspace ui:event with the active row's key
+        // (the confirmation dialog opens main-side).
+        expect(mockApi.emitEvent).toHaveBeenCalledWith({
+          kind: "remove-workspace",
+          key: "test-project-12345678/feature",
         });
         expect(shortcutModeActive.value).toBe(false);
       });
 
-      it("should-not-open-remove-dialog-when-no-active-workspace", () => {
+      it("should-not-request-remove-when-no-active-workspace", () => {
         setRows([ws("ws1")]);
 
         enableShortcutMode();
         handleShortcutKey("delete");
 
-        expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
+        expect(mockApi.emitEvent).not.toHaveBeenCalled();
       });
 
-      it("should-not-open-remove-dialog-when-deletion-in-progress", () => {
+      it("should-not-request-remove-when-deletion-in-progress", () => {
         setRows([ws("feature", { path: "/workspace", status: "deleting" })], {
           activePath: "/workspace",
         });
@@ -733,13 +720,13 @@ describe("shortcuts store", () => {
 
         handleShortcutKey("delete");
 
-        // Dialog should NOT be opened when deletion is in progress
-        expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
+        // No request while a deletion is already running
+        expect(mockApi.emitEvent).not.toHaveBeenCalled();
         // Shortcut mode should still be active (no action taken)
         expect(shortcutModeActive.value).toBe(true);
       });
 
-      it("should-not-open-remove-dialog-while-workspace-is-creating", () => {
+      it("should-not-request-remove-while-workspace-is-creating", () => {
         setRows([ws("feature", { path: "__pending__//project/feature", status: "creating" })], {
           activePath: "__pending__//project/feature",
         });
@@ -747,12 +734,12 @@ describe("shortcuts store", () => {
         enableShortcutMode();
         handleShortcutKey("delete");
 
-        // Dialog should NOT be opened for an optimistic creating placeholder
-        expect(mockDialogState.openRemoveDialog).not.toHaveBeenCalled();
+        // No request for a creating placeholder
+        expect(mockApi.emitEvent).not.toHaveBeenCalled();
         expect(shortcutModeActive.value).toBe(true);
       });
 
-      it("should-open-remove-dialog-when-previous-deletion-failed", () => {
+      it("should-request-remove-when-previous-deletion-failed", () => {
         setRows([ws("feature", { path: "/workspace", status: "delete-failed" })], {
           activePath: "/workspace",
         });
@@ -761,10 +748,9 @@ describe("shortcuts store", () => {
         handleShortcutKey("delete");
 
         // Retry must stay possible after a failed deletion
-        expect(mockDialogState.openRemoveDialog).toHaveBeenCalledWith({
-          projectId: "test-project-12345678",
-          workspaceName: "feature",
-          path: "/workspace",
+        expect(mockApi.emitEvent).toHaveBeenCalledWith({
+          kind: "remove-workspace",
+          key: "test-project-12345678/feature",
         });
       });
 
