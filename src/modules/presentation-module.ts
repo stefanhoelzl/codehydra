@@ -139,6 +139,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     return `${projectId}/${workspaceName}`;
   }
 
+  /**
+   * TRANSITIONAL: synthetic path for creating placeholders, same shape as the
+   * renderer's createPendingPath so path-keyed lookups stay consistent during
+   * the read cutover. Deleted with the row `path` fields in the write phase.
+   */
+  function pendingPath(projectPath: string, workspaceName: string): string {
+    return `__pending__/${projectPath}/${workspaceName}`;
+  }
+
   function findProjectByPath(projectPath: string): ProjectModel | undefined {
     for (const project of projects.values()) {
       if (project.path === projectPath) return project;
@@ -236,6 +245,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       .sort((a, b) => compareDisplayNames(a.name, b.name))
       .map((project) => ({
         id: project.id,
+        path: project.path,
         name: project.name,
         title: project.remoteUrl ?? project.path,
         workspaces: [...project.workspaces.values()]
@@ -244,6 +254,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
             const key = workspaceKey(project.id, workspace.name);
             return {
               key,
+              path: workspace.path ?? pendingPath(project.path, workspace.name),
               name: workspace.name,
               status: rowStatus(workspace),
               hibernated: isHibernated(workspace),

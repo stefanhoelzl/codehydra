@@ -309,11 +309,13 @@ describe("PresentationModule - ui:state snapshots", () => {
         projects: [
           {
             id: PROJECT_ID,
+            path: PROJECT_PATH,
             name: "alpha",
             title: PROJECT_PATH,
             workspaces: [
               {
                 key: `${PROJECT_ID}/main`,
+                path: `${PROJECT_PATH}/.worktrees/main`,
                 name: "main",
                 status: "ready",
                 hibernated: false,
@@ -402,6 +404,8 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshot.sidebar.projects[0]!.workspaces).toEqual([
       {
         key: `${PROJECT_ID}/feat`,
+        // Placeholder rows carry the renderer-compatible synthetic path.
+        path: `__pending__/${PROJECT_PATH}/feat`,
         name: "feat",
         status: "creating",
         hibernated: false,
@@ -439,6 +443,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshot.sidebar.projects[0]!.workspaces).toEqual([
       {
         key: `${PROJECT_ID}/feat`,
+        path: `${PROJECT_PATH}/.worktrees/feat`,
         name: "feat",
         status: "ready",
         hibernated: false,

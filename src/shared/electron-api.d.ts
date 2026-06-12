@@ -9,6 +9,7 @@ import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
 import type { NotificationUserEvent } from "./notification-types";
 import type { UiEvent } from "./ui-event";
+import type { UiState } from "./ui-state";
 
 import type { Project, Workspace, WorkspaceStatus } from "./api/types";
 
@@ -97,6 +98,16 @@ export interface Api {
    * Fire-and-forget - does not return a promise.
    */
   emitEvent(event: UiEvent): void;
+  /**
+   * Subscribe to UI state snapshots (api:ui:state channel).
+   * The presenter pushes the full render-ready UiState on every change.
+   * INVARIANT: subscribe before calling lifecycle.ready() — the first push
+   * is emitted by the app:ready operation that ready() dispatches, so a
+   * listener registered later misses it (there is no replay).
+   * @param callback - Called with each pushed snapshot
+   * @returns Unsubscribe function to remove the listener
+   */
+  onState(callback: (state: UiState) => void): Unsubscribe;
   /**
    * Subscribe to API events.
    * @param event - Event name (without api: prefix)

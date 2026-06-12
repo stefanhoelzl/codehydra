@@ -23,6 +23,13 @@ export interface UiWorkspaceRow {
    * them back in ui:events.
    */
   readonly key: string;
+  /**
+   * TRANSITIONAL (read-cutover only): real worktree path, echoed back into
+   * the path-keyed write invokes the renderer still makes. Creating
+   * placeholders carry a synthetic `__pending__/...` path. Deleted in the
+   * write-path phase, when ui:events carry `key` instead.
+   */
+  readonly path: string;
   readonly name: string;
   readonly status: "creating" | "ready" | "deleting" | "delete-failed";
   readonly hibernated: boolean;
@@ -33,6 +40,11 @@ export interface UiWorkspaceRow {
 
 export interface UiProjectRow {
   readonly id: string;
+  /**
+   * TRANSITIONAL (read-cutover only): project path, echoed back into the
+   * path-keyed `projects.close` invoke. Deleted in the write-path phase.
+   */
+  readonly path: string;
   readonly name: string;
   /** Tooltip text: the project's remote URL when cloned, else its local path. */
   readonly title: string;

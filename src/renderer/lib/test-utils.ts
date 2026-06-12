@@ -46,6 +46,7 @@ export function createMockApi(): Api {
     },
     emitEvent: vi.fn(),
     on: vi.fn(() => vi.fn()),
+    onState: vi.fn(() => vi.fn()),
     onModeChange: vi.fn(() => vi.fn()),
     onShortcut: vi.fn(() => vi.fn()),
     onTheme: vi.fn(() => vi.fn()),
