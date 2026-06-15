@@ -11,12 +11,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import type { UiState, UiWorkspaceRow } from "@shared/ui-state";
 
-type EventCallback = (...args: unknown[]) => void;
-const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
-  const callbacks = new Map<string, EventCallback>();
+const { mockApi, stateCallbacks } = vi.hoisted(() => {
   const stateCallbacks: Array<(state: unknown) => void> = [];
   return {
-    eventCallbacks: callbacks,
     stateCallbacks,
     mockApi: {
       emitEvent: vi.fn(),
@@ -34,10 +31,7 @@ const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
         ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
         quit: vi.fn().mockResolvedValue(undefined),
       },
-      on: vi.fn((event: string, callback: EventCallback) => {
-        callbacks.set(event, callback);
-        return vi.fn();
-      }),
+      on: vi.fn(() => vi.fn()),
       onState: vi.fn((callback: (state: unknown) => void) => {
         stateCallbacks.push(callback);
         return vi.fn();
@@ -55,10 +49,6 @@ import App from "../App.svelte";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
-
-function fireApiEvent(event: string, payload?: unknown): void {
-  eventCallbacks.get(event)?.(payload);
-}
 
 function pushState(state: UiState): void {
   expect(stateCallbacks.length).toBeGreaterThan(0);
@@ -85,7 +75,9 @@ function snapshotOf(rows: UiWorkspaceRow[], activeName?: string): UiState {
 
 async function renderApp(initial?: UiState): Promise<{ container: HTMLElement }> {
   const { container } = render(App);
-  fireApiEvent("lifecycle:show-main-view");
+  // App subscribes on mount; push a snapshot to leave the blank initializing
+  // state and mount MainView (the read cutover: there is no show-main-view IPC
+  // — MainView mounts when a non-startup snapshot arrives).
   await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
   if (initial) {
     pushState(initial);
@@ -102,7 +94,6 @@ async function expandSidebar(): Promise<void> {
 describe("Integration tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    eventCallbacks.clear();
     stateCallbacks.length = 0;
     resetUiState();
     dialogFrameworkStore.reset();

@@ -1,23 +1,21 @@
 /**
  * Tests for the App component.
  *
- * App owns mode routing (initializing → ready) and ARIA announcements (driven
- * by the snapshot mode — keyboard shortcuts and UI mode are main-owned now).
- * Workspace/project data arrives as UiState snapshots pushed through the
- * captured onState callback.
+ * App owns the ui:state subscription + ui-connected handshake (on mount) and
+ * routes by the snapshot's main.kind: startup kinds (starting / setup /
+ * agent-selection / loading) render StartupView; workspace / hibernated /
+ * creation render MainView. Until the first snapshot arrives it shows a blank
+ * initializing state. ARIA announcements are driven by the snapshot mode
+ * (keyboard shortcuts and UI mode are main-owned now).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { UiState } from "@shared/ui-state";
 
-// API event callbacks - must be hoisted with mockApi so it's available when mock runs
-type EventCallback = (...args: unknown[]) => void;
-const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
-  const callbacks = new Map<string, EventCallback>();
+const { mockApi, stateCallbacks } = vi.hoisted(() => {
   const stateCallbacks: Array<(state: unknown) => void> = [];
   return {
-    eventCallbacks: callbacks,
     stateCallbacks,
     mockApi: {
       emitEvent: vi.fn(),
@@ -35,11 +33,7 @@ const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
         ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
         quit: vi.fn().mockResolvedValue(undefined),
       },
-      // on() captures callbacks by event name for tests to fire events
-      on: vi.fn((event: string, callback: EventCallback) => {
-        callbacks.set(event, callback);
-        return vi.fn(); // unsubscribe
-      }),
+      on: vi.fn(() => vi.fn()),
       onState: vi.fn((callback: (state: unknown) => void) => {
         stateCallbacks.push(callback);
         return vi.fn();
@@ -50,28 +44,11 @@ const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
   };
 });
 
-// Helper to fire an event
-function fireEvent(event: string, payload?: unknown): void {
-  const callback = eventCallbacks.get(event);
-  if (callback) {
-    callback(payload);
-  }
-}
-
 /** Deliver a snapshot through the captured onState callback (real holder). */
 function pushState(state: UiState): void {
   for (const callback of stateCallbacks as Array<(state: UiState) => void>) {
     callback(state);
   }
-}
-
-/**
- * Trigger the main view to show.
- * App starts in "initializing" mode and waits for the main process to send
- * "lifecycle:show-main-view" before rendering MainView.
- */
-function showMainView(): void {
-  fireEvent("lifecycle:show-main-view");
 }
 
 // Mock the API module before any imports use it
@@ -123,7 +100,6 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
 describe("App component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    eventCallbacks.clear();
     stateCallbacks.length = 0;
     resetUiState();
     dialogFrameworkStore.reset();
@@ -133,17 +109,84 @@ describe("App component", () => {
     document.body.innerHTML = "";
   });
 
-  describe("mode routing", () => {
-    it("starts in initializing mode (no MainView)", () => {
+  describe("snapshot routing", () => {
+    it("subscribes to ui:state and emits ui-connected on mount", async () => {
+      render(App);
+
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalledTimes(1));
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "ui-connected" });
+    });
+
+    it("starts blank (no MainView) before the first snapshot", () => {
       const { container } = render(App);
 
       expect(container.querySelector(".initializing-container")).toBeInTheDocument();
       expect(container.querySelector(".main-view")).not.toBeInTheDocument();
     });
 
-    it("renders MainView after lifecycle:show-main-view", async () => {
+    it("renders StartupView for startup snapshots, not MainView", async () => {
       const { container } = render(App);
-      showMainView();
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+
+      pushState(makeUiState([], { main: { kind: "starting" }, mode: "dialog" }));
+      await waitFor(() => {
+        expect(container.querySelector(".startup-view")).toBeInTheDocument();
+      });
+      expect(container.querySelector(".main-view")).not.toBeInTheDocument();
+    });
+
+    it("renders the setup progress rows and Retry/Quit on error", async () => {
+      const { container } = render(App);
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+
+      pushState(
+        makeUiState([], {
+          mode: "dialog",
+          main: {
+            kind: "setup",
+            rows: [{ id: "vscode", label: "VSCode", status: "running" }],
+            error: { message: "it broke" },
+          },
+        })
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("VSCode")).toBeInTheDocument();
+        expect(screen.getByText("it broke")).toBeInTheDocument();
+      });
+      expect(container.querySelector(".startup-view")).toBeInTheDocument();
+    });
+
+    it("agent-selection Continue emits agent-selected with the picked agent", async () => {
+      render(App);
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+
+      pushState(
+        makeUiState([], {
+          mode: "dialog",
+          main: {
+            kind: "agent-selection",
+            agents: [
+              { agent: "claude", label: "Claude", icon: "sparkle" },
+              { agent: "opencode", label: "OpenCode", icon: "terminal" },
+            ],
+          },
+        })
+      );
+      await waitFor(() => expect(screen.getByText("OpenCode")).toBeInTheDocument());
+
+      await fireEvent.click(screen.getByRole("radio", { name: /opencode/i }));
+      await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "agent-selected",
+        agent: "opencode",
+      });
+    });
+
+    it("renders MainView for a normal snapshot", async () => {
+      const { container } = render(App);
+      await pushRows([ws("ws1")]);
 
       await waitFor(() => {
         expect(container.querySelector(".main-view")).toBeInTheDocument();
@@ -151,9 +194,9 @@ describe("App component", () => {
       expect(container.querySelector(".initializing-container")).not.toBeInTheDocument();
     });
 
-    it("announces 'Application ready' when the main view becomes visible", async () => {
+    it("announces 'Application ready' when a normal snapshot arrives", async () => {
       render(App);
-      showMainView();
+      await pushRows([ws("ws1")]);
 
       await waitFor(() => {
         const region = document.querySelector('[aria-live="polite"]');
@@ -165,7 +208,6 @@ describe("App component", () => {
   describe("rendering from snapshots", () => {
     it("renders Sidebar rows from a pushed snapshot", async () => {
       render(App);
-      showMainView();
       await pushRows([ws("ws1")]);
 
       await waitFor(() => {
@@ -175,7 +217,6 @@ describe("App component", () => {
 
     it("renders the creation panel when the snapshot says creation and the session exists", async () => {
       render(App);
-      showMainView();
       openCreationPanelSession();
       await pushRows([ws("ws1")]); // no active → creation
 
@@ -188,7 +229,6 @@ describe("App component", () => {
   describe("shortcut mode (snapshot-driven)", () => {
     it("shows the shortcut overlay when the snapshot mode is shortcut and hides it otherwise", async () => {
       const { container } = render(App);
-      showMainView();
 
       await pushRows([ws("ws1")], "test-project-12345678/ws1", { mode: "shortcut" });
       await waitFor(() => {
@@ -203,10 +243,16 @@ describe("App component", () => {
 
     it("announces shortcut mode for screen readers on the snapshot transition", async () => {
       render(App);
-      showMainView();
+
+      // First a normal snapshot (drains the one-shot "Application ready"
+      // announcement), then transition into shortcut mode.
+      await pushRows([ws("ws1")], "test-project-12345678/ws1", { mode: "workspace" });
+      await waitFor(() => {
+        const region = document.querySelector('[aria-live="polite"]');
+        expect(region).toHaveTextContent("Application ready");
+      });
 
       await pushRows([ws("ws1")], "test-project-12345678/ws1", { mode: "shortcut" });
-
       await waitFor(() => {
         const region = document.querySelector('[aria-live="polite"]');
         expect(region).toHaveTextContent(/shortcut mode active/i);

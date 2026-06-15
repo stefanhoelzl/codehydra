@@ -1,61 +1,92 @@
 <!--
   App.svelte
 
-  Root application component that acts as a mode router between initializing and ready modes.
+  Root application component. Owns the single ui:state subscription + the
+  ui-connected handshake (moved up from MainView so startup snapshots arrive
+  during the initializing phase — the presenter pushes the boot splash / setup /
+  agent-selection / loading surfaces before MainView would ever mount).
 
-  Component Ownership Model:
-  - App.svelte: Mode routing (initializing/ready), aria-live announcements
-  - MainView.svelte: Normal app state, IPC initialization, domain events (project/workspace/agent)
+  Renders by the snapshot's main.kind:
+  - startup kinds (starting / setup / agent-selection / loading) → StartupView
+  - workspace / hibernated / creation → MainView
+  - before the first snapshot arrives → a minimal blank initializing state
 
   App.svelte owns:
-  - <main> element with dynamic aria-label based on mode
+  - <main> element with dynamic aria-label
+  - the ui:state subscription + ui-connected emit (on mount)
   - aria-live announcements for snapshot mode transitions (shortcut mode) and
-    application-ready
-  - DialogHost for declarative dialogs from main process
+    application-ready (first non-startup snapshot)
+  - DialogHost for declarative dialogs from the main process
 
-  Keyboard shortcuts (Alt+X, navigation, Escape/blur exit) and UI mode are now
-  fully main-owned: the renderer reads mode from the UiState snapshot and never
-  handles shortcut keys.
-
-  MainView.svelte owns:
-  - IPC initialization (listProjects, getAllAgentStatuses)
-  - Domain event subscriptions (project/workspace/agent changes)
-  - Sidebar, dialogs, ShortcutOverlay rendering
+  Keyboard shortcuts (Alt+X, navigation, Escape/blur exit) and UI mode are
+  fully main-owned: the renderer reads mode from the UiState snapshot.
 -->
 <script lang="ts">
+  import { onMount, tick } from "svelte";
   import * as api from "$lib/api";
-  import { uiState } from "$lib/stores/ui-state.svelte.js";
+  import { uiState, setUiState } from "$lib/stores/ui-state.svelte.js";
   import { createLogger } from "$lib/logging";
+  import { getFocusables } from "$lib/utils/focus-trap";
   import MainView from "$lib/components/MainView.svelte";
+  import StartupView from "$lib/components/StartupView.svelte";
   import DialogHost from "$lib/components/DialogHost.svelte";
 
   const logger = createLogger("ui");
 
-  /**
-   * App mode discriminated union.
-   * - initializing: Waiting for main process IPC (shows blank/loading state)
-   * - ready: Services started, normal app mode (shows MainView)
-   */
-  type AppMode = { type: "initializing" } | { type: "ready" };
-
   /** Time in ms before clearing ARIA announcement to prevent repetition */
   const ARIA_ANNOUNCEMENT_CLEAR_MS = 1000;
 
-  let appMode = $state<AppMode>({ type: "initializing" });
-
   // Announcement message for screen readers (cleared after announcement)
   let announceMessage = $state<string>("");
+
+  // Root container for focus management (first control on the first normal
+  // snapshot).
+  let containerRef = $state<HTMLElement>();
+
+  const ui = $derived(uiState.value);
+  const main = $derived(ui?.main ?? null);
+  /** True once a normal (non-startup) snapshot has rendered: MainView shows. */
+  const showMain = $derived(
+    main !== null &&
+      main.kind !== "starting" &&
+      main.kind !== "setup" &&
+      main.kind !== "agent-selection" &&
+      main.kind !== "loading"
+  );
+
+  // Subscribe to ui:state, then emit the ui-connected handshake (on mount,
+  // during the initializing phase). The subscription MUST be in place before
+  // emitting: the presenter pushes the current snapshot synchronously on
+  // connect and there is no replay.
+  let focused = false;
+  onMount(() => {
+    const unsubscribe = api.onState((state) => {
+      setUiState(state);
+      // Focus the first control once, after the first normal snapshot renders
+      // (the startup surfaces own their own focus).
+      if (focused || state.main.kind === "starting" || state.main.kind === "setup") return;
+      if (state.main.kind === "agent-selection" || state.main.kind === "loading") return;
+      focused = true;
+      void tick().then(() => {
+        const firstFocusable = containerRef ? getFocusables(containerRef)[0] : undefined;
+        firstFocusable?.focus();
+      });
+    });
+    api.emitEvent({ kind: "ui-connected" });
+    return () => {
+      unsubscribe();
+    };
+  });
 
   // Announce shortcut-mode entry for screen readers, watching the snapshot
   // mode (main-owned). Fires on the transition into "shortcut".
   let prevShortcut = false;
   $effect(() => {
-    const isShortcut = uiState.value?.mode === "shortcut";
+    const isShortcut = ui?.mode === "shortcut";
     if (isShortcut !== prevShortcut) {
       logger.debug("Shortcut mode", { enabled: isShortcut });
       if (isShortcut) {
         announceMessage = "Shortcut mode active. Use arrow keys to navigate.";
-        // Clear after timeout so it doesn't repeat
         setTimeout(() => {
           announceMessage = "";
         }, ARIA_ANNOUNCEMENT_CLEAR_MS);
@@ -64,25 +95,10 @@
     prevShortcut = isShortcut;
   });
 
-  // Subscribe to lifecycle:show-main-view event from main process
-  // Main process tells us when setup is complete and we can show the main view.
-  // Note: MainView mounts in this mode but is covered by a startup overlay
-  // until projects finish loading (loadingState becomes "loaded").
-  $effect(() => {
-    const unsub = api.on<void>("lifecycle:show-main-view", () => {
-      logger.debug("Showing main view");
-      appMode = { type: "ready" };
-    });
-    return () => {
-      unsub();
-    };
-  });
-
   // Announce "Application ready." once when the main view becomes visible.
-  // One-shot guard prevents re-announcing if reactive deps are re-read.
   let announcedReady = false;
   $effect(() => {
-    if (appMode.type === "ready" && !announcedReady) {
+    if (showMain && !announcedReady) {
       announcedReady = true;
       announceMessage = "Application ready.";
       setTimeout(() => {
@@ -91,12 +107,8 @@
     }
   });
 
-  // No onMount needed - main process drives the flow via IPC events
-  // The renderer starts in "initializing" mode and waits for IPC instructions
-
-  // Get aria-label for main element based on mode
   function getAriaLabel(): string {
-    return appMode.type === "ready" ? "Application workspace" : "Application starting";
+    return showMain ? "Application workspace" : "Application starting";
   }
 </script>
 
@@ -105,19 +117,20 @@
   {#if announceMessage}{announceMessage}{/if}
 </div>
 
-<main class="app" aria-label={getAriaLabel()}>
-  {#if appMode.type === "initializing"}
-    <!-- Minimal blank state while waiting for main process IPC -->
+<main class="app" aria-label={getAriaLabel()} bind:this={containerRef}>
+  {#if main === null}
+    <!-- Minimal blank state until the first snapshot arrives. -->
     <div class="initializing-container" aria-busy="true"></div>
+  {:else if main.kind === "starting" || main.kind === "setup" || main.kind === "agent-selection" || main.kind === "loading"}
+    <StartupView {main} workspaceArea={false} />
   {:else}
-    <!-- Ready mode - MainView mounts and emits the ui-connected handshake -->
     <div class="main-view-container">
       <MainView />
     </div>
   {/if}
 
-  <!-- Declarative dialog host: renders dialogs driven by main process -->
-  <DialogHost workspaceArea={appMode.type === "ready"} />
+  <!-- Declarative dialog host: renders dialogs driven by the main process. -->
+  <DialogHost workspaceArea={showMain} />
 </main>
 
 <style>
@@ -157,7 +170,6 @@
     }
   }
 
-  /* Respect user's motion preferences */
   @media (prefers-reduced-motion: reduce) {
     .main-view-container {
       animation: none;

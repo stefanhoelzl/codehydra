@@ -33,6 +33,10 @@ import type { UiState } from "../shared/ui-state";
 import type { Project, ProjectId, Workspace, WorkspaceName } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
+import type { ShowUIHookResult } from "../intents/app-start";
+import { SETUP_OPERATION_ID, EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../intents/setup";
+import type { AgentSelectionHookContext } from "../intents/setup";
 import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import type { CloseConfirmHookResult } from "../intents/close-project";
@@ -136,8 +140,19 @@ function makeProject(workspaces: Workspace[], options?: { remoteUrl?: string }):
   };
 }
 
+/** Mark the renderer connected (opens the snapshot stream) via ui-connected. */
+function connect(deps: Deps): void {
+  deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "ui-connected" });
+}
+
+/**
+ * Bring the module to the steady state: renderer connected + app:started
+ * (startup phase left, normal main logic owns the view). Most snapshot tests
+ * assert the post-startup view.
+ */
 async function startModule(deps: Deps): Promise<IntentModule> {
   const module = createPresentationModule(deps);
+  connect(deps);
   await emit(module, EVENT_APP_STARTED, {});
   await flush();
   return module;
@@ -267,7 +282,7 @@ describe("PresentationModule - log routing", () => {
 // =============================================================================
 
 describe("PresentationModule - ui:state snapshots", () => {
-  it("does not push before app:started", async () => {
+  it("does not push before ui-connected", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
 
@@ -277,17 +292,20 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshots(deps)).toHaveLength(0);
   });
 
-  it("pushes the ground-state snapshot (creation panel) at app:started and debug-logs it", async () => {
+  it("pushes the boot-splash snapshot immediately on ui-connected", async () => {
     const deps = createDeps();
-    await startModule(deps);
+    createPresentationModule(deps);
 
+    connect(deps);
+
+    // The genesis "starting" splash is flushed synchronously on connect.
     expect(snapshots(deps)).toEqual([
       {
         sidebar: { projects: [] },
         frames: {},
-        main: { kind: "creation" },
+        main: { kind: "starting" },
         theme: "dark",
-        mode: "hover",
+        mode: "dialog",
       },
     ]);
     const logger = deps.loggingService.getLogger("presenter");
@@ -296,13 +314,27 @@ describe("PresentationModule - ui:state snapshots", () => {
     });
   });
 
-  it("includes pre-start events in the first snapshot (witnesses genesis)", async () => {
+  it("pushes the ground-state snapshot (creation panel) once startup completes", async () => {
+    const deps = createDeps();
+    await startModule(deps);
+
+    expect(lastSnapshot(deps)).toEqual({
+      sidebar: { projects: [] },
+      frames: {},
+      main: { kind: "creation" },
+      theme: "dark",
+      mode: "hover",
+    });
+  });
+
+  it("includes pre-start events in the first post-startup snapshot (witnesses genesis)", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
 
+    connect(deps);
     await emit(module, EVENT_APP_STARTED, {});
     await flush();
 
@@ -413,9 +445,10 @@ describe("PresentationModule - ui:state snapshots", () => {
         active: true,
       },
     ]);
-    // No runtime yet: the placeholder has no frame, mirroring today's blank pane.
+    // No runtime yet: the placeholder has no frame, and the active creating
+    // workspace shows the loading screen (not a blank workspace pane).
     expect(snapshot.frames).toEqual({});
-    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    expect(snapshot.main).toEqual({ kind: "loading", label: "Loading workspace..." });
   });
 
   it("workspace:created swaps the creating placeholder in place (same key)", async () => {
@@ -767,15 +800,19 @@ describe("PresentationModule - ui:event routing", () => {
     return dispatched;
   }
 
-  it("ui-connected flushes buffered notifications then dispatches app:ready", () => {
+  it("ui-connected flushes buffered notifications and pushes the snapshot (no app:ready)", () => {
     const deps = createDeps();
     const dispatched = recordDispatches(deps);
     createPresentationModule(deps);
 
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "ui-connected" });
 
+    // app:ready is dispatched by the app:start `start` hook now, not here.
     expect(deps.notificationManager.markUIReady).toHaveBeenCalledTimes(1);
-    expect(dispatched).toEqual([{ type: "app:ready", payload: {} }]);
+    expect(dispatched).toEqual([]);
+    // The boot splash flushed immediately so the renderer isn't blank.
+    expect(snapshots(deps)).toHaveLength(1);
+    expect(snapshots(deps)[0]!.main).toEqual({ kind: "starting" });
   });
 
   it("remove-workspace resolves the key and dispatches an interactive delete", async () => {
@@ -954,6 +991,231 @@ describe("PresentationModule - ui:event routing", () => {
     expect(logger?.warn).toHaveBeenCalledWith("Dropped close-project for unknown project", {
       projectId: "ghost-00000000",
     });
+  });
+});
+
+// =============================================================================
+// Startup flow (boot splash, first-run setup, agent-selection, loading)
+// =============================================================================
+
+describe("PresentationModule - startup flow", () => {
+  /** Run a hook handler directly. */
+  function runHook(
+    module: IntentModule,
+    opId: string,
+    point: string,
+    ctx: unknown
+  ): Promise<unknown> {
+    return module.hooks![opId]![point]!.handler(ctx as never) as Promise<unknown>;
+  }
+
+  it("starts in the boot-splash phase and pushes { kind: 'starting' } on connect", async () => {
+    const deps = createDeps();
+    createPresentationModule(deps);
+    connect(deps);
+
+    expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+    // Pre-interaction startup surface ⇒ dialog mode (Alt+X inert).
+    expect(lastSnapshot(deps).mode).toBe("dialog");
+  });
+
+  it("app:start show-ui sets the starting phase and returns waitForRetry", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+
+    const result = (await runHook(module, APP_START_OPERATION_ID, "show-ui", {
+      intent: { type: "app:start", payload: {} },
+    })) as ShowUIHookResult;
+    await flush();
+
+    expect(typeof result.waitForRetry).toBe("function");
+    expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+  });
+
+  it("app:setup show-ui enters the setup phase with pending rows", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+
+    await runHook(module, SETUP_OPERATION_ID, "show-ui", {
+      intent: { type: "app:setup", payload: {} },
+    });
+    await flush();
+
+    expect(lastSnapshot(deps).main).toEqual({
+      kind: "setup",
+      rows: [
+        { id: "vscode", label: "VSCode", status: "pending" },
+        { id: "agent", label: "Agent", status: "pending" },
+        { id: "setup", label: "Setup", status: "pending" },
+      ],
+    });
+  });
+
+  it("setup:progress accumulates rows; setup:error attaches the error", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+    await runHook(module, SETUP_OPERATION_ID, "show-ui", {
+      intent: { type: "app:setup", payload: {} },
+    });
+
+    await emit(module, EVENT_SETUP_PROGRESS, { id: "vscode", status: "done" });
+    await emit(module, EVENT_SETUP_PROGRESS, {
+      id: "agent",
+      status: "running",
+      message: "Downloading",
+      progress: 42,
+    });
+    await emit(module, EVENT_SETUP_PROGRESS, { id: "setup", status: "failed" });
+    await flush();
+
+    expect(lastSnapshot(deps).main).toEqual({
+      kind: "setup",
+      rows: [
+        { id: "vscode", label: "VSCode", status: "done" },
+        { id: "agent", label: "Agent", status: "running", message: "Downloading", progress: 42 },
+        // "failed" maps to "error".
+        { id: "setup", label: "Setup", status: "error" },
+      ],
+    });
+
+    await emit(module, EVENT_SETUP_ERROR, { message: "boom" });
+    await flush();
+    const main = lastSnapshot(deps).main;
+    expect(main.kind).toBe("setup");
+    if (main.kind === "setup") {
+      expect(main.error).toEqual({ message: "boom" });
+    }
+  });
+
+  it("agent-selection parks until agent-selected, then provides the agentType capability", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+
+    const ctx: AgentSelectionHookContext = {
+      intent: { type: "app:setup", payload: {} },
+      availableAgents: [
+        { agent: "claude", label: "Claude", icon: "sparkle" },
+        { agent: "opencode", label: "OpenCode", icon: "terminal" },
+      ],
+    };
+    const handlerDecl = module.hooks![SETUP_OPERATION_ID]!["agent-selection"]!;
+    const pending = handlerDecl.handler(ctx as never);
+    await flush();
+
+    // The picker is shown with the available agents.
+    expect(lastSnapshot(deps).main).toEqual({
+      kind: "agent-selection",
+      agents: [
+        { agent: "claude", label: "Claude", icon: "sparkle" },
+        { agent: "opencode", label: "OpenCode", icon: "terminal" },
+      ],
+    });
+
+    // The user picks opencode; the parked hook resolves.
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "agent-selected", agent: "opencode" });
+    await pending;
+
+    // provides() exposes the chosen agent as the agentType capability.
+    expect(handlerDecl.provides!()).toEqual({ agentType: "opencode" });
+  });
+
+  it("app:setup hide-ui returns to the boot-splash phase", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+    await runHook(module, SETUP_OPERATION_ID, "show-ui", {
+      intent: { type: "app:setup", payload: {} },
+    });
+
+    await runHook(module, SETUP_OPERATION_ID, "hide-ui", {
+      intent: { type: "app:setup", payload: {} },
+    });
+    await flush();
+
+    expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+  });
+
+  it("app:start start dispatches app:ready and shows the unified loading screen", async () => {
+    const deps = createDeps();
+    const dispatched: Array<{ type: string }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string }) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+    } as unknown as Deps["dispatcher"];
+    const module = createPresentationModule(deps);
+    connect(deps);
+
+    await runHook(module, APP_START_OPERATION_ID, "start", {
+      intent: { type: "app:start", payload: {} },
+    });
+    await flush();
+
+    expect(dispatched).toEqual([{ type: "app:ready", payload: {} }]);
+    expect(lastSnapshot(deps).main).toEqual({ kind: "loading", label: "Loading workspace..." });
+
+    // app:started leaves the startup flow (creation panel is the ground state).
+    await emit(module, EVENT_APP_STARTED, {});
+    await flush();
+    expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+  });
+
+  it("setup-retry resolves the parked waitForRetry", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+    const result = (await runHook(module, APP_START_OPERATION_ID, "show-ui", {
+      intent: { type: "app:start", payload: {} },
+    })) as ShowUIHookResult;
+
+    let resolved = false;
+    void result.waitForRetry!().then(() => {
+      resolved = true;
+    });
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "setup-retry" });
+    await flush();
+
+    expect(resolved).toBe(true);
+  });
+
+  it("setup-quit dispatches app:shutdown", () => {
+    const deps = createDeps();
+    const dispatched: Array<{ type: string }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string }) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+    } as unknown as Deps["dispatcher"];
+    createPresentationModule(deps);
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "setup-quit" });
+
+    expect(dispatched).toEqual([{ type: "app:shutdown", payload: {} }]);
+  });
+
+  it("app:shutdown stop resolves a parked agent-selection so quit can't hang", async () => {
+    const deps = createDeps();
+    const module = createPresentationModule(deps);
+    connect(deps);
+
+    const ctx: AgentSelectionHookContext = {
+      intent: { type: "app:setup", payload: {} },
+      availableAgents: [{ agent: "claude", label: "Claude", icon: "sparkle" }],
+    };
+    const pending = module.hooks![SETUP_OPERATION_ID]!["agent-selection"]!.handler(ctx as never);
+
+    await runHook(module, APP_SHUTDOWN_OPERATION_ID, "stop", {
+      intent: { type: "app:shutdown", payload: {} },
+    });
+
+    // The parked promise resolves (defaulting to the first option) — no hang.
+    await expect(pending).resolves.toBeUndefined();
   });
 });
 

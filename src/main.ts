@@ -483,8 +483,6 @@ const viewModule = createViewModule({
   menuLayer,
   windowManager,
   uiHtmlPath,
-  dialogManager,
-  dispatcher,
 });
 
 const codeServerModule = createCodeServerModule({

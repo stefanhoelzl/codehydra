@@ -4,9 +4,15 @@
  *
  * `log` is the renderer's logging channel (replacement for the former
  * api:log:* channels). `ui-connected` is the startup handshake: the renderer
- * emits it once after subscribing to ui:state, and the presenter responds by
- * flushing buffered notifications and dispatching app:ready (which loads
- * projects → emits app:started → opens the snapshot stream).
+ * emits it once (on App mount, during the initializing phase) after subscribing
+ * to ui:state; the presenter responds by flushing buffered notifications and
+ * pushing the current snapshot immediately. app:ready is no longer driven by
+ * ui-connected — it is dispatched by the presenter's app:start `start` hook.
+ *
+ * The startup events drive the first-run flow that StartupView renders from the
+ * `setup` / `agent-selection` main kinds: `agent-selected` resolves the parked
+ * agent-selection hook; `setup-retry` / `setup-quit` answer a setup error
+ * (retry resolves the app:start retry loop; quit dispatches app:shutdown).
  *
  * All gesture events are load-bearing: the presenter resolves their identity
  * (the opaque workspace `key` / `projectId`) against its model and dispatches
@@ -50,6 +56,13 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
     message: z.string(),
     context: logContextSchema.optional(),
   }),
+  // First-run agent picker: the chosen agent id, echoed from the snapshot's
+  // agent-selection options. Resolves the presenter's parked agent-selection
+  // hook (which provides the `agentType` capability to app:setup).
+  z.object({ kind: z.literal("agent-selected"), agent: z.string() }),
+  // Setup-error actions: retry resolves app:start's retry loop; quit shuts down.
+  z.object({ kind: z.literal("setup-retry") }),
+  z.object({ kind: z.literal("setup-quit") }),
 ]);
 
 /** Discriminated union of all renderer→main UI events. */

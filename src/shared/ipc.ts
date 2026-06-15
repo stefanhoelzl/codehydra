@@ -74,8 +74,6 @@ export const ApiIpcChannels = {
   // and main owns identity resolution, confirmation dialogs, and dispatch.
   // Lifecycle commands
   LIFECYCLE_QUIT: "api:lifecycle:quit",
-  // Lifecycle events (main → renderer)
-  LIFECYCLE_SHOW_MAIN_VIEW: "api:lifecycle:show-main-view",
   // Dialog framework (main ↔ renderer)
   DIALOG_COMMAND: "api:dialog:command",
   DIALOG_EVENT: "api:dialog:event",

@@ -1,22 +1,23 @@
 /**
- * ViewModule - Manages UI lifecycle, UI modes, workspace loading dialogs,
- * active-workspace bookkeeping, and shell layer disposal.
+ * ViewModule - Manages the UI shell lifecycle, active-workspace bookkeeping,
+ * and shell layer disposal.
  *
  * Workspace surfaces are iframes inside the UI renderer's DOM, derived from
- * the renderer stores — this module no longer creates or destroys views per
- * workspace. What remains main-side:
- * - app-start hooks (window + UI view creation, startup splash, mount signal)
- * - setup dialog hooks
+ * the UiState snapshot — this module no longer creates or destroys views per
+ * workspace. The four startup surfaces (boot splash, setup progress,
+ * agent-selection, workspace loading) are owned by the presenter now (pushed
+ * as UiState `main` kinds), not DialogManager dialogs. What remains here:
+ * - app-start `init` hook (window + UI view creation, HTML load, focus)
  * - active-workspace bookkeeping (resolve/get-active/switch/delete/hibernate)
- * - per-workspace loading dialogs (created → agent:status-updated / timeout)
- * - app-shutdown/stop (dialog cleanup + UI view + layer disposal)
+ * - open-project `select-folder` (native folder picker)
+ * - app-shutdown/stop (UI view + layer disposal)
  *
- * Internal state: cachedActiveRef, activeWorkspacePath, loading bookkeeping.
+ * Internal state: cachedActiveRef, activeWorkspacePath.
  */
 
 import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { IntentModule } from "../intents/lib/module";
-import { ANY_VALUE, type HookContext } from "../intents/lib/operation";
+import type { HookContext } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
@@ -24,8 +25,7 @@ import type { ViewBoundary } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
 import type { WorkspaceRef } from "../shared/api/types";
-import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/app-start";
-import type { AgentSelectionHookContext } from "../intents/setup";
+import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { GetActiveWorkspaceHookResult } from "../intents/get-active-workspace";
 import type {
   SwitchWorkspaceHookResult,
@@ -37,23 +37,10 @@ import type {
   HibernatePipelineHookInput,
   HibernateShutdownHookResult,
 } from "../intents/hibernate-workspace";
-import {
-  HIBERNATE_WORKSPACE_OPERATION_ID,
-  HIBERNATED_METADATA_KEY,
-} from "../intents/hibernate-workspace";
-import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
+import { HIBERNATE_WORKSPACE_OPERATION_ID } from "../intents/hibernate-workspace";
 import type { SelectFolderHookResult } from "../intents/open-project";
-import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
-import { EVENT_APP_STARTED } from "../intents/app-ready";
-import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { WORKSPACE_LOADING_TIMEOUT_MS } from "../boundaries/shell/view-manager.interface";
-import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
-import type { AppShutdownIntent } from "../intents/app-shutdown";
-import { SETUP_OPERATION_ID } from "../intents/setup";
-import { EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../intents/setup";
-import type { SetupProgressEvent, SetupErrorEvent } from "../intents/setup";
 import { GET_ACTIVE_WORKSPACE_OPERATION_ID } from "../intents/get-active-workspace";
 import { SWITCH_WORKSPACE_OPERATION_ID } from "../intents/switch-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
@@ -62,20 +49,8 @@ import {
   type ResolveHookInput,
   type ResolveHookResult,
 } from "../intents/resolve-workspace";
-import {
-  EVENT_WORKSPACE_CREATED,
-  EVENT_WORKSPACE_LOADING,
-  EVENT_WORKSPACE_CREATE_FAILED,
-} from "../intents/open-workspace";
-
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import { ApiIpcChannels } from "../shared/ipc";
-import type { LifecycleAgentType } from "../shared/ipc";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
-import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DialogConfig, DialogSection, ProgressItem } from "../shared/dialog-types";
-import { SetupError } from "../shared/errors/service-errors";
+import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
 
 // =============================================================================
 // Types
@@ -104,8 +79,6 @@ export interface ViewModuleDeps {
     focus(): void;
   } | null;
   readonly uiHtmlPath?: string | null;
-  readonly dialogManager?: DialogManager;
-  readonly dispatcher?: Dispatcher;
 }
 
 // =============================================================================
@@ -117,7 +90,7 @@ export interface ViewModuleDeps {
  * and shell layer disposal.
  */
 export function createViewModule(deps: ViewModuleDeps): IntentModule {
-  const { viewManager, logger } = deps;
+  const { viewManager } = deps;
 
   // Internal state
   let cachedActiveRef: WorkspaceRef | null = null;
@@ -130,114 +103,18 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
    * short-circuited as "already active".
    */
   let activeWorkspacePath: string | null = null;
-  /** Capability: agentType provided by agent-selection handler. */
-  let capAgentType: LifecycleAgentType | undefined;
-
-  /** Track which workspaces are loading (not necessarily showing a dialog). */
-  const loadingPaths = new Set<string>();
-  /** Loading-timeout fallback per workspace (agent may never report). */
-  const loadingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-  /** Currently visible loading dialog (only for active workspace).
-   *  path is null when opened by workspace:loading before the workspace path is known. */
-  let loadingDialog: { path: string | null; handle: DialogHandle } | null = null;
-  /** Track the setup dialog handle (for show-ui/hide-ui). */
-  let setupDialogHandle: DialogHandle | null = null;
-  /**
-   * Startup splash state — the "CodeHydra is starting..." dialog is held open
-   * across renderer mount, project loading, and the first workspace becoming
-   * ready (first agent:status-updated), so the user sees one unified loading
-   * screen instead of starting → blank → projects-loading → workspace-loading.
-   *
-   * Closes on whichever fires first:
-   *  - first `agent:status-updated` for any workspace
-   *  - `app:started` event with no active workspace (empty-state path)
-   *  - 10s fallback timeout
-   *
-   * While active, per-workspace "Loading workspace..." dialogs are suppressed
-   * (the splash already covers the window). Subsequent workspace switches
-   * show their own loading dialog as before.
-   */
-  let startupSplashActive = false;
-  let startupSplashTimeout: ReturnType<typeof setTimeout> | null = null;
-  function closeStartupSplash(): void {
-    if (!startupSplashActive) return;
-    startupSplashActive = false;
-    if (startupSplashTimeout) {
-      clearTimeout(startupSplashTimeout);
-      startupSplashTimeout = null;
-    }
-    if (setupDialogHandle) {
-      setupDialogHandle.close();
-      setupDialogHandle = null;
-    }
-  }
-  /** Accumulated setup row state (persists across progress events). */
-  const setupRowState = new Map<
-    string,
-    { status: ProgressItem["status"]; message?: string; progress?: number }
-  >();
-
-  function openLoadingDialog(): DialogHandle | null {
-    if (!deps.dialogManager) return null;
-    return deps.dialogManager.open({
-      sections: [
-        {
-          type: "progress",
-          items: [{ id: "loading", label: "Loading workspace...", status: "running" }],
-          style: "spinner",
-        },
-      ],
-    });
-  }
-
-  /**
-   * Mark a workspace as loading (from workspace:created until the agent's
-   * first status report or the timeout fallback). Shows the loading dialog
-   * only when the workspace is the active one and the splash isn't already
-   * covering the window.
-   */
-  function startWorkspaceLoading(workspacePath: string): void {
-    if (loadingPaths.has(workspacePath)) return;
-    loadingPaths.add(workspacePath);
-    loadingTimeouts.set(
-      workspacePath,
-      setTimeout(() => finishWorkspaceLoading(workspacePath), WORKSPACE_LOADING_TIMEOUT_MS)
-    );
-
-    const activePath = cachedActiveRef?.path ?? null;
-    if (workspacePath === activePath && !startupSplashActive) {
-      if (loadingDialog && loadingDialog.path === null) {
-        // Associate path with dialog opened early by workspace:loading event
-        loadingDialog = { path: workspacePath, handle: loadingDialog.handle };
-      } else if (!loadingDialog) {
-        const handle = openLoadingDialog();
-        if (handle) loadingDialog = { path: workspacePath, handle };
-      }
-    }
-  }
-
-  /** Clear a workspace's loading state and close its dialog. Idempotent. */
-  function finishWorkspaceLoading(workspacePath: string): void {
-    const timeout = loadingTimeouts.get(workspacePath);
-    if (timeout !== undefined) {
-      clearTimeout(timeout);
-      loadingTimeouts.delete(workspacePath);
-    }
-    if (!loadingPaths.delete(workspacePath)) return;
-    if (loadingDialog?.path === workspacePath) {
-      loadingDialog.handle.close();
-      loadingDialog = null;
-    }
-    logger.debug("Workspace loaded", { workspace: workspacePath });
-  }
 
   const module: IntentModule = {
     name: "view",
     hooks: {
       // -------------------------------------------------------------------
       // app-start → init: Shell creation + UI loading (post-ready)
-      // app-start → show-ui: send LIFECYCLE_SHOW_STARTING to renderer
-      // app-start → start: wire loading change callback + mount signal
+      //
+      // The startup surfaces (boot splash, setup progress, agent-selection,
+      // workspace loading) are owned by the presenter now — pushed as UiState
+      // `main` kinds, not DialogManager dialogs. This module keeps only the
+      // shell lifecycle (window/view creation, HTML load, focus) and the
+      // per-workspace bookkeeping below.
       // -------------------------------------------------------------------
       [APP_START_OPERATION_ID]: {
         init: {
@@ -268,235 +145,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
             // Focus UI
             viewManager.focus();
-          },
-        },
-        "show-ui": {
-          handler: async (): Promise<ShowUIHookResult> => {
-            // Open a "starting" dialog via DialogManager
-            if (deps.dialogManager) {
-              const config: DialogConfig = {
-                sections: [
-                  {
-                    type: "progress",
-                    items: [
-                      { id: "starting", label: "CodeHydra is starting...", status: "running" },
-                    ],
-                    style: "spinner",
-                  },
-                ],
-                modal: true,
-              };
-              setupDialogHandle = deps.dialogManager.open(config);
-              startupSplashActive = true;
-            }
-            if (!deps.dialogManager) return {};
-            return {
-              waitForRetry: () =>
-                new Promise<void>((resolve) => {
-                  // Called after error handler has opened an error dialog with retry/quit
-                  // actions and stored the handle in setupDialogHandle.
-                  if (!setupDialogHandle) {
-                    resolve();
-                    return;
-                  }
-                  setupDialogHandle.onEvent((evt) => {
-                    if (evt.actionId === "retry") {
-                      setupDialogHandle?.close();
-                      setupDialogHandle = null;
-                      resolve();
-                    } else if (evt.actionId === "quit") {
-                      setupDialogHandle?.close();
-                      setupDialogHandle = null;
-                      if (deps.dispatcher) {
-                        void deps.dispatcher.dispatch({
-                          type: INTENT_APP_SHUTDOWN,
-                          payload: {},
-                        } as AppShutdownIntent);
-                      }
-                    }
-                  });
-                }),
-            };
-          },
-        },
-        start: {
-          // Gate the renderer mount on code-server being up: workspace URLs
-          // shipped to the renderer must be servable when iframes mount.
-          requires: { codeServerPort: ANY_VALUE },
-          handler: async (): Promise<void> => {
-            // Send show-main-view to trigger renderer mount.
-            // The renderer emits the `ui-connected` ui:event when mounted,
-            // which dispatches app:ready to load initial projects.
-            if (!viewManager.isUIAvailable()) {
-              logger.warn("UI not available for mount");
-              return;
-            }
-            // Keep the startup splash visible through renderer mount + project
-            // loading + first workspace ready. If setup ran, the splash was
-            // closed during setup/show-ui — reopen it for the workspace-loading
-            // phase. Closes via closeStartupSplash() from agent:status-updated,
-            // app:started (no active workspace), or the timeout below.
-            if (deps.dialogManager && !setupDialogHandle) {
-              setupDialogHandle = deps.dialogManager.open({
-                sections: [
-                  {
-                    type: "progress",
-                    items: [
-                      { id: "starting", label: "CodeHydra is starting...", status: "running" },
-                    ],
-                    style: "spinner",
-                  },
-                ],
-                modal: true,
-              });
-              startupSplashActive = true;
-            }
-            if (startupSplashActive) {
-              startupSplashTimeout = setTimeout(closeStartupSplash, WORKSPACE_LOADING_TIMEOUT_MS);
-            }
-
-            logger.debug("Mounting renderer");
-            viewManager.sendToUI(ApiIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
-          },
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // setup → show-ui: open setup dialog via DialogManager
-      // setup → agent-selection: open selection dialog via DialogManager
-      // setup → hide-ui: close setup dialog
-      // -------------------------------------------------------------------
-      [SETUP_OPERATION_ID]: {
-        "show-ui": {
-          handler: async () => {
-            if (deps.dialogManager) {
-              // Close any existing setup dialog and reset accumulated state.
-              // If the startup splash was open, this closes it — app-start/start
-              // will reopen the splash after setup completes (via hide-ui).
-              if (setupDialogHandle) {
-                setupDialogHandle.close();
-                setupDialogHandle = null;
-              }
-              startupSplashActive = false;
-              if (startupSplashTimeout) {
-                clearTimeout(startupSplashTimeout);
-                startupSplashTimeout = null;
-              }
-              setupRowState.clear();
-              const config: DialogConfig = {
-                sections: [
-                  { type: "text", content: "Setting up CodeHydra", style: "heading" },
-                  {
-                    type: "text",
-                    content: "This is only required on first startup.",
-                    style: "subtitle",
-                  },
-                  {
-                    type: "progress",
-                    items: [
-                      { id: "vscode", label: "VSCode", status: "pending" },
-                      { id: "agent", label: "Agent", status: "pending" },
-                      { id: "setup", label: "Setup", status: "pending" },
-                    ],
-                  },
-                ],
-                modal: true,
-              };
-              setupDialogHandle = deps.dialogManager.open(config);
-            }
-          },
-        },
-        "agent-selection": {
-          provides: () => ({
-            ...(capAgentType !== undefined && { agentType: capAgentType }),
-          }),
-          handler: async (ctx: HookContext): Promise<void> => {
-            capAgentType = undefined;
-            const { availableAgents } = ctx as AgentSelectionHookContext;
-
-            if (!viewManager.isUIAvailable()) {
-              throw new SetupError("UI not available for agent selection", "TIMEOUT");
-            }
-
-            if (!deps.dialogManager) {
-              throw new SetupError("DialogManager not available for agent selection", "TIMEOUT");
-            }
-
-            logger.debug("Showing agent selection dialog");
-
-            // Close existing setup dialog to show selection dialog
-            if (setupDialogHandle) {
-              setupDialogHandle.close();
-              setupDialogHandle = null;
-            }
-
-            // Build selection dialog config
-            const config: DialogConfig = {
-              sections: [
-                { type: "text", content: "Choose Agent", style: "heading" },
-                {
-                  type: "radio",
-                  id: "agent",
-                  options: availableAgents.map((a) => ({
-                    id: a.agent,
-                    label: a.label,
-                    icon: a.icon,
-                  })),
-                },
-                {
-                  type: "group",
-                  items: [{ type: "button", id: "select", label: "Continue", variant: "primary" }],
-                },
-              ],
-              modal: true,
-            };
-
-            const handle = deps.dialogManager.open(config);
-            // Agent selection is mandatory: Escape (dismiss) is ignored — keep
-            // waiting until the user confirms a selection.
-            let event = await handle.nextEvent(5 * 60_000);
-            while (event.kind === "dismiss") {
-              event = await handle.nextEvent(5 * 60_000);
-            }
-            handle.close();
-
-            const selectedAgent = event.data?.["agent"] ?? availableAgents[0]?.agent;
-            capAgentType = selectedAgent as LifecycleAgentType;
-            logger.info("Agent selected", { agent: capAgentType });
-
-            // Re-open setup progress dialog for binary/extensions hooks
-            const labelMap: Record<string, string> = {
-              vscode: "VSCode",
-              agent: "Agent",
-              setup: "Setup",
-            };
-            const rowIds = ["vscode", "agent", "setup"];
-            const items: ProgressItem[] = rowIds.map((id) => {
-              const state = setupRowState.get(id);
-              return {
-                id,
-                label: labelMap[id] ?? id,
-                status: state?.status ?? "pending",
-                ...(state?.message !== undefined && { message: state.message }),
-                ...(state?.progress !== undefined && { progress: state.progress }),
-              };
-            });
-            setupDialogHandle = deps.dialogManager.open({
-              sections: [
-                { type: "text", content: "Setting up CodeHydra", style: "heading" },
-                { type: "progress", items },
-              ],
-              modal: true,
-            });
-          },
-        },
-        "hide-ui": {
-          handler: async () => {
-            // Close setup dialog, return to starting state
-            if (setupDialogHandle) {
-              setupDialogHandle.close();
-              setupDialogHandle = null;
-            }
           },
         },
       },
@@ -569,7 +217,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
         shutdown: {
           handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
             const { workspacePath, active } = ctx as DeletePipelineHookInput;
-            finishWorkspaceLoading(workspacePath);
             if (activeWorkspacePath === workspacePath) {
               activeWorkspacePath = null;
             }
@@ -588,7 +235,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
         shutdown: {
           handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
-            finishWorkspaceLoading(workspacePath);
             if (activeWorkspacePath === workspacePath) {
               activeWorkspacePath = null;
             }
@@ -623,28 +269,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async () => {
-            // Close loading dialog if open
-            if (loadingDialog) {
-              loadingDialog.handle.close();
-              loadingDialog = null;
-            }
-            loadingPaths.clear();
-            for (const timeout of loadingTimeouts.values()) {
-              clearTimeout(timeout);
-            }
-            loadingTimeouts.clear();
-
-            // Close setup dialog if open
-            if (setupDialogHandle) {
-              setupDialogHandle.close();
-              setupDialogHandle = null;
-            }
-            if (startupSplashTimeout) {
-              clearTimeout(startupSplashTimeout);
-              startupSplashTimeout = null;
-            }
-            startupSplashActive = false;
-
             // Destroy the UI view before disposing layers (uses viewLayer internally)
             viewManager.destroy();
 
@@ -665,80 +289,13 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
     events: {
       // -------------------------------------------------------------------
-      // workspace:loading → open loading dialog before slow work begins
-      // -------------------------------------------------------------------
-      [EVENT_WORKSPACE_LOADING]: {
-        handler: async (): Promise<void> => {
-          if (deps.dialogManager && !loadingDialog && !startupSplashActive) {
-            const handle = deps.dialogManager.open({
-              sections: [
-                {
-                  type: "progress",
-                  items: [{ id: "loading", label: "Loading workspace...", status: "running" }],
-                  style: "spinner",
-                },
-              ],
-            });
-            loadingDialog = { path: null, handle };
-          }
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // workspace:create-failed → close loading dialog on error
-      // -------------------------------------------------------------------
-      [EVENT_WORKSPACE_CREATE_FAILED]: {
-        handler: async (): Promise<void> => {
-          if (loadingDialog?.path === null) {
-            loadingDialog.handle.close();
-            loadingDialog = null;
-          }
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // workspace:created → begin loading indication. The renderer mounts
-      // the iframe (the event payload carries the code-server URL); main
-      // only tracks the created → first-agent-status window for the
-      // "Loading workspace..." dialog.
-      // -------------------------------------------------------------------
-      [EVENT_WORKSPACE_CREATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as WorkspaceCreatedEvent).payload;
-          // Hibernated workspaces have no runtime — nothing is loading.
-          if (payload.metadata?.[HIBERNATED_METADATA_KEY] === "true") return;
-          startWorkspaceLoading(payload.workspacePath);
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // workspace:switched → update cachedActiveRef + handle null (clear)
-      // Merged from uiHookModule + switchViewModule event handlers.
+      // workspace:switched → update cachedActiveRef + handle null (clear).
+      // The startup/loading surfaces are presenter-owned now; this handler
+      // keeps only the active-surface bookkeeping the switch pipeline reads.
       // -------------------------------------------------------------------
       [EVENT_WORKSPACE_SWITCHED]: {
         handler: async (event: DomainEvent): Promise<void> => {
           const payload = (event as WorkspaceSwitchedEvent).payload;
-          const newPath = payload?.path ?? null;
-
-          // Show/hide loading dialog based on active workspace
-          if (deps.dialogManager) {
-            if (loadingDialog && loadingDialog.path !== newPath) {
-              loadingDialog.handle.close();
-              loadingDialog = null;
-            }
-            if (newPath && loadingPaths.has(newPath) && !loadingDialog) {
-              const handle = deps.dialogManager.open({
-                sections: [
-                  {
-                    type: "progress",
-                    items: [{ id: "loading", label: "Loading workspace...", status: "running" }],
-                    style: "spinner",
-                  },
-                ],
-              });
-              loadingDialog = { path: newPath, handle };
-            }
-          }
 
           if (payload === null) {
             cachedActiveRef = null;
@@ -755,107 +312,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
-      // setup:progress → update setup dialog with progress
-      // -------------------------------------------------------------------
-      [EVENT_SETUP_PROGRESS]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          if (!setupDialogHandle) return;
-          const row = (event as SetupProgressEvent).payload;
-
-          // Map SetupRowStatus → ProgressItem status ("failed" → "error", rest pass through)
-          const status: ProgressItem["status"] = row.status === "failed" ? "error" : row.status;
-
-          // Accumulate per-row state across events
-          setupRowState.set(row.id, {
-            status,
-            ...(row.message !== undefined && { message: row.message }),
-            ...(row.progress !== undefined && { progress: row.progress }),
-          });
-
-          const labelMap: Record<string, string> = {
-            vscode: "VSCode",
-            agent: "Agent",
-            setup: "Setup",
-          };
-          const rowIds = ["vscode", "agent", "setup"];
-          const items: ProgressItem[] = rowIds.map((id) => {
-            const state = setupRowState.get(id);
-            return {
-              id,
-              label: labelMap[id] ?? id,
-              status: state?.status ?? "pending",
-              ...(state?.message !== undefined && { message: state.message }),
-              ...(state?.progress !== undefined && { progress: state.progress }),
-            };
-          });
-
-          const hasFailed = [...setupRowState.values()].some((s) => s.status === "error");
-          const sections: DialogSection[] = [
-            { type: "text", content: "Setting up CodeHydra", style: "heading" },
-            { type: "progress", items },
-          ];
-          if (hasFailed) {
-            sections.push({
-              type: "group",
-              items: [
-                { type: "button", id: "retry", label: "Retry", variant: "primary" },
-                { type: "button", id: "quit", label: "Quit", variant: "secondary" },
-              ],
-            });
-          }
-          const config: DialogConfig = { sections };
-          setupDialogHandle.update(config);
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // setup:error → open error dialog with retry/quit actions
-      // -------------------------------------------------------------------
-      [EVENT_SETUP_ERROR]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { message } = (event as SetupErrorEvent).payload;
-          if (!deps.dialogManager) return;
-
-          // Close existing setup dialog
-          if (setupDialogHandle) {
-            setupDialogHandle.close();
-          }
-
-          // Open error dialog with retry/quit actions
-          const config: DialogConfig = {
-            sections: [
-              { type: "text", content: "Setup Failed", style: "heading", icon: "error" },
-              { type: "text", content: message },
-              {
-                type: "group",
-                items: [
-                  { type: "button", id: "retry", label: "Retry", variant: "primary" },
-                  { type: "button", id: "quit", label: "Quit", variant: "secondary" },
-                ],
-              },
-            ],
-            modal: true,
-          };
-          setupDialogHandle = deps.dialogManager.open(config);
-          // Event handling is done in waitForRetry
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // agent:status-updated → clear loading screen (idempotent)
-      // Also closes the startup splash on the first such event — by the time
-      // any agent reports status, at least one workspace is far enough along
-      // to be visually meaningful.
-      // -------------------------------------------------------------------
-      [EVENT_AGENT_STATUS_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const payload = (event as AgentStatusUpdatedEvent).payload;
-          finishWorkspaceLoading(payload.workspace.path);
-          closeStartupSplash();
-        },
-      },
-
-      // -------------------------------------------------------------------
       // code-server:restarted → reload every workspace iframe. A resume
       // restart replaced the code-server process, so each frame's connection
       // to the old server is dead; reloading reconnects them to the fresh
@@ -864,20 +320,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [EVENT_CODE_SERVER_RESTARTED]: {
         handler: async (): Promise<void> => {
           viewManager.reloadFrames();
-        },
-      },
-
-      // -------------------------------------------------------------------
-      // app:started → close startup splash if there's no workspace to wait
-      // for. With workspaces present, the splash stays up until the first
-      // agent:status-updated above (or the 10s timeout falls through).
-      // -------------------------------------------------------------------
-      [EVENT_APP_STARTED]: {
-        handler: async (): Promise<void> => {
-          if (!startupSplashActive) return;
-          if (cachedActiveRef === null) {
-            closeStartupSplash();
-          }
         },
       },
     },

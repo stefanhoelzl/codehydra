@@ -3,11 +3,12 @@
  * Tests for the MainView component.
  *
  * Since the read cutover MainView is a render function over the UiState
- * snapshot: tests push snapshots through the captured onState callback
- * (wired by initializeApp on mount) and assert the rendered result. The
- * view-model semantics themselves (placeholders, deletion lifecycle, active
- * fallback, ground-state panel) are covered by the presenter's integration
- * tests in src/modules/presentation-module.integration.test.ts.
+ * snapshot (the `uiState` store, fed by App.svelte's onState subscription).
+ * Tests seed the store directly via setUiState and assert the rendered
+ * result. The view-model semantics themselves (placeholders, deletion
+ * lifecycle, active fallback, ground-state panel) are covered by the
+ * presenter's integration tests in
+ * src/modules/presentation-module.integration.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -15,21 +16,15 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import type { UiState } from "@shared/ui-state";
 
-type StateCallback = (state: UiState) => void;
-const { mockApi, stateCallbacks } = vi.hoisted(() => {
-  const stateCallbacks: Array<(state: unknown) => void> = [];
+const { mockApi } = vi.hoisted(() => {
   return {
-    stateCallbacks,
     mockApi: {
       emitEvent: vi.fn(),
       lifecycle: {
         quit: vi.fn().mockResolvedValue(undefined),
       },
       on: vi.fn(() => vi.fn()),
-      onState: vi.fn((callback: (state: unknown) => void) => {
-        stateCallbacks.push(callback);
-        return vi.fn();
-      }),
+      onState: vi.fn(() => vi.fn()),
       sendDialogEvent: vi.fn(),
       sendNotificationEvent: vi.fn(),
     },
@@ -41,21 +36,20 @@ vi.mock("$lib/api", () => mockApi);
 // Import after mock setup
 import MainView from "./MainView.svelte";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
-import { resetUiState } from "$lib/stores/ui-state.svelte.js";
+import { resetUiState, setUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 
-/** Deliver a snapshot through the captured onState callback (real holder). */
+/**
+ * Seed the snapshot store directly (App.svelte owns the onState subscription;
+ * MainView reads the resulting `uiState` store).
+ */
 function pushState(state: UiState): void {
-  expect(stateCallbacks.length).toBeGreaterThan(0);
-  for (const callback of stateCallbacks as StateCallback[]) {
-    callback(state);
-  }
+  setUiState(state);
 }
 
-/** Render MainView and wait for initializeApp to subscribe. */
+/** Render MainView. The store can be seeded before or after via pushState. */
 async function renderMainView(): Promise<{ container: HTMLElement }> {
   const { container } = render(MainView);
-  await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
   return { container };
 }
 
@@ -79,22 +73,12 @@ const PROJECT = makeUiProjectRow([WS1]);
 describe("MainView component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    stateCallbacks.length = 0;
     resetUiState();
     dialogFrameworkStore.reset();
   });
 
   afterEach(() => {
     document.body.innerHTML = "";
-  });
-
-  describe("initialization", () => {
-    it("subscribes to ui:state and emits ui-connected on mount", async () => {
-      await renderMainView();
-
-      expect(mockApi.onState).toHaveBeenCalledTimes(1);
-      await waitFor(() => expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "ui-connected" }));
-    });
   });
 
   describe("rendering from the snapshot", () => {
