@@ -165,19 +165,6 @@ describe("PresentationModule - ui:event intake", () => {
     expect(deps.ipcLayer._getListeners(ApiIpcChannels.UI_EVENT)).toHaveLength(1);
   });
 
-  it("debug-logs remaining observational events", () => {
-    const deps = createDeps();
-    createPresentationModule(deps);
-
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "switch-workspace" });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "wake-workspace" });
-
-    const logger = deps.loggingService.getLogger("presenter");
-    expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "switch-workspace" });
-    expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "wake-workspace" });
-    expect(logger?.warn).not.toHaveBeenCalled();
-  });
-
   it("drops events with an unknown kind and warns", () => {
     const deps = createDeps();
     createPresentationModule(deps);
@@ -330,7 +317,6 @@ describe("PresentationModule - ui:state snapshots", () => {
             workspaces: [
               {
                 key: `${PROJECT_ID}/main`,
-                path: `${PROJECT_PATH}/.worktrees/main`,
                 name: "main",
                 status: "ready",
                 hibernated: false,
@@ -419,8 +405,6 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshot.sidebar.projects[0]!.workspaces).toEqual([
       {
         key: `${PROJECT_ID}/feat`,
-        // Placeholder rows carry the renderer-compatible synthetic path.
-        path: `__pending__/${PROJECT_PATH}/feat`,
         name: "feat",
         status: "creating",
         hibernated: false,
@@ -458,7 +442,6 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(snapshot.sidebar.projects[0]!.workspaces).toEqual([
       {
         key: `${PROJECT_ID}/feat`,
-        path: `${PROJECT_PATH}/.worktrees/feat`,
         name: "feat",
         status: "ready",
         hibernated: false,
@@ -855,6 +838,86 @@ describe("PresentationModule - ui:event routing", () => {
     });
 
     expect(dispatched).toHaveLength(0);
+  });
+
+  it("switch-workspace resolves the key and dispatches a switch (default focus)", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main");
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "switch-workspace",
+      key: `${PROJECT_ID}/main`,
+    });
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: workspace.path } },
+    ]);
+  });
+
+  it("switch-workspace with key null deselects (creation panel)", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    await startModule(deps);
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "switch-workspace", key: null });
+
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspacePath: null } }]);
+  });
+
+  it("drops switch-workspace for a stale key with a warning", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "switch-workspace",
+      key: `${PROJECT_ID}/vanished`,
+    });
+
+    expect(dispatched).toHaveLength(0);
+    const logger = deps.loggingService.getLogger("presenter");
+    expect(logger?.warn).toHaveBeenCalledWith("Dropped switch-workspace for unknown key", {
+      key: `${PROJECT_ID}/vanished`,
+    });
+  });
+
+  it("wake-workspace resolves the key and dispatches a wake", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main", { metadata: { hibernated: "true" } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "wake-workspace",
+      key: `${PROJECT_ID}/main`,
+    });
+
+    expect(dispatched).toEqual([
+      { type: "workspace:wake", payload: { workspacePath: workspace.path, source: "ui-ipc" } },
+    ]);
+  });
+
+  it("drops wake-workspace for a stale key with a warning", async () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      kind: "wake-workspace",
+      key: `${PROJECT_ID}/vanished`,
+    });
+
+    expect(dispatched).toHaveLength(0);
+    const logger = deps.loggingService.getLogger("presenter");
+    expect(logger?.warn).toHaveBeenCalledWith("Dropped wake-workspace for unknown key", {
+      key: `${PROJECT_ID}/vanished`,
+    });
   });
 
   it("close-project resolves the projectId and dispatches an interactive close", async () => {

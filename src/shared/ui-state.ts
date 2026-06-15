@@ -22,13 +22,6 @@ export interface UiWorkspaceRow {
    * them back in ui:events.
    */
   readonly key: string;
-  /**
-   * TRANSITIONAL (until the write-path phase): real worktree path, echoed
-   * back into the path-keyed write invokes the renderer still makes (switch,
-   * hibernate, wake). Creating placeholders carry a synthetic
-   * `__pending__/...` path. Deleted when those ui:events carry `key` instead.
-   */
-  readonly path: string;
   readonly name: string;
   readonly status: "creating" | "ready" | "deleting" | "delete-failed";
   readonly hibernated: boolean;

@@ -1,10 +1,9 @@
 /**
  * Tests for the renderer API layer.
  *
- * Setup operations use lifecycle API:
- * - lifecycle.getState() returns "ready" | "setup"
- * - lifecycle.setup() runs setup and returns success/failure
- * - lifecycle.quit() quits the app
+ * All renderer→main gestures are fire-and-forget ui:events (emitEvent); the
+ * only remaining command invoke is lifecycle.quit. The layer mostly re-exports
+ * window.api for mockability.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -34,12 +33,9 @@ describe("renderer API layer", () => {
       window.api = mockApi;
     });
 
-    it("exports domain API namespaces delegating to window.api", async () => {
+    it("re-exports window.api functions for mockability", async () => {
       const api = await import("$lib/api");
 
-      await api.ui.switchWorkspace("/test/ws");
-
-      expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/ws", undefined);
       expect(api.lifecycle).toBe(mockApi.lifecycle);
       expect(api.on).toBe(mockApi.on);
       expect(api.onState).toBe(mockApi.onState);
@@ -47,10 +43,10 @@ describe("renderer API layer", () => {
   });
 
   // =============================================================================
-  // Phase A dual-fire: wrappers emit observational UiEvents
+  // ui:event emission
   // =============================================================================
 
-  describe("UI event dual-fire", () => {
+  describe("emitEvent", () => {
     let mockApi: Api;
 
     beforeEach(() => {
@@ -58,46 +54,25 @@ describe("renderer API layer", () => {
       window.api = mockApi;
     });
 
-    it("emits matching events alongside the invokes", async () => {
+    it("forwards events to window.api", async () => {
       const api = await import("$lib/api");
 
-      await api.projects.open("/test");
-      await api.workspaces.hibernate("/test/ws");
-      await api.workspaces.wake("/test/ws");
-      await api.ui.switchWorkspace("/test/ws");
+      api.emitEvent({ kind: "switch-workspace", key: "p/ws" });
+      api.emitEvent({ kind: "hover", region: "sidebar" });
 
       expect(vi.mocked(mockApi.emitEvent).mock.calls.map(([event]) => event)).toEqual([
-        { kind: "open-project" },
-        { kind: "hibernate-workspace" },
-        { kind: "wake-workspace" },
-        { kind: "switch-workspace" },
+        { kind: "switch-workspace", key: "p/ws" },
+        { kind: "hover", region: "sidebar" },
       ]);
     });
 
-    it("does not emit events for plain invokes (lifecycle.quit)", async () => {
-      const api = await import("$lib/api");
-
-      await api.lifecycle.quit();
-
-      expect(mockApi.emitEvent).not.toHaveBeenCalled();
-    });
-
-    it("emitEvent failures never break the invoke", async () => {
+    it("never throws when the underlying channel breaks", async () => {
       mockApi.emitEvent = vi.fn(() => {
         throw new Error("channel broke");
       });
       const api = await import("$lib/api");
 
-      await expect(api.workspaces.wake("/test/ws")).resolves.toBeDefined();
-      expect(mockApi.workspaces.wake).toHaveBeenCalledWith("/test/ws");
-    });
-
-    it("exports emitEvent for invoke-less signals", async () => {
-      const api = await import("$lib/api");
-
-      api.emitEvent({ kind: "hover", region: "sidebar" });
-
-      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "hover", region: "sidebar" });
+      expect(() => api.emitEvent({ kind: "wake-workspace", key: "p/ws" })).not.toThrow();
     });
   });
 
@@ -116,27 +91,17 @@ describe("renderer API layer", () => {
   });
 
   // =============================================================================
-  // Normal API Tests
+  // Remaining command invoke + event subscription
   // =============================================================================
 
   describe("normal API operations", () => {
     let mockApi: Api;
 
     beforeEach(() => {
-      // Use shared createMockApi instead of inline definition
       mockApi = createMockApi();
       window.api = mockApi;
     });
 
-    it("projects.open returns Project with id", async () => {
-      const api = await import("$lib/api");
-      const result = await api.projects.open("/test");
-
-      expect(mockApi.projects.open).toHaveBeenCalledWith("/test");
-      expect(result).toHaveProperty("id");
-    });
-
-    // Note: lifecycle.getState removed in app:setup migration
     it("lifecycle.quit calls quit", async () => {
       const api = await import("$lib/api");
       await api.lifecycle.quit();
@@ -159,28 +124,26 @@ describe("renderer API layer", () => {
   // =============================================================================
 
   describe("type-level tests", () => {
-    it("lifecycle API methods have correct types", async () => {
+    it("lifecycle API exposes quit (the only remaining command invoke)", async () => {
       const mockApi = createMockApi();
       window.api = mockApi;
 
       const api = await import("$lib/api");
 
-      // Verify lifecycle namespace exists - only quit remains after app:setup migration
       expect(api.lifecycle).toBeDefined();
       expect(typeof api.lifecycle.quit).toBe("function");
     });
 
-    it("API has all namespaces", async () => {
+    it("exposes emitEvent and event subscriptions", async () => {
       const mockApi = createMockApi();
       window.api = mockApi;
 
       const api = await import("$lib/api");
 
-      expect(api).toHaveProperty("projects");
-      expect(api).toHaveProperty("workspaces");
-      expect(api).toHaveProperty("ui");
+      expect(api).toHaveProperty("emitEvent");
       expect(api).toHaveProperty("lifecycle");
       expect(api).toHaveProperty("on");
+      expect(api).toHaveProperty("onState");
     });
   });
 });

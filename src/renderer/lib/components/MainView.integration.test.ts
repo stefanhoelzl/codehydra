@@ -74,10 +74,7 @@ function pushState(state: UiState): void {
 }
 
 const projectWithWorkspaces = makeUiProjectRow(
-  [
-    makeUiWorkspaceRow("feature-1", { path: "/test/.worktrees/feature-1" }),
-    makeUiWorkspaceRow("feature-2", { path: "/test/.worktrees/feature-2" }),
-  ],
+  [makeUiWorkspaceRow("feature-1"), makeUiWorkspaceRow("feature-2")],
   { id: "test-project-12345678", name: "test-project" }
 );
 

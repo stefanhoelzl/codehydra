@@ -60,21 +60,6 @@ export type AggregatedAgentStatus =
  */
 export type UIMode = "workspace" | "dialog" | "shortcut" | "hover";
 
-// ============ IPC Handler Payload Types ============
-// Payload types for IPC handlers registered in the UiIpc module.
-
-/** projects.open */
-export interface ProjectOpenPayload {
-  readonly path?: string;
-}
-
-/** ui.switchWorkspace. `workspacePath: null` = deselect (no active workspace;
- *  the creation panel becomes the main view). */
-export interface UiSwitchWorkspacePayload {
-  readonly workspacePath: string | null;
-  readonly focus?: boolean;
-}
-
 // ============ API Layer IPC Channels ============
 // All IPC channels use the api: prefix.
 // Domain events are mapped to IPC channels by the UiIpc module.
@@ -84,15 +69,9 @@ export interface UiSwitchWorkspacePayload {
  * All channels use the api: prefix convention.
  */
 export const ApiIpcChannels = {
-  // Project commands (close is NOT an invoke: the close-project ui:event
-  // requests the flow; main owns the confirmation dialog and dispatch)
-  PROJECT_OPEN: "api:project:open",
-  // Workspace commands (remove likewise goes through the remove-workspace
-  // ui:event)
-  WORKSPACE_HIBERNATE: "api:workspace:hibernate",
-  WORKSPACE_WAKE: "api:workspace:wake",
-  // UI commands
-  UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
+  // Renderer→main gestures (open/close/switch/wake/hibernate/remove) are NOT
+  // invokes: they flow through the fire-and-forget ui:event union (UI_EVENT),
+  // and main owns identity resolution, confirmation dialogs, and dispatch.
   // Lifecycle commands
   LIFECYCLE_QUIT: "api:lifecycle:quit",
   // Lifecycle events (main → renderer)

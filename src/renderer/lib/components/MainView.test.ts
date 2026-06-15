@@ -22,16 +22,6 @@ const { mockApi, stateCallbacks } = vi.hoisted(() => {
     stateCallbacks,
     mockApi: {
       emitEvent: vi.fn(),
-      projects: {
-        open: vi.fn().mockResolvedValue(undefined),
-      },
-      workspaces: {
-        hibernate: vi.fn().mockResolvedValue({ started: true }),
-        wake: vi.fn().mockResolvedValue(null),
-      },
-      ui: {
-        switchWorkspace: vi.fn().mockResolvedValue(undefined),
-      },
       lifecycle: {
         quit: vi.fn().mockResolvedValue(undefined),
       },
@@ -186,20 +176,23 @@ describe("MainView component", () => {
   });
 
   describe("actions", () => {
-    it("clicking a workspace invokes switchWorkspace without eager local state", async () => {
+    it("clicking a workspace emits the switch-workspace ui:event without eager local state", async () => {
       await renderMainView();
       pushState(makeUiState([PROJECT]));
       await waitFor(() => expect(screen.getByText("feature-1")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByRole("button", { name: "feature-1" }));
 
-      expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(WS1.path);
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "switch-workspace",
+        key: WS1.key,
+      });
       // No local mutation: the row stays inactive until a push says otherwise.
       const item = screen.getByText("feature-1").closest("li");
       expect(item).not.toHaveAttribute("aria-current");
     });
 
-    it("the New workspace entry deselects (switchWorkspace null)", async () => {
+    it("the New workspace entry deselects (switch-workspace key null)", async () => {
       await renderMainView();
       pushState(
         makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
@@ -210,7 +203,7 @@ describe("MainView component", () => {
 
       await fireEvent.click(screen.getByRole("button", { name: /new workspace/i }));
 
-      expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith(null);
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "switch-workspace", key: null });
     });
 
     it("close-project emits the close-project ui:event (dialog opens main-side)", async () => {

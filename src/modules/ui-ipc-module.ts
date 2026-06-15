@@ -9,7 +9,6 @@
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type { ProjectOpenPayload, UiSwitchWorkspacePayload } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
 import { agentSpecHasPrompt } from "../shared/api/types";
 import type { DialogUserEvent } from "../shared/dialog-types";
@@ -41,35 +40,28 @@ import {
   EVENT_WORKSPACE_DELETION_PROGRESS,
 } from "../intents/delete-workspace";
 import type { ProjectOpenedEvent } from "../intents/open-project";
-import { EVENT_PROJECT_OPENED, INTENT_OPEN_PROJECT } from "../intents/open-project";
-import type { OpenProjectIntent } from "../intents/open-project";
+import { EVENT_PROJECT_OPENED } from "../intents/open-project";
 import type { ProjectClosedEvent } from "../intents/close-project";
 import { EVENT_PROJECT_CLOSED } from "../intents/close-project";
 import type { WorkspaceSwitchedEvent } from "../intents/switch-workspace";
-import { EVENT_WORKSPACE_SWITCHED, INTENT_SWITCH_WORKSPACE } from "../intents/switch-workspace";
-import type { SwitchWorkspaceIntent } from "../intents/switch-workspace";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { BasesUpdatedEvent } from "../intents/get-project-bases";
 import { EVENT_BASES_UPDATED } from "../intents/get-project-bases";
-import type { WorkspaceStatus, Workspace } from "../shared/api/types";
+import type { WorkspaceStatus } from "../shared/api/types";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import { Path } from "../utils/path/path";
 import {
   EVENT_WORKSPACE_HIBERNATED,
   EVENT_WORKSPACE_HIBERNATE_FAILED,
-  INTENT_HIBERNATE_WORKSPACE,
-  type HibernateWorkspaceIntent,
   type WorkspaceHibernatedEvent,
   type WorkspaceHibernateFailedEvent,
 } from "../intents/hibernate-workspace";
 import {
   EVENT_WORKSPACE_WOKEN,
   EVENT_WORKSPACE_WAKE_FAILED,
-  INTENT_WAKE_WORKSPACE,
-  type WakeWorkspaceIntent,
   type WorkspaceWokenEvent,
   type WorkspaceWakeFailedEvent,
 } from "../intents/wake-workspace";
@@ -304,65 +296,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
       type: INTENT_APP_SHUTDOWN,
       payload: {},
     } as AppShutdownIntent);
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_HIBERNATE, async (payload) => {
-    const p = payload as { workspacePath: string };
-    const intent: HibernateWorkspaceIntent = {
-      type: INTENT_HIBERNATE_WORKSPACE,
-      payload: {
-        workspacePath: p.workspacePath,
-      },
-    };
-    const handle = dispatcher.dispatch(intent);
-    if (!(await handle.accepted)) {
-      return { started: false };
-    }
-    void handle.catch(() => {}); // Errors communicated via domain events
-    return { started: true };
-  });
-
-  registerIpc(ApiIpcChannels.WORKSPACE_WAKE, async (payload) => {
-    const p = payload as { workspacePath: string };
-    // wake now clears the hibernated flag AND reopens the workspace (restarts
-    // the agent server, rebuilds the view) by dispatching workspace:open
-    // internally. source "ui-ipc" makes open's failures surface as UI
-    // notifications; stealFocus is omitted so the woken workspace is focused.
-    const intent: WakeWorkspaceIntent = {
-      type: INTENT_WAKE_WORKSPACE,
-      payload: { workspacePath: p.workspacePath, source: "ui-ipc" },
-    };
-    // result is undefined only when a concurrent wake for the same workspace
-    // was deduped by the idempotency interceptor.
-    const result = await dispatcher.dispatch(intent);
-    return (result ?? null) as Workspace | null;
-  });
-
-  registerIpc(ApiIpcChannels.UI_SWITCH_WORKSPACE, async (payload) => {
-    const p = payload as UiSwitchWorkspacePayload;
-    const intent: SwitchWorkspaceIntent = {
-      type: INTENT_SWITCH_WORKSPACE,
-      payload: {
-        workspacePath: p.workspacePath,
-        ...(p.focus !== undefined && { focus: p.focus }),
-      },
-    };
-    await dispatcher.dispatch(intent);
-  });
-
-  registerIpc(ApiIpcChannels.PROJECT_OPEN, async (payload) => {
-    const p = payload as ProjectOpenPayload;
-    const intent: OpenProjectIntent = {
-      type: INTENT_OPEN_PROJECT,
-      payload: {
-        ...(p.path !== undefined && { path: new Path(p.path) }),
-      },
-    };
-    const handle = dispatcher.dispatch(intent);
-    if (!(await handle.accepted)) {
-      throw new Error("Project open already in progress");
-    }
-    return await handle;
   });
 
   // ---------------------------------------------------------------------------

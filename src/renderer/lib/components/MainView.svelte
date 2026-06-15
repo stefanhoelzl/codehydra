@@ -44,7 +44,6 @@
     processCommand as processFrameworkDialog,
   } from "$lib/stores/dialog-framework.svelte.js";
   import PanelView from "./PanelView.svelte";
-  import type { WorkspaceRef } from "$lib/api";
 
   const logger = createLogger("ui");
 
@@ -160,16 +159,17 @@
   // Handle switching workspace. No eager local state: the snapshot push
   // following workspace:switched flips the frame (and leaves the panel when
   // it was showing — selecting a workspace deselects the panel by design).
-  async function handleSwitchWorkspace(workspaceRef: WorkspaceRef): Promise<void> {
-    logger.debug("Workspace selected", { workspaceName: workspaceRef.workspaceName });
-    await api.ui.switchWorkspace(workspaceRef.path);
+  // The opaque row key is echoed back; main resolves it and dispatches.
+  function handleSwitchWorkspace(key: string): void {
+    logger.debug("Workspace selected", { key });
+    api.emitEvent({ kind: "switch-workspace", key });
   }
 
   // Handle opening the creation panel (global sidebar entry): deselect.
   // No workspace active = the panel is the main view (ground state).
   function handleOpenNewWorkspace(): void {
     logger.debug("New workspace view opened");
-    void api.ui.switchWorkspace(null);
+    api.emitEvent({ kind: "switch-workspace", key: null });
   }
 
   // Handle removing a workspace: request the flow from main with the row's
@@ -180,14 +180,12 @@
     api.emitEvent({ kind: "remove-workspace", key });
   }
 
-  // Wake the active (hibernated) workspace from the overlay. Still path-based
-  // until the write-path actions step folds wake into a keyed ui:event.
+  // Wake the active (hibernated) workspace from the overlay. The opaque row
+  // key is echoed back; main resolves it and dispatches the wake.
   function handleWakeActiveWorkspace(): void {
     const row = activeRow;
     if (!row) return;
-    api.workspaces.wake(row.path).catch((error: unknown) => {
-      logger.error("Failed to wake workspace", { path: row.path, error: String(error) });
-    });
+    api.emitEvent({ kind: "wake-workspace", key: row.key });
   }
 </script>
 

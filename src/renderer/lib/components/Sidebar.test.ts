@@ -32,13 +32,10 @@ vi.mock("$lib/api", () => ({
   emitEvent: vi.fn(),
   sendNotificationEvent: vi.fn(),
   on: vi.fn(() => () => {}),
-  workspaces: {
-    wake: vi.fn().mockResolvedValue(null),
-  },
 }));
 
 // Import after mock setup
-import { workspaces as apiWorkspaces, emitEvent } from "$lib/api";
+import { emitEvent } from "$lib/api";
 import Sidebar from "./Sidebar.svelte";
 
 const HOVER_DELAY_MS = 150;
@@ -214,11 +211,7 @@ describe("Sidebar component", () => {
       const workspaceButton = screen.getByRole("button", { name: ws.name });
       await fireEvent.click(workspaceButton);
 
-      expect(onSwitchWorkspace).toHaveBeenCalledWith({
-        projectId: project.id,
-        workspaceName: ws.name,
-        path: ws.path,
-      });
+      expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
     });
 
     it("does not call switchWorkspace for a creating workspace row", async () => {
@@ -457,11 +450,7 @@ describe("Sidebar component", () => {
       const statusButton = screen.getByRole("button", { name: /ws1 in test.*agent/i });
       await fireEvent.click(statusButton);
 
-      expect(onSwitchWorkspace).toHaveBeenCalledWith({
-        projectId: project.id,
-        workspaceName: ws.name,
-        path: ws.path,
-      });
+      expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
     });
 
     it("status cell button has descriptive aria-label with workspace, project, and status", () => {
@@ -544,7 +533,7 @@ describe("Sidebar component", () => {
 
     it("renders projects in the order provided", () => {
       const mkProject = (name: string): ReturnType<typeof makeUiProjectRow> =>
-        makeUiProjectRow([makeUiWorkspaceRow("ws", { path: `/${name}/ws`, key: `${name}/ws` })], {
+        makeUiProjectRow([makeUiWorkspaceRow("ws", { key: `${name}/ws` })], {
           id: `${name}-12345678`,
           name,
         });
@@ -935,7 +924,7 @@ describe("Sidebar component", () => {
         id: "p1-12345678",
         name: "test",
       });
-      const project2 = makeUiProjectRow([makeUiWorkspaceRow("ws2", { path: "/test2/ws2" })], {
+      const project2 = makeUiProjectRow([makeUiWorkspaceRow("ws2")], {
         id: "p2-12345678",
         name: "test2",
       });
@@ -1021,19 +1010,15 @@ describe("Sidebar component", () => {
 
     it("clicking the status cell wakes the workspace and switches to it", async () => {
       const onSwitchWorkspace = vi.fn();
-      const { ws, project, props } = hibernatedSetup();
+      const { ws, props } = hibernatedSetup();
       render(Sidebar, { props: { ...props, onSwitchWorkspace } });
 
       const statusButton = screen.getByRole("button", { name: /Hibernated - click to wake/i });
       await fireEvent.click(statusButton);
 
-      expect(apiWorkspaces.wake).toHaveBeenCalledWith(ws.path);
+      expect(emitEvent).toHaveBeenCalledWith({ kind: "wake-workspace", key: ws.key });
       // The click bubbles to the row's switch handler.
-      expect(onSwitchWorkspace).toHaveBeenCalledWith({
-        projectId: project.id,
-        workspaceName: ws.name,
-        path: ws.path,
-      });
+      expect(onSwitchWorkspace).toHaveBeenCalledWith(ws.key);
     });
 
     it("clicking the status cell of a non-hibernated workspace does not wake", async () => {
@@ -1046,7 +1031,9 @@ describe("Sidebar component", () => {
       const statusButton = screen.getByRole("button", { name: /ws1 in test/i });
       await fireEvent.click(statusButton);
 
-      expect(apiWorkspaces.wake).not.toHaveBeenCalled();
+      expect(emitEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "wake-workspace" })
+      );
       expect(onSwitchWorkspace).toHaveBeenCalled();
     });
 
