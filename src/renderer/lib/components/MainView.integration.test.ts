@@ -5,19 +5,16 @@
  * by src/modules/presentation-module.integration.test.ts and the
  * close-project operation tests.
  *
- * Workspace/project data arrives as UiState snapshots pushed through the
- * captured onState callback (real holder, real components).
+ * Workspace/project data is seeded into the `uiState` store directly (the
+ * onState subscription is owned by App.svelte; MainView only reads the store).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
 import type { UiState } from "@shared/ui-state";
 
-type StateCallback = (state: UiState) => void;
-const { mockApi, stateCallbacks } = vi.hoisted(() => {
-  const stateCallbacks: Array<(state: unknown) => void> = [];
+const { mockApi } = vi.hoisted(() => {
   return {
-    stateCallbacks,
     mockApi: {
       emitEvent: vi.fn(),
       projects: {
@@ -35,10 +32,7 @@ const { mockApi, stateCallbacks } = vi.hoisted(() => {
         quit: vi.fn().mockResolvedValue(undefined),
       },
       on: vi.fn(() => vi.fn()),
-      onState: vi.fn((callback: (state: unknown) => void) => {
-        stateCallbacks.push(callback);
-        return vi.fn();
-      }),
+      onState: vi.fn(() => vi.fn()),
       sendDialogEvent: vi.fn(),
       sendNotificationEvent: vi.fn(),
     },
@@ -63,14 +57,11 @@ vi.mock("$lib/services/agent-notifications", () => ({
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import { resetUiState } from "$lib/stores/ui-state.svelte.js";
+import { resetUiState, setUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 
 function pushState(state: UiState): void {
-  expect(stateCallbacks.length).toBeGreaterThan(0);
-  for (const callback of stateCallbacks as StateCallback[]) {
-    callback(state);
-  }
+  setUiState(state);
 }
 
 const projectWithWorkspaces = makeUiProjectRow(
@@ -86,16 +77,14 @@ const projectWithoutWorkspaces = makeUiProjectRow([], {
 const SNAPSHOT = makeUiState([projectWithWorkspaces, projectWithoutWorkspaces]);
 
 async function renderWithSnapshot(): Promise<void> {
-  render(MainView);
-  await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
   pushState(SNAPSHOT);
+  render(MainView);
   await waitFor(() => expect(screen.getByText("test-project")).toBeInTheDocument());
 }
 
 describe("MainView close project integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    stateCallbacks.length = 0;
     resetUiState();
   });
 

@@ -422,7 +422,7 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         },
         // The UI view exists once the view module's init handler has run
         // (it provides "ui-ready"); subscribe the crash guard right after,
-        // before show-main-view mounts the Svelte app.
+        // before the renderer mounts the Svelte app.
         init: {
           requires: { "ui-ready": ANY_VALUE },
           handler: async (): Promise<Record<string, never>> => {

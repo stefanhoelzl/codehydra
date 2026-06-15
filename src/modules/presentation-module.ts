@@ -30,6 +30,7 @@
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
+import { ANY_VALUE } from "../intents/lib/operation";
 import type { IDispatcher } from "../intents/lib/dispatcher";
 import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
 import type { Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
@@ -40,8 +41,22 @@ import type { Theme } from "../boundaries/shell/window-manager";
 import type { Unsubscribe } from "../shared/api/interfaces";
 import type { AgentStatus, DeletionProgress, WorkspaceTag } from "../shared/api/types";
 import { extractTags, TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import {
+  APP_SHUTDOWN_OPERATION_ID,
+  INTENT_APP_SHUTDOWN,
+  type AppShutdownIntent,
+} from "../intents/app-shutdown";
 import { EVENT_APP_STARTED, INTENT_APP_READY, type AppReadyIntent } from "../intents/app-ready";
+import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/app-start";
+import {
+  SETUP_OPERATION_ID,
+  EVENT_SETUP_PROGRESS,
+  EVENT_SETUP_ERROR,
+  type AgentSelectionHookContext,
+  type SetupProgressEvent,
+  type SetupErrorEvent,
+} from "../intents/setup";
+import type { LifecycleAgentType } from "../shared/ipc";
 import { EVENT_PROJECT_OPENED, type ProjectOpenedEvent } from "../intents/open-project";
 import {
   EVENT_PROJECT_CLOSED,
@@ -98,6 +113,7 @@ import {
   compareDisplayNames,
   type UiMainView,
   type UiProjectRow,
+  type UiSetupRow,
   type UiState,
   type UiWorkspaceRow,
 } from "../shared/ui-state";
@@ -279,9 +295,62 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   const screenshotLoads = new Set<string>();
   let activeKey: string | null = null;
   let theme: Theme = "dark";
-  let started = false;
+  /**
+   * The snapshot stream gate. Set true on the `ui-connected` handshake (App
+   * mount, during app:start). Pushes are gated on this — the view-model is
+   * maintained from genesis, but nothing leaves main until the renderer has
+   * subscribed. The genesis snapshot is flushed immediately on connect.
+   */
+  let connected = false;
   let pushScheduled = false;
   let themeUnsubscribe: Unsubscribe | null = null;
+
+  // ---------------------------------------------------------------------------
+  // Startup flow view-model (boot splash, first-run setup, agent-selection,
+  // workspace loading). Drives the startup `main` kinds until app:started.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Startup phase. "starting" is the genesis state (boot splash); "setup" /
+   * "agent-selection" are pushed by the app:setup hooks; "running" is reached
+   * once app:start's `start` hook fires (app:ready dispatched) and stays until
+   * app:started, after which the normal main logic owns the view.
+   */
+  type StartupPhase = "starting" | "setup" | "agent-selection" | "running" | "done";
+  let startupPhase: StartupPhase = "starting";
+
+  const SETUP_ROW_LABELS: Record<string, string> = {
+    vscode: "VSCode",
+    agent: "Agent",
+    setup: "Setup",
+  };
+  const SETUP_ROW_IDS = ["vscode", "agent", "setup"] as const;
+  /** Accumulated setup row state, keyed by row id (persists across progress). */
+  const setupRows = new Map<string, UiSetupRow>();
+  let setupError: { message: string } | undefined;
+
+  /** Reset the three setup rows to pending (entering the setup phase). */
+  function resetSetupRows(): void {
+    setupRows.clear();
+    setupError = undefined;
+    for (const id of SETUP_ROW_IDS) {
+      setupRows.set(id, { id, label: SETUP_ROW_LABELS[id] ?? id, status: "pending" });
+    }
+  }
+
+  /** Current setup rows in canonical (vscode, agent, setup) order. */
+  function setupRowList(): UiSetupRow[] {
+    return SETUP_ROW_IDS.map(
+      (id) => setupRows.get(id) ?? { id, label: SETUP_ROW_LABELS[id] ?? id, status: "pending" }
+    );
+  }
+
+  /** Available agents for the picker (set by the agent-selection hook). */
+  let agentOptions: AgentSelectionHookContext["availableAgents"] = [];
+  /** Resolver for the parked agent-selection hook (set while awaiting a pick). */
+  let agentSelectionResolve: ((agent: LifecycleAgentType) => void) | null = null;
+  /** Resolver for app:start's waitForRetry (set while awaiting setup-retry). */
+  let retryResolve: (() => void) | null = null;
 
   // --- UI mode inputs (main-owned). Mode = shortcut > dialog > hover >
   //     workspace, computed in buildMode() from these four signals.
@@ -422,11 +491,40 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   }
 
   function buildMain(): UiMainView {
+    // Startup flow owns the main view until app:started (phase → "done").
+    if (startupPhase === "starting") return { kind: "starting" };
+    if (startupPhase === "setup") {
+      return {
+        kind: "setup",
+        rows: setupRowList(),
+        ...(setupError !== undefined && { error: setupError }),
+      };
+    }
+    if (startupPhase === "agent-selection") {
+      return {
+        kind: "agent-selection",
+        agents: agentOptions.map((a) => ({ agent: a.agent, label: a.label, icon: a.icon })),
+      };
+    }
+    if (startupPhase === "running") {
+      // Unified startup loading window: from the `start` hook (app:ready
+      // dispatched) until app:started, the user sees one loading screen
+      // instead of starting → blank → projects-loading → workspace-loading.
+      return { kind: "loading", label: "Loading workspace..." };
+    }
+
+    // Normal main logic (startupPhase === "done").
     // The creation panel is the ground state: shown whenever nothing is
     // active (including a stale activeKey whose workspace is gone).
     if (activeKey === null) return { kind: "creation" };
     const active = findByKey(activeKey);
     if (!active) return { kind: "creation" };
+    // An active workspace still being created has no runtime/frame yet: show
+    // the loading screen (the mid-session equivalent of the startup loading
+    // window — replaces the former "Loading workspace..." dialog).
+    if (active.workspace.creating) {
+      return { kind: "loading", label: "Loading workspace..." };
+    }
     if (active.workspace.hibernated) {
       return {
         kind: "hibernated",
@@ -442,6 +540,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
    * Alt+X still works.
    */
   function buildMode(main: UiMainView): UIMode {
+    // Startup surfaces are full-screen, pre-interaction, UI-on-top: treat them
+    // like a modal dialog so Alt+X is inert and the workspace stays behind.
+    if (
+      main.kind === "starting" ||
+      main.kind === "setup" ||
+      main.kind === "agent-selection" ||
+      main.kind === "loading"
+    ) {
+      return "dialog";
+    }
     if (shortcutActive) return "shortcut";
     if (dialogModalOpen) return "dialog";
     if (main.kind === "creation" || hoverRegion === "sidebar") return "hover";
@@ -475,7 +583,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   }
 
   function scheduleUpdate(): void {
-    if (!started || pushScheduled) return;
+    if (!connected || pushScheduled) return;
     pushScheduled = true;
     queueMicrotask(() => {
       pushScheduled = false;
@@ -535,17 +643,41 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     }
     const event = result.data;
     if (event.kind === "ui-connected") {
-      // Startup handshake: the renderer has mounted and subscribed to ui:state.
-      // Flush buffered notifications and kick app:ready (load projects →
-      // app:started → opens the snapshot stream). Fire-and-forget: the genesis
-      // snapshot flows back on ui:state, the renderer awaits nothing.
+      // Startup handshake: the renderer has mounted (App, during the
+      // initializing phase) and subscribed to ui:state. Open the snapshot
+      // stream and flush the current snapshot immediately — startup state may
+      // already be set (the genesis "starting" splash, or setup mid-flight),
+      // and there is no replay. app:ready is NOT dispatched here: the
+      // app:start `start` hook owns that now (after setup completes).
       deps.notificationManager.markUIReady();
+      connected = true;
+      push();
+      return;
+    }
+    if (event.kind === "agent-selected") {
+      // Resolve the parked agent-selection hook with the user's choice.
+      if (agentSelectionResolve) {
+        agentSelectionResolve(event.agent as LifecycleAgentType);
+        agentSelectionResolve = null;
+      }
+      return;
+    }
+    if (event.kind === "setup-retry") {
+      // Answer a setup error: resolve app:start's retry loop.
+      if (retryResolve) {
+        retryResolve();
+        retryResolve = null;
+      }
+      return;
+    }
+    if (event.kind === "setup-quit") {
+      // Answer a setup error: shut the app down.
       const handle = deps.dispatcher.dispatch({
-        type: INTENT_APP_READY,
+        type: INTENT_APP_SHUTDOWN,
         payload: {},
-      } as AppReadyIntent);
+      } as AppShutdownIntent);
       void handle.catch((error: unknown) => {
-        logger.debug("app:ready dispatch rejected", { error: getErrorMessage(error) });
+        logger.debug("app:shutdown dispatch rejected", { error: getErrorMessage(error) });
       });
       return;
     }
@@ -985,9 +1117,32 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         scheduleUpdate();
       },
     },
+    [EVENT_SETUP_PROGRESS]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const row = (event as SetupProgressEvent).payload;
+        // Map SetupRowStatus ("failed") → UiSetupRow status ("error").
+        const status: UiSetupRow["status"] = row.status === "failed" ? "error" : row.status;
+        setupRows.set(row.id, {
+          id: row.id,
+          label: SETUP_ROW_LABELS[row.id] ?? row.id,
+          status,
+          ...(row.message !== undefined && { message: row.message }),
+          ...(row.progress !== undefined && { progress: row.progress }),
+        });
+        scheduleUpdate();
+      },
+    },
+    [EVENT_SETUP_ERROR]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const { message } = (event as SetupErrorEvent).payload;
+        setupError = { message };
+        scheduleUpdate();
+      },
+    },
     [EVENT_APP_STARTED]: {
       handler: async (): Promise<void> => {
-        started = true;
+        // Startup is over: hand the main view back to the normal logic.
+        startupPhase = "done";
         theme = deps.windowManager.getTheme();
         themeUnsubscribe = deps.windowManager.onThemeChange((next) => {
           theme = next;
@@ -1056,16 +1211,121 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Startup hooks (moved from view-module): the four startup surfaces are now
+  // pushed as `main` kinds, not DialogManager dialogs.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * app:start `show-ui`: set the boot-splash phase and hand app:start the
+   * waitForRetry hook it needs for the setup retry loop. The promise resolves
+   * when the user emits `setup-retry` (preserving app-start.ts's loop exactly).
+   */
+  async function appStartShowUi(): Promise<ShowUIHookResult> {
+    startupPhase = "starting";
+    scheduleUpdate();
+    return {
+      waitForRetry: () =>
+        new Promise<void>((resolve) => {
+          retryResolve = resolve;
+        }),
+    };
+  }
+
+  /**
+   * app:start `start`: dispatch app:ready (load projects → app:started). Gated
+   * on code-server being up (mirrors view-module's old start hook ordering).
+   * The "running" phase shows the unified loading screen until app:started.
+   * Fire-and-forget: app:ready is awaited internally by the dispatcher, but the
+   * hook must not block startup on the projects finishing — the snapshot stream
+   * carries the result.
+   */
+  async function appStartStart(): Promise<void> {
+    startupPhase = "running";
+    scheduleUpdate();
+    const handle = deps.dispatcher.dispatch({
+      type: INTENT_APP_READY,
+      payload: {},
+    } as AppReadyIntent);
+    void handle.catch((error: unknown) => {
+      logger.debug("app:ready dispatch rejected", { error: getErrorMessage(error) });
+    });
+  }
+
+  /** app:setup `show-ui`: enter the setup phase with fresh pending rows. */
+  async function setupShowUi(): Promise<void> {
+    startupPhase = "setup";
+    resetSetupRows();
+    scheduleUpdate();
+  }
+
+  /**
+   * app:setup `agent-selection`: show the picker and park until the user emits
+   * `agent-selected`. The chosen agent is exposed as the `agentType` capability
+   * (same contract the view-module hook provided). The handler awaits the pick
+   * so `provides` reads the populated value.
+   */
+  let chosenAgent: LifecycleAgentType | undefined;
+  async function setupAgentSelection(ctx: HookContext): Promise<void> {
+    chosenAgent = undefined;
+    const { availableAgents } = ctx as AgentSelectionHookContext;
+    agentOptions = availableAgents;
+    startupPhase = "agent-selection";
+    scheduleUpdate();
+
+    const agent = await new Promise<LifecycleAgentType>((resolve) => {
+      agentSelectionResolve = resolve;
+    });
+    chosenAgent = agent;
+    logger.info("Agent selected", { agent });
+  }
+
+  /** app:setup `hide-ui`: return to the boot-splash phase. */
+  async function setupHideUi(): Promise<void> {
+    startupPhase = "starting";
+    scheduleUpdate();
+  }
+
   return {
     name: "presentation",
     events,
     hooks: {
+      [APP_START_OPERATION_ID]: {
+        "show-ui": { handler: appStartShowUi },
+        start: {
+          // Gate on code-server: app:ready dispatches project:open, whose
+          // workspace URLs must be servable when the renderer mounts iframes.
+          requires: { codeServerPort: ANY_VALUE },
+          handler: appStartStart,
+        },
+      },
+      [SETUP_OPERATION_ID]: {
+        "show-ui": { handler: setupShowUi },
+        "agent-selection": {
+          provides: () => ({
+            ...(chosenAgent !== undefined && { agentType: chosenAgent }),
+          }),
+          handler: setupAgentSelection,
+        },
+        "hide-ui": { handler: setupHideUi },
+      },
       [CLOSE_PROJECT_OPERATION_ID]: {
         confirm: { handler: confirmClose },
       },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async (): Promise<void> => {
+            // Resolve any parked startup promises so app:start can't hang quit.
+            if (agentSelectionResolve) {
+              // Default to the first option so app:setup's agent-selection
+              // capability is still populated on a quit-during-setup.
+              agentSelectionResolve((agentOptions[0]?.agent ?? "claude") as LifecycleAgentType);
+              agentSelectionResolve = null;
+            }
+            if (retryResolve) {
+              retryResolve();
+              retryResolve = null;
+            }
             deps.ipcLayer.removeListener(ApiIpcChannels.UI_EVENT, listener);
             modalUnsubscribe();
             if (themeUnsubscribe) {

@@ -3,29 +3,28 @@
  * Integration tests for ViewModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
- * Covers: app-start hooks, setup dialog hooks, active-workspace bookkeeping
- * (resolve / get-active / switch / delete / hibernate), the workspace loading
- * dialog (created → agent:status-updated / timeout), and app-shutdown/stop
- * disposal.
+ * Covers: app-start/init (shell creation), active-workspace bookkeeping
+ * (resolve / get-active / switch / delete / hibernate), the open-project
+ * folder picker, and app-shutdown/stop disposal. The startup surfaces (boot
+ * splash, setup progress, agent-selection, workspace loading) are owned by the
+ * presenter now and tested in presentation-module.integration.test.ts.
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
-import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
+import type { Operation, OperationContext } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
-import type { AppStartIntent, ShowUIHookResult } from "../intents/app-start";
+import type { AppStartIntent } from "../intents/app-start";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
 } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import { INTENT_SETUP, SETUP_OPERATION_ID } from "../intents/setup";
-import type { SetupIntent, AgentSelectionHookContext, RegisterAgentResult } from "../intents/setup";
 import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
 import type { GetActiveWorkspaceIntent } from "../intents/get-active-workspace";
 import { GetActiveWorkspaceOperation } from "../intents/get-active-workspace";
@@ -40,6 +39,8 @@ import type {
   ActivateHookInput,
   WorkspaceSwitchedEvent,
 } from "../intents/switch-workspace";
+import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
+import type { CodeServerRestartedEvent } from "../intents/app-resume";
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
@@ -49,8 +50,6 @@ import type {
   DeletePipelineHookInput,
   ShutdownHookResult,
 } from "../intents/delete-workspace";
-import { INTENT_OPEN_WORKSPACE, EVENT_WORKSPACE_CREATED } from "../intents/open-workspace";
-import type { OpenWorkspaceIntent, WorkspaceCreatedEvent } from "../intents/open-workspace";
 import { INTENT_OPEN_PROJECT, OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import type { SelectFolderHookResult } from "../intents/open-project";
 import {
@@ -58,16 +57,10 @@ import {
   type ResolveHookInput,
   type ResolveHookResult,
 } from "../intents/resolve-workspace";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
-import type { CodeServerRestartedEvent } from "../intents/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { ApiIpcChannels } from "../shared/ipc";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 
 // =============================================================================
 // Mock IViewManager
@@ -87,59 +80,6 @@ function createMockShellLayers() {
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
-
-/** Runs "show-ui" hook point only. */
-class MinimalShowUIOperation implements Operation<Intent, ShowUIHookResult> {
-  readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<ShowUIHookResult> {
-    const { results } = await ctx.hooks.collect<ShowUIHookResult>("show-ui", {
-      intent: ctx.intent,
-    });
-    const merged: ShowUIHookResult = {};
-    for (const r of results) {
-      if (r.waitForRetry !== undefined) {
-        (merged as Record<string, unknown>).waitForRetry = r.waitForRetry;
-      }
-    }
-    return merged;
-  }
-}
-
-/** Runs "show-ui" and "hide-ui" hook points on setup. */
-class MinimalSetupOperation implements Operation<SetupIntent, void> {
-  readonly hookPoint: "show-ui" | "hide-ui";
-  readonly id = SETUP_OPERATION_ID;
-  constructor(hookPoint: "show-ui" | "hide-ui") {
-    this.hookPoint = hookPoint;
-  }
-  async execute(ctx: OperationContext<SetupIntent>): Promise<void> {
-    await ctx.hooks.collect<void>(this.hookPoint, { intent: ctx.intent });
-  }
-}
-
-/** Result type for the agent selection operation. */
-interface AgentSelectionResult {
-  selectedAgent: string;
-}
-
-/** Runs "agent-selection" hook with pre-populated availableAgents context. */
-class MinimalAgentSelectionOperation implements Operation<SetupIntent, AgentSelectionResult> {
-  readonly id = SETUP_OPERATION_ID;
-  readonly availableAgents: readonly RegisterAgentResult[];
-  constructor(availableAgents: readonly RegisterAgentResult[]) {
-    this.availableAgents = availableAgents;
-  }
-  async execute(ctx: OperationContext<SetupIntent>): Promise<AgentSelectionResult> {
-    const hookCtx: AgentSelectionHookContext = {
-      intent: ctx.intent,
-      availableAgents: this.availableAgents,
-    };
-    const { errors, capabilities } = await ctx.hooks.collect<void>("agent-selection", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-    const selectedAgent = (capabilities.agentType as string) ?? "claude";
-    return { selectedAgent };
-  }
-}
 
 /** Runs "activate" hook point + emits workspace:switched event. */
 class MinimalSwitchOperation implements Operation<SwitchWorkspaceIntent, void> {
@@ -200,43 +140,6 @@ class MinimalDeleteOperation implements Operation<DeleteWorkspaceIntent, Shutdow
       if (r.error !== undefined) (merged as Record<string, unknown>).error = r.error;
     }
     return merged;
-  }
-}
-
-/** Runs "start" hook only (for mount + loading change wiring). */
-class MinimalActivateOperation implements Operation<Intent, void> {
-  readonly id = APP_START_OPERATION_ID;
-  async execute(ctx: OperationContext<Intent>): Promise<void> {
-    // Pre-populate codeServerPort capability so handlers with requires run
-    const hookCtx: HookContext = {
-      intent: ctx.intent,
-      capabilities: { codeServerPort: null },
-    };
-    const { errors } = await ctx.hooks.collect<void>("start", hookCtx);
-    if (errors.length > 0) throw errors[0]!;
-  }
-}
-
-/** Runs workspace:created event via open-workspace. */
-class MinimalOpenOperation implements Operation<OpenWorkspaceIntent, unknown> {
-  readonly id = "open-workspace";
-  async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<unknown> {
-    const { payload } = ctx.intent;
-    const event: WorkspaceCreatedEvent = {
-      type: EVENT_WORKSPACE_CREATED,
-      payload: {
-        projectId: "test-12345678" as unknown as ProjectId,
-        workspaceName: payload.workspaceName as unknown as WorkspaceName,
-        workspacePath: `/workspaces/${payload.workspaceName}`,
-        projectPath: `/projects/test`,
-        branch: payload.base ?? "main",
-        base: payload.base ?? "main",
-        metadata: {},
-        workspaceUrl: `http://127.0.0.1:0/?folder=/workspaces/${payload.workspaceName}`,
-      },
-    };
-    ctx.emit(event);
-    return {};
   }
 }
 
@@ -323,338 +226,6 @@ async function resolveActive(module: IntentModule, workspacePath: string): Promi
 
 describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
-  // app-start show-ui → opens dialog via DialogManager (or no-op without it)
-  // -------------------------------------------------------------------------
-  describe("app-start/show-ui", () => {
-    it("returns ShowUIHookResult (no-op without dialogManager)", async () => {
-      const { dispatcher } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalShowUIOperation(),
-      });
-
-      const result = await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      // Without dialogManager, returns empty result
-      expect(result).toEqual({});
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 3: setup/show-ui → opens setup dialog via DialogManager (no-op without it)
-  // -------------------------------------------------------------------------
-  describe("setup/show-ui", () => {
-    it("completes without error when no dialogManager", async () => {
-      const { dispatcher } = createTestSetup({
-        intentType: INTENT_SETUP,
-        operation: new MinimalSetupOperation("show-ui"),
-      });
-
-      await expect(
-        dispatcher.dispatch({
-          type: INTENT_SETUP,
-          payload: {},
-        } as SetupIntent)
-      ).resolves.not.toThrow();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 4: setup/hide-ui → closes setup dialog (no-op without dialogManager)
-  // -------------------------------------------------------------------------
-  describe("setup/hide-ui", () => {
-    it("completes without error when no dialogManager", async () => {
-      const { dispatcher } = createTestSetup({
-        intentType: INTENT_SETUP,
-        operation: new MinimalSetupOperation("hide-ui"),
-      });
-
-      await expect(
-        dispatcher.dispatch({
-          type: INTENT_SETUP,
-          payload: {},
-        } as SetupIntent)
-      ).resolves.not.toThrow();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 4b: setup/agent-selection → uses DialogManager for agent selection
-  // -------------------------------------------------------------------------
-  describe("setup/agent-selection", () => {
-    it("throws SetupError when dialogManager not available", async () => {
-      const availableAgents: RegisterAgentResult[] = [
-        { agent: "claude", label: "Claude", icon: "sparkle" },
-        { agent: "opencode", label: "OpenCode", icon: "terminal" },
-      ];
-
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(
-        INTENT_SETUP,
-        new MinimalAgentSelectionOperation(availableAgents)
-      );
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        // No dialogManager provided
-      });
-
-      dispatcher.registerModule(module);
-
-      await expect(
-        dispatcher.dispatch({
-          type: INTENT_SETUP,
-          payload: {},
-        } as SetupIntent)
-      ).rejects.toThrow("DialogManager not available");
-    });
-
-    it("reads the selected agent from the dialog event values", async () => {
-      const availableAgents: RegisterAgentResult[] = [
-        { agent: "claude", label: "Claude", icon: "sparkle" },
-        { agent: "opencode", label: "OpenCode", icon: "terminal" },
-      ];
-
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(
-        INTENT_SETUP,
-        new MinimalAgentSelectionOperation(availableAgents)
-      );
-
-      // Selection dialog resolves to the "opencode" field value (keyed by id "agent").
-      const dialogManager = {
-        open: vi.fn(() => ({
-          id: "dlg-agent",
-          update: vi.fn(),
-          close: vi.fn(),
-          onEvent: vi.fn(() => () => {}),
-          nextEvent: vi.fn().mockResolvedValue({
-            dialogId: "dlg-agent",
-            actionId: "select",
-            data: { agent: "opencode" },
-          }),
-          closed: Promise.resolve(),
-        })),
-      };
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        dialogManager: dialogManager as unknown as NonNullable<ViewModuleDeps["dialogManager"]>,
-      });
-
-      dispatcher.registerModule(module);
-
-      const result = (await dispatcher.dispatch({
-        type: INTENT_SETUP,
-        payload: {},
-      } as SetupIntent)) as unknown as AgentSelectionResult;
-
-      expect(result.selectedAgent).toBe("opencode");
-      expect(dialogManager.open).toHaveBeenCalled();
-    });
-
-    it("ignores dismiss (Escape) and keeps waiting for a selection", async () => {
-      const availableAgents: RegisterAgentResult[] = [
-        { agent: "claude", label: "Claude", icon: "sparkle" },
-        { agent: "opencode", label: "OpenCode", icon: "terminal" },
-      ];
-
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-
-      dispatcher.registerOperation(
-        INTENT_SETUP,
-        new MinimalAgentSelectionOperation(availableAgents)
-      );
-
-      // Selection is mandatory: a dismiss response must not pick a fallback
-      // agent — the module re-awaits until an action arrives.
-      const nextEvent = vi
-        .fn()
-        .mockResolvedValueOnce({ kind: "dismiss", dialogId: "dlg-agent" })
-        .mockResolvedValueOnce({
-          dialogId: "dlg-agent",
-          actionId: "select",
-          data: { agent: "opencode" },
-        });
-      const dialogManager = {
-        open: vi.fn(() => ({
-          id: "dlg-agent",
-          update: vi.fn(),
-          close: vi.fn(),
-          onEvent: vi.fn(() => () => {}),
-          nextEvent,
-          closed: Promise.resolve(),
-        })),
-      };
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        dialogManager: dialogManager as unknown as NonNullable<ViewModuleDeps["dialogManager"]>,
-      });
-
-      dispatcher.registerModule(module);
-
-      const result = (await dispatcher.dispatch({
-        type: INTENT_SETUP,
-        payload: {},
-      } as SetupIntent)) as unknown as AgentSelectionResult;
-
-      expect(result.selectedAgent).toBe("opencode");
-      expect(nextEvent).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 5: workspace:created → createWorkspaceView + preloadWorkspaceUrl
-  // -------------------------------------------------------------------------
-  describe("workspace loading dialog", () => {
-    function createLoadingHarness() {
-      const dispatcher = createMockDispatcher();
-      const viewManager = createMockViewManager();
-      const handle = {
-        id: "dlg-loading",
-        update: vi.fn(),
-        close: vi.fn(),
-        onEvent: vi.fn(() => () => {}),
-        nextEvent: vi.fn(),
-        closed: Promise.resolve(),
-      };
-      const dialogManager = { open: vi.fn(() => handle) };
-
-      dispatcher.registerOperation(INTENT_OPEN_WORKSPACE, new MinimalOpenOperation());
-      dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new MinimalSwitchOperation());
-
-      const module = createViewModule({
-        viewManager: viewManager as unknown as ViewModuleDeps["viewManager"],
-        logger: SILENT_LOGGER,
-        viewLayer: null,
-        windowLayer: null,
-        sessionLayer: null,
-        dialogManager: dialogManager as unknown as NonNullable<ViewModuleDeps["dialogManager"]>,
-      });
-      dispatcher.registerModule(module);
-
-      const emitAgentStatus = async (path: string): Promise<void> => {
-        const event: AgentStatusUpdatedEvent = {
-          type: EVENT_AGENT_STATUS_UPDATED,
-          payload: {
-            workspace: {
-              path: path as WorkspacePath,
-              projectId: "test-project" as ProjectId,
-              name: "ws1" as WorkspaceName,
-              active: true,
-            },
-            status: { status: "idle" } as AggregatedAgentStatus,
-          },
-        };
-        await module.events![EVENT_AGENT_STATUS_UPDATED]!.handler(event);
-      };
-
-      return { dispatcher, dialogManager, handle, module, emitAgentStatus };
-    }
-
-    it("opens for the active workspace and closes on first agent status", async () => {
-      const { dispatcher, dialogManager, handle, emitAgentStatus } = createLoadingHarness();
-
-      // Make ws1 the active workspace (switched event populates cachedActiveRef)
-      await dispatcher.dispatch({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: "/workspaces/ws1" },
-      } as SwitchWorkspaceIntent);
-
-      // ws1 starts loading → dialog for the active workspace
-      await dispatcher.dispatch({
-        type: INTENT_OPEN_WORKSPACE,
-        payload: { workspaceName: "ws1", base: "main", projectPath: "/projects/test" },
-      } as OpenWorkspaceIntent);
-      expect(dialogManager.open).toHaveBeenCalledTimes(1);
-
-      // First agent status closes the dialog
-      await emitAgentStatus("/workspaces/ws1");
-      expect(handle.close).toHaveBeenCalled();
-    });
-
-    it("does not open a dialog for background workspaces", async () => {
-      const { dispatcher, dialogManager } = createLoadingHarness();
-
-      // No switch — ws1 loads in the background
-      await dispatcher.dispatch({
-        type: INTENT_OPEN_WORKSPACE,
-        payload: { workspaceName: "ws1", base: "main", projectPath: "/projects/test" },
-      } as OpenWorkspaceIntent);
-
-      expect(dialogManager.open).not.toHaveBeenCalled();
-    });
-
-    it("ignores hibernated workspaces", async () => {
-      const { dispatcher, dialogManager, module } = createLoadingHarness();
-
-      await dispatcher.dispatch({
-        type: INTENT_SWITCH_WORKSPACE,
-        payload: { workspacePath: "/workspaces/ws1" },
-      } as SwitchWorkspaceIntent);
-
-      const event: WorkspaceCreatedEvent = {
-        type: EVENT_WORKSPACE_CREATED,
-        payload: {
-          projectId: "test-project" as ProjectId,
-          workspaceName: "ws1" as WorkspaceName,
-          workspacePath: "/workspaces/ws1",
-          projectPath: "/projects/test",
-          branch: "main",
-          base: "main",
-          metadata: { hibernated: "true" },
-          workspaceUrl: "http://127.0.0.1:0/?folder=/workspaces/ws1",
-        },
-      };
-      await module.events![EVENT_WORKSPACE_CREATED]!.handler(event);
-
-      expect(dialogManager.open).not.toHaveBeenCalled();
-    });
-
-    it("falls through on the loading timeout", async () => {
-      vi.useFakeTimers();
-      try {
-        const { dispatcher, dialogManager, handle } = createLoadingHarness();
-
-        await dispatcher.dispatch({
-          type: INTENT_SWITCH_WORKSPACE,
-          payload: { workspacePath: "/workspaces/ws1" },
-        } as SwitchWorkspaceIntent);
-        await dispatcher.dispatch({
-          type: INTENT_OPEN_WORKSPACE,
-          payload: { workspaceName: "ws1", base: "main", projectPath: "/projects/test" },
-        } as OpenWorkspaceIntent);
-        expect(dialogManager.open).toHaveBeenCalledTimes(1);
-
-        vi.runAllTimers();
-        expect(handle.close).toHaveBeenCalled();
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // code-server:restarted → reload workspace iframes
   // -------------------------------------------------------------------------
   describe("code-server:restarted", () => {
@@ -672,7 +243,7 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 6: delete-workspace/shutdown → destroyWorkspaceView, returns wasActive
+  // delete-workspace/shutdown → clears active surface, returns wasActive
   // -------------------------------------------------------------------------
   describe("delete-workspace/shutdown", () => {
     it("returns wasActive when the deleted workspace was active", async () => {
@@ -854,26 +425,7 @@ describe("ViewModule Integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 14: app-start/activate → onLoadingChange wired, mount signal set
-  // -------------------------------------------------------------------------
-  describe("app-start/activate", () => {
-    it("sends LIFECYCLE_SHOW_MAIN_VIEW to mount the renderer", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalActivateOperation(),
-      });
-
-      await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent);
-
-      expect(viewManager.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.LIFECYCLE_SHOW_MAIN_VIEW);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 15: app-shutdown/stop → viewManager.destroy() + layers disposed
+  // app-shutdown/stop → viewManager.destroy() + layers disposed
   // -------------------------------------------------------------------------
   describe("app-shutdown/stop", () => {
     it("calls viewManager.destroy() and disposes shell layers", async () => {
@@ -1101,25 +653,6 @@ describe("ViewModule Integration", () => {
       })) as SelectFolderHookResult;
 
       expect(result.folderPath).toBeNull();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Retry (now uses DialogManager instead of IPC)
-  // -------------------------------------------------------------------------
-  describe("app-start/show-ui (retry)", () => {
-    it("show-ui hook returns empty object when dialogManager is not provided", async () => {
-      const { dispatcher } = createTestSetup({
-        intentType: INTENT_APP_START,
-        operation: new MinimalShowUIOperation(),
-      });
-
-      const result = (await dispatcher.dispatch({
-        type: INTENT_APP_START,
-        payload: {},
-      } as AppStartIntent)) as unknown as ShowUIHookResult;
-
-      expect(result.waitForRetry).toBeUndefined();
     });
   });
 });

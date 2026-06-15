@@ -11,14 +11,15 @@
   It does NOT render its own <main> landmark - App.svelte owns that.
 
   Responsibilities:
-  - Initialize IPC on mount via initializeApp (subscribes to ui:state, then
-    emits the ui-connected handshake)
   - Subscribe to the surviving domain events (notification chimes) via
-    setupDomainEventBindings
+    setupDomainEventBindings on mount
   - Sync dialog state with main process z-order
   - Render Sidebar, WorkspaceFrames, panel, and ShortcutOverlay. The remove
     and close-project confirmations are main-side declarative dialogs now:
     the gestures emit ui:events and the dialogs arrive via the framework.
+
+  The ui:state subscription + ui-connected handshake live in App.svelte now
+  (so startup snapshots arrive before MainView mounts).
 -->
 <script lang="ts">
   import { onMount, untrack } from "svelte";
@@ -29,7 +30,6 @@
 
   // Setup functions
   import { setupDomainEventBindings } from "$lib/utils/setup-domain-event-bindings";
-  import { initializeApp } from "$lib/utils/initialize-app";
 
   // Components
   import Sidebar from "./Sidebar.svelte";
@@ -46,9 +46,6 @@
   import PanelView from "./PanelView.svelte";
 
   const logger = createLogger("ui");
-
-  // Container ref for focus management
-  let containerRef: HTMLElement;
 
   // ============ Snapshot-derived views ============
   // uiState is null until the genesis push arrives (milliseconds after the
@@ -124,26 +121,11 @@
     }
   });
 
-  // Initialize and subscribe to events on mount
+  // Subscribe to the surviving domain events (notification chimes) on mount.
+  // The ui:state subscription + ui-connected handshake are owned by App.svelte.
   onMount(() => {
     const notificationService = new AgentNotificationService();
-
-    // Surviving domain-event bindings (notification chimes)
-    const cleanupDomainEvents = setupDomainEventBindings(notificationService);
-
-    // Initialize app (async with no-op cleanup for consistent composition)
-    let cleanupInit = (): void => {};
-    void initializeApp({
-      containerRef,
-    }).then((cleanup) => {
-      cleanupInit = cleanup;
-    });
-
-    // Combined cleanup
-    return () => {
-      cleanupDomainEvents();
-      cleanupInit();
-    };
+    return setupDomainEventBindings(notificationService);
   });
 
   // Handle closing a project: request the flow from main (the confirmation
@@ -189,7 +171,7 @@
   }
 </script>
 
-<div class="main-view" bind:this={containerRef}>
+<div class="main-view">
   <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} {mode} />
   <NotificationHost />
   <Sidebar
