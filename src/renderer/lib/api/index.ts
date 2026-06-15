@@ -58,7 +58,6 @@ export const ui: Api["ui"] = {
     emitEvent({ kind: "switch-workspace" });
     return api.ui.switchWorkspace(workspacePath, focus);
   },
-  setMode: (mode) => api.ui.setMode(mode),
 };
 
 // Re-export window.api functions for mockability
@@ -68,10 +67,6 @@ export const {
   on,
   // UI state snapshots (main process → renderer)
   onState,
-  // UI mode change event
-  onModeChange,
-  // Shortcut key event (main process → renderer)
-  onShortcut,
   // Dialog framework event (renderer → main process)
   sendDialogEvent,
   // Notification framework event (renderer → main process)

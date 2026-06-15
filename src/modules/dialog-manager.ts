@@ -57,16 +57,57 @@ type SendToUI = (channel: string, ...args: unknown[]) => void;
 
 /**
  * DialogManager wraps sendToUI with typed helpers for dialog lifecycle.
+ *
+ * It also exposes a synchronous "modal open" signal (a modal-surface dialog
+ * is currently open). Both the presenter (UI mode computation: dialog beats
+ * hover/workspace) and the shortcut-module (the Alt+X guard) consume it — the
+ * presenter subscribes and recomputes, the shortcut-module queries on demand.
+ * "modal" means surface === "modal" (the default); panel-surface sessions
+ * (e.g. the creation panel) do NOT count.
  */
 export class DialogManager {
   private readonly sendToUI: SendToUI;
   private readonly handles = new Map<string, DialogHandleImpl>();
+  /** Currently-open dialog ids whose surface is "modal". */
+  private readonly modalIds = new Set<string>();
+  private readonly modalChangeListeners = new Set<(open: boolean) => void>();
   private readonly logger: Logger | undefined;
   private nextId = 1;
 
   constructor(sendToUI: SendToUI, logger?: Logger) {
     this.sendToUI = sendToUI;
     this.logger = logger;
+  }
+
+  /** True while at least one modal-surface dialog is open. Synchronous. */
+  isModalOpen(): boolean {
+    return this.modalIds.size > 0;
+  }
+
+  /**
+   * Subscribe to modal-open transitions (called whenever isModalOpen() flips).
+   * Returns an unsubscribe function.
+   */
+  onModalOpenChange(listener: (open: boolean) => void): () => void {
+    this.modalChangeListeners.add(listener);
+    return () => {
+      this.modalChangeListeners.delete(listener);
+    };
+  }
+
+  private setModalOpen(dialogId: string, open: boolean): void {
+    const wasOpen = this.modalIds.size > 0;
+    if (open) {
+      this.modalIds.add(dialogId);
+    } else {
+      this.modalIds.delete(dialogId);
+    }
+    const isOpen = this.modalIds.size > 0;
+    if (isOpen !== wasOpen) {
+      for (const listener of this.modalChangeListeners) {
+        listener(isOpen);
+      }
+    }
   }
 
   /**
@@ -77,10 +118,14 @@ export class DialogManager {
    */
   open(config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle {
     const dialogId = `dlg-${this.nextId++}`;
+    // Default surface is "modal" (matches the renderer DialogHost default).
+    const isModal = (options?.surface ?? "modal") === "modal";
     const handle = new DialogHandleImpl(dialogId, this.sendToUI, () => {
       this.handles.delete(dialogId);
+      if (isModal) this.setModalOpen(dialogId, false);
     });
     this.handles.set(dialogId, handle);
+    if (isModal) this.setModalOpen(dialogId, true);
 
     const command: DialogCommand =
       options?.surface !== undefined

@@ -24,13 +24,6 @@
   import { onMount, untrack } from "svelte";
   import * as api from "$lib/api";
   import { uiState } from "$lib/stores/ui-state.svelte.js";
-  import {
-    shortcutModeActive,
-    setDialogOpen,
-    setNewWorkspaceViewOpen,
-    syncMode,
-    desiredMode,
-  } from "$lib/stores/ui-mode.svelte.js";
   import { AgentNotificationService } from "$lib/services/agent-notifications";
   import { createLogger } from "$lib/logging";
 
@@ -66,6 +59,8 @@
   const ui = $derived(uiState.value);
   const projectRows = $derived(ui?.sidebar.projects ?? []);
   const main = $derived(ui?.main ?? null);
+  /** The single UI mode (main-owned). Default to "workspace" before genesis. */
+  const mode = $derived(ui?.mode ?? "workspace");
   /** The creation panel is the ground state: shown whenever main says so. */
   const creationShown = $derived(main?.kind === "creation");
 
@@ -88,28 +83,8 @@
   });
   const activeFrameKey = $derived(main?.kind === "workspace" ? main.frameKey : null);
 
-  // ============ ui-mode sync ============
-
-  // Sync dialog state to central ui-mode store (modal framework dialogs are
-  // the only dialogs left — the confirmations are framework sessions now).
-  $effect(() => {
-    const hasModalFrameworkDialog = [...dialogs.value.values()].some((entry) => entry.config.modal);
-    setDialogOpen(hasModalFrameworkDialog);
-  });
-
-  // Sync desiredMode with main process (single IPC sync point)
-  // Note: desiredMode.value is accessed to establish reactive dependency,
-  // then syncMode() reads it internally and sends to main process
-  $effect(() => {
-    void desiredMode.value;
-    syncMode();
-  });
-
-  // Keep the central ui-mode store informed so the UI layer stays on top (at
-  // hover level, which still allows Alt+X) while the creation panel is shown.
-  $effect(() => {
-    setNewWorkspaceViewOpen(creationShown);
-  });
+  // Mode (including dialog/hover z-order) is now computed in main and shipped
+  // in the snapshot; the renderer no longer mirrors dialog/hover state back.
 
   // At the moment the creation panel is shown, dismiss MODAL framework
   // dialogs the main process opened in the meantime (most notably the
@@ -204,14 +179,25 @@
     logger.debug("Remove workspace requested", { key });
     api.emitEvent({ kind: "remove-workspace", key });
   }
+
+  // Wake the active (hibernated) workspace from the overlay. Still path-based
+  // until the write-path actions step folds wake into a keyed ui:event.
+  function handleWakeActiveWorkspace(): void {
+    const row = activeRow;
+    if (!row) return;
+    api.workspaces.wake(row.path).catch((error: unknown) => {
+      logger.error("Failed to wake workspace", { path: row.path, error: String(error) });
+    });
+  }
 </script>
 
 <div class="main-view" bind:this={containerRef}>
-  <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} />
+  <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} {mode} />
   <NotificationHost />
   <Sidebar
     projects={projectRows}
-    shortcutModeActive={shortcutModeActive.value}
+    {mode}
+    shortcutModeActive={mode === "shortcut"}
     newWorkspaceViewOpen={creationShown}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}
@@ -220,7 +206,7 @@
   />
 
   <ShortcutOverlay
-    active={shortcutModeActive.value}
+    active={mode === "shortcut"}
     workspaceCount={totalWorkspaces}
     hasActiveWorkspace={activeRow !== null}
     activeHibernated={main?.kind === "hibernated"}
@@ -238,7 +224,7 @@
   {/if}
 
   {#if main?.kind === "hibernated"}
-    <HibernatedOverlay screenshot={main.screenshot} />
+    <HibernatedOverlay screenshot={main.screenshot} onWake={handleWakeActiveWorkspace} />
   {/if}
 </div>
 

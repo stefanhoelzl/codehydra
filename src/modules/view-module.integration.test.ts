@@ -3,10 +3,10 @@
  * Integration tests for ViewModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
- * Covers: set-mode/set, app-start hooks, setup dialog hooks, active-workspace
- * bookkeeping (resolve / get-active / switch / delete / hibernate), the
- * workspace loading dialog (created → agent:status-updated / timeout), and
- * app-shutdown/stop disposal.
+ * Covers: app-start hooks, setup dialog hooks, active-workspace bookkeeping
+ * (resolve / get-active / switch / delete / hibernate), the workspace loading
+ * dialog (created → agent:status-updated / timeout), and app-shutdown/stop
+ * disposal.
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -16,8 +16,6 @@ import type { Operation, OperationContext, HookContext } from "../intents/lib/op
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
-import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/set-mode";
-import type { SetModeIntent, SetModeHookResult } from "../intents/set-mode";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent, ShowUIHookResult } from "../intents/app-start";
 import {
@@ -89,21 +87,6 @@ function createMockShellLayers() {
 // =============================================================================
 // Minimal Test Operations
 // =============================================================================
-
-/** Runs "set" hook point (matches real SetModeOperation). */
-class MinimalSetModeOperation implements Operation<SetModeIntent, void> {
-  readonly id = SET_MODE_OPERATION_ID;
-  async execute(ctx: OperationContext<SetModeIntent>): Promise<void> {
-    const { results, errors } = await ctx.hooks.collect<SetModeHookResult>("set", {
-      intent: ctx.intent,
-    });
-    if (errors.length > 0) throw errors[0]!;
-    // Verify result has previousMode
-    for (const r of results) {
-      if (r.previousMode !== undefined) return;
-    }
-  }
-}
 
 /** Runs "show-ui" hook point only. */
 class MinimalShowUIOperation implements Operation<Intent, ShowUIHookResult> {
@@ -340,29 +323,7 @@ async function resolveActive(module: IntentModule, workspacePath: string): Promi
 
 describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
-  // Test 1: ui:set-mode → setMode called, returns previousMode
-  // -------------------------------------------------------------------------
-  describe("set-mode/set", () => {
-    it("calls setMode and returns previousMode", async () => {
-      const { dispatcher, viewManager } = createTestSetup({
-        intentType: INTENT_SET_MODE,
-        operation: new MinimalSetModeOperation(),
-      });
-
-      viewManager.setMode("workspace");
-
-      await dispatcher.dispatch({
-        type: INTENT_SET_MODE,
-        payload: { mode: "shortcut" },
-      } as SetModeIntent);
-
-      expect(viewManager.setMode).toHaveBeenCalledWith("shortcut");
-      expect(viewManager.getMode).toHaveBeenCalled();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Test 2: app-start show-ui → opens dialog via DialogManager (or no-op without it)
+  // app-start show-ui → opens dialog via DialogManager (or no-op without it)
   // -------------------------------------------------------------------------
   describe("app-start/show-ui", () => {
     it("returns ShowUIHookResult (no-op without dialogManager)", async () => {

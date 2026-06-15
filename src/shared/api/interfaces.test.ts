@@ -13,7 +13,6 @@ import type {
   WorkspaceStatus,
   BaseInfo,
 } from "./types";
-import type { UIModeChangedEvent } from "../ipc";
 
 describe("ApiEvents Interface", () => {
   it("should define all required event handlers", () => {
@@ -68,12 +67,9 @@ describe("ApiEvents Interface", () => {
       }) => {
         void event;
       },
-      "ui:mode-changed": (event: UIModeChangedEvent) => {
-        void event;
-      },
     };
 
     expect(handlers).toBeDefined();
-    expect(Object.keys(handlers)).toHaveLength(11);
+    expect(Object.keys(handlers)).toHaveLength(10);
   });
 });

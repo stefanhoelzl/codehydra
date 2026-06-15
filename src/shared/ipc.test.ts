@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { ApiIpcChannels, type UIMode, type UIModeChangedEvent } from "./ipc";
+import { ApiIpcChannels, type UIMode } from "./ipc";
 
 describe("UIMode types", () => {
   it("UIMode type accepts 'workspace' value", () => {
@@ -25,15 +25,6 @@ describe("UIMode types", () => {
   it("UIMode type accepts 'hover' value", () => {
     const mode: UIMode = "hover";
     expect(mode).toBe("hover");
-  });
-
-  it("UIModeChangedEvent has mode and previousMode", () => {
-    const event: UIModeChangedEvent = {
-      mode: "shortcut",
-      previousMode: "workspace",
-    };
-    expect(event.mode).toBe("shortcut");
-    expect(event.previousMode).toBe("workspace");
   });
 });
 
@@ -57,18 +48,6 @@ describe("ApiIpcChannels (v2 API)", () => {
 
     it("has WORKSPACE_STATUS_CHANGED event channel", () => {
       expect(ApiIpcChannels.WORKSPACE_STATUS_CHANGED).toBe("api:workspace:status-changed");
-    });
-
-    it("has UI_MODE_CHANGED event channel", () => {
-      expect(ApiIpcChannels.UI_MODE_CHANGED).toBe("api:ui:mode-changed");
-    });
-
-    it("has SHORTCUT_KEY event channel", () => {
-      expect(ApiIpcChannels.SHORTCUT_KEY).toBe("api:shortcut:key");
-    });
-
-    it("has UI_SET_MODE command channel", () => {
-      expect(ApiIpcChannels.UI_SET_MODE).toBe("api:ui:set-mode");
     });
   });
 });

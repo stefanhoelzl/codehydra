@@ -16,7 +16,6 @@ import type {
   WorkspaceStatus,
   BaseInfo,
 } from "./types";
-import type { UIModeChangedEvent } from "../ipc";
 
 // Re-export for consumers that import from this module
 export type { Unsubscribe } from "../types";
@@ -67,5 +66,4 @@ export interface ApiEvents {
     readonly key: string;
     readonly value: string | null;
   }) => void;
-  "ui:mode-changed": (event: UIModeChangedEvent) => void;
 }

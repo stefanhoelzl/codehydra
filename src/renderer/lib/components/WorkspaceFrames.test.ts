@@ -9,16 +9,10 @@
  * window hooks the main process calls.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render } from "@testing-library/svelte";
 
-// The ui-mode store (imported by the component) calls api.ui.setMode.
-vi.mock("$lib/api", () => ({
-  ui: { setMode: vi.fn().mockResolvedValue(undefined) },
-}));
-
 import WorkspaceFrames from "./WorkspaceFrames.svelte";
-import { reset as resetUiMode } from "$lib/stores/ui-mode.svelte";
 
 interface FrameHooks {
   __chFocusActiveFrame?: () => void;
@@ -37,7 +31,6 @@ function frames(container: HTMLElement): HTMLIFrameElement[] {
 
 describe("WorkspaceFrames", () => {
   beforeEach(() => {
-    resetUiMode();
     document.body.innerHTML = "";
   });
 
@@ -103,13 +96,12 @@ describe("WorkspaceFrames", () => {
   });
 
   it("__chReloadFrames re-assigns the src of every mounted frame", () => {
-    setProjects([makeProject()]);
-    setActiveWorkspace("/workspaces/ws1");
-    const { container } = render(WorkspaceFrames);
+    const { container } = render(WorkspaceFrames, {
+      props: { frames: FRAMES, activeKey: "test-12345678/ws1" },
+    });
 
     // Re-assigning src forces a reload; spy on the setter of each frame while
-    // keeping the original URL readable. Only the two mounted (non-hibernated,
-    // url-bearing) frames should be touched.
+    // keeping the original URL readable. Both mounted frames should be touched.
     const tracked = frames(container).map((el) => {
       const original = el.src;
       const setter = vi.fn();

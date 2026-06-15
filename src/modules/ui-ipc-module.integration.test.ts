@@ -35,7 +35,6 @@ import { registerTestInfrastructure, updateStatusIntent } from "../intents/opera
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
 import type { IntentModule } from "../intents/lib/module";
 import { ApiIpcChannels, type AggregatedAgentStatus } from "../shared/ipc";
-import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { EVENT_WORKSPACE_CREATE_FAILED, EVENT_WORKSPACE_LOADING } from "../intents/open-workspace";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
@@ -384,7 +383,7 @@ describe("UiIpcModule - IPC handlers", () => {
     expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_QUIT)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.WORKSPACE_HIBERNATE)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.PROJECT_OPEN)).toBe(true);
-    expect(state.handlers.has(ApiIpcChannels.UI_SET_MODE)).toBe(true);
+    expect(state.handlers.has(ApiIpcChannels.UI_SWITCH_WORKSPACE)).toBe(true);
   });
 
   // Startup readiness (markUIReady + app:ready dispatch) moved to the
@@ -472,64 +471,10 @@ describe("UiIpcModule - shutdown", () => {
 
 // NOTE: setup:error forwarding tests removed — setup:error is now handled by view-module
 // via DialogManager, not the IPC event bridge.
-
-// =============================================================================
-// Tests - shortcut:key-pressed event
-// =============================================================================
-
-describe("UiIpcModule - shortcut:key-pressed", () => {
-  it("forwards recognized shortcut keys to renderer via sendToUI", async () => {
-    const deps = createBridgeDeps();
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const event: ShortcutKeyPressedEvent = {
-      type: EVENT_SHORTCUT_KEY_PRESSED,
-      payload: { key: "up" },
-    };
-    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
-
-    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "up");
-  });
-
-  it("forwards digit keys to renderer via sendToUI", async () => {
-    const deps = createBridgeDeps();
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const event: ShortcutKeyPressedEvent = {
-      type: EVENT_SHORTCUT_KEY_PRESSED,
-      payload: { key: "5" },
-    };
-    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
-
-    expect(deps.sendToUI).toHaveBeenCalledWith(ApiIpcChannels.SHORTCUT_KEY, "5");
-  });
-
-  it("does not forward unrecognized keys to renderer", async () => {
-    const deps = createBridgeDeps();
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const event: ShortcutKeyPressedEvent = {
-      type: EVENT_SHORTCUT_KEY_PRESSED,
-      payload: { key: "d" },
-    };
-    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
-
-    expect(deps.sendToUI).not.toHaveBeenCalled();
-  });
-
-  it("does not forward escape to renderer", async () => {
-    const deps = createBridgeDeps();
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const event: ShortcutKeyPressedEvent = {
-      type: EVENT_SHORTCUT_KEY_PRESSED,
-      payload: { key: "escape" },
-    };
-    await uiIpcModule.events![EVENT_SHORTCUT_KEY_PRESSED]!.handler(event);
-
-    expect(deps.sendToUI).not.toHaveBeenCalled();
-  });
-});
+//
+// NOTE: shortcut:key-pressed forwarding tests removed — shortcut navigation is
+// now handled in-process by the presenter; the IPC bridge no longer forwards
+// shortcut keys to the renderer.
 
 // =============================================================================
 // executeCommand tests (via IPC handler)

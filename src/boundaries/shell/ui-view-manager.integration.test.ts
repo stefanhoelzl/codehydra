@@ -117,18 +117,8 @@ describe("UiViewManager", () => {
     });
   });
 
-  describe("mode state", () => {
-    it("defaults to workspace and updates on setMode", () => {
-      const { manager } = createManager();
-      expect(manager.getMode()).toBe("workspace");
-
-      manager.setMode("shortcut");
-      expect(manager.getMode()).toBe("shortcut");
-    });
-  });
-
   describe("focus routing", () => {
-    it("workspace mode focuses the view and asks the renderer to focus the active frame", () => {
+    it("focuses the view and asks the renderer to focus the active frame", () => {
       const { manager, viewLayer } = createManager();
       const exec = vi.spyOn(viewLayer, "executeJavaScript");
 
@@ -139,26 +129,6 @@ describe("UiViewManager", () => {
         manager.getUIViewHandle(),
         expect.stringContaining("__chFocusActiveFrame")
       );
-    });
-
-    it("shortcut mode focuses the view without the frame hook", () => {
-      const { manager, viewLayer } = createManager();
-      manager.setMode("shortcut");
-      const exec = vi.spyOn(viewLayer, "executeJavaScript");
-
-      manager.focus();
-
-      expect(viewLayer.$.getViewSnapshot(manager.getUIViewHandle().id)?.focused).toBe(true);
-      expect(exec).not.toHaveBeenCalled();
-    });
-
-    it.each(["dialog", "hover"] as const)("%s mode does not move focus", (mode) => {
-      const { manager, viewLayer } = createManager();
-      manager.setMode(mode);
-
-      manager.focus();
-
-      expect(viewLayer.$.getViewSnapshot(manager.getUIViewHandle().id)?.focused).toBe(false);
     });
   });
 

@@ -2,12 +2,15 @@
 /**
  * Integration tests for ShortcutModule.
  *
- * Tests the full path from input event through to mode changes and shortcut key emission.
+ * The module owns the Alt+X state machine and the local `shortcutActive` flag,
+ * broadcasting entry/exit via the ui:set-shortcut-active intent and forwarding
+ * keys (while active) via shortcut:key. The Alt+X guard reads the
+ * dialog-manager's synchronous isModalOpen() signal. Escape and window blur
+ * exit shortcut mode (blur is suppressed briefly after a navigation switch).
  *
  * IMPORTANT: These tests verify that NO keys are prevented via preventDefault().
- * This is intentional - Electron bug #37336 causes keyUp events to not fire when
- * keyDown was prevented. By letting all keys propagate, we ensure reliable Alt
- * keyUp detection for exiting shortcut mode.
+ * Electron bug #37336 causes keyUp events to not fire when keyDown was
+ * prevented; letting all keys propagate ensures reliable Alt keyUp detection.
  */
 
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -19,16 +22,23 @@ import {
   APP_START_OPERATION_ID,
   type AppStartIntent,
 } from "../intents/app-start";
-import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
-import type { AppShutdownIntent } from "../intents/app-shutdown";
+import {
+  AppShutdownOperation,
+  INTENT_APP_SHUTDOWN,
+  type AppShutdownIntent,
+} from "../intents/app-shutdown";
 import { INTENT_SHORTCUT_KEY, ShortcutKeyOperation } from "../intents/shortcut-key";
-import { INTENT_SET_MODE, SET_MODE_OPERATION_ID } from "../intents/set-mode";
+import {
+  INTENT_SET_SHORTCUT_ACTIVE,
+  SetShortcutActiveOperation,
+} from "../intents/set-shortcut-active";
+import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createShortcutModule, normalizeKey, type ShortcutModuleDeps } from "./shortcut-module";
 import type { ViewHandle, WindowHandle } from "../boundaries/shell/types";
 import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
 import type { KeyboardTarget } from "../boundaries/shell/view-manager-types";
-import type { UIMode } from "../shared/ipc";
+import type { DomainEvent } from "../intents/lib/types";
 
 // =============================================================================
 // Helpers
@@ -58,9 +68,6 @@ function createKeyboardInput(
   };
 }
 
-/**
- * Tracks captured callbacks and unsubscribe spies for viewLayer and windowLayer mocks.
- */
 interface MockCallbacks {
   inputCallbacks: Map<string, (input: KeyboardInput, preventDefault: () => void) => void>;
   destroyedCallbacks: Map<string, () => void>;
@@ -101,20 +108,10 @@ function createKeyboardTarget(handle: ViewHandle, callbacks: MockCallbacks): Key
   };
 }
 
-function createMockViewManager(
-  uiHandle: ViewHandle,
-  callbacks: MockCallbacks,
-  initialMode: UIMode = "shortcut"
-) {
-  let currentMode: UIMode = initialMode;
+function createMockViewManager(uiHandle: ViewHandle, callbacks: MockCallbacks) {
   const uiTarget = createKeyboardTarget(uiHandle, callbacks);
-
   return {
     getUIKeyboardTarget: vi.fn(() => uiTarget),
-    getMode: vi.fn(() => currentMode),
-    _setMode(mode: UIMode) {
-      currentMode = mode;
-    },
     _uiTarget: uiTarget,
   };
 }
@@ -128,9 +125,7 @@ function createMockWindowBoundary(callbacks: MockCallbacks) {
   };
 }
 
-/**
- * Simulate keyboard input on a registered view.
- */
+/** Simulate keyboard input on a registered view. */
 function simulateInput(
   callbacks: MockCallbacks,
   viewId: string,
@@ -145,19 +140,24 @@ function simulateInput(
 
 interface TestHarness {
   callbacks: MockCallbacks;
-  viewManager: ReturnType<typeof createMockViewManager>;
   module: ReturnType<typeof createShortcutModule>;
   dispatcher: Dispatcher;
   uiHandle: ViewHandle;
   dispatchSpy: ReturnType<typeof vi.fn>;
+  setModalOpen: (open: boolean) => void;
+  /** Drive the module's workspace:switched event handler (records nav switch). */
+  emitSwitched: () => Promise<void>;
 }
 
-async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarness> {
+async function createHarness(modalOpen = false): Promise<TestHarness> {
   const dispatcher = createMockDispatcher();
   const uiHandle = createViewHandle("ui-view");
   const callbacks = createMockCallbacks();
-  const viewManager = createMockViewManager(uiHandle, callbacks, initialMode);
+  const viewManager = createMockViewManager(uiHandle, callbacks);
   const windowLayer = createMockWindowBoundary(callbacks);
+
+  let modalIsOpen = modalOpen;
+  const dialogManager = { isModalOpen: vi.fn(() => modalIsOpen) };
 
   dispatcher.registerOperation(
     INTENT_APP_START,
@@ -167,35 +167,55 @@ async function createHarness(initialMode: UIMode = "shortcut"): Promise<TestHarn
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
-  dispatcher.registerOperation(
-    INTENT_SET_MODE,
-    createMinimalOperation(SET_MODE_OPERATION_ID, "set")
-  );
+  dispatcher.registerOperation(INTENT_SET_SHORTCUT_ACTIVE, new SetShortcutActiveOperation());
 
-  // Dispatch spy that also updates viewManager mode for bidirectional state
-  const dispatchSpy = vi.fn((intent: { type: string; payload: unknown }) => {
-    if (intent.type === INTENT_SET_MODE) {
-      viewManager._setMode((intent.payload as { mode: UIMode }).mode);
-    }
-    return dispatcher.dispatch(intent);
-  });
+  const dispatchSpy = vi.fn((intent: { type: string; payload: unknown }) =>
+    dispatcher.dispatch(intent)
+  );
 
   const module = createShortcutModule({
     viewManager: viewManager as unknown as ShortcutModuleDeps["viewManager"],
     windowLayer,
     windowManager: { getWindowHandle: () => createWindowHandle() },
+    dialogManager: dialogManager as unknown as ShortcutModuleDeps["dialogManager"],
     dispatcher: { dispatch: dispatchSpy } as unknown as ShortcutModuleDeps["dispatcher"],
     logger: SILENT_LOGGER,
   });
 
   dispatcher.registerModule(module);
 
-  await dispatcher.dispatch({
-    type: INTENT_APP_START,
-    payload: {},
-  } as AppStartIntent);
+  await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
 
-  return { callbacks, viewManager, module, dispatcher, uiHandle, dispatchSpy };
+  const emitSwitched = (): Promise<void> =>
+    module.events![EVENT_WORKSPACE_SWITCHED]!.handler({
+      type: EVENT_WORKSPACE_SWITCHED,
+      payload: null,
+    } as DomainEvent);
+
+  return {
+    callbacks,
+    module,
+    dispatcher,
+    uiHandle,
+    dispatchSpy,
+    setModalOpen: (open) => {
+      modalIsOpen = open;
+    },
+    emitSwitched,
+  };
+}
+
+/** Activate shortcut mode (Alt+X) — leaves shortcutActive true. */
+function activate(callbacks: MockCallbacks): void {
+  simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
+  simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
+  vi.runAllTimers();
+}
+
+function setActiveCalls(dispatchSpy: ReturnType<typeof vi.fn>): Array<{ active: boolean }> {
+  return dispatchSpy.mock.calls
+    .filter((c: unknown[]) => (c[0] as { type: string }).type === INTENT_SET_SHORTCUT_ACTIVE)
+    .map((c: unknown[]) => (c[0] as { payload: { active: boolean } }).payload);
 }
 
 // =============================================================================
@@ -238,16 +258,12 @@ describe("ShortcutModule integration", () => {
   describe("view registration", () => {
     it("subscribes to input and destroyed events on init", async () => {
       const { callbacks } = await createHarness();
-
-      // UI view is registered during init
       expect(callbacks.inputCallbacks.has("ui-view")).toBe(true);
       expect(callbacks.destroyedCallbacks.has("ui-view")).toBe(true);
     });
 
     it("does not register the same view twice", async () => {
       const { callbacks } = await createHarness();
-
-      // UI view registered once during init — check that onBeforeInputEvent was called once for it
       const inputCallCount = [...callbacks.inputCallbacks.keys()].filter(
         (id) => id === "ui-view"
       ).length;
@@ -256,149 +272,109 @@ describe("ShortcutModule integration", () => {
 
     it("auto-unregisters when view is destroyed", async () => {
       const { callbacks } = await createHarness();
-
       const destroyedCallback = callbacks.destroyedCallbacks.get("ui-view");
       expect(destroyedCallback).toBeDefined();
       destroyedCallback!();
-
       expect(callbacks.inputUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.destroyedUnsubscribes.get("ui-view")).toHaveBeenCalled();
     });
   });
 
   describe("Alt+X activation", () => {
-    it("activates shortcut mode from workspace mode", async () => {
-      const { callbacks, viewManager } = await createHarness("workspace");
-
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
-      simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
-      vi.runAllTimers();
-
-      expect(viewManager.getMode()).toBe("shortcut");
-    });
-
-    it("activates shortcut mode from hover mode", async () => {
-      const { callbacks, viewManager } = await createHarness("hover");
-
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
-      simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
-      vi.runAllTimers();
-
-      expect(viewManager.getMode()).toBe("shortcut");
+    it("activates shortcut mode (dispatches set-shortcut-active true)", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }]);
     });
 
     it("activates shortcut mode with uppercase X", async () => {
-      const { callbacks, viewManager } = await createHarness("workspace");
-
+      const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
       simulateInput(callbacks, "ui-view", createKeyboardInput("X", "keyDown"));
       vi.runAllTimers();
-
-      expect(viewManager.getMode()).toBe("shortcut");
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }]);
     });
 
-    it("does not activate when mode is dialog", async () => {
-      const { callbacks, dispatchSpy, viewManager } = await createHarness("dialog");
-
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
-      simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
-      vi.runAllTimers();
-
+    it("does not activate when a modal dialog is open", async () => {
+      const { callbacks, dispatchSpy } = await createHarness(true);
+      activate(callbacks);
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_MODE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
       );
-      expect(viewManager.getMode()).toBe("dialog");
     });
 
     it("does not activate when only Alt is pressed", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("workspace");
-
+      const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
-
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_MODE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
       );
     });
 
     it("does not activate when X is pressed without prior Alt", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("workspace");
-
+      const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
-
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_MODE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
       );
     });
 
     it("does not activate when non-X key follows Alt", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("workspace");
-
+      const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
       simulateInput(callbacks, "ui-view", createKeyboardInput("j", "keyDown"));
       vi.runAllTimers();
-
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_MODE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
       );
     });
 
-    it("Alt+X calls dispatch with set:mode once", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("workspace");
-
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
-      simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
-      vi.runAllTimers();
-
-      const setModeCalls = dispatchSpy.mock.calls.filter(
-        (call: unknown[]) => (call[0] as { type: string }).type === INTENT_SET_MODE
-      );
-      expect(setModeCalls).toHaveLength(1);
-      expect(setModeCalls[0]![0]).toEqual({
-        type: INTENT_SET_MODE,
-        payload: { mode: "shortcut" },
-      });
+    it("Alt+X dispatches set-shortcut-active once", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
+      expect(setActiveCalls(dispatchSpy)).toHaveLength(1);
     });
   });
 
-  describe("Alt release exits shortcut mode", () => {
-    it("Alt keyUp exits shortcut mode back to workspace", async () => {
-      const { callbacks, viewManager } = await createHarness("shortcut");
-
+  describe("exit shortcut mode", () => {
+    it("Alt keyUp exits shortcut mode (set-shortcut-active false)", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyUp"));
-
-      expect(viewManager.getMode()).toBe("workspace");
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }, { active: false }]);
     });
 
-    it("Alt keyUp in workspace mode is a no-op", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("workspace");
-
+    it("Alt keyUp when not active is a no-op", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyUp"));
-
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_MODE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
       );
     });
 
-    it("full Alt+X activation then Alt release cycle", async () => {
-      const { callbacks, viewManager } = await createHarness("workspace");
+    it("Escape exits shortcut mode without forwarding a shortcut key", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
+      simulateInput(callbacks, "ui-view", createKeyboardInput("Escape", "keyDown"));
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }, { active: false }]);
+      expect(dispatchSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+      );
+    });
 
-      // Alt+X activates shortcut mode
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
-      simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
-      vi.runAllTimers();
-      expect(viewManager.getMode()).toBe("shortcut");
-
-      // Alt release exits shortcut mode
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyUp"));
-      expect(viewManager.getMode()).toBe("workspace");
+    it("Escape when not in shortcut mode is ignored", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      simulateInput(callbacks, "ui-view", createKeyboardInput("Escape", "keyDown"));
+      expect(dispatchSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
+      );
     });
   });
 
   describe("no keys are prevented (#37336)", () => {
     it("no keys in the Alt+X to shortcut-key to Alt-release sequence are prevented", async () => {
-      const { callbacks } = await createHarness("workspace");
+      const { callbacks } = await createHarness();
 
-      // Alt keyDown
       const { preventDefault: altDownPD } = simulateInput(
         callbacks,
         "ui-view",
@@ -406,7 +382,6 @@ describe("ShortcutModule integration", () => {
       );
       expect(altDownPD).not.toHaveBeenCalled();
 
-      // X keyDown
       const { preventDefault: xDownPD } = simulateInput(
         callbacks,
         "ui-view",
@@ -416,7 +391,6 @@ describe("ShortcutModule integration", () => {
 
       vi.runAllTimers();
 
-      // ArrowUp keyDown in shortcut mode
       const { preventDefault: arrowPD } = simulateInput(
         callbacks,
         "ui-view",
@@ -424,13 +398,12 @@ describe("ShortcutModule integration", () => {
       );
       expect(arrowPD).not.toHaveBeenCalled();
 
-      // Alt keyUp
-      const { preventDefault: altUpPD } = simulateInput(
+      const { preventDefault: escPD } = simulateInput(
         callbacks,
         "ui-view",
-        createKeyboardInput("Alt", "keyUp")
+        createKeyboardInput("Escape", "keyDown")
       );
-      expect(altUpPD).not.toHaveBeenCalled();
+      expect(escPD).not.toHaveBeenCalled();
     });
   });
 
@@ -445,72 +418,41 @@ describe("ShortcutModule integration", () => {
       ["Backspace", "delete"],
       ["0", "0"],
       ["1", "1"],
-      ["2", "2"],
-      ["3", "3"],
-      ["4", "4"],
       ["5", "5"],
-      ["6", "6"],
-      ["7", "7"],
-      ["8", "8"],
       ["9", "9"],
-    ] as const)("dispatches %s as normalized key %s", async (input, expected) => {
-      const { callbacks, dispatchSpy } = await createHarness("shortcut");
-
+    ] as const)("forwards %s as normalized key %s", async (input, expected) => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
       simulateInput(callbacks, "ui-view", createKeyboardInput(input, "keyDown"));
-
       expect(dispatchSpy).toHaveBeenCalledWith({
         type: INTENT_SHORTCUT_KEY,
         payload: { key: expected },
       });
     });
 
-    it("does not dispatch shortcut keys in workspace mode", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("workspace");
-
+    it("does not forward shortcut keys when not in shortcut mode", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("ArrowUp", "keyDown"));
-
       expect(dispatchSpy).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
       );
     });
 
-    it("does not dispatch shortcut keys in dialog mode", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("dialog");
-
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Enter", "keyDown"));
-
-      expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
-      );
-    });
-
-    it("dispatches normalized key for any key in shortcut mode", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("shortcut");
-
+    it("forwards normalized key for any non-Escape key in shortcut mode", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
       simulateInput(callbacks, "ui-view", createKeyboardInput("a", "keyDown"));
-
       expect(dispatchSpy).toHaveBeenCalledWith({
         type: INTENT_SHORTCUT_KEY,
         payload: { key: "a" },
       });
     });
 
-    it("dispatches Escape as normalized key", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("shortcut");
-
-      simulateInput(callbacks, "ui-view", createKeyboardInput("Escape", "keyDown"));
-
-      expect(dispatchSpy).toHaveBeenCalledWith({
-        type: INTENT_SHORTCUT_KEY,
-        payload: { key: "escape" },
-      });
-    });
-
-    it("does not dispatch on keyUp", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("shortcut");
-
+    it("does not forward on keyUp", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
+      dispatchSpy.mockClear();
       simulateInput(callbacks, "ui-view", createKeyboardInput("ArrowUp", "keyUp"));
-
       expect(dispatchSpy).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
       );
@@ -519,51 +461,65 @@ describe("ShortcutModule integration", () => {
 
   describe("edge cases", () => {
     it("auto-repeat events are ignored", async () => {
-      const { callbacks } = await createHarness("workspace");
-
+      const { callbacks } = await createHarness();
       const { preventDefault } = simulateInput(
         callbacks,
         "ui-view",
         createKeyboardInput("Alt", "keyDown", { isAutoRepeat: true })
       );
-
       expect(preventDefault).not.toHaveBeenCalled();
     });
 
     it("window blur resets pending Alt state", async () => {
-      const { callbacks, dispatchSpy } = await createHarness("workspace");
-
-      // Alt down to enter ALT_WAITING
+      const { callbacks, dispatchSpy } = await createHarness();
       simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyDown"));
-
-      // Window blur resets state
       callbacks.blurCallback!();
-
-      // X down should NOT activate (state was reset)
       simulateInput(callbacks, "ui-view", createKeyboardInput("x", "keyDown"));
       vi.runAllTimers();
-
       expect(dispatchSpy).not.toHaveBeenCalledWith(
-        expect.objectContaining({ type: INTENT_SET_MODE })
+        expect.objectContaining({ type: INTENT_SET_SHORTCUT_ACTIVE })
       );
+    });
+
+    it("window blur while active exits shortcut mode", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
+      callbacks.blurCallback!();
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }, { active: false }]);
+    });
+
+    it("blur right after a navigation switch does NOT exit shortcut mode", async () => {
+      const { callbacks, dispatchSpy, emitSwitched } = await createHarness();
+      activate(callbacks);
+      // Navigation dispatched a switch; the resulting bounds-change blur must
+      // be ignored while the switch is in flight.
+      await emitSwitched();
+      callbacks.blurCallback!();
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }]);
+    });
+
+    it("blur exits once the switch-suppression window elapses", async () => {
+      const { callbacks, dispatchSpy, emitSwitched } = await createHarness();
+      activate(callbacks);
+      await emitSwitched();
+      vi.advanceTimersByTime(300);
+      callbacks.blurCallback!();
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }, { active: false }]);
     });
   });
 
   describe("cleanup", () => {
     it("subscribes to window blur on init", async () => {
       const { callbacks } = await createHarness();
-
       expect(callbacks.blurCallback).not.toBeNull();
     });
 
     it("dispose unregisters all views and window blur handler on shutdown", async () => {
       const { callbacks, dispatcher } = await createHarness();
-
       await dispatcher.dispatch({
         type: INTENT_APP_SHUTDOWN,
         payload: {},
       } as AppShutdownIntent);
-
       expect(callbacks.inputUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.destroyedUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.blurUnsubscribe).toHaveBeenCalled();

@@ -5,12 +5,10 @@
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
-import type { UIModeChangedEvent } from "../shared/ipc";
 import type { UiEvent } from "../shared/ui-event";
 import type { UiState } from "../shared/ui-state";
 import type { DialogUserEvent } from "../shared/dialog-types";
 import type { NotificationUserEvent } from "../shared/notification-types";
-import type { ShortcutKey } from "../shared/shortcuts";
 
 /**
  * Function to unsubscribe from an event.
@@ -49,7 +47,6 @@ contextBridge.exposeInMainWorld("api", {
   ui: {
     switchWorkspace: (workspacePath: string | null, focus?: boolean) =>
       ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { workspacePath, focus }),
-    setMode: (mode: string) => ipcRenderer.invoke(ApiIpcChannels.UI_SET_MODE, { mode }),
   },
   lifecycle: {
     quit: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_QUIT),
@@ -87,21 +84,6 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on(channel, handler);
     return () => ipcRenderer.removeListener(channel, handler);
   },
-
-  /**
-   * Subscribe to UI mode change events.
-   * @param callback - Called when UI mode changes (workspace, shortcut, dialog)
-   * @returns Unsubscribe function to remove the listener
-   */
-  onModeChange: createEventSubscription<UIModeChangedEvent>(ApiIpcChannels.UI_MODE_CHANGED),
-
-  /**
-   * Subscribe to shortcut key events from main process.
-   * Fired when a shortcut key is pressed while shortcut mode is active.
-   * @param callback - Called with the normalized shortcut key (e.g., "up", "down", "enter", "0"-"9")
-   * @returns Unsubscribe function to remove the listener
-   */
-  onShortcut: createEventSubscription<ShortcutKey>(ApiIpcChannels.SHORTCUT_KEY),
 
   /**
    * Subscribe to theme change events from main process.

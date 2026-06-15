@@ -65,13 +65,42 @@ export function createMockDialogManager(): MockDialogManager {
   const handles: MockDialogHandle[] = [];
   let nextId = 1;
 
+  const modalIds = new Set<string>();
+  const modalChangeListeners = new Set<(open: boolean) => void>();
+  const notifyModal = (): void => {
+    const open = modalIds.size > 0;
+    for (const listener of modalChangeListeners) listener(open);
+  };
+
   const open = vi.fn((config: DialogConfig, options?: { surface?: DialogSurface }) => {
-    const mock = createMockDialogHandle(`dlg-test-${nextId++}`, config, options?.surface);
+    const id = `dlg-test-${nextId++}`;
+    const isModal = (options?.surface ?? "modal") === "modal";
+    const mock = createMockDialogHandle(id, config, options?.surface);
     handles.push(mock);
+    if (isModal) {
+      const wasOpen = modalIds.size > 0;
+      modalIds.add(id);
+      if (modalIds.size > 0 !== wasOpen) notifyModal();
+      void mock.handle.closed.then(() => {
+        const stillOpen = modalIds.size > 0;
+        modalIds.delete(id);
+        if (modalIds.size > 0 !== stillOpen) notifyModal();
+      });
+    }
     return mock.handle;
   });
 
-  const manager = { open, routeEvent: vi.fn() } as unknown as DialogManager;
+  const manager = {
+    open,
+    routeEvent: vi.fn(),
+    isModalOpen: () => modalIds.size > 0,
+    onModalOpenChange: (listener: (open: boolean) => void) => {
+      modalChangeListeners.add(listener);
+      return () => {
+        modalChangeListeners.delete(listener);
+      };
+    },
+  } as unknown as DialogManager;
 
   return {
     manager,

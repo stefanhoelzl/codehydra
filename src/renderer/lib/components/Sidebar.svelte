@@ -5,15 +5,11 @@
   // (ProjectId/WorkspaceName casts remain only for the WorkspaceRef passed to
   // onSwitchWorkspace — that invoke is still path-based until the write phase.)
   import type { UiProjectRow } from "@shared/ui-state";
+  import type { UIMode } from "@shared/ipc";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
   import Icon from "./Icon.svelte";
   import NotificationStack from "./NotificationStack.svelte";
-  import {
-    desiredMode,
-    hoverExpansionEligible,
-    setSidebarExpanded,
-  } from "$lib/stores/ui-mode.svelte.js";
   import {
     getWorkspaceGlobalIndex,
     formatIndexDisplay,
@@ -27,6 +23,8 @@
   interface SidebarProps {
     /** Render-ready project rows from the UiState snapshot. */
     projects: readonly UiProjectRow[];
+    /** The single UI mode from the snapshot (main-owned). */
+    mode?: UIMode;
     shortcutModeActive?: boolean;
     /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
     newWorkspaceViewOpen?: boolean;
@@ -39,6 +37,7 @@
 
   let {
     projects,
+    mode = "workspace",
     shortcutModeActive = false,
     newWorkspaceViewOpen = false,
     onCloseProject,
@@ -67,9 +66,16 @@
   let collapseTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // Sidebar is expanded when:
-  // - any ui-mode input forces the UI on top (hover, shortcut, dialog, New workspace view), OR
+  // - the snapshot mode is anything but "workspace" (hover, shortcut, dialog —
+  //   the creation panel maps to hover), OR
   // - there are no workspaces (so user can open a project)
-  const isExpanded = $derived(desiredMode.value !== "workspace" || totalWorkspaces === 0);
+  const isExpanded = $derived(mode !== "workspace" || totalWorkspaces === 0);
+
+  // Hover may only initiate expansion when nothing else forces the UI on top
+  // (i.e. the snapshot mode is "workspace"); otherwise the sidebar expanding
+  // into a parked cursor would latch hover and keep it open after that mode
+  // exits.
+  const hoverExpansionEligible = $derived(mode === "workspace");
 
   function clearOpenTimeout(): void {
     if (openTimeout) {
@@ -87,10 +93,7 @@
 
   function maybeArmExpansion(clientX: number): void {
     if (isHovering) return;
-    // Hover may only initiate expansion when nothing else forces the UI on
-    // top; otherwise the sidebar expanding into a parked cursor would latch
-    // hover and keep the sidebar open after that mode exits.
-    if (!hoverExpansionEligible.value) {
+    if (!hoverExpansionEligible) {
       logger.debug("sidebar hover: not eligible", { clientX });
       return;
     }
@@ -103,11 +106,12 @@
       logger.debug("sidebar hover: arm", { clientX });
       openTimeout = setTimeout(() => {
         openTimeout = null;
-        if (!hoverExpansionEligible.value) return;
+        if (!hoverExpansionEligible) return;
         logger.debug("sidebar hover: expand");
         isHovering = true;
+        // Main consumes the settled hover and folds it into the snapshot mode
+        // (which drives isExpanded). No local expansion state.
         api.emitEvent({ kind: "hover", region: "sidebar" });
-        setSidebarExpanded(true);
       }, HOVER_DELAY_MS);
     }
   }
@@ -154,7 +158,6 @@
       logger.debug("sidebar hover: collapse");
       isHovering = false;
       api.emitEvent({ kind: "hover", region: null });
-      setSidebarExpanded(false);
     }, HOVER_DELAY_MS);
   }
 
