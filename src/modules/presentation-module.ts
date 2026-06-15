@@ -41,7 +41,7 @@ import type { Unsubscribe } from "../shared/api/interfaces";
 import type { AgentStatus, DeletionProgress, WorkspaceTag } from "../shared/api/types";
 import { extractTags, TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import { EVENT_APP_STARTED } from "../intents/app-ready";
+import { EVENT_APP_STARTED, INTENT_APP_READY, type AppReadyIntent } from "../intents/app-ready";
 import { EVENT_PROJECT_OPENED, type ProjectOpenedEvent } from "../intents/open-project";
 import {
   EVENT_PROJECT_CLOSED,
@@ -86,6 +86,7 @@ import {
 } from "../shared/ui-state";
 import { buildScreenshotPath } from "./hibernation-screenshot-module";
 import type { DialogManager } from "./dialog-manager";
+import type { NotificationManager } from "./notification-manager";
 import { getErrorMessage } from "../shared/error-utils";
 
 export interface PresentationModuleDeps {
@@ -100,6 +101,7 @@ export interface PresentationModuleDeps {
   readonly pathProvider: PathProvider;
   readonly dialogManager: Pick<DialogManager, "open">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
+  readonly notificationManager: Pick<NotificationManager, "markUIReady">;
 }
 
 /**
@@ -447,6 +449,21 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       return;
     }
     const event = result.data;
+    if (event.kind === "ui-connected") {
+      // Startup handshake: the renderer has mounted and subscribed to ui:state.
+      // Flush buffered notifications and kick app:ready (load projects →
+      // app:started → opens the snapshot stream). Fire-and-forget: the genesis
+      // snapshot flows back on ui:state, the renderer awaits nothing.
+      deps.notificationManager.markUIReady();
+      const handle = deps.dispatcher.dispatch({
+        type: INTENT_APP_READY,
+        payload: {},
+      } as AppReadyIntent);
+      void handle.catch((error: unknown) => {
+        logger.debug("app:ready dispatch rejected", { error: getErrorMessage(error) });
+      });
+      return;
+    }
     if (event.kind === "log") {
       try {
         const target = deps.loggingService.createLogger(toLoggerName(event.logger));

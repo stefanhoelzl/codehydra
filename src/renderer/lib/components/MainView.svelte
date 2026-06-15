@@ -12,7 +12,7 @@
 
   Responsibilities:
   - Initialize IPC on mount via initializeApp (subscribes to ui:state, then
-    signals lifecycle.ready())
+    emits the ui-connected handshake)
   - Subscribe to the surviving domain events (notification chimes) via
     setupDomainEventBindings
   - Sync dialog state with main process z-order
@@ -59,8 +59,8 @@
   let containerRef: HTMLElement;
 
   // ============ Snapshot-derived views ============
-  // uiState is null until the genesis push arrives (milliseconds after
-  // lifecycle.ready()); until then the sidebar is empty and main shows
+  // uiState is null until the genesis push arrives (milliseconds after the
+  // ui-connected handshake); until then the sidebar is empty and main shows
   // nothing — same as today's pre-population frame.
 
   const ui = $derived(uiState.value);

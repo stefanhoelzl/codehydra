@@ -34,7 +34,6 @@ const { mockApi, stateCallbacks } = vi.hoisted(() => {
         setMode: vi.fn().mockResolvedValue(undefined),
       },
       lifecycle: {
-        ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
         quit: vi.fn().mockResolvedValue(undefined),
       },
       on: vi.fn(() => vi.fn()),
@@ -103,11 +102,11 @@ describe("MainView component", () => {
   });
 
   describe("initialization", () => {
-    it("subscribes to ui:state and signals lifecycle.ready on mount", async () => {
+    it("subscribes to ui:state and emits ui-connected on mount", async () => {
       await renderMainView();
 
       expect(mockApi.onState).toHaveBeenCalledTimes(1);
-      await waitFor(() => expect(mockApi.lifecycle.ready).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(mockApi.emitEvent).toHaveBeenCalledWith({ kind: "ui-connected" }));
     });
   });
 

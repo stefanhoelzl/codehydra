@@ -33,7 +33,6 @@ import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { createDeleteEventOperation } from "../intents/lib/operation.test-utils";
 import { registerTestInfrastructure, updateStatusIntent } from "../intents/operations.test-utils";
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
-import type { NotificationManager } from "./notification-manager";
 import type { IntentModule } from "../intents/lib/module";
 import { ApiIpcChannels, type AggregatedAgentStatus } from "../shared/ipc";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
@@ -382,52 +381,14 @@ describe("UiIpcModule - IPC handlers", () => {
     createUiIpcModule(deps);
 
     const state = ipcLayer._getState();
-    expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_READY)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_QUIT)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.WORKSPACE_HIBERNATE)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.PROJECT_OPEN)).toBe(true);
     expect(state.handlers.has(ApiIpcChannels.UI_SET_MODE)).toBe(true);
   });
 
-  it("lifecycle.ready IPC handler dispatches app:ready intent", async () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const dispatcher = {
-      dispatch: vi.fn().mockResolvedValue(undefined),
-    } as unknown as UiIpcModuleDeps["dispatcher"];
-    const deps = createBridgeDeps({ ipcLayer, dispatcher });
-    createUiIpcModule(deps);
-
-    await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, undefined);
-
-    expect(dispatcher.dispatch).toHaveBeenCalledWith({
-      type: "app:ready",
-      payload: {},
-    });
-  });
-
-  it("lifecycle.ready releases buffered notifications before dispatching app:ready", async () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const markUIReady = vi.fn();
-    const dispatch = vi.fn().mockImplementation(async () => {
-      // markUIReady must run before app:ready so notifications opened during
-      // app:start hooks render as soon as the renderer is mounted.
-      expect(markUIReady).toHaveBeenCalledTimes(1);
-    });
-    const deps = createBridgeDeps({
-      ipcLayer,
-      dispatcher: { dispatch } as unknown as UiIpcModuleDeps["dispatcher"],
-      notificationManager: {
-        markUIReady,
-        routeEvent: vi.fn(),
-      } as unknown as NotificationManager,
-    });
-    createUiIpcModule(deps);
-
-    await ipcLayer._invoke(ApiIpcChannels.LIFECYCLE_READY, undefined);
-
-    expect(markUIReady).toHaveBeenCalledTimes(1);
-    expect(dispatch).toHaveBeenCalledWith({ type: "app:ready", payload: {} });
-  });
+  // Startup readiness (markUIReady + app:ready dispatch) moved to the
+  // presenter's `ui-connected` ui:event handler — see presentation-module tests.
 });
 
 // =============================================================================
@@ -497,7 +458,7 @@ describe("UiIpcModule - shutdown", () => {
     dispatcher.registerModule(quitModule);
 
     // Remove a handler manually before shutdown
-    ipcLayer.removeHandler(ApiIpcChannels.LIFECYCLE_READY);
+    ipcLayer.removeHandler(ApiIpcChannels.LIFECYCLE_QUIT);
 
     // Shutdown should still succeed (catches the error for the already-removed handler)
     await expect(

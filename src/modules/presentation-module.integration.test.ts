@@ -80,6 +80,7 @@ function createDeps() {
     } as unknown as PathProvider,
     dialogManager: dialogs.manager,
     dispatcher: createMockDispatcher(),
+    notificationManager: { markUIReady: vi.fn() },
     /** Test-side view of dialogs the presenter opened. */
     dialogs,
   };
@@ -773,6 +774,17 @@ describe("PresentationModule - ui:event routing", () => {
     } as unknown as Deps["dispatcher"];
     return dispatched;
   }
+
+  it("ui-connected flushes buffered notifications then dispatches app:ready", () => {
+    const deps = createDeps();
+    const dispatched = recordDispatches(deps);
+    createPresentationModule(deps);
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "ui-connected" });
+
+    expect(deps.notificationManager.markUIReady).toHaveBeenCalledTimes(1);
+    expect(dispatched).toEqual([{ type: "app:ready", payload: {} }]);
+  });
 
   it("remove-workspace resolves the key and dispatches an interactive delete", async () => {
     const deps = createDeps();

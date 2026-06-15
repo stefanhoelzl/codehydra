@@ -7,7 +7,7 @@
  * Module-level (not component state) so the shortcuts store can read it from
  * plain functions — transitional until shortcut handling moves to main.
  * Null until the genesis push arrives (subscription is wired in
- * initializeApp, before lifecycle.ready()).
+ * initializeApp, before the `ui-connected` event is emitted).
  */
 
 import type { UiState } from "@shared/ui-state";

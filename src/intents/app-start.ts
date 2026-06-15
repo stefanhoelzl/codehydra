@@ -17,7 +17,7 @@
  * Configuration is loaded before this operation runs (via Config.load()).
  * configuredAgent is read from Config, not from hook results.
  *
- * After "start", the renderer signals ready via lifecycle.ready IPC,
+ * After "start", the renderer signals ready via the `ui-connected` ui:event,
  * which dispatches app:ready to load initial projects (see app-ready.ts).
  *
  * The "check-deps" hook point uses collect() for isolated handler contexts.

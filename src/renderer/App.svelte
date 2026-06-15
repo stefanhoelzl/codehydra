@@ -129,7 +129,7 @@
     <!-- Minimal blank state while waiting for main process IPC -->
     <div class="initializing-container" aria-busy="true"></div>
   {:else}
-    <!-- Ready mode - MainView mounts and calls lifecycle.ready() -->
+    <!-- Ready mode - MainView mounts and emits the ui-connected handshake -->
     <div class="main-view-container">
       <MainView />
     </div>

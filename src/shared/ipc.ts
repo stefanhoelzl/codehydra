@@ -107,7 +107,6 @@ export const ApiIpcChannels = {
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
   UI_SET_MODE: "api:ui:set-mode",
   // Lifecycle commands
-  LIFECYCLE_READY: "api:lifecycle:ready",
   LIFECYCLE_QUIT: "api:lifecycle:quit",
   // Lifecycle events (main → renderer)
   LIFECYCLE_SHOW_MAIN_VIEW: "api:lifecycle:show-main-view",
