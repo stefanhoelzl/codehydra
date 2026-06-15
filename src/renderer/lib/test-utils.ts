@@ -56,6 +56,7 @@ export function makeUiState(
     frames: {},
     main: { kind: "creation" },
     theme: "dark",
+    mode: "workspace",
     ...overrides,
   };
 }
@@ -87,7 +88,6 @@ export function createMockApi(): Api {
     },
     ui: {
       switchWorkspace: vi.fn().mockResolvedValue(undefined),
-      setMode: vi.fn().mockResolvedValue(undefined),
     },
     lifecycle: {
       quit: vi.fn().mockResolvedValue(undefined),
@@ -95,8 +95,6 @@ export function createMockApi(): Api {
     emitEvent: vi.fn(),
     on: vi.fn(() => vi.fn()),
     onState: vi.fn(() => vi.fn()),
-    onModeChange: vi.fn(() => vi.fn()),
-    onShortcut: vi.fn(() => vi.fn()),
     onTheme: vi.fn(() => vi.fn()),
     sendDialogEvent: vi.fn(),
     sendNotificationEvent: vi.fn(),

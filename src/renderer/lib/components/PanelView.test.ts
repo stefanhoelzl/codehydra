@@ -18,8 +18,6 @@ const { mockSendDialogEvent } = vi.hoisted(() => ({
 vi.mock("$lib/api", () => ({
   sendDialogEvent: mockSendDialogEvent,
   on: vi.fn(() => vi.fn()),
-  onModeChange: vi.fn(() => vi.fn()),
-  onShortcut: vi.fn(() => vi.fn()),
 }));
 
 // Import after mock setup

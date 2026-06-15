@@ -51,21 +51,14 @@ export type AggregatedAgentStatus =
 // ============ UI Mode Types ============
 
 /**
- * UI mode for the application.
+ * UI mode for the application. Computed by the presenter (main) and shipped in
+ * the UiState snapshot; the renderer reads it from there.
  * - "workspace": Normal mode, workspace view has focus, UI behind workspace
  * - "shortcut": Shortcut mode active, UI on top, shows keyboard hints
  * - "dialog": Dialog open, UI on top, dialog has focus (blocks Alt+X)
  * - "hover": UI overlay active (sidebar hover), UI on top, no focus change (allows Alt+X)
  */
 export type UIMode = "workspace" | "dialog" | "shortcut" | "hover";
-
-/**
- * Event payload for UI mode changes.
- */
-export interface UIModeChangedEvent {
-  readonly mode: UIMode;
-  readonly previousMode: UIMode;
-}
 
 // ============ IPC Handler Payload Types ============
 // Payload types for IPC handlers registered in the UiIpc module.
@@ -80,11 +73,6 @@ export interface ProjectOpenPayload {
 export interface UiSwitchWorkspacePayload {
   readonly workspacePath: string | null;
   readonly focus?: boolean;
-}
-
-/** ui.setMode */
-export interface UiSetModePayload {
-  readonly mode: UIMode;
 }
 
 // ============ API Layer IPC Channels ============
@@ -105,7 +93,6 @@ export const ApiIpcChannels = {
   WORKSPACE_WAKE: "api:workspace:wake",
   // UI commands
   UI_SWITCH_WORKSPACE: "api:ui:switch-workspace",
-  UI_SET_MODE: "api:ui:set-mode",
   // Lifecycle commands
   LIFECYCLE_QUIT: "api:lifecycle:quit",
   // Lifecycle events (main → renderer)
@@ -136,9 +123,7 @@ export const ApiIpcChannels = {
   WORKSPACE_STATUS_CHANGED: "api:workspace:status-changed",
   WORKSPACE_METADATA_CHANGED: "api:workspace:metadata-changed",
   WORKSPACE_DELETION_PROGRESS: "api:workspace:deletion-progress",
-  UI_MODE_CHANGED: "api:ui:mode-changed",
   UI_THEME: "api:ui:theme",
-  SHORTCUT_KEY: "api:shortcut:key",
 } as const satisfies Record<string, string>;
 
 // ============ Lifecycle Event Payload Types ============

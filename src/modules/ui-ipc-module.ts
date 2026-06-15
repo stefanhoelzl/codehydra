@@ -9,7 +9,7 @@
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type { ProjectOpenPayload, UiSwitchWorkspacePayload, UiSetModePayload } from "../shared/ipc";
+import type { ProjectOpenPayload, UiSwitchWorkspacePayload } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
 import { agentSpecHasPrompt } from "../shared/api/types";
 import type { DialogUserEvent } from "../shared/dialog-types";
@@ -22,9 +22,6 @@ import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { MetadataChangedPayload, MetadataChangedEvent } from "../intents/set-metadata";
 import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
-import type { ModeChangedPayload, ModeChangedEvent } from "../intents/set-mode";
-import { EVENT_MODE_CHANGED, INTENT_SET_MODE } from "../intents/set-mode";
-import type { SetModeIntent } from "../intents/set-mode";
 import type {
   WorkspaceCreatedEvent,
   WorkspaceCreateFailedEvent,
@@ -55,9 +52,6 @@ import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { BasesUpdatedEvent } from "../intents/get-project-bases";
 import { EVENT_BASES_UPDATED } from "../intents/get-project-bases";
-import type { ShortcutKeyPressedEvent } from "../intents/shortcut-key";
-import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
-import { isShortcutKey } from "../shared/shortcuts";
 import type { WorkspaceStatus, Workspace } from "../shared/api/types";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
@@ -129,15 +123,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
           workspaceName: payload.workspaceName,
           key: payload.key,
           value: payload.value,
-        });
-      },
-    },
-    [EVENT_MODE_CHANGED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const payload = (event as ModeChangedEvent).payload as ModeChangedPayload;
-        deps.viewManager.sendToUI(ApiIpcChannels.UI_MODE_CHANGED, {
-          mode: payload.mode,
-          previousMode: payload.previousMode,
         });
       },
     },
@@ -235,14 +220,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
           bases: p.bases,
           ...(p.defaultBaseBranch !== undefined && { defaultBaseBranch: p.defaultBaseBranch }),
         });
-      },
-    },
-    [EVENT_SHORTCUT_KEY_PRESSED]: {
-      handler: async (event: DomainEvent): Promise<void> => {
-        const { key } = (event as ShortcutKeyPressedEvent).payload;
-        if (isShortcutKey(key)) {
-          deps.viewManager.sendToUI(ApiIpcChannels.SHORTCUT_KEY, key);
-        }
       },
     },
     [EVENT_WORKSPACE_HIBERNATED]: {
@@ -359,15 +336,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     // was deduped by the idempotency interceptor.
     const result = await dispatcher.dispatch(intent);
     return (result ?? null) as Workspace | null;
-  });
-
-  registerIpc(ApiIpcChannels.UI_SET_MODE, async (payload) => {
-    const p = payload as UiSetModePayload;
-    const intent: SetModeIntent = {
-      type: INTENT_SET_MODE,
-      payload: { mode: p.mode },
-    };
-    await dispatcher.dispatch(intent);
   });
 
   registerIpc(ApiIpcChannels.UI_SWITCH_WORKSPACE, async (payload) => {

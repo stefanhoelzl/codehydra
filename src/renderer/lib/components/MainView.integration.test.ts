@@ -29,7 +29,6 @@ const { mockApi, stateCallbacks } = vi.hoisted(() => {
       },
       ui: {
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
-        setMode: vi.fn().mockResolvedValue(undefined),
       },
       lifecycle: {
         ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
@@ -64,7 +63,6 @@ vi.mock("$lib/services/agent-notifications", () => ({
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 
@@ -102,7 +100,6 @@ describe("MainView close project integration", () => {
     vi.clearAllMocks();
     stateCallbacks.length = 0;
     resetUiState();
-    shortcutsStore.reset();
   });
 
   afterEach(() => {

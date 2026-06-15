@@ -10,6 +10,7 @@
  */
 
 import type { AgentStatus, WorkspaceTag } from "./api/types";
+import type { UIMode } from "./ipc";
 
 /** Resolved OS theme (mirrors the shell Theme type without importing it). */
 export type UiTheme = "dark" | "light";
@@ -66,6 +67,13 @@ export interface UiState {
   readonly frames: Readonly<Record<string, string>>;
   readonly main: UiMainView;
   readonly theme: UiTheme;
+  /**
+   * The single UI mode, computed by the presenter (main-owned) with priority
+   * shortcut > dialog > hover > workspace. The renderer reads mode only from
+   * this field: ShortcutOverlay visibility, sidebar expansion + hover
+   * eligibility, and z-order all derive from it.
+   */
+  readonly mode: UIMode;
 }
 
 /**

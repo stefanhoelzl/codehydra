@@ -31,7 +31,6 @@ const { mockApi, stateCallbacks } = vi.hoisted(() => {
       },
       ui: {
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
-        setMode: vi.fn().mockResolvedValue(undefined),
       },
       lifecycle: {
         quit: vi.fn().mockResolvedValue(undefined),
@@ -51,7 +50,6 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
@@ -93,7 +91,6 @@ describe("MainView component", () => {
     vi.clearAllMocks();
     stateCallbacks.length = 0;
     resetUiState();
-    shortcutsStore.reset();
     dialogFrameworkStore.reset();
   });
 
@@ -243,44 +240,6 @@ describe("MainView component", () => {
     });
   });
 
-  describe("ui-mode sync", () => {
-    it("pushes hover mode while the creation panel is the main view", async () => {
-      await renderMainView();
-
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
-
-      await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("hover");
-      });
-    });
-
-    it("pushes dialog mode when a modal framework dialog opens and workspace mode when it closes", async () => {
-      await renderMainView();
-      pushState(
-        makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
-          main: { kind: "workspace", frameKey: WS1.key },
-        })
-      );
-
-      dialogFrameworkStore.processCommand({
-        action: "open",
-        dialogId: "dlg-confirm-1",
-        config: {
-          modal: true,
-          sections: [{ type: "text", content: "Remove Workspace", style: "heading" }],
-        },
-      });
-      await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("dialog");
-      });
-
-      dialogFrameworkStore.processCommand({ action: "close", dialogId: "dlg-confirm-1" });
-      await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
-      });
-    });
-  });
-
   describe("fresh-form dismiss on panel show", () => {
     it("sends one dismiss per show transition once the session exists", async () => {
       await renderMainView();
@@ -356,13 +315,18 @@ describe("MainView component", () => {
 
     it("keeps modal dialogs opened while the panel is already shown", async () => {
       await renderMainView();
+      openCreationPanelSession("dlg-panel");
 
+      // The panel is the main view; flush the show transition first.
       pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
       await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("hover");
+        expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
+          kind: "dismiss",
+          dialogId: "dlg-panel",
+        });
       });
 
-      // e.g. the creation module's git-clone sub-dialog
+      // e.g. the creation module's git-clone sub-dialog, opened while shown
       dialogFrameworkStore.processCommand({
         action: "open",
         dialogId: "dlg-clone",
@@ -371,7 +335,8 @@ describe("MainView component", () => {
       });
 
       // Still open: the sweep is transition-based, not continuous.
-      expect(dialogFrameworkStore.dialogs.value.size).toBe(1);
+      const clone = dialogFrameworkStore.dialogs.value.get("dlg-clone");
+      expect(clone).toBeDefined();
     });
   });
 });

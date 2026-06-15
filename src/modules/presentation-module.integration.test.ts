@@ -48,6 +48,8 @@ import {
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
+import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../intents/set-shortcut-active";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
 import { createPresentationModule } from "./presentation-module";
 import { createMockDialogManager } from "./dialog-manager.state-mock";
 
@@ -163,16 +165,16 @@ describe("PresentationModule - ui:event intake", () => {
     expect(deps.ipcLayer._getListeners(ApiIpcChannels.UI_EVENT)).toHaveLength(1);
   });
 
-  it("debug-logs valid events", () => {
+  it("debug-logs remaining observational events", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
     deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "switch-workspace" });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: "sidebar" });
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "wake-workspace" });
 
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "switch-workspace" });
-    expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "hover" });
+    expect(logger?.debug).toHaveBeenCalledWith("ui event", { kind: "wake-workspace" });
     expect(logger?.warn).not.toHaveBeenCalled();
   });
 
@@ -293,7 +295,13 @@ describe("PresentationModule - ui:state snapshots", () => {
     await startModule(deps);
 
     expect(snapshots(deps)).toEqual([
-      { sidebar: { projects: [] }, frames: {}, main: { kind: "creation" }, theme: "dark" },
+      {
+        sidebar: { projects: [] },
+        frames: {},
+        main: { kind: "creation" },
+        theme: "dark",
+        mode: "hover",
+      },
     ]);
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.debug).toHaveBeenCalledWith("ui:state push", {
@@ -337,6 +345,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       frames: { [`${PROJECT_ID}/main`]: "http://127.0.0.1:1/main" },
       main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
       theme: "dark",
+      mode: "workspace",
     });
   });
 
@@ -1023,5 +1032,315 @@ describe("PresentationModule - close confirm", () => {
     dismissHandle.emitDismiss();
     await expect(viaDismiss).resolves.toEqual({ canceled: true });
     expect(dismissHandle.closed).toBe(true);
+  });
+});
+
+// =============================================================================
+// UI mode computation (shortcut > dialog > hover > workspace)
+// =============================================================================
+
+describe("PresentationModule - UI mode", () => {
+  function mode(deps: Deps): UiState["mode"] {
+    return lastSnapshot(deps).mode;
+  }
+
+  it("workspace mode when a workspace is active and nothing else applies", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+
+    expect(mode(deps)).toBe("workspace");
+  });
+
+  it("hover mode while the creation panel is the ground state (no workspace active)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("main")]) });
+    await flush();
+
+    expect(lastSnapshot(deps).main.kind).toBe("creation");
+    expect(mode(deps)).toBe("hover");
+  });
+
+  it("hover mode when the sidebar hover region is set (workspace active)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+    expect(mode(deps)).toBe("workspace");
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: "sidebar" });
+    await flush();
+    expect(mode(deps)).toBe("hover");
+
+    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: null });
+    await flush();
+    expect(mode(deps)).toBe("workspace");
+  });
+
+  it("dialog mode when a modal dialog is open (beats hover)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("main")]) });
+    await flush();
+    // Ground state ⇒ hover.
+    expect(mode(deps)).toBe("hover");
+
+    // Open a modal dialog → dialogModalOpen flips the mode to "dialog".
+    deps.dialogManager.open({ sections: [], modal: true });
+    await flush();
+    expect(mode(deps)).toBe("dialog");
+  });
+
+  it("shortcut mode wins over dialog/hover/workspace", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("main")]) });
+
+    deps.dialogManager.open({ sections: [], modal: true });
+    await emit(module, EVENT_SHORTCUT_ACTIVE_CHANGED, { active: true });
+    await flush();
+    expect(mode(deps)).toBe("shortcut");
+
+    await emit(module, EVENT_SHORTCUT_ACTIVE_CHANGED, { active: false });
+    await flush();
+    // Falls back to dialog (the modal is still open).
+    expect(mode(deps)).toBe("dialog");
+  });
+
+  it("a panel-surface dialog does NOT count as a modal (no dialog mode)", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await flush();
+
+    deps.dialogManager.open({ sections: [] }, { surface: "panel" });
+    await flush();
+    expect(mode(deps)).toBe("workspace");
+  });
+});
+
+// =============================================================================
+// Shortcut navigation (the presenter runs nav over its own ordered rows)
+// =============================================================================
+
+describe("PresentationModule - shortcut navigation", () => {
+  /** Replace the deps dispatcher with a recording stub. */
+  function recordDispatches(deps: Deps): Array<{ type: string; payload: unknown }> {
+    const dispatched: Array<{ type: string; payload: unknown }> = [];
+    deps.dispatcher = {
+      dispatch: vi.fn((intent: { type: string; payload: unknown }) => {
+        dispatched.push(intent);
+        return Promise.resolve();
+      }),
+    } as unknown as Deps["dispatcher"];
+    return dispatched;
+  }
+
+  function key(module: IntentModule, k: string): Promise<void> {
+    return emit(module, EVENT_SHORTCUT_KEY_PRESSED, { key: k });
+  }
+
+  const pathOf = (name: string): string => `${PROJECT_PATH}/.worktrees/${name}`;
+
+  async function withWorkspaces(
+    deps: Deps,
+    names: string[],
+    activeName: string | null
+  ): Promise<IntentModule> {
+    const module = await startModule(deps);
+    const workspaces = names.map((n) => makeWorkspace(n, { url: `http://127.0.0.1:1/${n}` }));
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject(workspaces) });
+    if (activeName) {
+      const active = workspaces.find((w) => w.name === activeName)!;
+      await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(active));
+    }
+    return module;
+  }
+
+  it("up navigates to the previous workspace (focus:false)", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b", "c"], "b");
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "up");
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: pathOf("a"), focus: false } },
+    ]);
+  });
+
+  it("down navigates to the next workspace", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b", "c"], "b");
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "down");
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: pathOf("c"), focus: false } },
+    ]);
+  });
+
+  it("up with no active workspace targets the last; down targets the first", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b", "c"], null);
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "up");
+    await key(module, "down");
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: pathOf("c"), focus: false } },
+      { type: "workspace:switch", payload: { workspacePath: pathOf("a"), focus: false } },
+    ]);
+  });
+
+  it("a numeric jump targets the Nth awake workspace", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b", "c"], null);
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "2");
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: pathOf("b"), focus: false } },
+    ]);
+  });
+
+  it("a numeric jump beyond the workspace count is ignored", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b"], null);
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "5");
+
+    expect(dispatched).toEqual([]);
+  });
+
+  it("left/right navigation prefers idle workspaces, skipping hibernated", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const a = makeWorkspace("a", { url: "http://127.0.0.1:1/a" });
+    const b = makeWorkspace("b", { url: "http://127.0.0.1:1/b", metadata: { hibernated: "true" } });
+    const c = makeWorkspace("c", { url: "http://127.0.0.1:1/c" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([a, b, c]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(a));
+    // Mark c idle; b is hibernated (skipped) and would otherwise be the next.
+    await emit(module, EVENT_AGENT_STATUS_UPDATED, {
+      workspace: { path: c.path, projectId: PROJECT_ID, name: c.name, active: false },
+      status: { status: "idle", counts: { idle: 1, busy: 0 } },
+    });
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "right");
+
+    expect(dispatched).toEqual([
+      { type: "workspace:switch", payload: { workspacePath: c.path, focus: false } },
+    ]);
+  });
+
+  it("h hibernates an awake active workspace and wakes a hibernated one", async () => {
+    const deps = createDeps();
+    const awake = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([awake]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(awake));
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "h");
+    expect(dispatched).toEqual([
+      { type: "workspace:hibernate", payload: { workspacePath: awake.path } },
+    ]);
+
+    // Flip to hibernated, then h again → wake.
+    await emit(module, EVENT_METADATA_CHANGED, {
+      projectId: PROJECT_ID,
+      workspaceName: awake.name,
+      workspacePath: awake.path,
+      key: "hibernated",
+      value: "true",
+    });
+    dispatched.length = 0;
+    await key(module, "h");
+    expect(dispatched).toEqual([
+      { type: "workspace:wake", payload: { workspacePath: awake.path, source: "ui-ipc" } },
+    ]);
+  });
+
+  it("enter deselects (switch to null) so the creation panel shows", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["main"], "main");
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "enter");
+
+    expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspacePath: null } }]);
+  });
+
+  it("enter is a no-op when the creation panel is already showing", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["main"], null);
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "enter");
+
+    expect(dispatched).toEqual([]);
+  });
+
+  it("delete triggers the interactive remove flow for the active workspace", async () => {
+    const deps = createDeps();
+    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "delete");
+
+    expect(dispatched).toEqual([
+      {
+        type: "workspace:delete",
+        payload: {
+          workspacePath: workspace.path,
+          keepBranch: false,
+          force: false,
+          removeWorktree: true,
+          interactive: true,
+        },
+      },
+    ]);
+  });
+
+  it("delete is a no-op while the active workspace is still creating", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
+    await emit(module, EVENT_WORKSPACE_LOADING, {
+      workspaceName: "feat",
+      projectPath: PROJECT_PATH,
+    });
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "delete");
+
+    expect(dispatched).toEqual([]);
+  });
+
+  it("ignores unrecognized keys", async () => {
+    const deps = createDeps();
+    const module = await withWorkspaces(deps, ["a", "b"], "a");
+    const dispatched = recordDispatches(deps);
+
+    await key(module, "z");
+
+    expect(dispatched).toEqual([]);
   });
 });

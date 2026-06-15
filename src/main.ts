@@ -78,7 +78,6 @@ import { AppShutdownOperation, INTENT_APP_SHUTDOWN } from "./intents/app-shutdow
 import { AppResumeOperation, INTENT_APP_RESUME, EVENT_APP_RESUMED } from "./intents/app-resume";
 import type { AppShutdownIntent } from "./intents/app-shutdown";
 import { SetupOperation, INTENT_SETUP, EVENT_SETUP_ERROR } from "./intents/setup";
-import { SetModeOperation, INTENT_SET_MODE } from "./intents/set-mode";
 import { SetMetadataOperation, INTENT_SET_METADATA } from "./intents/set-metadata";
 import { GetMetadataOperation, INTENT_GET_METADATA } from "./intents/get-metadata";
 import {
@@ -149,6 +148,10 @@ import {
 } from "./intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "./intents/update-agent-status";
 import { ShortcutKeyOperation, INTENT_SHORTCUT_KEY } from "./intents/shortcut-key";
+import {
+  SetShortcutActiveOperation,
+  INTENT_SET_SHORTCUT_ACTIVE,
+} from "./intents/set-shortcut-active";
 import { SubmitBugReportOperation, INTENT_SUBMIT_BUG_REPORT } from "./intents/submit-bug-report";
 import {
   VscodeShowMessageOperation,
@@ -730,9 +733,9 @@ const tempDirModule = createTempDirModule({
 
 const shortcutModule = createShortcutModule({
   viewManager,
-  viewLayer,
   windowLayer,
   windowManager,
+  dialogManager,
   dispatcher,
   logger: loggingService.createLogger("shortcut"),
 });
@@ -774,7 +777,6 @@ dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(agentConfig
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
 dispatcher.registerOperation(INTENT_RESOLVE_PROJECT, new ResolveProjectOperation());
 dispatcher.registerOperation(INTENT_SETUP, new SetupOperation());
-dispatcher.registerOperation(INTENT_SET_MODE, new SetModeOperation());
 dispatcher.registerOperation(INTENT_SET_METADATA, new SetMetadataOperation());
 dispatcher.registerOperation(INTENT_GET_METADATA, new GetMetadataOperation());
 dispatcher.registerOperation(INTENT_GET_WORKSPACE_STATUS, new GetWorkspaceStatusOperation());
@@ -797,6 +799,7 @@ dispatcher.registerOperation(INTENT_CLOSE_PROJECT, new CloseProjectOperation());
 dispatcher.registerOperation(INTENT_SWITCH_WORKSPACE, new SwitchWorkspaceOperation());
 dispatcher.registerOperation(INTENT_UPDATE_AGENT_STATUS, new UpdateAgentStatusOperation());
 dispatcher.registerOperation(INTENT_SHORTCUT_KEY, new ShortcutKeyOperation());
+dispatcher.registerOperation(INTENT_SET_SHORTCUT_ACTIVE, new SetShortcutActiveOperation());
 dispatcher.registerOperation(INTENT_SUBMIT_BUG_REPORT, new SubmitBugReportOperation());
 dispatcher.registerOperation(INTENT_VSCODE_SHOW_MESSAGE, new VscodeShowMessageOperation());
 dispatcher.registerOperation(INTENT_VSCODE_COMMAND, new VscodeCommandOperation());

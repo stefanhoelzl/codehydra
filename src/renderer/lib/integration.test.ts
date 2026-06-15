@@ -29,7 +29,6 @@ const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
       },
       ui: {
         switchWorkspace: vi.fn().mockResolvedValue(undefined),
-        setMode: vi.fn().mockResolvedValue(undefined),
       },
       lifecycle: {
         ready: vi.fn().mockResolvedValue({ defaultAgent: null, availableAgents: [] }),
@@ -43,14 +42,6 @@ const { mockApi, eventCallbacks, stateCallbacks } = vi.hoisted(() => {
         stateCallbacks.push(callback);
         return vi.fn();
       }),
-      onModeChange: vi.fn((callback: EventCallback) => {
-        callbacks.set("ui:mode-changed", callback);
-        return vi.fn();
-      }),
-      onShortcut: vi.fn((callback: EventCallback) => {
-        callbacks.set("shortcut:key", callback);
-        return vi.fn();
-      }),
       sendDialogEvent: vi.fn(),
       sendNotificationEvent: vi.fn(),
     },
@@ -61,7 +52,6 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "../App.svelte";
-import * as shortcutsStore from "$lib/stores/shortcuts.svelte.js";
 import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
@@ -116,7 +106,6 @@ describe("Integration tests", () => {
     eventCallbacks.clear();
     stateCallbacks.length = 0;
     resetUiState();
-    shortcutsStore.reset();
     dialogFrameworkStore.reset();
   });
 
@@ -197,32 +186,21 @@ describe("Integration tests", () => {
       });
     });
 
-    it("panel shown → ui-mode hover; switching to a workspace → workspace mode", async () => {
-      await renderApp(snapshotOf([ws("ws1")]));
+    it("snapshot mode drives sidebar expansion (hover panel → workspace)", async () => {
+      // Panel showing: main pushes mode "hover" → sidebar expanded.
+      await renderApp({ ...snapshotOf([ws("ws1")]), mode: "hover" });
 
       await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("hover");
+        expect(document.querySelector(".sidebar")).toHaveClass("expanded");
       });
 
-      // Selecting a workspace: the presenter closes the panel in the same
-      // push that activates the row.
-      pushState(snapshotOf([ws("ws1")], "ws1"));
+      // Selecting a workspace: the presenter closes the panel and pushes
+      // mode "workspace" in the same snapshot.
+      pushState({ ...snapshotOf([ws("ws1")], "ws1"), mode: "workspace" });
 
       await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
+        expect(document.querySelector(".sidebar")).not.toHaveClass("expanded");
       });
-    });
-
-    it("handles api.setMode failure gracefully", async () => {
-      mockApi.ui.setMode.mockRejectedValue(new Error("setMode failed"));
-
-      await renderApp(snapshotOf([ws("ws1")]));
-
-      await waitFor(() => {
-        expect(mockApi.ui.setMode).toHaveBeenCalledWith("hover");
-      });
-      // No unhandled rejection; the app keeps rendering.
-      expect(document.querySelector(".main-view")).toBeInTheDocument();
     });
   });
 
@@ -242,57 +220,34 @@ describe("Integration tests", () => {
     });
   });
 
-  describe("keyboard action flows", () => {
-    it("Alt+X → ↓ → switch invoke → snapshot + mode release → overlay hides", async () => {
-      const { container } = await renderApp(snapshotOf([ws("ws1"), ws("ws2")], "ws1"));
-      await waitFor(() => expect(eventCallbacks.get("shortcut:key")).toBeDefined());
+  describe("shortcut overlay (snapshot mode driven)", () => {
+    it("the overlay reflects the snapshot mode and the active row follows pushes", async () => {
+      // Main owns shortcut detection + navigation now: the renderer only
+      // shows/hides the overlay from the snapshot mode, and the active row
+      // moves as the presenter pushes the post-switch snapshot.
+      const { container } = await renderApp({
+        ...snapshotOf([ws("ws1"), ws("ws2")], "ws1"),
+        mode: "shortcut",
+      });
 
-      // Alt+X pressed (main detects, sends mode change)
-      fireApiEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
       await waitFor(() => {
         expect(container.querySelector(".shortcut-overlay.active")).toBeInTheDocument();
       });
 
-      // ↓ pressed
-      fireApiEvent("shortcut:key", "down");
+      // The presenter navigated and pushed the post-switch snapshot, still in
+      // shortcut mode.
+      pushState({ ...snapshotOf([ws("ws1"), ws("ws2")], "ws2"), mode: "shortcut" });
       await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2", false);
+        const ws2Item = screen.getByText("ws2").closest("li");
+        expect(ws2Item).toHaveAttribute("aria-current", "true");
       });
 
-      // The switch lands as a snapshot
-      pushState(snapshotOf([ws("ws1"), ws("ws2")], "ws2"));
-
-      // Alt released (main sends mode change back to workspace)
-      fireApiEvent("ui:mode-changed", { mode: "workspace", previousMode: "shortcut" });
+      // Shortcut mode exits (Alt released): the snapshot mode flips and the
+      // overlay hides.
+      pushState({ ...snapshotOf([ws("ws1"), ws("ws2")], "ws2"), mode: "workspace" });
       await waitFor(() => {
         expect(container.querySelector(".shortcut-overlay.active")).not.toBeInTheDocument();
       });
-
-      const ws2Item = screen.getByText("ws2").closest("li");
-      expect(ws2Item).toHaveAttribute("aria-current", "true");
-    });
-
-    it("navigation wraps at boundaries (↓ from last → first)", async () => {
-      await renderApp(snapshotOf([ws("ws1"), ws("ws2")], "ws2"));
-      await waitFor(() => expect(eventCallbacks.get("shortcut:key")).toBeDefined());
-
-      fireApiEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-      fireApiEvent("shortcut:key", "down");
-
-      await waitFor(() => {
-        expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws1", false);
-      });
-    });
-
-    it("no workspaces → navigation keys are inert", async () => {
-      await renderApp(snapshotOf([]));
-      await waitFor(() => expect(eventCallbacks.get("shortcut:key")).toBeDefined());
-
-      fireApiEvent("ui:mode-changed", { mode: "shortcut", previousMode: "workspace" });
-      fireApiEvent("shortcut:key", "down");
-      fireApiEvent("shortcut:key", "1");
-
-      expect(mockApi.ui.switchWorkspace).not.toHaveBeenCalled();
     });
   });
 

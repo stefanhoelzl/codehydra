@@ -5,7 +5,6 @@
  * Workspace surfaces are iframes inside the UI renderer's DOM, derived from
  * the renderer stores — this module no longer creates or destroys views per
  * workspace. What remains main-side:
- * - set-mode/set hook (mode state lives on the UiViewManager)
  * - app-start hooks (window + UI view creation, startup splash, mount signal)
  * - setup dialog hooks
  * - active-workspace bookkeeping (resolve/get-active/switch/delete/hibernate)
@@ -25,7 +24,6 @@ import type { ViewBoundary } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
 import type { WorkspaceRef } from "../shared/api/types";
-import type { SetModeIntent, SetModeHookResult } from "../intents/set-mode";
 import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/app-start";
 import type { AgentSelectionHookContext } from "../intents/setup";
 import type { GetActiveWorkspaceHookResult } from "../intents/get-active-workspace";
@@ -46,7 +44,6 @@ import {
 import type { WorkspaceCreatedEvent } from "../intents/open-workspace";
 import type { SelectFolderHookResult } from "../intents/open-project";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
 import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
@@ -237,20 +234,6 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
   const module: IntentModule = {
     name: "view",
     hooks: {
-      // -------------------------------------------------------------------
-      // ui:set-mode → set: capture previous mode, apply new mode
-      // -------------------------------------------------------------------
-      [SET_MODE_OPERATION_ID]: {
-        set: {
-          handler: async (ctx: HookContext): Promise<SetModeHookResult> => {
-            const intent = ctx.intent as SetModeIntent;
-            const previousMode = viewManager.getMode();
-            viewManager.setMode(intent.payload.mode);
-            return { previousMode };
-          },
-        },
-      },
-
       // -------------------------------------------------------------------
       // app-start → init: Shell creation + UI loading (post-ready)
       // app-start → show-ui: send LIFECYCLE_SHOW_STARTING to renderer

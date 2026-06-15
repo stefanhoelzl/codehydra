@@ -68,12 +68,29 @@ import {
   type WorkspaceDeletedEvent,
   type WorkspaceDeletionProgressEvent,
 } from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "../intents/switch-workspace";
+import {
+  EVENT_WORKSPACE_SWITCHED,
+  INTENT_SWITCH_WORKSPACE,
+  type WorkspaceSwitchedEvent,
+  type SwitchWorkspaceIntent,
+} from "../intents/switch-workspace";
 import {
   EVENT_AGENT_STATUS_UPDATED,
   type AgentStatusUpdatedEvent,
 } from "../intents/update-agent-status";
 import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
+import {
+  EVENT_SHORTCUT_ACTIVE_CHANGED,
+  type ShortcutActiveChangedEvent,
+} from "../intents/set-shortcut-active";
+import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+import {
+  INTENT_HIBERNATE_WORKSPACE,
+  type HibernateWorkspaceIntent,
+} from "../intents/hibernate-workspace";
+import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../intents/wake-workspace";
+import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../shared/shortcuts";
+import type { UIMode } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { DialogConfig, DialogSection } from "../shared/dialog-types";
 import { uiEventSchema } from "../shared/ui-event";
@@ -99,7 +116,7 @@ export interface PresentationModuleDeps {
   };
   readonly fileSystem: Pick<FileSystemBoundary, "readFileBuffer">;
   readonly pathProvider: PathProvider;
-  readonly dialogManager: Pick<DialogManager, "open">;
+  readonly dialogManager: Pick<DialogManager, "open" | "isModalOpen" | "onModalOpenChange">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
   readonly notificationManager: Pick<NotificationManager, "markUIReady">;
 }
@@ -266,6 +283,19 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   let pushScheduled = false;
   let themeUnsubscribe: Unsubscribe | null = null;
 
+  // --- UI mode inputs (main-owned). Mode = shortcut > dialog > hover >
+  //     workspace, computed in buildMode() from these four signals.
+  /** Alt+X shortcut mode active (owned by shortcut-module, signalled here). */
+  let shortcutActive = false;
+  /** A modal-surface dialog is open (queried + subscribed from dialog-manager). */
+  let dialogModalOpen = deps.dialogManager.isModalOpen();
+  /** Last settled hover region from the renderer's `hover` ui:event. */
+  let hoverRegion: "sidebar" | null = null;
+  const modalUnsubscribe = deps.dialogManager.onModalOpenChange((open) => {
+    dialogModalOpen = open;
+    scheduleUpdate();
+  });
+
   /** Presenter-assigned opaque workspace identity. Never leaves main except inside UiState. */
   function workspaceKey(projectId: string, workspaceName: string): string {
     return `${projectId}/${workspaceName}`;
@@ -354,6 +384,53 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     return null;
   }
 
+  /**
+   * Build a UiWorkspaceRow for a workspace in a project (single source of
+   * truth for both the snapshot and shortcut navigation, so they always agree
+   * on ordering and status).
+   */
+  function buildRow(project: ProjectModel, workspace: WorkspaceModel): UiWorkspaceRow {
+    const key = workspaceKey(project.id, workspace.name);
+    return {
+      key,
+      path: workspace.path ?? pendingPath(project.path, workspace.name),
+      name: workspace.name,
+      status: rowStatus(workspace),
+      hibernated: workspace.hibernated,
+      agent:
+        (workspace.path === null ? undefined : agentStatuses.get(workspace.path)) ?? AGENT_NONE,
+      // Copy: the model array mutates on tag changes; snapshots are immutable values.
+      tags: [...workspace.tags],
+      active: key === activeKey,
+    };
+  }
+
+  /** A workspace row plus the model objects it was built from. */
+  interface RowEntry {
+    readonly row: UiWorkspaceRow;
+    readonly project: ProjectModel;
+    readonly workspace: WorkspaceModel;
+  }
+
+  /**
+   * All workspace rows in sidebar display order — the authoritative ordering
+   * shared by the snapshot (buildSnapshot) and shortcut navigation. Projects
+   * and workspaces sort by display name (AaBbCc).
+   */
+  function currentRows(): RowEntry[] {
+    const entries: RowEntry[] = [];
+    for (const project of [...projects.values()].sort((a, b) =>
+      compareDisplayNames(a.name, b.name)
+    )) {
+      for (const workspace of [...project.workspaces.values()].sort((a, b) =>
+        compareDisplayNames(a.name, b.name)
+      )) {
+        entries.push({ row: buildRow(project, workspace), project, workspace });
+      }
+    }
+    return entries;
+  }
+
   function buildMain(): UiMainView {
     // The creation panel is the ground state: shown whenever nothing is
     // active (including a stale activeKey whose workspace is gone).
@@ -369,6 +446,18 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     return { kind: "workspace", frameKey: activeKey };
   }
 
+  /**
+   * Compute the single UI mode. Priority shortcut > dialog > hover > workspace.
+   * The creation panel (no active workspace) maps to hover-level: UI on top but
+   * Alt+X still works.
+   */
+  function buildMode(main: UiMainView): UIMode {
+    if (shortcutActive) return "shortcut";
+    if (dialogModalOpen) return "dialog";
+    if (main.kind === "creation" || hoverRegion === "sidebar") return "hover";
+    return "workspace";
+  }
+
   function buildSnapshot(): UiState {
     const projectRows: UiProjectRow[] = [...projects.values()]
       .sort((a, b) => compareDisplayNames(a.name, b.name))
@@ -379,23 +468,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         remote: project.remoteUrl !== undefined,
         workspaces: [...project.workspaces.values()]
           .sort((a, b) => compareDisplayNames(a.name, b.name))
-          .map((workspace): UiWorkspaceRow => {
-            const key = workspaceKey(project.id, workspace.name);
-            return {
-              key,
-              path: workspace.path ?? pendingPath(project.path, workspace.name),
-              name: workspace.name,
-              status: rowStatus(workspace),
-              hibernated: workspace.hibernated,
-              agent:
-                (workspace.path === null ? undefined : agentStatuses.get(workspace.path)) ??
-                AGENT_NONE,
-              // Copy: the model array mutates on tag changes; snapshots are
-              // immutable values.
-              tags: [...workspace.tags],
-              active: key === activeKey,
-            };
-          }),
+          .map((workspace): UiWorkspaceRow => buildRow(project, workspace)),
       }));
 
     const frames: Record<string, string> = {};
@@ -407,7 +480,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       }
     }
 
-    return { sidebar: { projects: projectRows }, frames, main: buildMain(), theme };
+    const main = buildMain();
+    return { sidebar: { projects: projectRows }, frames, main, theme, mode: buildMode(main) };
   }
 
   function scheduleUpdate(): void {
@@ -430,13 +504,34 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   // ---------------------------------------------------------------------------
 
   /** Dispatch fire-and-forget: the intake must never await a parked confirm. */
-  function dispatchDetached(intent: DeleteWorkspaceIntent | CloseProjectIntent): void {
+  function dispatchDetached(
+    intent:
+      | DeleteWorkspaceIntent
+      | CloseProjectIntent
+      | SwitchWorkspaceIntent
+      | HibernateWorkspaceIntent
+      | WakeWorkspaceIntent
+  ): void {
     const handle = deps.dispatcher.dispatch(intent);
     void handle.catch((error: unknown) => {
       logger.debug("ui-event dispatch rejected", {
         intent: intent.type,
         error: getErrorMessage(error),
       });
+    });
+  }
+
+  /** The interactive remove flow (shared by the ui:event and shortcut delete). */
+  function dispatchInteractiveDelete(workspacePath: string): void {
+    dispatchDetached({
+      type: INTENT_DELETE_WORKSPACE,
+      payload: {
+        workspacePath,
+        keepBranch: false,
+        force: false,
+        removeWorktree: true,
+        interactive: true,
+      },
     });
   }
 
@@ -482,16 +577,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         logger.warn("Dropped remove-workspace for unknown key", { key: event.key });
         return;
       }
-      dispatchDetached({
-        type: INTENT_DELETE_WORKSPACE,
-        payload: {
-          workspacePath: found.workspace.path,
-          keepBranch: false,
-          force: false,
-          removeWorktree: true,
-          interactive: true,
-        },
-      });
+      dispatchInteractiveDelete(found.workspace.path);
+      return;
+    }
+    if (event.kind === "hover") {
+      hoverRegion = event.region === "sidebar" ? "sidebar" : null;
+      scheduleUpdate();
       return;
     }
     if (event.kind === "close-project") {
@@ -510,6 +601,181 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   };
 
   deps.ipcLayer.on(ApiIpcChannels.UI_EVENT, listener);
+
+  // ---------------------------------------------------------------------------
+  // Shortcut navigation (ported from the renderer's shortcuts store)
+  //
+  // The shortcut-module forwards every key press while shortcut mode is active
+  // as a shortcut:key intent → shortcut:key-pressed event. The presenter runs
+  // navigation over the SAME ordered rows it renders (currentRows()), and
+  // dispatches the existing intents directly with focus:false (so shortcut mode
+  // stays active across keyboard navigation).
+  // ---------------------------------------------------------------------------
+
+  /** Wrap an index into [0, length). */
+  function wrapIndex(index: number, length: number): number {
+    return ((index % length) + length) % length;
+  }
+
+  /** Switch to a workspace by its real path (placeholders are skipped upstream). */
+  function navigateSwitch(workspacePath: string): void {
+    dispatchDetached({
+      type: INTENT_SWITCH_WORKSPACE,
+      payload: { workspacePath, focus: false },
+    });
+  }
+
+  /**
+   * Up/down navigation. Wraps at boundaries; when nothing is active (creation
+   * panel) Up → last and Down → first. Targets the workspace's real path; a
+   * still-creating placeholder (null path) is not a valid target.
+   */
+  function handleNavigation(direction: -1 | 1): void {
+    const entries = currentRows();
+    if (entries.length === 0) return;
+    const currentIndex = entries.findIndex((e) => e.row.active);
+    const nextIndex =
+      currentIndex === -1
+        ? direction === 1
+          ? 0
+          : entries.length - 1
+        : wrapIndex(currentIndex + direction, entries.length);
+    if (nextIndex === currentIndex) return;
+    const target = entries[nextIndex];
+    if (!target || target.workspace.path === null) return;
+    navigateSwitch(target.workspace.path);
+  }
+
+  /**
+   * Find the next workspace index matching a status type in the given
+   * direction. Hibernated workspaces are always skipped — idle nav targets
+   * workspaces the user can immediately work in. Returns -1 if none.
+   */
+  function findNextByStatusType(
+    entries: readonly RowEntry[],
+    currentIndex: number,
+    direction: -1 | 1,
+    statusType: AgentStatus["type"]
+  ): number {
+    const count = entries.length;
+    const startIndex =
+      currentIndex === -1
+        ? direction === 1
+          ? 0
+          : count - 1
+        : wrapIndex(currentIndex + direction, count);
+    const iterations = currentIndex === -1 ? count : count - 1;
+    for (let i = 0; i < iterations; i++) {
+      const index = wrapIndex(startIndex + i * direction, count);
+      const entry = entries[index];
+      if (!entry) continue;
+      if (entry.row.hibernated) continue;
+      if (entry.row.agent.type === statusType) return index;
+    }
+    return -1;
+  }
+
+  /**
+   * Left/right navigation by status: prefer idle workspaces, fall back to busy
+   * only when the current workspace isn't already idle (or there is none).
+   */
+  function handleStatusNavigation(direction: -1 | 1): void {
+    const entries = currentRows();
+    if (entries.length === 0) return;
+    const currentIndex = entries.findIndex((e) => e.row.active);
+
+    let targetIndex = findNextByStatusType(entries, currentIndex, direction, "idle");
+    if (targetIndex === -1) {
+      const currentStatus = currentIndex === -1 ? undefined : entries[currentIndex]?.row.agent;
+      if (currentStatus?.type !== "idle") {
+        targetIndex = findNextByStatusType(entries, currentIndex, direction, "busy");
+      }
+    }
+    if (targetIndex === -1) return;
+    const target = entries[targetIndex];
+    if (!target || target.workspace.path === null) return;
+    navigateSwitch(target.workspace.path);
+  }
+
+  /** Jump to the Nth awake workspace (hibernated workspaces are unnumbered). */
+  function handleJump(key: JumpKey): void {
+    const index = jumpKeyToIndex(key);
+    const target = currentRows().filter((e) => !e.row.hibernated)[index];
+    if (!target || target.workspace.path === null) return;
+    navigateSwitch(target.workspace.path);
+  }
+
+  /** Toggle hibernation on the active workspace (h key). */
+  function handleHibernateToggle(): void {
+    if (activeKey === null) return;
+    const active = findByKey(activeKey);
+    if (!active || active.workspace.path === null) return;
+    if (active.workspace.hibernated) {
+      dispatchDetached({
+        type: INTENT_WAKE_WORKSPACE,
+        payload: { workspacePath: active.workspace.path, source: "ui-ipc" },
+      });
+    } else {
+      dispatchDetached({
+        type: INTENT_HIBERNATE_WORKSPACE,
+        payload: { workspacePath: active.workspace.path },
+      });
+    }
+  }
+
+  /**
+   * Enter / Delete dialog keys.
+   * - enter: deselect (switch to null) so the creation panel becomes the main
+   *   view — unless it is already showing. Mode auto-computes to hover.
+   * - delete: trigger the interactive remove flow for the active workspace
+   *   (the same path the remove-workspace ui:event uses), unless it is still
+   *   creating or already deleting.
+   */
+  function handleDialogKey(key: "enter" | "delete"): void {
+    if (key === "enter") {
+      if (activeKey === null) return; // creation panel already showing
+      dispatchDetached({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: null },
+      });
+      return;
+    }
+    if (activeKey === null) return;
+    const active = findByKey(activeKey);
+    if (!active || active.workspace.path === null) return;
+    const status = rowStatus(active.workspace);
+    if (status === "creating" || status === "deleting") return;
+    dispatchInteractiveDelete(active.workspace.path);
+  }
+
+  /** Run the navigation action for a normalized shortcut key. */
+  function runShortcutKey(key: string): void {
+    switch (key) {
+      case "up":
+        handleNavigation(-1);
+        break;
+      case "down":
+        handleNavigation(1);
+        break;
+      case "left":
+        handleStatusNavigation(-1);
+        break;
+      case "right":
+        handleStatusNavigation(1);
+        break;
+      case "enter":
+        handleDialogKey("enter");
+        break;
+      case "delete":
+        handleDialogKey("delete");
+        break;
+      case "h":
+        handleHibernateToggle();
+        break;
+      default:
+        if (/^[0-9]$/.test(key)) handleJump(key as JumpKey);
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Domain event subscriptions (main → view-model)
@@ -711,6 +977,20 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         scheduleUpdate();
       },
     },
+    [EVENT_SHORTCUT_ACTIVE_CHANGED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        shortcutActive = (event as ShortcutActiveChangedEvent).payload.active;
+        scheduleUpdate();
+      },
+    },
+    [EVENT_SHORTCUT_KEY_PRESSED]: {
+      handler: async (event: DomainEvent): Promise<void> => {
+        const { key } = (event as ShortcutKeyPressedEvent).payload;
+        // Only navigation runs in shortcut mode; the shortcut-module already
+        // handles Escape/Alt-release. Validate the key like the old IPC bridge.
+        if (isShortcutKey(key)) runShortcutKey(key);
+      },
+    },
   };
 
   /**
@@ -768,6 +1048,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
         stop: {
           handler: async (): Promise<void> => {
             deps.ipcLayer.removeListener(ApiIpcChannels.UI_EVENT, listener);
+            modalUnsubscribe();
             if (themeUnsubscribe) {
               themeUnsubscribe();
               themeUnsubscribe = null;

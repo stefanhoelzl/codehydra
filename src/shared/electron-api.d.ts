@@ -3,9 +3,6 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { UIModeChangedEvent } from "./ipc";
-import type { UIMode } from "./ipc";
-import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
 import type { NotificationUserEvent } from "./notification-types";
 import type { UiEvent } from "./ui-event";
@@ -58,7 +55,6 @@ export interface Api {
      * ignored for null).
      */
     switchWorkspace(workspacePath: string | null, focus?: boolean): Promise<void>;
-    setMode(mode: UIMode): Promise<void>;
   };
   lifecycle: {
     /**
@@ -88,21 +84,6 @@ export interface Api {
    * @returns Unsubscribe function
    */
   on<T>(event: string, callback: (event: T) => void): Unsubscribe;
-
-  /**
-   * Subscribe to UI mode change events.
-   * @param callback - Called when UI mode changes (workspace, shortcut, dialog)
-   * @returns Unsubscribe function to remove the listener
-   */
-  onModeChange(callback: (event: UIModeChangedEvent) => void): Unsubscribe;
-
-  /**
-   * Subscribe to shortcut key events from main process.
-   * Fired when a shortcut key is pressed while shortcut mode is active.
-   * @param callback - Called with the normalized shortcut key (e.g., "up", "down", "enter", "0"-"9")
-   * @returns Unsubscribe function to remove the listener
-   */
-  onShortcut(callback: (key: ShortcutKey) => void): Unsubscribe;
 
   /**
    * Subscribe to theme change events from main process.

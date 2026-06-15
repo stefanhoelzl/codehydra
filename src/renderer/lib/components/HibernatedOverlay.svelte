@@ -9,14 +9,15 @@
 -->
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import { handleHibernateToggle } from "$lib/stores/shortcuts.svelte";
 
   interface Props {
     /** Inline screenshot data URL from the snapshot (null = none/loading). */
     screenshot: string | null;
+    /** Wake the active (hibernated) workspace. */
+    onWake: () => void;
   }
 
-  let { screenshot }: Props = $props();
+  let { screenshot, onWake }: Props = $props();
 
   let imageBroken = $state(false);
 </script>
@@ -26,12 +27,7 @@
     <img class="screenshot" src={screenshot} alt="" onerror={() => (imageBroken = true)} />
   {/if}
   <div class="dim" aria-hidden="true"></div>
-  <button
-    class="indicator"
-    type="button"
-    aria-label="Wake workspace"
-    onclick={() => void handleHibernateToggle()}
-  >
+  <button class="indicator" type="button" aria-label="Wake workspace" onclick={() => onWake()}>
     <span class="icon-pause"><Icon name="debug-pause" size={48} /></span>
     <span class="icon-play"><Icon name="debug-start" size={48} /></span>
     <span class="label">Hibernated</span>

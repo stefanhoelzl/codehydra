@@ -18,7 +18,6 @@
  */
 
 import type { Logger } from "../platform/logging";
-import type { UIMode } from "../../shared/ipc";
 import { getErrorMessage } from "../../shared/error-utils";
 import type { AppBoundary } from "./app";
 import type { SessionBoundary } from "./session";
@@ -101,7 +100,6 @@ export class UiViewManager implements IViewManager {
   private readonly logger: Logger;
 
   private uiViewHandle: ViewHandle | null = null;
-  private mode: UIMode = "workspace";
   private destroying = false;
   private unsubscribeResize: Unsubscribe | null = null;
 
@@ -262,25 +260,16 @@ export class UiViewManager implements IViewManager {
   focus(): void {
     if (this.destroying || !this.uiViewHandle || !this.isWindowAlive()) return;
 
-    switch (this.mode) {
-      case "dialog":
-      case "hover":
-        // These modes manage their own focus via traps/handlers
-        break;
-      case "shortcut":
-        this.logger.debug("focus", { target: "ui", mode: this.mode });
-        this.viewLayer.focus(this.uiViewHandle);
-        break;
-      case "workspace":
-        this.logger.debug("focus", { target: "workspace", mode: this.mode });
-        this.viewLayer.focus(this.uiViewHandle);
-        // Ask the renderer to focus the active workspace iframe. Best-effort:
-        // before the WorkspaceFrames component mounts the hook is undefined.
-        this.viewLayer.executeJavaScript(this.uiViewHandle, FOCUS_ACTIVE_FRAME).catch(() => {
-          // UI may be mid-load
-        });
-        break;
-    }
+    // Mode is main-owned (the presenter) and no longer mirrored here. The only
+    // callers focus in a workspace context (app start, post-terminal focus):
+    // focus the UI webContents, then ask the renderer to focus the active
+    // workspace iframe. The renderer owns the dialog/hover/shortcut focus traps.
+    this.logger.debug("focus", { target: "workspace" });
+    this.viewLayer.focus(this.uiViewHandle);
+    // Best-effort: before the WorkspaceFrames component mounts the hook is undefined.
+    this.viewLayer.executeJavaScript(this.uiViewHandle, FOCUS_ACTIVE_FRAME).catch(() => {
+      // UI may be mid-load
+    });
   }
 
   reloadFrames(): void {
@@ -290,21 +279,6 @@ export class UiViewManager implements IViewManager {
     this.viewLayer.executeJavaScript(this.uiViewHandle, RELOAD_FRAMES).catch(() => {
       // UI may be mid-load
     });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Mode
-  // ---------------------------------------------------------------------------
-
-  setMode(newMode: UIMode): void {
-    const previousMode = this.mode;
-    if (newMode === previousMode) return;
-    this.mode = newMode;
-    this.logger.debug("Mode changed", { mode: newMode, previous: previousMode });
-  }
-
-  getMode(): UIMode {
-    return this.mode;
   }
 
   // ---------------------------------------------------------------------------

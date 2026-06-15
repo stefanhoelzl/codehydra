@@ -32,7 +32,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { uiMode } from "$lib/stores/ui-mode.svelte.js";
+  import type { UIMode } from "@shared/ipc";
 
   interface FrameHooks {
     __chFocusActiveFrame?: () => void;
@@ -54,9 +54,11 @@
     /** Frame currently shown (snapshot main.frameKey), null when main shows
      *  something else (panel, hibernated screen). */
     activeKey: string | null;
+    /** The single UI mode from the snapshot (main-owned). */
+    mode?: UIMode;
   }
 
-  let { frames, activeKey }: WorkspaceFramesProps = $props();
+  let { frames, activeKey, mode = "workspace" }: WorkspaceFramesProps = $props();
 
   const frameEls = new SvelteMap<string, HTMLIFrameElement>();
 
@@ -115,7 +117,7 @@
       const url = el.src;
       el.src = url;
     }
-    if (uiMode.value === "workspace") focusActiveFrame();
+    if (mode === "workspace") focusActiveFrame();
   }
 
   // Show flow: when the active workspace changes, force a paint-tree refresh
@@ -136,22 +138,25 @@
       el.style.transform = "";
     });
 
-    if (uiMode.value === "workspace") {
+    if (mode === "workspace") {
       focusFrame(el);
     }
   });
 
   // Mode routing: returning to workspace mode focuses the active frame
   // (replaces the old bringUIToBottom + focus); entering shortcut mode blurs
-  // it so arrow keys drive shortcut navigation instead of VS Code.
-  let previousMode = uiMode.value;
+  // it so arrow keys drive shortcut navigation instead of VS Code. The first
+  // effect run only records the initial mode (no action on mount).
+  let previousMode: UIMode | undefined = undefined;
   $effect(() => {
-    const mode = uiMode.value;
-    if (mode === previousMode) return;
-    previousMode = mode;
-    if (mode === "workspace") {
+    const current = mode;
+    const isFirstRun = previousMode === undefined;
+    if (current === previousMode) return;
+    previousMode = current;
+    if (isFirstRun) return;
+    if (current === "workspace") {
       focusActiveFrame();
-    } else if (mode === "shortcut") {
+    } else if (current === "shortcut") {
       const el = activeFrame();
       if (el && document.activeElement === el) {
         el.blur();
@@ -162,7 +167,7 @@
   onMount(() => {
     const hooks = window as FrameHooks;
     hooks.__chFocusActiveFrame = () => {
-      if (uiMode.value === "workspace") focusActiveFrame();
+      if (mode === "workspace") focusActiveFrame();
     };
     hooks.__chActiveFrameRect = () => {
       const el = activeFrame();

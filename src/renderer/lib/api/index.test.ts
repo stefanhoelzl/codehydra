@@ -37,13 +37,12 @@ describe("renderer API layer", () => {
     it("exports domain API namespaces delegating to window.api", async () => {
       const api = await import("$lib/api");
 
-      await api.ui.setMode("workspace");
+      await api.ui.switchWorkspace("/test/ws");
 
-      expect(mockApi.ui.setMode).toHaveBeenCalledWith("workspace");
+      expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/ws", undefined);
       expect(api.lifecycle).toBe(mockApi.lifecycle);
       expect(api.on).toBe(mockApi.on);
-      expect(api.onModeChange).toBe(mockApi.onModeChange);
-      expect(api.onShortcut).toBe(mockApi.onShortcut);
+      expect(api.onState).toBe(mockApi.onState);
     });
   });
 
@@ -75,10 +74,10 @@ describe("renderer API layer", () => {
       ]);
     });
 
-    it("does not emit events for request/response invokes", async () => {
+    it("does not emit events for plain invokes (lifecycle.quit)", async () => {
       const api = await import("$lib/api");
 
-      await api.ui.setMode("workspace");
+      await api.lifecycle.quit();
 
       expect(mockApi.emitEvent).not.toHaveBeenCalled();
     });

@@ -8,8 +8,10 @@
  * The sidebar uses one DOM tree for both the expanded and collapsed state:
  * every row is [label cell | icon cell at the right edge] and the collapsed
  * sidebar shows only the icon column (via CSS keyed on the `.expanded`
- * class). Expansion is derived from the real ui-mode store, so these tests
- * use the actual store (reset between tests) instead of mocking it.
+ * class). Expansion is now driven by the `mode` prop from the UiState snapshot
+ * (main-owned): mode !== "workspace" (or no workspaces) expands. Hover only
+ * emits a `hover` ui:event; main folds it into the snapshot mode. These tests
+ * therefore drive expansion via the `mode` prop and assert the emitted events.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -36,18 +38,16 @@ vi.mock("$lib/api", () => ({
 }));
 
 // Import after mock setup
-import { workspaces as apiWorkspaces } from "$lib/api";
+import { workspaces as apiWorkspaces, emitEvent } from "$lib/api";
 import Sidebar from "./Sidebar.svelte";
-import {
-  desiredMode,
-  setModeFromMain,
-  setDialogOpen,
-  reset as resetUiMode,
-} from "$lib/stores/ui-mode.svelte.js";
 
 const HOVER_DELAY_MS = 150;
 
-/** Deliberate hover: cursor deep in the gutter, sustained past the open delay. */
+/**
+ * Deliberate hover: cursor deep in the gutter, sustained past the open delay.
+ * Drives the hover arming logic (which emits the `hover` ui:event). Note this
+ * no longer expands the sidebar on its own — expansion follows the `mode` prop.
+ */
 async function hoverExpand(sidebar: Element): Promise<void> {
   await fireEvent.mouseEnter(sidebar);
   await fireEvent.mouseMove(sidebar, { clientX: 8 });
@@ -94,12 +94,10 @@ describe("Sidebar component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    resetUiMode();
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    resetUiMode();
     document.body.innerHTML = "";
   });
 
@@ -626,58 +624,76 @@ describe("Sidebar component", () => {
       return { ...defaultProps, projects: [project] };
     };
 
-    it("expands after deliberate hover (trigger depth + open delay)", async () => {
+    /** Hover ui:events emitted by the component, in order. */
+    function hoverEvents(): Array<{ kind: string; region: string | null }> {
+      return vi
+        .mocked(emitEvent)
+        .mock.calls.map(([e]) => e as { kind: string; region: string | null })
+        .filter((e) => e.kind === "hover");
+    }
+
+    it("is expanded for any non-workspace mode (main-owned)", () => {
+      for (const mode of ["hover", "shortcut", "dialog"] as const) {
+        const { container, unmount } = render(Sidebar, {
+          props: { ...propsWithWorkspaces(), mode },
+        });
+        expect(container.querySelector(".sidebar")).toHaveClass("expanded");
+        unmount();
+      }
+    });
+
+    it("is collapsed in workspace mode when there are workspaces", () => {
+      const { container } = render(Sidebar, {
+        props: { ...propsWithWorkspaces(), mode: "workspace" },
+      });
+      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
+    });
+
+    it("emits a sidebar hover event after deliberate hover (trigger depth + open delay)", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
-      expect(sidebar).not.toHaveClass("expanded");
-
       await hoverExpand(sidebar!);
 
-      expect(sidebar).toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
     });
 
-    it("expands when the cursor enters and rests without further movement (edge slam)", async () => {
-      // A cursor slammed against the window edge can come to rest in the
-      // same frame it enters: mouseenter fires, but no mousemove follows.
+    it("emits a hover event when the cursor enters and rests without movement (edge slam)", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       await fireEvent.mouseEnter(sidebar!, { clientX: 0 });
-
       vi.advanceTimersByTime(HOVER_DELAY_MS);
       flushSync();
 
-      expect(sidebar).toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
     });
 
-    it("does not expand before the open delay elapses", async () => {
+    it("does not emit before the open delay elapses", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       await fireEvent.mouseEnter(sidebar!);
       await fireEvent.mouseMove(sidebar!, { clientX: 8 });
-
       vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
       flushSync();
 
-      expect(sidebar).not.toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([]);
     });
 
-    it("does not expand while the cursor stays in the outer quarter of the gutter", async () => {
+    it("does not emit while the cursor stays in the outer quarter of the gutter", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       await fireEvent.mouseEnter(sidebar!);
       await fireEvent.mouseMove(sidebar!, { clientX: 18 });
-
       vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
       flushSync();
 
-      expect(sidebar).not.toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([]);
     });
 
-    it("moving back out of the trigger depth cancels the pending expansion", async () => {
+    it("moving back out of the trigger depth cancels the pending hover", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
@@ -685,14 +701,13 @@ describe("Sidebar component", () => {
       await fireEvent.mouseMove(sidebar!, { clientX: 8 });
       vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
       await fireEvent.mouseMove(sidebar!, { clientX: 18 });
-
       vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
       flushSync();
 
-      expect(sidebar).not.toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([]);
     });
 
-    it("leaving before the open delay elapses cancels the pending expansion", async () => {
+    it("leaving before the open delay elapses cancels the pending hover", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
@@ -700,50 +715,42 @@ describe("Sidebar component", () => {
       await fireEvent.mouseMove(sidebar!, { clientX: 8 });
       vi.advanceTimersByTime(HOVER_DELAY_MS - 50);
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-
       vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
       flushSync();
 
-      expect(sidebar).not.toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([]);
     });
 
-    it("collapses on mouseleave after the debounce", async () => {
+    it("emits hover region null on mouseleave after the debounce", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
-
       await hoverExpand(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
 
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      // Should still be expanded immediately (debounce hasn't elapsed)
-      expect(sidebar).toHaveClass("expanded");
-
       vi.advanceTimersByTime(HOVER_DELAY_MS);
       flushSync();
 
-      expect(sidebar).not.toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([
+        { kind: "hover", region: "sidebar" },
+        { kind: "hover", region: null },
+      ]);
     });
 
-    it("expands after a slam to the left edge (shallow enter, then leave reported outside)", async () => {
-      // Observed event stream of a fast slam: one shallow enter (x=18), then
-      // a leave at x=-1 as the OS pins the cursor against the window edge.
-      // No further events arrive while the cursor rests there.
+    it("emits hover on a slam to the left edge (shallow enter, then leave reported outside)", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       await fireEvent.mouseEnter(sidebar!, { clientX: 18 });
       await fireEvent.mouseLeave(sidebar!, { clientX: -1 });
-
       vi.advanceTimersByTime(HOVER_DELAY_MS);
       flushSync();
 
-      expect(sidebar).toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
     });
 
-    it("collapses on left exit when the window is not at the screen edge (windowed mode)", async () => {
-      // With space left of the window the cursor genuinely leaves; the pin
-      // interpretation only applies when the window sits at the screen edge.
+    it("emits hover null on left exit when the window is not at the screen edge (windowed mode)", async () => {
       const original = Object.getOwnPropertyDescriptor(window, "screenX");
       Object.defineProperty(window, "screenX", { value: 120, configurable: true });
       try {
@@ -751,13 +758,15 @@ describe("Sidebar component", () => {
 
         const sidebar = container.querySelector(".sidebar");
         await hoverExpand(sidebar!);
-        expect(sidebar).toHaveClass("expanded");
 
         await fireEvent.mouseLeave(sidebar!, { clientX: -1 });
         vi.advanceTimersByTime(HOVER_DELAY_MS);
         flushSync();
 
-        expect(sidebar).not.toHaveClass("expanded");
+        expect(hoverEvents()).toEqual([
+          { kind: "hover", region: "sidebar" },
+          { kind: "hover", region: null },
+        ]);
       } finally {
         if (original) {
           Object.defineProperty(window, "screenX", original);
@@ -767,160 +776,74 @@ describe("Sidebar component", () => {
       }
     });
 
-    it("stays expanded while the cursor is pinned at the left window edge", async () => {
-      // A leave through the left boundary is a pin (deepest hover), not a
-      // leave — the sidebar must not collapse underneath the pinned cursor.
+    it("stays armed (no null event) while the cursor is pinned at the left window edge", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
       await hoverExpand(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
 
       await fireEvent.mouseLeave(sidebar!, { clientX: 0 });
       vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
       flushSync();
 
-      expect(sidebar).toHaveClass("expanded");
+      // Pin = deepest hover; no collapse event is emitted.
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
     });
 
-    it("stays expanded when uiMode is 'shortcut'", () => {
-      setModeFromMain("shortcut");
-      flushSync();
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      expect(sidebar).toHaveClass("expanded");
-    });
-
-    it("does not latch hover while shortcut mode forces expansion", async () => {
-      // Scenario: Alt+X is pressed, sidebar expands into a parked cursor and
-      // mousemove events fire. When Alt is released the sidebar must collapse
-      // because hover was never latched.
-      setModeFromMain("shortcut");
-      flushSync();
-
+    it("does not arm hover (no event) while a non-workspace mode forces expansion", async () => {
       const { container } = render(Sidebar, {
-        props: { ...propsWithWorkspaces(), shortcutModeActive: true },
+        props: { ...propsWithWorkspaces(), mode: "shortcut", shortcutModeActive: true },
       });
 
       const sidebar = container.querySelector(".sidebar");
       expect(sidebar).toHaveClass("expanded");
 
-      // Cursor sits deep in the sidebar area during shortcut mode
+      // Cursor sits deep in the sidebar during shortcut mode: hover is not
+      // eligible, so no hover ui:event is emitted (no latch).
       await fireEvent.mouseEnter(sidebar!);
       await fireEvent.mouseMove(sidebar!, { clientX: 8 });
       vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
       flushSync();
 
-      // Shortcut mode exits — sidebar collapses (hover was not latched)
-      setModeFromMain("workspace");
-      flushSync();
-
-      expect(sidebar).not.toHaveClass("expanded");
+      expect(hoverEvents()).toEqual([]);
     });
 
-    it("does not latch hover while a dialog forces expansion", async () => {
-      setDialogOpen(true);
-      flushSync();
-
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-      const sidebar = container.querySelector(".sidebar");
-      expect(sidebar).toHaveClass("expanded");
-
-      await fireEvent.mouseEnter(sidebar!);
-      await fireEvent.mouseMove(sidebar!, { clientX: 8 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS * 3);
-      flushSync();
-
-      setDialogOpen(false);
-      flushSync();
-
-      expect(sidebar).not.toHaveClass("expanded");
-    });
-
-    it("stays expanded when a dialog is open", () => {
-      setDialogOpen(true);
-      flushSync();
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-      expect(sidebar).toHaveClass("expanded");
-    });
-
-    it("stays expanded when there are no workspaces", () => {
+    it("is expanded when there are no workspaces", () => {
       const { container } = render(Sidebar, { props: defaultProps });
 
       const sidebar = container.querySelector(".sidebar");
       expect(sidebar).toHaveClass("expanded");
     });
 
-    it("rapid hover in/out settles to correct final state", async () => {
+    it("cancels the collapse event when mouse re-enters during debounce", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
-
       await hoverExpand(sidebar!);
-      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      await fireEvent.mouseEnter(sidebar!);
-      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      await fireEvent.mouseEnter(sidebar!);
-      flushSync();
-
-      // Should be expanded because last action was re-entering
-      expect(sidebar).toHaveClass("expanded");
-
-      // Leave and wait
-      await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-      vi.advanceTimersByTime(HOVER_DELAY_MS);
-      flushSync();
-
-      expect(sidebar).not.toHaveClass("expanded");
-    });
-
-    it("cancels collapse when mouse re-enters during debounce", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-
-      const sidebar = container.querySelector(".sidebar");
-
-      await hoverExpand(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
 
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-
-      // Wait partial debounce
       vi.advanceTimersByTime(100);
-
-      // Re-enter before debounce completes
       await fireEvent.mouseEnter(sidebar!);
-
-      // Wait full debounce time
       vi.advanceTimersByTime(HOVER_DELAY_MS);
       flushSync();
 
-      // Should still be expanded because re-enter cancelled collapse
-      expect(sidebar).toHaveClass("expanded");
+      // Re-enter cancelled the collapse: no null event followed the open one.
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
     });
 
-    it("clears pending timeouts on unmount", async () => {
+    it("clears pending timeouts on unmount (no late collapse event)", async () => {
       const { container, unmount } = render(Sidebar, { props: propsWithWorkspaces() });
 
       const sidebar = container.querySelector(".sidebar");
-
       await hoverExpand(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
 
-      // Start collapse (this schedules a timeout)
       await fireEvent.mouseLeave(sidebar!, { clientX: 100 });
-
-      // Unmount before timeout fires
       unmount();
-
       vi.advanceTimersByTime(200);
       flushSync();
 
-      // The collapse timeout was cleared: the store input set by hover is
-      // untouched after unmount.
-      expect(desiredMode.value).toBe("hover");
+      // The collapse timeout was cleared on unmount: no null event fired.
+      expect(hoverEvents()).toEqual([{ kind: "hover", region: "sidebar" }]);
     });
 
     it("respects prefers-reduced-motion media query (CSS verification)", () => {
@@ -942,38 +865,37 @@ describe("Sidebar component", () => {
       const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")], { name: "test" });
       return { ...defaultProps, projects: [project] };
     };
+    // Expansion is mode-driven now; render with mode "hover" to expand.
+    const expandedProps = () => ({ ...propsWithWorkspaces(), mode: "hover" as const });
 
-    it("renders one DOM tree: status cell, workspace button, and remove button exist in both modes", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-      const sidebar = container.querySelector(".sidebar");
+    it("renders one DOM tree: status cell, workspace button, and remove button exist in both modes", () => {
+      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
+      expect(collapsed.container.querySelector(".sidebar")).not.toHaveClass("expanded");
+      expect(collapsed.container.querySelector(".status-cell")).toBeInTheDocument();
+      expect(collapsed.container.querySelector(".workspace-btn")).toBeInTheDocument();
+      expect(collapsed.container.querySelector(".remove-btn")).toBeInTheDocument();
+      collapsed.unmount();
 
-      // Collapsed
-      expect(sidebar).not.toHaveClass("expanded");
-      expect(container.querySelector(".status-cell")).toBeInTheDocument();
-      expect(container.querySelector(".workspace-btn")).toBeInTheDocument();
-      expect(container.querySelector(".remove-btn")).toBeInTheDocument();
-
-      // Expanded — same elements, no markup swap
-      await hoverExpand(sidebar!);
-      expect(sidebar).toHaveClass("expanded");
-      expect(container.querySelector(".status-cell")).toBeInTheDocument();
-      expect(container.querySelector(".workspace-btn")).toBeInTheDocument();
-      expect(container.querySelector(".remove-btn")).toBeInTheDocument();
+      const expanded = render(Sidebar, { props: expandedProps() });
+      expect(expanded.container.querySelector(".sidebar")).toHaveClass("expanded");
+      expect(expanded.container.querySelector(".status-cell")).toBeInTheDocument();
+      expect(expanded.container.querySelector(".workspace-btn")).toBeInTheDocument();
+      expect(expanded.container.querySelector(".remove-btn")).toBeInTheDocument();
     });
 
-    it("status cell has descriptive aria-label in both modes", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-      const sidebar = container.querySelector(".sidebar");
-
-      const assertLabel = (): void => {
+    it("status cell has descriptive aria-label in both modes", () => {
+      const assertLabel = (container: HTMLElement): void => {
         const statusCell = container.querySelector(".status-cell");
         expect(statusCell).toHaveAttribute("aria-label");
         expect(statusCell!.getAttribute("aria-label")).toMatch(/ws1 in test/);
       };
 
-      assertLabel();
-      await hoverExpand(sidebar!);
-      assertLabel();
+      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
+      assertLabel(collapsed.container);
+      collapsed.unmount();
+
+      const expanded = render(Sidebar, { props: expandedProps() });
+      assertLabel(expanded.container);
     });
 
     it("workspace label and remove button are in a label cell (hidden when collapsed via CSS)", () => {
@@ -985,29 +907,27 @@ describe("Sidebar component", () => {
       expect(labelCell!.querySelector(".remove-btn")).toBeInTheDocument();
     });
 
-    it("project header is a label cell and has no inert attribute", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-      const sidebar = container.querySelector(".sidebar");
-
-      const header = container.querySelector(".project-header");
+    it("project header is a label cell and has no inert attribute", () => {
+      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
+      const header = collapsed.container.querySelector(".project-header");
       expect(header).toHaveClass("ch-label-cell");
       expect(header).not.toHaveAttribute("inert");
+      collapsed.unmount();
 
-      await hoverExpand(sidebar!);
-      expect(header).not.toHaveAttribute("inert");
+      const expanded = render(Sidebar, { props: expandedProps() });
+      expect(expanded.container.querySelector(".project-header")).not.toHaveAttribute("inert");
     });
 
-    it("h2 heading exists in both modes inside a label cell", async () => {
-      const { container } = render(Sidebar, { props: propsWithWorkspaces() });
-      const sidebar = container.querySelector(".sidebar");
-
-      expect(sidebar).not.toHaveClass("expanded");
-      const heading = container.querySelector(".sidebar-header h2");
+    it("h2 heading exists in both modes inside a label cell", () => {
+      const collapsed = render(Sidebar, { props: propsWithWorkspaces() });
+      expect(collapsed.container.querySelector(".sidebar")).not.toHaveClass("expanded");
+      const heading = collapsed.container.querySelector(".sidebar-header h2");
       expect(heading).toBeInTheDocument();
       expect(heading!.closest(".ch-label-cell")).not.toBeNull();
+      collapsed.unmount();
 
-      await hoverExpand(sidebar!);
-      expect(container.querySelector(".sidebar-header h2")).toBeInTheDocument();
+      const expanded = render(Sidebar, { props: expandedProps() });
+      expect(expanded.container.querySelector(".sidebar-header h2")).toBeInTheDocument();
     });
 
     it("vscode-divider has no inert attribute", () => {

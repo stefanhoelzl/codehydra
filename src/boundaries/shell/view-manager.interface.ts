@@ -8,7 +8,6 @@
  * derived from the workspace stores.
  */
 
-import type { UIMode } from "../../shared/ipc";
 import type { ViewHandle } from "./types";
 import type { DevtoolsTarget, KeyboardTarget } from "./view-manager-types";
 
@@ -82,23 +81,12 @@ export interface IViewManager {
   sendToUI(channel: string, ...args: unknown[]): void;
 
   /**
-   * Routes focus according to the current mode:
-   * - "dialog" / "hover": no-op (the renderer's focus traps own focus)
-   * - "shortcut": focus the UI webContents (Alt+X key handling)
-   * - "workspace": focus the UI webContents, then ask the renderer to focus
-   *   the active workspace iframe
+   * Focuses the UI webContents, then asks the renderer to focus the active
+   * workspace iframe. Mode is main-owned (the presenter) and no longer
+   * mirrored here; the renderer owns the dialog/hover/shortcut focus traps.
+   * Callers focus only in a workspace context (app start, post-terminal focus).
    */
   focus(): void;
-
-  /**
-   * Sets the UI mode. Pure state. No view operations are tied to mode
-   * anymore — the renderer derives everything visual from the mirrored
-   * mode state.
-   */
-  setMode(mode: UIMode): void;
-
-  /** Returns the current UI mode. */
-  getMode(): UIMode;
 
   /**
    * Asks the renderer to reload every mounted workspace iframe (re-assigning

@@ -4,29 +4,27 @@
   Root application component that acts as a mode router between initializing and ready modes.
 
   Component Ownership Model:
-  - App.svelte: Mode routing, global keyboard events (shortcuts)
+  - App.svelte: Mode routing (initializing/ready), aria-live announcements
   - MainView.svelte: Normal app state, IPC initialization, domain events (project/workspace/agent)
 
   App.svelte owns:
   - <main> element with dynamic aria-label based on mode
-  - Shortcut event subscriptions (global - work in both modes)
-  - aria-live announcements for mode transitions
+  - aria-live announcements for snapshot mode transitions (shortcut mode) and
+    application-ready
   - DialogHost for declarative dialogs from main process
+
+  Keyboard shortcuts (Alt+X, navigation, Escape/blur exit) and UI mode are now
+  fully main-owned: the renderer reads mode from the UiState snapshot and never
+  handles shortcut keys.
 
   MainView.svelte owns:
   - IPC initialization (listProjects, getAllAgentStatuses)
   - Domain event subscriptions (project/workspace/agent changes)
-  - setMode("dialog") calls when dialogs open/close
   - Sidebar, dialogs, ShortcutOverlay rendering
 -->
 <script lang="ts">
   import * as api from "$lib/api";
-  import {
-    handleModeChange,
-    handleKeyDown,
-    handleWindowBlur,
-    handleShortcutKey,
-  } from "$lib/stores/shortcuts.svelte.js";
+  import { uiState } from "$lib/stores/ui-state.svelte.js";
   import { createLogger } from "$lib/logging";
   import MainView from "$lib/components/MainView.svelte";
   import DialogHost from "$lib/components/DialogHost.svelte";
@@ -48,37 +46,22 @@
   // Announcement message for screen readers (cleared after announcement)
   let announceMessage = $state<string>("");
 
-  // Subscribe to ui:mode-changed events from main process (unified mode system)
+  // Announce shortcut-mode entry for screen readers, watching the snapshot
+  // mode (main-owned). Fires on the transition into "shortcut".
+  let prevShortcut = false;
   $effect(() => {
-    const unsubModeChange = api.onModeChange((event) => {
-      handleModeChange(event);
-      // Log shortcut mode changes
-      if (event.mode === "shortcut" || event.previousMode === "shortcut") {
-        logger.debug("Shortcut mode", { enabled: event.mode === "shortcut" });
-      }
-      // Announce mode changes for screen readers
-      if (event.mode === "shortcut") {
+    const isShortcut = uiState.value?.mode === "shortcut";
+    if (isShortcut !== prevShortcut) {
+      logger.debug("Shortcut mode", { enabled: isShortcut });
+      if (isShortcut) {
         announceMessage = "Shortcut mode active. Use arrow keys to navigate.";
         // Clear after timeout so it doesn't repeat
         setTimeout(() => {
           announceMessage = "";
         }, ARIA_ANNOUNCEMENT_CLEAR_MS);
       }
-    });
-    return () => {
-      unsubModeChange();
-    };
-  });
-
-  // Subscribe to shortcut:key events from main process (Stage 2.5)
-  // Main process detects action keys and emits normalized ShortcutKey values
-  $effect(() => {
-    const unsubShortcut = api.onShortcut((key) => {
-      handleShortcutKey(key);
-    });
-    return () => {
-      unsubShortcut();
-    };
+    }
+    prevShortcut = isShortcut;
   });
 
   // Subscribe to lifecycle:show-main-view event from main process
@@ -116,8 +99,6 @@
     return appMode.type === "ready" ? "Application workspace" : "Application starting";
   }
 </script>
-
-<svelte:window onkeydowncapture={handleKeyDown} onblur={handleWindowBlur} />
 
 <!-- Screen reader announcements for mode transitions -->
 <div class="ch-visually-hidden" aria-live="polite" aria-atomic="true">
