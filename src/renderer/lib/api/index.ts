@@ -3,8 +3,8 @@
  * Re-exports window.api for mockability in tests.
  *
  * Setup is driven by the main process (app:setup intent).
- * Renderer subscribes to lifecycle events and responds to agent selection.
- * lifecycle.ready() signals readiness, lifecycle.quit() exits the app.
+ * The renderer signals readiness by emitting the `ui-connected` ui:event
+ * (see initialize-app); lifecycle.quit() exits the app.
  *
  * Transitional state of the write path: remove-workspace and close-project
  * are pure ui:events (emitted where the gesture happens; main owns their

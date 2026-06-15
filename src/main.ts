@@ -884,6 +884,7 @@ const presentationModule = createPresentationModule({
   pathProvider,
   dialogManager,
   dispatcher,
+  notificationManager,
 });
 
 const hibernationScreenshotModule = createHibernationScreenshotModule({

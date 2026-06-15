@@ -342,7 +342,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           requires: { codeServerPort: ANY_VALUE },
           handler: async (): Promise<void> => {
             // Send show-main-view to trigger renderer mount.
-            // The renderer will call lifecycle.ready() IPC when mounted,
+            // The renderer emits the `ui-connected` ui:event when mounted,
             // which dispatches app:ready to load initial projects.
             if (!viewManager.isUIAvailable()) {
               logger.warn("UI not available for mount");

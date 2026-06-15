@@ -61,8 +61,6 @@ import { isShortcutKey } from "../shared/shortcuts";
 import type { WorkspaceStatus, Workspace } from "../shared/api/types";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { AppShutdownIntent } from "../intents/app-shutdown";
-import { INTENT_APP_READY } from "../intents/app-ready";
-import type { AppReadyIntent } from "../intents/app-ready";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import { Path } from "../utils/path/path";
 import {
@@ -320,15 +318,8 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
   // Register IPC handlers directly on ipcLayer
   // ---------------------------------------------------------------------------
 
-  registerIpc(ApiIpcChannels.LIFECYCLE_READY, async () => {
-    // The renderer calls lifecycle.ready() once MainView (and its
-    // NotificationHost) is mounted — buffered notifications can now render.
-    deps.notificationManager?.markUIReady();
-    return await dispatcher.dispatch({
-      type: INTENT_APP_READY,
-      payload: {},
-    } as AppReadyIntent);
-  });
+  // Startup readiness + markUIReady moved to the presenter's `ui-connected`
+  // ui:event handler (the renderer emits it instead of invoking ready()).
 
   registerIpc(ApiIpcChannels.LIFECYCLE_QUIT, async () => {
     logger.debug("Quit requested");

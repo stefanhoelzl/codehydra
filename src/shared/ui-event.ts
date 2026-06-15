@@ -3,13 +3,16 @@
  * api:ui:event channel (planning/UI_STATE_ARCHITECTURE.md).
  *
  * `log` is the renderer's logging channel (replacement for the former
- * api:log:* channels). `remove-workspace` and `close-project` are
- * load-bearing requests: the presenter resolves their identity against its
- * model and dispatches the matching intent with `interactive: true` (the
- * confirmation dialog runs main-side). Identity fields are presenter-minted
- * and merely echoed back from the UiState snapshot — the renderer never
- * generates identifiers itself. The remaining events are observational; they
- * become load-bearing in the write-path phase.
+ * api:log:* channels). `ui-connected` is the startup handshake: the renderer
+ * emits it once after subscribing to ui:state, and the presenter responds by
+ * flushing buffered notifications and dispatching app:ready (which loads
+ * projects → emits app:started → opens the snapshot stream). `remove-workspace`
+ * and `close-project` are load-bearing requests: the presenter resolves their
+ * identity against its model and dispatches the matching intent with
+ * `interactive: true` (the confirmation dialog runs main-side). Identity fields
+ * are presenter-minted and merely echoed back from the UiState snapshot — the
+ * renderer never generates identifiers itself. The remaining events are
+ * observational; they become load-bearing in the write-path phase.
  *
  * NOTE: This file must be browser-compatible (no Node.js imports).
  */
@@ -22,6 +25,8 @@ const logContextSchema = z.record(
 );
 
 export const uiEventSchema = z.discriminatedUnion("kind", [
+  // Startup handshake: emitted once after the renderer subscribes to ui:state.
+  z.object({ kind: z.literal("ui-connected") }),
   z.object({ kind: z.literal("switch-workspace") }),
   z.object({ kind: z.literal("wake-workspace") }),
   z.object({ kind: z.literal("hibernate-workspace") }),

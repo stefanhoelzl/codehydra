@@ -1,8 +1,9 @@
 /**
  * AppReadyOperation - Loads initial projects after the renderer signals ready.
  *
- * Dispatched when the renderer calls lifecycle.ready() via IPC. This ensures
- * event subscriptions are in place before project:open dispatches fire.
+ * Dispatched when the renderer emits the `ui-connected` ui:event (handled by
+ * the presenter). This ensures the renderer's ui:state subscription is in
+ * place before project:open dispatches fire.
  *
  * Runs one hook point:
  * 1. "load-projects" - Collect saved project paths from modules
@@ -31,7 +32,8 @@ export interface AppReadyPayload {
 }
 
 /**
- * Bootstrap data the renderer needs immediately after lifecycle.ready().
+ * Result of app:ready. No longer sent to the renderer (the ui-connected
+ * handshake is fire-and-forget); retained as the operation's typed result.
  */
 export interface AppReadyResult {
   /** Global default agent (config.agent). Null when not yet chosen (first-run pending). */

@@ -3,7 +3,7 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { UIModeChangedEvent, LifecycleAgentType, AgentInfo } from "./ipc";
+import type { UIModeChangedEvent } from "./ipc";
 import type { UIMode } from "./ipc";
 import type { ShortcutKey } from "./shortcuts";
 import type { DialogUserEvent } from "./dialog-types";
@@ -62,15 +62,6 @@ export interface Api {
   };
   lifecycle: {
     /**
-     * Signal that the renderer is ready to receive state.
-     * The main process emits domain events for all current state before resolving.
-     * Returns app-wide bootstrap data (default agent + available agents).
-     */
-    ready(): Promise<{
-      defaultAgent: LifecycleAgentType | null;
-      availableAgents: readonly AgentInfo[];
-    }>;
-    /**
      * Quit the application.
      */
     quit(): Promise<void>;
@@ -83,8 +74,8 @@ export interface Api {
   /**
    * Subscribe to UI state snapshots (api:ui:state channel).
    * The presenter pushes the full render-ready UiState on every change.
-   * INVARIANT: subscribe before calling lifecycle.ready() — the first push
-   * is emitted by the app:ready operation that ready() dispatches, so a
+   * INVARIANT: subscribe before emitting the `ui-connected` event — the first
+   * push is emitted by the app:ready operation that ui-connected triggers, so a
    * listener registered later misses it (there is no replay).
    * @param callback - Called with each pushed snapshot
    * @returns Unsubscribe function to remove the listener

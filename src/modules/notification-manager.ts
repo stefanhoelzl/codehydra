@@ -36,8 +36,8 @@ export interface NotificationHandle {
  * Commands are buffered until markUIReady() is called: the renderer's
  * NotificationHost only subscribes to notification commands once MainView
  * mounts, so anything sent earlier (e.g. from app:start hooks) would be
- * silently dropped. The buffer is flushed in order when the renderer
- * dispatches lifecycle.ready().
+ * silently dropped. The buffer is flushed in order when the renderer emits
+ * the `ui-connected` ui:event (the presenter calls markUIReady()).
  */
 export class NotificationManager {
   private readonly viewManager: IViewManager;
@@ -73,7 +73,7 @@ export class NotificationManager {
 
   /**
    * Flush buffered commands and switch to direct delivery. Idempotent.
-   * Called once the renderer's NotificationHost is mounted (lifecycle.ready()).
+   * Called once the renderer's NotificationHost is mounted (on `ui-connected`).
    * Notifications that were already closed while buffered are skipped entirely.
    */
   markUIReady(): void {
