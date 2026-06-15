@@ -47,8 +47,8 @@ describe("preload API", () => {
   // ============================================================================
   // NOTE: Legacy setup commands (setupReady, setupRetry, setupQuit) and event
   // subscriptions (onSetupProgress, onSetupComplete, onSetupError) have been
-  // removed. Setup is now handled via the v2 lifecycle API (lifecycle.getState,
-  // lifecycle.setup, lifecycle.quit) and on("setup:progress", ...) events.
+  // removed. Setup is driven by the main process and the renderer answers via
+  // ui:events (agent-selected / setup-retry / setup-quit).
   // ============================================================================
 
   // ============================================================================
@@ -56,13 +56,8 @@ describe("preload API", () => {
   // ============================================================================
 
   describe("flat API namespaces", () => {
-    // Renderer→main gestures (open/switch/wake/hibernate) are ui:events now,
-    // not invoke namespaces. Only lifecycle (quit) remains a command invoke.
-    it("exposes lifecycle namespace on api", () => {
-      expect(exposedApi.lifecycle).toBeDefined();
-      expect(typeof exposedApi.lifecycle).toBe("object");
-    });
-
+    // Renderer→main gestures (open/switch/wake/hibernate/quit) are ui:events
+    // now, not invoke namespaces — there are no command invokes.
     it("exposes on function on api", () => {
       expect(exposedApi.on).toBeDefined();
       expect(typeof exposedApi.on).toBe("function");
@@ -72,19 +67,6 @@ describe("preload API", () => {
       expect(exposedApi.projects).toBeUndefined();
       expect(exposedApi.workspaces).toBeUndefined();
       expect(exposedApi.ui).toBeUndefined();
-    });
-  });
-
-  describe("lifecycle", () => {
-    // Note: lifecycle.getState and lifecycle.setup tests removed - migrated to app:setup intent
-
-    it("lifecycle.quit calls api:lifecycle:quit", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue(undefined);
-
-      const lifecycle = exposedApi.lifecycle as { quit: () => Promise<void> };
-      await lifecycle.quit();
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:lifecycle:quit");
     });
   });
 

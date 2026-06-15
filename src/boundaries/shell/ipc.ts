@@ -1,25 +1,19 @@
 /**
- * IpcBoundary - Abstraction over Electron IPC handler registration.
+ * IpcBoundary - Abstraction over Electron IPC event listener registration.
  *
- * Provides an injectable interface for IPC handler management, enabling:
- * - Unit testing of API registries with behavioral mocks
+ * Provides an injectable interface for IPC event management, enabling:
+ * - Integration testing of modules with behavioral mocks
  * - Boundary testing of DefaultIpcBoundary against real ipcMain
- * - Consistent error handling via PlatformError
  *
- * Supports two patterns:
- * - handle()/removeHandler(): Request-response (ipcMain.handle)
+ * Supports the fire-and-forget pattern only:
  * - on()/removeListener(): Fire-and-forget events (ipcMain.on)
  *
- * Sending messages to renderer is done via ViewBoundary's webContents access.
+ * Renderer→main gestures flow through the `api:ui:event` channel and
+ * main→renderer state through `api:ui:state` (sent via ViewBoundary's
+ * webContents access); there are no request/response invoke handlers.
  */
 
-import type { IpcMainInvokeEvent, IpcMainEvent } from "electron";
-import { PlatformError } from "../../shared/errors/platform-errors";
-
-/**
- * Handler function type for IPC invoke handlers (request-response).
- */
-export type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+import type { IpcMainEvent } from "electron";
 
 /**
  * Handler function type for IPC event listeners (fire-and-forget).
@@ -27,33 +21,12 @@ export type IpcHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => unkn
 export type IpcEventHandler = (event: IpcMainEvent, ...args: unknown[]) => void;
 
 /**
- * Abstraction over IPC handler registration.
- *
- * Methods throw PlatformError on failures:
- * - `IPC_HANDLER_EXISTS` when registering a handler for an already-registered channel
- * - `IPC_HANDLER_NOT_FOUND` when removing a handler that doesn't exist
+ * Abstraction over IPC event listener registration.
  */
 export interface IpcBoundary {
   /**
-   * Register a handler for an IPC invoke channel (request-response).
-   *
-   * @param channel - The IPC channel name
-   * @param handler - The handler function
-   * @throws PlatformError with code IPC_HANDLER_EXISTS if handler already registered
-   */
-  handle(channel: string, handler: IpcHandler): void;
-
-  /**
-   * Remove a handler for an IPC invoke channel.
-   *
-   * @param channel - The IPC channel name
-   * @throws PlatformError with code IPC_HANDLER_NOT_FOUND if no handler registered
-   */
-  removeHandler(channel: string): void;
-
-  /**
    * Register a listener for a fire-and-forget IPC event from the renderer.
-   * Unlike handle(), multiple listeners can be registered for the same channel.
+   * Multiple listeners can be registered for the same channel.
    *
    * @param channel - The IPC channel name
    * @param listener - The event handler function
@@ -77,37 +50,8 @@ import { ipcMain } from "electron";
 
 /**
  * Default implementation of IpcBoundary using Electron's ipcMain.
- *
- * Tracks registered channels to detect duplicate registrations
- * (which ipcMain silently ignores) and provide better error messages.
  */
 export class DefaultIpcBoundary implements IpcBoundary {
-  private readonly registeredChannels = new Set<string>();
-
-  handle(channel: string, handler: IpcHandler): void {
-    if (this.registeredChannels.has(channel)) {
-      throw new PlatformError(
-        "IPC_HANDLER_EXISTS",
-        `Handler already exists for channel: ${channel}`
-      );
-    }
-
-    ipcMain.handle(channel, handler);
-    this.registeredChannels.add(channel);
-  }
-
-  removeHandler(channel: string): void {
-    if (!this.registeredChannels.has(channel)) {
-      throw new PlatformError(
-        "IPC_HANDLER_NOT_FOUND",
-        `No handler registered for channel: ${channel}`
-      );
-    }
-
-    ipcMain.removeHandler(channel);
-    this.registeredChannels.delete(channel);
-  }
-
   on(channel: string, listener: IpcEventHandler): void {
     ipcMain.on(channel, listener);
   }

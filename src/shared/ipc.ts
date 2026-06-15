@@ -69,11 +69,9 @@ export type UIMode = "workspace" | "dialog" | "shortcut" | "hover";
  * All channels use the api: prefix convention.
  */
 export const ApiIpcChannels = {
-  // Renderer→main gestures (open/close/switch/wake/hibernate/remove) are NOT
-  // invokes: they flow through the fire-and-forget ui:event union (UI_EVENT),
+  // Renderer→main gestures (open/close/switch/wake/hibernate/remove/quit) are
+  // NOT invokes: they flow through the fire-and-forget ui:event union (UI_EVENT),
   // and main owns identity resolution, confirmation dialogs, and dispatch.
-  // Lifecycle commands
-  LIFECYCLE_QUIT: "api:lifecycle:quit",
   // Dialog framework (main ↔ renderer)
   DIALOG_COMMAND: "api:dialog:command",
   DIALOG_EVENT: "api:dialog:event",

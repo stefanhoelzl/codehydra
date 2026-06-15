@@ -61,20 +61,11 @@ export function makeUiState(
 /**
  * Creates a mock API object with all functions mocked.
  *
- * Setup operations use lifecycle API:
- * - lifecycle.getState() returns { state: "setup" | "loading" | "agent-selection", agent: ConfigAgentType | null }
- * - lifecycle.setup() runs setup and returns success/failure (does NOT start services)
- * - lifecycle.startServices() starts services and returns success/failure
- * - lifecycle.setAgent() saves agent selection to config
- * - lifecycle.quit() quits the app
+ * All renderer→main gestures are fire-and-forget ui:events (emitEvent); there
+ * are no command invokes. Quit is requested via the `setup-quit` ui:event.
  */
 export function createMockApi(): Api {
   return {
-    // All renderer→main gestures are ui:events now (emitEvent); the only
-    // remaining command invoke is lifecycle.quit.
-    lifecycle: {
-      quit: vi.fn().mockResolvedValue(undefined),
-    },
     emitEvent: vi.fn(),
     on: vi.fn(() => vi.fn()),
     onState: vi.fn(() => vi.fn()),

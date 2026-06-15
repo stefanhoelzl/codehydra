@@ -29,12 +29,10 @@ function createEventSubscription<T>(channel: string) {
 // Expose the API to the renderer process
 contextBridge.exposeInMainWorld("api", {
   // ============ API (api: prefixed channels) ============
-  // Primary API backed by intent dispatcher.
-  // Lifecycle handlers are registered in bootstrap(), others in startServices().
+  // Renderer→main gestures are fire-and-forget ui:events (emitEvent) and the
+  // dialog/notification framework events below; there are no invoke commands.
+  // main→renderer state arrives on onState (api:ui:state).
 
-  lifecycle: {
-    quit: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_QUIT),
-  },
   /**
    * Send dialog user event to main process.
    * Used when the user interacts with a declarative dialog (clicks an action button).

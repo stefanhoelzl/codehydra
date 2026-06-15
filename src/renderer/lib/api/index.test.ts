@@ -1,9 +1,9 @@
 /**
  * Tests for the renderer API layer.
  *
- * All renderer→main gestures are fire-and-forget ui:events (emitEvent); the
- * only remaining command invoke is lifecycle.quit. The layer mostly re-exports
- * window.api for mockability.
+ * All renderer→main gestures are fire-and-forget ui:events (emitEvent); there
+ * are no command invokes. The layer mostly re-exports window.api for
+ * mockability.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -36,7 +36,6 @@ describe("renderer API layer", () => {
     it("re-exports window.api functions for mockability", async () => {
       const api = await import("$lib/api");
 
-      expect(api.lifecycle).toBe(mockApi.lifecycle);
       expect(api.on).toBe(mockApi.on);
       expect(api.onState).toBe(mockApi.onState);
     });
@@ -102,13 +101,6 @@ describe("renderer API layer", () => {
       window.api = mockApi;
     });
 
-    it("lifecycle.quit calls quit", async () => {
-      const api = await import("$lib/api");
-      await api.lifecycle.quit();
-
-      expect(mockApi.lifecycle.quit).toHaveBeenCalled();
-    });
-
     it("on subscribes to events and returns unsubscribe", async () => {
       const api = await import("$lib/api");
       const handler = vi.fn();
@@ -124,16 +116,6 @@ describe("renderer API layer", () => {
   // =============================================================================
 
   describe("type-level tests", () => {
-    it("lifecycle API exposes quit (the only remaining command invoke)", async () => {
-      const mockApi = createMockApi();
-      window.api = mockApi;
-
-      const api = await import("$lib/api");
-
-      expect(api.lifecycle).toBeDefined();
-      expect(typeof api.lifecycle.quit).toBe("function");
-    });
-
     it("exposes emitEvent and event subscriptions", async () => {
       const mockApi = createMockApi();
       window.api = mockApi;
@@ -141,7 +123,6 @@ describe("renderer API layer", () => {
       const api = await import("$lib/api");
 
       expect(api).toHaveProperty("emitEvent");
-      expect(api).toHaveProperty("lifecycle");
       expect(api).toHaveProperty("on");
       expect(api).toHaveProperty("onState");
     });

@@ -29,12 +29,6 @@ describe("UIMode types", () => {
 });
 
 describe("ApiIpcChannels (v2 API)", () => {
-  describe("Lifecycle commands", () => {
-    it("has LIFECYCLE_QUIT channel (the only remaining command invoke)", () => {
-      expect(ApiIpcChannels.LIFECYCLE_QUIT).toBe("api:lifecycle:quit");
-    });
-  });
-
   describe("Events", () => {
     it("has PROJECT_OPENED event channel", () => {
       expect(ApiIpcChannels.PROJECT_OPENED).toBe("api:project:opened");

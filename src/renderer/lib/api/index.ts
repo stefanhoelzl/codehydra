@@ -4,12 +4,13 @@
  *
  * Setup is driven by the main process (app:setup intent).
  * The renderer signals readiness by emitting the `ui-connected` ui:event
- * (see initialize-app); lifecycle.quit() exits the app.
+ * (see initialize-app); the renderer requests quit via the `setup-quit`
+ * ui:event.
  *
  * All renderer→main gestures are fire-and-forget ui:events (emitEvent) —
  * switch-workspace / wake-workspace / remove-workspace / close-project carry
  * the opaque snapshot identity and main owns resolution + dispatch. There are
- * no renderer→main command invokes left (only lifecycle.quit remains).
+ * no renderer→main command invokes left.
  */
 
 import type { UiEvent } from "@shared/ui-event";
@@ -35,7 +36,6 @@ export function emitEvent(event: UiEvent): void {
 
 // Re-export window.api functions for mockability
 export const {
-  lifecycle,
   // Event subscriptions
   on,
   // UI state snapshots (main process → renderer)

@@ -3,8 +3,8 @@
  *
  * This is an IntentModule that:
  * 1. Subscribes to domain events and forwards them to sendToUI for IPC
- * 2. Registers IPC handlers (intent dispatch bridges) directly on ipcLayer
- * 3. On app:shutdown, removes all registered handlers and listeners
+ * 2. Routes dialog/notification user events (renderer → main) to their managers
+ * 3. On app:shutdown, removes the registered event listeners
  */
 
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
@@ -50,8 +50,6 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { BasesUpdatedEvent } from "../intents/get-project-bases";
 import { EVENT_BASES_UPDATED } from "../intents/get-project-bases";
 import type { WorkspaceStatus } from "../shared/api/types";
-import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
-import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import {
   EVENT_WORKSPACE_HIBERNATED,
@@ -86,22 +84,6 @@ export interface UiIpcModuleDeps {
  * @returns IntentModule with event subscriptions and lifecycle hooks
  */
 export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
-  const { dispatcher, logger } = deps;
-
-  // Track registered IPC channels for cleanup
-  const registeredChannels: string[] = [];
-
-  /**
-   * Register an IPC handler on the ipcLayer.
-   * Converts undefined/null payloads to empty objects for handlers with no input.
-   */
-  function registerIpc(channel: string, handler: (payload: unknown) => Promise<unknown>): void {
-    deps.ipcLayer.handle(channel, async (_event: unknown, payload: unknown) => {
-      return handler(payload ?? {});
-    });
-    registeredChannels.push(channel);
-  }
-
   // ---------------------------------------------------------------------------
   // Domain event → sendToUI subscriptions
   // ---------------------------------------------------------------------------
@@ -283,20 +265,10 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
     },
   };
 
-  // ---------------------------------------------------------------------------
-  // Register IPC handlers directly on ipcLayer
-  // ---------------------------------------------------------------------------
-
   // Startup readiness + markUIReady moved to the presenter's `ui-connected`
   // ui:event handler (the renderer emits it instead of invoking ready()).
-
-  registerIpc(ApiIpcChannels.LIFECYCLE_QUIT, async () => {
-    logger.debug("Quit requested");
-    await dispatcher.dispatch({
-      type: INTENT_APP_SHUTDOWN,
-      payload: {},
-    } as AppShutdownIntent);
-  });
+  // App quit is driven entirely main-side (OS menu / window close) and, from
+  // the renderer, via the `setup-quit` ui:event — there is no quit invoke.
 
   // ---------------------------------------------------------------------------
   // Dialog event routing (renderer → main)
@@ -346,13 +318,6 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
             if (notificationEventCleanup) {
               notificationEventCleanup();
               notificationEventCleanup = null;
-            }
-            for (const channel of registeredChannels) {
-              try {
-                deps.ipcLayer.removeHandler(channel);
-              } catch {
-                // Continue cleanup even if a handler was already removed
-              }
             }
           },
         },
