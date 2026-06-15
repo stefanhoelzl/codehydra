@@ -6,17 +6,15 @@
 import { vi } from "vitest";
 import type { Api } from "@shared/electron-api";
 import type { UiProjectRow, UiState, UiWorkspaceRow } from "@shared/ui-state";
-import { MOCK_WORKSPACE_API_DEFAULTS } from "@shared/test-fixtures";
 
 // ============ UiState fixtures ============
 
 /** Build a workspace row with sensible defaults (ready, awake, no agent).
- *  `key` and `path` default to name-derived values when not overridden. */
+ *  `key` defaults to a name-derived value when not overridden. */
 export function makeUiWorkspaceRow(
   name: string,
   overrides?: Partial<UiWorkspaceRow>
 ): UiWorkspaceRow {
-  const path = overrides?.path ?? `/test/project/.worktrees/${name}`;
   return {
     key: `test-project-12345678/${name}`,
     name,
@@ -26,7 +24,6 @@ export function makeUiWorkspaceRow(
     tags: [],
     active: false,
     ...overrides,
-    path,
   };
 }
 
@@ -73,22 +70,8 @@ export function makeUiState(
  */
 export function createMockApi(): Api {
   return {
-    // Domain APIs (remove/close are ui:events now, not invokes)
-    projects: {
-      open: vi.fn().mockResolvedValue({
-        id: "test-12345678",
-        name: "test",
-        path: "/test",
-        workspaces: [],
-      }),
-    },
-    workspaces: {
-      hibernate: vi.fn().mockResolvedValue({ started: true }),
-      wake: vi.fn().mockResolvedValue(MOCK_WORKSPACE_API_DEFAULTS.workspace),
-    },
-    ui: {
-      switchWorkspace: vi.fn().mockResolvedValue(undefined),
-    },
+    // All renderer→main gestures are ui:events now (emitEvent); the only
+    // remaining command invoke is lifecycle.quit.
     lifecycle: {
       quit: vi.fn().mockResolvedValue(undefined),
     },

@@ -69,7 +69,6 @@ function pushState(state: UiState): void {
 
 function ws(name: string, overrides?: Partial<UiWorkspaceRow>): UiWorkspaceRow {
   return makeUiWorkspaceRow(name, {
-    path: `/test/.worktrees/${name}`,
     key: `test-project-12345678/${name}`,
     ...overrides,
   });
@@ -114,12 +113,15 @@ describe("Integration tests", () => {
   });
 
   describe("switch workspace flow", () => {
-    it("click workspace → switchWorkspace invoke → pushed snapshot moves aria-current", async () => {
+    it("click workspace → switch-workspace ui:event → pushed snapshot moves aria-current", async () => {
       await renderApp(snapshotOf([ws("ws1"), ws("ws2")], "ws1"));
       await waitFor(() => expect(screen.getByText("ws2")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByRole("button", { name: "ws2" }));
-      expect(mockApi.ui.switchWorkspace).toHaveBeenCalledWith("/test/.worktrees/ws2");
+      expect(mockApi.emitEvent).toHaveBeenCalledWith({
+        kind: "switch-workspace",
+        key: "test-project-12345678/ws2",
+      });
 
       // The presenter answers with a new snapshot (workspace:switched).
       pushState(snapshotOf([ws("ws1"), ws("ws2")], "ws2"));

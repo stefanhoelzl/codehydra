@@ -8,8 +8,6 @@ import type { NotificationUserEvent } from "./notification-types";
 import type { UiEvent } from "./ui-event";
 import type { UiState } from "./ui-state";
 
-import type { Project, Workspace } from "./api/types";
-
 /**
  * Function to unsubscribe from an event.
  */
@@ -26,36 +24,11 @@ export interface Api {
   // Primary API backed by intent dispatcher.
   // Lifecycle handlers are registered in bootstrap(), others in startServices().
 
-  // Workspace removal and project closing are NOT invokes: the renderer
-  // emits remove-workspace / close-project ui:events and main owns the
-  // confirmation dialogs and dispatches.
-  projects: {
-    open(path?: string): Promise<Project | null>;
-  };
-  workspaces: {
-    /**
-     * Start hibernating a workspace (fire-and-forget).
-     * Tears down the view + agent server, persists `hibernated="true"` metadata,
-     * and emits workspace:hibernated. Returns { started: false } if blocked
-     * by idempotency.
-     */
-    hibernate(workspacePath: string): Promise<{ started: boolean }>;
-    /**
-     * Wake a hibernated workspace and bring it back online.
-     * Clears the `hibernated` metadata flag, deletes the saved screenshot, and
-     * re-runs the open pipeline (restarts the agent server, rebuilds the view).
-     * Returns the reopened Workspace, or null if a concurrent wake was deduped.
-     */
-    wake(workspacePath: string): Promise<Workspace | null>;
-  };
-  ui: {
-    /**
-     * Switch to a workspace, or deselect with `null` — no workspace is active
-     * afterwards and the creation panel becomes the main view (`focus` is
-     * ignored for null).
-     */
-    switchWorkspace(workspacePath: string | null, focus?: boolean): Promise<void>;
-  };
+  // Renderer→main gestures are NOT invokes: the renderer emits ui:events
+  // (switch-workspace / wake-workspace / remove-workspace / close-project)
+  // carrying opaque identity, and main owns resolution, confirmation dialogs,
+  // and dispatch. (Project open + hibernate have no renderer gesture — the
+  // creation panel and the `h` shortcut drive them entirely main-side.)
   lifecycle: {
     /**
      * Quit the application.

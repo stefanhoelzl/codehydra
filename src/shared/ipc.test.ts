@@ -29,15 +29,9 @@ describe("UIMode types", () => {
 });
 
 describe("ApiIpcChannels (v2 API)", () => {
-  describe("Project commands", () => {
-    it("has PROJECT_OPEN channel", () => {
-      expect(ApiIpcChannels.PROJECT_OPEN).toBe("api:project:open");
-    });
-  });
-
-  describe("Workspace commands", () => {
-    it("has WORKSPACE_HIBERNATE channel", () => {
-      expect(ApiIpcChannels.WORKSPACE_HIBERNATE).toBe("api:workspace:hibernate");
+  describe("Lifecycle commands", () => {
+    it("has LIFECYCLE_QUIT channel (the only remaining command invoke)", () => {
+      expect(ApiIpcChannels.LIFECYCLE_QUIT).toBe("api:lifecycle:quit");
     });
   });
 

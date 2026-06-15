@@ -301,15 +301,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     return `${projectId}/${workspaceName}`;
   }
 
-  /**
-   * TRANSITIONAL: synthetic path for creating placeholders, same shape as the
-   * renderer's createPendingPath so path-keyed lookups stay consistent during
-   * the read cutover. Deleted with the row `path` fields in the write phase.
-   */
-  function pendingPath(projectPath: string, workspaceName: string): string {
-    return `__pending__/${projectPath}/${workspaceName}`;
-  }
-
   function findProjectByPath(projectPath: string): ProjectModel | undefined {
     for (const project of projects.values()) {
       if (project.path === projectPath) return project;
@@ -393,7 +384,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     const key = workspaceKey(project.id, workspace.name);
     return {
       key,
-      path: workspace.path ?? pendingPath(project.path, workspace.name),
       name: workspace.name,
       status: rowStatus(workspace),
       hibernated: workspace.hibernated,
@@ -580,24 +570,53 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       dispatchInteractiveDelete(found.workspace.path);
       return;
     }
+    if (event.kind === "switch-workspace") {
+      // key null = deselect (the creation panel becomes the main view).
+      if (event.key === null) {
+        dispatchDetached({ type: INTENT_SWITCH_WORKSPACE, payload: { workspacePath: null } });
+        return;
+      }
+      // Resolve the echoed key; a stale key or still-creating placeholder
+      // (path null) has nothing to switch to. focus is omitted: a click
+      // focuses the workspace (the keyboard nav path passes focus:false).
+      const found = findByKey(event.key);
+      if (!found || found.workspace.path === null) {
+        logger.warn("Dropped switch-workspace for unknown key", { key: event.key });
+        return;
+      }
+      dispatchDetached({
+        type: INTENT_SWITCH_WORKSPACE,
+        payload: { workspacePath: found.workspace.path },
+      });
+      return;
+    }
+    if (event.kind === "wake-workspace") {
+      const found = findByKey(event.key);
+      if (!found || found.workspace.path === null) {
+        logger.warn("Dropped wake-workspace for unknown key", { key: event.key });
+        return;
+      }
+      dispatchDetached({
+        type: INTENT_WAKE_WORKSPACE,
+        payload: { workspacePath: found.workspace.path, source: "ui-ipc" },
+      });
+      return;
+    }
     if (event.kind === "hover") {
       hoverRegion = event.region === "sidebar" ? "sidebar" : null;
       scheduleUpdate();
       return;
     }
-    if (event.kind === "close-project") {
-      const project = projects.get(event.projectId);
-      if (!project) {
-        logger.warn("Dropped close-project for unknown project", { projectId: event.projectId });
-        return;
-      }
-      dispatchDetached({
-        type: INTENT_CLOSE_PROJECT,
-        payload: { projectPath: project.path, interactive: true },
-      });
+    // close-project: the only remaining kind.
+    const project = projects.get(event.projectId);
+    if (!project) {
+      logger.warn("Dropped close-project for unknown project", { projectId: event.projectId });
       return;
     }
-    logger.debug("ui event", { kind: event.kind });
+    dispatchDetached({
+      type: INTENT_CLOSE_PROJECT,
+      payload: { projectPath: project.path, interactive: true },
+    });
   };
 
   deps.ipcLayer.on(ApiIpcChannels.UI_EVENT, listener);

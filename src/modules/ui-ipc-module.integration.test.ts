@@ -380,10 +380,9 @@ describe("UiIpcModule - IPC handlers", () => {
     createUiIpcModule(deps);
 
     const state = ipcLayer._getState();
+    // The renderer→main command invokes (switch/wake/hibernate/open) are gone:
+    // those gestures flow through the ui:event union. Only quit remains.
     expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_QUIT)).toBe(true);
-    expect(state.handlers.has(ApiIpcChannels.WORKSPACE_HIBERNATE)).toBe(true);
-    expect(state.handlers.has(ApiIpcChannels.PROJECT_OPEN)).toBe(true);
-    expect(state.handlers.has(ApiIpcChannels.UI_SWITCH_WORKSPACE)).toBe(true);
   });
 
   // Startup readiness (markUIReady + app:ready dispatch) moved to the

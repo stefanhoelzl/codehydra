@@ -6,13 +6,16 @@
  * api:log:* channels). `ui-connected` is the startup handshake: the renderer
  * emits it once after subscribing to ui:state, and the presenter responds by
  * flushing buffered notifications and dispatching app:ready (which loads
- * projects → emits app:started → opens the snapshot stream). `remove-workspace`
- * and `close-project` are load-bearing requests: the presenter resolves their
- * identity against its model and dispatches the matching intent with
- * `interactive: true` (the confirmation dialog runs main-side). Identity fields
- * are presenter-minted and merely echoed back from the UiState snapshot — the
- * renderer never generates identifiers itself. The remaining events are
- * observational; they become load-bearing in the write-path phase.
+ * projects → emits app:started → opens the snapshot stream).
+ *
+ * All gesture events are load-bearing: the presenter resolves their identity
+ * (the opaque workspace `key` / `projectId`) against its model and dispatches
+ * the matching intent. `remove-workspace` and `close-project` run their
+ * confirmation dialog main-side (`interactive: true`); `switch-workspace` and
+ * `wake-workspace` dispatch directly. Identity fields are presenter-minted and
+ * merely echoed back from the UiState snapshot — the renderer never generates
+ * identifiers itself. (Hibernate and open-project have no renderer gesture:
+ * the `h` shortcut and the creation panel drive them entirely main-side.)
  *
  * NOTE: This file must be browser-compatible (no Node.js imports).
  */
@@ -27,13 +30,14 @@ const logContextSchema = z.record(
 export const uiEventSchema = z.discriminatedUnion("kind", [
   // Startup handshake: emitted once after the renderer subscribes to ui:state.
   z.object({ kind: z.literal("ui-connected") }),
-  z.object({ kind: z.literal("switch-workspace") }),
-  z.object({ kind: z.literal("wake-workspace") }),
-  z.object({ kind: z.literal("hibernate-workspace") }),
   // key is the snapshot row's presenter-assigned workspace key, echoed back.
+  // Switch to a workspace (sidebar/status-cell click); key null = deselect
+  // (the creation panel becomes the main view).
+  z.object({ kind: z.literal("switch-workspace"), key: z.string().nullable() }),
+  // Wake a hibernated workspace (status-cell / overlay click).
+  z.object({ kind: z.literal("wake-workspace"), key: z.string() }),
   // Requests the remove flow (confirmation dialog opens main-side).
   z.object({ kind: z.literal("remove-workspace"), key: z.string() }),
-  z.object({ kind: z.literal("open-project") }),
   // projectId is backend-minted and merely echoed back by the renderer.
   // Requests the close flow (confirmation dialog opens main-side).
   z.object({ kind: z.literal("close-project"), projectId: z.string() }),

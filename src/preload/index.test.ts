@@ -56,21 +56,8 @@ describe("preload API", () => {
   // ============================================================================
 
   describe("flat API namespaces", () => {
-    it("exposes projects namespace on api", () => {
-      expect(exposedApi.projects).toBeDefined();
-      expect(typeof exposedApi.projects).toBe("object");
-    });
-
-    it("exposes workspaces namespace on api", () => {
-      expect(exposedApi.workspaces).toBeDefined();
-      expect(typeof exposedApi.workspaces).toBe("object");
-    });
-
-    it("exposes ui namespace on api", () => {
-      expect(exposedApi.ui).toBeDefined();
-      expect(typeof exposedApi.ui).toBe("object");
-    });
-
+    // Renderer→main gestures (open/switch/wake/hibernate) are ui:events now,
+    // not invoke namespaces. Only lifecycle (quit) remains a command invoke.
     it("exposes lifecycle namespace on api", () => {
       expect(exposedApi.lifecycle).toBeDefined();
       expect(typeof exposedApi.lifecycle).toBe("object");
@@ -80,57 +67,11 @@ describe("preload API", () => {
       expect(exposedApi.on).toBeDefined();
       expect(typeof exposedApi.on).toBe("function");
     });
-  });
 
-  describe("projects", () => {
-    it("projects.open calls api:project:open with path", async () => {
-      const mockProject = {
-        id: "my-app-12345678",
-        name: "my-app",
-        path: "/test",
-        workspaces: [],
-      };
-      mockIpcRenderer.invoke.mockResolvedValue(mockProject);
-
-      const projects = exposedApi.projects as { open: (path?: string) => Promise<unknown> };
-      const result = await projects.open("/test/path");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:project:open", {
-        path: "/test/path",
-      });
-      expect(result).toEqual(mockProject);
-    });
-  });
-
-  describe("workspaces", () => {
-    it("workspaces.hibernate calls api:workspace:hibernate", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue({ started: true });
-
-      const workspaces = exposedApi.workspaces as {
-        hibernate: (workspacePath: string) => Promise<unknown>;
-      };
-      const result = await workspaces.hibernate("/test/.worktrees/feature");
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:workspace:hibernate", {
-        workspacePath: "/test/.worktrees/feature",
-      });
-      expect(result).toEqual({ started: true });
-    });
-  });
-
-  describe("ui", () => {
-    it("ui.switchWorkspace calls api:ui:switch-workspace", async () => {
-      mockIpcRenderer.invoke.mockResolvedValue(undefined);
-
-      const ui = exposedApi.ui as {
-        switchWorkspace: (workspacePath: string, focus?: boolean) => Promise<void>;
-      };
-      await ui.switchWorkspace("/test/.worktrees/feature", false);
-
-      expect(mockIpcRenderer.invoke).toHaveBeenCalledWith("api:ui:switch-workspace", {
-        workspacePath: "/test/.worktrees/feature",
-        focus: false,
-      });
+    it("does not expose the removed command namespaces", () => {
+      expect(exposedApi.projects).toBeUndefined();
+      expect(exposedApi.workspaces).toBeUndefined();
+      expect(exposedApi.ui).toBeUndefined();
     });
   });
 

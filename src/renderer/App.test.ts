@@ -87,11 +87,11 @@ import type { UiWorkspaceRow } from "@shared/ui-state";
 /** Push a snapshot with the given rows; active row drives main. */
 async function pushRows(
   rows: UiWorkspaceRow[],
-  activePath?: string,
+  activeKey?: string,
   overrides?: Partial<UiState>
 ): Promise<void> {
   await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
-  const marked = rows.map((row) => ({ ...row, active: row.path === activePath }));
+  const marked = rows.map((row) => ({ ...row, active: row.key === activeKey }));
   const activeRow = marked.find((row) => row.active);
   pushState(
     makeUiState([makeUiProjectRow(marked)], {
@@ -103,7 +103,6 @@ async function pushRows(
 
 function ws(name: string): UiWorkspaceRow {
   return makeUiWorkspaceRow(name, {
-    path: `/test/.worktrees/${name}`,
     key: `test-project-12345678/${name}`,
   });
 }
@@ -191,12 +190,12 @@ describe("App component", () => {
       const { container } = render(App);
       showMainView();
 
-      await pushRows([ws("ws1")], "/test/.worktrees/ws1", { mode: "shortcut" });
+      await pushRows([ws("ws1")], "test-project-12345678/ws1", { mode: "shortcut" });
       await waitFor(() => {
         expect(container.querySelector(".shortcut-overlay.active")).toBeInTheDocument();
       });
 
-      await pushRows([ws("ws1")], "/test/.worktrees/ws1", { mode: "workspace" });
+      await pushRows([ws("ws1")], "test-project-12345678/ws1", { mode: "workspace" });
       await waitFor(() => {
         expect(container.querySelector(".shortcut-overlay.active")).not.toBeInTheDocument();
       });
@@ -206,7 +205,7 @@ describe("App component", () => {
       render(App);
       showMainView();
 
-      await pushRows([ws("ws1")], "/test/.worktrees/ws1", { mode: "shortcut" });
+      await pushRows([ws("ws1")], "test-project-12345678/ws1", { mode: "shortcut" });
 
       await waitFor(() => {
         const region = document.querySelector('[aria-live="polite"]');

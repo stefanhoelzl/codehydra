@@ -1,9 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import * as api from "$lib/api";
-  import type { ProjectId, WorkspaceRef, WorkspaceName } from "$lib/api";
-  // (ProjectId/WorkspaceName casts remain only for the WorkspaceRef passed to
-  // onSwitchWorkspace — that invoke is still path-based until the write phase.)
   import type { UiProjectRow } from "@shared/ui-state";
   import type { UIMode } from "@shared/ipc";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
@@ -29,7 +26,8 @@
     /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
     newWorkspaceViewOpen?: boolean;
     onCloseProject: (projectId: string) => void;
-    onSwitchWorkspace: (workspaceRef: WorkspaceRef) => void;
+    /** Switch to a workspace by its opaque snapshot row key. */
+    onSwitchWorkspace: (key: string) => void;
     onOpenNewWorkspace: () => void;
     /** Request the remove flow for a workspace by its snapshot row key. */
     onRemoveWorkspace: (key: string) => void;
@@ -169,10 +167,8 @@
 
   // ============ Actions ============
 
-  function handleWakeWorkspace(path: string): void {
-    api.workspaces.wake(path).catch((error: unknown) => {
-      logger.error("Failed to wake workspace", { path, error: String(error) });
-    });
+  function handleWakeWorkspace(key: string): void {
+    api.emitEvent({ kind: "wake-workspace", key });
   }
 </script>
 
@@ -250,11 +246,6 @@
               {@const statusText = getStatusText(agentCounts.idle, agentCounts.busy)}
               {@const isActive = workspace.active}
               {@const status = workspace.status}
-              {@const workspaceRef = {
-                projectId: project.id as ProjectId,
-                workspaceName: workspace.name as WorkspaceName,
-                path: workspace.path,
-              }}
               {@const hasTags = workspace.tags.length > 0}
               {@const hibernated = workspace.hibernated}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -265,7 +256,7 @@
                 class:hibernated
                 aria-current={isActive ? "true" : undefined}
                 onclick={() => {
-                  if (status !== "creating") onSwitchWorkspace(workspaceRef);
+                  if (status !== "creating") onSwitchWorkspace(workspace.key);
                 }}
               >
                 <div class="workspace-row">
@@ -311,7 +302,7 @@
                     aria-label={`${workspace.name} in ${project.name} - ${status === "creating" ? "Creating" : status === "deleting" ? "Deleting" : status === "delete-failed" ? "Deletion failed" : hibernated ? "Hibernated - click to wake" : statusText}`}
                     aria-current={isActive ? "true" : undefined}
                     onclick={() => {
-                      if (hibernated) handleWakeWorkspace(workspace.path);
+                      if (hibernated) handleWakeWorkspace(workspace.key);
                     }}
                   >
                     {#if status === "creating"}

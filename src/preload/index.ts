@@ -32,22 +32,6 @@ contextBridge.exposeInMainWorld("api", {
   // Primary API backed by intent dispatcher.
   // Lifecycle handlers are registered in bootstrap(), others in startServices().
 
-  projects: {
-    open: (path?: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.PROJECT_OPEN, {
-        ...(path !== undefined && { path }),
-      }),
-  },
-  workspaces: {
-    hibernate: (workspacePath: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_HIBERNATE, { workspacePath }),
-    wake: (workspacePath: string) =>
-      ipcRenderer.invoke(ApiIpcChannels.WORKSPACE_WAKE, { workspacePath }),
-  },
-  ui: {
-    switchWorkspace: (workspacePath: string | null, focus?: boolean) =>
-      ipcRenderer.invoke(ApiIpcChannels.UI_SWITCH_WORKSPACE, { workspacePath, focus }),
-  },
   lifecycle: {
     quit: () => ipcRenderer.invoke(ApiIpcChannels.LIFECYCLE_QUIT),
   },

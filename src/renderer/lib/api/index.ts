@@ -6,14 +6,12 @@
  * The renderer signals readiness by emitting the `ui-connected` ui:event
  * (see initialize-app); lifecycle.quit() exits the app.
  *
- * Transitional state of the write path: remove-workspace and close-project
- * are pure ui:events (emitted where the gesture happens; main owns their
- * confirmation dialogs and dispatches). The remaining domain wrappers still
- * dual-fire — an observational UiEvent, then the load-bearing invoke — until
- * the write-path phase flips them too.
+ * All renderer→main gestures are fire-and-forget ui:events (emitEvent) —
+ * switch-workspace / wake-workspace / remove-workspace / close-project carry
+ * the opaque snapshot identity and main owns resolution + dispatch. There are
+ * no renderer→main command invokes left (only lifecycle.quit remains).
  */
 
-import type { Api } from "@shared/electron-api";
 import type { UiEvent } from "@shared/ui-event";
 
 // Check that window.api is available
@@ -34,31 +32,6 @@ export function emitEvent(event: UiEvent): void {
     // Never throw from event emission
   }
 }
-
-export const projects: Api["projects"] = {
-  open: (path?) => {
-    emitEvent({ kind: "open-project" });
-    return api.projects.open(path);
-  },
-};
-
-export const workspaces: Api["workspaces"] = {
-  hibernate: (workspacePath) => {
-    emitEvent({ kind: "hibernate-workspace" });
-    return api.workspaces.hibernate(workspacePath);
-  },
-  wake: (workspacePath) => {
-    emitEvent({ kind: "wake-workspace" });
-    return api.workspaces.wake(workspacePath);
-  },
-};
-
-export const ui: Api["ui"] = {
-  switchWorkspace: (workspacePath, focus?) => {
-    emitEvent({ kind: "switch-workspace" });
-    return api.ui.switchWorkspace(workspacePath, focus);
-  },
-};
 
 // Re-export window.api functions for mockability
 export const {
