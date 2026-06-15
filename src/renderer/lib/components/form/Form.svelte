@@ -10,9 +10,10 @@
   - the field-change channel (per-field debounce, cancel-on-submit)
   - autofocus placement and focus-follow on config updates
   - primary-action resolution (Enter submit) and action/change event emission
-  - the form-global keyboard contract: Escape emits a "dismiss" event (the
-    session owner decides what dismissing means), Cmd/Ctrl+Enter fires the
-    primary action, Tab/Shift+Tab is trapped at the form boundary
+  - the form-global keyboard contract: Escape clicks the first enabled
+    cancel-role button (a modal with none swallows Escape; a panel falls back
+    to a "dismiss" event the session owner interprets), Cmd/Ctrl+Enter fires
+    the primary action, Tab/Shift+Tab is trapped at the form boundary
 
   Leaves are controlled components: they receive their narrowed section config
   plus current value and report raw interactions back via callbacks; Form
@@ -26,10 +27,15 @@
   labeled rows.
 -->
 <script lang="ts">
-  import type { DialogConfig, DialogSection, DialogUserEvent } from "@shared/dialog-types";
+  import type {
+    DialogConfig,
+    DialogSection,
+    DialogSurface,
+    DialogUserEvent,
+  } from "@shared/dialog-types";
   import { onMount, onDestroy, untrack } from "svelte";
   import { sendDialogEvent } from "$lib/api";
-  import { trapTabKey } from "$lib/utils/focus-trap";
+  import { trapTabKey, getFocusables } from "$lib/utils/focus-trap";
   import Section from "./Section.svelte";
   import type {
     ButtonItem,
@@ -43,9 +49,14 @@
   interface Props {
     dialogId: string;
     config: DialogConfig;
+    /**
+     * Hosting surface. Governs Escape when no enabled cancel-role button
+     * exists: a "modal" swallows it (no-op); a "panel" emits a dismiss event.
+     */
+    surface?: DialogSurface;
   }
 
-  const { dialogId, config }: Props = $props();
+  const { dialogId, config, surface = "modal" }: Props = $props();
 
   /**
    * All field sections of the config in declaration order — top-level
@@ -320,8 +331,26 @@
     return null;
   }
 
+  /**
+   * The mount-time default focus target when no control carries an explicit
+   * autofocus flag: the first enabled field control (a focusable element that
+   * is not a footer/side-flow button — vscode-button), else the primary
+   * button. Field controls cover inputs, dropdowns, checkboxes, and the
+   * selected radio card (the only tabbable card), so this subsumes the old
+   * "focus the selected radio card" fallback. Runs at mount only — config
+   * updates never re-home focus unless an explicit flag moves (see below).
+   */
+  function defaultFocusTarget(): HTMLElement | null {
+    if (!formRef) return null;
+    const firstField = getFocusables(formRef).find(
+      (el) => el.tagName.toLowerCase() !== "vscode-button"
+    );
+    if (firstField) return firstField;
+    return formRef.querySelector<HTMLElement>("vscode-button[data-primary]:not([disabled])");
+  }
+
   // Auto-focus on mount: an explicit autofocus control wins, else the
-  // selected radio card (for keyboard navigation).
+  // computed default target (first enabled field, else the primary button).
   onMount(() => {
     setTimeout(() => {
       const explicit = formRef?.querySelector<HTMLElement>("[data-autofocus]");
@@ -329,8 +358,7 @@
         explicit.focus();
         return;
       }
-      const selected = formRef?.querySelector("[aria-checked='true']") as HTMLElement | null;
-      selected?.focus();
+      defaultFocusTarget()?.focus();
     }, 0);
   });
 
@@ -464,14 +492,33 @@
   }
 
   /**
+   * The button Escape activates: the first enabled (non-disabled, non-busy)
+   * button declared with role "cancel". Returns undefined when there is none
+   * (or the only cancel-role button is currently unavailable) — Escape then
+   * swallows on a modal, or dismisses on a panel.
+   */
+  function findCancelButton(cfg: DialogConfig): ButtonItem | undefined {
+    for (const section of cfg.sections) {
+      if (section.type !== "group") continue;
+      for (const item of section.items) {
+        if (item.type === "button" && item.role === "cancel" && !item.disabled && !item.busy) {
+          return item;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Form-global keyboard contract, on the bubble phase so field-level handlers
    * run first — e.g. an open dropdown consumes Escape (stopPropagation) to
    * close itself; only a second Escape reaches the form and dismisses the
    * session. Must be a template handler: Svelte delegates template keydowns to
    * the app root and replays them target-to-root, so only a delegated handler
    * keeps that ordering with the field components' handlers.
-   * - Escape emits a "dismiss" event; the session owner decides what
-   *   dismissing means (owners without a dismiss listener ignore it).
+   * - Escape clicks the first enabled cancel-role button (identical to a real
+   *   click). With none, a modal swallows Escape (no-op); a panel emits a
+   *   "dismiss" event the session owner interprets (typically reset).
    * - Cmd/Ctrl+Enter activates the primary button from anywhere in the form.
    * - Tab/Shift+Tab is trapped at the form boundary so focus never leaks out.
    */
@@ -487,8 +534,14 @@
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      const dismiss: DialogUserEvent = { kind: "dismiss", dialogId };
-      sendDialogEvent(dismiss);
+      const cancel = findCancelButton(config);
+      if (cancel) {
+        handleButton(cancel);
+      } else if (surface === "panel") {
+        const dismiss: DialogUserEvent = { kind: "dismiss", dialogId };
+        sendDialogEvent(dismiss);
+      }
+      // Modal with no enabled cancel-role button: Escape is a no-op.
       return;
     }
     if (formRef) {

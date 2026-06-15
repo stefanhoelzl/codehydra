@@ -9,6 +9,7 @@ import { tick } from "svelte";
 import { setBootstrap } from "$lib/stores/bootstrap.svelte.js";
 import { setUiState } from "$lib/stores/ui-state.svelte.js";
 import { createLogger } from "$lib/logging";
+import { getFocusables } from "$lib/utils/focus-trap";
 import type { AgentInfo, LifecycleAgentType } from "@shared/ipc";
 import type { UiState } from "@shared/ui-state";
 import type { Unsubscribe } from "@shared/electron-api";
@@ -30,23 +31,6 @@ export interface InitializeAppApi {
   };
   onState(callback: (state: UiState) => void): Unsubscribe;
 }
-
-/**
- * Focus selector that includes VSCode Elements components.
- * VSCode Elements are custom elements that should be focusable.
- */
-const FOCUSABLE_SELECTOR = [
-  'vscode-button:not([disabled]):not([tabindex="-1"])',
-  'vscode-textfield:not([disabled]):not([tabindex="-1"])',
-  'vscode-checkbox:not([disabled]):not([tabindex="-1"])',
-  'vscode-dropdown:not([disabled]):not([tabindex="-1"])',
-  'button:not([disabled]):not([tabindex="-1"])',
-  '[href]:not([tabindex="-1"])',
-  'input:not([disabled]):not([tabindex="-1"])',
-  'select:not([disabled]):not([tabindex="-1"])',
-  'textarea:not([disabled]):not([tabindex="-1"])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(", ");
 
 const defaultApi: InitializeAppApi = {
   lifecycle: api.lifecycle,
@@ -77,7 +61,7 @@ export async function initializeApp(
     setBootstrap(bootstrap);
 
     await tick();
-    const firstFocusable = containerRef?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    const firstFocusable = containerRef ? getFocusables(containerRef)[0] : undefined;
     firstFocusable?.focus();
   } catch (err: unknown) {
     // lifecycle.ready() failure leaves bootstrap.initialized=false; the main

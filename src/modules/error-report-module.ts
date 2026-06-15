@@ -120,7 +120,7 @@ function buildDialogConfig(): DialogConfig {
         type: "group",
         items: [
           { type: "button", id: "send", label: "Send", variant: "primary" },
-          { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+          { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
         ],
       },
     ],
@@ -402,12 +402,8 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         activeHandle = null;
       }
     });
-
-    // Escape discards the draft, same as Cancel.
-    handle.onDismiss(() => {
-      handle.close();
-      activeHandle = null;
-    });
+    // Escape discards the draft: the Cancel button carries role "cancel", so
+    // Escape clicks it through the action path above.
 
     void handle.closed.then(() => {
       activeHandle = null;

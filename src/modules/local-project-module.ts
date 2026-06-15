@@ -336,7 +336,13 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
                   type: "group",
                   items: [
                     { type: "button", id: "init", label: "Initialize", variant: "primary" },
-                    { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+                    {
+                      type: "button",
+                      id: "cancel",
+                      label: "Cancel",
+                      variant: "secondary",
+                      role: "cancel",
+                    },
                   ],
                 },
               ],

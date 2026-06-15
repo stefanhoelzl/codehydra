@@ -124,6 +124,17 @@ function suggestionValues(section: Record<string, unknown>): string[] {
   return groups.flatMap((g) => g.items.map((i) => i.value));
 }
 
+/** The footer's cancel-role button (the one Escape clicks), or undefined. */
+function cancelButton(config: DialogConfig): { id: string } | undefined {
+  for (const section of config.sections) {
+    if (section.type !== "group") continue;
+    for (const item of section.items) {
+      if (item.type === "button" && item.role === "cancel") return item;
+    }
+  }
+  return undefined;
+}
+
 async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
@@ -904,19 +915,22 @@ describe("CreationModule", () => {
       expect(clone.closed).toBe(true);
     });
 
-    it("Escape (dismiss) closes the dialog when not cloning", async () => {
+    it("Cancel carries role 'cancel' when not cloning, so Escape clicks it", async () => {
       const s = setup();
       const panel = await s.start();
       panel.emitAction("clone", {});
       await flush();
       const clone = s.dialogs.modalHandles()[0]!;
 
-      clone.emitDismiss();
+      // The cancel-role marker is what makes the form route Escape to Cancel.
+      expect(cancelButton(clone.config)?.id).toBe("cancel");
+
+      clone.emitAction("cancel", {});
       await flush();
       expect(clone.closed).toBe(true);
     });
 
-    it("Escape (dismiss) after a failed clone closes the dialog", async () => {
+    it("Cancel carries role 'cancel' after a failed clone", async () => {
       const s = setup();
       const panel = await s.start();
       panel.emitAction("clone", {});
@@ -930,12 +944,14 @@ describe("CreationModule", () => {
       await flush();
       await flush();
 
-      clone.emitDismiss();
+      expect(cancelButton(clone.config)?.id).toBe("cancel");
+
+      clone.emitAction("cancel", {});
       await flush();
       expect(clone.closed).toBe(true);
     });
 
-    it("Escape (dismiss) mid-clone detaches like 'Continue in background'", async () => {
+    it("mid-clone, 'Continue in background' is the cancel-role button (Escape detaches)", async () => {
       const s = setup({ projects: [PROJECT_A, PROJECT_B] });
       const panel = await s.start();
       const seededProject = field(panel.config, "project")["value"];
@@ -954,7 +970,10 @@ describe("CreationModule", () => {
       clone.emitAction("do-clone", { url: "org/repo" });
       await flush();
 
-      clone.emitDismiss();
+      // Mid-clone, Escape maps to the only footer button — "Continue in background".
+      expect(cancelButton(clone.config)?.id).toBe("background");
+
+      clone.emitAction("background", {});
       await flush();
       expect(clone.closed).toBe(true);
 

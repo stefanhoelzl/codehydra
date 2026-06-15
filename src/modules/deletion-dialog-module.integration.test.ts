@@ -30,6 +30,22 @@ import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
 import type { WorkspaceName, ProjectId } from "../shared/api/types";
+import type { DialogConfig } from "../shared/dialog-types";
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+/** The id of the footer's cancel-role button (the one Escape clicks), or undefined. */
+function cancelRoleButtonId(config: DialogConfig): string | undefined {
+  for (const section of config.sections) {
+    if (section.type !== "group") continue;
+    for (const item of section.items) {
+      if (item.type === "button" && item.role === "cancel") return item.id;
+    }
+  }
+  return undefined;
+}
 
 // =============================================================================
 // Test Constants
@@ -385,8 +401,8 @@ describe("DeletionDialogModule", () => {
     expect(payload.ignoreWarnings).toBe(true);
   });
 
-  it("Escape (dismiss event) acts like the Dismiss button when completed with errors", async () => {
-    const { dialogManager, dispatcher, fireProgress, fireSwitched } = setup;
+  it("marks Dismiss as the cancel-role button when completed with errors (Escape clicks it)", async () => {
+    const { dialogManager, fireProgress, fireSwitched } = setup;
 
     await fireSwitched(WS_PATH_A);
     await fireProgress(
@@ -399,29 +415,20 @@ describe("DeletionDialogModule", () => {
       })
     );
 
-    const handle = dialogManager.lastHandle!;
-    handle.emitDismiss();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(handle.closed).toBe(true);
-    const forceIntent = dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE);
-    expect(forceIntent).toBeDefined();
-    expect((forceIntent!.payload as Record<string, unknown>).force).toBe(true);
+    // The cancel-role marker is what makes the form route Escape to Dismiss;
+    // the Dismiss action itself (force-delete + close) is covered above.
+    expect(cancelRoleButtonId(dialogManager.lastHandle!.config)).toBe("dismiss");
   });
 
-  it("Escape (dismiss event) is a no-op while deletion is in progress", async () => {
-    const { dialogManager, dispatcher, fireProgress, fireSwitched } = setup;
+  it("renders no cancel-role button while deletion is in progress (Escape is a no-op)", async () => {
+    const { dialogManager, fireProgress, fireSwitched } = setup;
 
     await fireSwitched(WS_PATH_A);
-    // In progress: no Dismiss button is rendered.
+    // In progress: no Dismiss button is rendered, so the modal has no
+    // cancel-role button and Escape does nothing.
     await fireProgress(makeProgress());
 
-    const handle = dialogManager.lastHandle!;
-    handle.emitDismiss();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(handle.closed).toBe(false);
-    expect(dispatcher.dispatched.find((d) => d.type === INTENT_DELETE_WORKSPACE)).toBeUndefined();
+    expect(cancelRoleButtonId(dialogManager.lastHandle!.config)).toBeUndefined();
   });
 
   it("should clean up on EVENT_WORKSPACE_DELETED", async () => {
@@ -610,15 +617,13 @@ describe("DeletionDialogModule - remove confirm", () => {
     expect(handle.closed).toBe(true);
   });
 
-  it("Escape (dismiss) resolves canceled", async () => {
+  it("marks Cancel as the cancel-role button so Escape clicks it", async () => {
     const setup = createConfirmSetup();
-    const pending = setup.confirm();
+    setup.confirm();
     const handle = setup.dialogManager.lastHandle!;
 
-    handle.emitDismiss();
-
-    await expect(pending).resolves.toEqual({ canceled: true });
-    expect(handle.closed).toBe(true);
+    // Escape routes to Cancel (resolves canceled — covered above).
+    expect(cancelRoleButtonId(handle.config)).toBe("cancel");
   });
 
   it("a status result landing after the answer does not update the closed dialog", async () => {

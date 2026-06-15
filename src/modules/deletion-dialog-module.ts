@@ -132,6 +132,9 @@ function buildConfig(progress: DeletionProgress): DialogConfig {
           id: "dismiss",
           label: "Dismiss",
           variant: "secondary",
+          // role "cancel": Escape clicks Dismiss. Only rendered when the
+          // deletion completed with errors, so mid-deletion Escape is a no-op.
+          role: "cancel",
           title:
             "Close dialog. Workspace will be removed from CodeHydra, but blocking processes and files may remain on disk.",
         },
@@ -185,10 +188,9 @@ function buildRemoveConfirmConfig(state: RemoveConfirmState): DialogConfig {
     type: "group",
     items: [
       { type: "button", id: "remove", label: "Remove", variant: "primary" },
-      // autofocus places focus inside the form so its keyboard contract
-      // (Escape = dismiss, Tab trap) engages; Cancel is the safe default
-      // for a destructive confirmation.
-      { type: "button", id: "cancel", label: "Cancel", variant: "secondary", autofocus: true },
+      // role "cancel": Escape clicks Cancel. The form auto-focuses the
+      // first field (the keep-branch checkbox) on mount.
+      { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
     ],
   });
 
@@ -261,14 +263,9 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
         dismiss();
       }
     });
-
-    // Escape acts like the Dismiss button, but only in the states where that
-    // button is rendered (completed with errors); mid-deletion it's a no-op.
-    handle.onDismiss(() => {
-      const progress = progressMap.get(workspacePath);
-      if (!progress || !progress.completed || !progress.hasErrors) return;
-      dismiss();
-    });
+    // Escape is handled declaratively: the Dismiss button carries role
+    // "cancel" (only rendered when completed with errors), so Escape clicks it
+    // through the normal action path above; mid-deletion Escape is a no-op.
   }
 
   /** Open dialog for the given workspace if it has deletion progress. */

@@ -233,10 +233,9 @@ function buildCloseConfirmConfig(
     type: "group",
     items: [
       { type: "button", id: "close", label: closeLabel, variant: "primary" },
-      // autofocus places focus inside the form so its keyboard contract
-      // (Escape = dismiss, Tab trap) engages; Cancel is the safe default
-      // for a destructive confirmation.
-      { type: "button", id: "cancel", label: "Cancel", variant: "secondary", autofocus: true },
+      // role "cancel": Escape clicks this button (mirrors Cancel). The form
+      // auto-focuses the first field (a checkbox) or the primary button.
+      { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
     ],
   });
 

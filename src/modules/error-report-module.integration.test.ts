@@ -199,10 +199,12 @@ describe("ErrorReportModule — bug report dialog", () => {
     expect(deps.dispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it("Escape (dismiss) discards the draft like Cancel and allows reopening", async () => {
+  it("clears the active-handle guard on Cancel so the dialog can reopen", async () => {
+    // Escape is routed to the Cancel button (role "cancel") by the form, so
+    // discarding the draft is just the cancel action: close + clear the guard.
     const { module, deps, handle } = setup();
     await emitKey(module, "b");
-    handle.emitDismiss();
+    handle.emitEvent({ dialogId: "dlg-test", actionId: "cancel" });
     expect(handle.handle.close).toHaveBeenCalled();
     expect(deps.dispatcher.dispatch).not.toHaveBeenCalled();
 

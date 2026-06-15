@@ -136,18 +136,22 @@ describe("DialogView component (modal surface)", () => {
           type: "group",
           items: [
             { type: "button", id: "do-clone", label: "Clone", variant: "primary" },
-            { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+            { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
           ],
         },
       ],
     };
 
-    it("Escape emits a dismiss event for the modal session", async () => {
+    it("Escape clicks the cancel-role button on this modal surface", async () => {
       renderDialog(config, { dialogId: "clone-1" });
 
       await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
 
-      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "clone-1" });
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "clone-1",
+        actionId: "cancel",
+        data: { url: "" },
+      });
     });
 
     it("Cmd/Ctrl+Enter fires the primary action", async () => {

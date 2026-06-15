@@ -309,16 +309,25 @@ export type TableRow = Readonly<Record<string, string>>;
  * - variant: "secondary" renders the muted style; an explicit "primary" also
  *   marks the button that Enter activates from a radio group (without one,
  *   Enter does nothing).
+ * - role "cancel": marks this as the dialog's cancel action. On a modal
+ *   surface, Escape clicks the first enabled (non-disabled, non-busy)
+ *   cancel-role button — the emitted event is indistinguishable from a real
+ *   click (same actionId + field-values snapshot). A modal with no enabled
+ *   cancel-role button swallows Escape (no-op); a panel surface instead falls
+ *   back to a DialogDismissEvent. Independent of variant (a cancel button is
+ *   usually "secondary", but the primary could be the cancel in some dialogs).
  * - busy: disables the button; a labeled button shows busyLabel (or label),
  *   an icon-only button spins its icon.
  * - autofocus: focus this button when the form mounts (same semantics as
- *   FieldSection.autofocus).
+ *   FieldSection.autofocus). Usually unnecessary — the form auto-focuses its
+ *   first enabled field, else the primary button, on mount.
  */
 export interface DialogButton {
   readonly id: string;
   readonly label?: string;
   readonly icon?: string;
   readonly variant?: "primary" | "secondary";
+  readonly role?: "cancel";
   readonly disabled?: boolean;
   readonly busy?: boolean;
   readonly busyLabel?: string;

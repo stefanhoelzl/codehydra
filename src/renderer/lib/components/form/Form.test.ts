@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { DialogConfig } from "@shared/dialog-types";
+import type { DialogConfig, DialogSurface } from "@shared/dialog-types";
 
 // Mock setup - must be hoisted
 const { mockSendDialogEvent } = vi.hoisted(() => ({
@@ -28,11 +28,15 @@ vi.mock("$lib/api", () => ({
 import Form from "./Form.svelte";
 
 /** Helper to render Form with a config. */
-function renderForm(config: DialogConfig, options?: { dialogId?: string }) {
+function renderForm(
+  config: DialogConfig,
+  options?: { dialogId?: string; surface?: DialogSurface }
+) {
   return render(Form, {
     props: {
       dialogId: options?.dialogId ?? "test-dialog",
       config,
+      ...(options?.surface ? { surface: options.surface } : {}),
     },
   });
 }
@@ -963,30 +967,99 @@ describe("Form component", () => {
         {
           type: "group",
           items: [
-            { type: "button", id: "cancel", label: "Cancel", variant: "secondary" },
+            { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
             { type: "button", id: "create", label: "Create", variant: "primary" },
           ],
         },
       ],
     };
 
-    it("Escape emits a dismiss event for the session", async () => {
+    it("Escape clicks the cancel-role button with the values snapshot", async () => {
       renderForm(keyConfig, { dialogId: "kb-1" });
 
+      const field = document.getElementById("name")!;
+      await fireEvent.input(field, { target: { value: "ws" } });
       await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
 
-      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-1" });
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "kb-1",
+        actionId: "cancel",
+        data: { name: "ws" },
+      });
     });
 
-    it("Escape bubbles up from inside a field to dismiss", async () => {
+    it("Escape clicking the cancel-role button bubbles up from inside a field", async () => {
       renderForm(keyConfig, { dialogId: "kb-2" });
 
       await fireEvent.keyDown(document.getElementById("name")!, { key: "Escape" });
 
-      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-2" });
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "kb-2",
+        actionId: "cancel",
+        data: { name: "" },
+      });
     });
 
-    it("an open dropdown consumes the first Escape; the second dismisses", async () => {
+    it("Escape is a no-op on a modal with no enabled cancel-role button", async () => {
+      renderForm(
+        {
+          sections: [
+            { type: "input", id: "name", label: "Name" },
+            {
+              type: "group",
+              items: [{ type: "button", id: "create", label: "Create", variant: "primary" }],
+            },
+          ],
+        },
+        { dialogId: "kb-modal" }
+      );
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("Escape skips a disabled cancel-role button (no-op on a modal)", async () => {
+      renderForm(
+        {
+          sections: [
+            {
+              type: "group",
+              items: [
+                {
+                  type: "button",
+                  id: "cancel",
+                  label: "Cancel",
+                  variant: "secondary",
+                  role: "cancel",
+                  disabled: true,
+                },
+              ],
+            },
+          ],
+        },
+        { dialogId: "kb-disabled" }
+      );
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("Escape emits a dismiss event on the panel surface with no cancel-role button", async () => {
+      renderForm(
+        {
+          sections: [{ type: "input", id: "name", label: "Name" }],
+        },
+        { dialogId: "kb-panel", surface: "panel" }
+      );
+
+      await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-panel" });
+    });
+
+    it("an open dropdown consumes the first Escape; the second clicks cancel-role", async () => {
       renderForm(
         {
           sections: [
@@ -994,6 +1067,18 @@ describe("Form component", () => {
               type: "dropdown",
               id: "region",
               suggestions: [{ items: [{ value: "us-east", label: "US East" }] }],
+            },
+            {
+              type: "group",
+              items: [
+                {
+                  type: "button",
+                  id: "cancel",
+                  label: "Cancel",
+                  variant: "secondary",
+                  role: "cancel",
+                },
+              ],
             },
           ],
         },
@@ -1004,14 +1089,18 @@ describe("Form component", () => {
       await fireEvent.focus(input);
       expect(input).toHaveAttribute("aria-expanded", "true");
 
-      // First Escape closes the dropdown without dismissing the session.
+      // First Escape closes the dropdown without acting on the session.
       await fireEvent.keyDown(input, { key: "Escape" });
       expect(input).toHaveAttribute("aria-expanded", "false");
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
 
-      // Second Escape reaches the form and dismisses.
+      // Second Escape reaches the form and clicks the cancel-role button.
       await fireEvent.keyDown(input, { key: "Escape" });
-      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-3" });
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "kb-3",
+        actionId: "cancel",
+        data: { region: "us-east" },
+      });
     });
 
     it("Cmd/Ctrl+Enter activates the primary button with the values snapshot", async () => {
@@ -1213,6 +1302,86 @@ describe("Form component", () => {
 
       await waitFor(() => {
         expect(document.activeElement?.textContent).toContain("Cancel");
+      });
+    });
+
+    // ---- Default focus (no explicit autofocus flag) ----
+
+    it("defaults focus to the first enabled field on mount", async () => {
+      renderForm({
+        sections: [
+          {
+            type: "dropdown",
+            id: "region",
+            suggestions: [{ items: [{ value: "x", label: "x" }] }],
+          },
+          {
+            type: "group",
+            items: [
+              {
+                type: "button",
+                id: "cancel",
+                label: "Cancel",
+                variant: "secondary",
+                role: "cancel",
+              },
+              { type: "button", id: "ok", label: "OK", variant: "primary" },
+            ],
+          },
+        ],
+      });
+
+      await waitFor(() => {
+        expect(document.activeElement?.id).toBe("region-input");
+      });
+    });
+
+    it("defaults focus to the primary button when there are no fields", async () => {
+      renderForm({
+        sections: [
+          { type: "text", content: "Removing workspace", style: "heading" },
+          {
+            type: "group",
+            items: [
+              { type: "button", id: "retry", label: "Kill & Retry", variant: "primary" },
+              {
+                type: "button",
+                id: "dismiss",
+                label: "Dismiss",
+                variant: "secondary",
+                role: "cancel",
+              },
+            ],
+          },
+        ],
+      });
+
+      await waitFor(() => {
+        expect(document.activeElement?.textContent).toContain("Kill & Retry");
+      });
+    });
+
+    it("defaults focus to the selected radio card (subsumes the old fallback)", async () => {
+      renderForm({
+        sections: [
+          {
+            type: "radio",
+            id: "agent",
+            options: [
+              { id: "claude", label: "Claude" },
+              { id: "opencode", label: "OpenCode" },
+            ],
+          },
+          {
+            type: "group",
+            items: [{ type: "button", id: "go", label: "Go", variant: "primary" }],
+          },
+        ],
+      });
+
+      await waitFor(() => {
+        expect(document.activeElement).toHaveAttribute("role", "radio");
+        expect(document.activeElement).toHaveAttribute("aria-checked", "true");
       });
     });
   });
