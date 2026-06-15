@@ -4,24 +4,37 @@
  */
 
 /**
- * Selector for focusable elements (disabled controls excluded).
- * Includes standard HTML focusable elements and vscode-elements web components.
+ * Selector for focusable (tabbable) elements. Excludes disabled controls and
+ * anything removed from the tab order (`tabindex="-1"`), so e.g. the
+ * non-selected cards of a roving radio group are never treated as focus
+ * targets. Includes standard HTML focusables and vscode-elements web
+ * components (which handle focus internally). Private — callers use
+ * getFocusables(), the single source of truth shared across the app.
  */
 const FOCUSABLE_SELECTOR = [
   // Standard focusable elements
-  "button:not([disabled])",
-  "[href]",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
+  'button:not([disabled]):not([tabindex="-1"])',
+  '[href]:not([tabindex="-1"])',
+  'input:not([disabled]):not([tabindex="-1"])',
+  'select:not([disabled]):not([tabindex="-1"])',
+  'textarea:not([disabled]):not([tabindex="-1"])',
   '[tabindex]:not([tabindex="-1"])',
-  // vscode-elements web components (they handle focus internally)
-  "vscode-button:not([disabled])",
-  "vscode-checkbox:not([disabled])",
-  "vscode-textfield:not([disabled])",
-  "vscode-textarea:not([disabled])",
-  "vscode-single-select:not([disabled])",
+  // vscode-elements web components
+  'vscode-button:not([disabled]):not([tabindex="-1"])',
+  'vscode-checkbox:not([disabled]):not([tabindex="-1"])',
+  'vscode-textfield:not([disabled]):not([tabindex="-1"])',
+  'vscode-textarea:not([disabled]):not([tabindex="-1"])',
+  'vscode-single-select:not([disabled]):not([tabindex="-1"])',
+  'vscode-dropdown:not([disabled]):not([tabindex="-1"])',
 ].join(", ");
+
+/**
+ * All focusable (tabbable) elements within `container`, in DOM order. The
+ * shared way to enumerate focus targets — keeps the selector itself private.
+ */
+export function getFocusables(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+}
 
 /**
  * Keep Tab/Shift+Tab cycling inside a container: wraps at the boundaries and
@@ -31,7 +44,7 @@ const FOCUSABLE_SELECTOR = [
  */
 export function trapTabKey(event: KeyboardEvent, container: HTMLElement): void {
   if (event.key !== "Tab") return;
-  const focusables = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+  const focusables = getFocusables(container);
   if (focusables.length === 0) return;
   const first = focusables[0]!;
   const last = focusables[focusables.length - 1]!;
@@ -67,10 +80,6 @@ export interface FocusTrap {
  * @returns Focus trap controls
  */
 export function createFocusTrap(container: HTMLElement): FocusTrap {
-  function getFocusables(): HTMLElement[] {
-    return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-  }
-
   function handleKeyDown(event: KeyboardEvent): void {
     trapTabKey(event, container);
   }
@@ -79,7 +88,7 @@ export function createFocusTrap(container: HTMLElement): FocusTrap {
     activate: () => container.addEventListener("keydown", handleKeyDown),
     deactivate: () => container.removeEventListener("keydown", handleKeyDown),
     focusFirst: () => {
-      const focusables = getFocusables();
+      const focusables = getFocusables(container);
       // Prefer element with data-autofocus attribute (avoids a11y_autofocus warning)
       const autofocused = focusables.find((el) => el.hasAttribute("data-autofocus"));
       const target = autofocused ?? focusables[0];
@@ -96,7 +105,7 @@ export function createFocusTrap(container: HTMLElement): FocusTrap {
         element.focus();
       } else {
         // Fall back to first focusable if selector not found
-        const first = getFocusables()[0];
+        const first = getFocusables(container)[0];
         if (first) {
           first.focus();
         } else {

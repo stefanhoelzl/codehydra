@@ -874,7 +874,15 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       ? {
           type: "group",
           align: "right",
-          items: [{ type: "button", id: CLONE_ACTION_BACKGROUND, label: "Continue in background" }],
+          // role "cancel": mid-clone, Escape detaches like this button.
+          items: [
+            {
+              type: "button",
+              id: CLONE_ACTION_BACKGROUND,
+              label: "Continue in background",
+              role: "cancel",
+            },
+          ],
         }
       : {
           // Tab order: input -> Clone -> Cancel; visually Cancel sits left of
@@ -897,6 +905,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
               id: CLONE_ACTION_CANCEL,
               label: "Cancel",
               variant: "secondary" as const,
+              role: "cancel" as const,
             },
           ],
         };
@@ -966,16 +975,9 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       }
     });
 
-    cloneHandle.onDismiss(() => {
-      if (cloneDialog !== state) return;
-      if (state.cloneUrl !== null) {
-        // Mid-clone, Escape detaches like "Continue in background": the clone
-        // keeps running and project:opened lands silently.
-        logger.debug("Clone continuing in background", { url: state.cloneUrl });
-      }
-      closeCloneDialog();
-    });
-
+    // Escape is declarative: the footer's cancel-role button (Cancel when
+    // idle/error, "Continue in background" mid-clone) is clicked through the
+    // action path below.
     cloneHandle.onEvent((event) => {
       if (cloneDialog !== state) return;
       state.url = event.data?.[CLONE_FIELD_URL] ?? state.url;

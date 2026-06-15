@@ -4,8 +4,9 @@
   Modal surface for the declarative dialog framework.
   Renders the chrome — faded logo backdrop + centered card — and delegates the
   sections + actions to <Form>, which owns the keyboard contract (Escape ->
-  dismiss, Cmd/Ctrl+Enter -> primary, Tab trap). One DialogView is rendered
-  per active dialog by DialogHost.
+  click the cancel-role button, else no-op on this modal surface;
+  Cmd/Ctrl+Enter -> primary, Tab trap). One DialogView is rendered per active
+  dialog by DialogHost.
 -->
 <script lang="ts">
   import type { DialogConfig } from "@shared/dialog-types";

@@ -52,7 +52,7 @@
 <section class="panel-view" aria-label={heading}>
   <div class="panel-card">
     {#key dialogId}
-      <Form bind:this={formRef} {dialogId} {config} />
+      <Form bind:this={formRef} {dialogId} {config} surface="panel" />
     {/key}
   </div>
 </section>

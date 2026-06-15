@@ -23,6 +23,7 @@
   secondary={button.variant === "secondary" || undefined}
   disabled={button.disabled || button.busy || undefined}
   data-autofocus={button.autofocus || undefined}
+  data-primary={button.variant === "primary" || undefined}
   aria-label={button.label ?? button.title}
   onclick={onClick}
   {...button.title ? { title: button.title } : {}}
