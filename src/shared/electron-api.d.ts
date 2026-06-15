@@ -21,20 +21,13 @@ export type Unsubscribe = () => void;
  */
 export interface Api {
   // ============ API (api: prefixed channels) ============
-  // Primary API backed by intent dispatcher.
-  // Lifecycle handlers are registered in bootstrap(), others in startServices().
-
   // Renderer→main gestures are NOT invokes: the renderer emits ui:events
-  // (switch-workspace / wake-workspace / remove-workspace / close-project)
-  // carrying opaque identity, and main owns resolution, confirmation dialogs,
-  // and dispatch. (Project open + hibernate have no renderer gesture — the
-  // creation panel and the `h` shortcut drive them entirely main-side.)
-  lifecycle: {
-    /**
-     * Quit the application.
-     */
-    quit(): Promise<void>;
-  };
+  // (switch-workspace / wake-workspace / remove-workspace / close-project /
+  // setup-quit) carrying opaque identity, and main owns resolution,
+  // confirmation dialogs, and dispatch. (Project open + hibernate have no
+  // renderer gesture — the creation panel and the `h` shortcut drive them
+  // entirely main-side.) There are no request/response invoke commands.
+
   /**
    * Emit a UI event to the main process (api:ui:event channel).
    * Fire-and-forget - does not return a promise.

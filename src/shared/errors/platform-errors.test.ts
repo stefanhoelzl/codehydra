@@ -7,15 +7,15 @@ import { PlatformError } from "./platform-errors";
 
 describe("PlatformError", () => {
   it("preserves code and message", () => {
-    const error = new PlatformError("IPC_HANDLER_EXISTS", "Handler already exists");
+    const error = new PlatformError("DIALOG_CANCELLED", "Dialog was cancelled");
 
-    expect(error.code).toBe("IPC_HANDLER_EXISTS");
-    expect(error.message).toBe("Handler already exists");
+    expect(error.code).toBe("DIALOG_CANCELLED");
+    expect(error.message).toBe("Dialog was cancelled");
     expect(error.name).toBe("PlatformError");
   });
 
   it("extends Error", () => {
-    const error = new PlatformError("IPC_HANDLER_NOT_FOUND", "Not found");
+    const error = new PlatformError("IMAGE_NOT_FOUND", "Not found");
 
     expect(error).toBeInstanceOf(Error);
     expect(error).toBeInstanceOf(PlatformError);
@@ -30,9 +30,8 @@ describe("PlatformError", () => {
 
   it("works with different error codes", () => {
     const codes = [
-      "IPC_HANDLER_EXISTS",
-      "IPC_HANDLER_NOT_FOUND",
       "DIALOG_CANCELLED",
+      "IMAGE_NOT_FOUND",
       "IMAGE_LOAD_FAILED",
       "APP_NOT_READY",
     ] as const;

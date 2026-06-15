@@ -628,7 +628,7 @@ App.svelte (mode router)
 ├── lifecycle:show-setup → "setup" mode
 │   ├── SetupScreen.svelte (progress rows: vscode, agent, setup)
 │   ├── lifecycle:setup-progress events → update row statuses
-│   └── lifecycle:setup-error → SetupError (Retry sends sendRetry(), Quit calls lifecycle.quit())
+│   └── lifecycle:setup-error → SetupError (Retry emits the `setup-retry` ui:event, Quit emits `setup-quit`)
 │
 ├── lifecycle:show-starting → "loading" mode
 │   └── SetupScreen with message="CodeHydra is starting..."

@@ -1,40 +1,17 @@
 /**
  * Test utilities for IpcBoundary mocking.
  *
- * Provides a behavioral mock for IpcBoundary that tracks handler registrations
- * and allows state inspection for testing.
+ * Provides a behavioral mock for IpcBoundary that tracks event-listener
+ * registrations and allows state inspection for testing.
  */
 
-import type { IpcBoundary, IpcHandler, IpcEventHandler } from "./ipc";
-import { PlatformError } from "../../shared/errors/platform-errors";
-
-/**
- * State exposed by the behavioral mock for test inspection.
- */
-export interface IpcBoundaryState {
-  /** Map of channel names to registered handlers */
-  readonly handlers: Map<string, IpcHandler>;
-}
+import type { IpcBoundary, IpcEventHandler } from "./ipc";
 
 /**
  * Behavioral mock for IpcBoundary.
- * Extends IpcBoundary with a _getState() method for test inspection.
+ * Extends IpcBoundary with test helpers for inspecting and driving listeners.
  */
 export interface BehavioralIpcBoundary extends IpcBoundary {
-  /** Get the current state for test assertions */
-  _getState(): IpcBoundaryState;
-
-  /**
-   * Simulate invoking a handler (for testing handler behavior).
-   * This is NOT part of the real IpcBoundary interface - it's a test helper.
-   *
-   * @param channel - The IPC channel name
-   * @param args - Arguments to pass to the handler
-   * @returns The handler's return value
-   * @throws PlatformError with code IPC_HANDLER_NOT_FOUND if no handler registered
-   */
-  _invoke(channel: string, ...args: unknown[]): unknown;
-
   /**
    * Simulate sending a fire-and-forget event (for testing event listeners).
    * This is NOT part of the real IpcBoundary interface - it's a test helper.
@@ -56,54 +33,24 @@ export interface BehavioralIpcBoundary extends IpcBoundary {
 /**
  * Create a behavioral mock for IpcBoundary.
  *
- * This mock tracks handler registrations in memory and provides:
- * - Error behavior matching the real implementation (duplicate throws)
- * - State inspection via _getState() for assertions
- * - Handler invocation via _invoke() for testing handler logic
+ * This mock tracks event-listener registrations in memory and provides:
+ * - Listener inspection via _getListeners() for assertions
+ * - Listener invocation via _emit() for testing handler logic
  *
  * @example Basic usage
  * ```typescript
  * const ipcLayer = createBehavioralIpcBoundary();
- * ipcLayer.handle("api:test", async () => "result");
+ * const listener = (_event, payload) => { ... };
+ * ipcLayer.on("api:ui:event", listener);
  *
- * const state = ipcLayer._getState();
- * expect(state.handlers.has("api:test")).toBe(true);
- * ```
- *
- * @example Testing duplicate registration error
- * ```typescript
- * const ipcLayer = createBehavioralIpcBoundary();
- * ipcLayer.handle("api:test", async () => "result");
- *
- * expect(() => ipcLayer.handle("api:test", async () => "other"))
- *   .toThrow(PlatformError);
+ * expect(ipcLayer._getListeners("api:ui:event")).toHaveLength(1);
+ * ipcLayer._emit("api:ui:event", { kind: "ui-connected" });
  * ```
  */
 export function createBehavioralIpcBoundary(): BehavioralIpcBoundary {
-  const handlers = new Map<string, IpcHandler>();
   const eventListeners = new Map<string, IpcEventHandler[]>();
 
   return {
-    handle(channel: string, handler: IpcHandler): void {
-      if (handlers.has(channel)) {
-        throw new PlatformError(
-          "IPC_HANDLER_EXISTS",
-          `Handler already exists for channel: ${channel}`
-        );
-      }
-      handlers.set(channel, handler);
-    },
-
-    removeHandler(channel: string): void {
-      if (!handlers.has(channel)) {
-        throw new PlatformError(
-          "IPC_HANDLER_NOT_FOUND",
-          `No handler registered for channel: ${channel}`
-        );
-      }
-      handlers.delete(channel);
-    },
-
     on(channel: string, listener: IpcEventHandler): void {
       const listeners = eventListeners.get(channel) ?? [];
       listeners.push(listener);
@@ -121,25 +68,6 @@ export function createBehavioralIpcBoundary(): BehavioralIpcBoundary {
           eventListeners.delete(channel);
         }
       }
-    },
-
-    _getState(): IpcBoundaryState {
-      return {
-        handlers: new Map(handlers),
-      };
-    },
-
-    _invoke(channel: string, ...args: unknown[]): unknown {
-      const handler = handlers.get(channel);
-      if (!handler) {
-        throw new PlatformError(
-          "IPC_HANDLER_NOT_FOUND",
-          `No handler registered for channel: ${channel}`
-        );
-      }
-      // Create a minimal mock event object for testing
-      const mockEvent = {} as Parameters<IpcHandler>[0];
-      return handler(mockEvent, ...args);
     },
 
     _emit(channel: string, ...args: unknown[]): void {

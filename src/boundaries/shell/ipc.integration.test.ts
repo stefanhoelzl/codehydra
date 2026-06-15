@@ -3,120 +3,103 @@
  *
  * These tests verify the IpcBoundary interface contract using the behavioral mock.
  * The boundary tests verify the same behavior against real Electron ipcMain.
+ *
+ * IpcBoundary is fire-and-forget only (on/removeListener); renderer→main
+ * gestures flow through the `api:ui:event` channel as listeners.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createBehavioralIpcBoundary, type BehavioralIpcBoundary } from "./ipc.test-utils";
-import { PlatformError } from "../../shared/errors/platform-errors";
 
-describe("IpcBoundary.handle", () => {
+describe("IpcBoundary.on", () => {
   let ipcLayer: BehavioralIpcBoundary;
 
   beforeEach(() => {
     ipcLayer = createBehavioralIpcBoundary();
   });
 
-  it("registers handler for channel", () => {
-    const handler = async () => "result";
-    ipcLayer.handle("api:test:channel", handler);
+  it("registers a listener for a channel", () => {
+    const listener = vi.fn();
+    ipcLayer.on("api:test:channel", listener);
 
-    const state = ipcLayer._getState();
-    expect(state.handlers.has("api:test:channel")).toBe(true);
+    expect(ipcLayer._getListeners("api:test:channel")).toHaveLength(1);
   });
 
-  it("throws PlatformError on duplicate registration", () => {
-    ipcLayer.handle("api:test:channel", async () => "first");
+  it("allows multiple listeners on the same channel", () => {
+    ipcLayer.on("api:test:channel", vi.fn());
+    ipcLayer.on("api:test:channel", vi.fn());
 
-    expect(() => ipcLayer.handle("api:test:channel", async () => "second")).toThrow(PlatformError);
+    expect(ipcLayer._getListeners("api:test:channel")).toHaveLength(2);
   });
 
-  it("duplicate registration has correct error code", () => {
-    ipcLayer.handle("api:test:channel", async () => "first");
+  it("keeps listeners on different channels separate", () => {
+    ipcLayer.on("api:test:one", vi.fn());
+    ipcLayer.on("api:test:two", vi.fn());
 
-    try {
-      ipcLayer.handle("api:test:channel", async () => "second");
-      expect.fail("Should have thrown");
-    } catch (error) {
-      expect(error).toBeInstanceOf(PlatformError);
-      expect((error as PlatformError).code).toBe("IPC_HANDLER_EXISTS");
-    }
+    expect(ipcLayer._getListeners("api:test:one")).toHaveLength(1);
+    expect(ipcLayer._getListeners("api:test:two")).toHaveLength(1);
   });
 
-  it("allows different channels", () => {
-    ipcLayer.handle("api:test:one", async () => "one");
-    ipcLayer.handle("api:test:two", async () => "two");
-
-    const state = ipcLayer._getState();
-    expect(state.handlers.size).toBe(2);
-    expect(state.handlers.has("api:test:one")).toBe(true);
-    expect(state.handlers.has("api:test:two")).toBe(true);
+  it("returns an empty list for an unregistered channel", () => {
+    expect(ipcLayer._getListeners("api:nonexistent")).toHaveLength(0);
   });
 });
 
-describe("IpcBoundary.removeHandler", () => {
+describe("IpcBoundary._emit (test helper)", () => {
   let ipcLayer: BehavioralIpcBoundary;
 
   beforeEach(() => {
     ipcLayer = createBehavioralIpcBoundary();
   });
 
-  it("removes registered handler", () => {
-    ipcLayer.handle("api:test:channel", async () => "result");
-    ipcLayer.removeHandler("api:test:channel");
+  it("invokes all registered listeners with the payload", () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    ipcLayer.on("api:test:channel", a);
+    ipcLayer.on("api:test:channel", b);
 
-    const state = ipcLayer._getState();
-    expect(state.handlers.has("api:test:channel")).toBe(false);
+    ipcLayer._emit("api:test:channel", { message: "hello" });
+
+    expect(a).toHaveBeenCalledWith(expect.anything(), { message: "hello" });
+    expect(b).toHaveBeenCalledWith(expect.anything(), { message: "hello" });
   });
 
-  it("throws PlatformError for non-existent channel", () => {
-    expect(() => ipcLayer.removeHandler("api:nonexistent")).toThrow(PlatformError);
-  });
-
-  it("non-existent removal has correct error code", () => {
-    try {
-      ipcLayer.removeHandler("api:nonexistent");
-      expect.fail("Should have thrown");
-    } catch (error) {
-      expect(error).toBeInstanceOf(PlatformError);
-      expect((error as PlatformError).code).toBe("IPC_HANDLER_NOT_FOUND");
-    }
-  });
-
-  it("allows re-registration after removal", () => {
-    ipcLayer.handle("api:test:channel", async () => "first");
-    ipcLayer.removeHandler("api:test:channel");
-    ipcLayer.handle("api:test:channel", async () => "second");
-
-    const state = ipcLayer._getState();
-    expect(state.handlers.has("api:test:channel")).toBe(true);
+  it("does nothing for a channel with no listeners", () => {
+    expect(() => ipcLayer._emit("api:nonexistent", {})).not.toThrow();
   });
 });
 
-describe("IpcBoundary._invoke (test helper)", () => {
+describe("IpcBoundary.removeListener", () => {
   let ipcLayer: BehavioralIpcBoundary;
 
   beforeEach(() => {
     ipcLayer = createBehavioralIpcBoundary();
   });
 
-  it("invokes registered handler with arguments", async () => {
-    ipcLayer.handle("api:test:echo", async (_event, payload) => payload);
+  it("removes a specific listener by reference", () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    ipcLayer.on("api:test:channel", a);
+    ipcLayer.on("api:test:channel", b);
 
-    const result = await ipcLayer._invoke("api:test:echo", { message: "hello" });
-    expect(result).toEqual({ message: "hello" });
+    ipcLayer.removeListener("api:test:channel", a);
+
+    const remaining = ipcLayer._getListeners("api:test:channel");
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]).toBe(b);
   });
 
-  it("throws PlatformError for non-existent channel", () => {
-    expect(() => ipcLayer._invoke("api:nonexistent")).toThrow(PlatformError);
+  it("a removed listener is no longer invoked on emit", () => {
+    const listener = vi.fn();
+    ipcLayer.on("api:test:channel", listener);
+    ipcLayer.removeListener("api:test:channel", listener);
+
+    ipcLayer._emit("api:test:channel", {});
+
+    expect(listener).not.toHaveBeenCalled();
   });
 
-  it("invocation error has correct code", () => {
-    try {
-      ipcLayer._invoke("api:nonexistent");
-      expect.fail("Should have thrown");
-    } catch (error) {
-      expect(error).toBeInstanceOf(PlatformError);
-      expect((error as PlatformError).code).toBe("IPC_HANDLER_NOT_FOUND");
-    }
+  it("is a no-op for an unregistered channel", () => {
+    expect(() => ipcLayer.removeListener("api:nonexistent", vi.fn())).not.toThrow();
   });
 });

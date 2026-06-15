@@ -29,7 +29,6 @@ import {
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
 } from "../intents/app-shutdown";
-import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { createDeleteEventOperation } from "../intents/lib/operation.test-utils";
 import { registerTestInfrastructure, updateStatusIntent } from "../intents/operations.test-utils";
 import { createUiIpcModule, type UiIpcModuleDeps } from "./ui-ipc-module";
@@ -370,127 +369,18 @@ describe("UiIpcModule - workspace:loading", () => {
 // NOTE: workspace:deletion-progress tests removed — now handled by deletion-dialog-module
 
 // =============================================================================
-// Tests - IPC handler registration
-// =============================================================================
-
-describe("UiIpcModule - IPC handlers", () => {
-  it("registers IPC handlers on ipcLayer", () => {
-    const ipcLayer = createBehavioralIpcBoundary();
-    const deps = createBridgeDeps({ ipcLayer });
-    createUiIpcModule(deps);
-
-    const state = ipcLayer._getState();
-    // The renderer→main command invokes (switch/wake/hibernate/open) are gone:
-    // those gestures flow through the ui:event union. Only quit remains.
-    expect(state.handlers.has(ApiIpcChannels.LIFECYCLE_QUIT)).toBe(true);
-  });
-
-  // Startup readiness (markUIReady + app:ready dispatch) moved to the
-  // presenter's `ui-connected` ui:event handler — see presentation-module tests.
-});
-
-// =============================================================================
-// Tests - shutdown cleanup
-// =============================================================================
-
-describe("UiIpcModule - shutdown", () => {
-  it("removes all IPC handlers on app:shutdown", async () => {
-    const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-
-    const ipcLayer = createBehavioralIpcBoundary();
-    const deps = createBridgeDeps({
-      ipcLayer,
-      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
-    });
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const quitModule: IntentModule = {
-      name: "test-quit",
-      hooks: {
-        [APP_SHUTDOWN_OPERATION_ID]: {
-          quit: { handler: async () => {} },
-        },
-      },
-    };
-
-    dispatcher.registerModule(uiIpcModule);
-    dispatcher.registerModule(quitModule);
-
-    // Verify handlers are registered
-    const stateBefore = ipcLayer._getState();
-    expect(stateBefore.handlers.size).toBeGreaterThan(0);
-
-    // Shutdown
-    await dispatcher.dispatch({
-      type: INTENT_APP_SHUTDOWN,
-      payload: {},
-    } as AppShutdownIntent);
-
-    // All handlers should be removed
-    const stateAfter = ipcLayer._getState();
-    expect(stateAfter.handlers.size).toBe(0);
-  });
-
-  it("shutdown with already-removed handler does not throw", async () => {
-    const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
-
-    const ipcLayer = createBehavioralIpcBoundary();
-    const deps = createBridgeDeps({
-      ipcLayer,
-      dispatcher: dispatcher as unknown as UiIpcModuleDeps["dispatcher"],
-    });
-    const uiIpcModule = createUiIpcModule(deps);
-
-    const quitModule: IntentModule = {
-      name: "test-quit",
-      hooks: {
-        [APP_SHUTDOWN_OPERATION_ID]: {
-          quit: { handler: async () => {} },
-        },
-      },
-    };
-
-    dispatcher.registerModule(uiIpcModule);
-    dispatcher.registerModule(quitModule);
-
-    // Remove a handler manually before shutdown
-    ipcLayer.removeHandler(ApiIpcChannels.LIFECYCLE_QUIT);
-
-    // Shutdown should still succeed (catches the error for the already-removed handler)
-    await expect(
-      dispatcher.dispatch({
-        type: INTENT_APP_SHUTDOWN,
-        payload: {},
-      } as AppShutdownIntent)
-    ).resolves.not.toThrow();
-  });
-});
-
-// NOTE: setup:error forwarding tests removed — setup:error is now handled by view-module
-// via DialogManager, not the IPC event bridge.
+// NOTE: IPC invoke-handler + shutdown-cleanup tests removed.
 //
+// UiIpcModule no longer registers any request/response invoke handlers — the
+// last one (api:lifecycle:quit) is gone, and renderer→main gestures flow
+// through the api:ui:event union (see presentation-module tests). The only
+// listeners it registers are the dialog/notification user-event routers, torn
+// down in its app:shutdown `stop` hook. executeCommand was never exposed via
+// IPC; MCP/Plugin handlers dispatch intents directly.
+//
+// NOTE: setup:error forwarding tests removed — setup:error is now handled by
+// view-module via DialogManager, not the IPC event bridge.
 // NOTE: shortcut:key-pressed forwarding tests removed — shortcut navigation is
 // now handled in-process by the presenter; the IPC bridge no longer forwards
 // shortcut keys to the renderer.
-
 // =============================================================================
-// executeCommand tests (via IPC handler)
-// =============================================================================
-
-describe("UiIpcModule - executeCommand", () => {
-  it("is not exposed via IPC (only used by MCP/Plugin)", () => {
-    // executeCommand is registered as an apiRegistry method in the old code
-    // but was not exposed via IPC. Now it's gone entirely from the bridge.
-    // MCP/Plugin handlers dispatch intents directly.
-    const ipcLayer = createBehavioralIpcBoundary();
-    const deps = createBridgeDeps({ ipcLayer });
-    createUiIpcModule(deps);
-
-    // No IPC channel for executeCommand
-    const state = ipcLayer._getState();
-    const channels = [...state.handlers.keys()];
-    expect(channels.every((ch) => !ch.includes("execute-command"))).toBe(true);
-  });
-});
