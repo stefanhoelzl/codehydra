@@ -372,11 +372,11 @@ export interface DeletionProgress {
 }
 
 // =============================================================================
-// Initial Prompt Types
+// Agent Spec Types
 // =============================================================================
 
 /**
- * Model identifier for OpenCode prompts.
+ * Model identifier (provider + model id) carried by an agent spec.
  */
 export interface PromptModel {
   readonly providerID: string;
@@ -384,67 +384,50 @@ export interface PromptModel {
 }
 
 /**
- * Initial prompt for workspace creation.
- * Can be a simple string (uses defaults) or an object with optional
- * permissionMode / agentName / model.
+ * Agent specification for workspace creation — a discriminated union by backend.
  *
- * Axes (independent):
- * - permissionMode: Claude permission mode (e.g. "plan", "acceptEdits",
- *   "bypassPermissions"). Claude-only; ignored by OpenCode. Omit for the
- *   default (Claude decides; no --permission-mode flag).
- * - agentName: named agent/persona. Claude -> --agent; OpenCode -> the agent
- *   to run (e.g. "build", "plan", or a custom agent). Omit for the default.
+ * Carries both the prompt and the backend-specific launch config in one object,
+ * so each backend only exposes the options it actually understands:
+ * - "default": no backend chosen → resolved late from git metadata / config.
+ *   Accepts a prompt only. To set a model, permission mode or named agent you
+ *   must name the backend (a typed arm).
+ * - "claude": Claude. Supports prompt, model, permissionMode (e.g. "plan"),
+ *   and a named agent (--agent).
+ * - "opencode": OpenCode. Supports prompt, model and a named agent (e.g.
+ *   "build"). No permission mode (Claude-only concept).
  *
  * @example
- * // Simple string - uses defaults
- * initialPrompt: "Implement the login feature"
+ * // Just a prompt under whatever the resolved-default backend is
+ * agent: { type: "default", prompt: "Implement the login feature" }
  *
  * // Read-only/plan mode on Claude
- * initialPrompt: { prompt: "Investigate the bug", permissionMode: "plan" }
+ * agent: { type: "claude", prompt: "Investigate the bug", permissionMode: "plan" }
  *
- * // Named agent (OpenCode 'build', or a Claude custom agent)
- * initialPrompt: { prompt: "Implement the login feature", agentName: "build" }
- *
- * // Object with model
- * initialPrompt: { prompt: "Implement the login feature", model: { providerID: "anthropic", modelID: "claude-sonnet" } }
+ * // OpenCode 'build' agent with an explicit model
+ * agent: { type: "opencode", prompt: "Ship it", agentName: "build", model: { providerID: "anthropic", modelID: "claude-sonnet" } }
  */
-export type InitialPrompt =
-  | string
+export type AgentSpec =
+  | { readonly type: "default"; readonly prompt?: string }
   | {
-      readonly prompt: string;
+      readonly type: "claude";
+      readonly prompt?: string;
+      readonly model?: PromptModel;
       readonly permissionMode?: string;
       readonly agentName?: string;
+    }
+  | {
+      readonly type: "opencode";
+      readonly prompt?: string;
       readonly model?: PromptModel;
+      readonly agentName?: string;
     };
 
 /**
- * Normalized initial prompt structure.
- * Always has prompt text; permissionMode, agentName and model are optional.
+ * Whether an agent spec carries a non-empty prompt the agent will run on start.
+ * Used to signal optimistic "busy" state to the renderer.
  */
-export interface NormalizedInitialPrompt {
-  readonly prompt: string;
-  readonly permissionMode?: string;
-  readonly agentName?: string;
-  readonly model?: PromptModel;
-}
-
-/**
- * Normalize an initial prompt to a consistent structure.
- *
- * @param input - The initial prompt (string or object)
- * @returns Normalized object with prompt and optional permissionMode/agentName/model
- */
-export function normalizeInitialPrompt(input: InitialPrompt): NormalizedInitialPrompt {
-  if (typeof input === "string") {
-    return { prompt: input };
-  }
-  // Conditional spread keeps undefined keys out (exactOptionalPropertyTypes).
-  return {
-    prompt: input.prompt,
-    ...(input.permissionMode !== undefined && { permissionMode: input.permissionMode }),
-    ...(input.agentName !== undefined && { agentName: input.agentName }),
-    ...(input.model !== undefined && { model: input.model }),
-  };
+export function agentSpecHasPrompt(spec: AgentSpec | undefined): boolean {
+  return spec?.prompt !== undefined && spec.prompt.trim() !== "";
 }
 
 /**
@@ -456,17 +439,26 @@ const promptModelSchema = z.object({
 });
 
 /**
- * Zod schema for validating InitialPrompt.
- * Accepts either a non-empty string or an object with prompt and optional
- * permissionMode / agentName / model.
+ * Zod schema for validating AgentSpec. Discriminated on `type` so each backend
+ * only accepts the options it understands (e.g. permissionMode is Claude-only).
  */
-export const initialPromptSchema = z.union([
-  z.string().min(1),
+export const agentSpecSchema = z.discriminatedUnion("type", [
   z.object({
-    prompt: z.string().min(1),
-    permissionMode: z.string().optional(),
-    agentName: z.string().optional(),
+    type: z.literal("default"),
+    prompt: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal("claude"),
+    prompt: z.string().min(1).optional(),
     model: promptModelSchema.optional(),
+    permissionMode: z.string().min(1).optional(),
+    agentName: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal("opencode"),
+    prompt: z.string().min(1).optional(),
+    model: promptModelSchema.optional(),
+    agentName: z.string().min(1).optional(),
   }),
 ]);
 

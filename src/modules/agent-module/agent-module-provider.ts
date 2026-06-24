@@ -8,16 +8,21 @@
 
 import type { AgentType, AgentLifecycleEvent } from "../../shared/plugin-protocol";
 import type { AggregatedAgentStatus, WorkspacePath } from "../../shared/ipc";
-import type { AgentSessionInfo, McpConfig, StopServerResult, RestartServerResult } from "./types";
+import type {
+  AgentSessionInfo,
+  McpConfig,
+  StopServerResult,
+  RestartServerResult,
+  AgentPromptConfig,
+} from "./types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
-import type { NormalizedInitialPrompt } from "../../shared/api/types";
 import type { DownloadProgressCallback } from "../../utils/binary-download";
 
 /**
  * Options for starting a workspace.
  */
 export interface WorkspaceStartOptions {
-  readonly initialPrompt?: NormalizedInitialPrompt;
+  readonly initialPrompt?: AgentPromptConfig;
   readonly isNewWorkspace?: boolean;
 }
 

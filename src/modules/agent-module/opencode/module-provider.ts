@@ -148,9 +148,16 @@ export function createOpenCodeModuleProvider(
 
       // --- Workspace start ---
       startServer: async (workspacePath, options) => {
-        if (options?.initialPrompt) {
+        // OpenCode applies the named agent/model per message, so a prompt is
+        // required to act on them; without a prompt there's nothing to send.
+        const ip = options?.initialPrompt;
+        if (ip?.prompt) {
           await serverManager.startServer(workspacePath, {
-            initialPrompt: options.initialPrompt,
+            initialPrompt: {
+              prompt: ip.prompt,
+              ...(ip.agentName !== undefined && { agentName: ip.agentName }),
+              ...(ip.model !== undefined && { model: ip.model }),
+            },
           });
         } else {
           await serverManager.startServer(workspacePath);

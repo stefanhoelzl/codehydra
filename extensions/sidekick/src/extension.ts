@@ -11,7 +11,7 @@ import type {
   CommandRequest,
   LogContext,
   WorkspaceCreateRequest,
-  InitialPrompt,
+  AgentSpec,
   AgentSession,
   AgentType,
   ShowNotificationRequest,
@@ -419,11 +419,7 @@ const codehydraApi = {
       return emitApiCall<unknown>("api:workspace:executeCommand", { command, args });
     },
 
-    create(
-      name: string,
-      base: string,
-      options?: { initialPrompt?: InitialPrompt; stealFocus?: boolean }
-    ) {
+    create(name: string, base: string, options?: { agent?: AgentSpec; stealFocus?: boolean }) {
       // Client-side validation
       if (typeof name !== "string" || name.trim().length === 0) {
         return Promise.reject(new Error("Name must be a non-empty string"));
@@ -431,32 +427,27 @@ const codehydraApi = {
       if (typeof base !== "string" || base.trim().length === 0) {
         return Promise.reject(new Error("Base must be a non-empty string"));
       }
-      // Validate initialPrompt if provided
-      if (options?.initialPrompt !== undefined) {
-        const prompt = options.initialPrompt;
-        if (typeof prompt === "string") {
-          if (prompt.length === 0) {
-            return Promise.reject(new Error("Initial prompt cannot be empty"));
-          }
-        } else if (typeof prompt === "object" && prompt !== null) {
-          if (typeof prompt.prompt !== "string" || prompt.prompt.length === 0) {
-            return Promise.reject(new Error("Initial prompt.prompt must be a non-empty string"));
-          }
-          if (prompt.permissionMode !== undefined && typeof prompt.permissionMode !== "string") {
-            return Promise.reject(new Error("Initial prompt.permissionMode must be a string"));
-          }
-          if (prompt.agentName !== undefined && typeof prompt.agentName !== "string") {
-            return Promise.reject(new Error("Initial prompt.agentName must be a string"));
-          }
-        } else {
-          return Promise.reject(new Error("Initial prompt must be a string or object"));
+      // Validate the agent spec if provided
+      if (options?.agent !== undefined) {
+        const agent = options.agent;
+        if (typeof agent !== "object" || agent === null) {
+          return Promise.reject(new Error("agent must be an object"));
+        }
+        if (agent.type !== "default" && agent.type !== "claude" && agent.type !== "opencode") {
+          return Promise.reject(new Error('agent.type must be "default", "claude" or "opencode"'));
+        }
+        if (
+          agent.prompt !== undefined &&
+          (typeof agent.prompt !== "string" || agent.prompt.length === 0)
+        ) {
+          return Promise.reject(new Error("agent.prompt must be a non-empty string"));
         }
       }
       // Build request
       const request: WorkspaceCreateRequest = {
         name,
         base,
-        initialPrompt: options?.initialPrompt,
+        agent: options?.agent,
         stealFocus: options?.stealFocus,
       };
       return emitApiCall("api:workspace:create", request);

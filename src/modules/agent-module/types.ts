@@ -3,7 +3,21 @@
  * These interfaces enable pluggable agent implementations (OpenCode, Claude, etc.)
  */
 
-import type { NormalizedInitialPrompt } from "../../shared/api/types";
+import type { PromptModel } from "../../shared/api/types";
+
+/**
+ * Resolved per-workspace agent launch config handed to a provider once the
+ * backend is known. Mirrors the typed AgentSpec arms minus the `type`
+ * discriminant; every field is optional (prompt-less opens are valid).
+ */
+export interface AgentPromptConfig {
+  readonly prompt?: string;
+  readonly model?: PromptModel;
+  /** Claude permission mode (e.g. "plan"). Claude-only. */
+  readonly permissionMode?: string;
+  /** Named agent/persona (Claude --agent, or OpenCode's agent). */
+  readonly agentName?: string;
+}
 
 /**
  * MCP server configuration shared by both agent server managers.
@@ -74,9 +88,9 @@ export interface AgentServerManager {
    * Should be called after startServer() but before the workspace view is created.
    *
    * @param workspacePath - Absolute path to the workspace
-   * @param config - Normalized initial prompt configuration
+   * @param config - Resolved agent launch configuration
    */
-  setInitialPrompt?(workspacePath: string, config: NormalizedInitialPrompt): Promise<void>;
+  setInitialPrompt?(workspacePath: string, config: AgentPromptConfig): Promise<void>;
 
   /**
    * Create a no-session marker for a new workspace.

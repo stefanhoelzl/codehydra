@@ -9,7 +9,7 @@ import {
   SERVER_INSTRUCTIONS,
   type McpServerFactory,
 } from "./mcp-module";
-import { initialPromptSchema } from "../shared/api/types";
+import { agentSpecSchema } from "../shared/api/types";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMockDispatcher as createBaseMockDispatcher } from "../intents/lib/dispatcher.test-utils";
@@ -389,55 +389,55 @@ describe("createDefaultMcpServer", () => {
 describe("SERVER_INSTRUCTIONS", () => {
   it("includes workspace creation guidance", () => {
     expect(SERVER_INSTRUCTIONS).toContain("workspace_create");
-    expect(SERVER_INSTRUCTIONS).toContain('"plan"');
-    expect(SERVER_INSTRUCTIONS).toContain("read-only");
+    expect(SERVER_INSTRUCTIONS).toContain("prompt");
     expect(SERVER_INSTRUCTIONS).toContain("default mode");
-    expect(SERVER_INSTRUCTIONS).toContain("agentName");
   });
 });
 
-describe("initialPromptSchema validation", () => {
-  // Uses the schema imported from types - this tests the exact schema used by workspace_create
+describe("agentSpecSchema validation", () => {
+  // Uses the schema imported from types - the exact schema used by the create paths
 
-  it("rejects empty string prompt", () => {
-    const result = initialPromptSchema.safeParse("");
+  it("rejects a bare string (must be a typed object)", () => {
+    const result = agentSpecSchema.safeParse("Implement the feature");
     expect(result.success).toBe(false);
   });
 
-  it("rejects object with empty prompt string", () => {
-    const result = initialPromptSchema.safeParse({ prompt: "" });
+  it("rejects an unknown backend type", () => {
+    const result = agentSpecSchema.safeParse({ type: "gemini", prompt: "x" });
     expect(result.success).toBe(false);
   });
 
-  it("accepts non-empty string prompt", () => {
-    const result = initialPromptSchema.safeParse("Implement the feature");
+  it("accepts the default arm with a prompt", () => {
+    const result = agentSpecSchema.safeParse({ type: "default", prompt: "Implement the feature" });
     expect(result.success).toBe(true);
   });
 
-  it("accepts object with non-empty prompt", () => {
-    const result = initialPromptSchema.safeParse({ prompt: "Implement the feature" });
+  it("accepts the default arm with no prompt", () => {
+    const result = agentSpecSchema.safeParse({ type: "default" });
     expect(result.success).toBe(true);
   });
 
-  it("accepts object with prompt and agentName", () => {
-    const result = initialPromptSchema.safeParse({
-      prompt: "Implement the feature",
-      agentName: "build",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data).toEqual({ prompt: "Implement the feature", agentName: "build" });
-    }
+  it("rejects the default arm with an empty prompt", () => {
+    const result = agentSpecSchema.safeParse({ type: "default", prompt: "" });
+    expect(result.success).toBe(false);
   });
 
-  it("accepts object with prompt and permissionMode", () => {
-    const result = initialPromptSchema.safeParse({
+  it("accepts a claude arm with permissionMode", () => {
+    const result = agentSpecSchema.safeParse({
+      type: "claude",
       prompt: "Investigate the bug",
       permissionMode: "plan",
     });
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data).toEqual({ prompt: "Investigate the bug", permissionMode: "plan" });
-    }
+  });
+
+  it("accepts an opencode arm with agentName and model", () => {
+    const result = agentSpecSchema.safeParse({
+      type: "opencode",
+      prompt: "Implement the feature",
+      agentName: "build",
+      model: { providerID: "anthropic", modelID: "claude-sonnet" },
+    });
+    expect(result.success).toBe(true);
   });
 });

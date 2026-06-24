@@ -28,7 +28,7 @@ import { dirname } from "node:path";
  * Model is stored as just the modelID string (not full PromptModel).
  */
 export interface InitialPromptConfig {
-  readonly prompt: string;
+  readonly prompt?: string;
   readonly model?: string;
   /** Claude permission mode (e.g. "plan"). Omitted = let Claude decide. */
   readonly permissionMode?: string;

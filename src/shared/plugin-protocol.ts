@@ -6,8 +6,8 @@
  */
 
 import { z } from "zod/v4";
-import type { WorkspaceStatus, Workspace, InitialPrompt, AgentSession } from "./api/types";
-import { METADATA_KEY_REGEX, isValidMetadataKey, initialPromptSchema } from "./api/types";
+import type { WorkspaceStatus, Workspace, AgentSpec, AgentSession } from "./api/types";
+import { METADATA_KEY_REGEX, isValidMetadataKey, agentSpecSchema } from "./api/types";
 
 // ============================================================================
 // Result Types
@@ -296,8 +296,8 @@ export interface WorkspaceCreateRequest {
   readonly name: string;
   /** Base branch to create the workspace from */
   readonly base: string;
-  /** Optional initial prompt to send after workspace is created */
-  readonly initialPrompt?: InitialPrompt;
+  /** Optional agent spec: prompt + backend-specific launch config. */
+  readonly agent?: AgentSpec;
   /** If true, steal focus from current workspace. If false, don't steal focus but still
    *  switch when no workspace is active. Default: switch (undefined treated as true). */
   readonly stealFocus?: boolean;
@@ -306,11 +306,11 @@ export interface WorkspaceCreateRequest {
 const workspaceCreateRequestSchema = z.object({
   name: nonEmptyString("name"),
   base: nonEmptyString("base"),
-  initialPrompt: z
+  agent: z
     .unknown()
     .refine(
-      (value) => initialPromptSchema.safeParse(value).success,
-      "Field 'initialPrompt' must be a non-empty string or a prompt object"
+      (value) => agentSpecSchema.safeParse(value).success,
+      "Field 'agent' must be a valid agent spec ({ type, prompt?, ... })"
     )
     .optional(),
   stealFocus: z.boolean().optional(),
@@ -318,9 +318,8 @@ const workspaceCreateRequestSchema = z.object({
 
 /**
  * Runtime validation for WorkspaceCreateRequest.
- * Validates structure and required fields. The optional initialPrompt is
- * checked against initialPromptSchema (including the model field), keeping
- * this path in sync with the MCP server's validation.
+ * Validates structure and required fields. The optional agent spec is checked
+ * against agentSpecSchema, keeping this path in sync with the intent contract.
  */
 export const validateWorkspaceCreateRequest = validateWith(workspaceCreateRequestSchema);
 

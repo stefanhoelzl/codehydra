@@ -114,20 +114,34 @@ export interface PromptModel {
 }
 
 /**
- * Initial prompt for workspace creation.
- * Can be a simple string (uses the default agent) or an object with optional
- * agent and model selection.
+ * Agent specification for workspace creation — a discriminated union by backend.
+ * Carries the prompt plus the backend-specific launch config:
+ * - "default": prompt only; the backend is resolved on the CodeHydra side.
+ * - "claude": prompt, model, permissionMode (e.g. "plan") and a named agent.
+ * - "opencode": prompt, model and a named agent (e.g. "build"). No permission mode.
  */
-export type InitialPrompt =
-  | string
-  | { readonly prompt: string; readonly agent?: string; readonly model?: PromptModel };
+export type AgentSpec =
+  | { readonly type: "default"; readonly prompt?: string }
+  | {
+      readonly type: "claude";
+      readonly prompt?: string;
+      readonly model?: PromptModel;
+      readonly permissionMode?: string;
+      readonly agentName?: string;
+    }
+  | {
+      readonly type: "opencode";
+      readonly prompt?: string;
+      readonly model?: PromptModel;
+      readonly agentName?: string;
+    };
 
 /**
  * Options for workspace creation.
  */
 export interface WorkspaceCreateOptions {
-  /** Optional initial prompt to send after workspace is created */
-  readonly initialPrompt?: InitialPrompt;
+  /** Optional agent spec: prompt + backend-specific launch config. */
+  readonly agent?: AgentSpec;
   /** If true, steal focus from current workspace. If false, don't steal focus but still
    *  switch when no workspace is active. Default: switch (undefined treated as true). */
   readonly stealFocus?: boolean;

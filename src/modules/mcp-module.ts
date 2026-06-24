@@ -22,7 +22,6 @@ import { randomUUID } from "node:crypto";
 import { McpServer as McpServerSdk } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import { createOpencodeClient } from "@opencode-ai/sdk";
 
 import type { IntentModule } from "../intents/lib/module";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -35,13 +34,7 @@ import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
 import type { LogLevel } from "../boundaries/platform/logging-types";
 import type { IDisposable } from "../shared/types";
 import { getErrorMessage } from "../shared/errors/service-errors";
-import {
-  initialPromptSchema,
-  normalizeInitialPrompt,
-  type PromptModel,
-  type Workspace,
-  type DeletionProgress,
-} from "../shared/api/types";
+import { type Workspace, type DeletionProgress } from "../shared/api/types";
 
 // Intent types for direct dispatch
 import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
@@ -153,13 +146,8 @@ export type McpServerFactory = () => McpServerSdk;
 export const SERVER_INSTRUCTIONS = [
   "CodeHydra manages workspaces as git worktrees, each with its own AI agent session.",
   "",
-  "When creating a workspace with workspace_create, the initialPrompt parameter controls what the new workspace's agent will do.",
-  "Use the object form { prompt, permissionMode, agentName } to control how the agent starts:",
-  '- permissionMode: "plan" — the agent starts in read-only/plan mode (Claude). Use this when the task requires planning, research, or exploration before making changes.',
-  "- No permissionMode field — the agent starts in its default mode. Use this when the task should proceed directly to implementation.",
-  '- agentName — run a named agent/persona (e.g. "build" on OpenCode, or a Claude custom agent). Omit to use the default agent.',
-  "",
-  "The model is automatically propagated from your current session — you do not need to specify it.",
+  "When creating a workspace with workspace_create, pass an optional prompt to tell the new workspace's agent what to do.",
+  "The prompt runs under the workspace agent's default mode and model; backend selection, permission mode and model are configured on the CodeHydra side, not via this tool.",
   "",
   "When working with tool results, write down any important information you might need later in your response,",
   "as the original tool result may be cleared later.",
@@ -709,15 +697,13 @@ export class McpServer {
                 "When set, the local branch is created at this ref with upstream configured. " +
                 "Must be a valid remote-tracking branch."
             ),
-          initialPrompt: initialPromptSchema
+          prompt: z
+            .string()
+            .min(1)
             .optional()
             .describe(
-              "Optional initial prompt to send after workspace is created. " +
-                "Can be a string or { prompt, permissionMode?, agentName? }. " +
-                'Set permissionMode to "plan" for read-only/planning mode (Claude), ' +
-                "or omit it for the default mode. " +
-                'Set agentName to run a named agent (e.g. "build" on OpenCode, ' +
-                "or a Claude custom agent)."
+              "Optional initial prompt to send after the workspace is created. " +
+                "The workspace's agent runs it under that agent's default mode."
             ),
           stealFocus: z
             .boolean()
@@ -727,46 +713,15 @@ export class McpServer {
             ),
         }),
       },
-      async (args, extra) => {
-        const workspacePath = this.getWorkspacePathFromExtra(extra);
-
+      async (args) => {
         try {
           const projectPath = args.projectPath as string;
           const name = args.name as string;
           const base = args.base as string;
           const tracking = args.tracking as string | undefined;
-          const rawInitialPrompt = args.initialPrompt as
-            | string
-            | { prompt: string; permissionMode?: string; agentName?: string; model?: PromptModel }
-            | undefined;
+          const prompt = args.prompt as string | undefined;
           // Default to false for API calls (stay in background)
           const stealFocus = (args.stealFocus as boolean | undefined) ?? false;
-
-          // If initialPrompt provided, resolve model from caller's session if not specified
-          let finalPrompt:
-            | { prompt: string; permissionMode?: string; agentName?: string; model?: PromptModel }
-            | undefined;
-          if (rawInitialPrompt !== undefined) {
-            const normalized = normalizeInitialPrompt(rawInitialPrompt);
-
-            // If no model specified, try to get caller's current model
-            let model = normalized.model;
-            if (!model && workspacePath) {
-              model = await this.getCallerModel(workspacePath);
-            }
-
-            // Build final prompt with model if available
-            finalPrompt = { prompt: normalized.prompt };
-            if (normalized.permissionMode !== undefined) {
-              finalPrompt = { ...finalPrompt, permissionMode: normalized.permissionMode };
-            }
-            if (normalized.agentName !== undefined) {
-              finalPrompt = { ...finalPrompt, agentName: normalized.agentName };
-            }
-            if (model !== undefined) {
-              finalPrompt = { ...finalPrompt, model };
-            }
-          }
 
           const intent: OpenWorkspaceIntent = {
             type: INTENT_OPEN_WORKSPACE,
@@ -775,7 +730,8 @@ export class McpServer {
               workspaceName: name,
               base,
               ...(tracking !== undefined && { tracking }),
-              ...(finalPrompt !== undefined && { initialPrompt: finalPrompt }),
+              // Prompt-only under the resolved-default backend.
+              ...(prompt !== undefined && { agent: { type: "default", prompt } }),
               stealFocus,
               source: "mcp",
             },
@@ -1071,79 +1027,6 @@ export class McpServer {
       current.delete(resolve);
       if (current.size === 0) this.deletionWaiters.delete(workspacePath);
     };
-  }
-
-  /**
-   * Get the model from the caller's current OpenCode session.
-   * Used to propagate the model when creating a new workspace with an initial prompt.
-   *
-   * @param workspacePath - The workspace path of the caller
-   * @returns The model from the most recent user message, or undefined if not available
-   */
-  private async getCallerModel(workspacePath: string): Promise<PromptModel | undefined> {
-    try {
-      // Get caller's OpenCode session
-      const session = await this.dispatcher.dispatch({
-        type: INTENT_GET_AGENT_SESSION,
-        payload: { workspacePath },
-      } as GetAgentSessionIntent);
-
-      if (!session) {
-        this.logger.debug("Cannot determine model: no OpenCode session running", {
-          workspace: workspacePath,
-        });
-        return undefined;
-      }
-
-      // Query caller's OpenCode for current session's model
-      const sdk = createOpencodeClient({ baseUrl: `http://127.0.0.1:${session.port}` });
-      const sessions = await sdk.session.list();
-      const activeSession = sessions.data?.[0];
-
-      if (!activeSession) {
-        this.logger.debug("Cannot determine model: no active session in caller workspace", {
-          workspace: workspacePath,
-        });
-        return undefined;
-      }
-
-      const messages = await sdk.session.messages({ path: { id: activeSession.id } });
-      const lastUserMessage = messages.data?.findLast((m) => m.info.role === "user");
-
-      // SDK types don't include model field, but OpenCode returns it
-      type UserMessageInfo = {
-        role: string;
-        model?: { providerID: string; modelID: string };
-      };
-      const userInfo = lastUserMessage?.info as UserMessageInfo | undefined;
-
-      if (!userInfo?.model) {
-        this.logger.debug("Cannot determine model: no user messages with model in caller session", {
-          workspace: workspacePath,
-          sessionId: activeSession.id,
-        });
-        return undefined;
-      }
-
-      // Extract model from the message info
-      const model: PromptModel = {
-        providerID: userInfo.model.providerID,
-        modelID: userInfo.model.modelID,
-      };
-
-      this.logger.debug("Retrieved caller model", {
-        workspace: workspacePath,
-        model: `${model.providerID}/${model.modelID}`,
-      });
-
-      return model;
-    } catch (error) {
-      this.logger.warn("Failed to get caller model", {
-        workspace: workspacePath,
-        error: getErrorMessage(error),
-      });
-      return undefined;
-    }
   }
 
   /**

@@ -492,9 +492,10 @@ describe("AutoWorkspaceModule Integration", () => {
 
       expect(openWorkspaceOp.dispatched).toHaveLength(1);
       expect(openWorkspaceOp.dispatched[0]!.payload.workspaceName).toBe("item-1");
-      // No `agent` in the default template → falls back to the default (no
-      // agent override, default permission mode).
-      expect(openWorkspaceOp.dispatched[0]!.payload.initialPrompt).toEqual({
+      // No `agent.*` in the default template → prompt-only "default" arm; the
+      // backend is resolved later from metadata/config.
+      expect(openWorkspaceOp.dispatched[0]!.payload.agent).toEqual({
+        type: "default",
         prompt: "Work on item-1",
       });
     });
@@ -629,11 +630,12 @@ describe("AutoWorkspaceModule Integration", () => {
         "---",
         "git: https://github.com/org/repo.git",
         "name: ws/{{ id }}",
-        "agent: build",
+        "agent.type: opencode",
+        "agent.name: build",
         "base: origin/develop",
         "focus: true",
-        "model.provider: anthropic",
-        "model.id: claude-sonnet-4-6",
+        "agent.model.provider: anthropic",
+        "agent.model.id: claude-sonnet-4-6",
         "---",
         "Work on {{ id }}",
       ].join("\n");
@@ -653,7 +655,8 @@ describe("AutoWorkspaceModule Integration", () => {
       expect(payload.workspaceName).toBe("ws/item-1");
       expect(payload.base).toBe("origin/develop");
       expect(payload.stealFocus).toBe(true);
-      expect(payload.initialPrompt).toEqual({
+      expect(payload.agent).toEqual({
+        type: "opencode",
         prompt: "Work on item-1",
         agentName: "build",
         model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import type { WorkspaceStatus, InitialPrompt } from "../shared/api/types";
+import type { WorkspaceStatus } from "../shared/api/types";
 import type { McpError } from "./mcp-module";
 import type { Logger, LogContext } from "../boundaries/platform/logging";
 import type { LogLevel } from "../boundaries/platform/logging-types";
@@ -28,7 +28,7 @@ interface ToolHandlerFns {
     name: string;
     base: string;
     tracking?: string;
-    initialPrompt?: InitialPrompt;
+    prompt?: string;
     stealFocus?: boolean;
   }): Promise<unknown>;
   deleteWorkspace(

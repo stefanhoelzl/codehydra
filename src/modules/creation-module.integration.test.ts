@@ -499,10 +499,13 @@ describe("CreationModule", () => {
 
       const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
       expect(opens).toHaveLength(1);
+      // The form always emits a typed arm for the selected backend; the
+      // resolver only persists it as the workspace agent when != default.
       expect(opens[0]!.payload).toEqual({
         projectPath: PROJECT_A.path,
         workspaceName: "new-feature",
         base: "main",
+        agent: { type: "claude" },
         source: "creation",
       });
 
@@ -531,7 +534,7 @@ describe("CreationModule", () => {
       });
     });
 
-    it("builds the InitialPrompt with permissionMode + agentName and the agent override when != default", async () => {
+    it("builds a claude arm with trimmed prompt, permissionMode and agentName", async () => {
       const s = setup({
         defaultBaseBranch: "main",
         agents: [CLAUDE_AGENT, OPENCODE_AGENT],
@@ -546,18 +549,46 @@ describe("CreationModule", () => {
         prompt: "  do things  ",
         "permission-mode": "plan",
         "agent-name": "reviewer",
+        agent: "claude",
+      });
+      await flush();
+
+      const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
+      expect(opens[0]!.payload).toMatchObject({
+        agent: {
+          type: "claude",
+          prompt: "do things",
+          permissionMode: "plan",
+          agentName: "reviewer",
+        },
+      });
+    });
+
+    it("builds an opencode arm (agent override != default) and drops permission mode", async () => {
+      const s = setup({
+        defaultBaseBranch: "main",
+        agents: [CLAUDE_AGENT, OPENCODE_AGENT],
+        defaultAgent: "claude",
+      });
+      const panel = await readyPanel(s);
+
+      panel.emitAction("create", {
+        project: PROJECT_A.path,
+        name: "with-prompt",
+        base: "main",
+        prompt: "do things",
+        "agent-name": "build",
         agent: "opencode",
       });
       await flush();
 
       const opens = s.dispatcher.byType(INTENT_OPEN_WORKSPACE);
       expect(opens[0]!.payload).toMatchObject({
-        initialPrompt: { prompt: "do things", permissionMode: "plan", agentName: "reviewer" },
-        agent: "opencode",
+        agent: { type: "opencode", prompt: "do things", agentName: "build" },
       });
     });
 
-    it("omits initialPrompt and agent when prompt empty, mode default, agent = default", async () => {
+    it("emits a bare typed arm when prompt empty, mode default, agent = default", async () => {
       const s = setup({ defaultBaseBranch: "main", defaultAgent: "claude" });
       const panel = await readyPanel(s);
 
@@ -576,8 +607,9 @@ describe("CreationModule", () => {
         string,
         unknown
       >;
-      expect(payload["initialPrompt"]).toBeUndefined();
-      expect(payload["agent"]).toBeUndefined();
+      // Selected backend is emitted as a bare arm (no prompt/options); the
+      // resolver won't persist it since it equals the default.
+      expect(payload["agent"]).toEqual({ type: "claude" });
     });
 
     it("re-validates the snapshot: an invalid submit pushes errors instead of dispatching", async () => {
