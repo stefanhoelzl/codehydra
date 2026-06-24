@@ -796,7 +796,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
           {
             name: "my-ws",
             base: "main",
-            initialPrompt: "Do something",
+            agent: { type: "default", prompt: "Do something" },
             stealFocus: false,
           },
           (res) => resolve(res)
@@ -814,7 +814,7 @@ describe("PluginServer (boundary)", { timeout: TEST_TIMEOUT }, () => {
             projectPath: "/project/path",
             workspaceName: "my-ws",
             base: "main",
-            initialPrompt: "Do something",
+            agent: { type: "default", prompt: "Do something" },
             stealFocus: false,
           }),
         })

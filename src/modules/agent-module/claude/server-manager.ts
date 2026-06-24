@@ -23,6 +23,7 @@ import type {
   RestartServerResult,
   AgentStatus,
   McpConfig,
+  AgentPromptConfig,
 } from "../types";
 import { Path } from "../../../utils/path/path";
 import {
@@ -36,7 +37,6 @@ import {
 } from "./types";
 import hooksConfigTemplate from "./hooks.template.json";
 import mcpConfigTemplate from "./mcp.template.json";
-import type { NormalizedInitialPrompt } from "../../../shared/api/types";
 
 /**
  * Per-workspace state tracked by the server manager.
@@ -351,9 +351,9 @@ export class ClaudeCodeServerManager implements AgentServerManager {
    * The wrapper script will read and delete this file on first invocation.
    *
    * @param workspacePath - Absolute path to the workspace
-   * @param config - Normalized initial prompt configuration
+   * @param config - Resolved agent launch configuration
    */
-  async setInitialPrompt(workspacePath: string, config: NormalizedInitialPrompt): Promise<void> {
+  async setInitialPrompt(workspacePath: string, config: AgentPromptConfig): Promise<void> {
     const normalizedPath = new Path(workspacePath).toString();
     const state = this.workspaces.get(normalizedPath);
 
@@ -375,7 +375,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
         permissionMode?: string;
         agentName?: string;
       } = {
-        prompt: config.prompt,
+        prompt: config.prompt ?? "",
       };
       if (config.model !== undefined) {
         jsonContent.model = config.model.modelID;
@@ -398,7 +398,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       // the agent to process. Permission mode is irrelevant (even plan mode
       // works on the prompt); an empty prompt (e.g. only an agent or permission
       // mode was chosen) has nothing to run, so it starts "idle".
-      state.busyOnWrapperStart = config.prompt.trim() !== "";
+      state.busyOnWrapperStart = (config.prompt ?? "").trim() !== "";
 
       this.logger.info("Initial prompt file created", {
         workspacePath: normalizedPath,

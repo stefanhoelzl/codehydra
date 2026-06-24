@@ -1,16 +1,20 @@
-import { isValidMetadataKey } from "../../shared/api/types";
+import { isValidMetadataKey, type AgentSpec, type PromptModel } from "../../shared/api/types";
 
 export interface TemplateConfig {
   readonly name?: string;
-  readonly agent?: string;
   readonly base?: string;
   readonly tracking?: string;
   readonly focus?: boolean;
-  readonly model?: { readonly providerID: string; readonly modelID: string };
   readonly metadata?: Readonly<Record<string, string>>;
   readonly project?: string;
   readonly git?: string;
   readonly prompt: string;
+  /**
+   * Agent spec built from the `agent.*` front-matter (with a legacy-key shim).
+   * Absent when the template sets no agent config — the caller falls back to a
+   * prompt-only "default" arm.
+   */
+  readonly agent?: AgentSpec;
 }
 
 export interface ParseResult {
@@ -21,15 +25,27 @@ export interface ParseResult {
 const FRONT_MATTER_OPEN = "---\n";
 const KNOWN_KEYS = new Set([
   "name",
-  "agent",
   "base",
   "tracking",
   "focus",
-  "model.provider",
-  "model.id",
   "project",
   "git",
+  // Agent spec (mirrors the AgentSpec union under an `agent.` namespace)
+  "agent.type",
+  "agent.name",
+  "agent.permission-mode",
+  "agent.model.provider",
+  "agent.model.id",
+  // Legacy (deprecated) — mapped onto a Claude agent arm with a warning.
+  "agent",
+  "model.provider",
+  "model.id",
 ]);
+
+/** Treat empty front-matter values ("key:" with no value) as unset. */
+function nonEmpty(value: string | undefined): string | undefined {
+  return value !== undefined && value !== "" ? value : undefined;
+}
 
 export function parseTemplateOutput(rendered: string): ParseResult {
   const warnings: string[] = [];
@@ -95,27 +111,103 @@ export function parseTemplateOutput(rendered: string): ParseResult {
     }
   }
 
-  let model: { readonly providerID: string; readonly modelID: string } | undefined;
-  if (fields["model.provider"] !== undefined || fields["model.id"] !== undefined) {
-    if (fields["model.provider"] && fields["model.id"]) {
-      model = { providerID: fields["model.provider"], modelID: fields["model.id"] };
-    } else {
-      warnings.push("Both model.provider and model.id must be specified together");
-    }
-  }
+  const agent = buildAgentSpec(fields, prompt, warnings);
 
   const config: TemplateConfig = {
     prompt,
     ...(fields["name"] !== undefined && { name: fields["name"] }),
-    ...(fields["agent"] !== undefined && { agent: fields["agent"] }),
     ...(fields["base"] !== undefined && { base: fields["base"] }),
     ...(fields["tracking"] !== undefined && { tracking: fields["tracking"] }),
     ...(focus !== undefined && { focus }),
-    ...(model !== undefined && { model }),
     ...(Object.keys(metadataFields).length > 0 && { metadata: metadataFields }),
     ...(fields["project"] !== undefined && { project: fields["project"] }),
     ...(fields["git"] !== undefined && { git: fields["git"] }),
+    ...(agent !== undefined && { agent }),
   };
 
   return { config, warnings };
+}
+
+/**
+ * Build the AgentSpec from `agent.*` front-matter, applying the legacy-key shim.
+ * Legacy keys (`agent`, `model.*`) and any agent config lacking a valid
+ * `agent.type` assume `claude` (parser stays pure — no config lookup), so an
+ * opencode-default user must migrate to keep portability.
+ */
+function buildAgentSpec(
+  fields: Record<string, string>,
+  prompt: string,
+  warnings: string[]
+): AgentSpec | undefined {
+  const legacyAgentName = nonEmpty(fields["agent"]);
+  const legacyModelProvider = nonEmpty(fields["model.provider"]);
+  const legacyModelId = nonEmpty(fields["model.id"]);
+  if (
+    legacyAgentName !== undefined ||
+    legacyModelProvider !== undefined ||
+    legacyModelId !== undefined
+  ) {
+    warnings.push(
+      "Front-matter keys 'agent', 'model.provider', 'model.id' are deprecated; " +
+        "use 'agent.name' and 'agent.model.*' (with 'agent.type'). Legacy keys assume agent.type: claude."
+    );
+  }
+
+  const agentType = nonEmpty(fields["agent.type"]);
+  const agentName = nonEmpty(fields["agent.name"]) ?? legacyAgentName;
+  const permissionMode = nonEmpty(fields["agent.permission-mode"]);
+  const modelProvider = nonEmpty(fields["agent.model.provider"]) ?? legacyModelProvider;
+  const modelId = nonEmpty(fields["agent.model.id"]) ?? legacyModelId;
+
+  let model: PromptModel | undefined;
+  if (modelProvider !== undefined || modelId !== undefined) {
+    if (modelProvider !== undefined && modelId !== undefined) {
+      model = { providerID: modelProvider, modelID: modelId };
+    } else {
+      warnings.push("Both the model provider and id must be specified together");
+    }
+  }
+
+  const hasAgentConfig =
+    agentType !== undefined ||
+    agentName !== undefined ||
+    permissionMode !== undefined ||
+    model !== undefined;
+  if (!hasAgentConfig) return undefined;
+
+  let resolvedType: "claude" | "opencode";
+  if (agentType === "claude" || agentType === "opencode") {
+    resolvedType = agentType;
+  } else {
+    if (agentType !== undefined) {
+      warnings.push(
+        `Invalid agent.type "${agentType}", expected "claude" or "opencode"; assuming claude`
+      );
+    } else {
+      warnings.push(
+        "agent.type is required to set a model, permission mode or named agent; assuming claude"
+      );
+    }
+    resolvedType = "claude";
+  }
+
+  if (resolvedType === "opencode") {
+    if (permissionMode !== undefined) {
+      warnings.push("agent.permission-mode is ignored for opencode");
+    }
+    return {
+      type: "opencode",
+      ...(prompt !== "" && { prompt }),
+      ...(model !== undefined && { model }),
+      ...(agentName !== undefined && { agentName }),
+    };
+  }
+
+  return {
+    type: "claude",
+    ...(prompt !== "" && { prompt }),
+    ...(model !== undefined && { model }),
+    ...(permissionMode !== undefined && { permissionMode }),
+    ...(agentName !== undefined && { agentName }),
+  };
 }

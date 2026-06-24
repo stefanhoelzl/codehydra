@@ -52,7 +52,7 @@ import {
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
-import type { NormalizedInitialPrompt } from "../../shared/api/types";
+import type { AgentSpec } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
 import { renderTemplate } from "../../utils/liquid/liquid-renderer";
 import { parseTemplateOutput } from "./template";
@@ -360,13 +360,12 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
         return;
       }
 
-      // The frontmatter `agent` field selects the named agent (e.g. "plan",
-      // "build", or a custom agent). When unset, fall back to the default — no
-      // agent override. Permission mode is left at the default.
-      const initialPrompt: NormalizedInitialPrompt = {
-        prompt: config.prompt,
-        ...(config.agent !== undefined && { agentName: config.agent }),
-        ...(config.model !== undefined && { model: config.model }),
+      // The template's `agent.*` front-matter (parsed into config.agent) carries
+      // the backend + launch config. With none set, fall back to a prompt-only
+      // "default" arm so the resolved-default backend runs the body.
+      const agent: AgentSpec = config.agent ?? {
+        type: "default",
+        ...(config.prompt !== "" && { prompt: config.prompt }),
       };
 
       // Create the workspace
@@ -378,7 +377,7 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
           ...(config.tracking !== undefined && { tracking: config.tracking }),
           stealFocus: config.focus ?? false,
           projectPath: project.path,
-          initialPrompt,
+          agent,
           source: "auto-workspace",
         },
       } as OpenWorkspaceIntent);

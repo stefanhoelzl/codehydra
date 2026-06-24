@@ -31,7 +31,7 @@ import type { DialogManager, DialogHandle } from "./dialog-manager";
 import type { DialogConfig, DialogSection, DropdownSuggestionGroup } from "../shared/dialog-types";
 import type { Logger } from "../boundaries/platform/logging";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
-import type { Project, BaseInfo, InitialPrompt } from "../shared/api/types";
+import type { Project, BaseInfo, AgentSpec } from "../shared/api/types";
 import { validateWorkspaceName } from "../shared/api/types";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
@@ -707,22 +707,29 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     const agentName = (data[FIELD_AGENT_NAME] ?? "").trim();
     const agentSelection = data[FIELD_AGENT] ?? "";
 
-    let initialPrompt: InitialPrompt | undefined;
-    const hasAgentOptions = permissionMode !== "" || agentName !== "";
-    if (prompt !== "" || hasAgentOptions) {
-      initialPrompt = hasAgentOptions
-        ? {
-            prompt,
-            ...(permissionMode !== "" && { permissionMode }),
-            ...(agentName !== "" && { agentName }),
-          }
-        : prompt;
+    // The form knows the selected backend, so it always emits a typed arm
+    // (carrying prompt + options); the resolver only persists it as the
+    // workspace's agent when it differs from the global default. With no
+    // backend selected, fall back to the prompt-only "default" arm.
+    let agent: AgentSpec | undefined;
+    if (isAvailableAgent(agentSelection)) {
+      if (agentSelection === "claude") {
+        agent = {
+          type: "claude",
+          ...(prompt !== "" && { prompt }),
+          ...(permissionMode !== "" && { permissionMode }),
+          ...(agentName !== "" && { agentName }),
+        };
+      } else {
+        agent = {
+          type: "opencode",
+          ...(prompt !== "" && { prompt }),
+          ...(agentName !== "" && { agentName }),
+        };
+      }
+    } else if (prompt !== "") {
+      agent = { type: "default", prompt };
     }
-
-    const agent =
-      isAvailableAgent(agentSelection) && agentSelection !== defaultAgent()
-        ? agentSelection
-        : undefined;
 
     const intent: OpenWorkspaceIntent = {
       type: INTENT_OPEN_WORKSPACE,
@@ -730,7 +737,6 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         projectPath: project.path,
         workspaceName,
         base,
-        ...(initialPrompt !== undefined && { initialPrompt }),
         ...(agent !== undefined && { agent }),
         source: "creation",
       },

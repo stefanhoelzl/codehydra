@@ -19,6 +19,7 @@ import type {
   UiSetModePayload,
 } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
+import { agentSpecHasPrompt } from "../shared/api/types";
 import type { DialogUserEvent } from "../shared/dialog-types";
 import type { NotificationUserEvent } from "../shared/notification-types";
 import type { DialogManager } from "./dialog-manager";
@@ -184,7 +185,7 @@ export function createUiIpcModule(deps: UiIpcModuleDeps): IntentModule {
             path: p.workspacePath,
             url: p.workspaceUrl,
           },
-          ...(p.initialPrompt && { hasInitialPrompt: true }),
+          ...(agentSpecHasPrompt(p.agent) && { hasInitialPrompt: true }),
           ...(p.stealFocus !== undefined && { stealFocus: p.stealFocus }),
         });
       },

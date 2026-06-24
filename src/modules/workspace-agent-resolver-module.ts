@@ -114,7 +114,11 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
       if (!workspacePath) return;
 
       const defaultAgent = deps.agentConfig.get();
-      const requested = intent.payload.agent;
+      // Only the typed arms ("claude"/"opencode") pin a backend; "default" and
+      // absent defer to metadata/config.
+      const requestedType = intent.payload.agent?.type;
+      const requested =
+        requestedType === "claude" || requestedType === "opencode" ? requestedType : undefined;
 
       if (requested !== undefined && requested !== defaultAgent) {
         // Persist a non-default agent choice so future operations resolve to it.

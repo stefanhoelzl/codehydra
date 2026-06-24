@@ -19,15 +19,8 @@
 
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
-import type {
-  ProjectId,
-  WorkspaceName,
-  Workspace,
-  InitialPrompt,
-  NormalizedInitialPrompt,
-} from "../shared/api/types";
+import type { ProjectId, WorkspaceName, Workspace, AgentSpec } from "../shared/api/types";
 import type { AgentType } from "../shared/plugin-protocol";
-import { normalizeInitialPrompt } from "../shared/api/types";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
 import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
@@ -60,7 +53,6 @@ export interface OpenWorkspacePayload {
   /** Remote branch to check out (e.g., 'origin/feature-login'). When set, the local branch
    *  is created at this ref with upstream configured, instead of forking from base. */
   readonly tracking?: string;
-  readonly initialPrompt?: InitialPrompt;
   /** If true, switch to the new workspace. If false, don't steal focus but still switch when
    *  no workspace is active. Default behavior (undefined): switch. */
   readonly stealFocus?: boolean;
@@ -70,8 +62,12 @@ export interface OpenWorkspacePayload {
   readonly projectPath: string;
   /** Which module dispatched this intent. Used by error-notification to skip non-interactive sources. */
   readonly source?: WorkspaceOpenSource;
-  /** Optional per-workspace agent override. When omitted, falls back to the global default. */
-  readonly agent?: AgentType;
+  /**
+   * Agent spec: prompt + backend-specific launch config. When the `type` is
+   * "claude"/"opencode" it also selects (and persists) the per-workspace
+   * backend; "default" or omitted falls back to git metadata / global config.
+   */
+  readonly agent?: AgentSpec;
 }
 
 export type OpenWorkspaceResult = Workspace;
@@ -97,7 +93,7 @@ export interface WorkspaceCreatedPayload {
   readonly tracking?: string;
   readonly metadata: Readonly<Record<string, string>>;
   readonly workspaceUrl: string;
-  readonly initialPrompt?: NormalizedInitialPrompt;
+  readonly agent?: AgentSpec;
   readonly stealFocus?: boolean;
   /** True when re-activating a discovered workspace (not a fresh creation). */
   readonly reopened?: boolean;
@@ -319,8 +315,8 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       ...(ctx.intent.payload.tracking !== undefined && { tracking: ctx.intent.payload.tracking }),
       metadata,
       workspaceUrl,
-      ...(ctx.intent.payload.initialPrompt !== undefined && {
-        initialPrompt: normalizeInitialPrompt(ctx.intent.payload.initialPrompt),
+      ...(ctx.intent.payload.agent !== undefined && {
+        agent: ctx.intent.payload.agent,
       }),
       ...(ctx.intent.payload.stealFocus !== undefined && {
         stealFocus: ctx.intent.payload.stealFocus,

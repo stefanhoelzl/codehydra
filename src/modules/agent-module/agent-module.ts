@@ -66,7 +66,8 @@ import { RESTART_AGENT_OPERATION_ID } from "../../intents/restart-agent";
 import { AGENT_LIFECYCLE_OPERATION_ID } from "../../intents/agent-lifecycle";
 import { INTENT_UPDATE_AGENT_STATUS } from "../../intents/update-agent-status";
 import { SetupError, getErrorMessage } from "../../shared/errors/service-errors";
-import { normalizeInitialPrompt } from "../../shared/api/types";
+import type { AgentSpec } from "../../shared/api/types";
+import type { AgentPromptConfig } from "./types";
 import type { AgentModuleProvider } from "./agent-module-provider";
 
 // =============================================================================
@@ -86,6 +87,32 @@ export interface AgentModuleDeps {
 // =============================================================================
 // Factory
 // =============================================================================
+
+/**
+ * Project the payload's AgentSpec onto the launch config for the resolved
+ * provider. The "default" arm yields prompt-only; a matching typed arm yields
+ * its full config. Returns undefined when there's nothing to apply (no spec,
+ * or an empty arm) so providers skip prompt/marker work.
+ */
+function agentPromptConfigFor(
+  spec: AgentSpec | undefined,
+  providerType: AgentType
+): AgentPromptConfig | undefined {
+  if (spec === undefined) return undefined;
+  if (spec.type === "default") {
+    return spec.prompt !== undefined ? { prompt: spec.prompt } : undefined;
+  }
+  // Capability gating routes this hook only to the matching provider; guard anyway.
+  if (spec.type !== providerType) return undefined;
+  const config: AgentPromptConfig = {
+    ...(spec.prompt !== undefined && { prompt: spec.prompt }),
+    ...(spec.model !== undefined && { model: spec.model }),
+    ...("permissionMode" in spec &&
+      spec.permissionMode !== undefined && { permissionMode: spec.permissionMode }),
+    ...(spec.agentName !== undefined && { agentName: spec.agentName }),
+  };
+  return Object.keys(config).length > 0 ? config : undefined;
+}
 
 /**
  * Create a generic agent module that manages agent lifecycle by delegating
@@ -321,9 +348,7 @@ export function createAgentModule(
             const intent = ctx.intent as OpenWorkspaceIntent;
             const workspacePath = setupCtx.workspacePath;
 
-            const initialPrompt = intent.payload.initialPrompt
-              ? normalizeInitialPrompt(intent.payload.initialPrompt)
-              : undefined;
+            const initialPrompt = agentPromptConfigFor(intent.payload.agent, provider.type);
             const isNewWorkspace = intent.payload.existingWorkspace === undefined;
 
             const result = await provider.startWorkspace(workspacePath, {

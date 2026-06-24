@@ -738,8 +738,8 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
                 projectPath: resolved.projectPath,
                 workspaceName: req.name,
                 base: req.base,
-                ...(req.initialPrompt !== undefined && {
-                  initialPrompt: req.initialPrompt,
+                ...(req.agent !== undefined && {
+                  agent: req.agent,
                 }),
                 ...(req.stealFocus !== undefined && {
                   stealFocus: req.stealFocus,

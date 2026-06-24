@@ -297,11 +297,10 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
 
             await serverManager.startServer(setupCtx.workspacePath);
 
-            if (intent.payload.initialPrompt && serverManager.setInitialPrompt) {
-              await serverManager.setInitialPrompt(
-                setupCtx.workspacePath,
-                intent.payload.initialPrompt
-              );
+            if (intent.payload.agent?.prompt && serverManager.setInitialPrompt) {
+              await serverManager.setInitialPrompt(setupCtx.workspacePath, {
+                prompt: intent.payload.agent.prompt,
+              });
             }
 
             return { envVars };
@@ -586,8 +585,8 @@ describe("OpenWorkspace Operation", () => {
     });
   });
 
-  describe("initial prompt included in event payload (#7)", () => {
-    it("includes normalizedInitialPrompt in event", async () => {
+  describe("agent spec included in event payload (#7)", () => {
+    it("passes the typed agent spec through to the event", async () => {
       const setup = createTestSetup();
 
       const receivedEvents: DomainEvent[] = [];
@@ -597,19 +596,20 @@ describe("OpenWorkspace Operation", () => {
 
       await setup.dispatcher.dispatch(
         createIntent({
-          initialPrompt: { prompt: "Implement login", agentName: "build" },
+          agent: { type: "opencode", prompt: "Implement login", agentName: "build" },
         })
       );
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.initialPrompt).toEqual({
+      expect(event.payload.agent).toEqual({
+        type: "opencode",
         prompt: "Implement login",
         agentName: "build",
       });
     });
 
-    it("normalizes string prompt to object", async () => {
+    it("passes the default (prompt-only) arm through to the event", async () => {
       const setup = createTestSetup();
 
       const receivedEvents: DomainEvent[] = [];
@@ -619,13 +619,14 @@ describe("OpenWorkspace Operation", () => {
 
       await setup.dispatcher.dispatch(
         createIntent({
-          initialPrompt: "Fix the bug",
+          agent: { type: "default", prompt: "Fix the bug" },
         })
       );
 
       expect(receivedEvents).toHaveLength(1);
       const event = receivedEvents[0] as WorkspaceCreatedEvent;
-      expect(event.payload.initialPrompt).toEqual({
+      expect(event.payload.agent).toEqual({
+        type: "default",
         prompt: "Fix the bug",
       });
     });

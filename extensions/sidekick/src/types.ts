@@ -51,7 +51,7 @@ export type {
 export type {
   WorkspaceStatus,
   Workspace,
-  InitialPrompt,
+  AgentSpec,
   AgentSession,
 } from "../../../src/shared/api/types";
 

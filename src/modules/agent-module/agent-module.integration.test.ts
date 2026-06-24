@@ -859,7 +859,7 @@ describe("createAgentModule", () => {
           projectId: "test-12345678",
           workspaceName: "feature-1",
           base: "main",
-          initialPrompt: "Hello Claude",
+          agent: { type: "default", prompt: "Hello Claude" },
         },
       } as unknown as OpenWorkspaceIntent);
 

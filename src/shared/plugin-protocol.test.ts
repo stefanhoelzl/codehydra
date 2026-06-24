@@ -356,29 +356,30 @@ describe("validateWorkspaceCreateRequest", () => {
       expect(result).toEqual({ valid: true });
     });
 
-    it("accepts string initialPrompt", () => {
+    it("accepts the default agent arm with a prompt", () => {
       const result = validateWorkspaceCreateRequest({
         name: "feature-x",
         base: "main",
-        initialPrompt: "Implement the feature",
+        agent: { type: "default", prompt: "Implement the feature" },
       });
       expect(result).toEqual({ valid: true });
     });
 
-    it("accepts whitespace-only initialPrompt string (no trim, by design)", () => {
+    it("accepts whitespace-only prompt (no trim, by design)", () => {
       const result = validateWorkspaceCreateRequest({
         name: "feature-x",
         base: "main",
-        initialPrompt: "   ",
+        agent: { type: "default", prompt: "   " },
       });
       expect(result).toEqual({ valid: true });
     });
 
-    it("accepts initialPrompt object with agent and model", () => {
+    it("accepts a typed arm with agentName and model", () => {
       const result = validateWorkspaceCreateRequest({
         name: "feature-x",
         base: "main",
-        initialPrompt: {
+        agent: {
+          type: "opencode",
           prompt: "Implement the feature",
           agentName: "build",
           model: { providerID: "anthropic", modelID: "claude-sonnet" },
@@ -407,39 +408,39 @@ describe("validateWorkspaceCreateRequest", () => {
       expect(result).toEqual({ valid: false, error: "Field 'base' cannot be empty" });
     });
 
-    it("rejects empty initialPrompt string", () => {
+    it("rejects an empty prompt in the default arm", () => {
       const result = validateWorkspaceCreateRequest({
         name: "feature-x",
         base: "main",
-        initialPrompt: "",
+        agent: { type: "default", prompt: "" },
       });
       expect(result).toEqual({
         valid: false,
-        error: "Field 'initialPrompt' must be a non-empty string or a prompt object",
+        error: "Field 'agent' must be a valid agent spec ({ type, prompt?, ... })",
       });
     });
 
-    it("rejects initialPrompt object without prompt", () => {
+    it("rejects an unknown backend type", () => {
       const result = validateWorkspaceCreateRequest({
         name: "feature-x",
         base: "main",
-        initialPrompt: { agentName: "build" },
+        agent: { type: "gemini", prompt: "Implement" },
       });
       expect(result).toEqual({
         valid: false,
-        error: "Field 'initialPrompt' must be a non-empty string or a prompt object",
+        error: "Field 'agent' must be a valid agent spec ({ type, prompt?, ... })",
       });
     });
 
-    it("rejects malformed initialPrompt model", () => {
+    it("rejects a malformed model", () => {
       const result = validateWorkspaceCreateRequest({
         name: "feature-x",
         base: "main",
-        initialPrompt: { prompt: "Implement", model: { providerID: "anthropic" } },
+        agent: { type: "claude", prompt: "Implement", model: { providerID: "anthropic" } },
       });
       expect(result).toEqual({
         valid: false,
-        error: "Field 'initialPrompt' must be a non-empty string or a prompt object",
+        error: "Field 'agent' must be a valid agent spec ({ type, prompt?, ... })",
       });
     });
 
