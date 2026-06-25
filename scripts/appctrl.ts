@@ -579,6 +579,33 @@ server.registerTool(
   }
 );
 
+// ── appctrl_resume ──────────────────────────────────────────────────────
+
+server.registerTool(
+  "appctrl_resume",
+  {
+    description:
+      "Simulate a system wake by emitting Electron's powerMonitor 'resume' event " +
+      "in the main process. This drives the same code path as waking the machine " +
+      "from sleep (dispatches the app:resume intent). Use to test resume handling " +
+      "without actually suspending the host.",
+    inputSchema: z.object({}),
+  },
+  async () => {
+    try {
+      if (!electronApp) {
+        throw new Error("App not started. Call appctrl_start first.");
+      }
+      await electronApp.evaluate(({ powerMonitor }) => {
+        powerMonitor.emit("resume");
+      });
+      return textResult({ resumed: true });
+    } catch (err) {
+      return errorResult(err instanceof Error ? err.message : String(err));
+    }
+  }
+);
+
 // ── appctrl_console ─────────────────────────────────────────────────────
 
 server.registerTool(
