@@ -23,6 +23,7 @@ import {
   INTENT_APP_RESUME,
   EVENT_APP_RESUMED,
   EVENT_APP_RESUME_FAILED,
+  EVENT_CODE_SERVER_RESTARTED,
 } from "../intents/app-resume";
 import type { DomainEvent } from "../intents/lib/types";
 import { SETUP_OPERATION_ID } from "../intents/setup";
@@ -1196,6 +1197,9 @@ describe("CodeServerModule", () => {
         fetch.mockResolvedValueOnce({ status: 503 });
         fetch.mockResolvedValue({ status: 200 });
 
+        const restartedEvents: DomainEvent[] = [];
+        dispatcher.subscribe(EVENT_CODE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
+
         const resumePromise = dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
 
         // Drive the 5s probe timeout + any intervals
@@ -1205,12 +1209,14 @@ describe("CodeServerModule", () => {
         // Old process killed, new process spawned
         expect(initialProcess).toHaveBeenKilled();
         expect(asMockRunner(deps).$.spawnedCount).toBe(2);
+        // A successful restart signals the renderer to reload its frames
+        expect(restartedEvents).toHaveLength(1);
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it("emits app:resume-failed and blocks codeServerReady when restart fails", async () => {
+    it("does not emit code-server:restarted when the restart fails", async () => {
       vi.useFakeTimers();
 
       try {
@@ -1223,7 +1229,9 @@ describe("CodeServerModule", () => {
         (deps.portManager.isPortAvailable as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
         const failureEvents: DomainEvent[] = [];
+        const restartedEvents: DomainEvent[] = [];
         dispatcher.subscribe(EVENT_APP_RESUME_FAILED, (e) => failureEvents.push(e));
+        dispatcher.subscribe(EVENT_CODE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
 
         const resumePromise = dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
         await vi.advanceTimersByTimeAsync(6000);
@@ -1232,21 +1240,27 @@ describe("CodeServerModule", () => {
         expect(failureEvents).toHaveLength(1);
         const payload = failureEvents[0]!.payload as { error: string };
         expect(payload.error).toContain("already in use");
+        // No restart succeeded, so frames must not be told to reload
+        expect(restartedEvents).toHaveLength(0);
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it("provides codeServerReady capability and emits app:resumed when healthy", async () => {
+    it("emits app:resumed without restarting when healthy", async () => {
       const deps = createMockDeps();
       const { dispatcher } = await startCodeServer(deps);
 
       const resumedEvents: DomainEvent[] = [];
+      const restartedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_APP_RESUMED, (e) => resumedEvents.push(e));
+      dispatcher.subscribe(EVENT_CODE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
 
       await dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
 
       expect(resumedEvents).toHaveLength(1);
+      // Healthy probe → no restart → no frame reload
+      expect(restartedEvents).toHaveLength(0);
     });
 
     it("skips probe when code-server was never started", async () => {

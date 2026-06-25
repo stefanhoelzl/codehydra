@@ -101,6 +101,16 @@ export interface IViewManager {
   getMode(): UIMode;
 
   /**
+   * Asks the renderer to reload every mounted workspace iframe (re-assigning
+   * each frame's src) and re-focus the active one. Called after code-server
+   * restarts, when the iframes' connections to the replaced server are stale.
+   *
+   * Best-effort: before the WorkspaceFrames component mounts the hook is
+   * undefined, and a mid-load UI rejects the call silently.
+   */
+  reloadFrames(): void;
+
+  /**
    * Capture a PNG screenshot of the active workspace iframe, by clipping a
    * full-view capture to the iframe's bounding rect (no API exists to
    * capture an out-of-process iframe directly).

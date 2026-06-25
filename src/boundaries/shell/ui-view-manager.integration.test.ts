@@ -162,6 +162,29 @@ describe("UiViewManager", () => {
     });
   });
 
+  describe("reloadFrames", () => {
+    it("asks the renderer to reload its workspace frames", () => {
+      const { manager, viewLayer } = createManager();
+      const exec = vi.spyOn(viewLayer, "executeJavaScript");
+
+      manager.reloadFrames();
+
+      expect(exec).toHaveBeenCalledWith(
+        manager.getUIViewHandle(),
+        expect.stringContaining("__chReloadFrames")
+      );
+    });
+
+    it("swallows a rejected executeJavaScript (UI mid-load)", async () => {
+      const { manager, viewLayer } = createManager();
+      vi.spyOn(viewLayer, "executeJavaScript").mockRejectedValue(new Error("page gone"));
+
+      expect(() => manager.reloadFrames()).not.toThrow();
+      // Let the rejected promise settle without an unhandled rejection
+      await Promise.resolve();
+    });
+  });
+
   describe("captureActiveWorkspaceView", () => {
     it("clips the capture to the active frame rect reported by the renderer", async () => {
       const { manager, viewLayer } = createManager();

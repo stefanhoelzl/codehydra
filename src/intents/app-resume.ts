@@ -2,12 +2,12 @@
  * AppResumeOperation - Orchestrates recovery after system wake from sleep/hibernate.
  *
  * Single hook point:
- * - "resume" - Probe code-server health and reload workspace views.
- *              code-server-module provides `codeServerReady`; view-module's
- *              reload handler requires it so the reload only runs after the
- *              server is confirmed healthy (or has been restarted).
- *              Hook context includes `emit` so handlers can fire their own
- *              domain events (e.g. code-server:restart-failed).
+ * - "resume" - Probe code-server health and restart it if the probe fails.
+ *              The hook context includes `emit` so handlers can fire their own
+ *              domain events: code-server-module emits `code-server:restarted`
+ *              on a successful restart (view-module reacts by reloading the
+ *              workspace iframes, whose connections to the replaced server are
+ *              stale) and `app:resume-failed` if the restart fails.
  *
  * After hooks complete, emits `app:resumed` for telemetry subscribers
  * (telemetry-module) that don't depend on server state.
@@ -64,6 +64,20 @@ export interface AppResumeFailedEvent extends DomainEvent {
 }
 
 export const EVENT_APP_RESUME_FAILED = "app:resume-failed" as const;
+
+/**
+ * Emitted by code-server-module after it kills and restarts code-server on
+ * resume (the /healthz probe failed and a fresh process is now listening).
+ * view-module reacts by reloading all workspace iframes, whose connections to
+ * the replaced server are stale — otherwise code-server shows its own "Reload"
+ * dialog in each workspace.
+ */
+export interface CodeServerRestartedEvent extends DomainEvent {
+  readonly type: typeof EVENT_CODE_SERVER_RESTARTED;
+  readonly payload: Record<string, never>;
+}
+
+export const EVENT_CODE_SERVER_RESTARTED = "code-server:restarted" as const;
 
 // =============================================================================
 // Operation
