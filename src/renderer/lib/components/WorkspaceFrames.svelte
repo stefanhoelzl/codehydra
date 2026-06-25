@@ -38,6 +38,7 @@
   interface FrameHooks {
     __chFocusActiveFrame?: () => void;
     __chActiveFrameRect?: () => { x: number; y: number; width: number; height: number } | null;
+    __chReloadFrames?: () => void;
   }
 
   const frameEls = new SvelteMap<string, HTMLIFrameElement>();
@@ -94,6 +95,22 @@
     if (el) focusFrame(el);
   }
 
+  // Reload every mounted frame by re-assigning its src (forces a navigation
+  // even though the URL is unchanged — the prod code-server port is stable
+  // across a restart). Invoked by the main process via __chReloadFrames after
+  // code-server restarts on resume, so the frames reconnect to the fresh
+  // server instead of showing code-server's own "Reload" dialog. frameEls
+  // holds exactly the mounted (non-hibernated) frames.
+  function reloadFrames(): void {
+    for (const el of frameEls.values()) {
+      // Re-assigning src (via a local, to dodge no-self-assign) forces a fresh
+      // navigation even though the resolved URL is identical.
+      const url = el.src;
+      el.src = url;
+    }
+    if (uiMode.value === "workspace") focusActiveFrame();
+  }
+
   // Show flow: when the active workspace changes, force a paint-tree refresh
   // of the now-visible frame to work around Windows DirectComposition
   // surfaces that can come back blank after a display:none → display:block
@@ -147,9 +164,11 @@
       if (rect.width <= 0 || rect.height <= 0) return null;
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
     };
+    hooks.__chReloadFrames = reloadFrames;
     return () => {
       delete hooks.__chFocusActiveFrame;
       delete hooks.__chActiveFrameRect;
+      delete hooks.__chReloadFrames;
     };
   });
 </script>

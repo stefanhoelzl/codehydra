@@ -30,6 +30,7 @@ import { asProjectId, createMockProject } from "@shared/test-fixtures";
 interface FrameHooks {
   __chFocusActiveFrame?: () => void;
   __chActiveFrameRect?: () => { x: number; y: number; width: number; height: number } | null;
+  __chReloadFrames?: () => void;
 }
 
 function makeProject(): Project {
@@ -132,10 +133,40 @@ describe("WorkspaceFrames", () => {
 
     expect(typeof hooks.__chFocusActiveFrame).toBe("function");
     expect(typeof hooks.__chActiveFrameRect).toBe("function");
+    expect(typeof hooks.__chReloadFrames).toBe("function");
 
     unmount();
     expect(hooks.__chFocusActiveFrame).toBeUndefined();
     expect(hooks.__chActiveFrameRect).toBeUndefined();
+    expect(hooks.__chReloadFrames).toBeUndefined();
+  });
+
+  it("__chReloadFrames re-assigns the src of every mounted frame", () => {
+    setProjects([makeProject()]);
+    setActiveWorkspace("/workspaces/ws1");
+    const { container } = render(WorkspaceFrames);
+
+    // Re-assigning src forces a reload; spy on the setter of each frame while
+    // keeping the original URL readable. Only the two mounted (non-hibernated,
+    // url-bearing) frames should be touched.
+    const tracked = frames(container).map((el) => {
+      const original = el.src;
+      const setter = vi.fn();
+      Object.defineProperty(el, "src", {
+        configurable: true,
+        get: () => original,
+        set: setter,
+      });
+      return { setter, original };
+    });
+    expect(tracked).toHaveLength(2);
+
+    const hooks = window as FrameHooks;
+    hooks.__chReloadFrames!();
+
+    for (const { setter, original } of tracked) {
+      expect(setter).toHaveBeenCalledWith(original);
+    }
   });
 
   it("__chActiveFrameRect returns null when no workspace is active", () => {

@@ -60,6 +60,7 @@ const CHILD_FRAME_FOCUS_TRACKER = `
  */
 const FOCUS_ACTIVE_FRAME = `window.__chFocusActiveFrame && window.__chFocusActiveFrame()`;
 const ACTIVE_FRAME_RECT = `window.__chActiveFrameRect ? window.__chActiveFrameRect() : null`;
+const RELOAD_FRAMES = `window.__chReloadFrames && window.__chReloadFrames()`;
 
 const ALLOWED_PERMISSIONS = new Set([
   "clipboard-read",
@@ -280,6 +281,15 @@ export class UiViewManager implements IViewManager {
         });
         break;
     }
+  }
+
+  reloadFrames(): void {
+    if (!this.uiViewHandle || !this.isUIAvailable()) return;
+    // Best-effort fire-and-forget: before WorkspaceFrames mounts the hook is
+    // undefined, and a mid-load UI rejects executeJavaScript.
+    this.viewLayer.executeJavaScript(this.uiViewHandle, RELOAD_FRAMES).catch(() => {
+      // UI may be mid-load
+    });
   }
 
   // ---------------------------------------------------------------------------

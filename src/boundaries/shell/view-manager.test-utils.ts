@@ -39,6 +39,7 @@ export function createMockViewManager(options?: CreateMockViewManagerOptions): I
       currentMode = mode;
     }),
     getMode: vi.fn(() => currentMode),
+    reloadFrames: vi.fn(),
     captureActiveWorkspaceView: vi.fn().mockResolvedValue(null),
     destroy: vi.fn(),
   } as IViewManager;

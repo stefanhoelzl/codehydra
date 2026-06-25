@@ -62,6 +62,8 @@ import {
 } from "../intents/resolve-workspace";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
+import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
+import type { CodeServerRestartedEvent } from "../intents/app-resume";
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
 import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import { createViewModule, type ViewModuleDeps } from "./view-module";
@@ -688,6 +690,23 @@ describe("ViewModule Integration", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // code-server:restarted → reload workspace iframes
+  // -------------------------------------------------------------------------
+  describe("code-server:restarted", () => {
+    it("asks the view manager to reload frames", async () => {
+      const { viewManager, module } = createTestSetup();
+
+      const event: CodeServerRestartedEvent = {
+        type: EVENT_CODE_SERVER_RESTARTED,
+        payload: {},
+      };
+      await module.events![EVENT_CODE_SERVER_RESTARTED]!.handler(event);
+
+      expect(viewManager.reloadFrames).toHaveBeenCalledTimes(1);
     });
   });
 

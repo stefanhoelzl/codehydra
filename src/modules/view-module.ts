@@ -49,6 +49,7 @@ import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
 import { SET_MODE_OPERATION_ID } from "../intents/set-mode";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import { EVENT_APP_STARTED } from "../intents/app-ready";
+import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import { WORKSPACE_LOADING_TIMEOUT_MS } from "../boundaries/shell/view-manager.interface";
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
@@ -861,6 +862,18 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
           const payload = (event as AgentStatusUpdatedEvent).payload;
           finishWorkspaceLoading(payload.workspace.path);
           closeStartupSplash();
+        },
+      },
+
+      // -------------------------------------------------------------------
+      // code-server:restarted → reload every workspace iframe. A resume
+      // restart replaced the code-server process, so each frame's connection
+      // to the old server is dead; reloading reconnects them to the fresh
+      // server instead of leaving code-server's "Reload" dialog in each one.
+      // -------------------------------------------------------------------
+      [EVENT_CODE_SERVER_RESTARTED]: {
+        handler: async (): Promise<void> => {
+          viewManager.reloadFrames();
         },
       },
 

@@ -44,6 +44,7 @@ import {
   APP_RESUME_OPERATION_ID,
   APP_RESUME_HOOK_RESUME,
   EVENT_APP_RESUME_FAILED,
+  EVENT_CODE_SERVER_RESTARTED,
   type ResumeHookContext,
 } from "../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../intents/setup";
@@ -741,12 +742,10 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       // -------------------------------------------------------------------
       [APP_RESUME_OPERATION_ID]: {
         [APP_RESUME_HOOK_RESUME]: {
-          provides: () => ({ codeServerReady: true }),
           handler: async (ctx: HookContext): Promise<void> => {
             const port = currentPort;
             if (port === null) {
-              // Never started — nothing to probe. Still provide capability so
-              // view-module's reload runs (it will be a no-op with no workspaces).
+              // Never started — nothing to probe or restart.
               return;
             }
 
@@ -763,6 +762,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             }
 
             logger.warn("Code-server unhealthy after resume, restarting");
+            const resumeCtx = ctx as ResumeHookContext;
             try {
               await stop();
               await ensureRunning();
@@ -770,13 +770,20 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             } catch (error) {
               const message = getErrorMessage(error);
               logger.error("Code-server restart failed after resume", { error: message });
-              const resumeCtx = ctx as ResumeHookContext;
               await resumeCtx.emit({
                 type: EVENT_APP_RESUME_FAILED,
                 payload: { error: message },
               });
               throw error;
             }
+
+            // The fresh process invalidates every workspace iframe's connection
+            // to the old server. Tell view-module to reload them before
+            // code-server's client surfaces its own "Reload" dialog.
+            await resumeCtx.emit({
+              type: EVENT_CODE_SERVER_RESTARTED,
+              payload: {},
+            });
           },
         },
       },
