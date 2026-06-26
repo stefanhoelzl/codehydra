@@ -189,7 +189,6 @@ import { createTempDirModule } from "./modules/temp-dir-module";
 import { createErrorReportModule } from "./modules/error-report-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
-import { createThemeModule } from "./modules/theme-module";
 import { createDebugModule } from "./modules/debug-module";
 import { createPresentationModule } from "./modules/presentation-module";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
@@ -748,11 +747,6 @@ const devtoolsModule = createDevtoolsModule({
   viewLayer,
 });
 
-const themeModule = createThemeModule({
-  viewManager,
-  windowManager,
-});
-
 const debugModule = createDebugModule({ configService, ui: presentationModule });
 
 const errorReportModule = createErrorReportModule({
@@ -908,7 +902,6 @@ dispatcher.registerModule(scriptModule);
 dispatcher.registerModule(tempDirModule);
 dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
-dispatcher.registerModule(themeModule);
 dispatcher.registerModule(debugModule);
 dispatcher.registerModule(errorReportModule);
 dispatcher.registerModule(autoWorkspaceModule);

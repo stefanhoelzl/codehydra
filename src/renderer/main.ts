@@ -5,10 +5,8 @@ import "./lib/styles/variables.css";
 import "./lib/styles/global.css";
 import App from "./App.svelte";
 
-window.api.onTheme((theme) => {
-  document.documentElement.dataset.theme = theme;
-});
-
+// Theme arrives in the ui:state snapshot now (App applies it from onState);
+// there is no separate theme channel.
 const app = mount(App, {
   target: document.getElementById("app")!,
 });

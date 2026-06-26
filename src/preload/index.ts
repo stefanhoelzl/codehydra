@@ -44,19 +44,4 @@ contextBridge.exposeInMainWorld("api", {
    * the full render-ready UiState on every change.
    */
   onState: createEventSubscription<UiState>(ApiIpcChannels.UI_STATE),
-  // Event subscription using api: prefixed channels
-  on: <T>(event: string, callback: (event: T) => void): Unsubscribe => {
-    const channel = `api:${event}`;
-    const handler = (_event: IpcRendererEvent, data: T) => callback(data);
-    ipcRenderer.on(channel, handler);
-    return () => ipcRenderer.removeListener(channel, handler);
-  },
-
-  /**
-   * Subscribe to theme change events from main process.
-   * Fired once on startup with the initial theme and again whenever the OS theme changes.
-   * @param callback - Called with "dark" or "light"
-   * @returns Unsubscribe function to remove the listener
-   */
-  onTheme: createEventSubscription<"dark" | "light">(ApiIpcChannels.UI_THEME),
 });

@@ -56,17 +56,21 @@ describe("preload API", () => {
   // ============================================================================
 
   describe("flat API namespaces", () => {
-    // Renderer→main gestures (open/switch/wake/hibernate/quit) are ui:events
-    // now, not invoke namespaces — there are no command invokes.
-    it("exposes on function on api", () => {
-      expect(exposedApi.on).toBeDefined();
-      expect(typeof exposedApi.on).toBe("function");
+    // The surface is exactly two channels now: emitEvent (api:ui:event, up) and
+    // onState (api:ui:state, down). No command invokes, no per-feature events,
+    // no theme channel, no generic on().
+    it("exposes exactly emitEvent + onState", () => {
+      expect(typeof exposedApi.emitEvent).toBe("function");
+      expect(typeof exposedApi.onState).toBe("function");
+      expect(Object.keys(exposedApi).sort()).toEqual(["emitEvent", "onState"]);
     });
 
-    it("does not expose the removed command namespaces", () => {
+    it("does not expose removed surface (commands, on, onTheme)", () => {
       expect(exposedApi.projects).toBeUndefined();
       expect(exposedApi.workspaces).toBeUndefined();
       expect(exposedApi.ui).toBeUndefined();
+      expect(exposedApi.on).toBeUndefined();
+      expect(exposedApi.onTheme).toBeUndefined();
     });
   });
 
@@ -81,18 +85,18 @@ describe("preload API", () => {
   });
 
   describe("event subscriptions", () => {
-    it("on subscribes to api: prefixed events", () => {
+    it("onState subscribes to the api:ui:state snapshot channel", () => {
       const callback = vi.fn();
 
-      const on = exposedApi.on as (event: string, cb: () => void) => () => void;
-      const unsubscribe = on("project:opened", callback);
+      const onState = exposedApi.onState as (cb: () => void) => () => void;
+      const unsubscribe = onState(callback);
 
-      expect(mockIpcRenderer.on).toHaveBeenCalledWith("api:project:opened", expect.any(Function));
+      expect(mockIpcRenderer.on).toHaveBeenCalledWith("api:ui:state", expect.any(Function));
       expect(unsubscribe).toBeInstanceOf(Function);
 
       unsubscribe();
       expect(mockIpcRenderer.removeListener).toHaveBeenCalledWith(
-        "api:project:opened",
+        "api:ui:state",
         expect.any(Function)
       );
     });

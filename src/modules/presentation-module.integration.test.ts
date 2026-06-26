@@ -157,6 +157,10 @@ function connect(deps: Deps): void {
 async function startModule(deps: Deps): Promise<UiPresenter> {
   const module = createPresentationModule(deps);
   connect(deps);
+  // Production ordering: the app:start `init` hook seeds + tracks theme before
+  // app:started. Run it so the steady state mirrors that (theme subscription
+  // registered, startup snapshots carry the real theme).
+  await module.hooks![APP_START_OPERATION_ID]!.init!.handler({} as never);
   await emit(module, EVENT_APP_STARTED, {});
   await flush();
   return module;

@@ -66,6 +66,9 @@
   onMount(() => {
     const unsubscribe = api.onState((state) => {
       ui = state;
+      // Theme ships in the snapshot (no separate channel): mirror it onto the
+      // document so the global --ch-* CSS vars resolve to the OS theme.
+      document.documentElement.dataset.theme = state.theme;
       // Focus the first control once, after the first normal snapshot renders
       // (the startup surfaces own their own focus).
       if (focused || state.main.kind === "starting" || state.main.kind === "setup") return;

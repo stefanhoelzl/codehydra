@@ -69,32 +69,16 @@ export type UIMode = "workspace" | "dialog" | "shortcut" | "hover";
  * All channels use the api: prefix convention.
  */
 export const ApiIpcChannels = {
-  // Renderer→main gestures (open/close/switch/wake/hibernate/remove/quit) and
-  // dialog/notification user interactions are NOT invokes or per-feature
-  // channels: they flow through the fire-and-forget ui:event union (UI_EVENT),
-  // and the presenter owns identity resolution and routing. Dialog/notification
-  // state ships in the ui:state snapshot (UI_STATE), not on command channels.
+  // The complete main↔renderer surface is two channels. Renderer→main gestures
+  // (open/close/switch/wake/hibernate/remove/quit), dialog/notification user
+  // interactions, and logs all flow through the fire-and-forget ui:event union
+  // (UI_EVENT); the presenter owns identity resolution and routing. All
+  // main→renderer state — sidebar, frames, mode, dialogs, notifications, theme —
+  // ships in the full ui:state snapshot (UI_STATE). No per-feature channels.
   // UI events (renderer → main, fire-and-forget; zod-validated union)
   UI_EVENT: "api:ui:event",
   // UI state snapshots (main → renderer)
   UI_STATE: "api:ui:state",
-  // Events (main → renderer)
-  PROJECT_OPENED: "api:project:opened",
-  PROJECT_CLOSED: "api:project:closed",
-  PROJECT_BASES_UPDATED: "api:project:bases-updated",
-  WORKSPACE_CREATED: "api:workspace:created",
-  WORKSPACE_LOADING: "api:workspace:loading",
-  WORKSPACE_CREATE_FAILED: "api:workspace:create-failed",
-  WORKSPACE_REMOVED: "api:workspace:removed",
-  WORKSPACE_HIBERNATED: "api:workspace:hibernated",
-  WORKSPACE_HIBERNATE_FAILED: "api:workspace:hibernate-failed",
-  WORKSPACE_WOKEN: "api:workspace:woken",
-  WORKSPACE_WAKE_FAILED: "api:workspace:wake-failed",
-  WORKSPACE_SWITCHED: "api:workspace:switched",
-  WORKSPACE_STATUS_CHANGED: "api:workspace:status-changed",
-  WORKSPACE_METADATA_CHANGED: "api:workspace:metadata-changed",
-  WORKSPACE_DELETION_PROGRESS: "api:workspace:deletion-progress",
-  UI_THEME: "api:ui:theme",
 } as const satisfies Record<string, string>;
 
 // ============ Lifecycle Event Payload Types ============

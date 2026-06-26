@@ -75,8 +75,6 @@ export function sendNotificationEvent(event: NotificationUserEvent): void {
 
 // Re-export window.api functions for mockability
 export const {
-  // Event subscriptions
-  on,
   // UI state snapshots (main process → renderer)
   onState,
 } = window.api;

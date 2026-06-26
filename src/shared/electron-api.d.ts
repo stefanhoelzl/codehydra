@@ -41,19 +41,6 @@ export interface Api {
    * @returns Unsubscribe function to remove the listener
    */
   onState(callback: (state: UiState) => void): Unsubscribe;
-  /**
-   * Subscribe to API events.
-   * @param event - Event name (without api: prefix)
-   * @param callback - Event handler
-   * @returns Unsubscribe function
-   */
-  on<T>(event: string, callback: (event: T) => void): Unsubscribe;
-
-  /**
-   * Subscribe to theme change events from main process.
-   * Fired once on startup with the initial theme and again whenever the OS theme changes.
-   */
-  onTheme(callback: (theme: "dark" | "light") => void): Unsubscribe;
 }
 
 declare global {

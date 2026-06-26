@@ -1220,13 +1220,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     },
     [EVENT_APP_STARTED]: {
       handler: async (): Promise<void> => {
-        // Startup is over: hand the main view back to the normal logic.
+        // Startup is over: hand the main view back to the normal logic. Theme
+        // is already seeded + tracked from the app:start `init` hook (so the
+        // startup screens carry the right theme), nothing to do here for it.
         startupPhase = "done";
-        theme = deps.windowManager.getTheme();
-        themeUnsubscribe = deps.windowManager.onThemeChange((next) => {
-          theme = next;
-          scheduleUpdate();
-        });
         scheduleUpdate();
       },
     },
@@ -1374,6 +1371,21 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     events,
     hooks: {
       [APP_START_OPERATION_ID]: {
+        init: {
+          // Seed + track the OS theme as soon as the UI is ready (the same gate
+          // the old theme-module used), so every snapshot — including the
+          // startup screens — carries the right theme. Theme now rides in the
+          // ui:state snapshot; there is no separate theme channel.
+          requires: { "ui-ready": ANY_VALUE },
+          handler: async (): Promise<void> => {
+            theme = deps.windowManager.getTheme();
+            themeUnsubscribe = deps.windowManager.onThemeChange((next) => {
+              theme = next;
+              scheduleUpdate();
+            });
+            scheduleUpdate();
+          },
+        },
         "show-ui": { handler: appStartShowUi },
         start: {
           // Gate on code-server: app:ready dispatches project:open, whose
