@@ -150,10 +150,12 @@ renderer hook).
 
 ### UI Modes
 
-Modes (`workspace`/`shortcut`/`dialog`/`hover`) are plain state on the
-UiViewManager — the Alt+X keyboard interceptor consumes them synchronously
-in main, and the renderer mirrors them over IPC (`api:ui:set-mode` /
-`api:ui:mode-changed`). Since everything is one DOM tree, "raising the UI"
+The mode (`workspace`/`shortcut`/`dialog`/`hover`) is **computed in main by the
+presenter** (priority `shortcut > dialog > hover > workspace`) from state it
+owns — open dialogs, shortcut activation, and the renderer's last hover
+`ui:event` — and shipped in the `UiState` snapshot as `ui.mode`. The renderer
+reads mode only from the snapshot; there is no renderer→main `setMode` and no
+`mode-changed` round trip. Since everything is one DOM tree, "raising the UI"
 is CSS stacking, not view z-order: the sidebar, overlays, panel, and dialogs
 simply have higher z-index than the frames container.
 
@@ -453,22 +455,22 @@ For detailed platform abstraction documentation including interface definitions,
 
 ### Frontend Components (Svelte 5)
 
-| Component             | Purpose                                              |
-| --------------------- | ---------------------------------------------------- |
-| App                   | Mode router between setup and normal app modes       |
-| MainView              | Normal app mode container, IPC initialization        |
-| Sidebar               | Project list, workspace list, action buttons         |
-| EmptyState            | Displayed when no projects are open                  |
-| Dialog                | Base dialog component with focus trap, accessibility |
-| CreateWorkspaceDialog | New workspace form with validation, branch selection |
-| RemoveWorkspaceDialog | Confirmation with uncommitted changes warning        |
-| CloseProjectDialog    | Confirmation when closing project with workspaces    |
-| BranchDropdown        | Searchable combobox for branch selection             |
-| ShortcutOverlay       | Keyboard shortcut hints (shown during shortcut mode) |
-| SetupScreen           | Setup progress display with indeterminate bar        |
-| SetupComplete         | Brief success message after setup completes          |
-| SetupError            | Error display with Retry and Quit buttons            |
-| Stores                | projects, dialogs, shortcuts, setup (Svelte 5 runes) |
+| Component             | Purpose                                                                                                                                                                                             |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App                   | Mode router between setup and normal app modes                                                                                                                                                      |
+| MainView              | Normal app mode container, IPC initialization                                                                                                                                                       |
+| Sidebar               | Project list, workspace list, action buttons                                                                                                                                                        |
+| EmptyState            | Displayed when no projects are open                                                                                                                                                                 |
+| Dialog                | Base dialog component with focus trap, accessibility                                                                                                                                                |
+| CreateWorkspaceDialog | New workspace form with validation, branch selection                                                                                                                                                |
+| RemoveWorkspaceDialog | Confirmation with uncommitted changes warning                                                                                                                                                       |
+| CloseProjectDialog    | Confirmation when closing project with workspaces                                                                                                                                                   |
+| BranchDropdown        | Searchable combobox for branch selection                                                                                                                                                            |
+| ShortcutOverlay       | Keyboard shortcut hints (shown during shortcut mode)                                                                                                                                                |
+| SetupScreen           | Setup progress display with indeterminate bar                                                                                                                                                       |
+| SetupComplete         | Brief success message after setup completes                                                                                                                                                         |
+| SetupError            | Error display with Retry and Quit buttons                                                                                                                                                           |
+| App.svelte state      | `let ui = $state.raw(UiState)` from `api.onState`; props down. No stores — the renderer is a pure render function of the snapshot. Only ephemeral (hover/in-flight edits/focus) is component-local. |
 
 ## Intent-Based Architecture
 
@@ -512,12 +514,12 @@ External Trigger (IPC / MCP / Electron lifecycle)
 
 ### Layer Ownership
 
-| Component     | Owns                                                  | Does NOT Own                           |
-| ------------- | ----------------------------------------------------- | -------------------------------------- |
-| `Dispatcher`  | Intent routing, interceptor pipeline, event delivery  | Business logic (in modules)            |
-| `Operations`  | Workflow orchestration, control flow decisions        | Side effects (delegated to hooks)      |
-| `Modules`     | Hook handlers, event subscriptions, domain logic      | Workflow orchestration (in operations) |
-| `UiIpcModule` | IPC-to-intent mapping, domain-event-to-IPC forwarding | Business logic or workflow control     |
+| Component                            | Owns                                                                                                                                                                                                                                      | Does NOT Own                           |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `Dispatcher`                         | Intent routing, interceptor pipeline, event delivery                                                                                                                                                                                      | Business logic (in modules)            |
+| `Operations`                         | Workflow orchestration, control flow decisions                                                                                                                                                                                            | Side effects (delegated to hooks)      |
+| `Modules`                            | Hook handlers, event subscriptions, domain logic                                                                                                                                                                                          | Workflow orchestration (in operations) |
+| `PresentationModule` (the presenter) | Owns both UI wires (`api:ui:state` out, `api:ui:event` in): builds the `UiState` view-model from domain events, computes mode, interprets shortcuts, maps domain events to dialogs/notifications, and dispatches intents from `ui:events` | Business logic or workflow control     |
 
 ### Core Principles
 
@@ -707,14 +709,17 @@ Alt+X is blocked when `mode === "dialog"` but allowed for all other modes includ
 - Activating shortcut mode while hovering over the expanded sidebar
 - Blocking shortcut mode when a modal dialog is open (focus trap is active)
 
-**API:** `api.ui.setMode(mode)` - unified method that handles z-order and focus:
+**Computation:** mode is derived in main by the presenter, not commanded by the
+renderer. The presenter folds it into the `UiState` snapshot as `ui.mode`; the
+renderer reads it to drive CSS z-order and focus behavior:
 
-- `setMode("workspace")`: UI behind workspaces, focus active workspace
-- `setMode("shortcut")`: UI on top, focus UI layer
-- `setMode("dialog")`: UI on top, no focus change (dialog manages its own)
-- `setMode("hover")`: UI on top, no focus change (sidebar hover)
+- `workspace`: UI behind workspaces, focus active workspace
+- `shortcut`: UI on top, focus UI layer
+- `dialog`: UI on top, no focus change (dialog manages its own)
+- `hover`: UI on top, no focus change (sidebar hover)
 
-Mode transitions are idempotent - calling `setMode()` with the current mode is a no-op.
+The presenter coalesces snapshot pushes per microtask, so repeated recomputes
+that don't change `ui.mode` are naturally collapsed.
 
 ## Theming System
 
@@ -1418,28 +1423,30 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Main Process: ShortcutController                                        │
+│ Main Process — capture: shortcut-module                                  │
 │  ├─ Registers before-input-event on ALL WebViews (workspace + UI)       │
-│  ├─ Queries viewManager.getMode() for current state                     │
-│  ├─ Alt+X when mode=workspace → setMode("shortcut")                     │
-│  ├─ Action keys when mode=shortcut → emit shortcut:key event            │
-│  └─ Alt release when mode=shortcut → setMode("workspace")               │
+│  ├─ Alt+X (unless presenter.isModalOpen) → dispatch set-shortcut-active │
+│  ├─ Action keys while active → dispatch shortcut:key                    │
+│  └─ Alt release / Escape / blur → dispatch set-shortcut-active(false)   │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ Renderer: Receives events, executes actions                              │
-│  ├─ ui:mode-changed → update shortcut overlay visibility                │
-│  ├─ shortcut:key → execute workspace action (navigate, jump, dialog)    │
-│  └─ Escape key → call api.ui.setMode("workspace")                       │
+│ Main Process — interpret: presenter                                      │
+│  ├─ shortcut:active → recompute ui.mode (shortcut > dialog > hover > …)  │
+│  └─ shortcut:key → navigate / jump / dialog action against its model,   │
+│      updating the snapshot or dispatching the matching intent           │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Renderer: pure render of the snapshot                                    │
+│  └─ reads ui.mode → ShortcutOverlay visibility + CSS z-order            │
+│      (no action execution, no setMode round trip)                       │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Key Detection Flow
 
-| User Action            | Main Process                 | Renderer                  |
-| ---------------------- | ---------------------------- | ------------------------- |
-| Alt+X pressed          | setMode("shortcut")          | Show overlay              |
-| Action key (↑↓0-9 etc) | Emit api:shortcut:key        | Execute action            |
-| Escape pressed         | (passes through to renderer) | Call setMode("workspace") |
-| Alt released           | setMode("workspace")         | Hide overlay              |
+| User Action            | Main Process                             | Renderer (from snapshot)                 |
+| ---------------------- | ---------------------------------------- | ---------------------------------------- |
+| Alt+X pressed          | dispatch `set-shortcut-active(true)`     | overlay shows (`ui.mode === "shortcut"`) |
+| Action key (↑↓0-9 etc) | dispatch `shortcut:key` → presenter acts | row/active reflect the new snapshot      |
+| Escape / Alt released  | dispatch `set-shortcut-active(false)`    | overlay hides                            |
 
 ### ShortcutController State Machine
 
@@ -1461,7 +1468,7 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
               │  (suppress)  (let through)      │                          │
               │     │             │             ▼                          │
               │     │             │      • preventDefault                  │
-              │     │             │      • setMode("shortcut")             │
+              │     │             │      • dispatch set-shortcut-active    │
               │     │             │      • focusUI()                       │
               │     │             │             │                          │
               └─────┴─────────────┴─────────────┘                          │
@@ -1469,22 +1476,22 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
               Main process returns to NORMAL, UI has focus ────────────────┘
 ```
 
-**While in shortcut mode**, action keys (↑↓Enter Delete O 0-9) are captured and emitted as `api:shortcut:key` events. Unknown keys pass through to the focused view.
+**While in shortcut mode**, action keys (↑↓Enter Delete O 0-9) are captured and dispatched as `shortcut:key` domain events that the presenter interprets. Unknown keys pass through to the focused view.
 
 ### Key Files
 
-| File                                          | Purpose                                  |
-| --------------------------------------------- | ---------------------------------------- |
-| `src/main/shortcut-controller.ts`             | Main-process key detection and mode mgmt |
-| `src/renderer/lib/stores/shortcuts.svelte.ts` | UI state (mode tracking)                 |
-| `src/renderer/App.svelte`                     | Event subscriptions, action handlers     |
+| File                                              | Purpose                                                          |
+| ------------------------------------------------- | ---------------------------------------------------------------- |
+| `src/modules/shortcut-module.ts`                  | Main-process key capture (before-input-event) → shortcut intents |
+| `src/modules/presentation/presentation-module.ts` | Interprets shortcut events; computes `ui.mode`                   |
+| `src/renderer/App.svelte`                         | Reads `ui.mode` from the snapshot; renders overlay/z-order       |
 
 ### Design Decisions
 
-1. **Main process owns all detection**: Eliminates race conditions where renderer sees keys before focus switches
-2. **ViewManager is single source of truth for mode**: ShortcutController queries `getMode()` instead of tracking its own state
-3. **Escape handled in renderer**: Simplest key that doesn't require focus changes, just calls `setMode("workspace")`
-4. **Mode transitions are idempotent**: Prevents spurious events during workspace switches
+1. **Main owns detection AND interpretation**: capture (shortcut-module) and navigation/mode (presenter) both live in main — no renderer shortcut logic, eliminating focus/key races.
+2. **Mode is computed, not commanded**: the presenter derives `ui.mode` from its own state and ships it in the snapshot; the renderer never sets mode.
+3. **Alt+X guard**: the presenter's `isModalOpen()` blocks Alt+X while a modal dialog is open (focus trap active).
+4. **Coalesced pushes**: snapshot pushes batch per microtask, so mode recomputes that don't change anything are collapsed.
 
 ## Data Flow
 

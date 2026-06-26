@@ -16,76 +16,54 @@
 
 ## IPC Patterns
 
-### Fire-and-Forget IPC
+### Two-Channel UI IPC
 
-For UI state changes that cannot fail (like z-order swapping), use the `void` operator to call IPC without awaiting:
+The entire renderer↔main surface is **two channels**, both owned by the presenter
+(`src/modules/presentation/presentation-module.ts`):
 
-```typescript
-void api.ui.setMode("dialog"); // Intentionally not awaited
-```
+- **`api:ui:state`** (main → renderer): the presenter pushes the full
+  render-ready `UiState` snapshot, coalesced per microtask. No per-feature
+  channels, no diffs.
+- **`api:ui:event`** (renderer → main): a single zod-validated discriminated
+  union (`UiEvent`) carrying every gesture, dialog/notification interaction, and
+  `log`. Fire-and-forget — emission must never break the caller.
 
-This pattern is used when:
+The preload exposes only `{ emitEvent, onState }`. Theme rides in the snapshot
+(`ui.theme`); there is no separate theme channel.
 
-1. The operation cannot meaningfully fail
-2. Immediate UI response is more important than confirmation
-3. The renderer should not block on the main process
+### Fire-and-Forget UI events
 
-### IPC-to-Intent Pattern
-
-All IPC handlers are registered in `UiIpcModule`, which is an `IntentModule`. IPC handlers create typed intents and dispatch them through the intent dispatcher. Domain events emitted by operations are forwarded to the renderer via `sendToUI`.
-
-**Architecture:**
-
-```
-UiIpcModule (IntentModule)
-    │
-    ├── IPC Handlers (renderer → main)
-    │   registerIpc(channel, handler)
-    │   handler creates Intent → dispatcher.dispatch(intent)
-    │
-    └── Event Subscriptions (main → renderer)
-        Domain event → sendToUI(channel, payload)
-```
-
-**IPC Handler Registration:**
-
-Each IPC handler validates the payload, constructs a typed intent, and dispatches it:
+Renderer→main gestures are fire-and-forget `ui:events`; the renderer never blocks
+on main and never awaits a result:
 
 ```typescript
-// IPC handler creates intent and dispatches it
-registerIpc(ApiIpcChannels.WORKSPACE_CREATE, async (payload) => {
-  const p = payload as WorkspaceCreatePayload;
-  const intent: OpenWorkspaceIntent = {
-    type: INTENT_OPEN_WORKSPACE,
-    payload: { projectPath: p.projectPath, workspaceName: p.name, base: p.base },
-  };
-  return await dispatcher.dispatch(intent);
-});
+// $lib/api wraps window.api.emitEvent and swallows any throw
+api.emitEvent({ kind: "switch-workspace", key }); // opaque row key; main resolves it
 ```
 
-**Domain Event Forwarding:**
+The event carries opaque snapshot identity (a row `key`, a `projectId`, a
+`dialogId`); the **presenter** resolves it against its own model and dispatches
+the matching intent (with `interactive: true` for flows that may park on a
+confirmation). The result comes back the only way anything does — as the next
+`UiState` snapshot.
 
-Domain events emitted by operations are forwarded to the renderer as IPC messages:
+### Renderer is a render function of the snapshot
 
-```typescript
-// Domain event forwarded to renderer
-const events: EventDeclarations = {
-  [EVENT_WORKSPACE_CREATED]: (event: DomainEvent) => {
-    const p = (event as WorkspaceCreatedEvent).payload;
-    deps.sendToUI(ApiIpcChannels.WORKSPACE_CREATED, {
-      projectId: p.projectId,
-      workspace: { projectId: p.projectId, name: p.workspaceName, ... },
-    });
-  },
-};
+```
+renderer                         presenter (main)
+────────                         ────────────────
+api.emitEvent(uiEvent)  ───────► zod-validate → resolve identity → dispatch intent
+api.onState(snapshot)   ◄─────── build UiState from domain events (coalesced)
 ```
 
 **Key Points:**
 
-- All business logic lives in operations and hook modules, not in IPC handlers
-- IPC handlers only do payload validation and intent construction
-- Domain events are the mechanism for main-to-renderer communication
-- See [ARCHITECTURE.md](ARCHITECTURE.md#intent-based-architecture) for the full architecture
+- No `registerIpc`, no per-channel `sendToUI`, no domain-event→IPC bridge. The
+  presenter subscribes to domain events and folds them into the snapshot.
+- All business logic lives in operations and hook modules; the presenter only
+  builds the view-model and routes `ui:events` to intents.
+- The renderer holds `let ui = $state.raw(UiState)` in `App.svelte` and passes
+  props down — no stores. See [ARCHITECTURE.md](ARCHITECTURE.md#intent-based-architecture).
 
 ### ID Generation Pattern
 
@@ -136,22 +114,21 @@ function resolveProject(projectId: ProjectId): string | undefined {
 
 ### API Usage
 
-The renderer uses `api.*` for all operations after setup:
+The renderer has no command methods — every gesture is a fire-and-forget
+`ui:event`, and all state arrives as `UiState` snapshots:
 
 ```typescript
-// Open project
-const project = await api.projects.open("/path/to/repo");
-console.log(project.id); // "my-repo-a1b2c3d4"
+import * as api from "$lib/api";
 
-// Create workspace
-const workspace = await api.workspaces.create(project.id, "feature-x", "main");
+// Gestures: emit an event carrying opaque snapshot identity; main resolves +
+// dispatches. There is no return value — the result is the next snapshot.
+api.emitEvent({ kind: "switch-workspace", key }); // key from the workspace row
+api.emitEvent({ kind: "remove-workspace", key }); // opens the main-side confirm
+api.emitEvent({ kind: "close-project", projectId });
 
-// Switch workspace
-await api.ui.switchWorkspace(project.id, workspace.name);
-
-// Subscribe to events
-const unsubscribe = api.on("workspace:switched", (event) => {
-  console.log(`Switched to ${event.workspaceName} in ${event.projectId}`);
+// State: the single source of UI state.
+const unsubscribe = api.onState((ui) => {
+  // ui.sidebar.projects, ui.main, ui.mode, ui.dialogs, ui.notifications, ui.theme
 });
 ```
 
@@ -466,31 +443,24 @@ Complex `onMount` logic can be extracted into focused **setup functions** that r
 
 ### Pattern
 
+Renderer-local behavior that reacts to server state (e.g. the agent chime)
+subscribes to the snapshot via `onState` — injectable so it can be tested
+without `window.api`. This mirrors the real `setupDomainEventBindings`.
+
 ```typescript
 // lib/utils/setup-feature.ts
+import type { UiState } from "@shared/ui-state";
+import * as api from "$lib/api";
 
-// Type-safe API interface (constrained to needed events)
-export interface FeatureApi {
-  on(event: "feature:event", handler: (data: Data) => void): () => void;
-}
+/** The snapshot subscription, injectable for tests. */
+export type OnState = (cb: (state: UiState) => void) => () => void;
 
-// Default API - lazy loaded to avoid circular dependencies
-let defaultApi: FeatureApi | undefined;
-
-function getDefaultApi(): FeatureApi {
-  if (!defaultApi) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const api = require("$lib/api");
-    defaultApi = { on: api.on };
-  }
-  return defaultApi;
-}
-
-export function setupFeature(apiImpl: FeatureApi = getDefaultApi()): () => void {
-  const unsubscribe = apiImpl.on("feature:event", (data) => {
-    updateStore(data);
+export function setupFeature(service: FeatureService, onState: OnState = api.onState): () => void {
+  // Derive renderer-local behavior from each snapshot (no store to mutate —
+  // the snapshot is the single source of state).
+  return onState((state) => {
+    service.react(state);
   });
-  return unsubscribe; // cleanup callback
 }
 ```
 
@@ -518,50 +488,36 @@ export function setupFeature(apiImpl: FeatureApi = getDefaultApi()): () => void 
 Use **behavioral mocks** that verify state changes, not call tracking:
 
 ```typescript
-// Create behavioral mock with in-memory state
-import * as store from "$lib/stores/feature.svelte.js";
-
-function createMockApi() {
-  let handler: ((data: Data) => void) | undefined;
+// Behavioral mock: a fake onState the test can drive, plus a real service whose
+// observable effect is asserted (no store to inspect — assert the behavior).
+function createOnState() {
+  let cb: ((state: UiState) => void) | undefined;
   let unsubscribed = false;
-
-  const api: FeatureApi = {
-    on: (_event, h) => {
-      handler = h;
-      return () => {
-        handler = undefined;
-        unsubscribed = true;
-      };
-    },
+  const onState: OnState = (fn) => {
+    cb = fn;
+    return () => {
+      unsubscribed = true;
+    };
   };
-
-  return {
-    api,
-    emit: (data: Data) => handler?.(data),
-    unsubscribeCalled: () => unsubscribed,
-  };
+  return { onState, push: (s: UiState) => cb?.(s), unsubscribed: () => unsubscribed };
 }
 
-// Test actual behavior
-it("updates store when event is emitted", () => {
-  const { api, emit } = createMockApi();
+it("reacts to each pushed snapshot", () => {
+  const { onState, push } = createOnState();
+  const service = new FeatureService();
 
-  setupFeature(api);
-  emit(testData);
+  setupFeature(service, onState);
+  push(makeUiState(/* … */));
 
-  expect(store.getState()).toEqual(expectedState);
+  expect(service.lastReaction).toEqual(expectedReaction);
 });
 
-// Test cleanup stops updates
-it("cleanup stops updates", () => {
-  const { api, emit, unsubscribeCalled } = createMockApi();
+it("cleanup stops reacting", () => {
+  const { onState, unsubscribed } = createOnState();
+  const cleanup = setupFeature(new FeatureService(), onState);
 
-  const cleanup = setupFeature(api);
   cleanup();
-
-  expect(unsubscribeCalled()).toBe(true);
-  emit(otherData);
-  expect(store.getState()).toBeUndefined(); // unchanged after cleanup
+  expect(unsubscribed()).toBe(true);
 });
 ```
 
