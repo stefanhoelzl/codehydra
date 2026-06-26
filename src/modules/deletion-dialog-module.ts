@@ -53,7 +53,7 @@ import { getErrorMessage } from "../shared/error-utils";
  * Dependencies for the deletion dialog module.
  */
 export interface DeletionDialogModuleDeps {
-  readonly ui: Pick<UiPresenter, "dialog">;
+  readonly ui: Pick<UiPresenter, "dialog" | "deletionProgress">;
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
 }
@@ -221,9 +221,9 @@ function dispatchDelete(dispatcher: Dispatcher, payload: DeleteWorkspaceIntent["
  * Create the deletion dialog module.
  */
 export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): IntentModule {
-  // All active deletions (keyed by workspace path)
-  const progressMap = new Map<string, DeletionProgress>();
-  // Currently visible dialog (only one at a time — the active workspace's)
+  // Currently visible dialog (only one at a time — the active workspace's).
+  // Deletion progress itself is owned by the presenter (single source of
+  // truth); this module reads it via deps.ui.deletionProgress(path).
   let activeDialog: { path: string; handle: DialogHandle } | null = null;
   // Currently active workspace path
   let activeWorkspacePath: string | null = null;
@@ -234,7 +234,6 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       deps.logger.debug("Deletion dismiss", { workspace: workspacePath });
       handle.close();
       activeDialog = null;
-      progressMap.delete(workspacePath);
       dispatchDelete(deps.dispatcher, {
         workspacePath,
         keepBranch: false,
@@ -245,7 +244,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     }
 
     handle.onEvent((evt) => {
-      const progress = progressMap.get(workspacePath);
+      const progress = deps.ui.deletionProgress(workspacePath);
       if (!progress) return;
 
       if (evt.actionId === "retry") {
@@ -269,10 +268,8 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     // through the normal action path above; mid-deletion Escape is a no-op.
   }
 
-  /** Open dialog for the given workspace if it has deletion progress. */
-  function showDialogForWorkspace(path: string): void {
-    const progress = progressMap.get(path);
-    if (!progress) return;
+  /** Open the deletion dialog for a workspace from its current progress. */
+  function showDialog(path: string, progress: DeletionProgress): void {
     const handle = deps.ui.dialog(buildConfig(progress));
     activeDialog = { path, handle };
     wireEvents(handle, path);
@@ -289,26 +286,22 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
   const events: EventDeclarations = {
     [EVENT_WORKSPACE_DELETION_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
+        // Render from the event payload directly; the presenter stores the
+        // canonical copy off the same event (single source of truth).
         const progress = (event as WorkspaceDeletionProgressEvent).payload;
         const key = progress.workspacePath;
-
-        // Update stored progress
-        progressMap.set(key, progress);
 
         // If this workspace's dialog is currently showing, update it
         if (activeDialog && activeDialog.path === key) {
           activeDialog.handle.update(buildConfig(progress));
         } else if (key === activeWorkspacePath && !activeDialog) {
           // Active workspace just started deletion — open dialog
-          showDialogForWorkspace(key);
+          showDialog(key, progress);
         }
 
-        // Auto-close on successful completion
-        if (progress.completed && !progress.hasErrors) {
-          if (activeDialog?.path === key) {
-            closeActiveDialog();
-          }
-          progressMap.delete(key);
+        // Auto-close on successful completion (the presenter clears its copy).
+        if (progress.completed && !progress.hasErrors && activeDialog?.path === key) {
+          closeActiveDialog();
         }
       },
     },
@@ -324,9 +317,11 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
 
         activeWorkspacePath = newPath;
 
-        // Open dialog if the new workspace has deletion progress
-        if (newPath && progressMap.has(newPath) && !activeDialog) {
-          showDialogForWorkspace(newPath);
+        // Open dialog if the new workspace has deletion progress (read from the
+        // presenter, the single source of truth).
+        const progress = newPath ? deps.ui.deletionProgress(newPath) : undefined;
+        if (newPath && progress && !activeDialog) {
+          showDialog(newPath, progress);
         }
       },
     },
@@ -336,7 +331,6 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
         if (activeDialog?.path === workspacePath) {
           closeActiveDialog();
         }
-        progressMap.delete(workspacePath);
       },
     },
   };

@@ -1,11 +1,13 @@
 # UI State Architecture — Backend-Held UI State
 
-**Status**: Design agreed (2026-06-11). **Phases A + B complete (2026-06-26)** —
-presenter + `UiState` snapshot + full renderer cutover (no stores; `App` holds
-`$state.raw`, props down), and the surface is now exactly **2 channels**
-(`api:ui:state` down, `api:ui:event` up): all typed event channels and the
-separate theme channel are gone (theme rides in the snapshot). Phases C–D
-tracked in Open items.
+**Status**: Design agreed (2026-06-11). **Phases A + B + C complete (2026-06-26)**
+— presenter + `UiState` snapshot + full renderer cutover (no stores; `App` holds
+`$state.raw`, props down); the surface is now exactly **2 channels**
+(`api:ui:state` down, `api:ui:event` up) with theme folded into the snapshot;
+and the dialog/notification frameworks are unified in a presenter-owned
+`modules/presentation/` folder with the deletion dialog reading progress from
+the presenter (single source of truth). Phase D (shell absorption) tracked in
+Open items.
 
 Now that the app uses a single WebContentsView hosting `index.html` with workspaces as
 iframes, the complete semantic UI state moves into the main process. The renderer becomes
@@ -231,9 +233,15 @@ the renderer only ever renders the array.
   **DONE** (dead `api:project:*`/`api:workspace:*` constants removed; theme
   folded into the snapshot and `theme-module` + the `api:ui:theme` channel
   deleted; dead preload `on()` generic + the orphaned `ApiEvents` map removed;
-  surface is now exactly `ui:state` + `ui:event`) → C dialogs (dissolve
-  managers, UserInteraction, creation sub-module, local-dialog migration;
-  repoint the deletion dialog at `deletionProgress`) → D shell absorption
-  (window/view managers, appctrl, docs).
+  surface is now exactly `ui:state` + `ui:event`) → C dialogs — **DONE**, though
+  reality reshaped the sketch: the managers are load-bearing (9 callers), so
+  rather than "dissolve" they were **unified** into one generic `SessionRegistry`
+  core and co-located in a presenter-owned `modules/presentation/` folder; the
+  parked-`nextEvent()` pattern was kept as the confirmation mechanism (no
+  separate `UserInteraction` interface); the creation form stays a standalone
+  module; local dialogs were already migrated; and the deletion dialog now reads
+  progress from the presenter (the single owner of the full `DeletionProgress`),
+  which derives the render-ready `deletionProgress` onto the row → D shell
+  absorption (window/view managers, appctrl, docs).
 - **docs/** updates (ARCHITECTURE.md, PATTERNS.md, INTENTS.md) as phases land.
 - **appctrl** frame targeting hooks unaffected by design; verify during shell phase.

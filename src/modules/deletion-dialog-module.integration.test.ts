@@ -107,13 +107,23 @@ function createTestSetup(): TestSetup {
   const dialogManager = createMockDialogManager();
   const dispatcher = createMockDispatcher();
 
+  // Stand in for the presenter's single deletion-progress store: firing a
+  // progress event mirrors the presenter's set/clear so the module's reads via
+  // ui.deletionProgress() see what the presenter would hold.
+  const progressStore = new Map<string, DeletionProgress>();
+
   const module = createDeletionDialogModule({
-    ui: dialogManager.ui,
+    ui: { ...dialogManager.ui, deletionProgress: (path: string) => progressStore.get(path) },
     dispatcher: dispatcher as unknown as Dispatcher,
     logger: SILENT_LOGGER,
   });
 
   const fireProgress = async (progress: DeletionProgress): Promise<void> => {
+    if (progress.completed && !progress.hasErrors) {
+      progressStore.delete(progress.workspacePath);
+    } else {
+      progressStore.set(progress.workspacePath, progress);
+    }
     await module.events![EVENT_WORKSPACE_DELETION_PROGRESS]!.handler({
       type: EVENT_WORKSPACE_DELETION_PROGRESS,
       payload: progress,
@@ -128,6 +138,7 @@ function createTestSetup(): TestSetup {
   };
 
   const fireDeleted = async (workspacePath: string): Promise<void> => {
+    progressStore.delete(workspacePath);
     await module.events![EVENT_WORKSPACE_DELETED]!.handler({
       type: EVENT_WORKSPACE_DELETED,
       payload: { workspacePath },
@@ -491,7 +502,8 @@ describe("DeletionDialogModule - remove confirm", () => {
     };
 
     const module = createDeletionDialogModule({
-      ui: dialogManager.ui,
+      // The confirm hook only opens + parks; it never reads deletion progress.
+      ui: { ...dialogManager.ui, deletionProgress: () => undefined },
       dispatcher: dispatcher as unknown as Dispatcher,
       logger: SILENT_LOGGER,
     });
