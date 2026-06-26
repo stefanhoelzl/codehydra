@@ -39,8 +39,8 @@ import type { StateService } from "../boundaries/platform/state-service";
 import type { StateMigrationRegistry } from "./state-module";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { NotificationHandle } from "./notification-manager";
-import type { UiPresenter } from "./presentation-module";
+import type { NotificationHandle } from "./presentation/sessions";
+import type { UiPresenter } from "./presentation/presentation-module";
 import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 
 /** How often to re-check for updates while the app is running. */

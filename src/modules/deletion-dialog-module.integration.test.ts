@@ -23,7 +23,7 @@ import { INTENT_GET_WORKSPACE_STATUS } from "../intents/get-workspace-status";
 import { INTENT_GET_METADATA } from "../intents/get-metadata";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { createDeletionDialogModule } from "./deletion-dialog-module";
-import { createMockDialogManager } from "./dialog-manager.state-mock";
+import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";

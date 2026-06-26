@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { NotificationManager } from "./notification-manager";
-import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
+import { NotificationManager } from "./sessions";
+import type { NotificationConfig, NotificationUserEvent } from "../../shared/notification-types";
 
 const CONFIG: NotificationConfig = {
   type: "info",

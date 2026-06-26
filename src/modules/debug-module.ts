@@ -30,8 +30,8 @@ import {
 } from "../intents/resolve-workspace";
 import type { WorkspaceName } from "../shared/api/types";
 import { SETUP_OPERATION_ID, type BinaryHookInput } from "../intents/setup";
-import type { NotificationHandle } from "./notification-manager";
-import type { UiPresenter } from "./presentation-module";
+import type { NotificationHandle } from "./presentation/sessions";
+import type { UiPresenter } from "./presentation/presentation-module";
 import type { NotificationConfig } from "../shared/notification-types";
 
 interface DebugModuleDeps {

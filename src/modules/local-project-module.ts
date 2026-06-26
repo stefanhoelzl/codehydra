@@ -32,7 +32,7 @@ import {
   type RegisterHookInput,
   type RegisterHookResult,
 } from "../intents/open-project";
-import type { UiPresenter } from "./presentation-module";
+import type { UiPresenter } from "./presentation/presentation-module";
 import type { IGitClient } from "../boundaries/platform/git-client";
 import {
   CLOSE_PROJECT_OPERATION_ID,

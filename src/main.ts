@@ -190,7 +190,7 @@ import { createErrorReportModule } from "./modules/error-report-module";
 import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
 import { createDebugModule } from "./modules/debug-module";
-import { createPresentationModule } from "./modules/presentation-module";
+import { createPresentationModule } from "./modules/presentation/presentation-module";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";

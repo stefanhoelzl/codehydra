@@ -52,7 +52,7 @@ import type { ProjectId } from "../shared/api/types";
 import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";
 import type { IntentModule } from "../intents/lib/module";
 import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
-import { createMockDialogManager } from "./dialog-manager.state-mock";
+import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import { projectDirName } from "../boundaries/platform/paths";
 import nodePath from "path";
 

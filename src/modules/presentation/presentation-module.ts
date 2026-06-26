@@ -27,26 +27,26 @@
  * complete.
  */
 
-import type { IntentModule, EventDeclarations } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type { HookContext } from "../intents/lib/operation";
-import { ANY_VALUE } from "../intents/lib/operation";
-import type { IDispatcher } from "../intents/lib/dispatcher";
-import type { Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
-import type { PathProvider } from "../boundaries/platform/path-provider";
-import type { IViewManager } from "../boundaries/shell/view-manager.interface";
-import type { Theme } from "../boundaries/shell/window-manager";
-import type { Unsubscribe } from "../shared/api/interfaces";
-import type { AgentStatus, DeletionProgress, WorkspaceTag } from "../shared/api/types";
-import { extractTags, TAGS_METADATA_KEY_PREFIX } from "../shared/api/types";
+import type { IntentModule, EventDeclarations } from "../../intents/lib/module";
+import type { DomainEvent } from "../../intents/lib/types";
+import type { HookContext } from "../../intents/lib/operation";
+import { ANY_VALUE } from "../../intents/lib/operation";
+import type { IDispatcher } from "../../intents/lib/dispatcher";
+import type { Logging, LoggerName, LogContext } from "../../boundaries/platform/logging";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
+import type { PathProvider } from "../../boundaries/platform/path-provider";
+import type { IViewManager } from "../../boundaries/shell/view-manager.interface";
+import type { Theme } from "../../boundaries/shell/window-manager";
+import type { Unsubscribe } from "../../shared/api/interfaces";
+import type { AgentStatus, DeletionProgress, WorkspaceTag } from "../../shared/api/types";
+import { extractTags, TAGS_METADATA_KEY_PREFIX } from "../../shared/api/types";
 import {
   APP_SHUTDOWN_OPERATION_ID,
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
-} from "../intents/app-shutdown";
-import { EVENT_APP_STARTED, INTENT_APP_READY, type AppReadyIntent } from "../intents/app-ready";
-import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../intents/app-start";
+} from "../../intents/app-shutdown";
+import { EVENT_APP_STARTED, INTENT_APP_READY, type AppReadyIntent } from "../../intents/app-ready";
+import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../../intents/app-start";
 import {
   SETUP_OPERATION_ID,
   EVENT_SETUP_PROGRESS,
@@ -54,9 +54,9 @@ import {
   type AgentSelectionHookContext,
   type SetupProgressEvent,
   type SetupErrorEvent,
-} from "../intents/setup";
-import type { LifecycleAgentType } from "../shared/ipc";
-import { EVENT_PROJECT_OPENED, type ProjectOpenedEvent } from "../intents/open-project";
+} from "../../intents/setup";
+import type { LifecycleAgentType } from "../../shared/ipc";
+import { EVENT_PROJECT_OPENED, type ProjectOpenedEvent } from "../../intents/open-project";
 import {
   EVENT_PROJECT_CLOSED,
   INTENT_CLOSE_PROJECT,
@@ -65,7 +65,7 @@ import {
   type CloseProjectIntent,
   type CloseConfirmHookInput,
   type CloseConfirmHookResult,
-} from "../intents/close-project";
+} from "../../intents/close-project";
 import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
@@ -73,7 +73,7 @@ import {
   type WorkspaceCreatedEvent,
   type WorkspaceLoadingEvent,
   type WorkspaceCreateFailedEvent,
-} from "../intents/open-workspace";
+} from "../../intents/open-workspace";
 import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
@@ -81,33 +81,36 @@ import {
   type DeleteWorkspaceIntent,
   type WorkspaceDeletedEvent,
   type WorkspaceDeletionProgressEvent,
-} from "../intents/delete-workspace";
+} from "../../intents/delete-workspace";
 import {
   EVENT_WORKSPACE_SWITCHED,
   INTENT_SWITCH_WORKSPACE,
   type WorkspaceSwitchedEvent,
   type SwitchWorkspaceIntent,
-} from "../intents/switch-workspace";
+} from "../../intents/switch-workspace";
 import {
   EVENT_AGENT_STATUS_UPDATED,
   type AgentStatusUpdatedEvent,
-} from "../intents/update-agent-status";
-import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../intents/set-metadata";
+} from "../../intents/update-agent-status";
+import { EVENT_METADATA_CHANGED, type MetadataChangedEvent } from "../../intents/set-metadata";
 import {
   EVENT_SHORTCUT_ACTIVE_CHANGED,
   type ShortcutActiveChangedEvent,
-} from "../intents/set-shortcut-active";
-import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+} from "../../intents/set-shortcut-active";
+import {
+  EVENT_SHORTCUT_KEY_PRESSED,
+  type ShortcutKeyPressedEvent,
+} from "../../intents/shortcut-key";
 import {
   INTENT_HIBERNATE_WORKSPACE,
   type HibernateWorkspaceIntent,
-} from "../intents/hibernate-workspace";
-import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../intents/wake-workspace";
-import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../shared/shortcuts";
-import type { UIMode } from "../shared/ipc";
-import { ApiIpcChannels } from "../shared/ipc";
-import type { DialogConfig, DialogSection, DialogSurface } from "../shared/dialog-types";
-import { uiEventSchema } from "../shared/ui-event";
+} from "../../intents/hibernate-workspace";
+import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/wake-workspace";
+import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../../shared/shortcuts";
+import type { UIMode } from "../../shared/ipc";
+import { ApiIpcChannels } from "../../shared/ipc";
+import type { DialogConfig, DialogSection, DialogSurface } from "../../shared/dialog-types";
+import { uiEventSchema } from "../../shared/ui-event";
 import {
   compareDisplayNames,
   type UiDeletionProgress,
@@ -116,12 +119,16 @@ import {
   type UiSetupRow,
   type UiState,
   type UiWorkspaceRow,
-} from "../shared/ui-state";
-import { buildScreenshotPath } from "./hibernation-screenshot-module";
-import { DialogManager, type DialogHandle } from "./dialog-manager";
-import { NotificationManager, type NotificationHandle } from "./notification-manager";
-import type { NotificationConfig } from "../shared/notification-types";
-import { getErrorMessage } from "../shared/error-utils";
+} from "../../shared/ui-state";
+import { buildScreenshotPath } from "../hibernation-screenshot-module";
+import {
+  DialogManager,
+  NotificationManager,
+  type DialogHandle,
+  type NotificationHandle,
+} from "./sessions";
+import type { NotificationConfig } from "../../shared/notification-types";
+import { getErrorMessage } from "../../shared/error-utils";
 
 export interface PresentationModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
