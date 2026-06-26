@@ -579,6 +579,57 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces).toEqual([]);
   });
 
+  it("is the single source of deletion progress: full via accessor, render-ready on the row", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("feat", { url: "http://127.0.0.1:1/feat" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    const path = workspace.path as WorkspacePath;
+
+    expect(module.deletionProgress(path)).toBeUndefined();
+
+    await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
+      workspacePath: path,
+      workspaceName: workspace.name,
+      projectId: PROJECT_ID,
+      keepBranch: true,
+      operations: [{ id: "cleanup", label: "Removing", status: "error", error: "EBUSY" }],
+      completed: true,
+      hasErrors: true,
+      blockingProcesses: [
+        { pid: 4242, name: "node", commandLine: "node x", files: ["/w/a"], cwd: "/w" },
+      ],
+    });
+    await flush();
+
+    // Accessor exposes the FULL domain progress (pids, keepBranch) for the modal.
+    const full = module.deletionProgress(path);
+    expect(full?.keepBranch).toBe(true);
+    expect(full?.blockingProcesses?.[0]?.pid).toBe(4242);
+
+    // The row carries only the render-ready view (no pids / keepBranch / paths).
+    const row = lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+    expect(row.deletionProgress).toEqual({
+      operations: [{ id: "cleanup", label: "Removing", status: "error", error: "EBUSY" }],
+      completed: true,
+      hasErrors: true,
+      blockingProcessCount: 1,
+    });
+
+    // Cleared on successful completion.
+    await emit(module, EVENT_WORKSPACE_DELETION_PROGRESS, {
+      workspacePath: path,
+      workspaceName: workspace.name,
+      projectId: PROJECT_ID,
+      keepBranch: true,
+      operations: [],
+      completed: true,
+      hasErrors: false,
+    });
+    await flush();
+    expect(module.deletionProgress(path)).toBeUndefined();
+  });
+
   it("agent status updates land inline on the row", async () => {
     const deps = createDeps();
     const module = await startModule(deps);

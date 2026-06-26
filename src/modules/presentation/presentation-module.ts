@@ -156,6 +156,13 @@ export interface UiPresenter extends IntentModule {
   notification(config: NotificationConfig): NotificationHandle;
   /** True while a modal-surface dialog is open (the shortcut-module Alt+X guard). */
   isModalOpen(): boolean;
+  /**
+   * The current full deletion progress for a workspace path, or undefined when
+   * it is not deleting. The presenter is the single owner of deletion progress
+   * (it tracks it for row status); the deletion-dialog module reads it here for
+   * its modal and retry/dismiss dispatch inputs rather than tracking its own.
+   */
+  deletionProgress(workspacePath: string): DeletionProgress | undefined;
 }
 
 /**
@@ -336,10 +343,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /** Agent status keyed by workspace path. */
   const agentStatuses = new Map<string, AgentStatus>();
   /**
-   * Deletion lifecycle keyed by workspace path (absent = not deleting). Holds
-   * the render-ready progress folded onto the row; `status` derives from it.
+   * Deletion lifecycle keyed by workspace path (absent = not deleting). The
+   * single source of truth for deletion progress: the row's render-ready
+   * `deletionProgress` + `status` derive from it, and the deletion-dialog
+   * module reads it (via the `deletionProgress` accessor) for its modal +
+   * retry/dismiss dispatch inputs instead of tracking its own copy. Holds the
+   * full domain `DeletionProgress` because the modal needs fields the
+   * render-ready row view omits (blocking-process pids, keepBranch).
    */
-  const deletions = new Map<string, UiDeletionProgress>();
+  const deletions = new Map<string, DeletionProgress>();
   /** Hibernation screenshot data URLs keyed by workspace key (null = missing). */
   const screenshots = new Map<string, string | null>();
   const screenshotLoads = new Set<string>();
@@ -495,7 +507,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   function buildRow(project: ProjectModel, workspace: WorkspaceModel): UiWorkspaceRow {
     const key = workspaceKey(project.id, workspace.name);
-    const deletionProgress = workspace.path === null ? undefined : deletions.get(workspace.path);
+    const progress = workspace.path === null ? undefined : deletions.get(workspace.path);
     return {
       key,
       name: workspace.name,
@@ -506,7 +518,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // Copy: the model array mutates on tag changes; snapshots are immutable values.
       tags: [...workspace.tags],
       active: key === activeKey,
-      ...(deletionProgress && { deletionProgress }),
+      // Derive the render-ready row view from the full tracked progress.
+      ...(progress && { deletionProgress: toUiDeletionProgress(progress) }),
     };
   }
 
@@ -1148,7 +1161,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           // Auto-clear on successful completion (workspace:deleted removes the row).
           deletions.delete(progress.workspacePath);
         } else {
-          deletions.set(progress.workspacePath, toUiDeletionProgress(progress));
+          deletions.set(progress.workspacePath, progress);
         }
         scheduleUpdate();
       },
@@ -1375,6 +1388,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       dialogs.open(config, options),
     notification: (config: NotificationConfig): NotificationHandle => notifications.open(config),
     isModalOpen: (): boolean => dialogs.isModalOpen(),
+    deletionProgress: (workspacePath: string): DeletionProgress | undefined =>
+      deletions.get(workspacePath),
     events,
     hooks: {
       [APP_START_OPERATION_ID]: {
