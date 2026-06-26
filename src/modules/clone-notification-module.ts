@@ -18,8 +18,8 @@ import {
   EVENT_PROJECT_OPENED,
   EVENT_PROJECT_OPEN_FAILED,
 } from "../intents/open-project";
-import type { NotificationHandle } from "./notification-manager";
-import type { UiPresenter } from "./presentation-module";
+import type { NotificationHandle } from "./presentation/sessions";
+import type { UiPresenter } from "./presentation/presentation-module";
 import type { NotificationConfig } from "../shared/notification-types";
 
 /**

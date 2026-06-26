@@ -9,7 +9,7 @@
  */
 
 import { vi } from "vitest";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { DialogManager, DialogHandle } from "./sessions";
 import type { UiPresenter } from "./presentation-module";
 import type {
   DialogConfig,
@@ -18,7 +18,7 @@ import type {
   DialogActionEvent,
   DialogFieldChangeEvent,
   DialogDismissEvent,
-} from "../shared/dialog-types";
+} from "../../shared/dialog-types";
 
 /**
  * Test-side view of an open dialog: latest/full config history, surface,

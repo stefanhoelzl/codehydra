@@ -33,7 +33,7 @@ import { createMockViewManager } from "../boundaries/shell/view-manager.test-uti
 import { INTENT_APP_SHUTDOWN } from "../intents/app-shutdown";
 import type { DialogMessageBoxOptions } from "../boundaries/shell/dialog";
 import type { HookContext } from "../intents/lib/operation";
-import { createMockDialogHandle } from "./dialog-manager.state-mock";
+import { createMockDialogHandle } from "./presentation/dialog-manager.state-mock";
 import type { DialogConfig } from "../shared/dialog-types";
 
 // =============================================================================

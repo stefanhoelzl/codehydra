@@ -34,7 +34,7 @@ import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
-import type { UiPresenter } from "./presentation-module";
+import type { UiPresenter } from "./presentation/presentation-module";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import {

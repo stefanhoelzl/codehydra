@@ -15,7 +15,7 @@ import type { IntentModule } from "../intents/lib/module";
 import {
   createMockNotificationManager,
   type MockNotificationManager,
-} from "./notification-manager.state-mock";
+} from "./presentation/notification-manager.state-mock";
 
 // =============================================================================
 // Tests

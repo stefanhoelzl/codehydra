@@ -34,7 +34,7 @@ import type { Config } from "../boundaries/platform/config";
 import {
   createMockNotificationManager,
   type MockNotificationManager,
-} from "./notification-manager.state-mock";
+} from "./presentation/notification-manager.state-mock";
 
 /**
  * Auto-updater tests expect `update.notification` to default to true unless

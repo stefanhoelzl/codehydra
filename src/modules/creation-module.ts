@@ -27,8 +27,8 @@
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DialogHandle } from "./dialog-manager";
-import type { UiPresenter } from "./presentation-module";
+import type { DialogHandle } from "./presentation/sessions";
+import type { UiPresenter } from "./presentation/presentation-module";
 import type { DialogConfig, DialogSection, DropdownSuggestionGroup } from "../shared/dialog-types";
 import type { Logger } from "../boundaries/platform/logging";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";

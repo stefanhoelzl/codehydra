@@ -15,45 +15,45 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
+import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
   APP_SHUTDOWN_OPERATION_ID,
-} from "../intents/app-shutdown";
-import type { AppShutdownIntent } from "../intents/app-shutdown";
-import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import { createMockLogging } from "../boundaries/platform/logging";
-import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
-import type { PathProvider } from "../boundaries/platform/path-provider";
-import { Path } from "../utils/path/path";
-import { ApiIpcChannels } from "../shared/ipc";
-import type { UiState } from "../shared/ui-state";
-import type { Project, ProjectId, Workspace, WorkspaceName } from "../shared/api/types";
-import type { WorkspacePath } from "../shared/ipc";
-import { EVENT_APP_STARTED } from "../intents/app-ready";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
-import type { ShowUIHookResult } from "../intents/app-start";
-import { SETUP_OPERATION_ID, EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../intents/setup";
-import type { AgentSelectionHookContext } from "../intents/setup";
-import { EVENT_PROJECT_OPENED } from "../intents/open-project";
-import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
-import type { CloseConfirmHookResult } from "../intents/close-project";
+} from "../../intents/app-shutdown";
+import type { AppShutdownIntent } from "../../intents/app-shutdown";
+import type { IntentModule } from "../../intents/lib/module";
+import type { DomainEvent } from "../../intents/lib/types";
+import { createMockLogging } from "../../boundaries/platform/logging";
+import { createMockViewManager } from "../../boundaries/shell/view-manager.test-utils";
+import type { PathProvider } from "../../boundaries/platform/path-provider";
+import { Path } from "../../utils/path/path";
+import { ApiIpcChannels } from "../../shared/ipc";
+import type { UiState } from "../../shared/ui-state";
+import type { Project, ProjectId, Workspace, WorkspaceName } from "../../shared/api/types";
+import type { WorkspacePath } from "../../shared/ipc";
+import { EVENT_APP_STARTED } from "../../intents/app-ready";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import type { ShowUIHookResult } from "../../intents/app-start";
+import { SETUP_OPERATION_ID, EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../../intents/setup";
+import type { AgentSelectionHookContext } from "../../intents/setup";
+import { EVENT_PROJECT_OPENED } from "../../intents/open-project";
+import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../../intents/close-project";
+import type { CloseConfirmHookResult } from "../../intents/close-project";
 import {
   EVENT_WORKSPACE_CREATED,
   EVENT_WORKSPACE_LOADING,
   EVENT_WORKSPACE_CREATE_FAILED,
-} from "../intents/open-workspace";
+} from "../../intents/open-workspace";
 import {
   EVENT_WORKSPACE_DELETED,
   EVENT_WORKSPACE_DELETION_PROGRESS,
-} from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
-import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../intents/set-shortcut-active";
-import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
+} from "../../intents/delete-workspace";
+import { EVENT_WORKSPACE_SWITCHED } from "../../intents/switch-workspace";
+import { EVENT_AGENT_STATUS_UPDATED } from "../../intents/update-agent-status";
+import { EVENT_METADATA_CHANGED } from "../../intents/set-metadata";
+import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../../intents/set-shortcut-active";
+import { EVENT_SHORTCUT_KEY_PRESSED } from "../../intents/shortcut-key";
 import { createPresentationModule, type UiPresenter } from "./presentation-module";
 
 // =============================================================================

@@ -16,8 +16,8 @@ import type { IntentModule, EventDeclarations, HookDeclarations } from "../inten
 import type { DomainEvent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DialogHandle } from "./dialog-manager";
-import type { UiPresenter } from "./presentation-module";
+import type { DialogHandle } from "./presentation/sessions";
+import type { UiPresenter } from "./presentation/presentation-module";
 import type {
   DialogConfig,
   DialogSection,

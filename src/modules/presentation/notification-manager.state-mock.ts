@@ -3,8 +3,8 @@
  * all opened/updated/closed notifications plus their event listeners so tests
  * can drive the user-event side via emitEvent().
  */
-import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
-import type { NotificationHandle, NotificationManager } from "./notification-manager";
+import type { NotificationConfig, NotificationUserEvent } from "../../shared/notification-types";
+import type { NotificationHandle, NotificationManager } from "./sessions";
 import type { UiPresenter } from "./presentation-module";
 
 /** Per-notification state exposed for assertions. */

@@ -11,7 +11,7 @@ import type { WorkspaceCreateFailedEvent } from "../intents/open-workspace";
 import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
 import type { AppResumeFailedEvent } from "../intents/app-resume";
 import { EVENT_APP_RESUME_FAILED } from "../intents/app-resume";
-import type { UiPresenter } from "./presentation-module";
+import type { UiPresenter } from "./presentation/presentation-module";
 
 export interface ErrorNotificationModuleDeps {
   readonly ui: Pick<UiPresenter, "notification">;

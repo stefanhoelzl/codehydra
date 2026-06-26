@@ -20,7 +20,7 @@ import { RESOLVE_WORKSPACE_OPERATION_ID } from "../intents/resolve-workspace";
 import type { ResolveHookResult } from "../intents/resolve-workspace";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { SETUP_OPERATION_ID } from "../intents/setup";
-import { createMockNotificationManager } from "./notification-manager.state-mock";
+import { createMockNotificationManager } from "./presentation/notification-manager.state-mock";
 
 // =============================================================================
 // Test Helpers

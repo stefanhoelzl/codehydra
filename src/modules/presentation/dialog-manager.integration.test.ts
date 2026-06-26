@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { DialogManager } from "./dialog-manager";
-import type { DialogConfig, DialogUserEvent } from "../shared/dialog-types";
+import { DialogManager } from "./sessions";
+import type { DialogConfig, DialogUserEvent } from "../../shared/dialog-types";
 
 function createConfig(heading: string): DialogConfig {
   return {
