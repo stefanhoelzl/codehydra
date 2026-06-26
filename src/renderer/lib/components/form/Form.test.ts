@@ -881,23 +881,31 @@ describe("Form component", () => {
       ],
     } as const;
 
-    it("activates the first variant 'primary' button on Enter in a radio group", async () => {
-      const config: DialogConfig = {
-        sections: [
-          radioSection,
-          {
-            type: "group",
-            items: [
-              { type: "button", id: "open", icon: "folder-opened", title: "Open" },
-              { type: "button", id: "select", label: "Continue", variant: "primary" },
-            ],
-          },
-        ],
-      };
+    const radioWithPrimary: DialogConfig = {
+      sections: [
+        radioSection,
+        {
+          type: "group",
+          items: [
+            { type: "button", id: "open", icon: "folder-opened", title: "Open" },
+            { type: "button", id: "select", label: "Continue", variant: "primary" },
+          ],
+        },
+      ],
+    };
 
-      renderForm(config, { dialogId: "enter" });
+    it("plain Enter in a radio group does NOT submit", async () => {
+      renderForm(radioWithPrimary, { dialogId: "enter" });
 
       await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter" });
+
+      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+    });
+
+    it("Cmd/Ctrl+Enter in a radio group activates the primary button", async () => {
+      renderForm(radioWithPrimary, { dialogId: "enter" });
+
+      await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter", ctrlKey: true });
 
       expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
       expect(mockSendDialogEvent).toHaveBeenCalledWith({
@@ -907,7 +915,7 @@ describe("Form component", () => {
       });
     });
 
-    it("does nothing on Enter when no button declares variant 'primary'", async () => {
+    it("does nothing on Cmd/Ctrl+Enter when no button declares variant 'primary'", async () => {
       const config: DialogConfig = {
         sections: [
           radioSection,
@@ -920,7 +928,7 @@ describe("Form component", () => {
 
       renderForm(config);
 
-      await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter" });
+      await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter", ctrlKey: true });
 
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
     });
@@ -952,6 +960,62 @@ describe("Form component", () => {
         dialogId: "dd",
         actionId: "confirm",
         data: { region: "us-east" },
+      });
+    });
+
+    // Regression: a focused field that preventDefaults Enter without submitting
+    // (vscode-checkbox) must not swallow the form-global Cmd/Ctrl+Enter gesture.
+    it("Cmd/Ctrl+Enter submits even when the focused field preventDefaults Enter", async () => {
+      const config: DialogConfig = {
+        sections: [
+          { type: "checkbox", id: "keep-branch", label: "Keep branch" },
+          {
+            type: "group",
+            items: [{ type: "button", id: "remove", label: "Remove", variant: "primary" }],
+          },
+        ],
+      };
+      renderForm(config, { dialogId: "rm" });
+
+      const checkbox = document.getElementById("keep-branch")!;
+      // Mirror vscode-checkbox: it preventDefaults Enter (with no submit of its own).
+      checkbox.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") e.preventDefault();
+      });
+
+      await fireEvent.keyDown(checkbox, { key: "Enter", ctrlKey: true });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "rm",
+        actionId: "remove",
+        data: { "keep-branch": "false" },
+      });
+    });
+
+    it("Cmd/Ctrl+Enter on a single-line input submits exactly once (no double)", async () => {
+      renderForm(
+        {
+          sections: [
+            { type: "input", id: "url" },
+            {
+              type: "group",
+              items: [{ type: "button", id: "go", label: "Go", variant: "primary" }],
+            },
+          ],
+        },
+        { dialogId: "once" }
+      );
+
+      const field = document.getElementById("url")!;
+      await fireEvent.input(field, { target: { value: "org/repo" } });
+      await fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
+
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "once",
+        actionId: "go",
+        data: { url: "org/repo" },
       });
     });
   });

@@ -25,17 +25,15 @@ function renderRadio(
   options?: { value?: string; layout?: FormLayout }
 ) {
   const onSelect = vi.fn();
-  const onSubmit = vi.fn();
   render(RadioSection, {
     props: {
       section,
       value: options?.value ?? section.options[0]?.id ?? "",
       layout: options?.layout ?? "centered",
       onSelect,
-      onSubmit,
     },
   });
-  return { onSelect, onSubmit };
+  return { onSelect };
 }
 
 describe("RadioSection component", () => {
@@ -96,12 +94,11 @@ describe("RadioSection component", () => {
     expect(onSelect).toHaveBeenCalledWith("opt-b");
   });
 
-  it("Enter reports onSubmit without selecting", async () => {
-    const { onSelect, onSubmit } = renderRadio(twoOptions);
+  it("Enter is a no-op (does not select; submit is the form's Cmd/Ctrl+Enter)", async () => {
+    const { onSelect } = renderRadio(twoOptions);
 
     await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter" });
 
-    expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSelect).not.toHaveBeenCalled();
   });
 

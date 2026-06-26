@@ -523,14 +523,20 @@
    * - Tab/Shift+Tab is trapped at the form boundary so focus never leaks out.
    */
   function handleKeydown(event: KeyboardEvent): void {
-    // A field-level handler that consumed the key (dropdown Enter/Escape,
-    // input Enter, radio Enter) marks it defaultPrevented — stay out.
-    if (event.defaultPrevented) return;
+    // Cmd/Ctrl+Enter is the form-global submit gesture and is handled FIRST,
+    // before the defaultPrevented guard: some focusable web components (notably
+    // vscode-checkbox) preventDefault Enter without submitting, which would
+    // otherwise swallow the gesture. Field-level handlers only ever submit on
+    // PLAIN Enter, so the form is the sole owner of the modified-Enter submit —
+    // no double-submit.
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       triggerPrimaryAction();
       return;
     }
+    // A field-level handler that consumed the key (dropdown Enter/Escape,
+    // input Enter) marks it defaultPrevented — stay out for the rest.
+    if (event.defaultPrevented) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();

@@ -18,10 +18,9 @@
     value: string;
     layout: FormLayout;
     onSelect: (optionId: string) => void;
-    onSubmit: () => void;
   }
 
-  const { section, value, layout, onSelect, onSubmit }: Props = $props();
+  const { section, value, layout, onSelect }: Props = $props();
 </script>
 
 <div class="form-field">
@@ -58,10 +57,6 @@
           } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
             e.preventDefault();
             targetIndex = optionIndex === opts.length - 1 ? 0 : optionIndex + 1;
-          } else if (e.key === "Enter") {
-            e.preventDefault();
-            onSubmit();
-            return;
           } else if (e.key === " ") {
             e.preventDefault();
             onSelect(option.id);

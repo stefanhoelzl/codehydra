@@ -68,7 +68,9 @@
    */
   function submitOnEnter(node: HTMLElement): { destroy(): void } {
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === "Enter") {
+      // Plain Enter submits the single-line field; Cmd/Ctrl+Enter is the
+      // form-global gesture, handled by Form (let it fall through here).
+      if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         onSubmit();
       }
