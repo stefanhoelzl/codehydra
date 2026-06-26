@@ -1,11 +1,13 @@
 /**
- * Notification store using Svelte 5 runes.
- * Manages active notifications driven by the backend via IPC commands.
- * This is a pure state container - IPC subscriptions are handled by NotificationHost.
+ * Notification store: a read-only view over the open sidebar notifications in
+ * the ui:state snapshot. The backend (UiPresenter) owns notification lifecycle;
+ * the renderer renders this derived view and echoes user interactions back as
+ * ui:events.
  */
 
 import { SvelteMap } from "svelte/reactivity";
-import type { NotificationConfig, NotificationCommand } from "@shared/notification-types";
+import type { NotificationConfig } from "@shared/notification-types";
+import { uiState } from "./ui-state.svelte.js";
 
 // ============ Types ============
 
@@ -14,60 +16,30 @@ export interface NotificationEntry {
   readonly config: NotificationConfig;
 }
 
-// ============ State ============
-
-const _notifications = new SvelteMap<string, NotificationEntry>();
-
-// ============ Actions ============
-
-/**
- * Process a notification command from the main process.
- * - open: add notification to the map
- * - update: replace config for existing notification
- * - close: remove notification from the map
- */
-export function processCommand(command: NotificationCommand): void {
-  switch (command.action) {
-    case "open":
-      _notifications.set(command.notificationId, {
-        notificationId: command.notificationId,
-        config: command.config,
-      });
-      break;
-    case "update":
-      if (_notifications.has(command.notificationId)) {
-        _notifications.set(command.notificationId, {
-          notificationId: command.notificationId,
-          config: command.config,
-        });
-      }
-      break;
-    case "close":
-      _notifications.delete(command.notificationId);
-      break;
-  }
+function snapshotEntries(): NotificationEntry[] {
+  return (uiState.value?.notifications ?? []).map((n) => ({
+    notificationId: n.id,
+    config: n.config,
+  }));
 }
 
 // ============ Reactive Getters ============
 
 /**
- * Reactive access to all active notifications.
+ * Reactive access to all open notifications, keyed by id (in open order).
  */
 export const notifications = {
   get value(): ReadonlyMap<string, NotificationEntry> {
-    return _notifications;
+    return new SvelteMap(snapshotEntries().map((entry) => [entry.notificationId, entry]));
   },
 };
 
 /**
  * Reactive getter for whether any spinner-type notifications are active.
- * Replaces hasActiveClones — used to suppress auto-show-create-dialog while background work runs.
+ * Used to suppress auto-show-create-dialog while background work runs.
  */
 export const hasSpinnerNotifications = {
   get value(): boolean {
-    for (const entry of _notifications.values()) {
-      if (entry.config.type === "spinner") return true;
-    }
-    return false;
+    return snapshotEntries().some((entry) => entry.config.type === "spinner");
   },
 };

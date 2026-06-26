@@ -1,61 +1,48 @@
 /**
- * Setup function for the surviving domain event subscriptions.
+ * Setup function for the agent notification chime.
  *
- * Since the read cutover, all read-model state arrives via ui:state
- * snapshots (see lib/stores/ui-state.svelte.ts) — the only domain events the
- * renderer still consumes drive the agent notification chime, which is
+ * All read-model state arrives via ui:state snapshots, so the chime is driven
+ * off the snapshot too: on each push, every workspace's idle/busy counts are
+ * fed to the chime service (which only chimes on an idle-count increase), and
+ * tracking is dropped for workspaces that have disappeared. The chime is
  * renderer-local behavior (audio), not view state.
  *
  * @param notificationService - Service for agent completion chimes
- * @param apiImpl - API with event subscription (injectable for testing)
- * @returns Cleanup function to unsubscribe from all events
+ * @param onState - ui:state subscription (injectable for testing)
+ * @returns Cleanup function to unsubscribe
  */
 import type { Unsubscribe } from "@shared/electron-api";
-import type { ApiEvents } from "@shared/api/interfaces";
+import type { UiState } from "@shared/ui-state";
 import type { AgentNotificationService } from "$lib/services/agent-notifications";
 import * as api from "$lib/api";
 
-/**
- * API interface for event subscriptions.
- * Supports all events from the ApiEvents interface.
- */
-export interface DomainEventApi {
-  on<E extends keyof ApiEvents>(event: E, handler: ApiEvents[E]): Unsubscribe;
-}
+/** Subscribe to ui:state snapshots. */
+export type OnState = (callback: (state: UiState) => void) => Unsubscribe;
 
-// Default API implementation - cast to DomainEventApi for type-safe event subscriptions.
-const defaultApi: DomainEventApi = api as DomainEventApi;
-
-/**
- * Setup domain event subscriptions for the notification chime:
- * - workspace:status-changed → chime when idle count increases
- * - workspace:removed → drop the chime service's per-workspace tracking
- */
 export function setupDomainEventBindings(
   notificationService: AgentNotificationService,
-  apiImpl: DomainEventApi = defaultApi
+  onState: OnState = api.onState
 ): () => void {
-  const unsubscribes: (() => void)[] = [];
+  // Per-workspace tracking key is the snapshot's opaque workspace key (stable
+  // across the creating → ready swap), used purely as the chime's identity.
+  let prevKeys = new Set<string>();
 
-  unsubscribes.push(
-    apiImpl.on("workspace:status-changed", (event) => {
-      // Play chime when idle count increases (agent finished work).
-      // Treat "none" (agent gone — e.g. agent terminal closed) as zero idle so a
-      // later gray → green transition (reopening the terminal) registers as an
-      // idle increase and chimes. The "none" variant carries no counts.
-      const counts =
-        "counts" in event.status.agent ? event.status.agent.counts : { idle: 0, busy: 0 };
-      notificationService.handleStatusChange(event.path, counts);
-    })
-  );
-
-  unsubscribes.push(
-    apiImpl.on("workspace:removed", (event) => {
-      notificationService.removeWorkspace(event.path);
-    })
-  );
-
-  return () => {
-    unsubscribes.forEach((unsub) => unsub());
-  };
+  return onState((state) => {
+    const currentKeys = new Set<string>();
+    for (const project of state.sidebar.projects) {
+      for (const workspace of project.workspaces) {
+        currentKeys.add(workspace.key);
+        // Treat "none" (agent gone) as zero idle so a later gray → green
+        // transition registers as an idle increase and chimes.
+        const counts = "counts" in workspace.agent ? workspace.agent.counts : { idle: 0, busy: 0 };
+        notificationService.handleStatusChange(workspace.key, counts);
+      }
+    }
+    for (const key of prevKeys) {
+      if (!currentKeys.has(key)) {
+        notificationService.removeWorkspace(key);
+      }
+    }
+    prevKeys = currentKeys;
+  });
 }

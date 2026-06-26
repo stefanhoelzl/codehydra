@@ -32,7 +32,7 @@ import {
   type RegisterHookInput,
   type RegisterHookResult,
 } from "../intents/open-project";
-import type { DialogManager } from "./dialog-manager";
+import type { UiPresenter } from "./presentation-module";
 import type { IGitClient } from "../boundaries/platform/git-client";
 import {
   CLOSE_PROJECT_OPERATION_ID,
@@ -77,7 +77,7 @@ export interface LocalProjectModuleDeps {
     "readdir" | "readFile" | "writeFile" | "mkdir" | "unlink" | "rm"
   >;
   readonly gitWorktreeProvider: Pick<GitWorktreeProvider, "validateRepository">;
-  readonly dialogManager: DialogManager;
+  readonly ui: Pick<UiPresenter, "dialog">;
   readonly gitClient: Pick<IGitClient, "isRepositoryRoot" | "init">;
 }
 
@@ -283,7 +283,7 @@ async function removeProject(
  * @returns IntentModule with hook handlers for project:open, project:close, app:start
  */
 export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentModule {
-  const { projectsDir, fs, gitWorktreeProvider, dialogManager, gitClient } = deps;
+  const { projectsDir, fs, gitWorktreeProvider, ui, gitClient } = deps;
 
   /** Internal state: all projects keyed by normalized path string. */
   const projects = new Map<string, LocalProject>();
@@ -328,7 +328,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             if (isRepo) return {};
 
             // Not a git repo — ask user
-            const dialog = dialogManager.open({
+            const dialog = ui.dialog({
               sections: [
                 { type: "text", content: "Initialize Git Repository?", style: "heading" },
                 { type: "text", content: path.toString(), style: "subtitle" },

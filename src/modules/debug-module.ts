@@ -30,12 +30,13 @@ import {
 } from "../intents/resolve-workspace";
 import type { WorkspaceName } from "../shared/api/types";
 import { SETUP_OPERATION_ID, type BinaryHookInput } from "../intents/setup";
-import type { NotificationManager, NotificationHandle } from "./notification-manager";
+import type { NotificationHandle } from "./notification-manager";
+import type { UiPresenter } from "./presentation-module";
 import type { NotificationConfig } from "../shared/notification-types";
 
 interface DebugModuleDeps {
   readonly configService: Config;
-  readonly notificationManager?: NotificationManager;
+  readonly ui?: Pick<UiPresenter, "notification">;
 }
 
 export function createDebugModule(deps: DebugModuleDeps): IntentModule {
@@ -136,12 +137,12 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
         start: {
           handler: async (): Promise<void> => {
             const mode = updateMode();
-            if (mode === null || !deps.notificationManager) return;
+            if (mode === null || !deps.ui) return;
             const version = "99.0.0-debug";
             if (mode === "downloaded") {
-              deps.notificationManager.open(readyConfig(version));
+              deps.ui.notification(readyConfig(version));
             } else {
-              simulateUpdateNotification(deps.notificationManager, version);
+              simulateUpdateNotification(deps.ui, version);
             }
           },
         },
@@ -176,7 +177,7 @@ function readyConfig(version: string): NotificationConfig {
   };
 }
 
-function simulateUpdateNotification(manager: NotificationManager, version: string): void {
+function simulateUpdateNotification(ui: Pick<UiPresenter, "notification">, version: string): void {
   const available: NotificationConfig = {
     type: "info",
     title: "Update available",
@@ -184,7 +185,7 @@ function simulateUpdateNotification(manager: NotificationManager, version: strin
     dismissible: true,
     actions: [{ id: "install", label: "Install" }],
   };
-  const handle: NotificationHandle = manager.open(available);
+  const handle: NotificationHandle = ui.notification(available);
   handle.onEvent((event) => {
     if (event.actionId === "install") {
       void simulateDownload(handle, version);

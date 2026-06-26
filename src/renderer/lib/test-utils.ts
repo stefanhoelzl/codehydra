@@ -54,6 +54,8 @@ export function makeUiState(
     main: { kind: "creation" },
     theme: "dark",
     mode: "workspace",
+    dialogs: [],
+    notifications: [],
     ...overrides,
   };
 }
@@ -70,7 +72,5 @@ export function createMockApi(): Api {
     on: vi.fn(() => vi.fn()),
     onState: vi.fn(() => vi.fn()),
     onTheme: vi.fn(() => vi.fn()),
-    sendDialogEvent: vi.fn(),
-    sendNotificationEvent: vi.fn(),
   };
 }

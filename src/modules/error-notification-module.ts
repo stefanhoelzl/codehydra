@@ -11,10 +11,10 @@ import type { WorkspaceCreateFailedEvent } from "../intents/open-workspace";
 import { EVENT_WORKSPACE_CREATE_FAILED } from "../intents/open-workspace";
 import type { AppResumeFailedEvent } from "../intents/app-resume";
 import { EVENT_APP_RESUME_FAILED } from "../intents/app-resume";
-import type { NotificationManager } from "./notification-manager";
+import type { UiPresenter } from "./presentation-module";
 
 export interface ErrorNotificationModuleDeps {
-  readonly notificationManager: NotificationManager;
+  readonly ui: Pick<UiPresenter, "notification">;
 }
 
 export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps): IntentModule {
@@ -23,7 +23,7 @@ export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps)
       handler: async (event: DomainEvent): Promise<void> => {
         const { workspaceName, error, source } = (event as WorkspaceCreateFailedEvent).payload;
         if (source === "mcp") return;
-        const handle = deps.notificationManager.open({
+        const handle = deps.ui.notification({
           type: "error",
           title: `Failed to create "${workspaceName}"`,
           message: error,
@@ -37,7 +37,7 @@ export function createErrorNotificationModule(deps: ErrorNotificationModuleDeps)
     [EVENT_APP_RESUME_FAILED]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const { error } = (event as AppResumeFailedEvent).payload;
-        const handle = deps.notificationManager.open({
+        const handle = deps.ui.notification({
           type: "error",
           title: "Failed to recover after system resume",
           message: error,

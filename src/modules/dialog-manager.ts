@@ -1,21 +1,22 @@
 /**
- * DialogManager - Backend service for managing declarative dialogs.
+ * DialogManager - in-process registry of open declarative dialog sessions.
  *
- * Opens, updates, and closes dialogs by sending commands to the renderer via sendToUI.
- * Each dialog is tracked via a DialogHandle that supports updates, event subscriptions,
- * and awaiting user interactions.
+ * Owned privately by the UiPresenter. It holds session state and hands out
+ * DialogHandles; it does NOT touch IPC. On every mutation (open/update/close)
+ * it calls `notifyChange` (the presenter's coalescing snapshot scheduler), and
+ * the presenter folds `getSnapshot()` into the ui:state snapshot. User events
+ * arrive via the presenter (dialog ui:events) and are routed to handles.
  */
 
 import type {
   DialogConfig,
-  DialogCommand,
   DialogSurface,
   DialogUserEvent,
   DialogActionEvent,
   DialogFieldChangeEvent,
   DialogDismissEvent,
 } from "../shared/dialog-types";
-import { ApiIpcChannels } from "../shared/ipc";
+import type { UiDialog } from "../shared/ui-state";
 import type { Logger } from "../boundaries/platform/logging";
 
 /**
@@ -53,29 +54,23 @@ export interface DialogHandle {
   readonly closed: Promise<void>;
 }
 
-type SendToUI = (channel: string, ...args: unknown[]) => void;
-
 /**
- * DialogManager wraps sendToUI with typed helpers for dialog lifecycle.
- *
- * It also exposes a synchronous "modal open" signal (a modal-surface dialog
- * is currently open). Both the presenter (UI mode computation: dialog beats
- * hover/workspace) and the shortcut-module (the Alt+X guard) consume it — the
- * presenter subscribes and recomputes, the shortcut-module queries on demand.
- * "modal" means surface === "modal" (the default); panel-surface sessions
- * (e.g. the creation panel) do NOT count.
+ * DialogManager tracks open dialog sessions and exposes a render-ready
+ * snapshot. It also exposes a synchronous "modal open" signal (a modal-surface
+ * dialog is currently open), consumed by the presenter (mode computation:
+ * dialog beats hover/workspace) and the shortcut guard (Alt+X). "modal" means
+ * surface === "modal" (the default); panel-surface sessions do NOT count.
  */
 export class DialogManager {
-  private readonly sendToUI: SendToUI;
+  private readonly notifyChange: () => void;
   private readonly handles = new Map<string, DialogHandleImpl>();
   /** Currently-open dialog ids whose surface is "modal". */
   private readonly modalIds = new Set<string>();
-  private readonly modalChangeListeners = new Set<(open: boolean) => void>();
   private readonly logger: Logger | undefined;
   private nextId = 1;
 
-  constructor(sendToUI: SendToUI, logger?: Logger) {
-    this.sendToUI = sendToUI;
+  constructor(notifyChange: () => void, logger?: Logger) {
+    this.notifyChange = notifyChange;
     this.logger = logger;
   }
 
@@ -84,30 +79,13 @@ export class DialogManager {
     return this.modalIds.size > 0;
   }
 
-  /**
-   * Subscribe to modal-open transitions (called whenever isModalOpen() flips).
-   * Returns an unsubscribe function.
-   */
-  onModalOpenChange(listener: (open: boolean) => void): () => void {
-    this.modalChangeListeners.add(listener);
-    return () => {
-      this.modalChangeListeners.delete(listener);
-    };
-  }
-
-  private setModalOpen(dialogId: string, open: boolean): void {
-    const wasOpen = this.modalIds.size > 0;
-    if (open) {
-      this.modalIds.add(dialogId);
-    } else {
-      this.modalIds.delete(dialogId);
-    }
-    const isOpen = this.modalIds.size > 0;
-    if (isOpen !== wasOpen) {
-      for (const listener of this.modalChangeListeners) {
-        listener(isOpen);
-      }
-    }
+  /** Render-ready snapshot of every open dialog session, in open order. */
+  getSnapshot(): readonly UiDialog[] {
+    return [...this.handles.values()].map((handle) => ({
+      id: handle.id,
+      surface: handle.surface,
+      config: handle.config,
+    }));
   }
 
   /**
@@ -119,26 +97,23 @@ export class DialogManager {
   open(config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle {
     const dialogId = `dlg-${this.nextId++}`;
     // Default surface is "modal" (matches the renderer DialogHost default).
-    const isModal = (options?.surface ?? "modal") === "modal";
-    const handle = new DialogHandleImpl(dialogId, this.sendToUI, () => {
+    const surface: DialogSurface = options?.surface ?? "modal";
+    const isModal = surface === "modal";
+    const handle = new DialogHandleImpl(dialogId, surface, config, this.notifyChange, () => {
       this.handles.delete(dialogId);
-      if (isModal) this.setModalOpen(dialogId, false);
+      if (isModal) this.modalIds.delete(dialogId);
     });
     this.handles.set(dialogId, handle);
-    if (isModal) this.setModalOpen(dialogId, true);
+    if (isModal) this.modalIds.add(dialogId);
 
-    const command: DialogCommand =
-      options?.surface !== undefined
-        ? { action: "open", dialogId, config, surface: options.surface }
-        : { action: "open", dialogId, config };
-    this.sendToUI(ApiIpcChannels.DIALOG_COMMAND, command);
+    this.notifyChange();
 
     return handle;
   }
 
   /**
-   * Route an incoming user event from IPC to the correct handle.
-   * Called by the IPC bridge when api:dialog:event arrives.
+   * Route an incoming user event to the correct handle.
+   * Called by the presenter when a dialog ui:event arrives.
    */
   routeEvent(event: DialogUserEvent): void {
     const handle = this.handles.get(event.dialogId);
@@ -162,9 +137,13 @@ export class DialogManager {
  */
 class DialogHandleImpl implements DialogHandle {
   readonly id: string;
+  readonly surface: DialogSurface;
   readonly closed: Promise<void>;
 
-  private readonly sendToUI: SendToUI;
+  /** Current render config — read by DialogManager.getSnapshot(). */
+  config: DialogConfig;
+
+  private readonly notifyChange: () => void;
   private readonly onRemove: () => void;
   private readonly actionListeners = new Set<(event: DialogActionEvent) => void>();
   private readonly changeListeners = new Set<(event: DialogFieldChangeEvent) => void>();
@@ -172,9 +151,17 @@ class DialogHandleImpl implements DialogHandle {
   private resolveClosed!: () => void;
   private isClosed = false;
 
-  constructor(id: string, sendToUI: SendToUI, onRemove: () => void) {
+  constructor(
+    id: string,
+    surface: DialogSurface,
+    config: DialogConfig,
+    notifyChange: () => void,
+    onRemove: () => void
+  ) {
     this.id = id;
-    this.sendToUI = sendToUI;
+    this.surface = surface;
+    this.config = config;
+    this.notifyChange = notifyChange;
     this.onRemove = onRemove;
     this.closed = new Promise<void>((resolve) => {
       this.resolveClosed = resolve;
@@ -183,20 +170,19 @@ class DialogHandleImpl implements DialogHandle {
 
   update(config: DialogConfig): void {
     if (this.isClosed) return;
-    const command: DialogCommand = { action: "update", dialogId: this.id, config };
-    this.sendToUI(ApiIpcChannels.DIALOG_COMMAND, command);
+    this.config = config;
+    this.notifyChange();
   }
 
   close(): void {
     if (this.isClosed) return;
     this.isClosed = true;
-    const command: DialogCommand = { action: "close", dialogId: this.id };
-    this.sendToUI(ApiIpcChannels.DIALOG_COMMAND, command);
+    this.onRemove();
     this.resolveClosed();
     this.actionListeners.clear();
     this.changeListeners.clear();
     this.dismissListeners.clear();
-    this.onRemove();
+    this.notifyChange();
   }
 
   onEvent(handler: (event: DialogActionEvent) => void): () => void {

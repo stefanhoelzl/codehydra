@@ -224,6 +224,62 @@ describe("UiViewManager", () => {
     });
   });
 
+  describe("onFromUI", () => {
+    it("buffers subscriptions made before create() and delivers once wired", () => {
+      const { deps, viewLayer } = createDeps();
+      const manager = new UiViewManager(deps);
+      const received: unknown[] = [];
+
+      // Subscribe before the view exists.
+      manager.onFromUI("api:ui:event", (payload) => received.push(payload));
+
+      manager.create();
+      const handle = manager.getUIViewHandle();
+      viewLayer.$.triggerIpc(handle, "api:ui:event", { kind: "ui-connected" });
+
+      expect(received).toEqual([{ kind: "ui-connected" }]);
+    });
+
+    it("delivers the message arguments (Electron event swallowed)", () => {
+      const { manager, viewLayer } = createManager();
+      const received: unknown[][] = [];
+      manager.onFromUI("api:ui:event", (...args) => received.push(args));
+
+      const handle = manager.getUIViewHandle();
+      viewLayer.$.triggerIpc(handle, "api:ui:event", { kind: "hover", region: null });
+
+      expect(received).toEqual([[{ kind: "hover", region: null }]]);
+    });
+
+    it("stops delivering after unsubscribe", () => {
+      const { manager, viewLayer } = createManager();
+      const received: unknown[] = [];
+      const unsubscribe = manager.onFromUI("api:ui:event", (p) => received.push(p));
+      const handle = manager.getUIViewHandle();
+
+      unsubscribe();
+      viewLayer.$.triggerIpc(handle, "api:ui:event", { kind: "ui-connected" });
+
+      expect(received).toEqual([]);
+    });
+
+    it("re-wires the listener onto the new view after a recreate", () => {
+      const { deps, viewLayer } = createDeps();
+      const manager = new UiViewManager(deps);
+      const received: unknown[] = [];
+      manager.onFromUI("api:ui:event", (p) => received.push(p));
+
+      manager.create();
+      manager.destroy();
+      manager.create();
+
+      const handle = manager.getUIViewHandle();
+      viewLayer.$.triggerIpc(handle, "api:ui:event", { kind: "ui-connected" });
+
+      expect(received).toEqual([{ kind: "ui-connected" }]);
+    });
+  });
+
   describe("destroy", () => {
     it("destroys the UI view and is idempotent", () => {
       const { manager } = createManager();

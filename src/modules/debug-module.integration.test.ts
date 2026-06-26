@@ -245,10 +245,10 @@ describe("DebugModule Integration", () => {
 
   describe("update (inactive)", () => {
     it("start hook opens nothing when debug.update is off", async () => {
-      const { manager, notifications } = createMockNotificationManager();
+      const { ui, notifications } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig(),
-        notificationManager: manager,
+        ui,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
@@ -258,10 +258,10 @@ describe("DebugModule Integration", () => {
 
   describe("update (active)", () => {
     it("start hook opens 'Update available' notification when debug.update is 'pending'", async () => {
-      const { manager, notifications } = createMockNotificationManager();
+      const { ui, notifications } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig({ defaults: { "debug.update": "pending" } }),
-        notificationManager: manager,
+        ui,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
@@ -272,10 +272,10 @@ describe("DebugModule Integration", () => {
     });
 
     it("bare flag value 'true' behaves like 'pending'", async () => {
-      const { manager, notifications } = createMockNotificationManager();
+      const { ui, notifications } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig({ defaults: { "debug.update": "true" } }),
-        notificationManager: manager,
+        ui,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
@@ -285,10 +285,10 @@ describe("DebugModule Integration", () => {
     });
 
     it("start hook opens 'Update ready' notification when debug.update is 'downloaded'", async () => {
-      const { manager, notifications } = createMockNotificationManager();
+      const { ui, notifications } = createMockNotificationManager();
       const module = createDebugModule({
         configService: createMockConfig({ defaults: { "debug.update": "downloaded" } }),
-        notificationManager: manager,
+        ui,
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "start");
       await hook.handler(makeHookContext());
@@ -301,10 +301,10 @@ describe("DebugModule Integration", () => {
     it("clicking Install transitions to downloading then ready", async () => {
       vi.useFakeTimers();
       try {
-        const { manager, notifications, emitEvent } = createMockNotificationManager();
+        const { ui, notifications, emitEvent } = createMockNotificationManager();
         const module = createDebugModule({
           configService: createMockConfig({ defaults: { "debug.update": "pending" } }),
-          notificationManager: manager,
+          ui,
         });
         const hook = getHook(module, APP_START_OPERATION_ID, "start");
         await hook.handler(makeHookContext());

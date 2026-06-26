@@ -63,10 +63,9 @@ function setup(overrides?: SetupOverrides) {
   const dialogBoundary = createBehavioralDialogBoundary();
 
   const deps: ErrorReportModuleDeps = {
-    dialogManager: {
-      open: vi.fn().mockReturnValue(handle.handle),
-      routeEvent: vi.fn(),
-    } as unknown as ErrorReportModuleDeps["dialogManager"],
+    ui: {
+      dialog: vi.fn().mockReturnValue(handle.handle),
+    } as unknown as ErrorReportModuleDeps["ui"],
     fileSystem: { readFile: vi.fn().mockImplementation(defaultReadFile) },
     loggingService: {
       getLogFilePath: vi.fn().mockReturnValue("/logs/test-session.log"),
@@ -147,9 +146,8 @@ describe("ErrorReportModule — bug report dialog", () => {
     const { module, deps } = setup();
     await emitKey(module, "b");
 
-    expect(deps.dialogManager.open).toHaveBeenCalledOnce();
-    const config = (deps.dialogManager.open as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0] as DialogConfig;
+    expect(deps.ui.dialog).toHaveBeenCalledOnce();
+    const config = (deps.ui.dialog as ReturnType<typeof vi.fn>).mock.calls[0]![0] as DialogConfig;
     expect(config.sections[0]).toMatchObject({ type: "text", content: "Report a Bug" });
     expect(config.sections[1]).toMatchObject({ type: "input", id: "description", multiline: true });
   });
@@ -158,14 +156,14 @@ describe("ErrorReportModule — bug report dialog", () => {
     const { module, deps } = setup();
     await emitKey(module, "d");
     await emitKey(module, "enter");
-    expect(deps.dialogManager.open).not.toHaveBeenCalled();
+    expect(deps.ui.dialog).not.toHaveBeenCalled();
   });
 
   it("prevents multiple simultaneous dialogs", async () => {
     const { module, deps } = setup();
     await emitKey(module, "b");
     await emitKey(module, "b");
-    expect(deps.dialogManager.open).toHaveBeenCalledOnce();
+    expect(deps.ui.dialog).toHaveBeenCalledOnce();
   });
 
   it("reads logs and dispatches bug-report:submit on 'send'", async () => {
@@ -210,7 +208,7 @@ describe("ErrorReportModule — bug report dialog", () => {
 
     // The active-handle guard is cleared — 'b' opens a fresh dialog.
     await emitKey(module, "b");
-    expect(deps.dialogManager.open).toHaveBeenCalledTimes(2);
+    expect(deps.ui.dialog).toHaveBeenCalledTimes(2);
   });
 
   it("includes rotated archive log alongside the current log", async () => {

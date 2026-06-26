@@ -22,7 +22,7 @@
   (so startup snapshots arrive before MainView mounts).
 -->
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount } from "svelte";
   import * as api from "$lib/api";
   import { uiState } from "$lib/stores/ui-state.svelte.js";
   import { AgentNotificationService } from "$lib/services/agent-notifications";
@@ -34,15 +34,10 @@
   // Components
   import Sidebar from "./Sidebar.svelte";
   import WorkspaceFrames from "./WorkspaceFrames.svelte";
-  import NotificationHost from "./NotificationHost.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
 
-  import {
-    dialogs,
-    panelDialog,
-    processCommand as processFrameworkDialog,
-  } from "$lib/stores/dialog-framework.svelte.js";
+  import { panelDialog } from "$lib/stores/dialog-framework.svelte.js";
   import PanelView from "./PanelView.svelte";
 
   const logger = createLogger("ui");
@@ -82,24 +77,9 @@
   // Mode (including dialog/hover z-order) is now computed in main and shipped
   // in the snapshot; the renderer no longer mirrors dialog/hover state back.
 
-  // At the moment the creation panel is shown, dismiss MODAL framework
-  // dialogs the main process opened in the meantime (most notably the
-  // "Loading workspace..." progress dialog triggered by `workspace:loading`).
-  // They render inside the UI's DialogHost, so without this they would cover
-  // the panel. Transition-based (not continuous): modal dialogs opened WHILE
-  // the panel is shown — e.g. the creation module's git-clone sub-dialog —
-  // must stay. Panel-surface sessions are left alone.
-  let prevShownForModalSweep = false;
-  $effect(() => {
-    const shown = creationShown;
-    if (shown && !prevShownForModalSweep) {
-      for (const entry of untrack(() => [...dialogs.value.values()])) {
-        if (entry.surface !== "modal") continue;
-        processFrameworkDialog({ action: "close", dialogId: entry.dialogId });
-      }
-    }
-    prevShownForModalSweep = shown;
-  });
+  // (The renderer no longer locally closes modal dialogs when the panel shows:
+  // dialog lifecycle is backend-owned now, so the snapshot decides what is open
+  // — the presenter closes anything that should not coexist with the panel.)
 
   // Request a fresh form whenever the panel is (re)shown: send a dismiss
   // event so the backend creation module resets its session (close + reopen
@@ -173,7 +153,6 @@
 
 <div class="main-view">
   <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} {mode} />
-  <NotificationHost />
   <Sidebar
     projects={projectRows}
     {mode}

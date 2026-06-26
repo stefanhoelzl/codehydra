@@ -14,6 +14,8 @@
  */
 
 import type { UiEvent } from "@shared/ui-event";
+import type { DialogUserEvent } from "@shared/dialog-types";
+import type { NotificationUserEvent } from "@shared/notification-types";
 
 // Check that window.api is available
 if (typeof window === "undefined" || !window.api) {
@@ -34,16 +36,49 @@ export function emitEvent(event: UiEvent): void {
   }
 }
 
+/**
+ * Forward a dialog user interaction to the main process as a ui:event. The
+ * presenter routes it to the owning dialog session by `dialogId`. Kept as a
+ * thin translator so Form/MainView can keep building DialogUserEvents.
+ */
+export function sendDialogEvent(event: DialogUserEvent): void {
+  if (event.kind === "change") {
+    emitEvent({
+      kind: "dialog-change",
+      dialogId: event.dialogId,
+      fieldId: event.fieldId,
+      data: event.data,
+    });
+  } else if (event.kind === "dismiss") {
+    emitEvent({ kind: "dialog-dismiss", dialogId: event.dialogId });
+  } else {
+    // Action (kind "action" or absent).
+    emitEvent({
+      kind: "dialog-action",
+      dialogId: event.dialogId,
+      actionId: event.actionId,
+      ...(event.data !== undefined && { data: event.data }),
+    });
+  }
+}
+
+/**
+ * Forward a notification user interaction to the main process as a ui:event.
+ */
+export function sendNotificationEvent(event: NotificationUserEvent): void {
+  emitEvent({
+    kind: "notification-event",
+    notificationId: event.notificationId,
+    actionId: event.actionId,
+  });
+}
+
 // Re-export window.api functions for mockability
 export const {
   // Event subscriptions
   on,
   // UI state snapshots (main process → renderer)
   onState,
-  // Dialog framework event (renderer → main process)
-  sendDialogEvent,
-  // Notification framework event (renderer → main process)
-  sendNotificationEvent,
 } = window.api;
 
 // Re-export branded path types from IPC (still used for type safety)

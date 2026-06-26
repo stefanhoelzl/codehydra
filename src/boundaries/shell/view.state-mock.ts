@@ -110,6 +110,12 @@ export interface ViewBoundaryMockState extends MockState {
   triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void;
 
   /**
+   * Simulates a fire-and-forget IPC message from the view's renderer
+   * (`webContents.ipc`). Invokes all onIpc listeners for the view + channel.
+   */
+  triggerIpc(handle: ViewHandle, channel: string, ...args: unknown[]): void;
+
+  /**
    * Get a read-only snapshot of a view's state for assertions.
    */
   getViewSnapshot(id: string): ViewStateSnapshot | undefined;
@@ -153,6 +159,8 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   readonly destroyedCallbacks = new CallbackRegistry();
   readonly uncaughtExceptionCallbacks = new CallbackRegistry<[UncaughtExceptionDetails]>();
   readonly renderProcessGoneCallbacks = new CallbackRegistry<[RenderProcessGoneDetails]>();
+  /** Keyed by `${handle.id}::${channel}`. */
+  readonly ipcCallbacks = new CallbackRegistry<unknown[]>();
 
   constructor() {
     this._views = new Map();
@@ -200,6 +208,10 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   triggerRenderProcessGone(handle: ViewHandle, details: RenderProcessGoneDetails): void {
     this.renderProcessGoneCallbacks.trigger(handle.id, details);
+  }
+
+  triggerIpc(handle: ViewHandle, channel: string, ...args: unknown[]): void {
+    this.ipcCallbacks.trigger(`${handle.id}::${channel}`, ...args);
   }
 
   snapshot(): Snapshot {
@@ -296,6 +308,7 @@ export function createViewBoundaryMock(): MockViewBoundary {
     state.destroyedCallbacks,
     state.uncaughtExceptionCallbacks,
     state.renderProcessGoneCallbacks,
+    state.ipcCallbacks,
   ];
   let nextId = 1;
 
@@ -419,6 +432,19 @@ export function createViewBoundaryMock(): MockViewBoundary {
     send(_handle: ViewHandle, _channel: string, ..._args: unknown[]): void {
       getView(_handle); // Validate handle exists
       // No-op in mock - IPC is not simulated
+    },
+
+    onIpc(
+      handle: ViewHandle,
+      channel: string,
+      listener: (...args: unknown[]) => void
+    ): Unsubscribe {
+      getView(handle); // Validate handle exists
+      const key = `${handle.id}::${channel}`;
+      // CallbackRegistry.add is a no-op until the key is initialized; the ipc
+      // key is per (view, channel), so init lazily on first subscription.
+      if (!state.ipcCallbacks.get(key)) state.ipcCallbacks.init(key);
+      return state.ipcCallbacks.add(key, listener);
     },
 
     onBeforeInputEvent(

@@ -35,8 +35,7 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
-import { resetUiState, setUiState } from "$lib/stores/ui-state.svelte.js";
+import { uiState, resetUiState, setUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 
 /**
@@ -53,16 +52,23 @@ async function renderMainView(): Promise<{ container: HTMLElement }> {
   return { container };
 }
 
-/** Simulate the backend creation module's always-alive panel session. */
+/** Simulate the backend creation module's always-alive panel session by adding
+ *  a panel-surface dialog to the current snapshot. */
 function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
-  dialogFrameworkStore.processCommand({
-    action: "open",
-    dialogId,
-    config: {
-      layout: "form",
-      sections: [{ type: "text", content: "New workspace", style: "heading" }],
-    },
-    surface: "panel",
+  const current = uiState.value ?? makeUiState([]);
+  setUiState({
+    ...current,
+    dialogs: [
+      ...current.dialogs,
+      {
+        id: dialogId,
+        surface: "panel",
+        config: {
+          layout: "form",
+          sections: [{ type: "text", content: "New workspace", style: "heading" }],
+        },
+      },
+    ],
   });
 }
 
@@ -74,7 +80,6 @@ describe("MainView component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUiState();
-    dialogFrameworkStore.reset();
   });
 
   afterEach(() => {
@@ -121,9 +126,8 @@ describe("MainView component", () => {
 
     it("renders the creation panel when main is creation and the session exists", async () => {
       const { container } = await renderMainView();
-      openCreationPanelSession();
-
       pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      openCreationPanelSession();
 
       await waitFor(() => {
         expect(container.querySelector(".panel-view")).toBeInTheDocument();
@@ -220,9 +224,8 @@ describe("MainView component", () => {
   describe("fresh-form dismiss on panel show", () => {
     it("sends one dismiss per show transition once the session exists", async () => {
       await renderMainView();
-      openCreationPanelSession("dlg-1");
-
       pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      openCreationPanelSession("dlg-1");
       await waitFor(() => {
         expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
           kind: "dismiss",
@@ -240,6 +243,7 @@ describe("MainView component", () => {
       );
       flushSync();
       pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      openCreationPanelSession("dlg-1");
 
       await waitFor(() => {
         expect(mockApi.sendDialogEvent).toHaveBeenCalledTimes(2);
@@ -260,60 +264,6 @@ describe("MainView component", () => {
           dialogId: "dlg-late",
         });
       });
-    });
-  });
-
-  describe("modal sweep on panel show", () => {
-    it("closes modal framework dialogs at the moment the panel is shown", async () => {
-      await renderMainView();
-
-      // A modal dialog (e.g. "Loading workspace...") is open while the
-      // main view shows a workspace.
-      pushState(
-        makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
-          main: { kind: "workspace", frameKey: WS1.key },
-        })
-      );
-      dialogFrameworkStore.processCommand({
-        action: "open",
-        dialogId: "dlg-modal",
-        config: { layout: "form", modal: true, sections: [] },
-        surface: "modal",
-      });
-      expect(dialogFrameworkStore.dialogs.value.size).toBe(1);
-
-      // The panel becomes the main view → modal dialogs are swept.
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
-
-      await waitFor(() => {
-        expect(dialogFrameworkStore.dialogs.value.size).toBe(0);
-      });
-    });
-
-    it("keeps modal dialogs opened while the panel is already shown", async () => {
-      await renderMainView();
-      openCreationPanelSession("dlg-panel");
-
-      // The panel is the main view; flush the show transition first.
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
-      await waitFor(() => {
-        expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
-          kind: "dismiss",
-          dialogId: "dlg-panel",
-        });
-      });
-
-      // e.g. the creation module's git-clone sub-dialog, opened while shown
-      dialogFrameworkStore.processCommand({
-        action: "open",
-        dialogId: "dlg-clone",
-        config: { layout: "form", modal: true, sections: [] },
-        surface: "modal",
-      });
-
-      // Still open: the sweep is transition-based, not continuous.
-      const clone = dialogFrameworkStore.dialogs.value.get("dlg-clone");
-      expect(clone).toBeDefined();
     });
   });
 });

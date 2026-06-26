@@ -218,6 +218,19 @@ export interface ViewBoundary {
    */
   send(handle: ViewHandle, channel: string, ...args: unknown[]): void;
 
+  /**
+   * Subscribe to fire-and-forget IPC messages sent from the view's renderer
+   * (via `ipcRenderer.send`), scoped to this view's webContents. The Electron
+   * event is swallowed; the listener receives only the message arguments.
+   *
+   * @param handle - Handle to the view
+   * @param channel - IPC channel name
+   * @param listener - Called with the message arguments on each send
+   * @returns Unsubscribe function
+   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
+   */
+  onIpc(handle: ViewHandle, channel: string, listener: (...args: unknown[]) => void): Unsubscribe;
+
   // Events (continued)
   /**
    * Subscribe to before-input-event for keyboard interception.
@@ -621,6 +634,20 @@ export class DefaultViewBoundary implements ViewBoundary {
     if (wc && !wc.isDestroyed()) {
       wc.send(channel, ...args);
     }
+  }
+
+  onIpc(handle: ViewHandle, channel: string, listener: (...args: unknown[]) => void): Unsubscribe {
+    const state = this.getView(handle);
+    const handler = (_event: Electron.IpcMainEvent, ...args: unknown[]): void => {
+      listener(...args);
+    };
+    state.view.webContents.ipc.on(channel, handler);
+    return () => {
+      const wc = state.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.ipc.removeListener(channel, handler);
+      }
+    };
   }
 
   onBeforeInputEvent(

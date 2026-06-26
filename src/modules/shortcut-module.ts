@@ -34,7 +34,7 @@ import type { KeyboardInput, Unsubscribe } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
-import type { DialogManager } from "./dialog-manager";
+import type { UiPresenter } from "./presentation-module";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import {
@@ -87,7 +87,7 @@ export interface ShortcutModuleDeps {
   readonly viewManager: Pick<IViewManager, "getUIKeyboardTarget">;
   readonly windowLayer: Pick<WindowBoundary, "onBlur">;
   readonly windowManager: Pick<WindowManager, "getWindowHandle">;
-  readonly dialogManager: Pick<DialogManager, "isModalOpen">;
+  readonly ui: Pick<UiPresenter, "isModalOpen">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
   readonly logger: Logger;
 }
@@ -204,7 +204,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     if (state === "ALT_WAITING") {
       if (isActivationKey) {
         // Don't activate shortcut mode if a modal dialog is open.
-        if (deps.dialogManager.isModalOpen()) {
+        if (deps.ui.isModalOpen()) {
           state = "NORMAL";
           return;
         }

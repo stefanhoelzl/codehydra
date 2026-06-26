@@ -108,7 +108,7 @@ function createTestSetup(): TestSetup {
   const dispatcher = createMockDispatcher();
 
   const module = createDeletionDialogModule({
-    dialogManager: dialogManager.manager,
+    ui: dialogManager.ui,
     dispatcher: dispatcher as unknown as Dispatcher,
     logger: SILENT_LOGGER,
   });
@@ -491,7 +491,7 @@ describe("DeletionDialogModule - remove confirm", () => {
     };
 
     const module = createDeletionDialogModule({
-      dialogManager: dialogManager.manager,
+      ui: dialogManager.ui,
       dispatcher: dispatcher as unknown as Dispatcher,
       logger: SILENT_LOGGER,
     });

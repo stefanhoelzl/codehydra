@@ -1,79 +1,55 @@
 /**
- * Tests for setupDomainEventBindings.
- *
- * Since the read cutover the bindings only drive the agent notification
- * chime — read-model state arrives via ui:state snapshots instead.
+ * Tests for setupDomainEventBindings — the agent notification chime, driven off
+ * ui:state snapshots (it feeds every workspace's agent counts to the chime
+ * service and drops tracking for workspaces that leave the snapshot).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { WorkspaceStatus } from "@shared/api/types";
-import { asWorkspaceRef } from "@shared/test-fixtures";
-import type { ProjectId, WorkspaceName } from "@shared/api/types";
+import type { AgentStatus } from "@shared/api/types";
+import type { UiState, UiWorkspaceRow } from "@shared/ui-state";
 
-// Mock the API module before importing the setup function
 vi.mock("$lib/api", () => ({
   emitEvent: vi.fn(),
   on: vi.fn(() => vi.fn()),
+  onState: vi.fn(() => vi.fn()),
 }));
 
-import { setupDomainEventBindings, type DomainEventApi } from "./setup-domain-event-bindings";
-import type { ApiEvents } from "@shared/api/interfaces";
+import { setupDomainEventBindings, type OnState } from "./setup-domain-event-bindings";
 import { AgentNotificationService } from "$lib/services/agent-notifications";
 
-const TEST_PROJECT_ID = "my-project-a1b2c3d4" as ProjectId;
-const TEST_WORKSPACE_NAME = "feature-branch" as WorkspaceName;
-const TEST_WORKSPACE_PATH = "/test/project/.worktrees/feature";
-const TEST_WORKSPACE_REF = asWorkspaceRef(
-  TEST_PROJECT_ID,
-  TEST_WORKSPACE_NAME,
-  TEST_WORKSPACE_PATH
-);
+const KEY = "my-project-a1b2c3d4/feature-branch";
 
-type EventHandler<E extends keyof ApiEvents> = ApiEvents[E];
-
-function createMockApi(): {
-  api: DomainEventApi;
-  handlers: Map<keyof ApiEvents, EventHandler<keyof ApiEvents>>;
-  emit: <E extends keyof ApiEvents>(event: E, ...args: Parameters<ApiEvents[E]>) => void;
-} {
-  const handlers = new Map<keyof ApiEvents, EventHandler<keyof ApiEvents>>();
-
-  const api: DomainEventApi = {
-    on: vi.fn(<E extends keyof ApiEvents>(event: E, handler: ApiEvents[E]) => {
-      handlers.set(event, handler as EventHandler<keyof ApiEvents>);
-      return () => {
-        handlers.delete(event);
-      };
-    }),
-  };
-
-  const emit = <E extends keyof ApiEvents>(event: E, ...args: Parameters<ApiEvents[E]>): void => {
-    const handler = handlers.get(event) as
-      | ((...args: Parameters<ApiEvents[E]>) => void)
-      | undefined;
-    if (handler) {
-      handler(...args);
-    }
-  };
-
-  return { api, handlers, emit };
+function row(key: string, agent: AgentStatus): UiWorkspaceRow {
+  return { key, name: key, status: "ready", hibernated: false, agent, tags: [], active: false };
 }
 
-function statusEvent(
-  idle: number,
-  busy: number
-): Parameters<ApiEvents["workspace:status-changed"]>[0] {
+function makeState(workspaces: UiWorkspaceRow[]): UiState {
   return {
-    ...TEST_WORKSPACE_REF,
-    status: {
-      isDirty: false,
-      unmergedCommits: 0,
-      agent: { type: "busy", counts: { idle, busy, total: idle + busy } },
-    } as WorkspaceStatus,
+    sidebar: {
+      projects: [{ id: "p", name: "p", title: "/p", remote: false, workspaces }],
+    },
+    frames: {},
+    main: { kind: "creation" },
+    theme: "dark",
+    mode: "hover",
+    dialogs: [],
+    notifications: [],
   };
 }
 
-describe("setupDomainEventBindings", () => {
+/** A controllable onState: capture the callback, push snapshots on demand. */
+function createOnState(): { onState: OnState; push: (state: UiState) => void } {
+  let cb: ((state: UiState) => void) | null = null;
+  const onState: OnState = (callback) => {
+    cb = callback;
+    return () => {
+      cb = null;
+    };
+  };
+  return { onState, push: (state) => cb?.(state) };
+}
+
+describe("setupDomainEventBindings (chime from snapshots)", () => {
   let notificationService: AgentNotificationService;
 
   beforeEach(() => {
@@ -82,13 +58,13 @@ describe("setupDomainEventBindings", () => {
     vi.spyOn(notificationService, "removeWorkspace");
   });
 
-  it("forwards status counts to the notification service", () => {
-    const { api, emit } = createMockApi();
-    setupDomainEventBindings(notificationService, api);
+  it("forwards each workspace's agent counts to the chime service", () => {
+    const { onState, push } = createOnState();
+    setupDomainEventBindings(notificationService, onState);
 
-    emit("workspace:status-changed", statusEvent(1, 2));
+    push(makeState([row(KEY, { type: "busy", counts: { idle: 1, busy: 2, total: 3 } })]));
 
-    expect(notificationService.handleStatusChange).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, {
+    expect(notificationService.handleStatusChange).toHaveBeenCalledWith(KEY, {
       idle: 1,
       busy: 2,
       total: 3,
@@ -96,38 +72,31 @@ describe("setupDomainEventBindings", () => {
   });
 
   it("treats agent 'none' as zero counts (gray → green later still chimes)", () => {
-    const { api, emit } = createMockApi();
-    setupDomainEventBindings(notificationService, api);
+    const { onState, push } = createOnState();
+    setupDomainEventBindings(notificationService, onState);
 
-    emit("workspace:status-changed", {
-      ...TEST_WORKSPACE_REF,
-      status: { isDirty: false, unmergedCommits: 0, agent: { type: "none" } } as WorkspaceStatus,
-    });
+    push(makeState([row(KEY, { type: "none" })]));
 
-    expect(notificationService.handleStatusChange).toHaveBeenCalledWith(TEST_WORKSPACE_PATH, {
-      idle: 0,
-      busy: 0,
-    });
+    expect(notificationService.handleStatusChange).toHaveBeenCalledWith(KEY, { idle: 0, busy: 0 });
   });
 
-  it("drops chime tracking when a workspace is removed", () => {
-    const { api, emit } = createMockApi();
-    setupDomainEventBindings(notificationService, api);
+  it("drops chime tracking when a workspace leaves the snapshot", () => {
+    const { onState, push } = createOnState();
+    setupDomainEventBindings(notificationService, onState);
 
-    emit("workspace:removed", TEST_WORKSPACE_REF);
+    push(makeState([row(KEY, { type: "idle", counts: { idle: 1, busy: 0, total: 1 } })]));
+    push(makeState([])); // workspace removed
 
-    expect(notificationService.removeWorkspace).toHaveBeenCalledWith(TEST_WORKSPACE_PATH);
+    expect(notificationService.removeWorkspace).toHaveBeenCalledWith(KEY);
   });
 
-  it("unsubscribes all events when cleanup is called", () => {
-    const { api, handlers, emit } = createMockApi();
-    const cleanup = setupDomainEventBindings(notificationService, api);
+  it("unsubscribes when cleanup is called", () => {
+    const { onState, push } = createOnState();
+    const cleanup = setupDomainEventBindings(notificationService, onState);
 
-    expect(handlers.size).toBeGreaterThan(0);
     cleanup();
-    expect(handlers.size).toBe(0);
+    push(makeState([row(KEY, { type: "idle", counts: { idle: 1, busy: 0, total: 1 } })]));
 
-    emit("workspace:status-changed", statusEvent(1, 0));
     expect(notificationService.handleStatusChange).not.toHaveBeenCalled();
   });
 });

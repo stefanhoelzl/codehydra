@@ -18,7 +18,8 @@ import {
   EVENT_PROJECT_OPENED,
   EVENT_PROJECT_OPEN_FAILED,
 } from "../intents/open-project";
-import type { NotificationManager, NotificationHandle } from "./notification-manager";
+import type { NotificationHandle } from "./notification-manager";
+import type { UiPresenter } from "./presentation-module";
 import type { NotificationConfig } from "../shared/notification-types";
 
 /**
@@ -40,7 +41,7 @@ function stageLabel(stage: string): string {
 }
 
 export interface CloneNotificationModuleDeps {
-  readonly notificationManager: NotificationManager;
+  readonly ui: Pick<UiPresenter, "notification">;
 }
 
 export function createCloneNotificationModule(deps: CloneNotificationModuleDeps): IntentModule {
@@ -69,7 +70,7 @@ export function createCloneNotificationModule(deps: CloneNotificationModuleDeps)
         if (existing) {
           existing.update(buildConfig(name, stage, progress));
         } else {
-          const handle = deps.notificationManager.open(buildConfig(name, stage, progress));
+          const handle = deps.ui.notification(buildConfig(name, stage, progress));
           handles.set(url, handle);
         }
       },

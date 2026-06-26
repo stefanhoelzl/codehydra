@@ -36,7 +36,8 @@ import { gzipSync } from "node:zlib";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IDispatcher } from "../intents/lib/dispatcher";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { DialogHandle } from "./dialog-manager";
+import type { UiPresenter } from "./presentation-module";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logging, Logger } from "../boundaries/platform/logging";
 import type { DialogConfig } from "../shared/dialog-types";
@@ -133,7 +134,7 @@ function buildDialogConfig(): DialogConfig {
 // =============================================================================
 
 export interface ErrorReportModuleDeps {
-  readonly dialogManager: DialogManager;
+  readonly ui: Pick<UiPresenter, "dialog">;
   readonly fileSystem: Pick<FileSystemBoundary, "readFile">;
   readonly loggingService: Pick<Logging, "getLogFilePath" | "getElectronLogFilePath">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
@@ -377,7 +378,7 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
   function openDialog(): void {
     if (activeHandle) return;
 
-    const handle = deps.dialogManager.open(buildDialogConfig());
+    const handle = deps.ui.dialog(buildDialogConfig());
     activeHandle = handle;
 
     handle.onEvent((event) => {

@@ -16,7 +16,8 @@ import type { IntentModule, EventDeclarations, HookDeclarations } from "../inten
 import type { DomainEvent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { DialogHandle } from "./dialog-manager";
+import type { UiPresenter } from "./presentation-module";
 import type {
   DialogConfig,
   DialogSection,
@@ -52,7 +53,7 @@ import { getErrorMessage } from "../shared/error-utils";
  * Dependencies for the deletion dialog module.
  */
 export interface DeletionDialogModuleDeps {
-  readonly dialogManager: DialogManager;
+  readonly ui: Pick<UiPresenter, "dialog">;
   readonly dispatcher: Dispatcher;
   readonly logger: Logger;
 }
@@ -272,7 +273,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
   function showDialogForWorkspace(path: string): void {
     const progress = progressMap.get(path);
     if (!progress) return;
-    const handle = deps.dialogManager.open(buildConfig(progress));
+    const handle = deps.ui.dialog(buildConfig(progress));
     activeDialog = { path, handle };
     wireEvents(handle, path);
   }
@@ -356,7 +357,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
       base: undefined,
     };
 
-    const handle = deps.dialogManager.open(buildRemoveConfirmConfig(state));
+    const handle = deps.ui.dialog(buildRemoveConfirmConfig(state));
     let dialogOpen = true;
 
     // Background status check (refresh fetches remotes — slow). Never blocks

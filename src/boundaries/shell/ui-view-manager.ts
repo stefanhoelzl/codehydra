@@ -103,6 +103,12 @@ export class UiViewManager implements IViewManager {
   private destroying = false;
   private unsubscribeResize: Unsubscribe | null = null;
 
+  // Inbound IPC (renderer → main) from the UI view. Subscribers register via
+  // onFromUI before the view exists; the actual webContents.ipc listener is
+  // wired per channel at createView and re-wired on recreate.
+  private readonly uiListeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  private readonly uiIpcUnsubs = new Map<string, Unsubscribe>();
+
   constructor(deps: UiViewManagerDeps) {
     this.windowManager = deps.windowManager;
     this.windowLayer = deps.windowLayer;
@@ -184,6 +190,10 @@ export class UiViewManager implements IViewManager {
     });
 
     this.uiViewHandle = uiViewHandle;
+    // (Re)wire any onFromUI subscriptions onto the new view's webContents.
+    for (const channel of this.uiListeners.keys()) {
+      this.wireChannel(channel);
+    }
   }
 
   destroy(): void {
@@ -200,6 +210,10 @@ export class UiViewManager implements IViewManager {
       }
       this.uiViewHandle = null;
     }
+    // The webContents (and its ipc listeners) are gone; drop the stale wirings
+    // so a subsequent createView re-wires from uiListeners. Subscriptions
+    // themselves (uiListeners) survive a recreate.
+    this.uiIpcUnsubs.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -251,6 +265,42 @@ export class UiViewManager implements IViewManager {
     } catch {
       // Ignore errors - view may be destroyed
     }
+  }
+
+  onFromUI(channel: string, listener: (...args: unknown[]) => void): Unsubscribe {
+    let listeners = this.uiListeners.get(channel);
+    if (!listeners) {
+      listeners = new Set();
+      this.uiListeners.set(channel, listeners);
+    }
+    listeners.add(listener);
+    this.wireChannel(channel); // no-op if the view isn't up yet or already wired
+    return () => {
+      const set = this.uiListeners.get(channel);
+      if (!set) return;
+      set.delete(listener);
+      if (set.size === 0) {
+        this.uiListeners.delete(channel);
+        const unsub = this.uiIpcUnsubs.get(channel);
+        if (unsub) {
+          unsub();
+          this.uiIpcUnsubs.delete(channel);
+        }
+      }
+    };
+  }
+
+  /** Wire one webContents.ipc listener for `channel` that fans out to its subscribers. */
+  private wireChannel(channel: string): void {
+    if (!this.uiViewHandle || this.uiIpcUnsubs.has(channel)) return;
+    const unsub = this.viewLayer.onIpc(this.uiViewHandle, channel, (...args: unknown[]) => {
+      const listeners = this.uiListeners.get(channel);
+      if (!listeners) return;
+      for (const listener of [...listeners]) {
+        listener(...args);
+      }
+    });
+    this.uiIpcUnsubs.set(channel, unsub);
   }
 
   // ---------------------------------------------------------------------------
