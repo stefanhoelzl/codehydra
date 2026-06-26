@@ -11,9 +11,28 @@
 
 import type { AgentStatus, WorkspaceTag } from "./api/types";
 import type { UIMode } from "./ipc";
+import type { DialogConfig, DialogSurface } from "./dialog-types";
+import type { NotificationConfig } from "./notification-types";
 
 /** Resolved OS theme (mirrors the shell Theme type without importing it). */
 export type UiTheme = "dark" | "light";
+
+/**
+ * An open dialog session, render-ready. The presenter owns the registry (via
+ * its internal DialogManager) and folds it into the snapshot; the renderer
+ * renders each declaratively and echoes the opaque `id` back in dialog ui:events.
+ */
+export interface UiDialog {
+  readonly id: string;
+  readonly surface: DialogSurface;
+  readonly config: DialogConfig;
+}
+
+/** An open sidebar notification, render-ready (presenter-owned, echoed by id). */
+export interface UiNotification {
+  readonly id: string;
+  readonly config: NotificationConfig;
+}
 
 export interface UiWorkspaceRow {
   /**
@@ -98,6 +117,10 @@ export interface UiState {
    * eligibility, and z-order all derive from it.
    */
   readonly mode: UIMode;
+  /** Open dialog sessions (modal cards + non-modal panels), in open order. */
+  readonly dialogs: readonly UiDialog[];
+  /** Open sidebar notifications, in open order. */
+  readonly notifications: readonly UiNotification[];
 }
 
 /**

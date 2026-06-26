@@ -63,6 +63,30 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // Setup-error actions: retry resolves app:start's retry loop; quit shuts down.
   z.object({ kind: z.literal("setup-retry") }),
   z.object({ kind: z.literal("setup-quit") }),
+  // Dialog user interactions (replace the former api:dialog:event channel). The
+  // presenter routes these to the matching open dialog session by `dialogId`
+  // (the opaque id echoed from the snapshot's `dialogs`). `data` is the flat
+  // field-values snapshot (keyed by field id); values are strings.
+  z.object({
+    kind: z.literal("dialog-action"),
+    dialogId: z.string(),
+    actionId: z.string(),
+    data: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    kind: z.literal("dialog-change"),
+    dialogId: z.string(),
+    fieldId: z.string(),
+    data: z.record(z.string(), z.string()),
+  }),
+  z.object({ kind: z.literal("dialog-dismiss"), dialogId: z.string() }),
+  // Notification user interactions (replace the former api:notification:event
+  // channel). actionId is "dismiss" for the dismiss button, else a button id.
+  z.object({
+    kind: z.literal("notification-event"),
+    notificationId: z.string(),
+    actionId: z.string(),
+  }),
 ]);
 
 /** Discriminated union of all renderer→main UI events. */

@@ -8,8 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DialogManager } from "./dialog-manager";
-import type { DialogConfig, DialogCommand, DialogUserEvent } from "../shared/dialog-types";
-import { ApiIpcChannels } from "../shared/ipc";
+import type { DialogConfig, DialogUserEvent } from "../shared/dialog-types";
 
 function createConfig(heading: string): DialogConfig {
   return {
@@ -18,25 +17,22 @@ function createConfig(heading: string): DialogConfig {
 }
 
 describe("DialogManager", () => {
-  let sendToUI: ReturnType<typeof vi.fn<(channel: string, ...args: unknown[]) => void>>;
+  let notifyChange: ReturnType<typeof vi.fn<() => void>>;
   let manager: DialogManager;
 
   beforeEach(() => {
-    sendToUI = vi.fn<(channel: string, ...args: unknown[]) => void>();
-    manager = new DialogManager(sendToUI);
+    notifyChange = vi.fn<() => void>();
+    manager = new DialogManager(notifyChange);
   });
 
   describe("open", () => {
-    it("should send an open command to the UI", () => {
+    it("adds the dialog to the snapshot and notifies", () => {
       const config = createConfig("Hello");
 
       const handle = manager.open(config);
 
-      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.DIALOG_COMMAND, {
-        action: "open",
-        dialogId: handle.id,
-        config,
-      } satisfies DialogCommand);
+      expect(notifyChange).toHaveBeenCalled();
+      expect(manager.getSnapshot()).toEqual([{ id: handle.id, surface: "modal", config }]);
     });
 
     it("should generate unique dialog IDs", () => {
@@ -46,77 +42,61 @@ describe("DialogManager", () => {
       expect(h1.id).not.toBe(h2.id);
     });
 
-    it("should include the surface on the open command when given", () => {
+    it("records the surface in the snapshot when given", () => {
       const config = createConfig("Panel form");
 
       const handle = manager.open(config, { surface: "panel" });
 
-      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.DIALOG_COMMAND, {
-        action: "open",
-        dialogId: handle.id,
-        config,
-        surface: "panel",
-      } satisfies DialogCommand);
+      expect(manager.getSnapshot()).toEqual([{ id: handle.id, surface: "panel", config }]);
     });
 
-    it("should omit the surface field by default", () => {
-      const config = createConfig("Modal");
+    it("defaults the surface to modal", () => {
+      manager.open(createConfig("Modal"));
 
-      manager.open(config);
-
-      const command = sendToUI.mock.calls[0]![1] as DialogCommand;
-      expect("surface" in command).toBe(false);
+      expect(manager.getSnapshot()[0]!.surface).toBe("modal");
     });
 
-    it("should not resend the surface on update (session property, set once)", () => {
+    it("keeps the surface across updates (session property, set once)", () => {
       const handle = manager.open(createConfig("Panel"), { surface: "panel" });
-      sendToUI.mockClear();
 
       handle.update(createConfig("Updated"));
 
-      const command = sendToUI.mock.calls[0]![1] as DialogCommand;
-      expect(command.action).toBe("update");
-      expect("surface" in command).toBe(false);
+      expect(manager.getSnapshot()[0]!.surface).toBe("panel");
     });
   });
 
   describe("update", () => {
-    it("should send an update command to the UI", () => {
+    it("replaces the config in the snapshot and notifies", () => {
       const handle = manager.open(createConfig("Initial"));
-      sendToUI.mockClear();
+      notifyChange.mockClear();
 
       const newConfig = createConfig("Updated");
       handle.update(newConfig);
 
-      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.DIALOG_COMMAND, {
-        action: "update",
-        dialogId: handle.id,
-        config: newConfig,
-      } satisfies DialogCommand);
+      expect(notifyChange).toHaveBeenCalled();
+      expect(manager.getSnapshot()[0]!.config).toEqual(newConfig);
     });
 
-    it("should not send after close", () => {
+    it("does nothing after close", () => {
       const handle = manager.open(createConfig("Test"));
       handle.close();
-      sendToUI.mockClear();
+      notifyChange.mockClear();
 
       handle.update(createConfig("After close"));
 
-      expect(sendToUI).not.toHaveBeenCalled();
+      expect(notifyChange).not.toHaveBeenCalled();
     });
   });
 
   describe("close", () => {
-    it("should send a close command to the UI", () => {
+    it("removes the dialog from the snapshot and notifies", () => {
       const handle = manager.open(createConfig("Test"));
-      sendToUI.mockClear();
+      notifyChange.mockClear();
 
       handle.close();
 
-      expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.DIALOG_COMMAND, {
-        action: "close",
-        dialogId: handle.id,
-      } satisfies DialogCommand);
+      expect(notifyChange).toHaveBeenCalled();
+      expect(manager.getSnapshot()).toEqual([]);
     });
 
     it("should resolve the closed promise", async () => {
@@ -130,11 +110,12 @@ describe("DialogManager", () => {
     it("should be idempotent", () => {
       const handle = manager.open(createConfig("Test"));
       handle.close();
-      sendToUI.mockClear();
+      notifyChange.mockClear();
 
       handle.close();
 
-      expect(sendToUI).not.toHaveBeenCalled();
+      expect(notifyChange).not.toHaveBeenCalled();
+      expect(manager.getSnapshot()).toEqual([]);
     });
   });
 
@@ -393,7 +374,7 @@ describe("DialogManager", () => {
         error: vi.fn(),
         silly: vi.fn(),
       };
-      const loggedManager = new DialogManager(sendToUI, logger);
+      const loggedManager = new DialogManager(notifyChange, logger);
 
       loggedManager.routeEvent({ dialogId: "unknown-id", actionId: "click" });
 
@@ -411,7 +392,7 @@ describe("DialogManager", () => {
         error: vi.fn(),
         silly: vi.fn(),
       };
-      const loggedManager = new DialogManager(sendToUI, logger);
+      const loggedManager = new DialogManager(notifyChange, logger);
 
       loggedManager.routeEvent({
         kind: "change",

@@ -98,7 +98,7 @@ function createMockDeps(fsOverrides?: Parameters<typeof createFileSystemMock>[0]
       projectsDir: PROJECTS_DIR,
       fs,
       gitWorktreeProvider,
-      dialogManager: dialog.manager,
+      ui: dialog.ui,
       gitClient,
     },
     fs,

@@ -10,6 +10,7 @@
 
 import { vi } from "vitest";
 import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { UiPresenter } from "./presentation-module";
 import type {
   DialogConfig,
   DialogSurface,
@@ -47,6 +48,8 @@ export interface MockDialogHandle {
 export interface MockDialogManager {
   /** Manager to inject into the module under test. `open` is a vi.fn spy. */
   readonly manager: DialogManager;
+  /** UiPresenter dialog surface to inject into modules (`ui.dialog()`). */
+  readonly ui: Pick<UiPresenter, "dialog" | "isModalOpen">;
   /** Every opened dialog, in order. */
   readonly handles: MockDialogHandle[];
   /** The most recently opened dialog, or null. */
@@ -104,6 +107,10 @@ export function createMockDialogManager(): MockDialogManager {
 
   return {
     manager,
+    ui: {
+      dialog: open,
+      isModalOpen: () => modalIds.size > 0,
+    },
     handles,
     get lastHandle() {
       return handles[handles.length - 1] ?? null;

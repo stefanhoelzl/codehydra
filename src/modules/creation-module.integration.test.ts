@@ -191,7 +191,7 @@ function setup(options?: {
   });
 
   const deps: CreationModuleDeps = {
-    dialogManager: dialogs.manager,
+    ui: dialogs.ui,
     dispatcher: dispatcher.dispatcher,
     appBoundary: { openUrl },
     agentConfig: createMockAccessor<ConfigAgentType>("agent", options?.defaultAgent ?? "claude"),

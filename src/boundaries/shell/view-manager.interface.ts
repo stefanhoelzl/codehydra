@@ -81,6 +81,19 @@ export interface IViewManager {
   sendToUI(channel: string, ...args: unknown[]): void;
 
   /**
+   * Subscribe to fire-and-forget IPC messages from the UI layer's renderer,
+   * scoped to the UI view's webContents. Callable before the view exists: the
+   * manager buffers subscribers and wires the underlying listener when the view
+   * is created (re-wiring on recreate). The listener receives only the message
+   * arguments (the Electron event is swallowed).
+   *
+   * @param channel - IPC channel name
+   * @param listener - Called with the message arguments on each send
+   * @returns Unsubscribe function
+   */
+  onFromUI(channel: string, listener: (...args: unknown[]) => void): Unsubscribe;
+
+  /**
    * Focuses the UI webContents, then asks the renderer to focus the active
    * workspace iframe. Mode is main-owned (the presenter) and no longer
    * mirrored here; the renderer owns the dialog/hover/shortcut focus traps.

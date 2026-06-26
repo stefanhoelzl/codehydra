@@ -28,7 +28,7 @@ describe("ErrorNotificationModule", () => {
   beforeEach(() => {
     notificationManager = createMockNotificationManager();
     module = createErrorNotificationModule({
-      notificationManager: notificationManager.manager,
+      ui: notificationManager.ui,
     });
   });
 

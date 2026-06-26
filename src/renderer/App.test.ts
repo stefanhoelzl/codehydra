@@ -56,8 +56,7 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "./App.svelte";
-import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
-import { resetUiState } from "$lib/stores/ui-state.svelte.js";
+import { uiState, setUiState, resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 import type { UiWorkspaceRow } from "@shared/ui-state";
 
@@ -84,16 +83,23 @@ function ws(name: string): UiWorkspaceRow {
   });
 }
 
-// Simulate the backend creation module's always-alive panel session.
+// Simulate the backend creation module's always-alive panel session by adding a
+// panel-surface dialog to the current snapshot.
 function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
-  dialogFrameworkStore.processCommand({
-    action: "open",
-    dialogId,
-    config: {
-      layout: "form",
-      sections: [{ type: "text", content: "New workspace", style: "heading" }],
-    },
-    surface: "panel",
+  const current = uiState.value ?? makeUiState([]);
+  setUiState({
+    ...current,
+    dialogs: [
+      ...current.dialogs,
+      {
+        id: dialogId,
+        surface: "panel",
+        config: {
+          layout: "form",
+          sections: [{ type: "text", content: "New workspace", style: "heading" }],
+        },
+      },
+    ],
   });
 }
 
@@ -102,7 +108,6 @@ describe("App component", () => {
     vi.clearAllMocks();
     stateCallbacks.length = 0;
     resetUiState();
-    dialogFrameworkStore.reset();
   });
 
   afterEach(() => {
@@ -217,8 +222,8 @@ describe("App component", () => {
 
     it("renders the creation panel when the snapshot says creation and the session exists", async () => {
       render(App);
-      openCreationPanelSession();
       await pushRows([ws("ws1")]); // no active → creation
+      openCreationPanelSession();
 
       await waitFor(() => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();

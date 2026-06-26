@@ -80,28 +80,6 @@ describe("preload API", () => {
     });
   });
 
-  describe("sendDialogEvent", () => {
-    it("sends dialog:event IPC event with dialog user event payload", () => {
-      const sendDialogEvent = exposedApi.sendDialogEvent as (event: unknown) => void;
-      const event = { dialogId: "dlg-1", actionId: "retry" };
-      sendDialogEvent(event);
-
-      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:dialog:event", event);
-    });
-
-    it("forwards a flat field-values data payload verbatim", () => {
-      const sendDialogEvent = exposedApi.sendDialogEvent as (event: unknown) => void;
-      const event = {
-        dialogId: "dlg-2",
-        actionId: "confirm",
-        data: { agent: "claude", description: "hi" },
-      };
-      sendDialogEvent(event);
-
-      expect(mockIpcRenderer.send).toHaveBeenCalledWith("api:dialog:event", event);
-    });
-  });
-
   describe("event subscriptions", () => {
     it("on subscribes to api: prefixed events", () => {
       const callback = vi.fn();

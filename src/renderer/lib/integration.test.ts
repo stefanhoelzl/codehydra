@@ -46,9 +46,19 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "../App.svelte";
-import * as dialogFrameworkStore from "$lib/stores/dialog-framework.svelte.js";
 import { resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
+import type { UiDialog } from "@shared/ui-state";
+
+/** The backend creation module's always-alive panel session, as a snapshot entry. */
+const PANEL_DIALOG: UiDialog = {
+  id: "dlg-creation",
+  surface: "panel",
+  config: {
+    layout: "form",
+    sections: [{ type: "text", content: "New workspace", style: "heading" }],
+  },
+};
 
 function pushState(state: UiState): void {
   expect(stateCallbacks.length).toBeGreaterThan(0);
@@ -96,7 +106,6 @@ describe("Integration tests", () => {
     vi.clearAllMocks();
     stateCallbacks.length = 0;
     resetUiState();
-    dialogFrameworkStore.reset();
   });
 
   afterEach(() => {
@@ -159,20 +168,12 @@ describe("Integration tests", () => {
 
   describe("creation panel (ground state) flows", () => {
     it("deleting the last workspace lands on the creation panel", async () => {
-      dialogFrameworkStore.processCommand({
-        action: "open",
-        dialogId: "dlg-creation",
-        config: {
-          layout: "form",
-          sections: [{ type: "text", content: "New workspace", style: "heading" }],
-        },
-        surface: "panel",
-      });
       await renderApp(snapshotOf([ws("ws1")], "ws1"));
       await waitFor(() => expect(screen.getByText("ws1")).toBeInTheDocument());
 
-      // Last workspace removed: the presenter pushes the ground state.
-      pushState(snapshotOf([]));
+      // Last workspace removed: the presenter pushes the ground state with the
+      // always-alive creation panel session.
+      pushState({ ...snapshotOf([]), dialogs: [PANEL_DIALOG] });
 
       await waitFor(() => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
@@ -246,17 +247,7 @@ describe("Integration tests", () => {
 
   describe("onboarding flow", () => {
     it("empty state: ground-state snapshot + panel session render the creation form", async () => {
-      dialogFrameworkStore.processCommand({
-        action: "open",
-        dialogId: "dlg-creation",
-        config: {
-          layout: "form",
-          sections: [{ type: "text", content: "New workspace", style: "heading" }],
-        },
-        surface: "panel",
-      });
-
-      await renderApp(makeUiState([]));
+      await renderApp(makeUiState([], { dialogs: [PANEL_DIALOG] }));
 
       await waitFor(() => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();

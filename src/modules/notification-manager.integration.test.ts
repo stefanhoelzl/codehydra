@@ -1,16 +1,13 @@
 // @vitest-environment node
 /**
- * Integration tests for NotificationManager command buffering.
- *
- * The renderer's NotificationHost only subscribes once MainView mounts, so
- * commands sent earlier must be buffered and flushed on markUIReady().
+ * Integration tests for NotificationManager (a state-holder owned by the
+ * presenter). It exposes a render-ready snapshot and notifies on every change;
+ * the presenter folds getSnapshot() into the ui:state push.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import { NotificationManager } from "./notification-manager";
-import { ApiIpcChannels } from "../shared/ipc";
-import type { IViewManager } from "../boundaries/shell/view-manager.interface";
-import type { NotificationConfig } from "../shared/notification-types";
+import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 
 const CONFIG: NotificationConfig = {
   type: "info",
@@ -20,75 +17,76 @@ const CONFIG: NotificationConfig = {
 };
 
 function createManager() {
-  const sendToUI = vi.fn<(channel: string, ...args: unknown[]) => void>();
-  const manager = new NotificationManager({ sendToUI } as unknown as IViewManager);
-  return { manager, sendToUI };
+  const notifyChange = vi.fn<() => void>();
+  const manager = new NotificationManager(notifyChange);
+  return { manager, notifyChange };
 }
 
-describe("NotificationManager buffering", () => {
-  it("buffers commands until markUIReady, then flushes in order", () => {
-    const { manager, sendToUI } = createManager();
+describe("NotificationManager", () => {
+  it("adds an opened notification to the snapshot and notifies", () => {
+    const { manager, notifyChange } = createManager();
 
     const handle = manager.open(CONFIG);
+
+    expect(notifyChange).toHaveBeenCalled();
+    expect(manager.getSnapshot()).toEqual([{ id: handle.id, config: CONFIG }]);
+  });
+
+  it("replaces the config on update", () => {
+    const { manager, notifyChange } = createManager();
+    const handle = manager.open(CONFIG);
+    notifyChange.mockClear();
+
     const updated: NotificationConfig = { ...CONFIG, title: "Updated" };
     handle.update(updated);
 
-    expect(sendToUI).not.toHaveBeenCalled();
-
-    manager.markUIReady();
-
-    expect(sendToUI.mock.calls).toEqual([
-      [
-        ApiIpcChannels.NOTIFICATION_COMMAND,
-        { action: "open", notificationId: handle.id, config: CONFIG },
-      ],
-      [
-        ApiIpcChannels.NOTIFICATION_COMMAND,
-        { action: "update", notificationId: handle.id, config: updated },
-      ],
-    ]);
+    expect(notifyChange).toHaveBeenCalled();
+    expect(manager.getSnapshot()).toEqual([{ id: handle.id, config: updated }]);
   });
 
-  it("skips notifications opened and closed while buffered", () => {
-    const { manager, sendToUI } = createManager();
-
+  it("removes a closed notification from the snapshot", () => {
+    const { manager } = createManager();
     const transient = manager.open(CONFIG);
-    transient.close();
     const survivor = manager.open(CONFIG);
 
-    manager.markUIReady();
+    transient.close();
 
-    expect(sendToUI).toHaveBeenCalledTimes(1);
-    expect(sendToUI).toHaveBeenCalledWith(ApiIpcChannels.NOTIFICATION_COMMAND, {
-      action: "open",
-      notificationId: survivor.id,
-      config: CONFIG,
-    });
+    expect(manager.getSnapshot()).toEqual([{ id: survivor.id, config: CONFIG }]);
   });
 
-  it("sends directly after markUIReady", () => {
-    const { manager, sendToUI } = createManager();
-    manager.markUIReady();
-
+  it("does nothing after close", () => {
+    const { manager, notifyChange } = createManager();
     const handle = manager.open(CONFIG);
     handle.close();
+    notifyChange.mockClear();
 
-    expect(sendToUI.mock.calls).toEqual([
-      [
-        ApiIpcChannels.NOTIFICATION_COMMAND,
-        { action: "open", notificationId: handle.id, config: CONFIG },
-      ],
-      [ApiIpcChannels.NOTIFICATION_COMMAND, { action: "close", notificationId: handle.id }],
-    ]);
+    handle.update({ ...CONFIG, title: "After close" });
+
+    expect(notifyChange).not.toHaveBeenCalled();
   });
 
-  it("markUIReady is idempotent", () => {
-    const { manager, sendToUI } = createManager();
+  it("preserves open order in the snapshot", () => {
+    const { manager } = createManager();
+    const a = manager.open({ ...CONFIG, title: "A" });
+    const b = manager.open({ ...CONFIG, title: "B" });
 
-    manager.open(CONFIG);
-    manager.markUIReady();
-    manager.markUIReady();
+    expect(manager.getSnapshot().map((n) => n.id)).toEqual([a.id, b.id]);
+  });
 
-    expect(sendToUI).toHaveBeenCalledTimes(1);
+  it("routes user events to the owning handle", () => {
+    const { manager } = createManager();
+    const handle = manager.open(CONFIG);
+    const listener = vi.fn();
+    handle.onEvent(listener);
+
+    const event: NotificationUserEvent = { notificationId: handle.id, actionId: "dismiss" };
+    manager.routeEvent(event);
+
+    expect(listener).toHaveBeenCalledWith(event);
+  });
+
+  it("does not throw routing to an unknown notification", () => {
+    const { manager } = createManager();
+    expect(() => manager.routeEvent({ notificationId: "nope", actionId: "x" })).not.toThrow();
   });
 });

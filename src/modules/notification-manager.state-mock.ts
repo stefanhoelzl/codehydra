@@ -5,6 +5,7 @@
  */
 import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 import type { NotificationHandle, NotificationManager } from "./notification-manager";
+import type { UiPresenter } from "./presentation-module";
 
 /** Per-notification state exposed for assertions. */
 export interface MockNotification {
@@ -24,6 +25,8 @@ export interface MockNotification {
 export interface MockNotificationManager {
   /** The real NotificationManager-shaped object to inject into the SUT. */
   readonly manager: NotificationManager;
+  /** UiPresenter notification surface to inject into modules (`ui.notification()`). */
+  readonly ui: Pick<UiPresenter, "notification">;
   /** All notifications opened so far, in order. Mutates live. */
   readonly notifications: MockNotification[];
   /** Convenience accessor for the most recently opened notification, or null. */
@@ -75,6 +78,9 @@ export function createMockNotificationManager(): MockNotificationManager {
 
   return {
     manager,
+    ui: {
+      notification: (config: NotificationConfig) => manager.open(config),
+    },
     notifications: items,
     get lastNotification() {
       return items[items.length - 1] ?? null;

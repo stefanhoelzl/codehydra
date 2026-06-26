@@ -180,7 +180,7 @@ function createTestSetup(overrides?: {
     configService: mockConfig,
     stateService: mockState,
     stateMigrations: createStateMigrationRegistry(),
-    notificationManager: notificationManager.manager,
+    ui: notificationManager.ui,
   });
 
   dispatcher.registerOperation(

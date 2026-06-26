@@ -27,7 +27,8 @@
 import type { IntentModule, EventDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { DialogManager, DialogHandle } from "./dialog-manager";
+import type { DialogHandle } from "./dialog-manager";
+import type { UiPresenter } from "./presentation-module";
 import type { DialogConfig, DialogSection, DropdownSuggestionGroup } from "../shared/dialog-types";
 import type { Logger } from "../boundaries/platform/logging";
 import type { AgentInfo, LifecycleAgentType } from "../shared/ipc";
@@ -77,7 +78,7 @@ import {
 // =============================================================================
 
 export interface CreationModuleDeps {
-  readonly dialogManager: DialogManager;
+  readonly ui: Pick<UiPresenter, "dialog">;
   readonly dispatcher: Dispatcher;
   readonly appBoundary: Pick<AppBoundary, "openUrl">;
   /** Global default agent (config.agent). */
@@ -134,7 +135,7 @@ export function validateCloneUrl(url: string): string | null {
 // =============================================================================
 
 export function createCreationModule(deps: CreationModuleDeps): IntentModule {
-  const { dialogManager, dispatcher, logger } = deps;
+  const { ui, dispatcher, logger } = deps;
 
   // ---- Session state ----
 
@@ -602,7 +603,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
     const config = buildConfig();
     lastConfigJson = JSON.stringify(config);
-    const newHandle = dialogManager.open(config, { surface: "panel" });
+    const newHandle = ui.dialog(config, { surface: "panel" });
     handle = newHandle;
     wireSession(newHandle);
 
@@ -961,7 +962,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   function openCloneDialog(): void {
     if (cloneDialog !== null) return;
     const initial: CloneViewState = { url: "", cloneUrl: null, error: null, progress: null };
-    const cloneHandle = dialogManager.open(buildCloneConfig(initial));
+    const cloneHandle = ui.dialog(buildCloneConfig(initial));
     const state: CloneDialogState = { ...initial, handle: cloneHandle };
     cloneDialog = state;
 

@@ -69,15 +69,11 @@ export type UIMode = "workspace" | "dialog" | "shortcut" | "hover";
  * All channels use the api: prefix convention.
  */
 export const ApiIpcChannels = {
-  // Renderer→main gestures (open/close/switch/wake/hibernate/remove/quit) are
-  // NOT invokes: they flow through the fire-and-forget ui:event union (UI_EVENT),
-  // and main owns identity resolution, confirmation dialogs, and dispatch.
-  // Dialog framework (main ↔ renderer)
-  DIALOG_COMMAND: "api:dialog:command",
-  DIALOG_EVENT: "api:dialog:event",
-  // Notification framework (main ↔ renderer)
-  NOTIFICATION_COMMAND: "api:notification:command",
-  NOTIFICATION_EVENT: "api:notification:event",
+  // Renderer→main gestures (open/close/switch/wake/hibernate/remove/quit) and
+  // dialog/notification user interactions are NOT invokes or per-feature
+  // channels: they flow through the fire-and-forget ui:event union (UI_EVENT),
+  // and the presenter owns identity resolution and routing. Dialog/notification
+  // state ships in the ui:state snapshot (UI_STATE), not on command channels.
   // UI events (renderer → main, fire-and-forget; zod-validated union)
   UI_EVENT: "api:ui:event",
   // UI state snapshots (main → renderer)

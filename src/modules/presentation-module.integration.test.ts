@@ -25,7 +25,7 @@ import type { AppShutdownIntent } from "../intents/app-shutdown";
 import type { IntentModule } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
 import { createMockLogging } from "../boundaries/platform/logging";
-import { createBehavioralIpcBoundary } from "../boundaries/shell/ipc.test-utils";
+import { createMockViewManager } from "../boundaries/shell/view-manager.test-utils";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import { Path } from "../utils/path/path";
 import { ApiIpcChannels } from "../shared/ipc";
@@ -54,8 +54,7 @@ import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
 import { EVENT_METADATA_CHANGED } from "../intents/set-metadata";
 import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../intents/set-shortcut-active";
 import { EVENT_SHORTCUT_KEY_PRESSED } from "../intents/shortcut-key";
-import { createPresentationModule } from "./presentation-module";
-import { createMockDialogManager } from "./dialog-manager.state-mock";
+import { createPresentationModule, type UiPresenter } from "./presentation-module";
 
 // =============================================================================
 // Test setup helpers
@@ -65,11 +64,15 @@ const PROJECT_ID = "alpha-12345678" as ProjectId;
 const PROJECT_PATH = "/projects/alpha";
 
 function createDeps() {
-  const dialogs = createMockDialogManager();
+  // Typed sendToUI spy for snapshot assertions; the rest of the view-manager
+  // mock provides onFromUI + __emitFromUI for driving inbound ui:events.
+  const sendToUI = vi.fn<(channel: string, ...args: unknown[]) => void>();
+  const viewManager = createMockViewManager({ overrides: { sendToUI } });
   return {
-    ipcLayer: createBehavioralIpcBoundary(),
     loggingService: createMockLogging(),
-    viewManager: { sendToUI: vi.fn<(channel: string, ...args: unknown[]) => void>() },
+    viewManager,
+    /** Typed handle to the push spy (deps.viewManager.sendToUI loses the Mock type). */
+    sendToUI,
     windowManager: {
       getTheme: vi.fn(() => "dark" as const),
       onThemeChange: vi.fn<(callback: (theme: "dark" | "light") => void) => () => void>(() =>
@@ -84,14 +87,15 @@ function createDeps() {
     pathProvider: {
       dataPath: (subpath: string) => new Path(`/data/${subpath}`),
     } as unknown as PathProvider,
-    dialogManager: dialogs.manager,
     dispatcher: createMockDispatcher(),
-    notificationManager: { markUIReady: vi.fn() },
-    /** Test-side view of dialogs the presenter opened. */
-    dialogs,
   };
 }
 type Deps = ReturnType<typeof createDeps>;
+
+/** Drive an inbound ui:event into the presenter (via the view-manager mock). */
+function emitUiEvent(deps: Deps, event: unknown): void {
+  deps.viewManager.__emitFromUI(ApiIpcChannels.UI_EVENT, event);
+}
 
 async function emit(module: IntentModule, type: string, payload: unknown): Promise<void> {
   const declaration = module.events?.[type];
@@ -105,7 +109,7 @@ async function flush(): Promise<void> {
 }
 
 function snapshots(deps: Deps): UiState[] {
-  return deps.viewManager.sendToUI.mock.calls
+  return deps.sendToUI.mock.calls
     .filter(([channel]) => channel === ApiIpcChannels.UI_STATE)
     .map(([, snapshot]) => snapshot as UiState);
 }
@@ -142,7 +146,7 @@ function makeProject(workspaces: Workspace[], options?: { remoteUrl?: string }):
 
 /** Mark the renderer connected (opens the snapshot stream) via ui-connected. */
 function connect(deps: Deps): void {
-  deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "ui-connected" });
+  emitUiEvent(deps, { kind: "ui-connected" });
 }
 
 /**
@@ -150,7 +154,7 @@ function connect(deps: Deps): void {
  * (startup phase left, normal main logic owns the view). Most snapshot tests
  * assert the post-startup view.
  */
-async function startModule(deps: Deps): Promise<IntentModule> {
+async function startModule(deps: Deps): Promise<UiPresenter> {
   const module = createPresentationModule(deps);
   connect(deps);
   await emit(module, EVENT_APP_STARTED, {});
@@ -173,21 +177,24 @@ function switchedPayload(workspace: Workspace): unknown {
 // =============================================================================
 
 describe("PresentationModule - ui:event intake", () => {
-  it("registers a listener on the ui:event channel", () => {
+  it("subscribes to the ui:event channel (ui-connected opens the stream)", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
-    expect(deps.ipcLayer._getListeners(ApiIpcChannels.UI_EVENT)).toHaveLength(1);
+    // The presenter is listening: a ui-connected event opens the snapshot
+    // stream and flushes the genesis snapshot.
+    emitUiEvent(deps, { kind: "ui-connected" });
+    expect(snapshots(deps).length).toBeGreaterThan(0);
   });
 
   it("drops events with an unknown kind and warns", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "not-a-real-event" });
+    emitUiEvent(deps, { kind: "not-a-real-event" });
     // panel-visibility left the schema with the read cutover (the creation
     // panel is derived state); a stale emitter is dropped like any unknown.
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "panel-visibility", open: true });
+    emitUiEvent(deps, { kind: "panel-visibility", open: true });
 
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.warn).toHaveBeenCalledTimes(2);
@@ -198,9 +205,9 @@ describe("PresentationModule - ui:event intake", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "log", level: "shout", logger: "ui" });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: "main" });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, "not an object");
+    emitUiEvent(deps, { kind: "log", level: "shout", logger: "ui" });
+    emitUiEvent(deps, { kind: "hover", region: "main" });
+    emitUiEvent(deps, "not an object");
 
     const logger = deps.loggingService.getLogger("presenter");
     expect(logger?.warn).toHaveBeenCalledTimes(3);
@@ -217,7 +224,7 @@ describe("PresentationModule - log routing", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "log",
       level: "info",
       logger: "ui",
@@ -234,7 +241,7 @@ describe("PresentationModule - log routing", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "log",
       level: "warn",
       logger: "invalid-name",
@@ -249,7 +256,7 @@ describe("PresentationModule - log routing", () => {
     const deps = createDeps();
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "log",
       level: "debug",
       logger: "api",
@@ -267,7 +274,7 @@ describe("PresentationModule - log routing", () => {
     });
 
     expect(() => {
-      deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+      emitUiEvent(deps, {
         kind: "log",
         level: "error",
         logger: "ui",
@@ -306,6 +313,8 @@ describe("PresentationModule - ui:state snapshots", () => {
         main: { kind: "starting" },
         theme: "dark",
         mode: "dialog",
+        dialogs: [],
+        notifications: [],
       },
     ]);
     const logger = deps.loggingService.getLogger("presenter");
@@ -324,6 +333,8 @@ describe("PresentationModule - ui:state snapshots", () => {
       main: { kind: "creation" },
       theme: "dark",
       mode: "hover",
+      dialogs: [],
+      notifications: [],
     });
   });
 
@@ -364,6 +375,8 @@ describe("PresentationModule - ui:state snapshots", () => {
       main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
       theme: "dark",
       mode: "workspace",
+      dialogs: [],
+      notifications: [],
     });
   });
 
@@ -772,14 +785,23 @@ describe("PresentationModule - shutdown", () => {
     dispatcher.registerModule(presentationModule);
     dispatcher.registerModule(quitModule);
 
-    expect(deps.ipcLayer._getListeners(ApiIpcChannels.UI_EVENT)).toHaveLength(1);
+    // The presenter is listening: connect, then a hover event triggers a push.
+    connect(deps);
+    await flush();
+    emitUiEvent(deps, { kind: "hover", region: "sidebar" });
+    await flush();
+    const pushesBefore = snapshots(deps).length;
+    expect(pushesBefore).toBeGreaterThan(0);
 
     await dispatcher.dispatch({
       type: INTENT_APP_SHUTDOWN,
       payload: {},
     } as AppShutdownIntent);
 
-    expect(deps.ipcLayer._getListeners(ApiIpcChannels.UI_EVENT)).toHaveLength(0);
+    // After shutdown the ui:event listener is removed: further events do nothing.
+    emitUiEvent(deps, { kind: "hover", region: null });
+    await flush();
+    expect(snapshots(deps).length).toBe(pushesBefore);
   });
 });
 
@@ -805,10 +827,9 @@ describe("PresentationModule - ui:event routing", () => {
     const dispatched = recordDispatches(deps);
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "ui-connected" });
+    emitUiEvent(deps, { kind: "ui-connected" });
 
     // app:ready is dispatched by the app:start `start` hook now, not here.
-    expect(deps.notificationManager.markUIReady).toHaveBeenCalledTimes(1);
     expect(dispatched).toEqual([]);
     // The boot splash flushed immediately so the renderer isn't blank.
     expect(snapshots(deps)).toHaveLength(1);
@@ -822,7 +843,7 @@ describe("PresentationModule - ui:event routing", () => {
     const workspace = makeWorkspace("main");
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "remove-workspace",
       key: `${PROJECT_ID}/main`,
     });
@@ -847,7 +868,7 @@ describe("PresentationModule - ui:event routing", () => {
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "remove-workspace",
       key: `${PROJECT_ID}/vanished`,
     });
@@ -869,7 +890,7 @@ describe("PresentationModule - ui:event routing", () => {
       projectPath: PROJECT_PATH,
     });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "remove-workspace",
       key: `${PROJECT_ID}/feat`,
     });
@@ -884,7 +905,7 @@ describe("PresentationModule - ui:event routing", () => {
     const workspace = makeWorkspace("main");
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "switch-workspace",
       key: `${PROJECT_ID}/main`,
     });
@@ -899,7 +920,7 @@ describe("PresentationModule - ui:event routing", () => {
     const dispatched = recordDispatches(deps);
     await startModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "switch-workspace", key: null });
+    emitUiEvent(deps, { kind: "switch-workspace", key: null });
 
     expect(dispatched).toEqual([{ type: "workspace:switch", payload: { workspacePath: null } }]);
   });
@@ -910,7 +931,7 @@ describe("PresentationModule - ui:event routing", () => {
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "switch-workspace",
       key: `${PROJECT_ID}/vanished`,
     });
@@ -929,7 +950,7 @@ describe("PresentationModule - ui:event routing", () => {
     const workspace = makeWorkspace("main", { metadata: { hibernated: "true" } });
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "wake-workspace",
       key: `${PROJECT_ID}/main`,
     });
@@ -945,7 +966,7 @@ describe("PresentationModule - ui:event routing", () => {
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "wake-workspace",
       key: `${PROJECT_ID}/vanished`,
     });
@@ -963,7 +984,7 @@ describe("PresentationModule - ui:event routing", () => {
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([]) });
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "close-project",
       projectId: PROJECT_ID,
     });
@@ -981,7 +1002,7 @@ describe("PresentationModule - ui:event routing", () => {
     const dispatched = recordDispatches(deps);
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, {
+    emitUiEvent(deps, {
       kind: "close-project",
       projectId: "ghost-00000000",
     });
@@ -1116,7 +1137,7 @@ describe("PresentationModule - startup flow", () => {
     });
 
     // The user picks opencode; the parked hook resolves.
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "agent-selected", agent: "opencode" });
+    emitUiEvent(deps, { kind: "agent-selected", agent: "opencode" });
     await pending;
 
     // provides() exposes the chosen agent as the agentType capability.
@@ -1177,7 +1198,7 @@ describe("PresentationModule - startup flow", () => {
     void result.waitForRetry!().then(() => {
       resolved = true;
     });
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "setup-retry" });
+    emitUiEvent(deps, { kind: "setup-retry" });
     await flush();
 
     expect(resolved).toBe(true);
@@ -1194,7 +1215,7 @@ describe("PresentationModule - startup flow", () => {
     } as unknown as Deps["dispatcher"];
     createPresentationModule(deps);
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "setup-quit" });
+    emitUiEvent(deps, { kind: "setup-quit" });
 
     expect(dispatched).toEqual([{ type: "app:shutdown", payload: {} }]);
   });
@@ -1229,6 +1250,8 @@ describe("PresentationModule - close confirm", () => {
     input: { remoteUrl?: string; workspaceCount?: number }
   ): Promise<CloseConfirmHookResult> {
     const module = createPresentationModule(deps);
+    // Open the snapshot stream so the confirm dialog appears in ui:state.
+    connect(deps);
     const workspaces = Array.from({ length: input.workspaceCount ?? 2 }, (_, i) => ({
       path: `${PROJECT_PATH}/.worktrees/ws${i + 1}`,
     }));
@@ -1266,56 +1289,84 @@ describe("PresentationModule - close confirm", () => {
     ).find((s) => s.type === "checkbox" && s.id === id);
   }
 
+  // The presenter owns the dialog now; read it from the snapshot and drive user
+  // interactions via dialog ui:events (routed to the internal session by id).
+  type SnapshotDialog = { id: string; config: { sections: readonly unknown[]; modal?: boolean } };
+  function currentDialog(deps: Deps): SnapshotDialog {
+    const dialogs = lastSnapshot(deps).dialogs;
+    expect(dialogs.length).toBeGreaterThan(0);
+    return dialogs[dialogs.length - 1]! as unknown as SnapshotDialog;
+  }
+  function action(deps: Deps, id: string, actionId: string, data?: Record<string, string>): void {
+    emitUiEvent(deps, { kind: "dialog-action", dialogId: id, actionId, ...(data && { data }) });
+  }
+  function change(deps: Deps, id: string, fieldId: string, data: Record<string, string>): void {
+    emitUiEvent(deps, { kind: "dialog-change", dialogId: id, fieldId, data });
+  }
+  function dismiss(deps: Deps, id: string): void {
+    emitUiEvent(deps, { kind: "dialog-dismiss", dialogId: id });
+  }
+  /** After a close, the dialog is removed from the snapshot. */
+  async function expectClosed(deps: Deps): Promise<void> {
+    await flush();
+    expect(lastSnapshot(deps).dialogs).toEqual([]);
+  }
+
   it("local project: workspace count, remove-all checkbox, Close Project button", async () => {
     const deps = createDeps();
     const pending = runConfirm(deps, { workspaceCount: 2 });
-    const handle = deps.dialogs.lastHandle!;
+    await flush();
+    const dialog = currentDialog(deps);
 
-    expect(handle.config.modal).toBe(true);
-    const texts = (handle.config.sections as Array<{ type: string; content?: string }>)
+    expect(dialog.config.modal).toBe(true);
+    const texts = (dialog.config.sections as Array<{ type: string; content?: string }>)
       .filter((s) => s.type === "text")
       .map((s) => s.content);
     expect(texts).toContain("Close Project");
     expect(texts).toContain(
       "This project has 2 workspaces that will remain on disk after closing."
     );
-    expect(checkbox(handle.config, "remove-all")).toMatchObject({ value: false });
-    expect(checkbox(handle.config, "keep-repo")).toBeUndefined();
-    expect(buttonLabel(handle.config)).toBe("Close Project");
+    expect(checkbox(dialog.config, "remove-all")).toMatchObject({ value: false });
+    expect(checkbox(dialog.config, "keep-repo")).toBeUndefined();
+    expect(buttonLabel(dialog.config)).toBe("Close Project");
 
-    handle.emitAction("close");
+    action(deps, dialog.id, "close");
     await expect(pending).resolves.toEqual({ removeAll: false, removeLocalRepo: false });
-    expect(handle.closed).toBe(true);
+    await expectClosed(deps);
   });
 
   it("checking remove-all updates the warning and button label, and submits removeAll", async () => {
     const deps = createDeps();
     const pending = runConfirm(deps, { workspaceCount: 1 });
-    const handle = deps.dialogs.lastHandle!;
+    await flush();
+    let dialog = currentDialog(deps);
 
-    handle.emitChange("remove-all", { "remove-all": "true" });
+    change(deps, dialog.id, "remove-all", { "remove-all": "true" });
+    await flush();
+    dialog = currentDialog(deps);
 
-    expect(buttonLabel(handle.config)).toBe("Remove & Close");
-    const texts = (handle.config.sections as Array<{ type: string; content?: string }>)
+    expect(buttonLabel(dialog.config)).toBe("Remove & Close");
+    const texts = (dialog.config.sections as Array<{ type: string; content?: string }>)
       .filter((s) => s.type === "text")
       .map((s) => s.content);
     expect(texts).toContain(
       "All workspaces and their branches will be removed, including any uncommitted changes."
     );
 
-    handle.emitAction("close");
+    action(deps, dialog.id, "close");
     await expect(pending).resolves.toEqual({ removeAll: true, removeLocalRepo: false });
   });
 
   it("remote project defaults to deleting the repo (remove-all forced + disabled)", async () => {
     const deps = createDeps();
     const pending = runConfirm(deps, { remoteUrl: "https://example.com/repo.git" });
-    const handle = deps.dialogs.lastHandle!;
+    await flush();
+    const dialog = currentDialog(deps);
 
-    expect(checkbox(handle.config, "remove-all")).toMatchObject({ value: true, disabled: true });
-    expect(checkbox(handle.config, "keep-repo")).toMatchObject({ value: false });
-    expect(buttonLabel(handle.config)).toBe("Delete & Close");
-    const texts = (handle.config.sections as Array<{ type: string; content?: string }>)
+    expect(checkbox(dialog.config, "remove-all")).toMatchObject({ value: true, disabled: true });
+    expect(checkbox(dialog.config, "keep-repo")).toMatchObject({ value: false });
+    expect(buttonLabel(dialog.config)).toBe("Delete & Close");
+    const texts = (dialog.config.sections as Array<{ type: string; content?: string }>)
       .filter((s) => s.type === "text")
       .map((s) => s.content);
     expect(
@@ -1324,39 +1375,44 @@ describe("PresentationModule - close confirm", () => {
       )
     ).toBe(true);
 
-    handle.emitAction("close");
+    action(deps, dialog.id, "close");
     await expect(pending).resolves.toEqual({ removeAll: true, removeLocalRepo: true });
   });
 
   it("keeping the cloned repository withdraws the implied remove-all (interlock)", async () => {
     const deps = createDeps();
     const pending = runConfirm(deps, { remoteUrl: "https://example.com/repo.git" });
-    const handle = deps.dialogs.lastHandle!;
+    await flush();
+    let dialog = currentDialog(deps);
 
-    handle.emitChange("keep-repo", { "keep-repo": "true", "remove-all": "true" });
+    change(deps, dialog.id, "keep-repo", { "keep-repo": "true", "remove-all": "true" });
+    await flush();
+    dialog = currentDialog(deps);
 
-    expect(checkbox(handle.config, "remove-all")).toMatchObject({ value: false });
-    expect(checkbox(handle.config, "remove-all")!.disabled).toBeFalsy();
-    expect(buttonLabel(handle.config)).toBe("Close Project");
+    expect(checkbox(dialog.config, "remove-all")).toMatchObject({ value: false });
+    expect(checkbox(dialog.config, "remove-all")!.disabled).toBeFalsy();
+    expect(buttonLabel(dialog.config)).toBe("Close Project");
 
-    handle.emitAction("close");
+    action(deps, dialog.id, "close");
     await expect(pending).resolves.toEqual({ removeAll: false, removeLocalRepo: false });
   });
 
   it("Cancel and Escape resolve canceled", async () => {
     const deps = createDeps();
     const viaCancel = runConfirm(deps, {});
-    const cancelHandle = deps.dialogs.lastHandle!;
-    cancelHandle.emitAction("cancel");
+    await flush();
+    const cancel = currentDialog(deps);
+    action(deps, cancel.id, "cancel");
     await expect(viaCancel).resolves.toEqual({ canceled: true });
-    expect(cancelHandle.closed).toBe(true);
+    await expectClosed(deps);
 
     const deps2 = createDeps();
     const viaDismiss = runConfirm(deps2, {});
-    const dismissHandle = deps2.dialogs.lastHandle!;
-    dismissHandle.emitDismiss();
+    await flush();
+    const dismissDialog = currentDialog(deps2);
+    dismiss(deps2, dismissDialog.id);
     await expect(viaDismiss).resolves.toEqual({ canceled: true });
-    expect(dismissHandle.closed).toBe(true);
+    await expectClosed(deps2);
   });
 });
 
@@ -1399,11 +1455,11 @@ describe("PresentationModule - UI mode", () => {
     await flush();
     expect(mode(deps)).toBe("workspace");
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: "sidebar" });
+    emitUiEvent(deps, { kind: "hover", region: "sidebar" });
     await flush();
     expect(mode(deps)).toBe("hover");
 
-    deps.ipcLayer._emit(ApiIpcChannels.UI_EVENT, { kind: "hover", region: null });
+    emitUiEvent(deps, { kind: "hover", region: null });
     await flush();
     expect(mode(deps)).toBe("workspace");
   });
@@ -1417,7 +1473,7 @@ describe("PresentationModule - UI mode", () => {
     expect(mode(deps)).toBe("hover");
 
     // Open a modal dialog → dialogModalOpen flips the mode to "dialog".
-    deps.dialogManager.open({ sections: [], modal: true });
+    module.dialog({ sections: [], modal: true });
     await flush();
     expect(mode(deps)).toBe("dialog");
   });
@@ -1427,7 +1483,7 @@ describe("PresentationModule - UI mode", () => {
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("main")]) });
 
-    deps.dialogManager.open({ sections: [], modal: true });
+    module.dialog({ sections: [], modal: true });
     await emit(module, EVENT_SHORTCUT_ACTIVE_CHANGED, { active: true });
     await flush();
     expect(mode(deps)).toBe("shortcut");
@@ -1446,7 +1502,7 @@ describe("PresentationModule - UI mode", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     await flush();
 
-    deps.dialogManager.open({ sections: [] }, { surface: "panel" });
+    module.dialog({ sections: [] }, { surface: "panel" });
     await flush();
     expect(mode(deps)).toBe("workspace");
   });

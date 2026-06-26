@@ -36,7 +36,6 @@ import {
   PersistedValidationError,
 } from "./boundaries/platform/store-definition";
 // Boundaries - Shell
-import { DefaultIpcBoundary } from "./boundaries/shell/ipc";
 import { DefaultAppBoundary } from "./boundaries/shell/app";
 import { DefaultImageBoundary } from "./boundaries/shell/image";
 import { DefaultDialogBoundary } from "./boundaries/shell/dialog";
@@ -192,10 +191,7 @@ import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
 import { createThemeModule } from "./modules/theme-module";
 import { createDebugModule } from "./modules/debug-module";
-import { createUiIpcModule } from "./modules/ui-ipc-module";
 import { createPresentationModule } from "./modules/presentation-module";
-import { DialogManager } from "./modules/dialog-manager";
-import { NotificationManager } from "./modules/notification-manager";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
@@ -305,7 +301,6 @@ const windowLayer = new DefaultWindowBoundary(
 const viewLayer = new DefaultViewBoundary(windowLayer, loggingService.createLogger("view"));
 const sessionLayer = new DefaultSessionBoundary(loggingService.createLogger("view"));
 const appLayer = new DefaultAppBoundary(loggingService.createLogger("badge"));
-const ipcLayer = new DefaultIpcBoundary();
 
 // 4. Service construction
 
@@ -468,10 +463,20 @@ const idempotencyModule = createIdempotencyModule([
 
 const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}`;
 
-const dialogManager = new DialogManager(viewManager.sendToUI.bind(viewManager), apiLogger);
-const notificationManager = new NotificationManager(viewManager, apiLogger);
-const cloneNotificationModule = createCloneNotificationModule({ notificationManager });
-const errorNotificationModule = createErrorNotificationModule({ notificationManager });
+// The UI presenter owns the whole ui:state snapshot and both directions of the
+// UI-view IPC. It privately owns the dialog/notification registries and exposes
+// .dialog()/.notification() for any module to inject. Constructed early so the
+// consumer modules below can take it as `ui`.
+const presentationModule = createPresentationModule({
+  loggingService,
+  viewManager,
+  windowManager,
+  fileSystem: fileSystemLayer,
+  pathProvider,
+  dispatcher,
+});
+const cloneNotificationModule = createCloneNotificationModule({ ui: presentationModule });
+const errorNotificationModule = createErrorNotificationModule({ ui: presentationModule });
 
 const viewModule = createViewModule({
   viewManager,
@@ -618,7 +623,7 @@ const autoUpdaterLifecycleModule = createAutoUpdaterModule({
   configService,
   stateService,
   stateMigrations,
-  notificationManager,
+  ui: presentationModule,
 });
 // State module — loads state.json and drains the migration registry in
 // app:start/init. Constructed after the modules that contribute migrations.
@@ -631,7 +636,7 @@ const localProjectModule = createLocalProjectModule({
   projectsDir: pathProvider.dataPath("projects").toString(),
   fs: fileSystemLayer,
   gitWorktreeProvider,
-  dialogManager,
+  ui: presentationModule,
   gitClient,
 });
 const remoteProjectModule = createRemoteProjectModule({
@@ -657,12 +662,12 @@ const powerModule = createPowerModule({
   logger: loggingService.createLogger("power"),
 });
 const deletionDialogModule = createDeletionDialogModule({
-  dialogManager,
+  ui: presentationModule,
   dispatcher,
   logger: apiLogger,
 });
 const creationModule = createCreationModule({
-  dialogManager,
+  ui: presentationModule,
   dispatcher,
   appBoundary: appLayer,
   agentConfig,
@@ -733,7 +738,7 @@ const shortcutModule = createShortcutModule({
   viewManager,
   windowLayer,
   windowManager,
-  dialogManager,
+  ui: presentationModule,
   dispatcher,
   logger: loggingService.createLogger("shortcut"),
 });
@@ -748,10 +753,10 @@ const themeModule = createThemeModule({
   windowManager,
 });
 
-const debugModule = createDebugModule({ configService, notificationManager });
+const debugModule = createDebugModule({ configService, ui: presentationModule });
 
 const errorReportModule = createErrorReportModule({
-  dialogManager,
+  ui: presentationModule,
   fileSystem: fileSystemLayer,
   loggingService,
   dispatcher,
@@ -863,31 +868,6 @@ dispatcher.subscribe(EVENT_WORKSPACE_SWITCHED, (event) => {
     });
 });
 
-// Create UI IPC module (handles all bidirectional IPC between main and renderer)
-const uiIpcModule = createUiIpcModule({
-  ipcLayer,
-  viewManager,
-  logger: apiLogger,
-  dispatcher,
-  dialogManager,
-  notificationManager,
-});
-
-// Create presentation module (owns the api:ui:event + api:ui:state channels;
-// Phases A+B of the UI-state architecture — event intake, renderer log
-// routing, shadow UiState snapshots)
-const presentationModule = createPresentationModule({
-  ipcLayer,
-  loggingService,
-  viewManager,
-  windowManager,
-  fileSystem: fileSystemLayer,
-  pathProvider,
-  dialogManager,
-  dispatcher,
-  notificationManager,
-});
-
 const hibernationScreenshotModule = createHibernationScreenshotModule({
   fileSystem: fileSystemLayer,
   pathProvider,
@@ -935,7 +915,6 @@ dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);
 dispatcher.registerModule(hibernationScreenshotModule);
-dispatcher.registerModule(uiIpcModule);
 dispatcher.registerModule(presentationModule);
 
 // Load config (sync — reads config.json, env vars, CLI args)

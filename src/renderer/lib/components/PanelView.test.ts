@@ -22,7 +22,24 @@ vi.mock("$lib/api", () => ({
 
 // Import after mock setup
 import PanelView from "./PanelView.svelte";
-import { processCommand, reset as resetDialogs } from "$lib/stores/dialog-framework.svelte";
+import { setUiState, resetUiState } from "$lib/stores/ui-state.svelte.js";
+import type { UiDialog, UiState } from "@shared/ui-state";
+
+/** Push a snapshot carrying the given open dialogs (drives PanelView's
+ *  "modal stacked above" detection). */
+function setDialogs(dialogs: UiDialog[]): void {
+  setUiState({
+    sidebar: { projects: [] },
+    frames: {},
+    main: { kind: "creation" },
+    theme: "dark",
+    mode: "hover",
+    dialogs,
+    notifications: [],
+  } satisfies UiState);
+}
+const modal = (id: string): UiDialog => ({ id, surface: "modal", config: { sections: [] } });
+const panelDlg = (id: string): UiDialog => ({ id, surface: "panel", config: { sections: [] } });
 
 function createConfig(overrides?: Partial<DialogConfig>): DialogConfig {
   return {
@@ -49,7 +66,7 @@ function renderPanel(config: DialogConfig, dialogId = "panel-1") {
 describe("PanelView component (panel surface)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetDialogs();
+    resetUiState();
   });
 
   afterEach(() => {
@@ -93,12 +110,12 @@ describe("PanelView component (panel surface)", () => {
       await waitFor(() => expect(document.activeElement).toBe(textarea));
 
       // A modal opens above the panel and takes focus elsewhere.
-      processCommand({ action: "open", dialogId: "modal-1", config: { sections: [] } });
+      setDialogs([modal("modal-1")]);
       textarea.blur();
       await waitFor(() => expect(document.activeElement).not.toBe(textarea));
 
       // Modal closes — the panel is the active surface again.
-      processCommand({ action: "close", dialogId: "modal-1" });
+      setDialogs([]);
 
       await waitFor(() => expect(document.activeElement).toBe(textarea));
     });
@@ -108,12 +125,11 @@ describe("PanelView component (panel surface)", () => {
       const textarea = document.querySelector("textarea")!;
       await waitFor(() => expect(document.activeElement).toBe(textarea));
 
-      processCommand({ action: "open", dialogId: "modal-1", config: { sections: [] } });
-      processCommand({ action: "open", dialogId: "modal-2", config: { sections: [] } });
+      setDialogs([modal("modal-1"), modal("modal-2")]);
       textarea.blur();
 
       // Only one of the two modals closes.
-      processCommand({ action: "close", dialogId: "modal-1" });
+      setDialogs([modal("modal-2")]);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       expect(document.activeElement).not.toBe(textarea);
@@ -124,14 +140,9 @@ describe("PanelView component (panel surface)", () => {
       const textarea = document.querySelector("textarea")!;
       await waitFor(() => expect(document.activeElement).toBe(textarea));
 
-      processCommand({
-        action: "open",
-        dialogId: "panel-x",
-        config: { sections: [] },
-        surface: "panel",
-      });
+      setDialogs([panelDlg("panel-x")]);
       textarea.blur();
-      processCommand({ action: "close", dialogId: "panel-x" });
+      setDialogs([]);
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // No modal ever closed above the panel — focus is left alone.

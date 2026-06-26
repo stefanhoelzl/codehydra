@@ -32,7 +32,6 @@ import type { DomainEvent } from "../intents/lib/types";
 import type { HookContext } from "../intents/lib/operation";
 import { ANY_VALUE } from "../intents/lib/operation";
 import type { IDispatcher } from "../intents/lib/dispatcher";
-import type { IpcBoundary, IpcEventHandler } from "../boundaries/shell/ipc";
 import type { Logging, LoggerName, LogContext } from "../boundaries/platform/logging";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { PathProvider } from "../boundaries/platform/path-provider";
@@ -107,7 +106,7 @@ import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../intents/wake
 import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../shared/shortcuts";
 import type { UIMode } from "../shared/ipc";
 import { ApiIpcChannels } from "../shared/ipc";
-import type { DialogConfig, DialogSection } from "../shared/dialog-types";
+import type { DialogConfig, DialogSection, DialogSurface } from "../shared/dialog-types";
 import { uiEventSchema } from "../shared/ui-event";
 import {
   compareDisplayNames,
@@ -118,23 +117,37 @@ import {
   type UiWorkspaceRow,
 } from "../shared/ui-state";
 import { buildScreenshotPath } from "./hibernation-screenshot-module";
-import type { DialogManager } from "./dialog-manager";
-import type { NotificationManager } from "./notification-manager";
+import { DialogManager, type DialogHandle } from "./dialog-manager";
+import { NotificationManager, type NotificationHandle } from "./notification-manager";
+import type { NotificationConfig } from "../shared/notification-types";
 import { getErrorMessage } from "../shared/error-utils";
 
 export interface PresentationModuleDeps {
-  readonly ipcLayer: Pick<IpcBoundary, "on" | "removeListener">;
   readonly loggingService: Pick<Logging, "createLogger">;
-  readonly viewManager: Pick<IViewManager, "sendToUI">;
+  readonly viewManager: Pick<IViewManager, "sendToUI" | "onFromUI">;
   readonly windowManager: {
     getTheme(): Theme;
     onThemeChange(callback: (theme: Theme) => void): Unsubscribe;
   };
   readonly fileSystem: Pick<FileSystemBoundary, "readFileBuffer">;
   readonly pathProvider: PathProvider;
-  readonly dialogManager: Pick<DialogManager, "open" | "isModalOpen" | "onModalOpenChange">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
-  readonly notificationManager: Pick<NotificationManager, "markUIReady">;
+}
+
+/**
+ * The UI presenter: an IntentModule that also exposes the imperative
+ * dialog/notification command surface for any module to inject. It is the sole
+ * owner of ui:state and of the UI-view IPC (both directions, via ViewManager),
+ * and privately owns the Dialog/Notification managers whose state it folds into
+ * the snapshot.
+ */
+export interface UiPresenter extends IntentModule {
+  /** Open a dialog (modal card or non-modal panel). Returns a handle. */
+  dialog(config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle;
+  /** Open a sidebar notification. Returns a handle. */
+  notification(config: NotificationConfig): NotificationHandle;
+  /** True while a modal-surface dialog is open (the shortcut-module Alt+X guard). */
+  isModalOpen(): boolean;
 }
 
 /**
@@ -277,8 +290,15 @@ function buildCloseConfirmConfig(
   return { sections, modal: true };
 }
 
-export function createPresentationModule(deps: PresentationModuleDeps): IntentModule {
+export function createPresentationModule(deps: PresentationModuleDeps): UiPresenter {
   const logger = deps.loggingService.createLogger("presenter");
+
+  // The presenter privately owns the dialog/notification registries. They hold
+  // session state and hand out handles; every mutation calls scheduleUpdate so
+  // their getSnapshot() is folded into the next ui:state push. (scheduleUpdate
+  // is a hoisted function declaration below.)
+  const dialogs = new DialogManager(scheduleUpdate, logger);
+  const notifications = new NotificationManager(scheduleUpdate, logger);
 
   // ---------------------------------------------------------------------------
   // State (mirrors the renderer stores' semantics)
@@ -356,14 +376,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
   //     workspace, computed in buildMode() from these four signals.
   /** Alt+X shortcut mode active (owned by shortcut-module, signalled here). */
   let shortcutActive = false;
-  /** A modal-surface dialog is open (queried + subscribed from dialog-manager). */
-  let dialogModalOpen = deps.dialogManager.isModalOpen();
   /** Last settled hover region from the renderer's `hover` ui:event. */
   let hoverRegion: "sidebar" | null = null;
-  const modalUnsubscribe = deps.dialogManager.onModalOpenChange((open) => {
-    dialogModalOpen = open;
-    scheduleUpdate();
-  });
 
   /** Presenter-assigned opaque workspace identity. Never leaves main except inside UiState. */
   function workspaceKey(projectId: string, workspaceName: string): string {
@@ -551,7 +565,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       return "dialog";
     }
     if (shortcutActive) return "shortcut";
-    if (dialogModalOpen) return "dialog";
+    if (dialogs.isModalOpen()) return "dialog";
     if (main.kind === "creation" || hoverRegion === "sidebar") return "hover";
     return "workspace";
   }
@@ -579,7 +593,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     }
 
     const main = buildMain();
-    return { sidebar: { projects: projectRows }, frames, main, theme, mode: buildMode(main) };
+    return {
+      sidebar: { projects: projectRows },
+      frames,
+      main,
+      theme,
+      mode: buildMode(main),
+      dialogs: dialogs.getSnapshot(),
+      notifications: notifications.getSnapshot(),
+    };
   }
 
   function scheduleUpdate(): void {
@@ -633,7 +655,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     });
   }
 
-  const listener: IpcEventHandler = (_event: unknown, ...args: unknown[]) => {
+  const listener = (...args: unknown[]): void => {
     const result = uiEventSchema.safeParse(args[0]);
     if (!result.success) {
       logger.warn("Dropped invalid ui event", {
@@ -649,7 +671,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       // already be set (the genesis "starting" splash, or setup mid-flight),
       // and there is no replay. app:ready is NOT dispatched here: the
       // app:start `start` hook owns that now (after setup completes).
-      deps.notificationManager.markUIReady();
+      // Buffering of pre-connect notifications is handled by this same gate:
+      // their state lives in the snapshot, which only ships once connected.
       connected = true;
       push();
       return;
@@ -739,19 +762,52 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
       scheduleUpdate();
       return;
     }
-    // close-project: the only remaining kind.
-    const project = projects.get(event.projectId);
-    if (!project) {
-      logger.warn("Dropped close-project for unknown project", { projectId: event.projectId });
+    // Dialog/notification user interactions: route to the owning session. The
+    // session owner's listeners (onChange/nextEvent/onEvent) drive any follow-up
+    // (update/close, which schedule a snapshot push of their own).
+    if (event.kind === "dialog-action") {
+      dialogs.routeEvent({
+        kind: "action",
+        dialogId: event.dialogId,
+        actionId: event.actionId,
+        ...(event.data !== undefined && { data: event.data }),
+      });
       return;
     }
-    dispatchDetached({
-      type: INTENT_CLOSE_PROJECT,
-      payload: { projectPath: project.path, interactive: true },
-    });
+    if (event.kind === "dialog-change") {
+      dialogs.routeEvent({
+        kind: "change",
+        dialogId: event.dialogId,
+        fieldId: event.fieldId,
+        data: event.data,
+      });
+      return;
+    }
+    if (event.kind === "dialog-dismiss") {
+      dialogs.routeEvent({ kind: "dismiss", dialogId: event.dialogId });
+      return;
+    }
+    if (event.kind === "notification-event") {
+      notifications.routeEvent({
+        notificationId: event.notificationId,
+        actionId: event.actionId,
+      });
+      return;
+    }
+    if (event.kind === "close-project") {
+      const project = projects.get(event.projectId);
+      if (!project) {
+        logger.warn("Dropped close-project for unknown project", { projectId: event.projectId });
+        return;
+      }
+      dispatchDetached({
+        type: INTENT_CLOSE_PROJECT,
+        payload: { projectPath: project.path, interactive: true },
+      });
+    }
   };
 
-  deps.ipcLayer.on(ApiIpcChannels.UI_EVENT, listener);
+  const unsubscribeFromUI = deps.viewManager.onFromUI(ApiIpcChannels.UI_EVENT, listener);
 
   // ---------------------------------------------------------------------------
   // Shortcut navigation (ported from the renderer's shortcuts store)
@@ -1180,7 +1236,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
     const buildConfig = (): DialogConfig =>
       buildCloseConfirmConfig(state, input.workspaces.length, input.remoteUrl);
 
-    const handle = deps.dialogManager.open(buildConfig());
+    const handle = dialogs.open(buildConfig());
     const unsubscribe = handle.onChange((change) => {
       if (change.fieldId === "remove-all") {
         state.removeAll = change.data["remove-all"] === "true";
@@ -1288,6 +1344,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
 
   return {
     name: "presentation",
+    dialog: (config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle =>
+      dialogs.open(config, options),
+    notification: (config: NotificationConfig): NotificationHandle => notifications.open(config),
+    isModalOpen: (): boolean => dialogs.isModalOpen(),
     events,
     hooks: {
       [APP_START_OPERATION_ID]: {
@@ -1326,8 +1386,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): IntentMo
               retryResolve();
               retryResolve = null;
             }
-            deps.ipcLayer.removeListener(ApiIpcChannels.UI_EVENT, listener);
-            modalUnsubscribe();
+            unsubscribeFromUI();
             if (themeUnsubscribe) {
               themeUnsubscribe();
               themeUnsubscribe = null;

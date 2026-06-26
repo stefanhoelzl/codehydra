@@ -1,20 +1,19 @@
 /**
- * NotificationManager - Backend service for managing sidebar notifications.
+ * NotificationManager - in-process registry of open sidebar notifications.
  *
- * Opens, updates, and closes notifications by sending commands to the renderer via IViewManager.
- * Each notification is tracked via a NotificationHandle that supports updates, event subscriptions,
- * and awaiting user interactions.
+ * Owned privately by the UiPresenter. It holds session state and hands out
+ * NotificationHandles; it does NOT touch IPC. On every mutation
+ * (open/update/close) it calls `notifyChange` (the presenter's coalescing
+ * snapshot scheduler), and the presenter folds `getSnapshot()` into the
+ * ui:state snapshot. The presenter's `connected` gate handles pre-UI buffering
+ * (the snapshot is only pushed once the renderer has connected), so this
+ * manager needs no buffering of its own.
  *
  * Mirrors DialogManager but for lightweight, non-modal sidebar indicators.
  */
 
-import type {
-  NotificationConfig,
-  NotificationCommand,
-  NotificationUserEvent,
-} from "../shared/notification-types";
-import { ApiIpcChannels } from "../shared/ipc";
-import type { IViewManager } from "../boundaries/shell/view-manager.interface";
+import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
+import type { UiNotification } from "../shared/ui-state";
 import type { Logger } from "../boundaries/platform/logging";
 
 /**
@@ -31,25 +30,27 @@ export interface NotificationHandle {
 }
 
 /**
- * NotificationManager sends typed commands to the renderer for notification lifecycle.
- *
- * Commands are buffered until markUIReady() is called: the renderer's
- * NotificationHost only subscribes to notification commands once MainView
- * mounts, so anything sent earlier (e.g. from app:start hooks) would be
- * silently dropped. The buffer is flushed in order when the renderer emits
- * the `ui-connected` ui:event (the presenter calls markUIReady()).
+ * NotificationManager tracks open notification sessions and exposes a
+ * render-ready snapshot. User events arrive via the presenter (notification
+ * ui:events) and are routed to handles.
  */
 export class NotificationManager {
-  private readonly viewManager: IViewManager;
+  private readonly notifyChange: () => void;
   private readonly handles = new Map<string, NotificationHandleImpl>();
   private readonly logger: Logger | undefined;
   private nextId = 1;
-  private uiReady = false;
-  private pendingCommands: NotificationCommand[] = [];
 
-  constructor(viewManager: IViewManager, logger?: Logger) {
-    this.viewManager = viewManager;
+  constructor(notifyChange: () => void, logger?: Logger) {
+    this.notifyChange = notifyChange;
     this.logger = logger;
+  }
+
+  /** Render-ready snapshot of every open notification, in open order. */
+  getSnapshot(): readonly UiNotification[] {
+    return [...this.handles.values()].map((handle) => ({
+      id: handle.id,
+      config: handle.config,
+    }));
   }
 
   /**
@@ -57,50 +58,19 @@ export class NotificationManager {
    */
   open(config: NotificationConfig): NotificationHandle {
     const notificationId = `ntf-${this.nextId++}`;
-    const handle = new NotificationHandleImpl(
-      notificationId,
-      (command) => this.send(command),
-      () => {
-        this.handles.delete(notificationId);
-      }
-    );
+    const handle = new NotificationHandleImpl(notificationId, config, this.notifyChange, () => {
+      this.handles.delete(notificationId);
+    });
     this.handles.set(notificationId, handle);
 
-    this.send({ action: "open", notificationId, config });
+    this.notifyChange();
 
     return handle;
   }
 
   /**
-   * Flush buffered commands and switch to direct delivery. Idempotent.
-   * Called once the renderer's NotificationHost is mounted (on `ui-connected`).
-   * Notifications that were already closed while buffered are skipped entirely.
-   */
-  markUIReady(): void {
-    if (this.uiReady) return;
-    this.uiReady = true;
-    const buffered = this.pendingCommands;
-    this.pendingCommands = [];
-    const closedIds = new Set(
-      buffered.filter((c) => c.action === "close").map((c) => c.notificationId)
-    );
-    for (const command of buffered) {
-      if (closedIds.has(command.notificationId)) continue;
-      this.viewManager.sendToUI(ApiIpcChannels.NOTIFICATION_COMMAND, command);
-    }
-  }
-
-  private send(command: NotificationCommand): void {
-    if (!this.uiReady) {
-      this.pendingCommands.push(command);
-      return;
-    }
-    this.viewManager.sendToUI(ApiIpcChannels.NOTIFICATION_COMMAND, command);
-  }
-
-  /**
-   * Route an incoming user event from IPC to the correct handle.
-   * Called by the IPC bridge when api:notification:event arrives.
+   * Route an incoming user event to the correct handle.
+   * Called by the presenter when a notification ui:event arrives.
    */
   routeEvent(event: NotificationUserEvent): void {
     const handle = this.handles.get(event.notificationId);
@@ -121,28 +91,38 @@ export class NotificationManager {
 class NotificationHandleImpl implements NotificationHandle {
   readonly id: string;
 
-  private readonly send: (command: NotificationCommand) => void;
+  /** Current render config — read by NotificationManager.getSnapshot(). */
+  config: NotificationConfig;
+
+  private readonly notifyChange: () => void;
   private readonly onRemove: () => void;
   private readonly listeners = new Set<(event: NotificationUserEvent) => void>();
   private isClosed = false;
 
-  constructor(id: string, send: (command: NotificationCommand) => void, onRemove: () => void) {
+  constructor(
+    id: string,
+    config: NotificationConfig,
+    notifyChange: () => void,
+    onRemove: () => void
+  ) {
     this.id = id;
-    this.send = send;
+    this.config = config;
+    this.notifyChange = notifyChange;
     this.onRemove = onRemove;
   }
 
   update(config: NotificationConfig): void {
     if (this.isClosed) return;
-    this.send({ action: "update", notificationId: this.id, config });
+    this.config = config;
+    this.notifyChange();
   }
 
   close(): void {
     if (this.isClosed) return;
     this.isClosed = true;
-    this.send({ action: "close", notificationId: this.id });
-    this.listeners.clear();
     this.onRemove();
+    this.listeners.clear();
+    this.notifyChange();
   }
 
   onEvent(handler: (event: NotificationUserEvent) => void): () => void {

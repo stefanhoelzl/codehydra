@@ -7,8 +7,6 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { ApiIpcChannels } from "../shared/ipc";
 import type { UiEvent } from "../shared/ui-event";
 import type { UiState } from "../shared/ui-state";
-import type { DialogUserEvent } from "../shared/dialog-types";
-import type { NotificationUserEvent } from "../shared/notification-types";
 
 /**
  * Function to unsubscribe from an event.
@@ -31,22 +29,9 @@ contextBridge.exposeInMainWorld("api", {
   // ============ API (api: prefixed channels) ============
   // Renderer→main gestures are fire-and-forget ui:events (emitEvent) and the
   // dialog/notification framework events below; there are no invoke commands.
-  // main→renderer state arrives on onState (api:ui:state).
+  // main→renderer state arrives on onState (api:ui:state). Dialog/notification
+  // user interactions are carried as ui:event kinds via emitEvent.
 
-  /**
-   * Send dialog user event to main process.
-   * Used when the user interacts with a declarative dialog (clicks an action button).
-   */
-  sendDialogEvent: (event: DialogUserEvent) => {
-    ipcRenderer.send(ApiIpcChannels.DIALOG_EVENT, event);
-  },
-  /**
-   * Send notification user event to main process.
-   * Used when the user interacts with a sidebar notification (dismiss or action button).
-   */
-  sendNotificationEvent: (event: NotificationUserEvent) => {
-    ipcRenderer.send(ApiIpcChannels.NOTIFICATION_EVENT, event);
-  },
   /**
    * Emit a UI event to the main process (renderer → main, fire-and-forget).
    * Validated with zod on the main side; invalid events are dropped there.

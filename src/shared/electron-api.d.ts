@@ -3,8 +3,6 @@
  * This file is in shared/ so both main/preload and renderer can access the types.
  */
 
-import type { DialogUserEvent } from "./dialog-types";
-import type { NotificationUserEvent } from "./notification-types";
 import type { UiEvent } from "./ui-event";
 import type { UiState } from "./ui-state";
 
@@ -56,20 +54,6 @@ export interface Api {
    * Fired once on startup with the initial theme and again whenever the OS theme changes.
    */
   onTheme(callback: (theme: "dark" | "light") => void): Unsubscribe;
-
-  /**
-   * Send dialog user event to main process.
-   * Used when the user interacts with a declarative dialog (clicks an action button).
-   * Fire-and-forget - does not return a promise.
-   */
-  sendDialogEvent(event: DialogUserEvent): void;
-
-  /**
-   * Send notification user event to main process.
-   * Used when the user interacts with a sidebar notification (dismiss or action button).
-   * Fire-and-forget - does not return a promise.
-   */
-  sendNotificationEvent(event: NotificationUserEvent): void;
 }
 
 declare global {

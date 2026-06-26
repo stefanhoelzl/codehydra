@@ -177,7 +177,7 @@ async function createHarness(modalOpen = false): Promise<TestHarness> {
     viewManager: viewManager as unknown as ShortcutModuleDeps["viewManager"],
     windowLayer,
     windowManager: { getWindowHandle: () => createWindowHandle() },
-    dialogManager: dialogManager as unknown as ShortcutModuleDeps["dialogManager"],
+    ui: dialogManager as unknown as ShortcutModuleDeps["ui"],
     dispatcher: { dispatch: dispatchSpy } as unknown as ShortcutModuleDeps["dispatcher"],
     logger: SILENT_LOGGER,
   });

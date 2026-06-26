@@ -1,80 +1,52 @@
 /**
- * Dialog framework store using Svelte 5 runes.
- * Manages active dialogs driven by the backend via IPC commands.
- * This is a pure state container - IPC subscriptions are handled by DialogHost.
+ * Dialog framework store: a read-only view over the open dialog sessions in the
+ * ui:state snapshot. The backend (UiPresenter) owns dialog lifecycle entirely;
+ * the renderer renders this derived view and echoes user interactions back as
+ * ui:events. There is no local mutation — dialogs appear/update/disappear only
+ * as the snapshot changes.
  */
 
 import { SvelteMap } from "svelte/reactivity";
-import type { DialogConfig, DialogCommand, DialogSurface } from "@shared/dialog-types";
+import type { DialogConfig, DialogSurface } from "@shared/dialog-types";
+import { uiState } from "./ui-state.svelte.js";
 
 // ============ Types ============
 
 export interface DialogEntry {
   readonly dialogId: string;
   readonly config: DialogConfig;
-  /** Hosting surface, pinned from the open command — updates cannot change it. */
+  /** Hosting surface, pinned by the backend when the session opened. */
   readonly surface: DialogSurface;
 }
 
-// ============ State ============
-
-const _dialogs = new SvelteMap<string, DialogEntry>();
-
-// ============ Actions ============
-
-/**
- * Process a dialog command from the main process.
- * - open: add dialog to the map (surface defaults to "modal")
- * - update: replace config for existing dialog (surface is preserved)
- * - close: remove dialog from the map
- */
-export function processCommand(command: DialogCommand): void {
-  switch (command.action) {
-    case "open":
-      _dialogs.set(command.dialogId, {
-        dialogId: command.dialogId,
-        config: command.config,
-        surface: command.surface ?? "modal",
-      });
-      break;
-    case "update": {
-      const existing = _dialogs.get(command.dialogId);
-      if (existing) {
-        _dialogs.set(command.dialogId, {
-          dialogId: command.dialogId,
-          config: command.config,
-          surface: existing.surface,
-        });
-      }
-      break;
-    }
-    case "close":
-      _dialogs.delete(command.dialogId);
-      break;
-  }
+function snapshotEntries(): DialogEntry[] {
+  return (uiState.value?.dialogs ?? []).map((d) => ({
+    dialogId: d.id,
+    config: d.config,
+    surface: d.surface,
+  }));
 }
 
 // ============ Reactive Getters ============
 
 /**
- * Reactive access to all active dialogs.
+ * Reactive access to all open dialogs, keyed by id (in open order).
  */
 export const dialogs = {
   get value(): ReadonlyMap<string, DialogEntry> {
-    return _dialogs;
+    return new SvelteMap(snapshotEntries().map((entry) => [entry.dialogId, entry]));
   },
 };
 
 /**
  * Reactive access to the active panel-surface session, or undefined.
  * The panel occupies the whole content area, so at most one is shown; if
- * several are open, the most recently opened wins (SvelteMap preserves
- * insertion order).
+ * several are open, the most recently opened wins (snapshot order).
  */
 export const panelDialog = {
   get value(): DialogEntry | undefined {
     let latest: DialogEntry | undefined;
-    for (const entry of _dialogs.values()) {
+    for (const entry of snapshotEntries()) {
       if (entry.surface === "panel") {
         latest = entry;
       }
@@ -82,10 +54,3 @@ export const panelDialog = {
     return latest;
   },
 };
-
-/**
- * Reset store to initial state. Used for testing.
- */
-export function reset(): void {
-  _dialogs.clear();
-}

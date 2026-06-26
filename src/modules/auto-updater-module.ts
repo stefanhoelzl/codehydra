@@ -39,7 +39,8 @@ import type { StateService } from "../boundaries/platform/state-service";
 import type { StateMigrationRegistry } from "./state-module";
 import type { AutoUpdater } from "./auto-updater";
 import type { Dispatcher } from "../intents/lib/dispatcher";
-import type { NotificationManager, NotificationHandle } from "./notification-manager";
+import type { NotificationHandle } from "./notification-manager";
+import type { UiPresenter } from "./presentation-module";
 import type { NotificationConfig, NotificationUserEvent } from "../shared/notification-types";
 
 /** How often to re-check for updates while the app is running. */
@@ -53,7 +54,7 @@ interface AutoUpdaterModuleDeps {
   readonly stateService: StateService;
   /** Registry the state module drains to migrate dismissed-version out of config.json. */
   readonly stateMigrations: StateMigrationRegistry;
-  readonly notificationManager: NotificationManager;
+  readonly ui: Pick<UiPresenter, "notification">;
 }
 
 function availableConfig(version: string): NotificationConfig {
@@ -170,7 +171,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
     notificationState = "downloading";
 
     if (notification === null) {
-      notification = deps.notificationManager.open(downloadingConfig(version, 0));
+      notification = deps.ui.notification(downloadingConfig(version, 0));
       notification.onEvent(handleNotificationEvent);
     } else {
       notification.update(downloadingConfig(version, 0));
@@ -208,7 +209,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   function showAvailableNotification(version: string): void {
     notificationState = "available";
     if (notification === null) {
-      notification = deps.notificationManager.open(availableConfig(version));
+      notification = deps.ui.notification(availableConfig(version));
       notification.onEvent(handleNotificationEvent);
     } else {
       notification.update(availableConfig(version));
