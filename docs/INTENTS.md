@@ -403,21 +403,28 @@ const idempotencyModule = createIdempotencyModule([
 
 ---
 
-## IPC-to-Intent Mapping
+## UI-event-to-Intent Mapping
 
-IPC channels map directly to intents through `UiIpcModule`. There are no separate API interfaces -- each IPC handler creates a typed intent and dispatches it:
+There are no per-feature IPC channels. The renderer emits fire-and-forget
+`ui:events` on the single `api:ui:event` channel; the **presenter**
+(`PresentationModule`) zod-validates each, resolves its opaque snapshot identity
+(row `key`, `projectId`, `dialogId`) against its own model, and dispatches the
+matching intent — with `interactive: true` for flows that may park on a
+confirmation dialog:
 
-| IPC Channel            | Intent Type        | Operation                |
-| ---------------------- | ------------------ | ------------------------ |
-| `api:project:open`     | `project:open`     | OpenProjectOperation     |
-| `api:project:close`    | `project:close`    | CloseProjectOperation    |
-| `api:workspace:create` | `workspace:open`   | OpenWorkspaceOperation   |
-| `api:workspace:remove` | `workspace:delete` | DeleteWorkspaceOperation |
-| `api:workspace:switch` | `workspace:switch` | SwitchWorkspaceOperation |
-| `api:ui:set-mode`      | `ui:setMode`       | SetModeOperation         |
-| `api:lifecycle:quit`   | `app:shutdown`     | AppShutdownOperation     |
+| `ui:event` kind    | Intent Type        | Operation                |
+| ------------------ | ------------------ | ------------------------ |
+| `switch-workspace` | `workspace:switch` | SwitchWorkspaceOperation |
+| `remove-workspace` | `workspace:delete` | DeleteWorkspaceOperation |
+| `close-project`    | `project:close`    | CloseProjectOperation    |
+| `wake-workspace`   | `workspace:wake`   | WakeWorkspaceOperation   |
 
-Non-IPC consumers (MCP Server, Plugin API) dispatch intents directly through the Dispatcher.
+Creation-form submit (`workspace:open`) and the startup gestures
+(`agent-selected` / `setup-retry` / `setup-quit`) are routed by their owning
+modules. Dialog/notification interactions (`dialog-action` / `dialog-change` /
+`dialog-dismiss` / `notification-event`) and `log` are other `ui:event` kinds the
+presenter routes internally, not to intents. Non-IPC consumers (MCP Server,
+Plugin API) dispatch intents directly through the Dispatcher.
 
 ---
 
@@ -434,7 +441,6 @@ All operations use the intent dispatcher. Intents are dispatched through operati
 | `restart-agent`        | `agent:restart`           | `restart`                                                                                        | `agent:restarted`                                                             |
 | `agent-lifecycle`      | `agent:lifecycle`         | `lifecycle`                                                                                      | --                                                                            |
 | `update-agent-status`  | `agent:update-status`     | --                                                                                               | `agent:status-updated`                                                        |
-| `set-mode`             | `ui:set-mode`             | `set`                                                                                            | `ui:mode-changed`                                                             |
 | `get-active-workspace` | `ui:get-active-workspace` | `get`                                                                                            | --                                                                            |
 | `vscode-command`       | `vscode:command`          | `execute`                                                                                        | --                                                                            |
 | `vscode-show-message`  | `vscode:show-message`     | `show`                                                                                           | --                                                                            |
@@ -457,7 +463,7 @@ All operations use the intent dispatcher. Intents are dispatched through operati
 | `shortcut-key`         | `shortcut:key`            | --                                                                                               | `shortcut:key-pressed`                                                        |
 | `submit-bug-report`    | `bug-report:submit`       | --                                                                                               | `bug-report:submitted`                                                        |
 
-IPC handlers in `UiIpcModule` create typed intents and dispatch them. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules (UiIpcModule, BadgeModule, WindowTitleModule) which forward them to the renderer via `sendToUI()` or react internally.
+The presenter (`PresentationModule`) maps renderer `ui:events` to these intents. Domain events (e.g., `workspace:created`) are subscribed to by event handlers in modules — the presenter folds them into the `UiState` snapshot, while others (BadgeModule, WindowTitleModule) react internally (taskbar badge, window title).
 
 The `open-workspace` operation uses these hook modules:
 
@@ -471,7 +477,7 @@ The `delete-workspace` operation uses these hook modules:
 - **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode. Skipped when `removeWorktree` is false.
 - **delete**: WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
 
-The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), UiIpcModule (emits `workspace:removed` IPC event), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
+The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), the presenter (drops the row from the next `UiState` snapshot), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
 
 The `open-project` operation runs `select-folder` (when no path/URL given), `prepare` (e.g. git init), then `resolve` (clone if URL, validate git), `register` (generate ID, store state, persist), and `discover` (find existing workspaces).
 
@@ -501,7 +507,7 @@ The `app-shutdown` operation uses a single hook point:
 
 ## Domain Events
 
-Operations emit domain events via `ctx.emit()`. The dispatcher delivers these to all module event subscribers. `UiIpcModule` forwards relevant events to the renderer via `sendToUI()`:
+Operations emit domain events via `ctx.emit()`. The dispatcher delivers these to all module event subscribers. The presenter folds relevant events into the `UiState` snapshot it pushes on `api:ui:state`:
 
 ```
 Operation
@@ -511,9 +517,9 @@ Operation
     v
 Dispatcher delivers to subscribers
     |
-    +-- UiIpcModule  ->  sendToUI("api:workspace:switched", payload)  ->  Renderer
-    +-- BadgeModule     ->  updates dock badge
-    +-- WindowTitleModule -> updates window title
+    +-- PresentationModule -> rebuild UiState -> push api:ui:state -> Renderer
+    +-- BadgeModule        -> updates dock badge
+    +-- WindowTitleModule  -> updates window title
 ```
 
 ### Workspace Switching Example
@@ -523,24 +529,23 @@ The `workspace:switched` event is emitted through the intent dispatcher via `Swi
 - `SwitchWorkspaceOperation` runs the `activate` hook (resolves workspace; view-module records the new active surface) then emits `workspace:switched` via `ctx.emit()` — the renderer swaps the visible workspace iframe when the event lands
 - Other operations dispatch `workspace:switch` intents for active-workspace changes (e.g., `OpenWorkspaceOperation` dispatches after creating a workspace)
 - Null deactivation (delete last workspace, close last project) emits `workspace:switched(null)` directly via `ctx.emit()` without going through the intent
-- `UiIpcModule` subscribes to `workspace:switched` and forwards to the renderer via `deps.sendToUI()`
+- The presenter subscribes to `workspace:switched`, updates the active workspace in its view-model, and pushes the new `UiState` snapshot (the renderer swaps the visible iframe)
 - `WindowTitleModule` subscribes to `workspace:switched` and updates the window title
 
 ### Domain Events Table
 
-| Event                        | Payload                                                    | Description                                 |
-| ---------------------------- | ---------------------------------------------------------- | ------------------------------------------- |
-| `project:opened`             | `{ project: Project }`                                     | Project was opened                          |
-| `project:closed`             | `{ projectId: ProjectId }`                                 | Project was closed                          |
-| `project:bases-updated`      | `{ projectId, bases }`                                     | Branch list refreshed                       |
-| `workspace:created`          | `{ projectId, workspace }`                                 | Workspace was created                       |
-| `workspace:removed`          | `WorkspaceRef`                                             | Workspace was removed                       |
-| `workspace:switched`         | `WorkspaceRef \| null`                                     | Active workspace changed                    |
-| `workspace:status-changed`   | `WorkspaceRef & { status }`                                | Dirty/agent status changed                  |
-| `workspace:metadata-changed` | `{ projectId, workspaceName, key, value: string \| null }` | Metadata key set or deleted                 |
-| `ui:mode-changed`            | `{ mode, previousMode }`                                   | UI mode changed (shortcut/dialog/workspace) |
-| `shortcut:key`               | `ShortcutKey`                                              | Shortcut action key pressed                 |
-| `setup:progress`             | `{ step, message }`                                        | Setup progress update                       |
+| Event                        | Payload                                                    | Description                                                                                                        |
+| ---------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `project:opened`             | `{ project: Project }`                                     | Project was opened                                                                                                 |
+| `project:closed`             | `{ projectId: ProjectId }`                                 | Project was closed                                                                                                 |
+| `project:bases-updated`      | `{ projectId, bases }`                                     | Branch list refreshed                                                                                              |
+| `workspace:created`          | `{ projectId, workspace }`                                 | Workspace was created                                                                                              |
+| `workspace:removed`          | `WorkspaceRef`                                             | Workspace was removed                                                                                              |
+| `workspace:switched`         | `WorkspaceRef \| null`                                     | Active workspace changed                                                                                           |
+| `workspace:status-changed`   | `WorkspaceRef & { status }`                                | Dirty/agent status changed                                                                                         |
+| `workspace:metadata-changed` | `{ projectId, workspaceName, key, value: string \| null }` | Metadata key set or deleted                                                                                        |
+| `shortcut:key-pressed`       | `ShortcutKey`                                              | Shortcut action key pressed (presenter interprets it; mode is recomputed and shipped in the snapshot, not emitted) |
+| `setup:progress`             | `{ step, message }`                                        | Setup progress update                                                                                              |
 
 ---
 
@@ -554,7 +559,7 @@ index.ts (composition root)
     +-- Construct all services (no I/O)
     +-- Create Dispatcher + HookRegistry
     +-- Register all operations (25+)
-    +-- Create UiIpcModule (registers IPC handlers)
+    +-- Create PresentationModule (the presenter: owns api:ui:state + api:ui:event)
     +-- Register all modules (30+)
     +-- Dispatch app:start intent
               |

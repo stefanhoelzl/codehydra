@@ -1,13 +1,17 @@
 # UI State Architecture — Backend-Held UI State
 
-**Status**: Design agreed (2026-06-11). **Phases A + B + C complete (2026-06-26)**
-— presenter + `UiState` snapshot + full renderer cutover (no stores; `App` holds
-`$state.raw`, props down); the surface is now exactly **2 channels**
-(`api:ui:state` down, `api:ui:event` up) with theme folded into the snapshot;
-and the dialog/notification frameworks are unified in a presenter-owned
-`modules/presentation/` folder with the deletion dialog reading progress from
-the presenter (single source of truth). Phase D (shell absorption) tracked in
-Open items.
+**Status**: Design agreed (2026-06-11). **All phases complete (2026-06-26).**
+A: presenter + `UiState` snapshot + full renderer cutover (no stores; `App` holds
+`$state.raw`, props down). B: the surface is now exactly **2 channels**
+(`api:ui:state` down, `api:ui:event` up) with theme folded into the snapshot.
+C: the dialog/notification frameworks are unified in a presenter-owned
+`modules/presentation/` folder, with the deletion dialog reading progress from
+the presenter (single source of truth). D: **reframed** — the docs were brought
+in line with reality (`docs/ARCHITECTURE.md`, `PATTERNS.md`, `INTENTS.md`), and
+the planned "absorb `WindowManager`/`UiViewManager` into the presenter" was
+**rejected**: those are shell infrastructure used by ~7 modules, and the
+presenter is already narrowly coupled to them (`Pick<IViewManager,
+"sendToUI"|"onFromUI">` + a theme accessor), so they stay as shell seams.
 
 Now that the app uses a single WebContentsView hosting `index.html` with workspaces as
 iframes, the complete semantic UI state moves into the main process. The renderer becomes
@@ -36,7 +40,7 @@ testable headlessly in main.
 | Shortcuts        | Main interprets keys directly against its own state. `shortcut:key` push channel and renderer shortcuts logic die.                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Switching        | Strict round-trip (keypress → ui:event → main → snapshot → iframe swap). No optimistic highlight.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Gathering        | Central presenter subscribes to domain events (no slice-contribution model). Registered before `app:start` ⇒ witnesses events from genesis, no initial pull.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| Module shape     | ONE presentation module: owns IPC, view-model, mode, shortcut interpretation, domain-event→dialog/notification mapping, dispatches intents from ui:events. Absorbs WindowManager/ViewManager (boundaries stay as seams).                                                                                                                                                                                                                                                                                                                                                                  |
+| Module shape     | ONE presentation module: owns IPC, view-model, mode, shortcut interpretation, domain-event→dialog/notification mapping, dispatches intents from ui:events. ~~Absorbs WindowManager/ViewManager~~ — **not done (Phase D reframe)**: those are shell infra used by ~7 modules; the presenter stays narrowly coupled (`Pick<IViewManager,"sendToUI"\|"onFromUI">` + theme accessor) and they remain shell seams.                                                                                                                                                                             |
 | Dialog framework | DialogManager/NotificationManager DISSOLVE. Domain modules become UI-agnostic and emit domain events only; presenter maps them to dialogs/notifications. Creation-form logic becomes a presenter sub-module.                                                                                                                                                                                                                                                                                                                                                                              |
 | Confirmations    | Parked dispatch: intent payload carries `interactive`; the operation calls a `UserInteraction` capability (presenter-provided, **new approved interface**) that opens the dialog and resolves with the user's answers (keepBranch, force, blocking PIDs).                                                                                                                                                                                                                                                                                                                                 |
 | Local dialogs    | RemoveWorkspaceDialog / CloseProjectDialog migrate into this model (no renderer-local dialogs remain).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
@@ -192,16 +196,17 @@ the renderer only ever renders the array.
    notification-store · bootstrap          │    $lib/api re-export (send/onState)
      → App-owned $state.raw + props        │
                                            │  main:
- main:                                     │    WindowBoundary / ViewBoundary
-   IPC event bridge (14 event channels)    │     (seams; manager classes absorbed
-   DialogManager / NotificationManager     │      into presenter)
-   WindowManager / ViewManager classes     │    domain modules — fully UI-agnostic,
-   setMode/mode-changed feedback loop      │     emit domain events only
-   _lastEmittedMode dedup · modal sweep    │    creation-form logic as presenter
-   __pending__ name reconciliation         │     sub-module
-   _switchingWorkspace guard               │    UserInteraction (new approved
-   typed invoke channels (api:workspace:*, │     interface, presenter-provided)
-    api:project:*, api:ui:*, api:log)      │
+ main:                                     │    WindowBoundary / ViewBoundary seams +
+   IPC event bridge (14 typed channels)    │     WindowManager / UiViewManager classes
+   setMode/mode-changed feedback loop      │     (shell infra, ~7 module consumers —
+   _lastEmittedMode dedup · modal sweep    │      Phase D reframe: NOT absorbed)
+   __pending__ name reconciliation         │    DialogManager / NotificationManager
+   _switchingWorkspace guard               │     unified in presentation/sessions.ts
+   typed invoke channels (api:workspace:*, │    domain modules — fully UI-agnostic,
+    api:project:*, api:ui:*, api:log)      │     emit domain events only
+   separate api:ui:theme channel           │    creation-form stays a standalone module
+                                           │    parked nextEvent() confirmations
+                                           │     (no separate UserInteraction iface)
 ```
 
 ## Invariants
@@ -242,6 +247,14 @@ the renderer only ever renders the array.
   module; local dialogs were already migrated; and the deletion dialog now reads
   progress from the presenter (the single owner of the full `DeletionProgress`),
   which derives the render-ready `deletionProgress` onto the row → D shell
-  absorption (window/view managers, appctrl, docs).
-- **docs/** updates (ARCHITECTURE.md, PATTERNS.md, INTENTS.md) as phases land.
-- **appctrl** frame targeting hooks unaffected by design; verify during shell phase.
+  absorption — **DONE as a reframe**: the literal "absorb window/view managers
+  into the presenter" was rejected (they're shell infra for ~7 modules; the
+  presenter is already narrowly coupled), so they stay as shell seams; the
+  substantive work was bringing `docs/` in line with reality + verifying
+  appctrl.
+- **docs/** updates (ARCHITECTURE.md, PATTERNS.md, INTENTS.md) — **DONE** (Phase D):
+  renderer-no-stores, 2-channel IPC, main-computed mode, presenter as convergence
+  point, unified `presentation/` sessions, deletion single-source.
+- **appctrl** frame targeting hooks (`__chFocusActiveFrame` / `__chActiveFrameRect` /
+  `__chReloadFrames`) unaffected by design; still installed by `WorkspaceFrames.svelte`
+  and called by `UiViewManager` — verify in the running app.
