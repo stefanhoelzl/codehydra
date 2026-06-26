@@ -69,8 +69,6 @@ export function makeUiState(
 export function createMockApi(): Api {
   return {
     emitEvent: vi.fn(),
-    on: vi.fn(() => vi.fn()),
     onState: vi.fn(() => vi.fn()),
-    onTheme: vi.fn(() => vi.fn()),
   };
 }

@@ -1,8 +1,11 @@
 # UI State Architecture — Backend-Held UI State
 
-**Status**: Design agreed (2026-06-11). **Phase A (read path) complete (2026-06-26)** —
+**Status**: Design agreed (2026-06-11). **Phases A + B complete (2026-06-26)** —
 presenter + `UiState` snapshot + full renderer cutover (no stores; `App` holds
-`$state.raw`, props down). Phases B–D tracked in Open items.
+`$state.raw`, props down), and the surface is now exactly **2 channels**
+(`api:ui:state` down, `api:ui:event` up): all typed event channels and the
+separate theme channel are gone (theme rides in the snapshot). Phases C–D
+tracked in Open items.
 
 Now that the app uses a single WebContentsView hosting `index.html` with workspaces as
 iframes, the complete semantic UI state moves into the main process. The renderer becomes
@@ -225,10 +228,12 @@ the renderer only ever renders the array.
 
 - **Phasing**: A read path (presenter + snapshot + renderer cutover) — **DONE** →
   B write path (ui:event, shortcuts + mode to main, delete typed channels) —
-  largely landed; the dead `api:project:*`/`api:workspace:*` channel _constants_
-  in `src/shared/ipc.ts` still await removal → C dialogs (dissolve managers,
-  UserInteraction, creation sub-module, local-dialog migration; repoint the
-  deletion dialog at `deletionProgress`) → D shell absorption (window/view
-  managers, appctrl, docs).
+  **DONE** (dead `api:project:*`/`api:workspace:*` constants removed; theme
+  folded into the snapshot and `theme-module` + the `api:ui:theme` channel
+  deleted; dead preload `on()` generic + the orphaned `ApiEvents` map removed;
+  surface is now exactly `ui:state` + `ui:event`) → C dialogs (dissolve
+  managers, UserInteraction, creation sub-module, local-dialog migration;
+  repoint the deletion dialog at `deletionProgress`) → D shell absorption
+  (window/view managers, appctrl, docs).
 - **docs/** updates (ARCHITECTURE.md, PATTERNS.md, INTENTS.md) as phases land.
 - **appctrl** frame targeting hooks unaffected by design; verify during shell phase.

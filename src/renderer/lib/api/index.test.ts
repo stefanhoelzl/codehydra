@@ -36,7 +36,6 @@ describe("renderer API layer", () => {
     it("re-exports window.api functions for mockability", async () => {
       const api = await import("$lib/api");
 
-      expect(api.on).toBe(mockApi.on);
       expect(api.onState).toBe(mockApi.onState);
     });
   });
@@ -93,24 +92,6 @@ describe("renderer API layer", () => {
   // Remaining command invoke + event subscription
   // =============================================================================
 
-  describe("normal API operations", () => {
-    let mockApi: Api;
-
-    beforeEach(() => {
-      mockApi = createMockApi();
-      window.api = mockApi;
-    });
-
-    it("on subscribes to events and returns unsubscribe", async () => {
-      const api = await import("$lib/api");
-      const handler = vi.fn();
-      const unsubscribe = api.on("workspace:switched", handler);
-
-      expect(mockApi.on).toHaveBeenCalledWith("workspace:switched", handler);
-      expect(typeof unsubscribe).toBe("function");
-    });
-  });
-
   // =============================================================================
   // Type-level Tests
   // =============================================================================
@@ -123,7 +104,6 @@ describe("renderer API layer", () => {
       const api = await import("$lib/api");
 
       expect(api).toHaveProperty("emitEvent");
-      expect(api).toHaveProperty("on");
       expect(api).toHaveProperty("onState");
     });
   });

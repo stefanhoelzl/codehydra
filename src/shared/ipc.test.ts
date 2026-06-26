@@ -29,13 +29,9 @@ describe("UIMode types", () => {
 });
 
 describe("ApiIpcChannels (v2 API)", () => {
-  describe("Events", () => {
-    it("has PROJECT_OPENED event channel", () => {
-      expect(ApiIpcChannels.PROJECT_OPENED).toBe("api:project:opened");
-    });
-
-    it("has WORKSPACE_STATUS_CHANGED event channel", () => {
-      expect(ApiIpcChannels.WORKSPACE_STATUS_CHANGED).toBe("api:workspace:status-changed");
-    });
+  it("exposes exactly the two live channels (ui:event up, ui:state down)", () => {
+    expect(ApiIpcChannels.UI_EVENT).toBe("api:ui:event");
+    expect(ApiIpcChannels.UI_STATE).toBe("api:ui:state");
+    expect(Object.keys(ApiIpcChannels)).toEqual(["UI_EVENT", "UI_STATE"]);
   });
 });
