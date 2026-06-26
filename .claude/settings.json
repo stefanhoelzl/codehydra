@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "mcp__codehydra__*",
-      "mcp__appctrl__*",
+      "mcp__codehydra",
+      "mcp__appctrl",
       "Bash(pnpm test:*)",
       "Bash(pnpm validate:*)",
       "Bash(pnpm build:*)",
