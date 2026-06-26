@@ -34,6 +34,33 @@ export interface UiNotification {
   readonly config: NotificationConfig;
 }
 
+/** Display status of a single workspace-deletion operation. */
+export type UiDeletionOpStatus = "pending" | "in-progress" | "done" | "error";
+
+/** A single deletion-pipeline step, render-ready (no domain identifiers). */
+export interface UiDeletionOp {
+  readonly id: string;
+  readonly label: string;
+  readonly status: UiDeletionOpStatus;
+  readonly error?: string;
+}
+
+/**
+ * Render-ready deletion progress for a workspace row. Present only while a
+ * workspace is deleting or its deletion has failed; the row's `status` is
+ * derived from it (deleting vs delete-failed). The renderer detail-consumer
+ * (the deletion confirmation surface) reads `operations`; until that lands the
+ * field rides along carrying the data the presenter already derives `status`
+ * from. Carries no WorkspacePath/ProjectId/PIDs — opaque-key invariant holds.
+ */
+export interface UiDeletionProgress {
+  readonly operations: readonly UiDeletionOp[];
+  readonly completed: boolean;
+  readonly hasErrors: boolean;
+  /** Count of processes blocking deletion (Windows EBUSY/EACCES/EPERM). */
+  readonly blockingProcessCount: number;
+}
+
 export interface UiWorkspaceRow {
   /**
    * Opaque presenter-assigned identity; stable across the creating → ready
@@ -43,10 +70,18 @@ export interface UiWorkspaceRow {
   readonly key: string;
   readonly name: string;
   readonly status: "creating" | "ready" | "deleting" | "delete-failed";
+  /**
+   * Orthogonal to `status`: a hibernated workspace is still `ready` (or even
+   * `deleting`) — hibernation is a sleep flag layered on the lifecycle, not a
+   * lifecycle phase. Drives the dimmed sidebar row, wake-on-click, and
+   * shortcut numbering (hibernated rows are unnumbered).
+   */
   readonly hibernated: boolean;
   readonly agent: AgentStatus;
   readonly tags: readonly WorkspaceTag[];
   readonly active: boolean;
+  /** Present while `status` is `deleting`/`delete-failed`; absent otherwise. */
+  readonly deletionProgress?: UiDeletionProgress;
 }
 
 export interface UiProjectRow {

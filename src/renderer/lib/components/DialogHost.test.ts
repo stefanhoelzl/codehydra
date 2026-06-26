@@ -6,9 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/svelte";
-import { flushSync } from "svelte";
 import type { DialogConfig } from "@shared/dialog-types";
-import type { UiDialog, UiState } from "@shared/ui-state";
+import type { UiDialog } from "@shared/ui-state";
 
 // Mock setup - must be hoisted
 const { mockSendDialogEvent } = vi.hoisted(() => ({
@@ -22,7 +21,6 @@ vi.mock("$lib/api", () => ({
 
 // Import after mock setup
 import DialogHost from "./DialogHost.svelte";
-import { setUiState, resetUiState } from "$lib/stores/ui-state.svelte.js";
 
 function createConfig(heading: string): DialogConfig {
   return {
@@ -30,56 +28,37 @@ function createConfig(heading: string): DialogConfig {
   };
 }
 
-/** Push a snapshot carrying the given open dialogs. */
-function showDialogs(dialogs: UiDialog[]): void {
-  setUiState({
-    sidebar: { projects: [] },
-    frames: {},
-    main: { kind: "creation" },
-    theme: "dark",
-    mode: "hover",
-    dialogs,
-    notifications: [],
-  } satisfies UiState);
+/** Render DialogHost with the given open dialogs as props. */
+function renderDialogs(dialogs: UiDialog[]): void {
+  render(DialogHost, { props: { dialogs } });
 }
 
 describe("DialogHost surface routing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetUiState();
   });
 
   afterEach(() => {
     document.body.innerHTML = "";
-    resetUiState();
   });
 
   it("renders a DialogView for a modal entry", () => {
-    render(DialogHost);
-
-    showDialogs([{ id: "dlg-1", surface: "modal", config: createConfig("Modal") }]);
-    flushSync();
+    renderDialogs([{ id: "dlg-1", surface: "modal", config: createConfig("Modal") }]);
 
     expect(screen.getByRole("dialog", { name: "Modal" })).toBeInTheDocument();
   });
 
   it("does not render panel-surface entries", () => {
-    render(DialogHost);
-
-    showDialogs([{ id: "dlg-1", surface: "panel", config: createConfig("Panel form") }]);
-    flushSync();
+    renderDialogs([{ id: "dlg-1", surface: "panel", config: createConfig("Panel form") }]);
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("renders only the modal entry when both surfaces are active", () => {
-    render(DialogHost);
-
-    showDialogs([
+    renderDialogs([
       { id: "dlg-1", surface: "modal", config: createConfig("Modal") },
       { id: "dlg-2", surface: "panel", config: createConfig("Panel form") },
     ]);
-    flushSync();
 
     expect(screen.getAllByRole("dialog")).toHaveLength(1);
     expect(screen.getByRole("dialog", { name: "Modal" })).toBeInTheDocument();

@@ -6,17 +6,19 @@
   sessions are rendered by MainView as a PanelView in the content area.
 -->
 <script lang="ts">
-  import { dialogs } from "$lib/stores/dialog-framework.svelte.js";
+  import type { UiDialog } from "@shared/ui-state";
   import DialogView from "./DialogView.svelte";
 
   interface Props {
+    /** Open dialog sessions from the snapshot (modal + panel). */
+    dialogs: readonly UiDialog[];
     /** When true, dialogs are positioned in the workspace area (sidebar stays visible). */
     workspaceArea?: boolean;
   }
 
-  const { workspaceArea = false }: Props = $props();
+  const { dialogs, workspaceArea = false }: Props = $props();
 </script>
 
-{#each [...dialogs.value.values()].filter((e) => e.surface === "modal") as entry (entry.dialogId)}
-  <DialogView dialogId={entry.dialogId} config={entry.config} {workspaceArea} />
+{#each dialogs.filter((d) => d.surface === "modal") as entry (entry.id)}
+  <DialogView dialogId={entry.id} config={entry.config} {workspaceArea} />
 {/each}

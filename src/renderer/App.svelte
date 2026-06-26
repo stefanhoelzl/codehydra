@@ -24,7 +24,7 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import * as api from "$lib/api";
-  import { uiState, setUiState } from "$lib/stores/ui-state.svelte.js";
+  import type { UiState } from "@shared/ui-state";
   import { createLogger } from "$lib/logging";
   import { getFocusables } from "$lib/utils/focus-trap";
   import MainView from "$lib/components/MainView.svelte";
@@ -43,7 +43,11 @@
   // snapshot).
   let containerRef = $state<HTMLElement>();
 
-  const ui = $derived(uiState.value);
+  // The single source of UI state: the latest snapshot pushed on api:ui:state.
+  // $state.raw because snapshots are immutable and replaced wholesale — no deep
+  // reactivity, and local patching is physically impossible (the renderer
+  // cannot drift from main's truth). Null until the genesis push arrives.
+  let ui = $state.raw<UiState | null>(null);
   const main = $derived(ui?.main ?? null);
   /** True once a normal (non-startup) snapshot has rendered: MainView shows. */
   const showMain = $derived(
@@ -61,7 +65,7 @@
   let focused = false;
   onMount(() => {
     const unsubscribe = api.onState((state) => {
-      setUiState(state);
+      ui = state;
       // Focus the first control once, after the first normal snapshot renders
       // (the startup surfaces own their own focus).
       if (focused || state.main.kind === "starting" || state.main.kind === "setup") return;
@@ -123,14 +127,14 @@
     <div class="initializing-container" aria-busy="true"></div>
   {:else if main.kind === "starting" || main.kind === "setup" || main.kind === "agent-selection" || main.kind === "loading"}
     <StartupView {main} workspaceArea={false} />
-  {:else}
+  {:else if ui !== null}
     <div class="main-view-container">
-      <MainView />
+      <MainView {ui} />
     </div>
   {/if}
 
   <!-- Declarative dialog host: renders dialogs driven by the main process. -->
-  <DialogHost workspaceArea={showMain} />
+  <DialogHost dialogs={ui?.dialogs ?? []} workspaceArea={showMain} />
 </main>
 
 <style>

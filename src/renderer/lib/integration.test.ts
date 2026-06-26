@@ -46,7 +46,6 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "../App.svelte";
-import { resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 import type { UiDialog } from "@shared/ui-state";
 
@@ -105,7 +104,6 @@ describe("Integration tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     stateCallbacks.length = 0;
-    resetUiState();
   });
 
   afterEach(() => {

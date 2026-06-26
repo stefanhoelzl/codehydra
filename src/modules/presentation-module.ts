@@ -110,6 +110,7 @@ import type { DialogConfig, DialogSection, DialogSurface } from "../shared/dialo
 import { uiEventSchema } from "../shared/ui-event";
 import {
   compareDisplayNames,
+  type UiDeletionProgress,
   type UiMainView,
   type UiProjectRow,
   type UiSetupRow,
@@ -185,6 +186,25 @@ function fromMetadata(
   return {
     hibernated: metadata["hibernated"] === "true",
     tags: extractTags(metadata),
+  };
+}
+
+/**
+ * Distill the domain DeletionProgress into the render-ready row field: keep
+ * only what a renderer shows (per-operation display status, completion/error
+ * flags, blocking-process count) — never the WorkspacePath/ProjectId/PIDs.
+ */
+function toUiDeletionProgress(progress: DeletionProgress): UiDeletionProgress {
+  return {
+    operations: progress.operations.map((op) => ({
+      id: op.id,
+      label: op.label,
+      status: op.status,
+      ...(op.error !== undefined && { error: op.error }),
+    })),
+    completed: progress.completed,
+    hasErrors: progress.hasErrors,
+    blockingProcessCount: progress.blockingProcesses?.length ?? 0,
   };
 }
 
@@ -308,8 +328,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   const projects = new Map<string, ProjectModel>();
   /** Agent status keyed by workspace path. */
   const agentStatuses = new Map<string, AgentStatus>();
-  /** Deletion lifecycle keyed by workspace path (absent = not deleting). */
-  const deletions = new Map<string, { failed: boolean }>();
+  /**
+   * Deletion lifecycle keyed by workspace path (absent = not deleting). Holds
+   * the render-ready progress folded onto the row; `status` derives from it.
+   */
+  const deletions = new Map<string, UiDeletionProgress>();
   /** Hibernation screenshot data URLs keyed by workspace key (null = missing). */
   const screenshots = new Map<string, string | null>();
   const screenshotLoads = new Set<string>();
@@ -422,8 +445,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   function rowStatus(workspace: WorkspaceModel): UiWorkspaceRow["status"] {
     if (workspace.creating) return "creating";
-    const deletion = workspace.path === null ? undefined : deletions.get(workspace.path);
-    if (deletion) return deletion.failed ? "delete-failed" : "deleting";
+    const progress = workspace.path === null ? undefined : deletions.get(workspace.path);
+    if (progress) return progress.completed && progress.hasErrors ? "delete-failed" : "deleting";
     return "ready";
   }
 
@@ -465,6 +488,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    */
   function buildRow(project: ProjectModel, workspace: WorkspaceModel): UiWorkspaceRow {
     const key = workspaceKey(project.id, workspace.name);
+    const deletionProgress = workspace.path === null ? undefined : deletions.get(workspace.path);
     return {
       key,
       name: workspace.name,
@@ -475,6 +499,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // Copy: the model array mutates on tag changes; snapshots are immutable values.
       tags: [...workspace.tags],
       active: key === activeKey,
+      ...(deletionProgress && { deletionProgress }),
     };
   }
 
@@ -1116,9 +1141,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           // Auto-clear on successful completion (workspace:deleted removes the row).
           deletions.delete(progress.workspacePath);
         } else {
-          deletions.set(progress.workspacePath, {
-            failed: progress.completed && progress.hasErrors,
-          });
+          deletions.set(progress.workspacePath, toUiDeletionProgress(progress));
         }
         scheduleUpdate();
       },

@@ -10,18 +10,20 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { sendNotificationEvent } from "$lib/api";
-  import { notifications } from "$lib/stores/notification-store.svelte.js";
+  import type { UiNotification } from "@shared/ui-state";
   import type { NotificationConfig } from "@shared/notification-types";
   import type { DialogButton } from "@shared/dialog-types";
 
   interface Props {
+    /** Open sidebar notifications from the snapshot (open order). */
+    notifications: readonly UiNotification[];
     isExpanded: boolean;
   }
 
-  const { isExpanded }: Props = $props();
+  const { notifications, isExpanded }: Props = $props();
 
-  // Newest on top: reverse the insertion order
-  const entries = $derived([...notifications.value.values()].reverse());
+  // Newest on top: reverse the snapshot's open order
+  const entries = $derived([...notifications].reverse());
 
   function handleDismiss(notificationId: string): void {
     sendNotificationEvent({ notificationId, actionId: "dismiss" });
@@ -42,7 +44,7 @@
 
 {#if entries.length > 0}
   <div class="notification-stack" class:expanded={isExpanded}>
-    {#each entries as entry (entry.notificationId)}
+    {#each entries as entry (entry.id)}
       {@const config = entry.config}
       {@const pct = progressPercent(config)}
       <div class="notification-entry" role="status" aria-label={config.title}>
@@ -55,7 +57,7 @@
                 type="button"
                 class="dismiss-btn"
                 aria-label="Dismiss"
-                onclick={() => handleDismiss(entry.notificationId)}
+                onclick={() => handleDismiss(entry.id)}
               >
                 <Icon name="close" size={14} />
               </button>
@@ -95,7 +97,7 @@
               <vscode-button
                 secondary={action.variant !== "primary" || undefined}
                 disabled={action.disabled || action.busy || undefined}
-                onclick={() => handleAction(entry.notificationId, action)}
+                onclick={() => handleAction(entry.id, action)}
               >
                 {action.busy ? (action.busyLabel ?? action.label) : action.label}
               </vscode-button>

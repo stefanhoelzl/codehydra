@@ -81,6 +81,7 @@ describe("getStatusText helper", () => {
 describe("Sidebar component", () => {
   const defaultProps = {
     projects: [],
+    notifications: [],
     shortcutModeActive: false,
     onCloseProject: vi.fn(),
     onSwitchWorkspace: vi.fn(),

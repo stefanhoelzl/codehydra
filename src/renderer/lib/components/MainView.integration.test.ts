@@ -5,8 +5,9 @@
  * by src/modules/presentation-module.integration.test.ts and the
  * close-project operation tests.
  *
- * Workspace/project data is seeded into the `uiState` store directly (the
- * onState subscription is owned by App.svelte; MainView only reads the store).
+ * Workspace/project data is passed in as the `ui` prop (the onState
+ * subscription is owned by App.svelte; MainView is a render function over the
+ * snapshot).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -57,11 +58,14 @@ vi.mock("$lib/services/agent-notifications", () => ({
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import { resetUiState, setUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 
-function pushState(state: UiState): void {
-  setUiState(state);
+let current: UiState;
+let rerenderView: (props: { ui: UiState }) => Promise<void>;
+
+function pushState(state: UiState): Promise<void> {
+  current = state;
+  return rerenderView({ ui: current });
 }
 
 const projectWithWorkspaces = makeUiProjectRow(
@@ -77,15 +81,15 @@ const projectWithoutWorkspaces = makeUiProjectRow([], {
 const SNAPSHOT = makeUiState([projectWithWorkspaces, projectWithoutWorkspaces]);
 
 async function renderWithSnapshot(): Promise<void> {
-  pushState(SNAPSHOT);
-  render(MainView);
+  current = SNAPSHOT;
+  const result = render(MainView, { props: { ui: current } });
+  rerenderView = result.rerender;
   await waitFor(() => expect(screen.getByText("test-project")).toBeInTheDocument());
 }
 
 describe("MainView close project integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetUiState();
   });
 
   afterEach(() => {
@@ -124,7 +128,7 @@ describe("MainView close project integration", () => {
 
     // The project disappears (e.g. closed elsewhere) before the click lands.
     const closeButton = document.getElementById(`close-project-${projectWithWorkspaces.id}`);
-    pushState(makeUiState([projectWithoutWorkspaces]));
+    await pushState(makeUiState([projectWithoutWorkspaces]));
     await fireEvent.click(closeButton!);
 
     expect(mockApi.emitEvent).not.toHaveBeenCalledWith(

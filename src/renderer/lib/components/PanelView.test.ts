@@ -22,24 +22,6 @@ vi.mock("$lib/api", () => ({
 
 // Import after mock setup
 import PanelView from "./PanelView.svelte";
-import { setUiState, resetUiState } from "$lib/stores/ui-state.svelte.js";
-import type { UiDialog, UiState } from "@shared/ui-state";
-
-/** Push a snapshot carrying the given open dialogs (drives PanelView's
- *  "modal stacked above" detection). */
-function setDialogs(dialogs: UiDialog[]): void {
-  setUiState({
-    sidebar: { projects: [] },
-    frames: {},
-    main: { kind: "creation" },
-    theme: "dark",
-    mode: "hover",
-    dialogs,
-    notifications: [],
-  } satisfies UiState);
-}
-const modal = (id: string): UiDialog => ({ id, surface: "modal", config: { sections: [] } });
-const panelDlg = (id: string): UiDialog => ({ id, surface: "panel", config: { sections: [] } });
 
 function createConfig(overrides?: Partial<DialogConfig>): DialogConfig {
   return {
@@ -59,14 +41,13 @@ function createConfig(overrides?: Partial<DialogConfig>): DialogConfig {
   };
 }
 
-function renderPanel(config: DialogConfig, dialogId = "panel-1") {
-  return render(PanelView, { props: { dialogId, config } });
+function renderPanel(config: DialogConfig, dialogId = "panel-1", modalAbove = false) {
+  return render(PanelView, { props: { dialogId, config, modalAbove } });
 }
 
 describe("PanelView component (panel surface)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetUiState();
   });
 
   afterEach(() => {
@@ -105,48 +86,32 @@ describe("PanelView component (panel surface)", () => {
     });
 
     it("re-places focus on the autofocus control when the last modal above closes", async () => {
-      renderPanel(autofocusConfig);
+      const { rerender } = renderPanel(autofocusConfig, "panel-1", false);
       const textarea = document.querySelector("textarea")!;
       await waitFor(() => expect(document.activeElement).toBe(textarea));
 
       // A modal opens above the panel and takes focus elsewhere.
-      setDialogs([modal("modal-1")]);
+      await rerender({ dialogId: "panel-1", config: autofocusConfig, modalAbove: true });
       textarea.blur();
       await waitFor(() => expect(document.activeElement).not.toBe(textarea));
 
       // Modal closes — the panel is the active surface again.
-      setDialogs([]);
+      await rerender({ dialogId: "panel-1", config: autofocusConfig, modalAbove: false });
 
       await waitFor(() => expect(document.activeElement).toBe(textarea));
     });
 
-    it("does not refocus while a modal is still open above", async () => {
-      renderPanel(autofocusConfig);
+    it("a modal opening above does not disturb existing panel focus", async () => {
+      const { rerender } = renderPanel(autofocusConfig, "panel-1", false);
       const textarea = document.querySelector("textarea")!;
       await waitFor(() => expect(document.activeElement).toBe(textarea));
 
-      setDialogs([modal("modal-1"), modal("modal-2")]);
-      textarea.blur();
-
-      // Only one of the two modals closes.
-      setDialogs([modal("modal-2")]);
+      // A modal opens above (modalAbove false→true). The refocus gate fires
+      // only on the true→false close, so focus is left exactly where it is.
+      await rerender({ dialogId: "panel-1", config: autofocusConfig, modalAbove: true });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(document.activeElement).not.toBe(textarea);
-    });
-
-    it("a panel-surface session does not count as a modal above", async () => {
-      renderPanel(autofocusConfig);
-      const textarea = document.querySelector("textarea")!;
-      await waitFor(() => expect(document.activeElement).toBe(textarea));
-
-      setDialogs([panelDlg("panel-x")]);
-      textarea.blur();
-      setDialogs([]);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // No modal ever closed above the panel — focus is left alone.
-      expect(document.activeElement).not.toBe(textarea);
+      expect(document.activeElement).toBe(textarea);
     });
   });
 
