@@ -64,7 +64,6 @@
     value={values[section.id] ?? ""}
     {layout}
     onSelect={(optionId) => onSelect(section, optionId)}
-    {onSubmit}
   />
 {:else if section.type === "dropdown"}
   <DropdownSection

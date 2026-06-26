@@ -286,7 +286,11 @@
               selectOption(exactMatch.value);
             }
           }
-          onEnter?.();
+          // Plain Enter on typed text submits; Cmd/Ctrl+Enter is the form-global
+          // gesture (Form handles it), so don't also submit here.
+          if (!event.ctrlKey && !event.metaKey) {
+            onEnter?.();
+          }
         }
         break;
 
