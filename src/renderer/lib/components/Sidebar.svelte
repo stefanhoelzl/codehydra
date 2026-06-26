@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import * as api from "$lib/api";
-  import type { UiProjectRow } from "@shared/ui-state";
+  import type { UiNotification, UiProjectRow } from "@shared/ui-state";
   import type { UIMode } from "@shared/ipc";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
   import WorkspaceTags from "./WorkspaceTags.svelte";
@@ -20,6 +20,8 @@
   interface SidebarProps {
     /** Render-ready project rows from the UiState snapshot. */
     projects: readonly UiProjectRow[];
+    /** Open sidebar notifications from the snapshot. */
+    notifications: readonly UiNotification[];
     /** The single UI mode from the snapshot (main-owned). */
     mode?: UIMode;
     shortcutModeActive?: boolean;
@@ -35,6 +37,7 @@
 
   let {
     projects,
+    notifications,
     mode = "workspace",
     shortcutModeActive = false,
     newWorkspaceViewOpen = false,
@@ -340,7 +343,7 @@
     </ul>
   </div>
 
-  <NotificationStack {isExpanded} />
+  <NotificationStack {notifications} {isExpanded} />
 </nav>
 
 <style>

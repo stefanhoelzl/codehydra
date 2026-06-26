@@ -2,18 +2,17 @@
 /**
  * Tests for the MainView component.
  *
- * Since the read cutover MainView is a render function over the UiState
- * snapshot (the `uiState` store, fed by App.svelte's onState subscription).
- * Tests seed the store directly via setUiState and assert the rendered
- * result. The view-model semantics themselves (placeholders, deletion
- * lifecycle, active fallback, ground-state panel) are covered by the
- * presenter's integration tests in
+ * Since the read cutover MainView is a pure render function over the UiState
+ * snapshot, passed in as the `ui` prop (App.svelte owns the onState
+ * subscription and hands MainView the snapshot). Tests render with a snapshot
+ * prop and drive updates via rerender. The view-model semantics themselves
+ * (placeholders, deletion lifecycle, active fallback, ground-state panel) are
+ * covered by the presenter's integration tests in
  * src/modules/presentation-module.integration.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/svelte";
-import { flushSync } from "svelte";
 import type { UiState } from "@shared/ui-state";
 
 const { mockApi } = vi.hoisted(() => {
@@ -35,28 +34,30 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import MainView from "./MainView.svelte";
-import { uiState, resetUiState, setUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 
-/**
- * Seed the snapshot store directly (App.svelte owns the onState subscription;
- * MainView reads the resulting `uiState` store).
- */
-function pushState(state: UiState): void {
-  setUiState(state);
+/** The snapshot currently rendered; updated by pushState/openCreationPanelSession. */
+let current: UiState;
+let rerenderView: (props: { ui: UiState }) => Promise<void>;
+
+/** Render MainView with an initial snapshot (App only mounts it post-genesis). */
+function renderMainView(initial: UiState = makeUiState([])): { container: HTMLElement } {
+  current = initial;
+  const result = render(MainView, { props: { ui: current } });
+  rerenderView = result.rerender;
+  return { container: result.container };
 }
 
-/** Render MainView. The store can be seeded before or after via pushState. */
-async function renderMainView(): Promise<{ container: HTMLElement }> {
-  const { container } = render(MainView);
-  return { container };
+/** Push a new snapshot (replaces the `ui` prop, as App's onState would). */
+function pushState(state: UiState): Promise<void> {
+  current = state;
+  return rerenderView({ ui: current });
 }
 
 /** Simulate the backend creation module's always-alive panel session by adding
  *  a panel-surface dialog to the current snapshot. */
-function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
-  const current = uiState.value ?? makeUiState([]);
-  setUiState({
+function openCreationPanelSession(dialogId = "dlg-creation-1"): Promise<void> {
+  current = {
     ...current,
     dialogs: [
       ...current.dialogs,
@@ -69,7 +70,8 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
         },
       },
     ],
-  });
+  };
+  return rerenderView({ ui: current });
 }
 
 const WS1 = makeUiWorkspaceRow("feature-1");
@@ -79,7 +81,6 @@ const PROJECT = makeUiProjectRow([WS1]);
 describe("MainView component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetUiState();
   });
 
   afterEach(() => {
@@ -88,7 +89,7 @@ describe("MainView component", () => {
 
   describe("rendering from the snapshot", () => {
     it("renders main-view container, Sidebar, and frames region", async () => {
-      const { container } = await renderMainView();
+      const { container } = renderMainView();
 
       expect(container.querySelector(".main-view")).toBeInTheDocument();
       expect(screen.getByRole("navigation", { name: "Projects" })).toBeInTheDocument();
@@ -96,9 +97,9 @@ describe("MainView component", () => {
     });
 
     it("renders sidebar rows from a pushed snapshot", async () => {
-      await renderMainView();
+      renderMainView();
 
-      pushState(makeUiState([PROJECT]));
+      await pushState(makeUiState([PROJECT]));
 
       await waitFor(() => {
         expect(screen.getByText("feature-1")).toBeInTheDocument();
@@ -107,9 +108,9 @@ describe("MainView component", () => {
     });
 
     it("mounts iframes from the snapshot frames region with the active one visible", async () => {
-      const { container } = await renderMainView();
+      const { container } = renderMainView();
 
-      pushState(
+      await pushState(
         makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
           frames: { [WS1.key]: "http://127.0.0.1:9000/?folder=/ws" },
           main: { kind: "workspace", frameKey: WS1.key },
@@ -125,9 +126,9 @@ describe("MainView component", () => {
     });
 
     it("renders the creation panel when main is creation and the session exists", async () => {
-      const { container } = await renderMainView();
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
-      openCreationPanelSession();
+      const { container } = renderMainView();
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await openCreationPanelSession();
 
       await waitFor(() => {
         expect(container.querySelector(".panel-view")).toBeInTheDocument();
@@ -135,9 +136,9 @@ describe("MainView component", () => {
     });
 
     it("renders no panel when main is creation but the session has not arrived", async () => {
-      const { container } = await renderMainView();
+      const { container } = renderMainView();
 
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
 
       await waitFor(() => {
         expect(screen.getByText("feature-1")).toBeInTheDocument();
@@ -146,9 +147,9 @@ describe("MainView component", () => {
     });
 
     it("renders the HibernatedOverlay with the snapshot's inline screenshot", async () => {
-      const { container } = await renderMainView();
+      const { container } = renderMainView();
 
-      pushState(
+      await pushState(
         makeUiState([makeUiProjectRow([{ ...WS1_ACTIVE, hibernated: true }])], {
           main: { kind: "hibernated", screenshot: "data:image/png;base64,UE5H" },
         })
@@ -165,8 +166,8 @@ describe("MainView component", () => {
 
   describe("actions", () => {
     it("clicking a workspace emits the switch-workspace ui:event without eager local state", async () => {
-      await renderMainView();
-      pushState(makeUiState([PROJECT]));
+      renderMainView();
+      await pushState(makeUiState([PROJECT]));
       await waitFor(() => expect(screen.getByText("feature-1")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByRole("button", { name: "feature-1" }));
@@ -181,8 +182,8 @@ describe("MainView component", () => {
     });
 
     it("the New workspace entry deselects (switch-workspace key null)", async () => {
-      await renderMainView();
-      pushState(
+      renderMainView();
+      await pushState(
         makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
           main: { kind: "workspace", frameKey: WS1.key },
         })
@@ -195,8 +196,8 @@ describe("MainView component", () => {
     });
 
     it("close-project emits the close-project ui:event (dialog opens main-side)", async () => {
-      await renderMainView();
-      pushState(makeUiState([PROJECT]));
+      renderMainView();
+      await pushState(makeUiState([PROJECT]));
       await waitFor(() => expect(screen.getByText("test-project")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByLabelText(/close project/i));
@@ -208,8 +209,8 @@ describe("MainView component", () => {
     });
 
     it("the workspace remove button emits the remove-workspace ui:event", async () => {
-      await renderMainView();
-      pushState(makeUiState([PROJECT]));
+      renderMainView();
+      await pushState(makeUiState([PROJECT]));
       await waitFor(() => expect(screen.getByText("feature-1")).toBeInTheDocument());
 
       await fireEvent.click(screen.getByRole("button", { name: "Remove workspace" }));
@@ -223,9 +224,9 @@ describe("MainView component", () => {
 
   describe("fresh-form dismiss on panel show", () => {
     it("sends one dismiss per show transition once the session exists", async () => {
-      await renderMainView();
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
-      openCreationPanelSession("dlg-1");
+      renderMainView();
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await openCreationPanelSession("dlg-1");
       await waitFor(() => {
         expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
           kind: "dismiss",
@@ -234,16 +235,15 @@ describe("MainView component", () => {
       });
       expect(mockApi.sendDialogEvent).toHaveBeenCalledTimes(1);
 
-      // Leaving and returning re-sends (new show transition). Flush between
-      // pushes so the effect observes the intermediate workspace state.
-      pushState(
+      // Leaving and returning re-sends (new show transition). Awaiting each
+      // rerender flushes effects so the intermediate workspace state is seen.
+      await pushState(
         makeUiState([makeUiProjectRow([WS1_ACTIVE])], {
           main: { kind: "workspace", frameKey: WS1.key },
         })
       );
-      flushSync();
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
-      openCreationPanelSession("dlg-1");
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await openCreationPanelSession("dlg-1");
 
       await waitFor(() => {
         expect(mockApi.sendDialogEvent).toHaveBeenCalledTimes(2);
@@ -251,12 +251,12 @@ describe("MainView component", () => {
     });
 
     it("covers the startup race: snapshot shows the panel before the session arrives", async () => {
-      await renderMainView();
+      renderMainView();
 
-      pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
+      await pushState(makeUiState([PROJECT], { main: { kind: "creation" } }));
       expect(mockApi.sendDialogEvent).not.toHaveBeenCalled();
 
-      openCreationPanelSession("dlg-late");
+      await openCreationPanelSession("dlg-late");
 
       await waitFor(() => {
         expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({

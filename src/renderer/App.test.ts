@@ -44,8 +44,12 @@ const { mockApi, stateCallbacks } = vi.hoisted(() => {
   };
 });
 
-/** Deliver a snapshot through the captured onState callback (real holder). */
+/** The last snapshot delivered, so panel-session helpers can extend it. */
+let currentState: UiState | undefined;
+
+/** Deliver a snapshot through the captured onState callback (App's real seam). */
 function pushState(state: UiState): void {
+  currentState = state;
   for (const callback of stateCallbacks as Array<(state: UiState) => void>) {
     callback(state);
   }
@@ -56,7 +60,6 @@ vi.mock("$lib/api", () => mockApi);
 
 // Import after mock setup
 import App from "./App.svelte";
-import { uiState, setUiState, resetUiState } from "$lib/stores/ui-state.svelte.js";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 import type { UiWorkspaceRow } from "@shared/ui-state";
 
@@ -86,8 +89,8 @@ function ws(name: string): UiWorkspaceRow {
 // Simulate the backend creation module's always-alive panel session by adding a
 // panel-surface dialog to the current snapshot.
 function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
-  const current = uiState.value ?? makeUiState([]);
-  setUiState({
+  const current = currentState ?? makeUiState([]);
+  pushState({
     ...current,
     dialogs: [
       ...current.dialogs,
@@ -107,7 +110,7 @@ describe("App component", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     stateCallbacks.length = 0;
-    resetUiState();
+    currentState = undefined;
   });
 
   afterEach(() => {

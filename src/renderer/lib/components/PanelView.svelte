@@ -20,14 +20,15 @@
 <script lang="ts">
   import type { DialogConfig } from "@shared/dialog-types";
   import Form from "./form/Form.svelte";
-  import { dialogs } from "$lib/stores/dialog-framework.svelte";
 
   interface Props {
     dialogId: string;
     config: DialogConfig;
+    /** Whether a modal dialog is open above the panel (drives refocus on close). */
+    modalAbove: boolean;
   }
 
-  const { dialogId, config }: Props = $props();
+  const { dialogId, config, modalAbove }: Props = $props();
 
   let formRef: Form | undefined = $state();
 
@@ -39,9 +40,6 @@
 
   // Refocus the form when the last modal above the panel closes (modals steal
   // focus while open; on close the panel is the active surface again).
-  const modalAbove = $derived(
-    [...dialogs.value.values()].some((entry) => entry.surface === "modal")
-  );
   let hadModalAbove = false;
   $effect(() => {
     if (hadModalAbove && !modalAbove) formRef?.refocus();

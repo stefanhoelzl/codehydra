@@ -3,9 +3,10 @@
 
   Main application content component that renders when setup is complete.
   Renders from the UiState snapshot (read cutover): the main process presenter
-  pushes the full render-ready view-model on api:ui:state; this component is a
-  render function over it plus the renderer-local stores that have not yet
-  migrated (dialogs, ui-mode, notifications).
+  pushes the full render-ready view-model on api:ui:state; App holds it and
+  hands MainView the snapshot as the `ui` prop. This component is a pure render
+  function over it — it distributes the fields each leaf renders (sidebar rows,
+  notifications, dialogs, mode) as props; there are no renderer stores.
 
   Note: This component renders inside App.svelte's <main> element.
   It does NOT render its own <main> landmark - App.svelte owns that.
@@ -24,7 +25,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as api from "$lib/api";
-  import { uiState } from "$lib/stores/ui-state.svelte.js";
+  import type { UiState } from "@shared/ui-state";
   import { AgentNotificationService } from "$lib/services/agent-notifications";
   import { createLogger } from "$lib/logging";
 
@@ -37,21 +38,34 @@
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
 
-  import { panelDialog } from "$lib/stores/dialog-framework.svelte.js";
   import PanelView from "./PanelView.svelte";
+
+  interface Props {
+    /** The latest snapshot, passed down from App (always non-null here). */
+    ui: UiState;
+  }
+
+  const { ui }: Props = $props();
 
   const logger = createLogger("ui");
 
   // ============ Snapshot-derived views ============
-  // uiState is null until the genesis push arrives (milliseconds after the
-  // ui-connected handshake); until then the sidebar is empty and main shows
-  // nothing — same as today's pre-population frame.
+  // App renders MainView only once the genesis snapshot has arrived, so `ui` is
+  // always present; the derivations below are plain field reads + view-only
+  // joins (the distributor hands leaves the fields they render).
 
-  const ui = $derived(uiState.value);
-  const projectRows = $derived(ui?.sidebar.projects ?? []);
-  const main = $derived(ui?.main ?? null);
-  /** The single UI mode (main-owned). Default to "workspace" before genesis. */
-  const mode = $derived(ui?.mode ?? "workspace");
+  const projectRows = $derived(ui.sidebar.projects);
+  const main = $derived(ui.main);
+  /** The single UI mode (main-owned). */
+  const mode = $derived(ui.mode);
+  /**
+   * The active panel-surface dialog session (the creation form is the only one
+   * today). View-only pick over the snapshot's dialogs; if several are open the
+   * most recently opened wins (snapshot order).
+   */
+  const panelDialog = $derived(ui.dialogs.filter((d) => d.surface === "panel").at(-1));
+  /** Whether any modal dialog is open above the panel (drives panel refocus). */
+  const modalAbove = $derived(ui.dialogs.some((d) => d.surface === "modal"));
   /** The creation panel is the ground state: shown whenever main says so. */
   const creationShown = $derived(main?.kind === "creation");
 
@@ -66,7 +80,7 @@
   // rows. Display-only transitional join.
   const frameEntries = $derived.by(() => {
     const names = new Map(allRows.map((row) => [row.key, row.name]));
-    return Object.entries(ui?.frames ?? {}).map(([key, url]) => ({
+    return Object.entries(ui.frames).map(([key, url]) => ({
       key,
       url,
       title: names.get(key) ?? "workspace",
@@ -94,10 +108,10 @@
     if (shown && !prevShownForDismiss) showDismissPending = true;
     if (!shown) showDismissPending = false;
     prevShownForDismiss = shown;
-    const session = panelDialog.value;
+    const session = panelDialog;
     if (showDismissPending && session) {
       showDismissPending = false;
-      api.sendDialogEvent({ kind: "dismiss", dialogId: session.dialogId });
+      api.sendDialogEvent({ kind: "dismiss", dialogId: session.id });
     }
   });
 
@@ -155,6 +169,7 @@
   <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} {mode} />
   <Sidebar
     projects={projectRows}
+    notifications={ui.notifications}
     {mode}
     shortcutModeActive={mode === "shortcut"}
     newWorkspaceViewOpen={creationShown}
@@ -178,8 +193,8 @@
        ground state when no workspace is active). The creation form is the
        only panel-surface session today; revisit the gating if another panel
        session appears. -->
-  {#if creationShown && panelDialog.value}
-    <PanelView dialogId={panelDialog.value.dialogId} config={panelDialog.value.config} />
+  {#if creationShown && panelDialog}
+    <PanelView dialogId={panelDialog.id} config={panelDialog.config} {modalAbove} />
   {/if}
 
   {#if main?.kind === "hibernated"}
