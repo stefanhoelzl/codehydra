@@ -55,7 +55,7 @@ import {
   type BasesUpdatedEvent,
   type GetProjectBasesIntent,
 } from "../intents/get-project-bases";
-import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
+import { EVENT_WORKSPACE_SWITCHED, type WorkspaceSwitchedEvent } from "../intents/switch-workspace";
 import {
   INTENT_OPEN_WORKSPACE,
   EVENT_WORKSPACE_CREATED,
@@ -63,10 +63,7 @@ import {
 } from "../intents/open-workspace";
 import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../intents/list-projects";
-import {
-  INTENT_GET_ACTIVE_WORKSPACE,
-  type GetActiveWorkspaceIntent,
-} from "../intents/get-active-workspace";
+import { Path } from "../utils/path/path";
 import {
   INTENT_GET_LAUNCH_OPTIONS,
   type GetLaunchOptionsIntent,
@@ -167,6 +164,14 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
   let formError: string | null = null;
   /** Project to seed the next reset with (most recently opened project). */
   let pendingSeedProjectPath: string | null = null;
+  /**
+   * Project path of the workspace the app last made active. Recorded from
+   * non-null workspace:switched events so it survives the deselect
+   * (workspace:switch → null) the renderer fires when showing the panel —
+   * that deselect would otherwise null the live active ref before the seed
+   * reads it, collapsing the seed to projects[0].
+   */
+  let lastActiveProjectPath: string | null = null;
   /** Guards against overlapping resets (dismiss bursts). */
   let resetting = false;
   /** Invalidates in-flight branch fetches when the selection changes. */
@@ -554,27 +559,20 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
   // ---- Session lifecycle ----
 
-  /** Seed rule: pending opened project > active workspace's project > first. */
-  async function computeSeedProject(): Promise<string | null> {
+  /** Seed rule: pending opened project > last active workspace's project > first. */
+  function computeSeedProject(): string | null {
     if (pendingSeedProjectPath !== null) {
       const seed = pendingSeedProjectPath;
       pendingSeedProjectPath = null;
       if (projects.some((p) => p.path === seed)) return seed;
     }
-    try {
-      const intent: GetActiveWorkspaceIntent = {
-        type: INTENT_GET_ACTIVE_WORKSPACE,
-        payload: {},
-      };
-      const ref = await dispatcher.dispatch(intent);
-      if (ref) {
-        const project = projects.find((p) => p.id === ref.projectId);
-        if (project) return project.path;
-      }
-    } catch (error) {
-      logger.debug("Creation form: active workspace lookup failed", {
-        error: getErrorMessage(error),
-      });
+    // The live active ref is unusable here: showing the panel deselects the
+    // active workspace first, so a query would return null. Use the last
+    // workspace the app made active instead (recorded across switches).
+    if (lastActiveProjectPath !== null) {
+      const remembered = new Path(lastActiveProjectPath);
+      const project = projects.find((p) => remembered.equals(new Path(p.path)));
+      if (project) return project.path;
     }
     return projects[0]?.path ?? null;
   }
@@ -595,7 +593,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
     await refreshProjects();
     availableAgents = await deps.getAvailableAgents();
     selectedAgentType = resolveInitialAgentType();
-    const seed = await computeSeedProject();
+    const seed = computeSeedProject();
     if (seed !== null) {
       selectedProjectPath = seed;
       branchesLoading = true;
@@ -1039,7 +1037,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         await refreshProjects();
         if (selectedProjectPath !== null && selectedProject() === undefined) {
           // The selected project was closed: fall back to the seed rule.
-          const seed = await computeSeedProject();
+          const seed = computeSeedProject();
           if (seed !== null) {
             selectProject(seed);
             return;
@@ -1083,10 +1081,17 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
       },
     },
     [EVENT_WORKSPACE_SWITCHED]: {
-      handler: async (): Promise<void> => {
+      handler: async (event: DomainEvent): Promise<void> => {
         // The user moved on — a stale "recently opened project" seed should
         // not override the active workspace's project on the next reset.
         pendingSeedProjectPath = null;
+        // Remember the active workspace's project for the seed. Only non-null
+        // payloads update it: the deselect (null) the renderer fires when
+        // showing the panel must not erase the project we want to seed.
+        const payload = (event as WorkspaceSwitchedEvent).payload;
+        if (payload !== null) {
+          lastActiveProjectPath = payload.projectPath;
+        }
       },
     },
     [EVENT_WORKSPACE_CREATED]: {
