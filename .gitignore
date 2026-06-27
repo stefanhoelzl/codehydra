@@ -41,3 +41,6 @@ pnpm-debug.log*
 
 # Claude Code scheduler
 .claude/scheduled_tasks.lock
+
+# Claude Code local settings (personal overrides, not shared)
+.claude/settings.local.json
