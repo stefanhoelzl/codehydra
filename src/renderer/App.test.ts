@@ -1,3 +1,4 @@
+// @vitest-environment-options {"settings": {"disableIframePageLoading": true}}
 /**
  * Tests for the App component.
  *
@@ -231,6 +232,66 @@ describe("App component", () => {
       await waitFor(() => {
         expect(screen.getByRole("heading", { name: "New workspace" })).toBeInTheDocument();
       });
+    });
+  });
+
+  describe("mid-session loading keeps workspace iframes mounted", () => {
+    it("overlays the loading surface instead of tearing MainView (and its iframes) down", async () => {
+      const { container } = render(App);
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+
+      const wsA = ws("alpha");
+      const frames = { [wsA.key]: "http://127.0.0.1:25448/?workspace=alpha" };
+
+      // First normal snapshot: one workspace active, its iframe mounted.
+      pushState(
+        makeUiState([makeUiProjectRow([{ ...wsA, active: true }])], {
+          frames,
+          main: { kind: "workspace", frameKey: wsA.key },
+        })
+      );
+
+      let iframe: Element | null = null;
+      await waitFor(() => {
+        iframe = container.querySelector(`iframe[data-key="${wsA.key}"]`);
+        expect(iframe).toBeInTheDocument();
+      });
+      expect(container.querySelector(".main-view")).toBeInTheDocument();
+
+      // A new workspace is being created and becomes active: the presenter
+      // pushes main.kind="loading" (no frame for it yet) while keeping the
+      // existing workspace's frame in the snapshot. MainView must survive so
+      // the existing iframe is not destroyed and reloaded.
+      pushState(
+        makeUiState([makeUiProjectRow([{ ...wsA, active: false }])], {
+          frames,
+          main: { kind: "loading", label: "Loading workspace..." },
+          mode: "dialog",
+        })
+      );
+
+      // Loading shows as an overlay (StartupView) rendered INSIDE MainView,
+      // not by swapping MainView out for a top-level StartupView.
+      await waitFor(() => {
+        expect(container.querySelector(".startup-view")).toBeInTheDocument();
+      });
+      expect(container.querySelector(".main-view")).toBeInTheDocument();
+
+      // The kept-alive frame is the same DOM node — no remount, no reload.
+      const sameIframe = container.querySelector(`iframe[data-key="${wsA.key}"]`);
+      expect(sameIframe).toBe(iframe);
+
+      // Creation completes: back to the workspace surface, frame still the same.
+      pushState(
+        makeUiState([makeUiProjectRow([{ ...wsA, active: true }])], {
+          frames,
+          main: { kind: "workspace", frameKey: wsA.key },
+        })
+      );
+      await waitFor(() => {
+        expect(container.querySelector(".startup-view")).not.toBeInTheDocument();
+      });
+      expect(container.querySelector(`iframe[data-key="${wsA.key}"]`)).toBe(iframe);
     });
   });
 
