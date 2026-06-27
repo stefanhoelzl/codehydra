@@ -2657,3 +2657,56 @@ describe("GitWorktreeProvider bare repository support", () => {
     });
   });
 });
+
+describe("GitWorktreeProvider isDirty", () => {
+  const PROJECT_ROOT = new Path("/project");
+  const WORKSPACES_DIR = new Path("/workspaces");
+  const WORKSPACE_PATH = new Path("/workspaces/feature-x");
+
+  it("returns false when the workspace directory no longer exists (deletion race)", async () => {
+    // getStatus throws because the worktree isn't a known repo, and the
+    // directory is absent from the filesystem — the deleted-workspace race.
+    const mockClient = createMockGitClient({
+      repositories: {
+        [PROJECT_ROOT.toString()]: { branches: ["main"], currentBranch: "main" },
+      },
+    });
+    const mockFs = createFileSystemMock({
+      entries: { [WORKSPACES_DIR.toString()]: directory() },
+    });
+    const provider = await createProvider(
+      PROJECT_ROOT,
+      mockClient,
+      WORKSPACES_DIR,
+      mockFs,
+      SILENT_LOGGER
+    );
+
+    expect(await provider.isDirty(WORKSPACE_PATH)).toBe(false);
+  });
+
+  it("rethrows the git error when the workspace directory still exists", async () => {
+    // getStatus fails for a genuine reason but the directory is present — the
+    // error must surface (the delete-preflight dirty check depends on this).
+    const mockClient = createMockGitClient({
+      repositories: {
+        [PROJECT_ROOT.toString()]: { branches: ["main"], currentBranch: "main" },
+      },
+    });
+    const mockFs = createFileSystemMock({
+      entries: {
+        [WORKSPACES_DIR.toString()]: directory(),
+        [WORKSPACE_PATH.toString()]: directory(),
+      },
+    });
+    const provider = await createProvider(
+      PROJECT_ROOT,
+      mockClient,
+      WORKSPACES_DIR,
+      mockFs,
+      SILENT_LOGGER
+    );
+
+    await expect(provider.isDirty(WORKSPACE_PATH)).rejects.toThrow();
+  });
+});

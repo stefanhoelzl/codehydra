@@ -16,7 +16,11 @@ import type {
   UpdateBasesResult,
   Workspace,
 } from "./git-types";
-import { WorkspaceError, getErrorMessage } from "../../shared/errors/service-errors";
+import {
+  WorkspaceError,
+  FileSystemError,
+  getErrorMessage,
+} from "../../shared/errors/service-errors";
 import { sanitizeWorkspaceName, unsanitizeWorkspaceName } from "./paths";
 import { isValidMetadataKey } from "../../shared/api/types";
 import type { FileSystemBoundary } from "./filesystem";
@@ -628,8 +632,40 @@ export class GitWorktreeProvider {
   }
 
   async isDirty(workspacePath: Path): Promise<boolean> {
-    const status = await this.gitClient.getStatus(workspacePath);
-    return status.isDirty;
+    try {
+      const status = await this.gitClient.getStatus(workspacePath);
+      return status.isDirty;
+    } catch (error) {
+      // A status query can race with workspace deletion: the directory is
+      // removed on disk while the workspace is still in the in-memory list, so
+      // a get-status request resolves and reaches here. A workspace that no
+      // longer exists has no uncommitted changes to report. Only swallow that
+      // specific case — genuine git failures must still surface (e.g. the
+      // delete-preflight dirty check relies on this to avoid discarding work).
+      if (!(await this.directoryExists(workspacePath))) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Best-effort check for whether a directory still exists. Used only to
+   * classify an already-failed git operation, so it is not subject to the
+   * TOCTOU concerns that motivate omitting a general exists() helper.
+   */
+  private async directoryExists(path: Path): Promise<boolean> {
+    try {
+      await this.fileSystemLayer.readdir(path);
+      return true;
+    } catch (error) {
+      if (error instanceof FileSystemError && error.fsCode === "ENOENT") {
+        return false;
+      }
+      // Some other filesystem problem (permissions, etc.) — assume the
+      // directory exists so the original error is surfaced rather than masked.
+      return true;
+    }
   }
 
   async countUnmergedCommits(workspacePath: Path): Promise<number> {
