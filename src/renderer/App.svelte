@@ -7,7 +7,11 @@
   agent-selection / loading surfaces before MainView would ever mount).
 
   Renders by the snapshot's main.kind:
-  - startup kinds (starting / setup / agent-selection / loading) → StartupView
+  - startup kinds (starting / setup / agent-selection / loading) → StartupView,
+    but only until the first normal snapshot. Thereafter MainView stays mounted
+    (see showMain) so a mid-session "loading" surface — the still-creating
+    active workspace — never tears down the workspace iframes; it renders as an
+    overlay inside MainView instead (mirroring the hibernated overlay).
   - workspace / hibernated / creation → MainView
   - before the first snapshot arrives → a minimal blank initializing state
 
@@ -49,14 +53,28 @@
   // cannot drift from main's truth). Null until the genesis push arrives.
   let ui = $state.raw<UiState | null>(null);
   const main = $derived(ui?.main ?? null);
-  /** True once a normal (non-startup) snapshot has rendered: MainView shows. */
-  const showMain = $derived(
-    main !== null &&
+  /**
+   * Latches true once the first normal (non-startup) snapshot renders, and
+   * stays true for the rest of the session. Deliberately one-way: a mid-session
+   * "loading" surface (the still-creating active workspace) must NOT swap
+   * MainView back out for StartupView — unmounting MainView destroys every
+   * mounted workspace iframe, so all open workspaces would reload each time a
+   * new one is created. The startup kinds (starting/setup/agent-selection/
+   * loading) only occur before app:started, so the latch never traps a real
+   * startup surface; mid-session loading shows as an overlay inside MainView.
+   */
+  let showMain = $state(false);
+  $effect(() => {
+    if (
+      main !== null &&
       main.kind !== "starting" &&
       main.kind !== "setup" &&
       main.kind !== "agent-selection" &&
       main.kind !== "loading"
-  );
+    ) {
+      showMain = true;
+    }
+  });
 
   // Subscribe to ui:state, then emit the ui-connected handshake (on mount,
   // during the initializing phase). The subscription MUST be in place before
@@ -128,7 +146,7 @@
   {#if main === null}
     <!-- Minimal blank state until the first snapshot arrives. -->
     <div class="initializing-container" aria-busy="true"></div>
-  {:else if main.kind === "starting" || main.kind === "setup" || main.kind === "agent-selection" || main.kind === "loading"}
+  {:else if !showMain && (main.kind === "starting" || main.kind === "setup" || main.kind === "agent-selection" || main.kind === "loading")}
     <StartupView {main} workspaceArea={false} />
   {:else if ui !== null}
     <div class="main-view-container">
