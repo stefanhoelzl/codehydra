@@ -33,7 +33,6 @@ import { EVENT_BASES_UPDATED, INTENT_GET_PROJECT_BASES } from "../intents/get-pr
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { INTENT_OPEN_WORKSPACE } from "../intents/open-workspace";
 import { INTENT_LIST_PROJECTS } from "../intents/list-projects";
-import { INTENT_GET_ACTIVE_WORKSPACE } from "../intents/get-active-workspace";
 import { INTENT_GET_LAUNCH_OPTIONS } from "../intents/agent-launch-options";
 
 // =============================================================================
@@ -69,6 +68,17 @@ const BASES_A: readonly BaseInfo[] = [
 
 const CLAUDE_AGENT: AgentInfo = { agent: "claude", label: "Claude Code", icon: "claude" };
 const OPENCODE_AGENT: AgentInfo = { agent: "opencode", label: "OpenCode", icon: "opencode" };
+
+/** A non-null workspace:switched payload for a project (active-surface bookkeeping). */
+function switchedPayload(project: Project): Record<string, unknown> {
+  return {
+    projectId: project.id,
+    projectName: project.name,
+    projectPath: project.path,
+    workspaceName: "active" as WorkspaceName,
+    path: `${project.path}/.worktrees/active`,
+  };
+}
 
 // =============================================================================
 // Mock Dispatcher (programmable per-intent results)
@@ -177,11 +187,6 @@ function setup(options?: {
       projectId: PROJECT_A.id,
     };
   });
-  dispatcher.results.set(INTENT_GET_ACTIVE_WORKSPACE, () => {
-    const projectId = options?.activeWorkspaceProjectId;
-    if (projectId === null || projectId === undefined) return null;
-    return { projectId, workspaceName: "existing", path: "/projects/a/.worktrees/existing" };
-  });
   dispatcher.results.set(INTENT_GET_LAUNCH_OPTIONS, (payload) => {
     // Mirror real backends: Claude reports permission modes, OpenCode none.
     const backend = (payload as { backend: string }).backend;
@@ -208,6 +213,15 @@ function setup(options?: {
   };
 
   const start = async (): Promise<MockDialogHandle> => {
+    // Mirror the real restore-switch that lands before app:started: the
+    // creation module records the active workspace's project from this event
+    // (it no longer queries a live active ref, which the panel-open deselect
+    // would null before the seed reads it).
+    const activeId = options?.activeWorkspaceProjectId;
+    if (activeId !== null && activeId !== undefined) {
+      const active = projects.find((p) => p.id === activeId);
+      if (active !== undefined) await emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(active));
+    }
     await emit(EVENT_APP_STARTED);
     const panel = dialogs.panelHandles().find((h) => !h.closed);
     expect(panel, "open panel session").toBeDefined();
@@ -258,6 +272,36 @@ describe("CreationModule", () => {
       const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: null });
       const panel = await s.start();
       expect(field(panel.config, "project")["value"]).toBe(PROJECT_B.path);
+    });
+
+    it("keeps seeding the last active project across the panel-open deselect", async () => {
+      // PROJECT_A is active but is NOT projects[0] — proves the seed follows the
+      // active workspace, not the list head.
+      const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: PROJECT_A.id });
+      const panel = await s.start();
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+
+      // Showing the panel deselects the active workspace (workspace:switched
+      // null). The next open must not collapse to projects[0] (PROJECT_B).
+      await s.emit(EVENT_WORKSPACE_SWITCHED, null);
+      currentPanel(s).emitDismiss();
+      await flush();
+
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_A.path);
+    });
+
+    it("falls back to the first project when the last active project is no longer open", async () => {
+      const s = setup({ projects: [PROJECT_B, PROJECT_A], activeWorkspaceProjectId: PROJECT_A.id });
+      const panel = await s.start();
+      expect(field(panel.config, "project")["value"]).toBe(PROJECT_A.path);
+
+      // PROJECT_A closed: the remembered path is no longer in the list, so the
+      // reset must fall back to projects[0] rather than seeding a dead project.
+      s.dispatcher.results.set(INTENT_LIST_PROJECTS, () => [PROJECT_B]);
+      currentPanel(s).emitDismiss();
+      await flush();
+
+      expect(field(currentPanel(s).config, "project")["value"]).toBe(PROJECT_B.path);
     });
 
     it("renders the no-project placeholder (disabled fields, disabled Create) without projects", async () => {
@@ -1019,7 +1063,7 @@ describe("CreationModule", () => {
 
       projects.push(PROJECT_B);
       await s.emit(EVENT_PROJECT_OPENED, { project: PROJECT_B });
-      await s.emit(EVENT_WORKSPACE_SWITCHED, { path: "/projects/a/.worktrees/existing" });
+      await s.emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(PROJECT_A));
 
       panel.emitDismiss();
       await flush();
