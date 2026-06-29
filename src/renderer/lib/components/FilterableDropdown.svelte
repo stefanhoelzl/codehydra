@@ -209,18 +209,16 @@
       return;
     }
 
-    // When allowFreeText is false, resolve typed text: select the exact label
-    // match (canonicalizing case), otherwise revert to the prop value.
-    if (!allowFreeText && localFilterOverride !== null) {
-      const exactMatch = selectableOptions.find(
-        (opt) => opt.label.toLowerCase() === localFilterOverride!.toLowerCase()
-      );
-      if (exactMatch === undefined) {
-        // No valid match - revert to original prop value
-        localFilterOverride = null;
-      } else {
-        selectOption(exactMatch.value);
-      }
+    // Strict select (allowFreeText false): leaving the field discards any
+    // transient filter text so the box snaps back to the committed value.
+    // Blur deliberately never commits — selecting a value requires an explicit
+    // gesture (click an option, Enter, or Tab). Keeping blur side-effect-free
+    // means a teardown blur (the focused input being removed from the DOM when
+    // the dialog closes) can't fire onSelect into an already-destroyed parent,
+    // which was the "Cannot read properties of undefined (reading 'config')"
+    // crash. In free-text mode the typed text is itself the value, so it stays.
+    if (!allowFreeText) {
+      localFilterOverride = null;
     }
 
     isOpen = false;
