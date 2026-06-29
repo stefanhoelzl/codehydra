@@ -713,7 +713,7 @@ describe("FilterableDropdown component", () => {
       expect(input.value).toBe("Banana");
     });
 
-    it("selects and canonicalizes an exact match on blur when allowFreeText is false", async () => {
+    it("does not commit on blur even for an exact match (allowFreeText false)", async () => {
       const onSelect = vi.fn();
       render(FilterableDropdown, {
         props: { ...defaultProps, onSelect, value: "Banana", allowFreeText: false },
@@ -723,15 +723,18 @@ describe("FilterableDropdown component", () => {
 
       await fireEvent.focus(input);
 
-      // Type valid option label (case-insensitive match)
+      // Type a valid option label (case-insensitive exact match).
       await fireEvent.input(input, { target: { value: "apple" } });
       expect(input.value).toBe("apple");
 
-      // Blur selects the matching option, canonicalizing the displayed label.
+      // Blur never selects: committing requires an explicit gesture (click,
+      // Enter, or Tab). The transient filter text is discarded and the box
+      // reverts to the committed value. This keeps blur side-effect-free so a
+      // teardown blur cannot fire onSelect into a destroyed parent.
       await fireEvent.blur(input);
 
-      expect(onSelect).toHaveBeenCalledWith("Apple");
-      expect(input.value).toBe("Apple");
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(input.value).toBe("Banana");
     });
 
     it("does not revert on blur when allowFreeText is true", async () => {
