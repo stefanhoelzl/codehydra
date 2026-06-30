@@ -18,7 +18,7 @@ import { dirname } from "node:path";
 import { stat } from "node:fs/promises";
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { Logger } from "../boundaries/platform/logging-types";
 import { SILENT_LOGGER, logAtLevel } from "../boundaries/platform/logging";
@@ -158,9 +158,6 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     string,
     { env: Record<string, string>; agentType: AgentType; resetWorkspace: boolean }
   >();
-
-  /** Capability: pluginPort provided by start handler. */
-  let capPluginPort: number | null = null;
 
   // ---------------------------------------------------------------------------
   // Server lifecycle functions
@@ -871,17 +868,21 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          provides: () => ({ pluginPort: capPluginPort }),
-          handler: async (): Promise<void> => {
-            capPluginPort = null;
+          handler: async (): Promise<HookOutput> => {
+            // pluginPort stays null on failure; the key is still provided (null,
+            // not undefined) so code-server's `requires: { pluginPort: ANY_VALUE }`
+            // gate is satisfied and it runs in degraded mode.
+            let pluginPort: number | null = null;
 
             try {
-              capPluginPort = await start();
-              logger.info("Plugin server started", { port: capPluginPort });
+              pluginPort = await start();
+              logger.info("Plugin server started", { port: pluginPort });
             } catch (error) {
               const message = error instanceof Error ? error.message : "Unknown error";
               logger.warn("PluginServer start failed", { error: message });
             }
+
+            return { provides: { pluginPort } };
           },
         },
       },
@@ -915,7 +916,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
 
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
@@ -930,14 +931,14 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
               });
             }
 
-            return {};
+            return { result: {} };
           },
         },
       },
 
       [VSCODE_SHOW_MESSAGE_OPERATION_ID]: {
         show: {
-          handler: async (ctx: HookContext): Promise<ShowHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ShowHookResult>> => {
             if (!io) {
               throw new Error("Plugin server not available");
             }
@@ -947,14 +948,16 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
             const { type, message, hint, options: msgOptions, timeoutMs } = intent.payload;
 
             return {
-              result: await handleShowMessage(
-                workspacePath,
-                type,
-                message,
-                hint,
-                msgOptions,
-                timeoutMs
-              ),
+              result: {
+                result: await handleShowMessage(
+                  workspacePath,
+                  type,
+                  message,
+                  hint,
+                  msgOptions,
+                  timeoutMs
+                ),
+              },
             };
           },
         },
@@ -962,7 +965,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
 
       [VSCODE_COMMAND_OPERATION_ID]: {
         execute: {
-          handler: async (ctx: HookContext): Promise<ExecuteHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ExecuteHookResult>> => {
             if (!io) {
               throw new Error("Plugin server not available");
             }
@@ -976,7 +979,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
               throw new Error(commandResult.error);
             }
 
-            return { result: commandResult.data };
+            return { result: { result: commandResult.data } };
           },
         },
       },

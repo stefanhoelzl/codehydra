@@ -46,6 +46,7 @@ import type { IntentModule } from "./lib/module";
 import {
   ANY_VALUE,
   type HookContext,
+  type HookOutput,
   type Operation,
   type OperationContext,
 } from "./lib/operation";
@@ -90,13 +91,13 @@ function createCodeServerModule(state: TestState, options?: { fail?: boolean }):
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          provides: () => ({ codeServerPort: 8080 }),
-          handler: async (): Promise<void> => {
+          handler: async (): Promise<HookOutput> => {
             if (options?.fail) {
               throw new Error("CodeServer failed to start");
             }
             state.codeServerStarted = true;
             state.executionOrder.push("codeserver-start");
+            return { provides: { codeServerPort: 8080 } };
           },
         },
       },
@@ -110,13 +111,13 @@ function createMcpModule(state: TestState, options?: { fail?: boolean }): Intent
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          provides: () => ({ mcpPort: 9090 }),
-          handler: async (): Promise<void> => {
+          handler: async (): Promise<HookOutput> => {
             if (options?.fail) {
               throw new Error("MCP server failed to start");
             }
             state.mcpStarted = true;
             state.executionOrder.push("mcp-start");
+            return { provides: { mcpPort: 9090 } };
           },
         },
       },
@@ -173,8 +174,7 @@ function createCodeServerModuleWithGracefulPluginDegradation(
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          provides: () => ({ codeServerPort: 8080 }),
-          handler: async (): Promise<void> => {
+          handler: async (): Promise<HookOutput> => {
             // Simulate PluginServer start attempt (internal try/catch)
             let pluginPort: number | undefined;
             try {
@@ -191,6 +191,7 @@ function createCodeServerModuleWithGracefulPluginDegradation(
             state.codeServerStarted = true;
             state.executionOrder.push("codeserver-start");
             void pluginPort; // Used for code-server config in real impl
+            return { provides: { codeServerPort: 8080 } };
           },
         },
       },
@@ -210,7 +211,7 @@ function defaultCheckModules(): IntentModule[] {
       hooks: {
         [APP_START_OPERATION_ID]: {
           init: {
-            handler: async (): Promise<InitResult> => ({}),
+            handler: async (): Promise<HookOutput<InitResult>> => ({ result: {} }),
           },
         },
       },
@@ -378,7 +379,7 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
-              handler: async (): Promise<InitResult> => ({}),
+              handler: async (): Promise<HookOutput<InitResult>> => ({ result: {} }),
             },
           },
         },
@@ -391,8 +392,8 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
-              handler: async (): Promise<CheckDepsResult> => {
-                return { missingBinaries };
+              handler: async (): Promise<HookOutput<CheckDepsResult>> => {
+                return { result: { missingBinaries } };
               },
             },
           },
@@ -408,11 +409,13 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
-              handler: async (): Promise<CheckDepsResult> => {
+              handler: async (): Promise<HookOutput<CheckDepsResult>> => {
                 return {
-                  ...(opts.installPlan !== undefined && {
-                    extensionInstallPlan: opts.installPlan,
-                  }),
+                  result: {
+                    ...(opts.installPlan !== undefined && {
+                      extensionInstallPlan: opts.installPlan,
+                    }),
+                  },
                 };
               },
             },
@@ -553,7 +556,7 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
-              handler: async (): Promise<InitResult> => {
+              handler: async (): Promise<HookOutput<InitResult>> => {
                 throw new Error("Config load failed");
               },
             },
@@ -578,7 +581,7 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
-              handler: async (): Promise<CheckDepsResult> => {
+              handler: async (): Promise<HookOutput<CheckDepsResult>> => {
                 throw new Error("Binary preflight failed");
               },
             },
@@ -609,9 +612,9 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             "check-deps": {
-              handler: async (ctx: HookContext): Promise<CheckDepsResult> => {
+              handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
                 receivedAgent = (ctx as CheckDepsHookContext).configuredAgent;
-                return {};
+                return { result: {} };
               },
             },
           },
@@ -707,8 +710,8 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             "before-ready": {
-              handler: async (): Promise<ConfigureResult> => {
-                return { scripts };
+              handler: async (): Promise<HookOutput<ConfigureResult>> => {
+                return { result: { scripts } };
               },
             },
           },
@@ -722,7 +725,7 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             "before-ready": {
-              handler: async (): Promise<ConfigureResult> => {
+              handler: async (): Promise<HookOutput<ConfigureResult>> => {
                 throw new Error(message);
               },
             },
@@ -740,7 +743,7 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             init: {
-              handler: async (ctx: HookContext): Promise<InitResult> => {
+              handler: async (ctx: HookContext): Promise<HookOutput<InitResult>> => {
                 if (options?.fail) {
                   throw new Error("Init failed");
                 }
@@ -748,7 +751,7 @@ describe("AppStart Operation", () => {
                 if (options?.captureScripts) {
                   options.captureScripts((ctx as InitHookContext).requiredScripts);
                 }
-                return {};
+                return { result: {} };
               },
             },
           },
@@ -840,9 +843,9 @@ describe("AppStart Operation", () => {
         hooks: {
           [APP_START_OPERATION_ID]: {
             "before-ready": {
-              handler: async (): Promise<ConfigureResult> => {
+              handler: async (): Promise<HookOutput<ConfigureResult>> => {
                 state.executionOrder.push("before-ready");
-                return { scripts: ["test-script"] };
+                return { result: { scripts: ["test-script"] } };
               },
             },
           },

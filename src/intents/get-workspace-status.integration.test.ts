@@ -27,7 +27,7 @@ import type {
 } from "./get-workspace-status";
 import { registerTestInfrastructure } from "./operations.test-utils";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, WorkspaceStatus } from "../shared/api/types";
 import type { AggregatedAgentStatus } from "../shared/ipc";
@@ -86,11 +86,11 @@ function createTestSetup(opts: {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<GetStatusHookResult>> => {
             const { workspacePath } = ctx as GetStatusHookInput;
             const provider = opts.workspaceProvider;
             const isDirty = provider ? await provider.isDirty(new Path(workspacePath)) : false;
-            return { isDirty };
+            return { result: { isDirty } };
           },
         },
       },
@@ -103,12 +103,12 @@ function createTestSetup(opts: {
     hooks: {
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (): Promise<GetStatusHookResult> => {
+          handler: async (): Promise<HookOutput<GetStatusHookResult>> => {
             const status = opts.agentStatus;
             if (status) {
-              return { agentStatus: status };
+              return { result: { agentStatus: status } };
             }
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -231,9 +231,11 @@ describe("GetWorkspaceStatus Operation", () => {
         hooks: {
           [GET_WORKSPACE_STATUS_OPERATION_ID]: {
             get: {
-              handler: async (): Promise<GetStatusHookResult> => ({
-                isDirty: false,
-                unmergedCommits: 3,
+              handler: async (): Promise<HookOutput<GetStatusHookResult>> => ({
+                result: {
+                  isDirty: false,
+                  unmergedCommits: 3,
+                },
               }),
             },
           },

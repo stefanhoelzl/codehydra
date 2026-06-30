@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";
+import type { HookContext, ResolvedHooks, HookResult, HookOutput } from "../intents/lib/operation";
 import type { IntentModule } from "../intents/lib/module";
 
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
@@ -54,9 +54,11 @@ function resolveHooksFromModule(module: IntentModule, operationId: string): Reso
         return { results: [], errors: [], capabilities: {} };
       }
       try {
-        const result = await hookHandler.handler(ctx);
-        // Filter out undefined results to match Dispatcher behavior (undefined = "not handled")
-        const results = result !== undefined ? [result as T] : [];
+        const output = await hookHandler.handler(ctx);
+        // Unwrap HookOutput.result; filter out undefined/null to match Dispatcher
+        // behavior (undefined/null = "not handled")
+        const result = (output as HookOutput<T> | undefined)?.result;
+        const results: T[] = result !== undefined && result !== null ? [result] : [];
         return { results, errors: [], capabilities: {} };
       } catch (error) {
         return { results: [], errors: [error as Error], capabilities: {} };

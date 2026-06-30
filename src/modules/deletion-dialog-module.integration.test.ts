@@ -25,7 +25,7 @@ import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
 import { createDeletionDialogModule } from "./deletion-dialog-module";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DeletionProgress } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
@@ -508,8 +508,8 @@ describe("DeletionDialogModule - remove confirm", () => {
       logger: SILENT_LOGGER,
     });
 
-    const confirm = (): Promise<ConfirmHookResult> =>
-      module.hooks![DELETE_WORKSPACE_OPERATION_ID]!["confirm"]!.handler({
+    const confirm = async (): Promise<ConfirmHookResult> => {
+      const output = (await module.hooks![DELETE_WORKSPACE_OPERATION_ID]!["confirm"]!.handler({
         intent: {
           type: INTENT_DELETE_WORKSPACE,
           payload: {
@@ -524,7 +524,9 @@ describe("DeletionDialogModule - remove confirm", () => {
         workspacePath: WS_PATH_A,
         workspaceName: WS_NAME_A,
         active: true,
-      } as unknown as HookContext) as Promise<ConfirmHookResult>;
+      } as unknown as HookContext)) as HookOutput<ConfirmHookResult>;
+      return output.result!;
+    };
 
     return {
       dialogManager,

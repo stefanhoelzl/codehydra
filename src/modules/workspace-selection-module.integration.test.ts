@@ -27,6 +27,7 @@ import {
   registerTestInfrastructure,
 } from "../intents/operations.test-utils";
 import type { IntentModule } from "../intents/lib/module";
+import type { HookOutput } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import { createWorkspaceSelectionModule } from "./workspace-selection-module";
 import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
@@ -103,8 +104,8 @@ function createTestSetup(opts: { candidates: WorkspaceCandidate[] }): TestSetup 
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "find-candidates": {
-          handler: async (): Promise<FindCandidatesHookResult> => {
-            return { candidates: opts.candidates };
+          handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
+            return { result: { candidates: opts.candidates } };
           },
         },
       },

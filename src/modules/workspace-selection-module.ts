@@ -9,7 +9,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import { SWITCH_WORKSPACE_OPERATION_ID, selectNextWorkspace } from "../intents/switch-workspace";
 import type {
@@ -38,10 +38,10 @@ export function createWorkspaceSelectionModule(): IntentModule {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "select-next": {
-          handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SelectNextHookResult>> => {
             const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
             const result = selectNextWorkspace(currentPath, candidates, scorer);
-            return result ? { selected: result } : {};
+            return result ? { result: { selected: result } } : { result: {} };
           },
         },
       },

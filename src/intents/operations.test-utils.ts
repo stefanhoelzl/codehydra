@@ -17,7 +17,7 @@
 
 import type { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId, WorkspaceName, WorkspaceRef } from "../shared/api/types";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
 import { INTENT_UPDATE_AGENT_STATUS } from "./update-agent-status";
@@ -215,7 +215,7 @@ export function createTestViewManager(initialActive: string | null = null): Test
 export function createTestMockModule(config: TestMockConfig): IntentModule {
   const hooks: Record<
     string,
-    Record<string, { handler: (ctx: HookContext) => Promise<unknown> }>
+    Record<string, { handler: (ctx: HookContext) => Promise<HookOutput | void> }>
   > = {};
 
   // -- resolve-workspace --
@@ -226,15 +226,17 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     const vm = config.viewManager;
     hooks[RESOLVE_WORKSPACE_OPERATION_ID] = {
       resolve: {
-        handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+        handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
           const intent = ctx.intent as { payload: { workspacePath: string } };
           const entry = lookupWorkspace(intent.payload.workspacePath);
-          if (!entry) return {};
+          if (!entry) return { result: {} };
           return {
-            ...entry,
-            active:
-              entry.active ??
-              (vm ? vm.getActiveWorkspacePath() === intent.payload.workspacePath : false),
+            result: {
+              ...entry,
+              active:
+                entry.active ??
+                (vm ? vm.getActiveWorkspacePath() === intent.payload.workspacePath : false),
+            },
           };
         },
       },
@@ -248,15 +250,15 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
       typeof projects === "function" ? projects : (path: string) => projects[path];
     hooks[RESOLVE_PROJECT_OPERATION_ID] = {
       resolve: {
-        handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+        handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
           const { projectPath } = ctx as ResolveProjectHookInput;
           const entry = lookupProject(projectPath);
-          if (!entry) return {};
+          if (!entry) return { result: {} };
           const result: ResolveProjectHookResult = { projectId: entry.projectId };
           if (entry.projectName !== undefined) {
-            return { ...result, projectName: entry.projectName };
+            return { result: { ...result, projectName: entry.projectName } };
           }
-          return result;
+          return { result };
         },
       },
     };
@@ -269,8 +271,8 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     const activeRef = config.activeWorkspaceRef;
     hooks[GET_ACTIVE_WORKSPACE_OPERATION_ID] = {
       get: {
-        handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-          return { workspaceRef: activeRef };
+        handler: async (): Promise<HookOutput<GetActiveWorkspaceHookResult>> => {
+          return { result: { workspaceRef: activeRef } };
         },
       },
     };
@@ -281,20 +283,20 @@ export function createTestMockModule(config: TestMockConfig): IntentModule {
     const vm = config.viewManager;
     hooks[SWITCH_WORKSPACE_OPERATION_ID] = {
       activate: {
-        handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+        handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
           const { workspacePath, active } = ctx as ActivateHookInput;
           const intent = ctx.intent as SwitchWorkspaceIntent;
           // Deselect: mirrors the production view-module null branch.
           if (workspacePath === null) {
             vm.setActiveWorkspace(null);
-            return {};
+            return { result: {} };
           }
           if (active) {
-            return {};
+            return { result: {} };
           }
           const focus = intent.payload.focus ?? true;
           vm.setActiveWorkspace(workspacePath, focus);
-          return { resolvedPath: workspacePath };
+          return { result: { resolvedPath: workspacePath } };
         },
       },
     };

@@ -14,7 +14,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 
-import type { Operation, OperationContext, HookContext } from "../intents/lib/operation";
+import type {
+  Operation,
+  OperationContext,
+  HookContext,
+  HookOutput,
+} from "../intents/lib/operation";
 import type { Intent, DomainEvent } from "../intents/lib/types";
 import type { IntentModule } from "../intents/lib/module";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
@@ -588,9 +593,11 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       // The CloseProjectOperation collects this hook to drive its
       // per-workspace teardown (and the close confirm dialog's count).
-      const result = (await module.hooks![CLOSE_PROJECT_OPERATION_ID]!["resolve"]!.handler({
-        intent: { type: "project:close", payload: { projectPath } },
-      } as HookContext)) as { workspaces: ReadonlyArray<{ path: string }> };
+      const result = (
+        (await module.hooks![CLOSE_PROJECT_OPERATION_ID]!["resolve"]!.handler({
+          intent: { type: "project:close", payload: { projectPath } },
+        } as HookContext)) as HookOutput<{ workspaces: ReadonlyArray<{ path: string }> }>
+      ).result!;
 
       expect(result.workspaces.map((workspace) => workspace.path)).toEqual([
         `${projectPath}/.worktrees/feature-1`,

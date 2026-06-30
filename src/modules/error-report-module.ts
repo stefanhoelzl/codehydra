@@ -49,6 +49,7 @@ import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { ViewBoundary, UncaughtExceptionDetails } from "../boundaries/shell/view";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { ANY_VALUE } from "../intents/lib/operation";
+import type { HookOutput } from "../intents/lib/operation";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import { INTENT_APP_SHUTDOWN, type AppShutdownIntent } from "../intents/app-shutdown";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
@@ -416,9 +417,9 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
     hooks: {
       [APP_START_OPERATION_ID]: {
         "before-ready": {
-          handler: async (): Promise<Record<string, never>> => {
+          handler: async (): Promise<HookOutput<Record<string, never>>> => {
             registerErrorHandlers();
-            return {};
+            return { result: {} };
           },
         },
         // The UI view exists once the view module's init handler has run
@@ -426,9 +427,9 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
         // before the renderer mounts the Svelte app.
         init: {
           requires: { "ui-ready": ANY_VALUE },
-          handler: async (): Promise<Record<string, never>> => {
+          handler: async (): Promise<HookOutput<Record<string, never>>> => {
             subscribeUiCrashGuard();
-            return {};
+            return { result: {} };
           },
         },
       },

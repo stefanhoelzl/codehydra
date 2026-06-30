@@ -49,7 +49,7 @@ import { APP_READY_OPERATION_ID, type LoadProjectsResult } from "../intents/app-
 import type { AppReadyIntent } from "../intents/app-ready";
 import { Path } from "../utils/path/path";
 import type { ProjectId } from "../shared/api/types";
-import type { HookContext, ResolvedHooks, HookResult } from "../intents/lib/operation";
+import type { HookContext, ResolvedHooks, HookResult, HookOutput } from "../intents/lib/operation";
 import type { IntentModule } from "../intents/lib/module";
 import { createFileSystemMock, directory } from "../boundaries/platform/filesystem.state-mock";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
@@ -125,8 +125,9 @@ function resolveHooksFromModule(module: IntentModule, operationId: string): Reso
         return { results: [], errors: [], capabilities: {} };
       }
       try {
-        const result = await hookHandler.handler(ctx);
-        const results = result !== undefined ? [result as T] : [];
+        const output = await hookHandler.handler(ctx);
+        const result = (output as HookOutput<T> | undefined)?.result;
+        const results: T[] = result !== undefined && result !== null ? [result] : [];
         return { results, errors: [], capabilities: {} };
       } catch (error) {
         return { results: [], errors: [error as Error], capabilities: {} };

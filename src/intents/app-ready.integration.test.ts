@@ -21,7 +21,7 @@ import type { AppReadyIntent, LoadProjectsResult } from "./app-ready";
 import { INTENT_OPEN_PROJECT } from "./open-project";
 import type { OpenProjectIntent } from "./open-project";
 import type { IntentModule } from "./lib/module";
-import type { Operation, OperationContext } from "./lib/operation";
+import type { HookOutput, Operation, OperationContext } from "./lib/operation";
 import type { Project } from "../shared/api/types";
 import { createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { ConfigAgentType } from "../boundaries/platform/config";
@@ -48,8 +48,8 @@ function createProjectModule(projectPaths: readonly string[]): IntentModule {
     hooks: {
       [APP_READY_OPERATION_ID]: {
         "load-projects": {
-          handler: async (): Promise<LoadProjectsResult> => {
-            return { projectPaths };
+          handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
+            return { result: { projectPaths } };
           },
         },
       },
@@ -249,7 +249,7 @@ describe("AppReady Operation", () => {
         hooks: {
           [APP_READY_OPERATION_ID]: {
             "load-projects": {
-              handler: async (): Promise<LoadProjectsResult> => {
+              handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
                 throw new Error("Failed to load project configs");
               },
             },

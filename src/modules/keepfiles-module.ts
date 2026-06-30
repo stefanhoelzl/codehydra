@@ -15,7 +15,7 @@
 import * as path from "node:path";
 import ignore, { type Ignore } from "ignore";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { Logger } from "../boundaries/platform/logging-types";
 import {
@@ -274,13 +274,13 @@ export function createKeepFilesModule(deps: KeepFilesModuleDeps): IntentModule {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
             const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as OpenWorkspaceIntent;
 
             // Skip keepfiles for re-opened workspaces — only copy for newly created ones
             if (intent.payload.existingWorkspace !== undefined) {
-              return {};
+              return { result: {} };
             }
 
             try {
@@ -297,7 +297,7 @@ export function createKeepFilesModule(deps: KeepFilesModuleDeps): IntentModule {
               // Do not re-throw -- keepfiles is best-effort
             }
 
-            return {};
+            return { result: {} };
           },
         },
       },

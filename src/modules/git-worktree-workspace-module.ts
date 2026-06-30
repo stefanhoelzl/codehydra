@@ -17,7 +17,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { Workspace } from "../boundaries/platform/git-types";
 import type { PathProvider } from "../boundaries/platform/path-provider";
@@ -189,10 +189,10 @@ export function createGitWorktreeWorkspaceModule(
       // resolve-workspace -> resolve (single registration replaces 8 per-operation hooks)
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const { workspacePath } = ctx as ResolveHookInput;
             const resolved = resolveFromWorkspacePath(workspacePath);
-            return resolved ?? {};
+            return { result: resolved ?? {} };
           },
         },
       },
@@ -200,7 +200,7 @@ export function createGitWorktreeWorkspaceModule(
       // open-project -> discover
       [OPEN_PROJECT_OPERATION_ID]: {
         discover: {
-          handler: async (ctx: HookContext): Promise<DiscoverHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<DiscoverHookResult>> => {
             const { projectPath } = ctx as DiscoverHookInput;
             const projectPathObj = new Path(projectPath);
             const workspacesDir = pathProvider.getProjectWorkspacesDir(projectPathObj);
@@ -224,8 +224,10 @@ export function createGitWorktreeWorkspaceModule(
             const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj);
 
             return {
-              workspaces: discovered,
-              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+              result: {
+                workspaces: discovered,
+                ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+              },
             };
           },
         },
@@ -237,16 +239,20 @@ export function createGitWorktreeWorkspaceModule(
         // tears each down (runtime teardown), upgrades to full deletion on a
         // confirmed removeAll, and the confirm dialog shows the count.
         resolve: {
-          handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
             const intent = ctx.intent as CloseProjectIntent;
             const key = new Path(intent.payload.projectPath).toString();
             const list = workspaces.get(key) ?? [];
             // IPC-shaped contract: paths cross the hook boundary as strings.
-            return { workspaces: list.map((workspace) => ({ path: workspace.path.toString() })) };
+            return {
+              result: {
+                workspaces: list.map((workspace) => ({ path: workspace.path.toString() })),
+              },
+            };
           },
         },
         close: {
-          handler: async (ctx: HookContext): Promise<Record<string, never>> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<Record<string, never>>> => {
             const { projectPath } = ctx as CloseHookInput;
             const projectPathObj = new Path(projectPath);
 
@@ -261,7 +267,7 @@ export function createGitWorktreeWorkspaceModule(
               }
             }
 
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -269,7 +275,7 @@ export function createGitWorktreeWorkspaceModule(
       // open-workspace -> create
       [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
-          handler: async (ctx: HookContext): Promise<CreateHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CreateHookResult>> => {
             const intent = ctx.intent as OpenWorkspaceIntent;
             const { payload } = intent;
             const { projectPath } = ctx as CreateHookInput;
@@ -302,10 +308,12 @@ export function createGitWorktreeWorkspaceModule(
               }
 
               return {
-                workspacePath,
-                branch,
-                metadata,
-                ...(payload.base !== undefined && { resolvedBase: payload.base }),
+                result: {
+                  workspacePath,
+                  branch,
+                  metadata,
+                  ...(payload.base !== undefined && { resolvedBase: payload.base }),
+                },
               };
             }
 
@@ -348,10 +356,12 @@ export function createGitWorktreeWorkspaceModule(
             }
 
             return {
-              workspacePath: internalWorkspace.path.toString(),
-              branch: internalWorkspace.branch ?? internalWorkspace.name,
-              metadata: internalWorkspace.metadata,
-              resolvedBase: base,
+              result: {
+                workspacePath: internalWorkspace.path.toString(),
+                branch: internalWorkspace.branch ?? internalWorkspace.name,
+                metadata: internalWorkspace.metadata,
+                resolvedBase: base,
+              },
             };
           },
         },
@@ -360,7 +370,7 @@ export function createGitWorktreeWorkspaceModule(
       // get-project-bases -> list + refresh
       [GET_PROJECT_BASES_OPERATION_ID]: {
         list: {
-          handler: async (ctx: HookContext): Promise<ListBasesHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ListBasesHookResult>> => {
             const { projectPath } = ctx as ListBasesHookInput;
             const projectPathObj = new Path(projectPath);
 
@@ -368,8 +378,10 @@ export function createGitWorktreeWorkspaceModule(
             const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj);
 
             return {
-              bases,
-              ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+              result: {
+                bases,
+                ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
+              },
             };
           },
         },
@@ -384,21 +396,21 @@ export function createGitWorktreeWorkspaceModule(
       // delete-workspace -> preflight + delete (resolve hook removed, now uses resolve-workspace dispatch)
       [DELETE_WORKSPACE_OPERATION_ID]: {
         preflight: {
-          handler: async (ctx: HookContext): Promise<PreflightHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<PreflightHookResult>> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             try {
               const isDirty = await gitWorktreeProvider.isDirty(new Path(wsPath));
               const unmergedCommits = await gitWorktreeProvider.countUnmergedCommits(
                 new Path(wsPath)
               );
-              return { isDirty, unmergedCommits };
+              return { result: { isDirty, unmergedCommits } };
             } catch (error) {
-              return { error: getErrorMessage(error) };
+              return { result: { error: getErrorMessage(error) } };
             }
           },
         },
         delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
             const { projectPath, workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
@@ -422,7 +434,7 @@ export function createGitWorktreeWorkspaceModule(
                   unregisterWorkspaceFromState(projectPath, wsPath);
                 }
                 // Non-force: workspace stays in deletionPending for resolve/list
-                return { error: getErrorMessage(error) };
+                return { result: { error: getErrorMessage(error) } };
               }
 
               // Success: clean up deletionPending
@@ -430,7 +442,7 @@ export function createGitWorktreeWorkspaceModule(
             }
 
             unregisterWorkspaceFromState(projectPath, wsPath);
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -438,7 +450,7 @@ export function createGitWorktreeWorkspaceModule(
       // switch-workspace -> find-candidates (resolve hook removed)
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "find-candidates": {
-          handler: async (): Promise<FindCandidatesHookResult> => {
+          handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
             const candidates: Array<{
               projectPath: string;
               projectName: string;
@@ -459,7 +471,7 @@ export function createGitWorktreeWorkspaceModule(
                 });
               }
             }
-            return { candidates };
+            return { result: { candidates } };
           },
         },
       },
@@ -467,13 +479,13 @@ export function createGitWorktreeWorkspaceModule(
       // get-workspace-status -> get (resolve hook removed)
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<GetStatusHookResult>> => {
             const { workspacePath: wsPath } = ctx as GetStatusHookInput;
             const isDirty = await gitWorktreeProvider.isDirty(new Path(wsPath));
             const unmergedCommits = await gitWorktreeProvider.countUnmergedCommits(
               new Path(wsPath)
             );
-            return { isDirty, unmergedCommits };
+            return { result: { isDirty, unmergedCommits } };
           },
         },
       },
@@ -481,7 +493,7 @@ export function createGitWorktreeWorkspaceModule(
       // list-projects -> list-workspaces
       [LIST_PROJECTS_OPERATION_ID]: {
         "list-workspaces": {
-          handler: async (): Promise<ListWorkspacesHookResult> => {
+          handler: async (): Promise<HookOutput<ListWorkspacesHookResult>> => {
             const entries: ListWorkspacesHookEntry[] = [];
             for (const [key, wsList] of getMergedWorkspaces()) {
               entries.push({
@@ -489,7 +501,7 @@ export function createGitWorktreeWorkspaceModule(
                 workspaces: wsList,
               });
             }
-            return { entries };
+            return { result: { entries } };
           },
         },
       },

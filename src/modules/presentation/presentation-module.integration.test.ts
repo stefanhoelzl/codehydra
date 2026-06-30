@@ -37,6 +37,7 @@ import { APP_START_OPERATION_ID } from "../../intents/app-start";
 import type { ShowUIHookResult } from "../../intents/app-start";
 import { SETUP_OPERATION_ID, EVENT_SETUP_PROGRESS, EVENT_SETUP_ERROR } from "../../intents/setup";
 import type { AgentSelectionHookContext } from "../../intents/setup";
+import type { HookOutput } from "../../intents/lib/operation";
 import { EVENT_PROJECT_OPENED } from "../../intents/open-project";
 import { EVENT_PROJECT_CLOSED, CLOSE_PROJECT_OPERATION_ID } from "../../intents/close-project";
 import type { CloseConfirmHookResult } from "../../intents/close-project";
@@ -1100,9 +1101,11 @@ describe("PresentationModule - startup flow", () => {
     const module = createPresentationModule(deps);
     connect(deps);
 
-    const result = (await runHook(module, APP_START_OPERATION_ID, "show-ui", {
-      intent: { type: "app:start", payload: {} },
-    })) as ShowUIHookResult;
+    const result = (
+      (await runHook(module, APP_START_OPERATION_ID, "show-ui", {
+        intent: { type: "app:start", payload: {} },
+      })) as HookOutput<ShowUIHookResult>
+    ).result!;
     await flush();
 
     expect(typeof result.waitForRetry).toBe("function");
@@ -1193,10 +1196,10 @@ describe("PresentationModule - startup flow", () => {
 
     // The user picks opencode; the parked hook resolves.
     emitUiEvent(deps, { kind: "agent-selected", agent: "opencode" });
-    await pending;
+    const output = await pending;
 
-    // provides() exposes the chosen agent as the agentType capability.
-    expect(handlerDecl.provides!()).toEqual({ agentType: "opencode" });
+    // The handler returns the chosen agent as the agentType capability.
+    expect(output).toEqual({ provides: { agentType: "opencode" } });
   });
 
   it("app:setup hide-ui returns to the boot-splash phase", async () => {
@@ -1245,9 +1248,11 @@ describe("PresentationModule - startup flow", () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
-    const result = (await runHook(module, APP_START_OPERATION_ID, "show-ui", {
-      intent: { type: "app:start", payload: {} },
-    })) as ShowUIHookResult;
+    const result = (
+      (await runHook(module, APP_START_OPERATION_ID, "show-ui", {
+        intent: { type: "app:start", payload: {} },
+      })) as HookOutput<ShowUIHookResult>
+    ).result!;
 
     let resolved = false;
     void result.waitForRetry!().then(() => {
@@ -1291,7 +1296,7 @@ describe("PresentationModule - startup flow", () => {
     });
 
     // The parked promise resolves (defaulting to the first option) — no hang.
-    await expect(pending).resolves.toBeUndefined();
+    await expect(pending).resolves.toEqual({ provides: { agentType: "claude" } });
   });
 });
 
@@ -1319,9 +1324,11 @@ describe("PresentationModule - close confirm", () => {
       ...(input.remoteUrl !== undefined && { remoteUrl: input.remoteUrl }),
       workspaces,
     };
-    return module.hooks![CLOSE_PROJECT_OPERATION_ID]!["confirm"]!.handler(
-      hookInput as never
-    ) as Promise<CloseConfirmHookResult>;
+    return (
+      module.hooks![CLOSE_PROJECT_OPERATION_ID]!["confirm"]!.handler(hookInput as never) as Promise<
+        HookOutput<CloseConfirmHookResult>
+      >
+    ).then((output) => output.result!);
   }
 
   function buttonLabel(config: { sections: readonly unknown[] }): string | undefined {

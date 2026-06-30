@@ -14,7 +14,7 @@
 
 import type { IntentModule, EventDeclarations, HookDeclarations } from "../intents/lib/module";
 import type { DomainEvent } from "../intents/lib/types";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DialogHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
@@ -341,7 +341,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
    * warnings in when the background status check lands, and parks the
    * dispatch until the user answers.
    */
-  async function confirmRemove(ctx: HookContext): Promise<ConfirmHookResult> {
+  async function confirmRemove(ctx: HookContext): Promise<HookOutput<ConfirmHookResult>> {
     const input = ctx as DeletePipelineHookInput;
     let state: RemoveConfirmState = {
       workspaceName: input.workspaceName,
@@ -391,10 +391,10 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
     try {
       const event = await handle.nextEvent();
       if (event.kind !== "dismiss" && event.actionId === "remove") {
-        return { keepBranch: event.data?.["keep-branch"] === "true" };
+        return { result: { keepBranch: event.data?.["keep-branch"] === "true" } };
       }
       // Cancel button or Escape.
-      return { canceled: true };
+      return { result: { canceled: true } };
     } finally {
       dialogOpen = false;
       handle.close();

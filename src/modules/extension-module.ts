@@ -12,6 +12,7 @@ import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { InitResult, ExtensionRequirement } from "../intents/app-start";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
+import type { HookOutput } from "../intents/lib/operation";
 import { Path } from "../utils/path/path";
 import { getErrorMessage } from "../shared/errors/service-errors";
 
@@ -98,7 +99,7 @@ export function createExtensionModule(deps: ExtensionModuleDeps): IntentModule {
       [APP_START_OPERATION_ID]: {
         init: {
           requires: { "app-ready": true },
-          handler: async (): Promise<InitResult> => {
+          handler: async (): Promise<HookOutput<InitResult>> => {
             try {
               const manifestPath = pathProvider.runtimePath("extensions/manifest.json");
               const content = await fileSystemLayer.readFile(manifestPath);
@@ -107,7 +108,7 @@ export function createExtensionModule(deps: ExtensionModuleDeps): IntentModule {
 
               if (!validation.isValid) {
                 logger.warn("Invalid extensions manifest", { error: validation.error });
-                return {};
+                return { result: {} };
               }
 
               const extensionRequirements: ExtensionRequirement[] = validation.manifest.map(
@@ -122,12 +123,12 @@ export function createExtensionModule(deps: ExtensionModuleDeps): IntentModule {
                 count: extensionRequirements.length,
               });
 
-              return { extensionRequirements };
+              return { result: { extensionRequirements } };
             } catch (error) {
               logger.warn("Failed to load extensions manifest", {
                 error: getErrorMessage(error),
               });
-              return {};
+              return { result: {} };
             }
           },
         },

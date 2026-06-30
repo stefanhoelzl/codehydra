@@ -37,7 +37,7 @@ import type { ProjectId, WorkspaceName } from "../shared/api/types";
 import { isValidMetadataKey } from "../shared/api/types";
 import type { IntentModule } from "./lib/module";
 import type { DomainEvent, Intent } from "./lib/types";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 
 // =============================================================================
 // Test Constants
@@ -112,10 +112,10 @@ function createTestSetup(): TestSetup {
       },
       [GET_METADATA_OPERATION_ID]: {
         get: {
-          handler: async (ctx: HookContext): Promise<GetMetadataHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<GetMetadataHookResult>> => {
             const { workspacePath: wp } = ctx as GetHookInput;
             const metadata = metadataStore.get(wp) ?? {};
-            return { metadata };
+            return { result: { metadata } };
           },
         },
       },

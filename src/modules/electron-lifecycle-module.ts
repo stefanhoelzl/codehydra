@@ -12,6 +12,7 @@ import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { AsyncWatcher } from "../boundaries/platform/async-watcher";
 import type { Logger } from "../boundaries/platform/logging";
 import type { IntentModule } from "../intents/lib/module";
+import type { HookOutput } from "../intents/lib/operation";
 import type { ConfigureResult } from "../intents/app-start";
 import type { Config } from "../boundaries/platform/config";
 import type { Dispatcher } from "../intents/lib/dispatcher";
@@ -156,7 +157,7 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
     hooks: {
       [APP_START_OPERATION_ID]: {
         "before-ready": {
-          handler: async (): Promise<ConfigureResult> => {
+          handler: async (): Promise<HookOutput<ConfigureResult>> => {
             // Disable ASAR when not packaged
             if (!deps.buildInfo.isPackaged) {
               process.noAsar = true;
@@ -200,14 +201,14 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
                 ...(flag.value !== undefined && { value: flag.value }),
               });
             }
-            return {};
+            return { result: {} };
           },
         },
         init: {
-          provides: () => ({ "app-ready": true }),
-          handler: async (): Promise<void> => {
+          handler: async (): Promise<HookOutput> => {
             deps.asyncWatcher.check();
             await deps.app.whenReady();
+            return { provides: { "app-ready": true } };
           },
         },
         start: {

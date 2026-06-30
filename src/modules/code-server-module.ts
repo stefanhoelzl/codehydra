@@ -16,7 +16,7 @@
 import { join, delimiter } from "node:path";
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import { ANY_VALUE } from "../intents/lib/operation";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { ProcessRunner, SpawnedProcess } from "../boundaries/platform/process";
@@ -646,9 +646,6 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     }
   }
 
-  /** Capability: workspaceUrl provided by finalize handler. */
-  let capWorkspaceUrl: string | undefined;
-
   // -------------------------------------------------------------------------
   // Module definition
   // -------------------------------------------------------------------------
@@ -661,8 +658,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         // app-start -> before-ready: declare required scripts
         // -------------------------------------------------------------------
         "before-ready": {
-          handler: async (): Promise<ConfigureResult> => {
-            return { scripts: ["code", "code.cmd"] };
+          handler: async (): Promise<HookOutput<ConfigureResult>> => {
+            return { result: { scripts: ["code", "code.cmd"] } };
           },
         },
 
@@ -670,7 +667,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         // app-start -> check-deps: preflight code-server binary + extensions
         // -------------------------------------------------------------------
         "check-deps": {
-          handler: async (ctx: HookContext): Promise<CheckDepsResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
             const { extensionRequirements } = ctx as CheckDepsHookContext;
             const missingBinaries: BinaryType[] = [];
 
@@ -682,7 +679,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
             // Compare requirements against installed extensions
             if (extensionRequirements.length === 0) {
-              return { missingBinaries };
+              return { result: { missingBinaries } };
             }
 
             try {
@@ -699,10 +696,10 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 installPlanCount: extensionInstallPlan.length,
               });
 
-              return { missingBinaries, extensionInstallPlan };
+              return { result: { missingBinaries, extensionInstallPlan } };
             } catch (error) {
               logger.warn("Extension check failed", { error: getErrorMessage(error) });
-              return { missingBinaries };
+              return { result: { missingBinaries } };
             }
           },
         },
@@ -712,8 +709,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         // -------------------------------------------------------------------
         start: {
           requires: { pluginPort: ANY_VALUE },
-          provides: () => ({ codeServerPort }),
-          handler: async (ctx: HookContext): Promise<void> => {
+          handler: async (ctx: HookContext): Promise<HookOutput> => {
             // Read pluginPort from capabilities (provided by plugin-server-module)
             const pluginPort = ctx.capabilities?.pluginPort as number | null;
             if (pluginPort !== null) {
@@ -733,6 +729,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
 
             // Update internal port (consumed by finalize hook for workspace URLs)
             codeServerPort = port;
+
+            return { provides: { codeServerPort: port } };
           },
         },
       },
@@ -908,11 +906,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       // -------------------------------------------------------------------
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          provides: () => ({
-            ...(capWorkspaceUrl !== undefined && { workspaceUrl: capWorkspaceUrl }),
-          }),
-          handler: async (ctx: HookContext): Promise<void> => {
-            capWorkspaceUrl = undefined;
+          handler: async (ctx: HookContext): Promise<HookOutput> => {
+            let workspaceUrl: string;
             const finalizeCtx = ctx as FinalizeHookInput;
 
             try {
@@ -930,14 +925,16 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 "extensions.autoCheckUpdates": false,
               };
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
-              capWorkspaceUrl = urlForWorkspace(codeServerPort, wsFilePath.toString());
+              workspaceUrl = urlForWorkspace(codeServerPort, wsFilePath.toString());
             } catch (error) {
               logger.warn("Failed to ensure workspace file, using folder URL", {
                 workspacePath: finalizeCtx.workspacePath,
                 error: error instanceof Error ? error.message : String(error),
               });
-              capWorkspaceUrl = urlForFolder(codeServerPort, finalizeCtx.workspacePath);
+              workspaceUrl = urlForFolder(codeServerPort, finalizeCtx.workspacePath);
             }
+
+            return { provides: { workspaceUrl } };
           },
         },
       },
@@ -947,7 +944,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       // -------------------------------------------------------------------
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
@@ -956,13 +953,13 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               const workspaceName = workspacePath.basename;
               const projectWorkspacesDir = workspacePath.dirname;
               await removeWorkspaceFile(workspaceName, projectWorkspacesDir);
-              return {};
+              return { result: {} };
             } catch (error) {
               if (payload.force) {
                 logger.warn("CodeServerModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
-                return {};
+                return { result: {} };
               }
               throw error;
             }

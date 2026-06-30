@@ -12,7 +12,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Config } from "../boundaries/platform/config";
 import { storeBoolean, storeEnum } from "../boundaries/platform/store-definition";
 import { APP_START_OPERATION_ID, type CheckDepsResult } from "../intents/app-start";
@@ -86,26 +86,28 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
       // --- Blocking PIDs scenario ---
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
-            if (!isActive("debug.blocking-pids")) return {};
+          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
+            if (!isActive("debug.blocking-pids")) return { result: {} };
             const { projectPath, workspacePath, workspaceName } = ctx as DeletePipelineHookInput;
             debugWorkspaces.set(workspacePath, { projectPath, workspaceName });
-            return { error: "Debug: simulated file lock" };
+            return { result: { error: "Debug: simulated file lock" } };
           },
         },
         detect: {
-          handler: async (): Promise<DetectHookResult> => {
-            if (!isActive("debug.blocking-pids")) return {};
+          handler: async (): Promise<HookOutput<DetectHookResult>> => {
+            if (!isActive("debug.blocking-pids")) return { result: {} };
             return {
-              blockingProcesses: [
-                {
-                  pid: 99999,
-                  name: "debug-blocker",
-                  commandLine: "debug --simulated",
-                  files: ["locked-file.txt"],
-                  cwd: null,
-                },
-              ],
+              result: {
+                blockingProcesses: [
+                  {
+                    pid: 99999,
+                    name: "debug-blocker",
+                    commandLine: "debug --simulated",
+                    files: ["locked-file.txt"],
+                    cwd: null,
+                  },
+                ],
+              },
             };
           },
         },
@@ -114,13 +116,15 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
       // --- Blocking PIDs: resolve cached workspace identity ---
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const { workspacePath } = ctx as ResolveHookInput;
             const cached = debugWorkspaces.get(workspacePath);
-            if (!cached) return {};
+            if (!cached) return { result: {} };
             return {
-              projectPath: cached.projectPath,
-              workspaceName: cached.workspaceName,
+              result: {
+                projectPath: cached.projectPath,
+                workspaceName: cached.workspaceName,
+              },
             };
           },
         },
@@ -129,9 +133,9 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
       // --- Setup: check-deps + binary download simulation ---
       [APP_START_OPERATION_ID]: {
         "check-deps": {
-          handler: async (): Promise<CheckDepsResult> => {
-            if (!isActive("debug.setup")) return {};
-            return { missingBinaries: ["claude" as BinaryType] };
+          handler: async (): Promise<HookOutput<CheckDepsResult>> => {
+            if (!isActive("debug.setup")) return { result: {} };
+            return { result: { missingBinaries: ["claude" as BinaryType] } };
           },
         },
         start: {

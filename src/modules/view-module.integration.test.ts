@@ -13,7 +13,7 @@
 import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi } from "vitest";
 import { Dispatcher } from "../intents/lib/dispatcher";
-import type { Operation, OperationContext } from "../intents/lib/operation";
+import type { Operation, OperationContext, HookOutput } from "../intents/lib/operation";
 import type { Intent } from "../intents/lib/types";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import type { IntentModule } from "../intents/lib/module";
@@ -214,9 +214,11 @@ async function resolveActive(module: IntentModule, workspacePath: string): Promi
     intent: { type: "workspace:resolve", payload: { workspacePath } },
     workspacePath,
   } as unknown as ResolveHookInput;
-  const result = (await module.hooks![RESOLVE_WORKSPACE_OPERATION_ID]!.resolve!.handler(
-    hookCtx
-  )) as ResolveHookResult;
+  const result = (
+    (await module.hooks![RESOLVE_WORKSPACE_OPERATION_ID]!.resolve!.handler(
+      hookCtx
+    )) as HookOutput<ResolveHookResult>
+  ).result!;
   return result.active === true;
 }
 
