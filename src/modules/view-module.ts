@@ -17,7 +17,7 @@
 
 import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { DomainEvent } from "../intents/lib/types";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import type { Logger } from "../boundaries/platform/logging";
@@ -119,8 +119,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       [APP_START_OPERATION_ID]: {
         init: {
           requires: { "app-ready": true },
-          provides: () => ({ "ui-ready": true }),
-          handler: async (): Promise<void> => {
+          handler: async (): Promise<HookOutput> => {
             // Disable application menu
             if (deps.menuLayer) {
               deps.menuLayer.setApplicationMenu(null);
@@ -145,6 +144,8 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
 
             // Focus UI
             viewManager.focus();
+
+            return { provides: { "ui-ready": true } };
           },
         },
       },
@@ -161,9 +162,9 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const { workspacePath } = ctx as ResolveHookInput;
-            return { active: activeWorkspacePath === workspacePath };
+            return { result: { active: activeWorkspacePath === workspacePath } };
           },
         },
       },
@@ -173,8 +174,8 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
-          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-            return { workspaceRef: cachedActiveRef };
+          handler: async (): Promise<HookOutput<GetActiveWorkspaceHookResult>> => {
+            return { result: { workspaceRef: cachedActiveRef } };
           },
         },
       },
@@ -187,22 +188,22 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
             const { workspacePath, active } = ctx as ActivateHookInput;
 
             // Deselect: clear the active-workspace bookkeeping so a later
             // switch back to it isn't short-circuited as already-active.
             if (workspacePath === null) {
               activeWorkspacePath = null;
-              return {};
+              return { result: {} };
             }
 
             if (active) {
-              return {};
+              return { result: {} };
             }
 
             activeWorkspacePath = workspacePath;
-            return { resolvedPath: workspacePath };
+            return { result: { resolvedPath: workspacePath } };
           },
         },
       },
@@ -215,12 +216,12 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath, active } = ctx as DeletePipelineHookInput;
             if (activeWorkspacePath === workspacePath) {
               activeWorkspacePath = null;
             }
-            return { ...(active && { wasActive: true }) };
+            return { result: { ...(active && { wasActive: true }) } };
           },
         },
       },
@@ -233,12 +234,12 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<HibernateShutdownHookResult>> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
             if (activeWorkspacePath === workspacePath) {
               activeWorkspacePath = null;
             }
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -248,17 +249,17 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       // -------------------------------------------------------------------
       [OPEN_PROJECT_OPERATION_ID]: {
         "select-folder": {
-          handler: async (): Promise<SelectFolderHookResult> => {
+          handler: async (): Promise<HookOutput<SelectFolderHookResult>> => {
             if (!deps.dialogLayer) {
-              return { folderPath: null };
+              return { result: { folderPath: null } };
             }
             const result = await deps.dialogLayer.showOpenDialog({
               properties: ["openDirectory"] as const,
             });
             if (result.canceled || result.filePaths.length === 0) {
-              return { folderPath: null };
+              return { result: { folderPath: null } };
             }
-            return { folderPath: result.filePaths[0]!.toString() };
+            return { result: { folderPath: result.filePaths[0]!.toString() } };
           },
         },
       },

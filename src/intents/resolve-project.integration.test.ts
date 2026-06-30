@@ -22,7 +22,7 @@ import {
 } from "./resolve-project";
 import type { ResolveProjectIntent, ResolveHookResult } from "./resolve-project";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { ProjectId } from "../shared/api/types";
 
 // =============================================================================
@@ -37,7 +37,9 @@ const PROJECT_NAME = "my-app";
 // Test Setup
 // =============================================================================
 
-function createTestSetup(resolveHandler?: (ctx: HookContext) => Promise<ResolveHookResult>): {
+function createTestSetup(
+  resolveHandler?: (ctx: HookContext) => Promise<HookOutput<ResolveHookResult>>
+): {
   dispatcher: Dispatcher;
 } {
   const dispatcher = createMockDispatcher();
@@ -74,9 +76,11 @@ describe("ResolveProjectOperation Integration", () => {
   describe("success", () => {
     it("resolves projectPath to projectId + projectName (#1)", async () => {
       const { dispatcher } = createTestSetup(
-        async (): Promise<ResolveHookResult> => ({
-          projectId: PROJECT_ID,
-          projectName: PROJECT_NAME,
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            projectId: PROJECT_ID,
+            projectName: PROJECT_NAME,
+          },
         })
       );
 
@@ -90,8 +94,10 @@ describe("ResolveProjectOperation Integration", () => {
 
     it("defaults projectName to empty string when not provided (#3)", async () => {
       const { dispatcher } = createTestSetup(
-        async (): Promise<ResolveHookResult> => ({
-          projectId: PROJECT_ID,
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            projectId: PROJECT_ID,
+          },
         })
       );
 
@@ -107,8 +113,10 @@ describe("ResolveProjectOperation Integration", () => {
   describe("failure", () => {
     it("throws when no handler returns projectId (#2)", async () => {
       const { dispatcher } = createTestSetup(
-        async (): Promise<ResolveHookResult> => ({
-          projectName: PROJECT_NAME,
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            projectName: PROJECT_NAME,
+          },
         })
       );
 

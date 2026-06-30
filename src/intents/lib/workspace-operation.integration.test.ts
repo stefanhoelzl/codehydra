@@ -17,7 +17,7 @@ import { createMockDispatcher } from "./dispatcher.test-utils";
 import { WorkspaceHookOperation } from "./workspace-operation";
 import { lastDefined, requireResult } from "./hook-helpers";
 import type { Intent, DomainEvent } from "./types";
-import type { HookHandler } from "./operation";
+import type { HookHandler, HookOutput } from "./operation";
 import {
   ResolveWorkspaceOperation,
   RESOLVE_WORKSPACE_OPERATION_ID,
@@ -102,21 +102,23 @@ function createSetup(opts: {
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx): Promise<ResolveWorkspaceHookResult> => {
+          handler: async (ctx): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
             const intent = ctx.intent as TestIntent;
             if (intent.payload.workspacePath === WORKSPACE_PATH) {
-              return { projectPath: PROJECT_ROOT, workspaceName: WORKSPACE_NAME };
+              return { result: { projectPath: PROJECT_ROOT, workspaceName: WORKSPACE_NAME } };
             }
-            return {};
+            return { result: {} };
           },
         },
       },
       ...(opts.registerProject && {
         [RESOLVE_PROJECT_OPERATION_ID]: {
           resolve: {
-            handler: async (): Promise<ResolveProjectHookResult> => ({
-              projectId: PROJECT_ID,
-              projectName: "project",
+            handler: async (): Promise<HookOutput<ResolveProjectHookResult>> => ({
+              result: {
+                projectId: PROJECT_ID,
+                projectName: "project",
+              },
             }),
           },
         },
@@ -159,7 +161,7 @@ describe("WorkspaceHookOperation", () => {
   it("resolve failure short-circuits before the hook runs", async () => {
     const { dispatcher, hookRuns } = createSetup({
       operation: new TestOperation(),
-      workHandlers: [{ handler: async () => ({ value: "x" }) }],
+      workHandlers: [{ handler: async () => ({ result: { value: "x" } }) }],
     });
 
     await expect(dispatcher.dispatch(testIntent("/unknown"))).rejects.toThrow(
@@ -171,7 +173,7 @@ describe("WorkspaceHookOperation", () => {
   it("returns the extracted result on success", async () => {
     const { dispatcher } = createSetup({
       operation: new TestOperation(),
-      workHandlers: [{ handler: async () => ({ value: "result-1" }) }],
+      workHandlers: [{ handler: async () => ({ result: { value: "result-1" } }) }],
     });
 
     await expect(dispatcher.dispatch(testIntent())).resolves.toBe("result-1");
@@ -217,7 +219,7 @@ describe("WorkspaceHookOperation", () => {
   it("throws the extract guard when no handler provides a result", async () => {
     const { dispatcher } = createSetup({
       operation: new TestOperation(),
-      workHandlers: [{ handler: async () => ({}) }],
+      workHandlers: [{ handler: async () => ({ result: {} }) }],
     });
 
     await expect(dispatcher.dispatch(testIntent())).rejects.toThrow(
@@ -228,7 +230,7 @@ describe("WorkspaceHookOperation", () => {
   it("emits the onSuccess event with resolved identity, project, and result", async () => {
     const { dispatcher } = createSetup({
       operation: new TestOperation({ resolveProject: true, emitEvent: true }),
-      workHandlers: [{ handler: async () => ({ value: "done" }) }],
+      workHandlers: [{ handler: async () => ({ result: { value: "done" } }) }],
       registerProject: true,
     });
 
@@ -251,7 +253,7 @@ describe("WorkspaceHookOperation", () => {
     // "No operation registered" if the skeleton tried to resolve the project.
     const { dispatcher } = createSetup({
       operation: new TestOperation(),
-      workHandlers: [{ handler: async () => ({ value: "ok" }) }],
+      workHandlers: [{ handler: async () => ({ result: { value: "ok" } }) }],
     });
 
     await expect(dispatcher.dispatch(testIntent())).resolves.toBe("ok");

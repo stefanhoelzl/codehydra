@@ -13,7 +13,7 @@ import { describe, it, expect } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 import type { IntentModule } from "./lib/module";
 import type { DomainEvent } from "./lib/types";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import {
   HibernateWorkspaceOperation,
   HIBERNATE_WORKSPACE_OPERATION_ID,
@@ -118,10 +118,10 @@ function createSwitchModule(recorder: Recorder): IntentModule {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (): Promise<Record<string, never>> => {
+          handler: async (): Promise<HookOutput<Record<string, never>>> => {
             recorder.switchCalled = true;
             recorder.callOrder.push("switch");
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -141,27 +141,27 @@ function createHibernateHookModule(
     hooks: {
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         capture: {
-          handler: async (ctx: HookContext): Promise<CaptureHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CaptureHookResult>> => {
             const c = ctx as HibernatePipelineHookInput;
             expect(c.workspacePath).toBe(WORKSPACE_PATH);
             expect(c.projectId).toBe(PROJECT_ID);
             recorder.captureCalled = true;
             recorder.callOrder.push("capture");
-            return {};
+            return { result: {} };
           },
         },
         shutdown: {
-          handler: async (): Promise<HibernateShutdownHookResult> => {
+          handler: async (): Promise<HookOutput<HibernateShutdownHookResult>> => {
             if (opts.shutdownGate) {
               await opts.shutdownGate;
             }
             recorder.shutdownCalled = true;
             recorder.callOrder.push("shutdown");
-            return {};
+            return { result: {} };
           },
         },
         release: {
-          handler: async (ctx: HookContext): Promise<HibernateReleaseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<HibernateReleaseHookResult>> => {
             const c = ctx as HibernatePipelineHookInput;
             expect(c.workspacePath).toBe(WORKSPACE_PATH);
             recorder.releaseCalled = true;
@@ -169,7 +169,7 @@ function createHibernateHookModule(
             if (opts.releaseThrows) {
               throw new Error("release boom");
             }
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -183,11 +183,11 @@ function createWakeHookModule(recorder: Recorder): IntentModule {
     hooks: {
       [WAKE_WORKSPACE_OPERATION_ID]: {
         cleanup: {
-          handler: async (ctx: HookContext): Promise<CleanupHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CleanupHookResult>> => {
             const c = ctx as WakePipelineHookInput;
             expect(c.workspacePath).toBe(WORKSPACE_PATH);
             recorder.cleanupCalled = true;
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -358,10 +358,12 @@ describe("workspace:hibernate", () => {
         hooks: {
           [HIBERNATE_WORKSPACE_OPERATION_ID]: {
             capture: {
-              handler: async (): Promise<CaptureHookResult> => ({}),
+              handler: async (): Promise<HookOutput<CaptureHookResult>> => ({ result: {} }),
             },
             shutdown: {
-              handler: async (): Promise<HibernateShutdownHookResult> => ({}),
+              handler: async (): Promise<HookOutput<HibernateShutdownHookResult>> => ({
+                result: {},
+              }),
             },
           },
         },

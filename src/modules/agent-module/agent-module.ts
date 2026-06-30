@@ -11,7 +11,7 @@
  */
 
 import type { IntentModule } from "../../intents/lib/module";
-import { ANY_VALUE, type HookContext } from "../../intents/lib/operation";
+import { ANY_VALUE, type HookContext, type HookOutput } from "../../intents/lib/operation";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { BinaryType } from "../../utils/binary-resolution/types";
 import type { AgentType } from "../../shared/plugin-protocol";
@@ -128,9 +128,6 @@ export function createAgentModule(
   // Internal closure state
   // =========================================================================
 
-  /** Capability: agentType provided by setup handler. */
-  let capAgentType: AgentType | undefined;
-
   /** MCP port captured during app:start; consumed on lazy initialize. */
   let capturedMcpPort: number | null = null;
 
@@ -185,24 +182,26 @@ export function createAgentModule(
     hooks: {
       [APP_START_OPERATION_ID]: {
         "before-ready": {
-          handler: async (): Promise<ConfigureResult> => {
+          handler: async (): Promise<HookOutput<ConfigureResult>> => {
             return {
-              scripts: provider.scripts,
+              result: {
+                scripts: provider.scripts,
+              },
             };
           },
         },
 
         "check-deps": {
-          handler: async (ctx: HookContext): Promise<CheckDepsResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
             const { configuredAgent } = ctx as CheckDepsHookContext;
-            if (configuredAgent !== provider.type) return {};
+            if (configuredAgent !== provider.type) return { result: {} };
 
             const missingBinaries: BinaryType[] = [];
             const result = await provider.preflight();
             if (result.success && result.needsDownload) {
               missingBinaries.push(provider.binaryType);
             }
-            return { missingBinaries };
+            return { result: { missingBinaries } };
           },
         },
 
@@ -219,19 +218,21 @@ export function createAgentModule(
 
       [APP_READY_OPERATION_ID]: {
         "available-agents": {
-          handler: async (): Promise<AvailableAgentsResult> => {
+          handler: async (): Promise<HookOutput<AvailableAgentsResult>> => {
             try {
               const result = await provider.preflight();
-              if (!result.success || result.needsDownload) return {};
+              if (!result.success || result.needsDownload) return { result: {} };
               return {
-                agent: {
-                  agent: provider.type,
-                  label: provider.displayName,
-                  icon: provider.icon,
+                result: {
+                  agent: {
+                    agent: provider.type,
+                    label: provider.displayName,
+                    icon: provider.icon,
+                  },
                 },
               };
             } catch {
-              return {};
+              return { result: {} };
             }
           },
         },
@@ -239,18 +240,18 @@ export function createAgentModule(
 
       [GET_LAUNCH_OPTIONS_OPERATION_ID]: {
         "launch-options": {
-          handler: async (ctx: HookContext): Promise<LaunchOptionsHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<LaunchOptionsHookResult>> => {
             const { backend } = ctx as LaunchOptionsHookInput;
             // Only the module matching the requested backend contributes.
             if (backend !== provider.type || provider.getLaunchOptions === undefined) {
-              return {};
+              return { result: {} };
             }
             try {
               const { permissionModes } = await provider.getLaunchOptions();
-              return { permissionModes };
+              return { result: { permissionModes } };
             } catch {
               // Best-effort: detection failure → form offers only the default.
-              return {};
+              return { result: {} };
             }
           },
         },
@@ -273,11 +274,13 @@ export function createAgentModule(
 
       [SETUP_OPERATION_ID]: {
         "register-agents": {
-          handler: async (): Promise<RegisterAgentResult> => {
+          handler: async (): Promise<HookOutput<RegisterAgentResult>> => {
             return {
-              agent: provider.type,
-              label: provider.displayName,
-              icon: provider.icon,
+              result: {
+                agent: provider.type,
+                label: provider.displayName,
+                icon: provider.icon,
+              },
             };
           },
         },
@@ -337,11 +340,7 @@ export function createAgentModule(
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
           requires: { agent: provider.type },
-          provides: () => ({
-            ...(capAgentType !== undefined && { agentType: capAgentType }),
-          }),
-          handler: async (ctx: HookContext): Promise<SetupHookResult | undefined> => {
-            capAgentType = undefined;
+          handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
             ensureInitialized();
 
             const setupCtx = ctx as SetupHookInput;
@@ -356,8 +355,10 @@ export function createAgentModule(
               isNewWorkspace,
             });
 
-            capAgentType = provider.type;
-            return { envVars: result.envVars };
+            return {
+              result: { envVars: result.envVars },
+              provides: { agentType: provider.type },
+            };
           },
         },
       },
@@ -365,16 +366,18 @@ export function createAgentModule(
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult | undefined> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             const result = await stopAgentForWorkspace(workspacePath, "delete shutdown");
             if (result.error && !payload.force) {
               throw new Error(result.error);
             }
-            return result.error
-              ? { serverName: provider.serverName, error: result.error }
-              : { serverName: provider.serverName };
+            return {
+              result: result.error
+                ? { serverName: provider.serverName, error: result.error }
+                : { serverName: provider.serverName },
+            };
           },
         },
       },
@@ -382,10 +385,10 @@ export function createAgentModule(
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<HibernateShutdownHookResult | undefined> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<HibernateShutdownHookResult>> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
             await stopAgentForWorkspace(workspacePath, "hibernate shutdown");
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -393,10 +396,12 @@ export function createAgentModule(
       [GET_WORKSPACE_STATUS_OPERATION_ID]: {
         get: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<GetStatusHookResult | undefined> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<GetStatusHookResult>> => {
             const { workspacePath } = ctx as GetStatusHookInput;
             return {
-              agentStatus: provider.getStatus(workspacePath as WorkspacePath),
+              result: {
+                agentStatus: provider.getStatus(workspacePath as WorkspacePath),
+              },
             };
           },
         },
@@ -405,10 +410,12 @@ export function createAgentModule(
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<GetAgentSessionHookResult | undefined> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<GetAgentSessionHookResult>> => {
             const { workspacePath } = ctx as GetAgentSessionHookInput;
             return {
-              session: provider.getSession(workspacePath as WorkspacePath),
+              result: {
+                session: provider.getSession(workspacePath as WorkspacePath),
+              },
             };
           },
         },
@@ -417,11 +424,11 @@ export function createAgentModule(
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
           requires: { agent: provider.type },
-          handler: async (ctx: HookContext): Promise<RestartAgentHookResult | undefined> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<RestartAgentHookResult>> => {
             const { workspacePath } = ctx as RestartAgentHookInput;
             const result = await provider.restartWorkspace(workspacePath);
             if (result.success) {
-              return { port: result.port };
+              return { result: { port: result.port } };
             } else {
               throw new Error(result.error);
             }

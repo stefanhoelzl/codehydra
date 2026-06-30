@@ -9,7 +9,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { createDebugModule } from "./debug-module";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookHandler, HookContext } from "../intents/lib/operation";
+import type { HookHandler, HookContext, HookOutput } from "../intents/lib/operation";
 import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { Config } from "../boundaries/platform/config";
 import type { CheckDepsResult } from "../intents/app-start";
@@ -84,14 +84,16 @@ describe("DebugModule Integration", () => {
     it("delete hook returns empty object", async () => {
       const module = createDebugModule({ configService: createMockConfig() });
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
-      const result = (await hook.handler(makeHookContext())) as DeleteHookResult;
+      const result = ((await hook.handler(makeHookContext())) as HookOutput<DeleteHookResult>)
+        .result!;
       expect(result).toEqual({});
     });
 
     it("detect hook returns empty object", async () => {
       const module = createDebugModule({ configService: createMockConfig() });
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "detect");
-      const result = (await hook.handler(makeHookContext())) as DetectHookResult;
+      const result = ((await hook.handler(makeHookContext())) as HookOutput<DetectHookResult>)
+        .result!;
       expect(result).toEqual({});
     });
   });
@@ -111,9 +113,11 @@ describe("DebugModule Integration", () => {
         configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
       });
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "delete");
-      const result = (await hook.handler(
-        makeDeleteCtx("/projects/my-app/workspaces/test-1", "/projects/my-app")
-      )) as DeleteHookResult;
+      const result = (
+        (await hook.handler(
+          makeDeleteCtx("/projects/my-app/workspaces/test-1", "/projects/my-app")
+        )) as HookOutput<DeleteHookResult>
+      ).result!;
       expect(result.error).toBe("Debug: simulated file lock");
     });
 
@@ -122,7 +126,8 @@ describe("DebugModule Integration", () => {
         configService: createMockConfig({ defaults: { "debug.blocking-pids": true } }),
       });
       const hook = getHook(module, DELETE_WORKSPACE_OPERATION_ID, "detect");
-      const result = (await hook.handler(makeHookContext())) as DetectHookResult;
+      const result = ((await hook.handler(makeHookContext())) as HookOutput<DetectHookResult>)
+        .result!;
       expect(result.blockingProcesses).toHaveLength(1);
       expect(result.blockingProcesses![0]).toEqual({
         pid: 99999,
@@ -150,7 +155,8 @@ describe("DebugModule Integration", () => {
         intent: { type: "workspace:resolve", payload: {} },
         workspacePath: "/projects/my-app/workspaces/test-1",
       } as unknown as HookContext;
-      const result = (await resolveHook.handler(resolveCtx)) as ResolveHookResult;
+      const result = ((await resolveHook.handler(resolveCtx)) as HookOutput<ResolveHookResult>)
+        .result!;
       expect(result).toEqual({
         projectPath: "/projects/my-app",
         workspaceName: "test-1",
@@ -166,7 +172,7 @@ describe("DebugModule Integration", () => {
         intent: { type: "workspace:resolve", payload: {} },
         workspacePath: "/unknown/path",
       } as unknown as HookContext;
-      const result = (await resolveHook.handler(ctx)) as ResolveHookResult;
+      const result = ((await resolveHook.handler(ctx)) as HookOutput<ResolveHookResult>).result!;
       expect(result).toEqual({});
     });
   });
@@ -175,7 +181,8 @@ describe("DebugModule Integration", () => {
     it("check-deps returns empty object", async () => {
       const module = createDebugModule({ configService: createMockConfig() });
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
-      const result = (await hook.handler(makeHookContext())) as CheckDepsResult;
+      const result = ((await hook.handler(makeHookContext())) as HookOutput<CheckDepsResult>)
+        .result!;
       expect(result).toEqual({});
     });
 
@@ -195,7 +202,8 @@ describe("DebugModule Integration", () => {
         configService: createMockConfig({ defaults: { "debug.setup": true } }),
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
-      const result = (await hook.handler(makeHookContext())) as CheckDepsResult;
+      const result = ((await hook.handler(makeHookContext())) as HookOutput<CheckDepsResult>)
+        .result!;
       expect(result.missingBinaries).toEqual(["claude"]);
     });
 
@@ -336,7 +344,8 @@ describe("DebugModule Integration", () => {
         }),
       });
       const hook = getHook(module, APP_START_OPERATION_ID, "check-deps");
-      const result = (await hook.handler(makeHookContext())) as CheckDepsResult;
+      const result = ((await hook.handler(makeHookContext())) as HookOutput<CheckDepsResult>)
+        .result!;
       expect(result.missingBinaries).toEqual(["claude"]);
     });
   });

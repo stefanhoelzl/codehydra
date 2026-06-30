@@ -9,7 +9,7 @@
  *     `requires: { agent: provider.type }`.
  */
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookHandler } from "../intents/lib/operation";
+import type { HookContext, HookHandler, HookOutput } from "../intents/lib/operation";
 import type { GitWorktreeProvider } from "../boundaries/platform/git-worktree-provider";
 import type { PersistedAccessor } from "../boundaries/platform/store-definition";
 import type { ConfigAgentType } from "../boundaries/platform/config";
@@ -88,14 +88,14 @@ function makeResolverHandler(
   deps: WorkspaceAgentResolverDeps,
   getWorkspacePath: (ctx: HookContext) => string | undefined
 ): HookHandler {
-  let resolved: AgentType | null = null;
   return {
-    provides: () => (resolved !== null ? { agent: resolved } : {}),
-    handler: async (ctx: HookContext): Promise<void> => {
-      resolved = null;
+    handler: async (ctx: HookContext): Promise<HookOutput> => {
       const workspacePath = getWorkspacePath(ctx);
-      if (workspacePath === undefined) return;
-      resolved = await resolveAgent(workspacePath, deps);
+      if (workspacePath === undefined) return {};
+      const resolved = await resolveAgent(workspacePath, deps);
+      // Omit the capability entirely when unresolved (null) — a present-but-null
+      // `agent` would differ from "absent" for key-presence checks.
+      return resolved !== null ? { provides: { agent: resolved } } : {};
     },
   };
 }
@@ -103,15 +103,12 @@ function makeResolverHandler(
 export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverDeps): IntentModule {
   // workspace:open is special — the intent payload may carry a per-workspace
   // override that must be persisted before downstream hooks read it.
-  let openResolved: AgentType | null = null;
   const openSetupHandler: HookHandler = {
-    provides: () => (openResolved !== null ? { agent: openResolved } : {}),
-    handler: async (ctx: HookContext): Promise<void> => {
-      openResolved = null;
+    handler: async (ctx: HookContext): Promise<HookOutput> => {
       const setupCtx = ctx as SetupHookInput;
       const intent = ctx.intent as OpenWorkspaceIntent;
       const { workspacePath } = setupCtx;
-      if (!workspacePath) return;
+      if (!workspacePath) return {};
 
       const defaultAgent = deps.agentConfig.get();
       // Only the typed arms ("claude"/"opencode") pin a backend; "default" and
@@ -137,7 +134,8 @@ export function createWorkspaceAgentResolverModule(deps: WorkspaceAgentResolverD
         }
       }
 
-      openResolved = await resolveAgent(workspacePath, deps);
+      const openResolved = await resolveAgent(workspacePath, deps);
+      return openResolved !== null ? { provides: { agent: openResolved } } : {};
     },
   };
 

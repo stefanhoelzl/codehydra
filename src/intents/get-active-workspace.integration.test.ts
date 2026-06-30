@@ -26,6 +26,7 @@ import type {
   GetActiveWorkspaceHookResult,
 } from "./get-active-workspace";
 import type { IntentModule } from "./lib/module";
+import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceRef } from "../shared/api/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
@@ -57,8 +58,8 @@ function createTestSetup(cachedRef: WorkspaceRef | null): TestSetup {
     hooks: {
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
-          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
-            return { workspaceRef: cachedRef };
+          handler: async (): Promise<HookOutput<GetActiveWorkspaceHookResult>> => {
+            return { result: { workspaceRef: cachedRef } };
           },
         },
       },

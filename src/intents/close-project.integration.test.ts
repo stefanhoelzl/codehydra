@@ -21,7 +21,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import {
   CloseProjectOperation,
@@ -210,7 +210,7 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
             // Track that skipSwitch is set
@@ -219,7 +219,7 @@ function createTestHarness(options?: {
               viewManager.setActiveWorkspace(null);
             }
             await viewManager.destroyWorkspaceView(workspacePath);
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -231,13 +231,13 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const serverManager = appState.getServerManager();
             if (serverManager) {
               await serverManager.stopServer(workspacePath);
             }
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -262,7 +262,7 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
             const intent = ctx.intent as CloseProjectIntent;
             const { projectPath: payloadPath } = intent.payload;
 
@@ -277,8 +277,10 @@ function createTestHarness(options?: {
             const config = await store.getProjectConfig(found.path);
 
             return {
-              workspaces: found.workspaces ?? [],
-              ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
+              result: {
+                workspaces: found.workspaces ?? [],
+                ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
+              },
             };
           },
         },
@@ -293,14 +295,14 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
             const { projectPath } = ctx as CloseHookInput;
             const allProjects: Project[] = await appState.getAllProjects();
             const otherProjectsExist = allProjects.some((p) => p.path !== projectPath);
             if (!otherProjectsExist) {
               viewManager.setActiveWorkspace(null);
             }
-            return { otherProjectsExist };
+            return { result: { otherProjectsExist } };
           },
         },
       },
@@ -313,12 +315,12 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
             const { projectPath, remoteUrl } = ctx as CloseHookInput;
 
             // Self-select: only handle local projects (no remoteUrl)
             if (remoteUrl !== undefined) {
-              return {};
+              return { result: {} };
             }
 
             appState.deregisterProject(projectPath);
@@ -330,7 +332,7 @@ function createTestHarness(options?: {
               // Fail silently
             }
 
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -343,12 +345,12 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
             const { projectPath, remoteUrl, removeLocalRepo } = ctx as CloseHookInput;
 
             // Self-select: only handle remote projects (has remoteUrl)
             if (!remoteUrl) {
-              return {};
+              return { result: {} };
             }
 
             appState.deregisterProject(projectPath);
@@ -366,7 +368,7 @@ function createTestHarness(options?: {
               });
             }
 
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -379,10 +381,10 @@ function createTestHarness(options?: {
     hooks: {
       [CLOSE_PROJECT_OPERATION_ID]: {
         close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
             const { projectPath } = ctx as CloseHookInput;
             gitWorktreeProvider.unregisterProject(new Path(projectPath));
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -541,8 +543,9 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
       hooks: {
         [CLOSE_PROJECT_OPERATION_ID]: {
           confirm: {
-            handler: async (ctx: HookContext): Promise<CloseConfirmHookResult> =>
-              spy(ctx as CloseConfirmHookInput),
+            handler: async (ctx: HookContext): Promise<HookOutput<CloseConfirmHookResult>> => ({
+              result: await spy(ctx as CloseConfirmHookInput),
+            }),
           },
         },
       },
@@ -562,7 +565,7 @@ describe("CloseProjectOperation.interactiveConfirm", () => {
           delete: {
             handler: async (ctx: HookContext) => {
               payloads.push((ctx.intent as DeleteWorkspaceIntent).payload);
-              return {};
+              return { result: {} };
             },
           },
         },

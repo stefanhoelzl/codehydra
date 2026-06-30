@@ -24,6 +24,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 
 import type { IntentModule } from "../intents/lib/module";
+import type { HookOutput } from "../intents/lib/operation";
 import type { Dispatcher } from "../intents/lib/dispatcher";
 import type { DomainEvent } from "../intents/lib/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
@@ -1195,20 +1196,14 @@ export function createMcpModule(deps: McpModuleDeps): IntentModule {
     deps.config
   );
 
-  /** Capability: mcpPort provided by start handler. */
-  let capMcpPort: number | undefined;
-
   return {
     name: "mcp",
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          provides: () => ({
-            ...(capMcpPort !== undefined && { mcpPort: capMcpPort }),
-          }),
-          handler: async (): Promise<void> => {
-            capMcpPort = undefined;
-            capMcpPort = await mcpServerManager.start();
+          handler: async (): Promise<HookOutput> => {
+            const mcpPort = await mcpServerManager.start();
+            return { provides: { mcpPort } };
           },
         },
       },

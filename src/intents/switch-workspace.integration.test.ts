@@ -40,7 +40,7 @@ import {
   workspacesFromProjects,
 } from "./operations.test-utils";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
@@ -181,7 +181,7 @@ function createTestSetup(opts?: {
       hooks: {
         [SWITCH_WORKSPACE_OPERATION_ID]: {
           "find-candidates": {
-            handler: async (): Promise<FindCandidatesHookResult> => {
+            handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
               const candidates: Array<{
                 projectPath: string;
                 projectName: string;
@@ -198,7 +198,7 @@ function createTestSetup(opts?: {
                   });
                 }
               }
-              return { candidates };
+              return { result: { candidates } };
             },
           },
         },
@@ -211,10 +211,10 @@ function createTestSetup(opts?: {
       hooks: {
         [SWITCH_WORKSPACE_OPERATION_ID]: {
           "select-next": {
-            handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
+            handler: async (ctx: HookContext): Promise<HookOutput<SelectNextHookResult>> => {
               const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
               const result = selectNextWorkspace(currentPath, candidates, () => 2);
-              return result ? { selected: result } : {};
+              return { result: result ? { selected: result } : {} };
             },
           },
         },

@@ -17,7 +17,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Logger } from "../boundaries/platform/logging";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { PathProvider } from "../boundaries/platform/path-provider";
@@ -77,7 +77,7 @@ export function createHibernationScreenshotModule(
     hooks: {
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         capture: {
-          handler: async (ctx: HookContext): Promise<CaptureHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CaptureHookResult>> => {
             const { active, projectId, workspaceName } = ctx as HibernatePipelineHookInput;
             try {
               // Only the visible iframe has pixels to capture; a background
@@ -85,32 +85,32 @@ export function createHibernationScreenshotModule(
               // the shared host view, which showed the active workspace's
               // pixels regardless of which workspace was hibernating.)
               if (!active) {
-                return {};
+                return { result: {} };
               }
               const png = await viewManager.captureActiveWorkspaceView();
               if (!png) {
-                return {};
+                return { result: {} };
               }
               const filePath = buildScreenshotPath(pathProvider, projectId, workspaceName);
               await fileSystem.mkdir(filePath.dirname);
               await fileSystem.writeFileBuffer(filePath, png);
-              return {};
+              return { result: {} };
             } catch (error) {
               logger.debug("hibernation-screenshot: capture failed (ignored)", {
                 error: getErrorMessage(error),
               });
-              return {};
+              return { result: {} };
             }
           },
         },
       },
       [WAKE_WORKSPACE_OPERATION_ID]: {
         cleanup: {
-          handler: async (ctx: HookContext): Promise<CleanupHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CleanupHookResult>> => {
             const { projectId, workspaceName } = ctx as WakePipelineHookInput;
             const filePath = buildScreenshotPath(pathProvider, projectId, workspaceName);
             await deletePath(filePath);
-            return {};
+            return { result: {} };
           },
         },
       },

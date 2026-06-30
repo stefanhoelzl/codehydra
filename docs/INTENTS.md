@@ -98,17 +98,25 @@ export interface HookContext {
 /**
  * A handler registered for a hook point.
  *
- * Generic parameter T is the return type for collect() -- defaults to unknown
- * so that HookDeclarations (which uses HookHandler) accepts handlers with any return type.
+ * A handler returns a HookOutput: an optional `result` (lifted into collect()'s
+ * results[]) and/or `provides` (capabilities merged into the running bag as plain
+ * data). Returning void is shorthand for an empty output. Generic parameter T is the
+ * unwrapped result type -- defaults to unknown so HookDeclarations accepts any result.
  */
+export interface HookOutput<T = unknown> {
+  /** Value contributed to collect()'s results[]. Omit / undefined / null for none. */
+  readonly result?: T | null;
+  /** Capabilities merged into the running bag after the handler completes. Plain data
+   *  (no closure), so a remotely-executed handler can ship them across a wire.
+   *  undefined-valued keys are skipped during the merge. */
+  readonly provides?: Readonly<Record<string, unknown>>;
+}
+
 export interface HookHandler<T = unknown> {
-  readonly handler: (ctx: HookContext) => Promise<T>;
+  readonly handler: (ctx: HookContext) => Promise<HookOutput<T> | void>;
   /** Capabilities this handler requires before it can execute.
    *  Key = capability name. Value = required value, or ANY_VALUE for "must exist, any value". */
   readonly requires?: Readonly<Record<string, unknown>>;
-  /** Capabilities this handler provides after successful execution.
-   *  Called after the handler completes; return value is merged into capabilities. */
-  readonly provides?: () => Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -132,7 +140,7 @@ export interface ResolvedHooks {
 }
 ```
 
-`DispatchFn` is the type signature for nested dispatch, available in `OperationContext`. `ANY_VALUE` is a sentinel symbol used in `requires` to mean "this capability must exist, but any value is accepted." `HookContext` is the base context passed to hook handlers -- operations extend it with additional readonly fields. `HookHandler<T>` declares a handler function plus optional capability requirements (`requires`) and provisions (`provides`). `HookResult<T>` collects all handler results, errors, and accumulated capabilities from a single `collect()` call. `ResolvedHooks` is the interface operations use to run hook points.
+`DispatchFn` is the type signature for nested dispatch, available in `OperationContext`. `ANY_VALUE` is a sentinel symbol used in `requires` to mean "this capability must exist, but any value is accepted." `HookContext` is the base context passed to hook handlers -- operations extend it with additional readonly fields. `HookHandler<T>` declares a handler function plus optional capability requirements (`requires`); the handler returns a `HookOutput<T>` carrying its `result` and/or the capabilities it `provides` as plain data (the dispatcher merges them after the handler completes -- no closure). `HookResult<T>` collects all handler results, errors, and accumulated capabilities from a single `collect()` call. `ResolvedHooks` is the interface operations use to run hook points.
 
 ### OperationContext and Operation
 
@@ -253,19 +261,20 @@ export interface IDispatcher {
 
 ## Capability-Based Hook Ordering
 
-Hooks are unordered by default. When execution order matters, handlers declare `requires` and `provides` capabilities. The `collect()` function topologically sorts handlers based on these declarations, running providers before consumers.
+Hooks are unordered by default. When execution order matters, a handler declares the capabilities it `requires` (a static field) and returns the capabilities it `provides` (in its `HookOutput`). The `collect()` function topologically sorts handlers based on these declarations, running providers before consumers.
 
-Each `HookHandler` has three fields:
+Each `HookHandler` has two fields; capabilities are returned, not declared via a closure:
 
-| Field      | Type                               | Purpose                                                      |
-| ---------- | ---------------------------------- | ------------------------------------------------------------ |
-| `handler`  | `(ctx: HookContext) => Promise<T>` | The hook logic                                               |
-| `requires` | `Record<string, unknown>`          | Capabilities this handler needs before it can run            |
-| `provides` | `() => Record<string, unknown>`    | Capabilities this handler makes available after it completes |
+| Field      | Type                                                   | Purpose                                            |
+| ---------- | ------------------------------------------------------ | -------------------------------------------------- |
+| `handler`  | `(ctx: HookContext) => Promise<HookOutput<T> \| void>` | The hook logic; returns `result` and/or `provides` |
+| `requires` | `Record<string, unknown>`                              | Capabilities this handler needs before it can run  |
+
+A handler advertises capabilities by returning `{ provides: { … } }` (optionally alongside `result`). The dispatcher merges that returned data into the running bag after the handler completes -- there is no host-side `provides` closure, so a handler that runs remotely can ship its capabilities across a wire as plain data. Keys whose value is `undefined` are skipped during the merge, so a capability is only "present" when it carries a defined value.
 
 The `ANY_VALUE` sentinel (exported from `operation.ts`) matches any value for a required capability -- it means "this capability must exist, but I do not care about its value."
 
-**Example**: In the `app:start` operation's `start` hook point, the code-server module provides `{ codeServerPort: number }` after starting code-server. The plugin-server module requires `{ codeServerPort: ANY_VALUE }` so it runs after the port is known.
+**Example**: In the `app:start` operation's `start` hook point, the code-server module's start handler returns `{ provides: { codeServerPort } }` after starting code-server. The presentation module requires `{ codeServerPort: ANY_VALUE }` so it runs after the port is known.
 
 Capabilities accumulate across handlers within a single `collect()` call and are available on `HookResult.capabilities` for the operation to inspect.
 

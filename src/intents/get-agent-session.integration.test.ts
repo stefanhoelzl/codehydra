@@ -22,6 +22,7 @@ import {
 import type { GetAgentSessionIntent, GetAgentSessionHookResult } from "./get-agent-session";
 import { registerTestInfrastructure } from "./operations.test-utils";
 import type { IntentModule } from "./lib/module";
+import type { HookOutput } from "./lib/operation";
 import type { Intent } from "./lib/types";
 import type { WorkspaceName, AgentSession } from "../shared/api/types";
 
@@ -67,8 +68,8 @@ function createTestSetup(opts: { session?: AgentSessionInfo | null }): TestSetup
     hooks: {
       [GET_AGENT_SESSION_OPERATION_ID]: {
         get: {
-          handler: async (): Promise<GetAgentSessionHookResult> => {
-            return { session: opts.session ?? null };
+          handler: async (): Promise<HookOutput<GetAgentSessionHookResult>> => {
+            return { result: { session: opts.session ?? null } };
           },
         },
       },

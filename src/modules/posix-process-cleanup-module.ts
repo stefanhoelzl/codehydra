@@ -12,7 +12,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { ProcessRunner, ProcessResult } from "../boundaries/platform/process";
 import {
@@ -157,25 +157,25 @@ export function createPosixProcessCleanupModule(deps: PosixProcessCleanupModuleD
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
-          handler: async (ctx: HookContext): Promise<ReleaseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ReleaseHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             if (payload.force) {
-              return {};
+              return { result: {} };
             }
 
             await runCwdReleaseKill(deps, workspacePath, "deletion");
-            return {};
+            return { result: {} };
           },
         },
       },
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         release: {
-          handler: async (ctx: HookContext): Promise<HibernateReleaseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<HibernateReleaseHookResult>> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
             await runCwdReleaseKill(deps, workspacePath, "hibernation");
-            return {};
+            return { result: {} };
           },
         },
       },

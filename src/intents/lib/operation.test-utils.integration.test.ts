@@ -40,7 +40,7 @@ describe("createMinimalOperation", () => {
       name: "test-handler",
       hooks: {
         [TEST_OPERATION_ID]: {
-          [TEST_HOOK_POINT]: { handler: async () => ({ value: 42 }) },
+          [TEST_HOOK_POINT]: { handler: async () => ({ result: { value: 42 } }) },
         },
       },
     });
@@ -122,7 +122,7 @@ describe("createMinimalOperation", () => {
           [TEST_HOOK_POINT]: {
             handler: async (ctx: HookContext) => {
               receivedContext = ctx;
-              return "ok";
+              return { result: "ok" };
             },
           },
         },

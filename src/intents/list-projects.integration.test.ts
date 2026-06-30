@@ -21,6 +21,7 @@ import type {
   ListWorkspacesHookResult,
 } from "./list-projects";
 import type { IntentModule } from "./lib/module";
+import type { HookOutput } from "./lib/operation";
 import type { Project, ProjectId } from "../shared/api/types";
 import type { InternalWorkspace } from "./list-projects";
 import { Path } from "../utils/path/path";
@@ -52,8 +53,8 @@ interface TestSetup {
 }
 
 function createTestSetup(
-  projectsHandler: () => Promise<ListProjectsHookResult>,
-  workspacesHandler: () => Promise<ListWorkspacesHookResult>
+  projectsHandler: () => Promise<HookOutput<ListProjectsHookResult>>,
+  workspacesHandler: () => Promise<HookOutput<ListWorkspacesHookResult>>
 ): TestSetup {
   const dispatcher = createMockDispatcher();
 
@@ -108,8 +109,8 @@ describe("ListProjects Operation", () => {
 
     beforeEach(() => {
       setup = createTestSetup(
-        async () => ({ projects: [] }),
-        async () => ({ entries: [] })
+        async () => ({ result: { projects: [] } }),
+        async () => ({ result: { entries: [] } })
       );
     });
 
@@ -128,10 +129,12 @@ describe("ListProjects Operation", () => {
     beforeEach(() => {
       setup = createTestSetup(
         async () => ({
-          projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          result: {
+            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          },
         }),
         async () => ({
-          entries: [{ projectPath: PROJECT_A_PATH, workspaces: [ws1, ws2] }],
+          result: { entries: [{ projectPath: PROJECT_A_PATH, workspaces: [ws1, ws2] }] },
         })
       );
     });
@@ -159,16 +162,20 @@ describe("ListProjects Operation", () => {
     beforeEach(() => {
       setup = createTestSetup(
         async () => ({
-          projects: [
-            { projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH },
-            { projectId: PROJECT_B_ID, name: "project-b", path: PROJECT_B_PATH },
-          ],
+          result: {
+            projects: [
+              { projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH },
+              { projectId: PROJECT_B_ID, name: "project-b", path: PROJECT_B_PATH },
+            ],
+          },
         }),
         async () => ({
-          entries: [
-            { projectPath: PROJECT_A_PATH, workspaces: [wsA] },
-            { projectPath: PROJECT_B_PATH, workspaces: [wsB] },
-          ],
+          result: {
+            entries: [
+              { projectPath: PROJECT_A_PATH, workspaces: [wsA] },
+              { projectPath: PROJECT_B_PATH, workspaces: [wsB] },
+            ],
+          },
         })
       );
     });
@@ -196,9 +203,11 @@ describe("ListProjects Operation", () => {
     beforeEach(() => {
       setup = createTestSetup(
         async () => ({
-          projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          result: {
+            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          },
         }),
-        async () => ({ entries: [] })
+        async () => ({ result: { entries: [] } })
       );
     });
 
@@ -217,10 +226,12 @@ describe("ListProjects Operation", () => {
     beforeEach(() => {
       setup = createTestSetup(
         async () => ({
-          projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          result: {
+            projects: [{ projectId: PROJECT_A_ID, name: "project-a", path: PROJECT_A_PATH }],
+          },
         }),
         async () => ({
-          entries: [{ projectPath: "/repos/unknown", workspaces: [ws] }],
+          result: { entries: [{ projectPath: "/repos/unknown", workspaces: [ws] }] },
         })
       );
     });
@@ -239,7 +250,7 @@ describe("ListProjects Operation", () => {
         async () => {
           throw new Error("project hook failed");
         },
-        async () => ({ entries: [] })
+        async () => ({ result: { entries: [] } })
       );
 
       await expect(setup.dispatcher.dispatch(listProjectsIntent())).rejects.toThrow(
@@ -249,7 +260,7 @@ describe("ListProjects Operation", () => {
 
     it("propagates list-workspaces hook errors", async () => {
       const setup = createTestSetup(
-        async () => ({ projects: [] }),
+        async () => ({ result: { projects: [] } }),
         async () => {
           throw new Error("workspace hook failed");
         }

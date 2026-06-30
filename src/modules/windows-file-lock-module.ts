@@ -12,7 +12,7 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { Logger } from "../boundaries/platform/logging-types";
 import type { ProcessRunner } from "../boundaries/platform/process";
 import type { BlockingProcess } from "../shared/api/types";
@@ -231,20 +231,20 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
-          handler: async (ctx: HookContext): Promise<ReleaseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ReleaseHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             if (payload.force) {
-              return {};
+              return { result: {} };
             }
 
             await runCwdReleaseKill(deps, workspacePath, "deletion");
-            return {};
+            return { result: {} };
           },
         },
         detect: {
-          handler: async (ctx: HookContext): Promise<DetectHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<DetectHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
 
             try {
@@ -255,36 +255,36 @@ export function createWindowsFileLockModule(deps: WindowsFileLockModuleDeps): In
                 "Detect",
                 deps.logger
               );
-              return { blockingProcesses: detected };
+              return { result: { blockingProcesses: detected } };
             } catch (error) {
               deps.logger.warn("Detection failed", {
                 workspacePath,
                 error: getErrorMessage(error),
               });
-              return { blockingProcesses: [] };
+              return { result: { blockingProcesses: [] } };
             }
           },
         },
         flush: {
-          handler: async (ctx: HookContext): Promise<FlushHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<FlushHookResult>> => {
             const { blockingPids } = ctx as FlushHookInput;
             if (blockingPids.length > 0) {
               try {
                 await killBlockingProcesses(deps.processRunner, [...blockingPids], deps.logger);
               } catch (error) {
-                return { error: getErrorMessage(error) };
+                return { result: { error: getErrorMessage(error) } };
               }
             }
-            return {};
+            return { result: {} };
           },
         },
       },
       [HIBERNATE_WORKSPACE_OPERATION_ID]: {
         release: {
-          handler: async (ctx: HookContext): Promise<HibernateReleaseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<HibernateReleaseHookResult>> => {
             const { workspacePath } = ctx as HibernatePipelineHookInput;
             await runCwdReleaseKill(deps, workspacePath, "hibernation");
-            return {};
+            return { result: {} };
           },
         },
       },

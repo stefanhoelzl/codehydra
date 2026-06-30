@@ -16,7 +16,7 @@
 import * as crypto from "node:crypto";
 import nodePath from "path";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { ProjectId } from "../shared/api/types";
 import { Path } from "../utils/path/path";
 import { projectDirName } from "../boundaries/platform/paths";
@@ -294,12 +294,12 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       // resolve-project -> resolve (single registration replaces 5 per-operation hooks)
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
             const { projectPath } = ctx as ResolveProjectHookInput;
             const normalizedKey = new Path(projectPath).toString();
             const project = projects.get(normalizedKey);
-            if (!project) return {};
-            return { projectId: project.id, projectName: project.name };
+            if (!project) return { result: {} };
+            return { result: { projectId: project.id, projectName: project.name } };
           },
         },
       },
@@ -307,15 +307,15 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       [OPEN_PROJECT_OPERATION_ID]: {
         // prepare: offer git init for non-git directories
         prepare: {
-          handler: async (ctx: HookContext): Promise<PrepareHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<PrepareHookResult>> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { path, git } = intent.payload;
 
             // Self-select: only handle local paths
-            if (git || !path) return {};
+            if (git || !path) return { result: {} };
 
             // Already open — skip
-            if (projects.has(path.toString())) return {};
+            if (projects.has(path.toString())) return { result: {} };
 
             // Check if it's already a git repo
             let isRepo: boolean;
@@ -323,9 +323,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               isRepo = await gitClient.isRepositoryRoot(path);
             } catch {
               // Path doesn't exist or inaccessible — let resolve handle the error
-              return {};
+              return { result: {} };
             }
-            if (isRepo) return {};
+            if (isRepo) return { result: {} };
 
             // Not a git repo — ask user
             const dialog = ui.dialog({
@@ -354,23 +354,23 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             dialog.close();
 
             if (event.kind === "dismiss" || event.actionId !== "init") {
-              return { canceled: true };
+              return { result: { canceled: true } };
             }
 
             await gitClient.init(path, { initialCommit: "Initial commit" });
-            return {};
+            return { result: {} };
           },
         },
 
         // resolve: validate .git exists for local paths
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { path, git } = intent.payload;
 
             // Self-select: only handle local paths (not git URLs)
             if (git || !path) {
-              return {};
+              return { result: {} };
             }
 
             // Check persisted config for remoteUrl (restores icon on startup)
@@ -380,24 +380,28 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             // Already open — skip validation, signal short-circuit
             if (projects.has(path.toString())) {
               return {
-                projectPath: path.toString(),
-                alreadyOpen: true,
-                ...(remoteUrl !== undefined && { remoteUrl }),
+                result: {
+                  projectPath: path.toString(),
+                  alreadyOpen: true,
+                  ...(remoteUrl !== undefined && { remoteUrl }),
+                },
               };
             }
 
             await gitWorktreeProvider.validateRepository(path);
 
             return {
-              projectPath: path.toString(),
-              ...(remoteUrl !== undefined && { remoteUrl }),
+              result: {
+                projectPath: path.toString(),
+                ...(remoteUrl !== undefined && { remoteUrl }),
+              },
             };
           },
         },
 
         // register: generate ID, persist, add to internal state (all projects)
         register: {
-          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
             const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
 
             const projectPath = new Path(projectPathStr);
@@ -406,7 +410,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
 
             // Already in state — return alreadyOpen without re-persisting
             if (projects.has(normalizedKey)) {
-              return { projectId, name: projectPath.basename, alreadyOpen: true };
+              return { result: { projectId, name: projectPath.basename, alreadyOpen: true } };
             }
 
             // Persist to store if new
@@ -422,7 +426,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               path: projectPath,
             });
 
-            return { projectId, name: projectPath.basename };
+            return { result: { projectId, name: projectPath.basename } };
           },
         },
       },
@@ -430,7 +434,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       [CLOSE_PROJECT_OPERATION_ID]: {
         // resolve: look up projectPath in config to get remoteUrl
         resolve: {
-          handler: async (ctx: HookContext): Promise<CloseResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseResolveHookResult>> => {
             const intent = ctx.intent as CloseProjectIntent;
             const { projectPath } = intent.payload;
 
@@ -438,14 +442,16 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
             const config = await getProjectConfig(fs, projectsDir, projectPath);
 
             return {
-              ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
+              result: {
+                ...(config?.remoteUrl !== undefined && { remoteUrl: config.remoteUrl }),
+              },
             };
           },
         },
 
         // close: remove from internal state and config (all projects)
         close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
             const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
             // Remove from internal state
@@ -469,7 +475,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
               }
             }
 
-            return { otherProjectsExist: projects.size > 0 };
+            return { result: { otherProjectsExist: projects.size > 0 } };
           },
         },
       },
@@ -477,9 +483,9 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       [APP_READY_OPERATION_ID]: {
         // load-projects: load all saved project configs
         "load-projects": {
-          handler: async (): Promise<LoadProjectsResult> => {
+          handler: async (): Promise<HookOutput<LoadProjectsResult>> => {
             const configs = await loadAllProjectConfigs(fs, projectsDir);
-            return { projectPaths: configs.map((c) => c.path) };
+            return { result: { projectPaths: configs.map((c) => c.path) } };
           },
         },
       },
@@ -487,7 +493,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
       // list-projects -> list-projects
       [LIST_PROJECTS_OPERATION_ID]: {
         "list-projects": {
-          handler: async (): Promise<ListProjectsHookResult> => {
+          handler: async (): Promise<HookOutput<ListProjectsHookResult>> => {
             const entries: ListProjectsHookEntry[] = [];
             for (const [key, project] of projects) {
               entries.push({
@@ -496,7 +502,7 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
                 path: key,
               });
             }
-            return { projects: entries };
+            return { result: { projects: entries } };
           },
         },
       },

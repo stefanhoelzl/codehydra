@@ -514,8 +514,7 @@ describe("Dispatcher", () => {
         hooks: {
           "action-op": {
             run: {
-              provides: () => ({ serverPort: 3000 }),
-              handler: async () => undefined,
+              handler: async () => ({ provides: { serverPort: 3000 } }),
             },
           },
         },
@@ -558,8 +557,7 @@ describe("Dispatcher", () => {
         hooks: {
           "action-op": {
             run: {
-              provides: () => ({ portA: 1000, portB: 2000 }),
-              handler: async () => undefined,
+              handler: async () => ({ provides: { portA: 1000, portB: 2000 } }),
             },
           },
         },
@@ -604,8 +602,7 @@ describe("Dispatcher", () => {
         hooks: {
           "action-op": {
             run: {
-              provides: () => ({ setting: 42 }),
-              handler: async () => undefined,
+              handler: async () => ({ provides: { setting: 42 } }),
             },
           },
         },
@@ -897,7 +894,7 @@ describe("Dispatcher", () => {
         name: "test-mod",
         hooks: {
           "action-op": {
-            run: { handler: async () => ({ value: 1 }) },
+            run: { handler: async () => ({ result: { value: 1 } }) },
           },
         },
       };
@@ -948,8 +945,7 @@ describe("Dispatcher", () => {
         hooks: {
           "action-op": {
             run: {
-              provides: () => ({ port: 3000 }),
-              handler: async () => undefined,
+              handler: async () => ({ provides: { port: 3000 } }),
             },
           },
         },
@@ -1308,9 +1304,9 @@ describe("Dispatcher", () => {
     it("returns typed results from handlers", async () => {
       const result = await collectWithModules(
         [
-          { handler: async () => ({ value: 1 }) },
-          { handler: async () => ({ value: 2 }) },
-          { handler: async () => ({ value: 3 }) },
+          { handler: async () => ({ result: { value: 1 } }) },
+          { handler: async () => ({ result: { value: 2 } }) },
+          { handler: async () => ({ result: { value: 3 } }) },
         ],
         { intent: { type: "test:noop", payload: {} } }
       );
@@ -1350,7 +1346,7 @@ describe("Dispatcher", () => {
           {
             handler: async () => {
               ran.push(2);
-              return "ok";
+              return { result: "ok" };
             },
           },
           {
@@ -1391,7 +1387,7 @@ describe("Dispatcher", () => {
       const result = await collectWithModules(
         [
           { handler: async () => undefined },
-          { handler: async () => ({ projectPath: "/selected" }) },
+          { handler: async () => ({ result: { projectPath: "/selected" } }) },
           { handler: async () => undefined },
         ],
         { intent: { type: "test:noop", payload: {} } }
@@ -1403,7 +1399,10 @@ describe("Dispatcher", () => {
 
     it("filters null results from self-selecting handlers", async () => {
       const result = await collectWithModules(
-        [{ handler: async () => null }, { handler: async () => ({ value: "kept" }) }],
+        [
+          { handler: async () => ({ result: null }) },
+          { handler: async () => ({ result: { value: "kept" } }) },
+        ],
         { intent: { type: "test:noop", payload: {} } }
       );
 
@@ -1417,7 +1416,7 @@ describe("Dispatcher", () => {
       };
       const originalIntent = ctx.intent;
 
-      await collectWithModules([{ handler: async () => "result" }], ctx);
+      await collectWithModules([{ handler: async () => ({ result: "result" }) }], ctx);
 
       expect(ctx.intent).toBe(originalIntent);
     });
@@ -1434,9 +1433,9 @@ describe("Dispatcher", () => {
             },
           },
           {
-            provides: () => ({ port: 3000 }),
             handler: async () => {
               order.push("provider");
+              return { provides: { port: 3000 } };
             },
           },
         ],
@@ -1458,15 +1457,15 @@ describe("Dispatcher", () => {
             },
           },
           {
-            provides: () => ({ a: 1 }),
             handler: async () => {
               order.push("provides-a");
+              return { provides: { a: 1 } };
             },
           },
           {
-            provides: () => ({ b: 2 }),
             handler: async () => {
               order.push("provides-b");
+              return { provides: { b: 2 } };
             },
           },
         ],
@@ -1482,8 +1481,7 @@ describe("Dispatcher", () => {
       await collectWithModules(
         [
           {
-            provides: () => ({ port: 8080 }),
-            handler: async () => undefined,
+            handler: async () => ({ provides: { port: 8080 } }),
           },
           {
             requires: { port: ANY_VALUE },
@@ -1504,7 +1502,6 @@ describe("Dispatcher", () => {
       const result = await collectWithModules(
         [
           {
-            provides: () => ({ token: "abc" }),
             handler: async () => {
               throw new Error("provider failed");
             },
@@ -1551,22 +1548,22 @@ describe("Dispatcher", () => {
         [
           {
             requires: { y: ANY_VALUE },
-            provides: () => ({ z: 3 }),
             handler: async () => {
               order.push("C");
+              return { provides: { z: 3 } };
             },
           },
           {
             requires: { x: ANY_VALUE },
-            provides: () => ({ y: 2 }),
             handler: async () => {
               order.push("B");
+              return { provides: { y: 2 } };
             },
           },
           {
-            provides: () => ({ x: 1 }),
             handler: async () => {
               order.push("A");
+              return { provides: { x: 1 } };
             },
           },
         ],
@@ -1583,16 +1580,16 @@ describe("Dispatcher", () => {
         [
           {
             requires: { b: ANY_VALUE },
-            provides: () => ({ a: 1 }),
             handler: async () => {
               ran.push("A");
+              return { provides: { a: 1 } };
             },
           },
           {
             requires: { a: ANY_VALUE },
-            provides: () => ({ b: 2 }),
             handler: async () => {
               ran.push("B");
+              return { provides: { b: 2 } };
             },
           },
         ],
@@ -1621,9 +1618,9 @@ describe("Dispatcher", () => {
             },
           },
           {
-            provides: () => ({ setup: true }),
             handler: async () => {
               order.push("provides-setup");
+              return { provides: { setup: true } };
             },
           },
         ],
@@ -1687,8 +1684,7 @@ describe("Dispatcher", () => {
       await collectWithModules(
         [
           {
-            provides: () => ({ key: 42 }),
-            handler: async () => undefined,
+            handler: async () => ({ provides: { key: 42 } }),
           },
           {
             requires: { key: ANY_VALUE },
@@ -1709,8 +1705,7 @@ describe("Dispatcher", () => {
       await collectWithModules(
         [
           {
-            provides: () => ({ platform: "darwin" }),
-            handler: async () => undefined,
+            handler: async () => ({ provides: { platform: "darwin" } }),
           },
           {
             requires: { platform: "linux" },
@@ -1725,16 +1720,17 @@ describe("Dispatcher", () => {
       expect(ran).toEqual([]);
     });
 
-    it("dynamic provides: closure value read at call time", async () => {
-      let port = 0;
+    it("capabilities returned from the handler are merged into the bag", async () => {
       let receivedCaps: Record<string, unknown> | undefined;
 
       await collectWithModules(
         [
           {
-            provides: () => ({ port }),
             handler: async () => {
-              port = 9090;
+              // Value computed during handler execution and returned as data
+              // (no closure read after the fact).
+              const port = 9090;
+              return { provides: { port } };
             },
           },
           {
@@ -1754,12 +1750,10 @@ describe("Dispatcher", () => {
       const result = await collectWithModules(
         [
           {
-            provides: () => ({ port: 8080 }),
-            handler: async () => undefined,
+            handler: async () => ({ provides: { port: 8080 } }),
           },
           {
-            provides: () => ({ host: "127.0.0.1" }),
-            handler: async () => undefined,
+            handler: async () => ({ provides: { host: "127.0.0.1" } }),
           },
         ],
         { intent: { type: "test:noop", payload: {} } }
@@ -1779,8 +1773,7 @@ describe("Dispatcher", () => {
           },
           {
             name: "provider",
-            provides: () => ({ port: 3000 }),
-            handler: async () => undefined,
+            handler: async () => ({ provides: { port: 3000 } }),
           },
         ],
         { intent: { type: "test:noop", payload: {} } },

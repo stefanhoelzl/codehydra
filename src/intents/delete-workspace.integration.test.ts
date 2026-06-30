@@ -44,7 +44,7 @@ import type {
   FlushHookInput,
   DeletePipelineHookInput,
 } from "./delete-workspace";
-import type { HookContext, OperationContext } from "./lib/operation";
+import type { HookContext, HookOutput, OperationContext } from "./lib/operation";
 import type {
   BlockingProcess,
   DeletionProgress,
@@ -388,16 +388,18 @@ function createTestHarness(options?: {
     hooks: {
       [RESOLVE_WORKSPACE_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveWorkspaceHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveWorkspaceHookResult>> => {
             const { workspacePath: wsPath } = ctx as { workspacePath: string } & HookContext;
             // Reverse lookup: find which project owns this workspace path
             const project = appState.findProjectForWorkspace(wsPath);
-            if (!project) return {};
+            if (!project) return { result: {} };
             const workspaceName = wsPath.slice(wsPath.lastIndexOf("/") + 1);
             return {
-              projectPath: project.path,
-              workspaceName: workspaceName as WorkspaceName,
-              active: viewManager.getActiveWorkspacePath() === wsPath,
+              result: {
+                projectPath: project.path,
+                workspaceName: workspaceName as WorkspaceName,
+                active: viewManager.getActiveWorkspacePath() === wsPath,
+              },
             };
           },
         },
@@ -410,13 +412,15 @@ function createTestHarness(options?: {
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
             const { projectPath } = ctx as { projectPath: string } & HookContext;
             const allProjects = await appState.getAllProjects();
             const project = allProjects.find((p) => p.path === projectPath);
-            return project
-              ? { projectId: testProjectId(project.path), projectName: project.name }
-              : {};
+            return {
+              result: project
+                ? { projectId: testProjectId(project.path), projectName: project.name }
+                : {},
+            };
           },
         },
       },
@@ -428,21 +432,23 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath, active: isActive } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             try {
               await viewManager.destroyWorkspaceView(workspacePath);
-              return { ...(isActive && { wasActive: true }) };
+              return { result: { ...(isActive && { wasActive: true }) } };
             } catch (error) {
               if (payload.force) {
                 logger.warn("ViewModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
                 return {
-                  ...(isActive && { wasActive: true }),
-                  error: getErrorMessage(error),
+                  result: {
+                    ...(isActive && { wasActive: true }),
+                    error: getErrorMessage(error),
+                  },
                 };
               }
               throw error;
@@ -458,7 +464,7 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         shutdown: {
-          handler: async (ctx: HookContext): Promise<ShutdownHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ShutdownHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
@@ -486,13 +492,13 @@ function createTestHarness(options?: {
                 }
               }
 
-              return serverError ? { error: serverError } : {};
+              return { result: serverError ? { error: serverError } : {} };
             } catch (error) {
               if (payload.force) {
                 logger.warn("AgentModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
-                return { error: getErrorMessage(error) };
+                return { result: { error: getErrorMessage(error) } };
               }
               throw error;
             }
@@ -507,12 +513,12 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         release: {
-          handler: async (ctx: HookContext): Promise<ReleaseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ReleaseHookResult>> => {
             const { workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
             if (payload.force || !workspaceLockHandler) {
-              return {};
+              return { result: {} };
             }
 
             // CWD-only scan: find and kill processes whose CWD is under workspace
@@ -524,34 +530,34 @@ function createTestHarness(options?: {
             } catch {
               // Non-fatal
             }
-            return {};
+            return { result: {} };
           },
         },
         detect: {
-          handler: async (ctx: HookContext): Promise<DetectHookResult> => {
-            if (!workspaceLockHandler) return {};
+          handler: async (ctx: HookContext): Promise<HookOutput<DetectHookResult>> => {
+            if (!workspaceLockHandler) return { result: {} };
             const { workspacePath } = ctx as DeletePipelineHookInput;
 
             try {
               const detected = await workspaceLockHandler.detect(new Path(workspacePath));
-              return { blockingProcesses: detected };
+              return { result: { blockingProcesses: detected } };
             } catch {
-              return { blockingProcesses: [] };
+              return { result: { blockingProcesses: [] } };
             }
           },
         },
         flush: {
-          handler: async (ctx: HookContext): Promise<FlushHookResult> => {
-            if (!workspaceLockHandler) return {};
+          handler: async (ctx: HookContext): Promise<HookOutput<FlushHookResult>> => {
+            if (!workspaceLockHandler) return { result: {} };
             const { blockingPids } = ctx as FlushHookInput;
             if (blockingPids.length > 0) {
               try {
                 await workspaceLockHandler.killProcesses([...blockingPids]);
               } catch (error) {
-                return { error: getErrorMessage(error) };
+                return { result: { error: getErrorMessage(error) } };
               }
             }
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -563,7 +569,7 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
             const { projectPath, workspacePath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
@@ -574,13 +580,13 @@ function createTestHarness(options?: {
                 !payload.keepBranch
               );
               testState.worktreeRemoved = true;
-              return {};
+              return { result: {} };
             } catch (error) {
               if (payload.force) {
                 logger.warn("WorktreeModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
-                return { error: getErrorMessage(error) };
+                return { result: { error: getErrorMessage(error) } };
               }
               throw error;
             }
@@ -595,7 +601,7 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         delete: {
-          handler: async (ctx: HookContext): Promise<DeleteHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<DeleteHookResult>> => {
             const { workspacePath: wsPath } = ctx as DeletePipelineHookInput;
             const { payload } = ctx.intent as DeleteWorkspaceIntent;
 
@@ -604,13 +610,13 @@ function createTestHarness(options?: {
               const workspaceName = workspacePath.basename;
               const projectWorkspacesDir = workspacePath.dirname;
               await workspaceFileService.deleteWorkspaceFile(workspaceName, projectWorkspacesDir);
-              return {};
+              return { result: {} };
             } catch (error) {
               if (payload.force) {
                 logger.warn("CodeServerModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
-                return {};
+                return { result: {} };
               }
               throw error;
             }
@@ -638,16 +644,16 @@ function createTestHarness(options?: {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
             const { workspacePath, active } = ctx as ActivateHookInput;
             const intent = ctx.intent as SwitchWorkspaceIntent;
 
             if (workspacePath === null || active) {
-              return {};
+              return { result: {} };
             }
             const focus = intent.payload.focus ?? true;
             viewManager.setActiveWorkspace(workspacePath, focus);
-            return { resolvedPath: workspacePath };
+            return { result: { resolvedPath: workspacePath } };
           },
         },
       },
@@ -670,7 +676,7 @@ function createTestHarness(options?: {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "find-candidates": {
-          handler: async (): Promise<FindCandidatesHookResult> => {
+          handler: async (): Promise<HookOutput<FindCandidatesHookResult>> => {
             const allProjects = await appState.getAllProjects();
             const candidates: Array<{
               projectPath: string;
@@ -688,7 +694,7 @@ function createTestHarness(options?: {
                 });
               }
             }
-            return { candidates };
+            return { result: { candidates } };
           },
         },
       },
@@ -700,14 +706,16 @@ function createTestHarness(options?: {
     hooks: {
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
-          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
+          handler: async (): Promise<HookOutput<GetActiveWorkspaceHookResult>> => {
             const path = activeWorkspace.path;
-            if (!path) return { workspaceRef: null };
+            if (!path) return { result: { workspaceRef: null } };
             return {
-              workspaceRef: {
-                projectId: PROJECT_ID,
-                workspaceName: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
-                path,
+              result: {
+                workspaceRef: {
+                  projectId: PROJECT_ID,
+                  workspaceName: path.slice(path.lastIndexOf("/") + 1) as WorkspaceName,
+                  path,
+                },
               },
             };
           },
@@ -733,13 +741,13 @@ function createTestHarness(options?: {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         "select-next": {
-          handler: async (ctx: HookContext): Promise<SelectNextHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SelectNextHookResult>> => {
             const { currentPath, candidates } = ctx as unknown as SelectNextHookInput;
             // In production, scoring uses an internal status cache.
             // For these tests, all workspaces are treated as idle (score 0).
             const scorer = (): number => 0;
             const result = selectNextWorkspace(currentPath, candidates, scorer);
-            return result ? { selected: result } : {};
+            return { result: result ? { selected: result } : {} };
           },
         },
       },
@@ -751,10 +759,12 @@ function createTestHarness(options?: {
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
         preflight: {
-          handler: async (): Promise<PreflightHookResult> => {
+          handler: async (): Promise<HookOutput<PreflightHookResult>> => {
             return {
-              isDirty: options?.isDirty ?? false,
-              unmergedCommits: options?.unmergedCommits ?? 0,
+              result: {
+                isDirty: options?.isDirty ?? false,
+                unmergedCommits: options?.unmergedCommits ?? 0,
+              },
             };
           },
         },
@@ -1881,8 +1891,9 @@ describe("DeleteWorkspaceOperation.interactiveConfirm", () => {
       hooks: {
         [DELETE_WORKSPACE_OPERATION_ID]: {
           confirm: {
-            handler: async (ctx: HookContext): Promise<ConfirmHookResult> =>
-              spy(ctx as DeletePipelineHookInput),
+            handler: async (ctx: HookContext): Promise<HookOutput<ConfirmHookResult>> => ({
+              result: await spy(ctx as DeletePipelineHookInput),
+            }),
           },
         },
       },

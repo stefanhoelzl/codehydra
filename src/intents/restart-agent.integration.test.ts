@@ -29,7 +29,7 @@ import type {
 } from "./restart-agent";
 import { registerTestInfrastructure } from "./operations.test-utils";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
 
@@ -89,11 +89,11 @@ function createTestSetup(opts: { serverManager: MockAgentServerManager }): TestS
     hooks: {
       [RESTART_AGENT_OPERATION_ID]: {
         restart: {
-          handler: async (ctx: HookContext): Promise<RestartAgentHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<RestartAgentHookResult>> => {
             const { workspacePath } = ctx as RestartAgentHookInput;
             const result = await opts.serverManager.restartServer(workspacePath);
             if (result.success) {
-              return { port: result.port };
+              return { result: { port: result.port } };
             } else {
               throw new Error(result.error);
             }

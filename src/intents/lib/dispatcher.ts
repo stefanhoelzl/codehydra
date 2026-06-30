@@ -23,6 +23,7 @@ import type {
   ResolvedHooks,
   HookContext,
   HookHandler,
+  HookOutput,
   HookResult,
 } from "./operation";
 import { ANY_VALUE } from "./operation";
@@ -282,12 +283,19 @@ export class Dispatcher implements IDispatcher {
             capabilities: Object.freeze({ ...capabilities }),
           });
           try {
-            const result = await entry.handler(frozenCtx);
-            if (result !== undefined && result !== null) {
-              results.push(result as T);
+            // A handler returns a HookOutput (result and/or provided capabilities);
+            // void is shorthand for an empty output.
+            const output: HookOutput = (await entry.handler(frozenCtx)) ?? {};
+            if (output.result !== undefined && output.result !== null) {
+              results.push(output.result as T);
             }
-            if (entry.provides) {
-              Object.assign(capabilities, entry.provides());
+            // Merge provided capabilities from returned data (no host-side closure).
+            // Skip undefined-valued keys: requires/ANY_VALUE test key *presence*, so a
+            // key must only appear when it carries a defined value.
+            if (output.provides) {
+              for (const [key, value] of Object.entries(output.provides)) {
+                if (value !== undefined) capabilities[key] = value;
+              }
             }
           } catch (err) {
             errors.push(err instanceof Error ? err : new Error(String(err)));

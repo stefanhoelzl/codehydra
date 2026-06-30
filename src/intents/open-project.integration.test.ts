@@ -24,7 +24,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import {
   OpenProjectOperation,
@@ -311,17 +311,17 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { path, git } = intent.payload;
 
             // Self-select: only handle local paths
             if (git || !path) {
-              return {};
+              return { result: {} };
             }
 
             await gitWorktreeProvider.validateRepository(path);
-            return { projectPath: path.toString() };
+            return { result: { projectPath: path.toString() } };
           },
         },
       },
@@ -334,20 +334,20 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { git } = intent.payload;
 
             // Self-select: only handle git URLs
             if (!git) {
-              return {};
+              return { result: {} };
             }
 
             // Test URLs are fully-qualified HTTPS URLs; no expansion needed
             const remoteUrl = git;
             const existing = await projectStore.findByRemoteUrl(remoteUrl);
             if (existing) {
-              return { projectPath: existing, remoteUrl };
+              return { result: { projectPath: existing, remoteUrl } };
             }
 
             const gitPath = new Path("/test/cloned", "repo");
@@ -357,7 +357,7 @@ function createTestHarness(options?: {
             });
             projectStoreState.configs.set(gitPath.toString(), { remoteUrl });
 
-            return { projectPath: gitPath.toString(), remoteUrl };
+            return { result: { projectPath: gitPath.toString(), remoteUrl } };
           },
         },
       },
@@ -376,7 +376,7 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         register: {
-          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
             const { projectPath: projectPathStr } = ctx as RegisterHookInput;
 
             const projectPath = new Path(projectPathStr);
@@ -385,7 +385,7 @@ function createTestHarness(options?: {
 
             // Already registered — return alreadyOpen
             if (registeredPaths.has(normalizedKey)) {
-              return { projectId, name: projectPath.basename, alreadyOpen: true };
+              return { result: { projectId, name: projectPath.basename, alreadyOpen: true } };
             }
 
             const config = await projectStore.getProjectConfig(projectPathStr);
@@ -394,7 +394,7 @@ function createTestHarness(options?: {
             }
 
             registeredPaths.add(normalizedKey);
-            return { projectId, name: projectPath.basename };
+            return { result: { projectId, name: projectPath.basename } };
           },
         },
       },
@@ -407,7 +407,7 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         register: {
-          handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
             const { projectPath: projectPathStr, remoteUrl } = ctx as RegisterHookInput;
             const projectPath = new Path(projectPathStr);
             const projectId = testProjectId(projectPathStr);
@@ -420,7 +420,7 @@ function createTestHarness(options?: {
               ...(remoteUrl !== undefined && { remoteUrl }),
             });
 
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -446,8 +446,8 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_PROJECT_OPERATION_ID]: {
         discover: {
-          handler: async (): Promise<DiscoverHookResult> => {
-            return { workspaces: discoverResult, defaultBaseBranch: "main" };
+          handler: async (): Promise<HookOutput<DiscoverHookResult>> => {
+            return { result: { workspaces: discoverResult, defaultBaseBranch: "main" } };
           },
         },
       },
@@ -464,7 +464,7 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
-          handler: async (ctx: HookContext): Promise<CreateHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CreateHookResult>> => {
             const intent = ctx.intent as OpenWorkspaceIntent;
 
             if (intent.payload.existingWorkspace) {
@@ -476,9 +476,11 @@ function createTestHarness(options?: {
               }
 
               return {
-                workspacePath: existing.path,
-                branch: existing.branch ?? existing.name,
-                metadata: existing.metadata,
+                result: {
+                  workspacePath: existing.path,
+                  branch: existing.branch ?? existing.name,
+                  metadata: existing.metadata,
+                },
               };
             }
 
@@ -495,9 +497,9 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          provides: () => ({ workspaceUrl: WORKSPACE_URL }),
-          handler: async (ctx: HookContext): Promise<void> => {
+          handler: async (ctx: HookContext): Promise<HookOutput> => {
             void (ctx as FinalizeHookInput).envVars;
+            return { provides: { workspaceUrl: WORKSPACE_URL } };
           },
         },
       },
@@ -563,22 +565,24 @@ function createTestHarness(options?: {
     hooks: {
       [GET_ACTIVE_WORKSPACE_OPERATION_ID]: {
         get: {
-          handler: async (): Promise<GetActiveWorkspaceHookResult> => {
+          handler: async (): Promise<HookOutput<GetActiveWorkspaceHookResult>> => {
             const path = viewManager.getActiveWorkspacePath();
-            if (!path) return { workspaceRef: null };
+            if (!path) return { result: { workspaceRef: null } };
             const name = extractWorkspaceName(path);
             // Find the project that owns this workspace
             const project = projectState.registeredProjects.find((p) =>
               p.workspaces.some((w) => w.path === path)
             );
             return {
-              workspaceRef: project
-                ? {
-                    projectId: testProjectId(project.path),
-                    workspaceName: name as WorkspaceName,
-                    path,
-                  }
-                : null,
+              result: {
+                workspaceRef: project
+                  ? {
+                      projectId: testProjectId(project.path),
+                      workspaceName: name as WorkspaceName,
+                      path,
+                    }
+                  : null,
+              },
             };
           },
         },
@@ -730,11 +734,11 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           resolve: {
-            handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
               const intent = ctx.intent as OpenProjectIntent;
               const { path } = intent.payload;
-              if (!path) return {};
-              return { projectPath: path.toString(), alreadyOpen: true };
+              if (!path) return { result: {} };
+              return { result: { projectPath: path.toString(), alreadyOpen: true } };
             },
           },
         },
@@ -747,10 +751,10 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           register: {
-            handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+            handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
               const { projectPath: projectPathStr } = ctx as RegisterHookInput;
               const projectId = testProjectId(projectPathStr);
-              return { projectId, name: new Path(projectPathStr).basename };
+              return { result: { projectId, name: new Path(projectPathStr).basename } };
             },
           },
         },
@@ -763,17 +767,19 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           discover: {
-            handler: async (): Promise<DiscoverHookResult> => {
+            handler: async (): Promise<HookOutput<DiscoverHookResult>> => {
               return {
-                workspaces: [
-                  {
-                    name: "feature-a",
-                    path: new Path(WORKSPACE_A_PATH),
-                    branch: "feature-a",
-                    metadata: { base: "main" },
-                  },
-                ],
-                defaultBaseBranch: "main",
+                result: {
+                  workspaces: [
+                    {
+                      name: "feature-a",
+                      path: new Path(WORKSPACE_A_PATH),
+                      branch: "feature-a",
+                      metadata: { base: "main" },
+                    },
+                  ],
+                  defaultBaseBranch: "main",
+                },
               };
             },
           },
@@ -896,8 +902,8 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           "select-folder": {
-            handler: async (): Promise<SelectFolderHookResult> => {
-              return { folderPath: PROJECT_PATH };
+            handler: async (): Promise<HookOutput<SelectFolderHookResult>> => {
+              return { result: { folderPath: PROJECT_PATH } };
             },
           },
         },
@@ -929,8 +935,8 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           "select-folder": {
-            handler: async (): Promise<SelectFolderHookResult> => {
-              return { folderPath: null };
+            handler: async (): Promise<HookOutput<SelectFolderHookResult>> => {
+              return { result: { folderPath: null } };
             },
           },
         },
@@ -957,9 +963,9 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           "select-folder": {
-            handler: async (): Promise<SelectFolderHookResult> => {
+            handler: async (): Promise<HookOutput<SelectFolderHookResult>> => {
               selectFolderSpy();
-              return { folderPath: "/should-not-be-used" };
+              return { result: { folderPath: "/should-not-be-used" } };
             },
           },
         },
@@ -1029,22 +1035,22 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           resolve: {
-            handler: async (ctx: HookContext): Promise<ResolveHookResult> => {
+            handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
               const intent = ctx.intent as OpenProjectIntent;
               const { path } = intent.payload;
-              if (!path) return {};
-              return { projectPath: path.toString(), alreadyOpen: true };
+              if (!path) return { result: {} };
+              return { result: { projectPath: path.toString(), alreadyOpen: true } };
             },
           },
           register: {
-            handler: async (ctx: HookContext): Promise<RegisterHookResult> => {
+            handler: async (ctx: HookContext): Promise<HookOutput<RegisterHookResult>> => {
               const { projectPath: p } = ctx as RegisterHookInput;
-              return { projectId: testProjectId(p), name: new Path(p).basename };
+              return { result: { projectId: testProjectId(p), name: new Path(p).basename } };
             },
           },
           discover: {
-            handler: async (): Promise<DiscoverHookResult> => {
-              return { workspaces: [] };
+            handler: async (): Promise<HookOutput<DiscoverHookResult>> => {
+              return { result: { workspaces: [] } };
             },
           },
         },
@@ -1103,8 +1109,8 @@ describe("OpenProjectOperation", () => {
       hooks: {
         [OPEN_PROJECT_OPERATION_ID]: {
           prepare: {
-            handler: async (): Promise<PrepareHookResult> => {
-              return { canceled: true };
+            handler: async (): Promise<HookOutput<PrepareHookResult>> => {
+              return { result: { canceled: true } };
             },
           },
         },

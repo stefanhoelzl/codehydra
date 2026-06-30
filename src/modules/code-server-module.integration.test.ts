@@ -270,8 +270,7 @@ function createPluginPortProvider(port: number | null = null): IntentModule {
     hooks: {
       [APP_START_OPERATION_ID]: {
         start: {
-          provides: () => ({ pluginPort: port }),
-          handler: async () => undefined,
+          handler: async () => ({ provides: { pluginPort: port } }),
         },
       },
     },

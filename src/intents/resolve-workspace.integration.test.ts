@@ -22,7 +22,7 @@ import {
 } from "./resolve-workspace";
 import type { ResolveWorkspaceIntent, ResolveHookResult } from "./resolve-workspace";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { WorkspaceName } from "../shared/api/types";
 
 // =============================================================================
@@ -37,7 +37,9 @@ const WORKSPACE_NAME = "feature-x" as WorkspaceName;
 // Test Setup
 // =============================================================================
 
-function createTestSetup(resolveHandler?: (ctx: HookContext) => Promise<ResolveHookResult>): {
+function createTestSetup(
+  resolveHandler?: (ctx: HookContext) => Promise<HookOutput<ResolveHookResult>>
+): {
   dispatcher: Dispatcher;
 } {
   const dispatcher = createMockDispatcher();
@@ -74,9 +76,11 @@ describe("ResolveWorkspaceOperation Integration", () => {
   describe("success", () => {
     it("resolves workspacePath to projectPath + workspaceName (#1)", async () => {
       const { dispatcher } = createTestSetup(
-        async (): Promise<ResolveHookResult> => ({
-          projectPath: PROJECT_PATH,
-          workspaceName: WORKSPACE_NAME,
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            projectPath: PROJECT_PATH,
+            workspaceName: WORKSPACE_NAME,
+          },
         })
       );
 
@@ -93,10 +97,12 @@ describe("ResolveWorkspaceOperation Integration", () => {
 
     it("returns the branch when a handler provides it", async () => {
       const { dispatcher } = createTestSetup(
-        async (): Promise<ResolveHookResult> => ({
-          projectPath: PROJECT_PATH,
-          workspaceName: WORKSPACE_NAME,
-          branch: "feature-x",
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            projectPath: PROJECT_PATH,
+            workspaceName: WORKSPACE_NAME,
+            branch: "feature-x",
+          },
         })
       );
 
@@ -109,8 +115,10 @@ describe("ResolveWorkspaceOperation Integration", () => {
   describe("failure", () => {
     it("throws when no handler returns projectPath (#2)", async () => {
       const { dispatcher } = createTestSetup(
-        async (): Promise<ResolveHookResult> => ({
-          workspaceName: WORKSPACE_NAME,
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            workspaceName: WORKSPACE_NAME,
+          },
         })
       );
 
@@ -121,8 +129,10 @@ describe("ResolveWorkspaceOperation Integration", () => {
 
     it("throws when no handler returns workspaceName (#3)", async () => {
       const { dispatcher } = createTestSetup(
-        async (): Promise<ResolveHookResult> => ({
-          projectPath: PROJECT_PATH,
+        async (): Promise<HookOutput<ResolveHookResult>> => ({
+          result: {
+            projectPath: PROJECT_PATH,
+          },
         })
       );
 

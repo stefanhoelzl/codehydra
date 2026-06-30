@@ -39,21 +39,41 @@ export interface HookContext {
 }
 
 /**
+ * A handler's return value.
+ *
+ * Both fields are optional so a handler can contribute a result, capabilities,
+ * both, or neither. Replaces the former `HookHandler.provides` closure: capabilities
+ * are returned as plain data, so a handler that executes remotely can ship them
+ * across a wire and the host dispatcher merges from the returned data instead of
+ * invoking a host-side closure.
+ *
+ * Generic parameter `T` is the unwrapped result type — the dispatcher lifts `result`
+ * into `collect()`'s `results[]`, so `collect<T>()` consumers are unchanged.
+ */
+export interface HookOutput<T = unknown> {
+  /** Value contributed to `collect()`'s `results[]`. Omit (or `undefined`/`null`) for none. */
+  readonly result?: T | null;
+  /** Capabilities merged into the running capability bag after the handler completes.
+   *  Plain data (no closure). Keys with `undefined` values are skipped during the merge,
+   *  so a capability is only "present" when it carries a defined value. */
+  readonly provides?: Readonly<Record<string, unknown>>;
+}
+
+/**
  * A handler registered for a hook point.
  *
- * Generic parameter `T` is the return type for `collect()` — defaults to `unknown`
- * so that `HookDeclarations` (which uses `HookHandler`) accepts handlers with any return type.
+ * Generic parameter `T` is the unwrapped result type for `collect()` — defaults to `unknown`
+ * so that `HookDeclarations` (which uses `HookHandler`) accepts handlers with any result type.
+ * A handler returns a `HookOutput<T>` (result and/or provided capabilities); returning `void`
+ * is shorthand for an empty output (no result, no capabilities).
  */
 export interface HookHandler<T = unknown> {
   /** Module name — set by the Dispatcher during registerModule(). */
   readonly name?: string;
-  readonly handler: (ctx: HookContext) => Promise<T>;
+  readonly handler: (ctx: HookContext) => Promise<HookOutput<T> | void>;
   /** Capabilities this handler requires before it can execute.
    *  Key = capability name. Value = required value, or ANY_VALUE for "must exist, any value". */
   readonly requires?: Readonly<Record<string, unknown>>;
-  /** Capabilities this handler provides after successful execution.
-   *  Called after the handler completes; return value is merged into capabilities. */
-  readonly provides?: () => Readonly<Record<string, unknown>>;
 }
 
 /**

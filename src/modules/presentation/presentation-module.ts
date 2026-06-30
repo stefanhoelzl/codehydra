@@ -29,7 +29,7 @@
 
 import type { IntentModule, EventDeclarations } from "../../intents/lib/module";
 import type { DomainEvent } from "../../intents/lib/types";
-import type { HookContext } from "../../intents/lib/operation";
+import type { HookContext, HookOutput } from "../../intents/lib/operation";
 import { ANY_VALUE } from "../../intents/lib/operation";
 import type { IDispatcher } from "../../intents/lib/dispatcher";
 import type { Logging, LoggerName, LogContext } from "../../boundaries/platform/logging";
@@ -1269,7 +1269,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * through the backend model (interlock: keeping the cloned repository
    * unchecks remove-all; deleting it forces remove-all on).
    */
-  async function confirmClose(ctx: HookContext): Promise<CloseConfirmHookResult> {
+  async function confirmClose(ctx: HookContext): Promise<HookOutput<CloseConfirmHookResult>> {
     const input = ctx as CloseConfirmHookInput;
     const isRemote = input.remoteUrl !== undefined;
     const state: CloseConfirmState = { removeAll: false, keepRepo: false };
@@ -1295,12 +1295,14 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       if (event.kind !== "dismiss" && event.actionId === "close") {
         const shouldDeleteRepo = isRemote && !state.keepRepo;
         return {
-          removeAll: state.removeAll || shouldDeleteRepo,
-          removeLocalRepo: shouldDeleteRepo,
+          result: {
+            removeAll: state.removeAll || shouldDeleteRepo,
+            removeLocalRepo: shouldDeleteRepo,
+          },
         };
       }
       // Cancel button or Escape.
-      return { canceled: true };
+      return { result: { canceled: true } };
     } finally {
       unsubscribe();
       handle.close();
@@ -1317,14 +1319,16 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * waitForRetry hook it needs for the setup retry loop. The promise resolves
    * when the user emits `setup-retry` (preserving app-start.ts's loop exactly).
    */
-  async function appStartShowUi(): Promise<ShowUIHookResult> {
+  async function appStartShowUi(): Promise<HookOutput<ShowUIHookResult>> {
     startupPhase = "starting";
     scheduleUpdate();
     return {
-      waitForRetry: () =>
-        new Promise<void>((resolve) => {
-          retryResolve = resolve;
-        }),
+      result: {
+        waitForRetry: () =>
+          new Promise<void>((resolve) => {
+            retryResolve = resolve;
+          }),
+      },
     };
   }
 
@@ -1357,13 +1361,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   /**
    * app:setup `agent-selection`: show the picker and park until the user emits
-   * `agent-selected`. The chosen agent is exposed as the `agentType` capability
+   * `agent-selected`. The chosen agent is returned as the `agentType` capability
    * (same contract the view-module hook provided). The handler awaits the pick
-   * so `provides` reads the populated value.
+   * before returning so the provided value is populated.
    */
-  let chosenAgent: LifecycleAgentType | undefined;
-  async function setupAgentSelection(ctx: HookContext): Promise<void> {
-    chosenAgent = undefined;
+  async function setupAgentSelection(ctx: HookContext): Promise<HookOutput> {
     const { availableAgents } = ctx as AgentSelectionHookContext;
     agentOptions = availableAgents;
     startupPhase = "agent-selection";
@@ -1372,8 +1374,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const agent = await new Promise<LifecycleAgentType>((resolve) => {
       agentSelectionResolve = resolve;
     });
-    chosenAgent = agent;
     logger.info("Agent selected", { agent });
+    return { provides: { agentType: agent } };
   }
 
   /** app:setup `hide-ui`: return to the boot-splash phase. */
@@ -1419,9 +1421,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       [SETUP_OPERATION_ID]: {
         "show-ui": { handler: setupShowUi },
         "agent-selection": {
-          provides: () => ({
-            ...(chosenAgent !== undefined && { agentType: chosenAgent }),
-          }),
           handler: setupAgentSelection,
         },
         "hide-ui": { handler: setupHideUi },

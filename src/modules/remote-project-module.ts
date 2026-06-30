@@ -13,7 +13,7 @@
 import * as crypto from "node:crypto";
 import nodePath from "path";
 import type { IntentModule } from "../intents/lib/module";
-import type { HookContext } from "../intents/lib/operation";
+import type { HookContext, HookOutput } from "../intents/lib/operation";
 import type { IGitClient } from "../boundaries/platform/git-client";
 import type { PathProvider } from "../boundaries/platform/path-provider";
 import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
@@ -69,13 +69,13 @@ export function createRemoteProjectModule(deps: {
       // -----------------------------------------------------------------------
       [OPEN_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveHookResult | undefined> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
             const intent = ctx.intent as OpenProjectIntent;
             const { git } = intent.payload;
             const { report } = ctx as ResolveHookInput;
 
             if (!git) {
-              return undefined;
+              return {};
             }
 
             const expanded = expandGitUrl(git);
@@ -95,8 +95,10 @@ export function createRemoteProjectModule(deps: {
                 existingPath: gitPath.toString(),
               });
               return {
-                projectPath: gitPath.toString(),
-                remoteUrl: expanded,
+                result: {
+                  projectPath: gitPath.toString(),
+                  remoteUrl: expanded,
+                },
               };
             } catch {
               // Not found — clone
@@ -114,7 +116,7 @@ export function createRemoteProjectModule(deps: {
             // No saveProject call — LocalProjectModule.register handles persistence
             // with remoteUrl from context
 
-            return { projectPath: gitPath.toString(), remoteUrl: expanded };
+            return { result: { projectPath: gitPath.toString(), remoteUrl: expanded } };
           },
         },
       },
@@ -126,18 +128,18 @@ export function createRemoteProjectModule(deps: {
         // close: filesystem cleanup only — delete cloned directory if requested
         // Uses remoteUrl from hook context (provided by resolve-project results)
         close: {
-          handler: async (ctx: HookContext): Promise<CloseHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CloseHookResult>> => {
             const { projectPath, removeLocalRepo, remoteUrl } = ctx as CloseHookInput;
 
             if (!removeLocalRepo || !remoteUrl) {
-              return {};
+              return { result: {} };
             }
 
             // Delete the clone directory (parent of gitPath, e.g. remotes/<url-hash>/)
             const cloneDir = nodePath.dirname(new Path(projectPath).toString());
             await fs.rm(cloneDir, { recursive: true, force: true });
 
-            return {};
+            return { result: {} };
           },
         },
       },

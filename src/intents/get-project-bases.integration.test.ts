@@ -38,7 +38,7 @@ import type {
   ResolveHookInput as ResolveProjectHookInput,
 } from "./resolve-project";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent } from "./lib/types";
 import type { ProjectId } from "../shared/api/types";
 
@@ -87,12 +87,12 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [RESOLVE_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<ResolveProjectHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<ResolveProjectHookResult>> => {
             const { projectPath } = ctx as ResolveProjectHookInput;
             if (opts?.unknownProject || projectPath !== PROJECT_ROOT) {
-              return {};
+              return { result: {} };
             }
-            return { projectId: PROJECT_ID, projectName: "test" };
+            return { result: { projectId: PROJECT_ID, projectName: "test" } };
           },
         },
       },
@@ -110,11 +110,13 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [GET_PROJECT_BASES_OPERATION_ID]: {
         list: {
-          handler: async (): Promise<ListBasesHookResult> => {
+          handler: async (): Promise<HookOutput<ListBasesHookResult>> => {
             listCallCount++;
             // First call returns cached, subsequent calls return fresh
             const bases = listCallCount === 1 ? [...CACHED_BASES] : [...freshBases];
-            return opts?.noDefaultBaseBranch ? { bases } : { bases, defaultBaseBranch: "main" };
+            return {
+              result: opts?.noDefaultBaseBranch ? { bases } : { bases, defaultBaseBranch: "main" },
+            };
           },
         },
         refresh: {

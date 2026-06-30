@@ -58,7 +58,7 @@ import type {
   ExistingWorkspaceData,
 } from "./open-workspace";
 import type { IntentModule } from "./lib/module";
-import type { HookContext } from "./lib/operation";
+import type { HookContext, HookOutput } from "./lib/operation";
 import type { DomainEvent, Intent } from "./lib/types";
 import type { ProjectId, Workspace, WorkspaceName } from "../shared/api/types";
 
@@ -210,9 +210,9 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [SWITCH_WORKSPACE_OPERATION_ID]: {
         activate: {
-          handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
             const { workspacePath } = ctx as ActivateHookInput;
-            return workspacePath === null ? {} : { resolvedPath: workspacePath };
+            return { result: workspacePath === null ? {} : { resolvedPath: workspacePath } };
           },
         },
       },
@@ -225,7 +225,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         create: {
-          handler: async (ctx: HookContext): Promise<CreateHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<CreateHookResult>> => {
             const intent = ctx.intent as OpenWorkspaceIntent;
             const { projectPath } = ctx as CreateHookInput;
 
@@ -233,9 +233,11 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             if (intent.payload.existingWorkspace) {
               const existing = intent.payload.existingWorkspace;
               return {
-                workspacePath: existing.path,
-                branch: existing.branch ?? existing.name,
-                metadata: existing.metadata,
+                result: {
+                  workspacePath: existing.path,
+                  branch: existing.branch ?? existing.name,
+                  metadata: existing.metadata,
+                },
               };
             }
 
@@ -252,9 +254,11 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             void projectPath;
 
             return {
-              workspacePath: workspace.path.toString(),
-              branch: workspace.branch,
-              metadata: workspace.metadata,
+              result: {
+                workspacePath: workspace.path.toString(),
+                branch: workspace.branch,
+                metadata: workspace.metadata,
+              },
             };
           },
         },
@@ -268,7 +272,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
             const setupCtx = ctx as SetupHookInput;
             try {
               await keepFilesService.copyToWorkspace(
@@ -278,7 +282,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
             } catch {
               // Best-effort: do not re-throw
             }
-            return {};
+            return { result: {} };
           },
         },
       },
@@ -291,7 +295,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         setup: {
-          handler: async (ctx: HookContext): Promise<SetupHookResult> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<SetupHookResult>> => {
             const setupCtx = ctx as SetupHookInput;
             const intent = ctx.intent as OpenWorkspaceIntent;
 
@@ -303,7 +307,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
               });
             }
 
-            return { envVars };
+            return { result: { envVars } };
           },
         },
       },
@@ -335,9 +339,9 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          provides: () => ({ workspaceUrl }),
-          handler: async (ctx: HookContext): Promise<void> => {
+          handler: async (ctx: HookContext): Promise<HookOutput> => {
             void (ctx as FinalizeHookInput).envVars;
+            return { provides: { workspaceUrl } };
           },
         },
       },
@@ -916,8 +920,8 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             setup: {
-              handler: async (): Promise<SetupHookResult> => {
-                return { envVars: { BRIDGE_PORT: "15000" } };
+              handler: async (): Promise<HookOutput<SetupHookResult>> => {
+                return { result: { envVars: { BRIDGE_PORT: "15000" } } };
               },
             },
           },
@@ -943,9 +947,9 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [SWITCH_WORKSPACE_OPERATION_ID]: {
             activate: {
-              handler: async (ctx: HookContext): Promise<SwitchWorkspaceHookResult> => {
+              handler: async (ctx: HookContext): Promise<HookOutput<SwitchWorkspaceHookResult>> => {
                 const { workspacePath } = ctx as ActivateHookInput;
-                return workspacePath === null ? {} : { resolvedPath: workspacePath };
+                return { result: workspacePath === null ? {} : { resolvedPath: workspacePath } };
               },
             },
           },
@@ -956,10 +960,12 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             create: {
-              handler: async (): Promise<CreateHookResult> => ({
-                workspacePath: WORKSPACE_PATH,
-                branch: WORKSPACE_BRANCH,
-                metadata: WORKSPACE_METADATA,
+              handler: async (): Promise<HookOutput<CreateHookResult>> => ({
+                result: {
+                  workspacePath: WORKSPACE_PATH,
+                  branch: WORKSPACE_BRANCH,
+                  metadata: WORKSPACE_METADATA,
+                },
               }),
             },
           },
@@ -971,8 +977,8 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             setup: {
-              handler: async (): Promise<SetupHookResult> => {
-                return { envVars: { AGENT_PORT: "9090" } };
+              handler: async (): Promise<HookOutput<SetupHookResult>> => {
+                return { result: { envVars: { AGENT_PORT: "9090" } } };
               },
             },
           },
@@ -985,9 +991,9 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             finalize: {
-              provides: () => ({ workspaceUrl: WORKSPACE_URL }),
-              handler: async (ctx: HookContext): Promise<void> => {
+              handler: async (ctx: HookContext): Promise<HookOutput> => {
                 capturedEnvVars = (ctx as FinalizeHookInput).envVars;
+                return { provides: { workspaceUrl: WORKSPACE_URL } };
               },
             },
           },
