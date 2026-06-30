@@ -435,6 +435,18 @@
     overflow-x: hidden;
   }
 
+  /* Collapsed, the gutter is only ~20px wide, so the native scrollbar would
+     sit on top of the status-indicator icon column and hide it. Hide the
+     scrollbar in collapsed mode (wheel scrolling still works); the real
+     scrollbar returns when the sidebar expands and has room for it. */
+  .sidebar:not(.expanded) .sidebar-content {
+    scrollbar-width: none;
+  }
+
+  .sidebar:not(.expanded) .sidebar-content::-webkit-scrollbar {
+    display: none;
+  }
+
   /* ============ New workspace entry ============ */
 
   .new-workspace-entry {
