@@ -437,8 +437,8 @@ export interface DialogDismissEvent {
 }
 
 /**
- * Events sent from renderer -> main when the user interacts with a dialog, over
- * the api:dialog:event channel. Discriminated by `kind`: "action" (default when
- * absent), "change", or "dismiss".
+ * Events sent from renderer -> main when the user interacts with a dialog, as
+ * dialog-* kinds on the api:ui:event channel. Discriminated by `kind`: "action"
+ * (default when absent), "change", or "dismiss".
  */
 export type DialogUserEvent = DialogActionEvent | DialogFieldChangeEvent | DialogDismissEvent;

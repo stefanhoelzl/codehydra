@@ -2,8 +2,7 @@
  * UI event contract: renderer → main fire-and-forget events on the
  * api:ui:event channel (planning/UI_STATE_ARCHITECTURE.md).
  *
- * `log` is the renderer's logging channel (replacement for the former
- * api:log:* channels). `ui-connected` is the startup handshake: the renderer
+ * `log` is the renderer's logging channel. `ui-connected` is the startup handshake: the renderer
  * emits it once (on App mount, during the initializing phase) after subscribing
  * to ui:state; the presenter responds by flushing buffered notifications and
  * pushing the current snapshot immediately. app:ready is no longer driven by
@@ -63,7 +62,7 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   // Setup-error actions: retry resolves app:start's retry loop; quit shuts down.
   z.object({ kind: z.literal("setup-retry") }),
   z.object({ kind: z.literal("setup-quit") }),
-  // Dialog user interactions (replace the former api:dialog:event channel). The
+  // Dialog user interactions. The
   // presenter routes these to the matching open dialog session by `dialogId`
   // (the opaque id echoed from the snapshot's `dialogs`). `data` is the flat
   // field-values snapshot (keyed by field id); values are strings.
@@ -80,8 +79,7 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
     data: z.record(z.string(), z.string()),
   }),
   z.object({ kind: z.literal("dialog-dismiss"), dialogId: z.string() }),
-  // Notification user interactions (replace the former api:notification:event
-  // channel). actionId is "dismiss" for the dismiss button, else a button id.
+  // Notification user interactions. actionId is "dismiss" for the dismiss button, else a button id.
   z.object({
     kind: z.literal("notification-event"),
     notificationId: z.string(),
