@@ -14,6 +14,8 @@
  * therefore drive expansion via the `mode` prop and assert the emitted events.
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import { flushSync } from "svelte";
@@ -918,6 +920,24 @@ describe("Sidebar component", () => {
 
       const expanded = render(Sidebar, { props: expandedProps() });
       expect(expanded.container.querySelector(".sidebar-header h2")).toBeInTheDocument();
+    });
+
+    it("hides the scrollbar in collapsed mode so it can't cover the status indicators", () => {
+      // The collapsed gutter is ~20px wide; a native scrollbar would overlap
+      // the status-indicator icon column and hide it. JSDOM neither renders
+      // scrollbars nor injects scoped component styles, so we assert the
+      // component ships the collapsed-only scrollbar-hiding rules at source.
+      const source = readFileSync(
+        resolve(process.cwd(), "src/renderer/lib/components/Sidebar.svelte"),
+        "utf8"
+      );
+
+      expect(source).toMatch(
+        /\.sidebar:not\(\.expanded\)\s+\.sidebar-content\s*\{[\s\S]*?scrollbar-width:\s*none/
+      );
+      expect(source).toMatch(
+        /\.sidebar:not\(\.expanded\)\s+\.sidebar-content::-webkit-scrollbar\s*\{[\s\S]*?display:\s*none/
+      );
     });
 
     it("vscode-divider has no inert attribute", () => {
