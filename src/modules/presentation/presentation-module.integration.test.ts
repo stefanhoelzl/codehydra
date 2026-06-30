@@ -5,7 +5,7 @@
  *
  * Phase A (ui:event intake):
  * - zod validation, invalid events dropped with a warning
- * - log events routed to the LoggingService (replacement for api:log:*)
+ * - log events routed to the LoggingService
  * - app:shutdown removes the ui:event listener
  *
  * Phase B (ui:state shadow snapshots):

@@ -170,8 +170,8 @@
  * Light theme overrides.
  * Only fallback values change - VS Code variable references stay the same.
  *
- * Selected via [data-theme="light"] on :root, set by the renderer in response
- * to the api:ui:theme event pushed from main (driven by Electron's nativeTheme).
+ * Selected via [data-theme="light"] on :root, set by the renderer from the
+ * theme in the api:ui:state snapshot pushed from main (driven by Electron's nativeTheme).
  */
 :root[data-theme="light"] {
   /*
