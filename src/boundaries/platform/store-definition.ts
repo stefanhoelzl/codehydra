@@ -21,6 +21,52 @@ export interface ComputedDefaultContext {
   readonly isPackaged: boolean;
 }
 
+// =============================================================================
+// Settings-UI descriptors
+// =============================================================================
+
+/** A single selectable option for an enum control. */
+export interface SettingsOption {
+  readonly value: string;
+  readonly label: string;
+}
+
+/**
+ * How a config key renders in the auto-populated settings dialog.
+ *
+ * Typed builders (storeBoolean/storeNumber/storeEnum/...) attach one of these
+ * automatically, so the settings dialog can render a key without parsing the
+ * `validValues` help string. A key is shown in the dialog iff its definition
+ * carries a `settingsControl` (storeCustom keys opt in by passing one).
+ *
+ * `guarded-text` is the checkbox-guarded text field used by the two keys whose
+ * "off" state is a distinct value rather than empty/null of a simple type
+ * (experimental.busy-during-background-shell → off = false;
+ * electron.disabled-features → off = null). The four functions bridge the
+ * two-widget UI (checkbox + text) to the single typed config value.
+ */
+export type SettingsControl =
+  | { readonly kind: "boolean" }
+  | { readonly kind: "string" }
+  | { readonly kind: "number"; readonly min?: number; readonly max?: number }
+  | {
+      readonly kind: "enum";
+      readonly options: readonly SettingsOption[];
+      readonly nullable: boolean;
+    }
+  | { readonly kind: "enum-list"; readonly options: readonly string[] }
+  | {
+      readonly kind: "guarded-text";
+      /** Value written when the guard checkbox is unchecked. */
+      readonly offValue: unknown;
+      /** Value written when checked with an empty text field. */
+      readonly onEmptyValue: unknown;
+      /** Build the typed value from a non-empty text field. */
+      readonly fromText: (text: string) => unknown;
+      /** Project the current value onto the guard's {active, text} display state. */
+      readonly toText: (value: unknown) => { readonly active: boolean; readonly text: string };
+    };
+
 /**
  * Definition of a single configuration key.
  *
@@ -40,6 +86,18 @@ export interface PersistedKeyDefinition<T> {
   readonly description?: string;
   /** Valid values hint for help text (e.g. "true|false", "claude|opencode"). */
   readonly validValues?: string;
+  /**
+   * How a changed value takes effect. "live" = the app re-reads it and applies
+   * immediately; "restart" = only picked up on next launch (the settings dialog
+   * shows a "Restart to apply" note on changed restart-scoped rows). Absent is
+   * treated as "restart" (the safe default). Purely a settings-UI hint.
+   */
+  readonly applies?: "live" | "restart";
+  /**
+   * How this key renders in the auto-populated settings dialog. Typed builders
+   * attach this automatically; a key without one is not shown. See SettingsControl.
+   */
+  readonly settingsControl?: SettingsControl;
   /**
    * Controls redaction in contexts like bug reports (see getRedactedOverrides).
    * `true` replaces the whole value with the redaction token. A function
@@ -72,6 +130,7 @@ export interface PersistedKeyDefinition<T> {
  */
 export type PersistedTypeBuilder<T> = Pick<PersistedKeyDefinition<T>, "parse" | "validate"> & {
   readonly validValues?: string;
+  readonly settingsControl?: SettingsControl;
 };
 
 // =============================================================================
@@ -138,6 +197,7 @@ export function storeBoolean(): PersistedTypeBuilder<boolean> {
     parse: parseBool,
     validate: (v: unknown) => (typeof v === "boolean" ? v : undefined),
     validValues: "true|false",
+    settingsControl: { kind: "boolean" },
   };
 }
 
@@ -175,6 +235,11 @@ export function storeNumber(options?: {
     parse: (raw: string) => (raw === "" ? undefined : check(Number(raw))),
     validate: (v: unknown) => (typeof v === "number" ? check(v) : undefined),
     validValues,
+    settingsControl: {
+      kind: "number",
+      ...(min !== undefined && { min }),
+      ...(max !== undefined && { max }),
+    },
   };
 }
 
@@ -193,6 +258,11 @@ export function storeEnum<const T extends string>(
 ): PersistedTypeBuilder<T | null> {
   const set = new Set<string>(values);
   const validValues = options?.nullable ? [...values, "null"].join("|") : values.join("|");
+  const enumControl: SettingsControl = {
+    kind: "enum",
+    options: values.map((v) => ({ value: v, label: v })),
+    nullable: options?.nullable === true,
+  };
 
   if (options?.nullable) {
     return {
@@ -201,6 +271,7 @@ export function storeEnum<const T extends string>(
       validate: (v: unknown): T | null | undefined =>
         v === null ? null : typeof v === "string" && set.has(v) ? (v as T) : undefined,
       validValues,
+      settingsControl: enumControl,
     };
   }
 
@@ -209,6 +280,7 @@ export function storeEnum<const T extends string>(
     validate: (v: unknown): T | null | undefined =>
       typeof v === "string" && set.has(v) ? (v as T) : undefined,
     validValues,
+    settingsControl: enumControl,
   };
 }
 
@@ -240,6 +312,7 @@ export function storeEnumList(values: readonly string[]): PersistedTypeBuilder<s
     parse: parseList,
     validate: (v: unknown) => (typeof v === "string" ? parseList(v) : undefined),
     validValues,
+    settingsControl: { kind: "enum-list", options: values },
   };
 }
 
@@ -255,6 +328,7 @@ export function storeString(options?: { nullable: true }): PersistedTypeBuilder<
       validate: (v: unknown): string | null | undefined =>
         v === null ? null : typeof v === "string" ? v : undefined,
       validValues: "<string>",
+      settingsControl: { kind: "string" },
     };
   }
 
@@ -262,6 +336,7 @@ export function storeString(options?: { nullable: true }): PersistedTypeBuilder<
     parse: (s: string): string | null | undefined => (s === "" ? undefined : s),
     validate: (v: unknown): string | null | undefined => (typeof v === "string" ? v : undefined),
     validValues: "<string>",
+    settingsControl: { kind: "string" },
   };
 }
 
@@ -294,6 +369,7 @@ export function storePath(options: { nullable: true }): PersistedTypeBuilder<str
       }
     },
     validValues: "<path>",
+    settingsControl: { kind: "string" },
   };
 }
 
@@ -304,11 +380,13 @@ export function storeCustom<T>(fns: {
   parse: (raw: string) => T | undefined;
   validate: (value: unknown) => T | undefined;
   validValues?: string;
+  settingsControl?: SettingsControl;
 }): PersistedTypeBuilder<T> {
   return {
     parse: fns.parse,
     validate: fns.validate,
     ...(fns.validValues !== undefined && { validValues: fns.validValues }),
+    ...(fns.settingsControl !== undefined && { settingsControl: fns.settingsControl }),
   };
 }
 

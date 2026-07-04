@@ -192,6 +192,7 @@ import { createShortcutModule } from "./modules/shortcut-module";
 import { createDevtoolsModule } from "./modules/devtools-module";
 import { createDebugModule } from "./modules/debug-module";
 import { createPresentationModule } from "./modules/presentation/presentation-module";
+import { createSettingsModule } from "./modules/settings-module";
 import { createCloneNotificationModule } from "./modules/clone-notification-module";
 import { createErrorNotificationModule } from "./modules/error-notification-module";
 import { createDeletionDialogModule } from "./modules/deletion-dialog-module";
@@ -244,9 +245,10 @@ const stateMigrations = createStateMigrationRegistry();
 // are threaded into the modules/intents that read or write them, so those
 // consumers never reach into the config service by string key.
 const agentConfig = configService.register("agent", {
-  default: null,
+  default: "claude",
   description: "Agent selection",
-  ...storeEnum(["claude", "opencode"], { nullable: true }),
+  applies: "restart",
+  ...storeEnum(["claude", "opencode"]),
 });
 // telemetry.enabled is read by two modules (telemetry-module gates passive
 // events; error-report-module gates crash reporting), so it is registered here
@@ -254,6 +256,7 @@ const agentConfig = configService.register("agent", {
 const telemetryEnabledConfig = configService.register("telemetry.enabled", {
   default: true,
   description: "Enable telemetry (false in dev/unpackaged)",
+  applies: "live",
   ...storeBoolean(),
   computedDefault: (ctx) => (ctx.isDevelopment || !ctx.isPackaged ? false : undefined),
 });
@@ -271,6 +274,7 @@ const busyDuringBackgroundShellConfig = configService.register(
       "running. true = every background shell; false = never; array of " +
       "regexes (config.json only) = only shells whose command matches " +
       "(e.g. a CI-wait script), so dev servers don't pin the workspace busy.",
+    applies: "live",
     ...configBusyDuringBackgroundShell(),
   }
 );
@@ -294,6 +298,7 @@ const opencodeVersionConfig = configService.register("version.opencode", {
 const sidebarWidthConfig = configService.register("sidebar.width", {
   default: 250,
   description: "Expanded sidebar width in pixels (drag its right edge to resize; min 250)",
+  applies: "live",
   ...storeNumber({ min: 250, max: 100000 }),
 });
 
@@ -476,6 +481,10 @@ const uiHtmlPath = `file://${nodePath.join(__dirname, "../renderer/index.html")}
 // UI-view IPC. It privately owns the dialog/notification registries and exposes
 // .dialog()/.notification() for any module to inject. Constructed early so the
 // consumer modules below can take it as `ui`.
+// Forwards the sidebar gear's open-settings ui event to the settings module.
+// Assigned once the settings module is constructed below (it needs the
+// presenter for its dialog), so the presenter closes over a mutable ref.
+let openSettings: () => void = () => {};
 const presentationModule = createPresentationModule({
   loggingService,
   viewManager,
@@ -485,7 +494,15 @@ const presentationModule = createPresentationModule({
   dispatcher,
   sidebarWidthConfig,
   configService,
+  onOpenSettings: () => openSettings(),
 });
+const settingsModule = createSettingsModule({
+  ui: presentationModule,
+  config: configService,
+  app: appLayer,
+  logger: loggingService.createLogger("settings"),
+});
+openSettings = settingsModule.openSettings;
 const cloneNotificationModule = createCloneNotificationModule({ ui: presentationModule });
 const errorNotificationModule = createErrorNotificationModule({ ui: presentationModule });
 
@@ -780,7 +797,10 @@ const errorReportModule = createErrorReportModule({
 
 dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
 dispatcher.registerOperation(INTENT_APP_RESUME, new AppResumeOperation());
-dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(agentConfig));
+dispatcher.registerOperation(
+  INTENT_APP_START,
+  new AppStartOperation(agentConfig, () => configService.wasConfigured())
+);
 dispatcher.registerOperation(INTENT_APP_READY, new AppReadyOperation(agentConfig));
 // config:set-values operation removed — config is now a plain service
 dispatcher.registerOperation(INTENT_RESOLVE_WORKSPACE, new ResolveWorkspaceOperation());
@@ -916,6 +936,7 @@ dispatcher.registerModule(shortcutModule);
 dispatcher.registerModule(devtoolsModule);
 dispatcher.registerModule(debugModule);
 dispatcher.registerModule(errorReportModule);
+dispatcher.registerModule(settingsModule.module);
 dispatcher.registerModule(autoWorkspaceModule);
 dispatcher.registerModule(cloneNotificationModule);
 dispatcher.registerModule(errorNotificationModule);

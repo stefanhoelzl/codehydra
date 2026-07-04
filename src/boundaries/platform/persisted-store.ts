@@ -89,6 +89,11 @@ export class PersistedStore {
   private readonly definitions = new PersistedDefinitions();
   private readonly effective: Record<string, unknown> = {};
   private readonly defaults: Record<string, unknown> = {};
+  // Where each key's effective value came from. Seeded to "default" for every
+  // key by seedDefaults(); the composing service overlays higher-precedence
+  // sources via markSources(). set()/reset() keep it current at runtime. Read by
+  // the settings UI to show a source badge (e.g. env/CLI-overridden keys).
+  private readonly sources: Record<string, string> = {};
   private loaded = false;
   // Tail of the write queue. Every persistMutation() chains off this so writes
   // to the backing file run strictly one-at-a-time, even across owners that
@@ -195,8 +200,38 @@ export class PersistedStore {
     for (const [key, value] of Object.entries(defaults)) {
       this.effective[key] = value;
       this.defaults[key] = value;
+      this.sources[key] = "default";
     }
     return defaults;
+  }
+
+  /**
+   * Mark a set of keys as sourced from `source` (e.g. "user", "env", "cli").
+   * The composing service calls this in precedence order after seedDefaults() so
+   * the last writer wins, matching the effective-value merge.
+   */
+  markSources(keys: Iterable<string>, source: string): void {
+    for (const key of keys) {
+      this.sources[key] = source;
+    }
+  }
+
+  /** Where the key's effective value currently comes from (default if unseeded). */
+  getSource(key: string): string {
+    return this.sources[key] ?? "default";
+  }
+
+  /**
+   * String-keyed set for callers that don't hold the typed accessor (the settings
+   * dialog). Same validation/persistence as PersistedAccessor.set().
+   */
+  setValue(key: string, value: unknown, options?: { persist?: boolean }): Promise<void> {
+    return this.writeValue(key, value, options);
+  }
+
+  /** String-keyed reset for callers that don't hold the typed accessor. */
+  resetKey(key: string, options?: { persist?: boolean }): Promise<void> {
+    return this.resetValue(key, options);
   }
 
   /** Overlay resolved values onto the effective map (highest-precedence last). */
@@ -254,6 +289,12 @@ export class PersistedStore {
       });
     }
     this.effective[key] = validated;
+    // A persisted write lands in config.json, i.e. becomes user-sourced — except
+    // env/CLI overrides, which still win on the next load, so we keep that source
+    // sticky so the settings UI keeps warning about the active override.
+    if (options?.persist !== false && this.sources[key] !== "env" && this.sources[key] !== "cli") {
+      this.sources[key] = "user";
+    }
 
     if (options?.persist !== false) {
       await this.persistMutation((fileContent) => {
@@ -273,6 +314,10 @@ export class PersistedStore {
       });
     }
     this.effective[key] = this.defaults[key];
+    // Deleting the key from config.json reverts it to the default source (env/CLI
+    // overrides would re-apply on next load, but the in-memory value is now the
+    // default, so report it as such).
+    this.sources[key] = "default";
 
     if (options?.persist !== false) {
       await this.persistMutation((fileContent) => {

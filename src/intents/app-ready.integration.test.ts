@@ -88,7 +88,7 @@ function createTestSetup(
 
   dispatcher.registerOperation(
     INTENT_APP_READY,
-    new AppReadyOperation(createMockAccessor<ConfigAgentType>("agent", null))
+    new AppReadyOperation(createMockAccessor<ConfigAgentType>("agent", "claude"))
   );
   dispatcher.registerOperation(INTENT_OPEN_PROJECT, stub);
 

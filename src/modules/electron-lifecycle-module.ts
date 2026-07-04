@@ -150,6 +150,18 @@ export function createElectronLifecycleModule(deps: ElectronLifecycleModuleDeps)
       "Comma-separated Chromium features to disable via --disable-features. " +
       "null = use curated defaults; empty string = disable nothing; any value fully replaces defaults.",
     ...storeString({ nullable: true }),
+    // Settings UI: a checkbox guarding the feature list, since this key needs
+    // three states (unchecked = null = curated defaults; checked + empty = "" =
+    // disable nothing; checked + value = replace). Overrides the string control
+    // the builder would otherwise attach.
+    settingsControl: {
+      kind: "guarded-text",
+      offValue: null,
+      onEmptyValue: "",
+      fromText: (text: string) => text,
+      toText: (value: unknown) =>
+        value === null ? { active: false, text: "" } : { active: true, text: String(value) },
+    },
   });
 
   return {

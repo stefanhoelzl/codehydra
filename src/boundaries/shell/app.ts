@@ -89,6 +89,13 @@ export interface AppBoundary {
   allowPowerSaving(allow: boolean): void;
 
   /**
+   * Relaunch the app: schedule a fresh instance to start on exit, then quit the
+   * current one. Used by the settings dialog's "Save & Restart" to apply
+   * restart-scoped config changes.
+   */
+  relaunch(): void;
+
+  /**
    * Whether the OS is currently using a dark color scheme.
    */
   shouldUseDarkColors(): boolean;
@@ -164,6 +171,12 @@ export class DefaultAppBoundary implements AppBoundary {
     this.logger.debug("Power saving prevented (display-sleep blocker started)", {
       id: this.powerBlockerId,
     });
+  }
+
+  relaunch(): void {
+    this.logger.info("Relaunching app");
+    app.relaunch();
+    app.quit();
   }
 
   shouldUseDarkColors(): boolean {

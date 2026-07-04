@@ -954,3 +954,66 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["--unknown-flag=val"])).toEqual({ "unknown-flag": "val" });
   });
 });
+
+// =============================================================================
+// Settings-support surface: getSource / wasConfigured / getDefinitions
+// =============================================================================
+
+describe("Config — settings support", () => {
+  it("wasConfigured() is false on a genuine first run (no config.json)", () => {
+    const svc = createService();
+    svc.load();
+    expect(svc.wasConfigured()).toBe(false);
+  });
+
+  it("wasConfigured() is true when config.json exists", () => {
+    const svc = createService({
+      fileEntries: { "/app": directory(), "/app/config.json": file("{}") },
+    });
+    svc.load();
+    expect(svc.wasConfigured()).toBe(true);
+  });
+
+  it("getSource() reports where the effective value came from (precedence)", () => {
+    const svc = createService({
+      fileEntries: {
+        "/app": directory(),
+        "/app/config.json": file(JSON.stringify({ "from.file": "f" })),
+      },
+      env: { CH_FROM__ENV: "e" },
+      argv: ["--from.cli=c"],
+    });
+    svc.register("plain", stringDef("plain", "d"));
+    svc.register("from.file", stringDef("from.file", "d"));
+    svc.register("from.env", stringDef("from.env", "d"));
+    svc.register("from.cli", stringDef("from.cli", "d"));
+    svc.load();
+
+    expect(svc.getSource("plain")).toBe("default");
+    expect(svc.getSource("from.file")).toBe("user");
+    expect(svc.getSource("from.env")).toBe("env");
+    expect(svc.getSource("from.cli")).toBe("cli");
+  });
+
+  it("getSource() flips to user after a runtime set(), stays env-sticky under an override", async () => {
+    const svc = createService({ env: { CH_OVERRIDDEN: "e" } });
+    const plain = svc.register("plain", stringDef("plain", "d"));
+    svc.register("overridden", stringDef("overridden", "d"));
+    svc.load();
+
+    await plain.set("x");
+    expect(svc.getSource("plain")).toBe("user");
+
+    // An env-sourced key stays "env" after a set (the override still wins on reload).
+    await svc.set("overridden", "y");
+    expect(svc.getSource("overridden")).toBe("env");
+  });
+
+  it("getDefinitions() exposes registered keys with their metadata", () => {
+    const svc = createService();
+    svc.register("test.key", stringDef("test.key", "d"));
+    svc.load();
+    const defs = svc.getDefinitions();
+    expect(defs.has("test.key")).toBe(true);
+  });
+});

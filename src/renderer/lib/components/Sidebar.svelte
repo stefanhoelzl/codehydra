@@ -43,6 +43,8 @@
     onOpenNewWorkspace: () => void;
     /** Request the remove flow for a workspace by its snapshot row key. */
     onRemoveWorkspace: (key: string) => void;
+    /** Open the settings dialog (gear in the PROJECTS header). */
+    onOpenSettings: () => void;
   }
 
   let {
@@ -58,6 +60,7 @@
     onSwitchWorkspace,
     onOpenNewWorkspace,
     onRemoveWorkspace,
+    onOpenSettings,
   }: SidebarProps = $props();
 
   const totalWorkspaces = $derived(
@@ -317,7 +320,17 @@
     <div class="ch-label-cell header-label">
       <h2>PROJECTS</h2>
     </div>
-    {#if !isExpanded}
+    {#if isExpanded}
+      <button
+        type="button"
+        class="header-gear"
+        aria-label="Settings"
+        title="Settings"
+        onclick={() => onOpenSettings()}
+      >
+        <Icon name="gear" size={14} />
+      </button>
+    {:else}
       <span class="ch-icon-cell expand-hint" aria-hidden="true">
         <Icon name="chevron-right" size={12} />
       </span>
@@ -624,6 +637,26 @@
 
   .expand-hint:hover {
     opacity: 1;
+  }
+
+  /* Gear button in the (expanded) PROJECTS header — a global settings entry. */
+  .header-gear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 12px;
+    padding: 2px 6px;
+    color: var(--ch-foreground);
+    background: transparent;
+    border: none;
+    border-radius: var(--ch-radius-sm, 6px);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .header-gear:hover {
+    opacity: 1;
+    background: var(--ch-list-hover-bg);
   }
 
   .sidebar-header h2 {

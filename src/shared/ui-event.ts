@@ -59,6 +59,10 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
     message: z.string(),
     context: logContextSchema.optional(),
   }),
+  // Open the settings dialog (sidebar gear click). The presenter forwards this
+  // to the settings module, which opens the declarative settings dialog. The
+  // Alt+X+S shortcut reaches the same module via the shortcut-key domain event.
+  z.object({ kind: z.literal("open-settings") }),
   // Dialog user interactions. The
   // presenter routes these to the matching open dialog session by `dialogId`
   // (the opaque id echoed from the snapshot's `dialogs`). `data` is the flat

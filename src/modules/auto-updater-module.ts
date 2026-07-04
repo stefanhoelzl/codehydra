@@ -116,6 +116,7 @@ export function createAutoUpdaterModule(deps: AutoUpdaterModuleDeps): IntentModu
   const updateNotificationConfig = deps.configService.register("update.notification", {
     default: true,
     description: "Show a sidebar notification when an update is available",
+    applies: "live",
     ...storeBoolean(),
   });
   // App-written bookkeeping (not user config): persisted in state.json so a

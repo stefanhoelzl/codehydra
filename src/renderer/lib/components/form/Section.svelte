@@ -22,9 +22,10 @@
   import InputSection from "./InputSection.svelte";
   import ProgressSection from "./ProgressSection.svelte";
   import RadioSection from "./RadioSection.svelte";
+  import SettingRow from "./SettingRow.svelte";
   import TableSection from "./TableSection.svelte";
   import TextSection from "./TextSection.svelte";
-  import type { ButtonItem, FormLayout, GroupItem, SectionHandlers } from "./types";
+  import type { ButtonItem, FormLayout, SectionHandlers } from "./types";
   import type { DialogSection } from "@shared/dialog-types";
 
   interface Props extends SectionHandlers {
@@ -34,8 +35,8 @@
     values: Record<string, string>;
     /** Dropdown display text keyed by field id (what the combobox shows). */
     displays: Record<string, string>;
-    /** Renders a group item as an ordinary section (Form's recursive snippet). */
-    renderItem: Snippet<[GroupItem]>;
+    /** Renders a nested item as an ordinary section (Form's recursive snippet). */
+    renderItem: Snippet<[DialogSection | ButtonItem]>;
   }
 
   const {
@@ -89,6 +90,12 @@
   />
 {:else if section.type === "group"}
   <GroupSection {section} {layout} {renderItem} />
+{:else if section.type === "setting-row"}
+  <SettingRow
+    {section}
+    {renderItem}
+    onReset={() => onAction({ type: "button", id: section.resetId ?? "" })}
+  />
 {:else if section.type === "table"}
   <TableSection {section} />
 {:else if section.type === "button"}

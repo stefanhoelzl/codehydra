@@ -160,6 +160,12 @@ export interface PresentationModuleDeps {
    */
   readonly sidebarWidthConfig: Pick<PersistedAccessor<number>, "get" | "set">;
   readonly configService: Pick<Config, "register">;
+  /**
+   * Called when the renderer emits the `open-settings` ui event (the sidebar
+   * gear). Wired in the composition root to the settings module's openSettings;
+   * the presenter itself stays agnostic of the settings dialog.
+   */
+  readonly onOpenSettings?: () => void;
 }
 
 /** Allowed values for the `sidebar.label-scroll` config key. */
@@ -373,6 +379,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     {
       default: "hover",
       description: "How overflowing sidebar row labels scroll: always|hover|off",
+      applies: "live",
       ...storeEnum(LABEL_SCROLL_VALUES),
     }
   );
@@ -1015,6 +1022,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     if (event.kind === "hover") {
       hoverRegion = event.region === "sidebar" ? "sidebar" : null;
       scheduleUpdate();
+      return;
+    }
+    if (event.kind === "open-settings") {
+      deps.onOpenSettings?.();
       return;
     }
     if (event.kind === "resize-sidebar") {

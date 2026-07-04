@@ -90,6 +90,7 @@ describe("Sidebar component", () => {
     onSwitchWorkspace: vi.fn(),
     onOpenNewWorkspace: vi.fn(),
     onRemoveWorkspace: vi.fn(),
+    onOpenSettings: vi.fn(),
   };
 
   beforeEach(() => {

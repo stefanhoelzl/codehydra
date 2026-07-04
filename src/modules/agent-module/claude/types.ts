@@ -184,6 +184,26 @@ export function configBusyDuringBackgroundShell(): PersistedTypeBuilder<BusyDuri
       return v as readonly string[];
     },
     validValues: "true|false|[<regex>, ...] (array via config.json only)",
+    // Settings UI: a checkbox guarding a comma-separated regex field.
+    //   unchecked            → false (never busy)
+    //   checked, empty text  → true  (every background shell keeps busy)
+    //   checked, "a, b"      → ["a","b"] (only matching commands keep busy)
+    settingsControl: {
+      kind: "guarded-text",
+      offValue: false,
+      onEmptyValue: true,
+      fromText: (text: string) =>
+        text
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0),
+      toText: (value: unknown) => {
+        if (value === false) return { active: false, text: "" };
+        if (value === true) return { active: true, text: "" };
+        if (Array.isArray(value)) return { active: true, text: value.join(", ") };
+        return { active: false, text: "" };
+      },
+    },
   });
 }
 

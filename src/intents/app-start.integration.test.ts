@@ -57,9 +57,9 @@ import type { PersistedAccessor } from "../boundaries/platform/store-definition"
 
 /** Mock accessor that seeds the configured agent. Pass null to leave it unset. */
 function createMockAgentAccessor(
-  agent: ConfigAgentType | null = "opencode"
-): PersistedAccessor<ConfigAgentType | null> {
-  return createMockAccessor<ConfigAgentType | null>("agent", agent);
+  agent: ConfigAgentType = "opencode"
+): PersistedAccessor<ConfigAgentType> {
+  return createMockAccessor<ConfigAgentType>("agent", agent);
 }
 
 // =============================================================================
@@ -228,7 +228,10 @@ function createTestSetup(
 ): { dispatcher: Dispatcher } {
   const dispatcher = createMockDispatcher();
 
-  dispatcher.registerOperation(INTENT_APP_START, new AppStartOperation(createMockAgentAccessor()));
+  dispatcher.registerOperation(
+    INTENT_APP_START,
+    new AppStartOperation(createMockAgentAccessor(), () => true)
+  );
 
   const allModules = options?.skipDefaultChecks ? modules : [...defaultCheckModules(), ...modules];
   for (const m of allModules) dispatcher.registerModule(m);
@@ -444,10 +447,15 @@ describe("AppStart Operation", () => {
     ): { dispatcher: Dispatcher } {
       const dispatcher = createMockDispatcher();
 
-      const agent = options?.configuredAgent !== undefined ? options.configuredAgent : "opencode";
+      // A null configuredAgent models a first run (config.json absent →
+      // agent-selection onboarding), now driven by wasConfigured() rather than a
+      // null agent value; the stored agent itself is always a valid agent.
+      const configured = options?.configuredAgent;
+      const wasConfigured = configured !== null;
+      const agent: ConfigAgentType = configured && configured !== null ? configured : "opencode";
       dispatcher.registerOperation(
         INTENT_APP_START,
-        new AppStartOperation(createMockAgentAccessor(agent))
+        new AppStartOperation(createMockAgentAccessor(agent), () => wasConfigured)
       );
       if (options?.setupStub) {
         dispatcher.registerOperation(INTENT_SETUP, options.setupStub);
