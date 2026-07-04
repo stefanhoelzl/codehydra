@@ -1043,7 +1043,7 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
       "codehydra.setMetadata",
       async (arg?: { key: string; value: string }): Promise<void> => {
         let key: string;
-        let value: string;
+        let value: string | null;
 
         if (arg && typeof arg.key === "string" && typeof arg.value === "string") {
           if (SYSTEM_METADATA_KEYS.has(arg.key)) {
@@ -1054,7 +1054,8 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
         } else {
           const keyInput = await vscode.window.showInputBox({
             title: "Metadata Key",
-            prompt: "Enter metadata key (letters, digits, hyphens, dots)",
+            prompt:
+              "Enter metadata key — e.g. 'title' sets the sidebar display title (letters, digits, hyphens, dots)",
             validateInput: (v) => {
               const error = validateMetadataKeyInput(v);
               if (error) return error;
@@ -1067,10 +1068,11 @@ export function activate(context: vscode.ExtensionContext): { codehydra: typeof 
 
           const valueInput = await vscode.window.showInputBox({
             title: "Metadata Value",
-            prompt: `Enter value for "${key}"`,
+            prompt: `Enter value for "${key}" — leave empty to delete the key`,
           });
           if (valueInput === undefined) return;
-          value = valueInput;
+          // An empty value deletes the key (you can't type null in an input box).
+          value = valueInput === "" ? null : valueInput;
         }
 
         await codehydraApi.workspace.setMetadata(key, value);
