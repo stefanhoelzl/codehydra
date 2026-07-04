@@ -53,7 +53,7 @@ import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
 import { Path } from "../utils/path/path";
 import { encodePathForUrl } from "../boundaries/platform/paths";
-import { storeString, storeCustom } from "../boundaries/platform/store-definition";
+import { storeString, storeNumber } from "../boundaries/platform/store-definition";
 import type { Config } from "../boundaries/platform/config";
 import { CodeServerError, SetupError, getErrorMessage } from "../shared/errors/service-errors";
 import { waitForHealthy } from "../utils/health-check";
@@ -292,15 +292,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   const codeServerPortConfig = deps.configService.register("code-server.port", {
     default: getCodeServerPort(deps.buildInfo),
     description: "Code-server port",
-    ...storeCustom<number>({
-      parse: (raw) => {
-        const n = Number(raw);
-        return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : undefined;
-      },
-      validate: (v) =>
-        typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 65535 ? v : undefined,
-      validValues: "1-65535",
-    }),
+    ...storeNumber({ min: 1, max: 65535, integer: true }),
   });
 
   // -------------------------------------------------------------------------

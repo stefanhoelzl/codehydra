@@ -13,6 +13,7 @@ export type TableSectionConfig = Extract<DialogSection, { type: "table" }>;
 export type InputSectionConfig = Extract<DialogSection, { type: "input" }>;
 export type CheckboxSectionConfig = Extract<DialogSection, { type: "checkbox" }>;
 export type GroupSectionConfig = Extract<DialogSection, { type: "group" }>;
+export type SettingRowSectionConfig = Extract<DialogSection, { type: "setting-row" }>;
 
 export type GroupItem = GroupSectionConfig["items"][number];
 export type ButtonItem = Extract<GroupItem, { type: "button" }>;

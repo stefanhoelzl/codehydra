@@ -144,7 +144,11 @@ interface CheckResult {
 export class AppStartOperation implements Operation<AppStartIntent, void> {
   readonly id = APP_START_OPERATION_ID;
 
-  constructor(private readonly agentConfig: PersistedAccessor<ConfigAgentType | null>) {}
+  constructor(
+    private readonly agentConfig: PersistedAccessor<ConfigAgentType>,
+    /** Whether config.json existed at load; false = first run → agent selection. */
+    private readonly wasConfigured: () => boolean
+  ) {}
 
   async execute(ctx: OperationContext<AppStartIntent>): Promise<void> {
     const hookCtx: HookContext = {
@@ -175,8 +179,12 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       if (result.extensionRequirements) extensionRequirements.push(...result.extensionRequirements);
     }
 
-    // configuredAgent comes from Config (loaded before app:start)
-    const configuredAgent = this.agentConfig.get();
+    // On first run (no config.json yet) the agent is treated as "not chosen":
+    // null defers binary checks and drives needsAgentSelection, exactly as a null
+    // agent value used to. Once configured, the real (non-null) agent is used.
+    const configuredAgent: ConfigAgentType | null = this.wasConfigured()
+      ? this.agentConfig.get()
+      : null;
 
     // Hook 3: "show-ui" -- Show starting screen, capture waitForRetry
     const { results: showUiResults, errors: showUiErrors } =

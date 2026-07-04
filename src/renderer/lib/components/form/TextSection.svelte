@@ -23,6 +23,13 @@
     {/if}
     {section.content}
   </h1>
+{:else if section.style === "subheading"}
+  <h2
+    class="section-subheading"
+    style={section.indent ? `padding-left: ${section.indent}rem` : undefined}
+  >
+    {section.content}
+  </h2>
 {:else if section.style === "subtitle"}
   <p class="section-subtitle">{section.content}</p>
 {:else if section.style === "warning" || section.style === "error"}
@@ -53,6 +60,12 @@
 
   .icon-error {
     color: var(--ch-danger);
+  }
+
+  .section-subheading {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
   }
 
   .section-subtitle {

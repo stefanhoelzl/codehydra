@@ -78,6 +78,12 @@
             fields.push(item);
           }
         }
+      } else if (section.type === "setting-row") {
+        // A settings row wraps real field controls; collect them so their
+        // values flow through the form exactly like top-level fields.
+        for (const item of section.fields) {
+          fields.push(item);
+        }
       }
     }
     return fields;
@@ -86,6 +92,22 @@
   // Section layout: "centered" (default) keeps the centered stack; "form" lays
   // fields out as left-aligned labeled rows with right-aligned actions.
   const layout = $derived(config.layout ?? "centered");
+
+  /**
+   * Index of a trailing button-only group (the footer/action row), or -1. When
+   * present on a modal form dialog (the settings dialog), the sections above it
+   * scroll in a body and the footer is pinned at the card's bottom.
+   */
+  const footerIndex = $derived.by(() => {
+    const secs = config.sections;
+    const last = secs[secs.length - 1];
+    if (last && last.type === "group" && last.items.every((i) => i.type === "button")) {
+      return secs.length - 1;
+    }
+    return -1;
+  });
+
+  const splitFooter = $derived(surface === "modal" && layout === "form" && footerIndex >= 0);
 
   /**
    * Stable keys for the sections each-block, so a config push that inserts or
@@ -108,7 +130,9 @@
           ? `field:${section.id}`
           : section.type === "group"
             ? `group:${section.items.map((item) => item.id).join("+")}`
-            : section.type;
+            : section.type === "setting-row"
+              ? `setting:${section.fields.map((field) => field.id).join("+")}`
+              : section.type;
       const occurrence = counters[base] ?? 0;
       counters[base] = occurrence + 1;
       return occurrence === 0 ? base : `${base}:${occurrence}`;
@@ -196,8 +220,19 @@
             ? existingDisplay
             : suggestionLabel(section, next[section.id]!);
       } else if (section.type === "input") {
+        // Controlled push with the dropdown/checkbox adopt-once semantics: adopt
+        // a pushed value the renderer has not seen yet (e.g. a reset-to-default);
+        // re-sends preserve the user's edits. Absent value = seed from
+        // initialValue, then user-driven.
         const existing = untrack(() => fieldValues[section.id]);
-        next[section.id] = existing ?? section.initialValue ?? "";
+        const pushed =
+          section.value !== undefined && section.value !== adoptedValues[section.id]
+            ? section.value
+            : undefined;
+        if (pushed !== undefined) {
+          adoptedValues[section.id] = pushed;
+        }
+        next[section.id] = pushed ?? existing ?? section.initialValue ?? "";
       } else if (section.type === "checkbox") {
         // Controlled push with the dropdown's adopt-once semantics: adopt a
         // pushed value the renderer has not seen yet; re-sends preserve the
@@ -351,6 +386,9 @@
 
   // Auto-focus on mount: an explicit autofocus control wins, else the
   // computed default target (first enabled field, else the primary button).
+  // In the form layout (settings) we skip the default target: focusing the
+  // first field would open its dropdown list, so we leave focus unset unless a
+  // control opts in with an explicit autofocus flag.
   onMount(() => {
     setTimeout(() => {
       const explicit = formRef?.querySelector<HTMLElement>("[data-autofocus]");
@@ -358,6 +396,7 @@
         explicit.focus();
         return;
       }
+      if (layout === "form") return;
       defaultFocusTarget()?.focus();
     }, 0);
   });
@@ -561,6 +600,7 @@
 <div
   class="form"
   class:layout-form={layout === "form"}
+  class:split-footer={splitFooter}
   role="none"
   bind:this={formRef}
   onkeydown={handleKeydown}
@@ -583,9 +623,21 @@
       onSubmit={triggerPrimaryAction}
     />
   {/snippet}
-  {#each config.sections as section, sectionIndex (sectionKeys[sectionIndex])}
-    {@render renderSection(section)}
-  {/each}
+  {#if splitFooter}
+    <!-- Scrolling body (everything above the footer) + a pinned footer row. -->
+    <div class="form-body">
+      {#each config.sections.slice(0, footerIndex) as section, sectionIndex (sectionKeys[sectionIndex])}
+        {@render renderSection(section)}
+      {/each}
+    </div>
+    <div class="form-footer">
+      {@render renderSection(config.sections[footerIndex]!)}
+    </div>
+  {:else}
+    {#each config.sections as section, sectionIndex (sectionKeys[sectionIndex])}
+      {@render renderSection(section)}
+    {/each}
+  {/if}
 </div>
 
 <style>
@@ -605,5 +657,66 @@
   .form.layout-form {
     align-items: stretch;
     text-align: left;
+  }
+
+  /* Split-footer mode (modal settings dialog): the form fills the card, its
+     body scrolls, and the footer row stays pinned at the bottom. The card
+     (DialogView) drops its own padding in this mode, so the body/footer carry
+     it. */
+  .form.split-footer {
+    flex: 1;
+    min-height: 0;
+    gap: 0;
+  }
+
+  .form.split-footer .form-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 2rem 2rem 0.75rem;
+  }
+
+  .form.split-footer .form-footer {
+    padding: 1rem 2rem;
+    border-top: 1px solid var(--ch-border);
+  }
+
+  /* Group headings in the settings dialog are section labels, not a dialog
+     title — smaller than the default heading. Uppercase + muted to read as a
+     group header. :global reaches the TextSection child's element. */
+  .form.split-footer :global(.section-heading) {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.6;
+    margin-top: 0.75rem;
+  }
+
+  /* Theme-aware scrollbar for the scrolling body (Chromium/Electron). Defaults
+     to VS Code's scrollbar-slider colors, which follow the active theme, so it
+     is not a bright bar on dark backgrounds. */
+  .form.split-footer .form-body {
+    scrollbar-color: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4)) transparent;
+  }
+
+  .form.split-footer .form-body::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .form.split-footer .form-body::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background, rgba(121, 121, 121, 0.4));
+    border-radius: 5px;
+  }
+
+  .form.split-footer .form-body::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.7));
+  }
+
+  .form.split-footer .form-body::-webkit-scrollbar-track {
+    background: transparent;
   }
 </style>

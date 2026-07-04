@@ -37,6 +37,8 @@ class AppBoundaryMockStateImpl implements MockState {
   sleepBlockerStarts = 0;
   /** Number of times a blocker transitioned from active → inactive. */
   sleepBlockerStops = 0;
+  /** Number of times relaunch() was called (Save & Restart). */
+  relaunchCount = 0;
   readonly themeUpdatedCallbacks = new CallbackSet();
 
   triggerThemeUpdated(): void {
@@ -164,6 +166,10 @@ export function createAppBoundaryMock(options: MockAppBoundaryOptions = {}): Moc
     async openUrl(): Promise<void> {},
     async openPath(): Promise<void> {},
 
+    relaunch(): void {
+      state.relaunchCount += 1;
+    },
+
     shouldUseDarkColors(): boolean {
       return state.shouldUseDarkColors;
     },
@@ -206,6 +212,12 @@ export interface AppBoundaryMatchers {
    * @param count - Expected number of blocker starts
    */
   toHaveSleepBlockerStartCount(count: number): void;
+
+  /**
+   * Assert how many times relaunch() was called (Save & Restart).
+   * @param count - Expected number of relaunch calls
+   */
+  toHaveRelaunchCount(count: number): void;
 }
 
 // Extend vitest's assertion interface
@@ -252,6 +264,11 @@ const appBoundaryMatchers: MatcherImplementationsFor<
   toHaveSleepBlockerStartCount: countMatcher<MockAppBoundary & { $: AppBoundaryMockStateImpl }>(
     "sleep blocker start",
     (mock) => mock.$.sleepBlockerStarts
+  ),
+
+  toHaveRelaunchCount: countMatcher<MockAppBoundary & { $: AppBoundaryMockStateImpl }>(
+    "relaunch",
+    (mock) => mock.$.relaunchCount
   ),
 };
 

@@ -18,6 +18,9 @@
 
   const { section, value, onInput, onSubmit }: Props = $props();
 
+  // Masked (password) single-line fields start hidden; the eye button reveals.
+  let revealed = $state(false);
+
   /**
    * Focus the textarea and optionally select the seeded text. Also re-focuses
    * the textarea when Alt is released: Chromium's default Alt-up handler
@@ -111,22 +114,36 @@
       }}
     ></textarea>
   {:else}
-    <vscode-textfield
-      class="input-textfield"
-      id={section.id}
-      invalid={section.error ? true : undefined}
-      placeholder={section.placeholder ?? ""}
-      disabled={section.disabled || undefined}
-      data-autofocus={section.autofocus || undefined}
-      aria-label={section.label ? undefined : (section.placeholder ?? "Text input")}
-      aria-invalid={section.error ? "true" : undefined}
-      aria-describedby={section.error ? `${section.id}-error` : undefined}
-      {value}
-      oninput={(e: Event) => {
-        onInput((e.currentTarget as HTMLInputElement).value);
-      }}
-      use:submitOnEnter
-    ></vscode-textfield>
+    <div class="input-row" class:masked={section.masked}>
+      <vscode-textfield
+        class="input-textfield"
+        id={section.id}
+        type={section.masked && !revealed ? "password" : undefined}
+        invalid={section.error ? true : undefined}
+        placeholder={section.placeholder ?? ""}
+        disabled={section.disabled || undefined}
+        data-autofocus={section.autofocus || undefined}
+        aria-label={section.label ? undefined : (section.placeholder ?? "Text input")}
+        aria-invalid={section.error ? "true" : undefined}
+        aria-describedby={section.error ? `${section.id}-error` : undefined}
+        {value}
+        oninput={(e: Event) => {
+          onInput((e.currentTarget as HTMLInputElement).value);
+        }}
+        use:submitOnEnter
+      ></vscode-textfield>
+      {#if section.masked}
+        <button
+          type="button"
+          class="reveal-btn"
+          aria-label={revealed ? "Hide value" : "Reveal value"}
+          aria-pressed={revealed}
+          onclick={() => (revealed = !revealed)}
+        >
+          <vscode-icon name={revealed ? "eye-closed" : "eye"} aria-hidden="true"></vscode-icon>
+        </button>
+      {/if}
+    </div>
   {/if}
   {#if section.error}
     <vscode-form-helper id="{section.id}-error">
@@ -188,5 +205,34 @@
 
   .input-textfield {
     width: 100%;
+  }
+
+  /* Masked field: text field + reveal button share one row. */
+  .input-row {
+    display: contents;
+  }
+
+  .input-row.masked {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .reveal-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 6px;
+    color: var(--ch-foreground);
+    background: transparent;
+    border: none;
+    border-radius: var(--ch-radius-sm, 6px);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .reveal-btn:hover {
+    opacity: 1;
+    background: var(--ch-list-hover-bg);
   }
 </style>

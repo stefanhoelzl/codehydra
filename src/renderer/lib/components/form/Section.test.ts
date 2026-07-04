@@ -11,11 +11,14 @@ import { render, screen } from "@testing-library/svelte";
 import { createRawSnippet } from "svelte";
 import Section from "./Section.svelte";
 import type { DialogSection } from "@shared/dialog-types";
-import type { ButtonItem, GroupItem } from "./types";
+import type { ButtonItem } from "./types";
 
 /** Stand-in for Form's recursive snippet: renders an identifiable stub. */
-const renderItemStub = createRawSnippet<[GroupItem]>((item) => ({
-  render: () => `<div class="item-stub" data-id="${item().id}"></div>`,
+const renderItemStub = createRawSnippet<[DialogSection | ButtonItem]>((item) => ({
+  render: () => {
+    const s = item();
+    return `<div class="item-stub" data-id="${"id" in s ? s.id : ""}"></div>`;
+  },
 }));
 
 function renderSection(section: DialogSection | ButtonItem) {

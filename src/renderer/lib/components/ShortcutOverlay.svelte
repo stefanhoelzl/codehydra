@@ -85,6 +85,9 @@
     <vscode-badge>H</vscode-badge>
     {activeHibernated ? "Wake" : "Hibernate"}
   </span>
+  <span class="shortcut-hint" aria-label="S key to open settings">
+    <vscode-badge>S</vscode-badge> Settings
+  </span>
 </div>
 
 <style>

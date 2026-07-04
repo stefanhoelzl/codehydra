@@ -5,8 +5,12 @@
  * store-backed accessors (mirroring production), plus a standalone
  * createMockAccessor() for injecting cross-module accessors into deps.
  */
-import type { Config } from "./config";
-import type { PersistedAccessor, DeprecatedPersistedAccessor } from "./store-definition";
+import type { Config, ConfigSource } from "./config";
+import type {
+  PersistedAccessor,
+  DeprecatedPersistedAccessor,
+  PersistedKeyDefinition,
+} from "./store-definition";
 
 export interface CreateMockConfigOptions {
   /**
@@ -20,6 +24,11 @@ export interface CreateMockConfigOptions {
    * the mock doesn't track.
    */
   overrides?: Record<string, unknown> | undefined;
+  /**
+   * Value returned by wasConfigured(). Defaults to true (a configured install);
+   * set false to simulate a first run (drives agent-selection onboarding).
+   */
+  wasConfigured?: boolean | undefined;
 }
 
 /**
@@ -37,6 +46,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
   const store = new Map<string, unknown>(Object.entries(options?.defaults ?? {}));
   const overrides = { ...(options?.overrides ?? {}) };
   const defaultsByKey = new Map<string, unknown>();
+  const definitionsByKey = new Map<string, PersistedKeyDefinition<unknown>>();
 
   function makeAccessor(key: string): PersistedAccessor<unknown> {
     return {
@@ -60,6 +70,7 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
     definition: { default?: unknown; deprecated?: true }
   ): PersistedAccessor<unknown> | DeprecatedPersistedAccessor => {
     defaultsByKey.set(key, definition.default);
+    definitionsByKey.set(key, definition as PersistedKeyDefinition<unknown>);
     // Mirror production: registered defaults seed the store for unset keys,
     // but never overwrite values pre-populated via the `defaults` option.
     if (!store.has(key) && definition.default !== undefined) {
@@ -86,6 +97,16 @@ export function createMockConfig(options?: CreateMockConfigOptions): Config {
     register,
     load: () => {},
     getEffective: () => Object.fromEntries(store),
+    getDefinitions: () => definitionsByKey,
+    set: async (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    reset: async (key: string) => {
+      store.set(key, defaultsByKey.get(key));
+    },
+    getSource: (key: string): ConfigSource =>
+      store.get(key) === defaultsByKey.get(key) ? "default" : "user",
+    wasConfigured: () => options?.wasConfigured ?? true,
     getRedactedOverrides: () => ({ ...overrides }),
     getHelpText: () => "",
   };

@@ -312,7 +312,7 @@ class MinimalShutdownOperation implements Operation<
 
 function createTestSetup(providerOverrides: Partial<AgentModuleProvider> = {}) {
   const mockProvider = createMockProvider(providerOverrides);
-  const agentConfig = createMockAccessor<ConfigAgentType>("agent", null);
+  const agentConfig = createMockAccessor<ConfigAgentType>("agent", "claude");
 
   const mockDispatcher = {
     dispatch: vi.fn().mockResolvedValue(undefined),

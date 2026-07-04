@@ -17,6 +17,8 @@
  * Text section - displays a text element with optional styling and icon.
  *
  * - style "heading": large + bold (h1-like)
+ * - style "subheading": medium + semibold (h2-like); a subordinate section
+ *   header (e.g. a settings group's nested sub-group).
  * - style "subtitle": small + dim
  * - style "warning" / "error": alert box (icon + tinted background). The two
  *   styles state semantic intent — a caution the user should weigh vs. a
@@ -28,8 +30,10 @@
 interface TextSection {
   readonly type: "text";
   readonly content: string;
-  readonly style?: "heading" | "subtitle" | "warning" | "error";
+  readonly style?: "heading" | "subheading" | "subtitle" | "warning" | "error";
   readonly icon?: string;
+  /** Indentation depth (0 = flush). Each level indents the text left-to-right. */
+  readonly indent?: number;
 }
 
 /**
@@ -185,7 +189,21 @@ interface InputSection extends FieldSection {
   readonly rows?: number;
   readonly initialValue?: string;
   readonly selectInitialValue?: boolean;
+  /**
+   * Controlled value push with the dropdown/checkbox adopt-once semantics: the
+   * renderer adopts a pushed value it has not seen yet; re-sending the same
+   * value preserves the user's edits. Lets the backend force the field (e.g.
+   * reset-to-default) while normal typing stays user-driven. Absent = seed from
+   * initialValue, then fully user-driven.
+   */
+  readonly value?: string;
   readonly changeEvent?: FieldChangeConfig;
+  /**
+   * Render a single-line field as a masked/password input with an eye-toggle to
+   * reveal. Used for sensitive settings (e.g. API tokens). Ignored when
+   * `multiline` is set.
+   */
+  readonly masked?: boolean;
 }
 
 /**
@@ -239,6 +257,36 @@ interface GroupSection {
 
 type GroupItem = InputSection | DropdownSection | ButtonItem;
 
+/** A value-bearing control that can sit inside a settings row. */
+export type SettingRowField = CheckboxSection | InputSection | DropdownSection;
+
+/**
+ * Setting row - one auto-populated settings entry: a labeled row wrapping one
+ * or more real field controls (so the form's value collection and live-change
+ * validation apply unchanged) plus settings-specific chrome.
+ *
+ * - fields: the value-bearing control(s). One for a simple setting; several for
+ *   a multi-value setting (a checkbox per enum-list option) or a guarded field
+ *   (an on/off checkbox + a text input).
+ * - description: muted help text under the label (from the config key's description).
+ * - badge: a small tag by the label naming a non-default source ("env" / "cli").
+ * - note: an inline note under the row (e.g. "Restart to apply").
+ * - indent: indentation depth (0 = flush) mirroring the key's group nesting.
+ * - resetId: when set, a reset-to-default icon button appears at the right of
+ *   the row and emits a DialogActionEvent with this id. Omit to hide it (value
+ *   already at default / not user-set).
+ */
+interface SettingRowSection {
+  readonly type: "setting-row";
+  readonly label: string;
+  readonly fields: readonly SettingRowField[];
+  readonly description?: string;
+  readonly badge?: string;
+  readonly note?: string;
+  readonly indent?: number;
+  readonly resetId?: string;
+}
+
 export type DialogSection =
   | TextSection
   | ProgressSection
@@ -247,7 +295,8 @@ export type DialogSection =
   | TableSection
   | InputSection
   | CheckboxSection
-  | GroupSection;
+  | GroupSection
+  | SettingRowSection;
 
 // ---- Progress Items ----
 

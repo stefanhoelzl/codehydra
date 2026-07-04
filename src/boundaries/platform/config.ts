@@ -43,11 +43,18 @@ import { PersistedStore } from "./persisted-store";
 const BROKEN_CONFIG_FILENAME = "config.json.broken";
 
 /**
- * Agent types that can be selected by the user.
- * null indicates the user hasn't made a selection yet (first-run).
+ * Agent types that can be selected by the user. Non-nullable: the default is
+ * "claude". First-run onboarding is gated on whether config.json existed at load
+ * (Config.wasConfigured()), not on a null agent.
  * Config-specific (not a generic store type), so it lives with the Config service.
  */
-export type ConfigAgentType = "claude" | "opencode" | null;
+export type ConfigAgentType = "claude" | "opencode";
+
+/**
+ * Where a config key's effective value came from, in precedence order.
+ * Surfaced to the settings dialog so it can badge env/CLI-overridden keys.
+ */
+export type ConfigSource = "default" | "user" | "env" | "cli";
 
 // =============================================================================
 // Name Derivation
@@ -148,6 +155,30 @@ export interface Config {
 
   /** Get all effective config values (for help text). */
   getEffective(): Readonly<Record<string, unknown>>;
+
+  /**
+   * The registered key definitions. Used by the settings dialog to enumerate
+   * keys and read each key's `settingsControl` / `applies` metadata.
+   */
+  getDefinitions(): ReadonlyMap<string, PersistedKeyDefinition<unknown>>;
+
+  /**
+   * String-keyed set for the settings dialog (which doesn't hold typed
+   * accessors). Validates and persists to config.json like accessor.set().
+   */
+  set(key: string, value: unknown): Promise<void>;
+
+  /** String-keyed reset to default (deletes the key from config.json). */
+  reset(key: string): Promise<void>;
+
+  /** Where the key's effective value came from (default|user|env|cli). */
+  getSource(key: string): ConfigSource;
+
+  /**
+   * Whether config.json existed at load. false = genuine first run (no config
+   * written yet) → onboarding; true = the user has configured before.
+   */
+  wasConfigured(): boolean;
 
   /**
    * Get the subset of effective values that differ from their defaults, with
@@ -264,12 +295,15 @@ function readConfigFile(
   configPath: Path,
   syncRead: (path: string) => string,
   syncRename: (oldPath: string, newPath: string) => void
-): { data: Record<string, unknown>; issues: PersistedIssue[] } {
+): { data: Record<string, unknown>; issues: PersistedIssue[]; existed: boolean } {
   let content: string;
   try {
     content = syncRead(configPath.toNative());
-  } catch {
-    return { data: {}, issues: [] };
+  } catch (error) {
+    // ENOENT = genuinely first run (no file). Any other read error means the file
+    // is there but unreadable — still "configured" for onboarding purposes.
+    const existed = !(error instanceof Error && "code" in error && error.code === "ENOENT");
+    return { data: {}, issues: [], existed };
   }
 
   let parsed: unknown;
@@ -280,6 +314,7 @@ function readConfigFile(
     syncRename(configPath.toNative(), backupPath.toNative());
     return {
       data: {},
+      existed: true,
       issues: [
         {
           kind: "broken-json",
@@ -292,9 +327,9 @@ function readConfigFile(
   }
 
   if (typeof parsed !== "object" || parsed === null) {
-    return { data: {}, issues: [] };
+    return { data: {}, issues: [], existed: true };
   }
-  return { data: parsed as Record<string, unknown>, issues: [] };
+  return { data: parsed as Record<string, unknown>, issues: [], existed: true };
 }
 
 // =============================================================================
@@ -304,6 +339,8 @@ function readConfigFile(
 export class DefaultConfig implements Config {
   /** Generic typed key-value store backed by config.json. */
   private readonly store: PersistedStore;
+  /** Whether config.json existed at load. Set in load(); read by wasConfigured(). */
+  private configFileExisted = false;
 
   constructor(private readonly deps: ConfigDeps) {
     this.store = new PersistedStore({
@@ -346,6 +383,7 @@ export class DefaultConfig implements Config {
 
     // 2. config.json: read (I/O) → validate (typed values).
     const file = readConfigFile(configPath, syncRead, syncRename);
+    this.configFileExisted = file.existed;
     const fileResult = this.store.validate(file.data);
 
     // 3. env + CLI: tokenize → parse (strings → typed) → validate.
@@ -364,6 +402,12 @@ export class DefaultConfig implements Config {
       ...envResult.values,
       ...cliResult.values,
     });
+
+    // 5b. Record each key's source in the same precedence order (last wins), so
+    //     the settings dialog can badge user/env/CLI-sourced values.
+    this.store.markSources(Object.keys(fileResult.values), "user");
+    this.store.markSources(Object.keys(envResult.values), "env");
+    this.store.markSources(Object.keys(cliResult.values), "cli");
 
     // 6. If config.json contained unknown keys, rewrite it with those stripped
     //    (active, deprecated, and legacy entries are preserved).
@@ -450,6 +494,26 @@ export class DefaultConfig implements Config {
 
   getEffective(): Readonly<Record<string, unknown>> {
     return this.store.getEffective();
+  }
+
+  getDefinitions(): ReadonlyMap<string, PersistedKeyDefinition<unknown>> {
+    return this.store.getDefinitions();
+  }
+
+  set(key: string, value: unknown): Promise<void> {
+    return this.store.setValue(key, value);
+  }
+
+  reset(key: string): Promise<void> {
+    return this.store.resetKey(key);
+  }
+
+  getSource(key: string): ConfigSource {
+    return this.store.getSource(key) as ConfigSource;
+  }
+
+  wasConfigured(): boolean {
+    return this.configFileExisted;
   }
 
   getRedactedOverrides(): Record<string, unknown> {

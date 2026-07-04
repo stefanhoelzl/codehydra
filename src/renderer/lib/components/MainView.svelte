@@ -169,6 +169,12 @@
     if (!row) return;
     api.emitEvent({ kind: "wake-workspace", key: row.key });
   }
+
+  // Open the settings dialog (sidebar gear). Main forwards this to the settings
+  // module, which opens the declarative settings dialog.
+  function handleOpenSettings(): void {
+    api.emitEvent({ kind: "open-settings" });
+  }
 </script>
 
 <div class="main-view">
@@ -186,6 +192,7 @@
     onSwitchWorkspace={handleSwitchWorkspace}
     onOpenNewWorkspace={handleOpenNewWorkspace}
     onRemoveWorkspace={handleRemoveWorkspace}
+    onOpenSettings={handleOpenSettings}
   />
 
   <ShortcutOverlay
