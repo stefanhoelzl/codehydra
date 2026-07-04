@@ -177,6 +177,7 @@
   <WorkspaceFrames frames={frameEntries} activeKey={activeFrameKey} {mode} />
   <Sidebar
     projects={projectRows}
+    sidebarWidth={ui.sidebar.width}
     notifications={ui.notifications}
     {mode}
     shortcutModeActive={mode === "shortcut"}

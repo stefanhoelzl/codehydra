@@ -12,13 +12,11 @@
   interface Props {
     /** Open dialog sessions from the snapshot (modal + panel). */
     dialogs: readonly UiDialog[];
-    /** When true, dialogs are positioned in the workspace area (sidebar stays visible). */
-    workspaceArea?: boolean;
   }
 
-  const { dialogs, workspaceArea = false }: Props = $props();
+  const { dialogs }: Props = $props();
 </script>
 
 {#each dialogs.filter((d) => d.surface === "modal") as entry (entry.id)}
-  <DialogView dialogId={entry.id} config={entry.config} {workspaceArea} />
+  <DialogView dialogId={entry.id} config={entry.config} />
 {/each}

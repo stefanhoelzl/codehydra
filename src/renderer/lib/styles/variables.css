@@ -86,7 +86,7 @@
   --ch-overlay-bg: rgba(0, 0, 0, 0.6);
   --ch-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   --ch-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
-  --ch-overlay-blur: blur(8px);
+  --ch-overlay-blur: blur(1px);
 
   /* Accent muted (for active/selected backgrounds) */
   --ch-accent-muted: rgba(108, 140, 255, 0.12);

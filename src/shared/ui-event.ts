@@ -48,6 +48,10 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("close-project"), projectId: z.string() }),
   // Debounced semantic hover (sidebar expanded by pointer), not raw mouse moves.
   z.object({ kind: z.literal("hover"), region: z.literal("sidebar").nullable() }),
+  // Persist the expanded sidebar width (px) after a drag-resize on its right
+  // edge. Fired once on drag release; the presenter clamps (>= min) and writes
+  // it to the `sidebar.width` config key, then echoes it back in the snapshot.
+  z.object({ kind: z.literal("resize-sidebar"), width: z.number().int().positive() }),
   z.object({
     kind: z.literal("log"),
     level: z.enum(["debug", "info", "warn", "error"]),

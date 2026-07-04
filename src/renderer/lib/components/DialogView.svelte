@@ -16,11 +16,9 @@
   interface Props {
     dialogId: string;
     config: DialogConfig;
-    /** When true, offset left to keep sidebar visible. */
-    workspaceArea?: boolean;
   }
 
-  const { dialogId, config, workspaceArea = false }: Props = $props();
+  const { dialogId, config }: Props = $props();
 
   /** Derive heading text from sections for aria-label. */
   const heading = $derived.by(() => {
@@ -29,7 +27,7 @@
   });
 </script>
 
-<div class="dialog-view" class:workspace-area={workspaceArea} role="dialog" aria-label={heading}>
+<div class="dialog-view" role="dialog" aria-label={heading}>
   <div class="backdrop" aria-hidden="true">
     <Logo />
   </div>
@@ -39,18 +37,20 @@
 </div>
 
 <style>
+  /* Full-window modal: a translucent scrim over the whole viewport (the sidebar
+     stays visible, dimmed behind it) with the card centered. Pointer-capturing,
+     so it blocks interaction beneath (true modal). z-index sits above the
+     expanded sidebar (--ch-z-sidebar-expanded: 950) so it is not painted under
+     it. Mirrors the canonical modal chrome in Dialog.svelte. */
   .dialog-view {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: var(--ch-surface-0, var(--ch-background));
-    z-index: 900;
-  }
-
-  .dialog-view.workspace-area {
-    left: var(--ch-sidebar-minimized-width, 20px);
+    background: var(--ch-overlay-bg);
+    backdrop-filter: var(--ch-overlay-blur, blur(8px));
+    z-index: 1000;
   }
 
   .backdrop {

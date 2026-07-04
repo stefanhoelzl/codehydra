@@ -154,8 +154,9 @@
     </div>
   {/if}
 
-  <!-- Declarative dialog host: renders dialogs driven by the main process. -->
-  <DialogHost dialogs={ui?.dialogs ?? []} workspaceArea={showMain} />
+  <!-- Declarative dialog host: renders modal dialogs driven by the main process.
+       Modals are full-window (centered in the whole window, above the sidebar). -->
+  <DialogHost dialogs={ui?.dialogs ?? []} />
 </main>
 
 <style>

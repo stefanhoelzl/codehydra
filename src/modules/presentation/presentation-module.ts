@@ -35,6 +35,7 @@ import type { IDispatcher } from "../../intents/lib/dispatcher";
 import type { Logging, LoggerName, LogContext } from "../../boundaries/platform/logging";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
+import type { PersistedAccessor } from "../../boundaries/platform/store-definition";
 import type { IViewManager } from "../../boundaries/shell/view-manager.interface";
 import type { Theme } from "../../boundaries/shell/window-manager";
 import type { Unsubscribe } from "../../shared/api/interfaces";
@@ -116,6 +117,7 @@ import { ApiIpcChannels } from "../../shared/ipc";
 import type { DialogConfig, DialogSection, DialogSurface } from "../../shared/dialog-types";
 import { uiEventSchema } from "../../shared/ui-event";
 import {
+  clampSidebarWidthMin,
   compareDisplayNames,
   type UiDeletionProgress,
   type UiMainView,
@@ -144,6 +146,11 @@ export interface PresentationModuleDeps {
   readonly fileSystem: Pick<FileSystemBoundary, "readFileBuffer">;
   readonly pathProvider: PathProvider;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
+  /**
+   * Persisted expanded-sidebar width (px). Read into every snapshot's sidebar
+   * region and written when the renderer emits a `resize-sidebar` drag result.
+   */
+  readonly sidebarWidthConfig: Pick<PersistedAccessor<number>, "get" | "set">;
 }
 
 /**
@@ -649,7 +656,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
     const main = buildMain();
     return {
-      sidebar: { projects: projectRows },
+      // Clamp the stored width to the shared minimum so a hand-edited
+      // config.json below the floor still yields a sane snapshot; the renderer
+      // additionally clamps to its window-relative maximum.
+      sidebar: {
+        projects: projectRows,
+        width: clampSidebarWidthMin(deps.sidebarWidthConfig.get()),
+      },
       frames,
       main,
       theme,
@@ -815,6 +828,18 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     }
     if (event.kind === "hover") {
       hoverRegion = event.region === "sidebar" ? "sidebar" : null;
+      scheduleUpdate();
+      return;
+    }
+    if (event.kind === "resize-sidebar") {
+      // Persist the drag result. Clamp to the shared minimum (the renderer
+      // already enforces both bounds, but main owns what lands in config); the
+      // window-relative maximum stays renderer-side. Echo the canonical value
+      // back in the next snapshot so any renderer converges.
+      const width = clampSidebarWidthMin(event.width);
+      void deps.sidebarWidthConfig.set(width).catch((error: unknown) => {
+        logger.warn("Failed to persist sidebar width", { error: getErrorMessage(error) });
+      });
       scheduleUpdate();
       return;
     }

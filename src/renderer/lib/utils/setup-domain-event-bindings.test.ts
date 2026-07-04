@@ -27,6 +27,7 @@ function makeState(workspaces: UiWorkspaceRow[]): UiState {
   return {
     sidebar: {
       projects: [{ id: "p", name: "p", title: "/p", remote: false, workspaces }],
+      width: 250,
     },
     frames: {},
     main: { kind: "creation" },

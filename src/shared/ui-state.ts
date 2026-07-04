@@ -18,6 +18,17 @@ import type { NotificationConfig } from "./notification-types";
 export type UiTheme = "dark" | "light";
 
 /**
+ * Clamp an expanded-sidebar width (px) to the grow-only floor (250) — the
+ * historical default, so resizing can never make the sidebar narrower than it
+ * was before this feature. The window-relative maximum is enforced
+ * renderer-side (main can't see the window size); the config default is inlined
+ * in main.ts.
+ */
+export function clampSidebarWidthMin(width: number): number {
+  return Math.max(250, Math.round(width));
+}
+
+/**
  * An open dialog session, render-ready. The presenter owns the registry (via
  * its internal DialogManager) and folds it into the snapshot; the renderer
  * renders each declaratively and echoes the opaque `id` back in dialog ui:events.
@@ -137,7 +148,11 @@ export type UiMainView =
   | { readonly kind: "creation" };
 
 export interface UiState {
-  readonly sidebar: { readonly projects: readonly UiProjectRow[] };
+  readonly sidebar: {
+    readonly projects: readonly UiProjectRow[];
+    /** Persisted expanded-sidebar width (px), clamped to the shared minimum. */
+    readonly width: number;
+  };
   /**
    * Mounted workspace iframes: key → code-server URL. Every workspace with a
    * runtime stays mounted (keep-alive); `main` references at most one of them.

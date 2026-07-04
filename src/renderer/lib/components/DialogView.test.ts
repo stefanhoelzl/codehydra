@@ -23,15 +23,11 @@ vi.mock("$lib/api", () => ({
 import DialogView from "./DialogView.svelte";
 
 /** Helper to render DialogView with a config. */
-function renderDialog(
-  config: DialogConfig,
-  options?: { dialogId?: string; workspaceArea?: boolean }
-) {
+function renderDialog(config: DialogConfig, options?: { dialogId?: string }) {
   return render(DialogView, {
     props: {
       dialogId: options?.dialogId ?? "test-dialog",
       config,
-      workspaceArea: options?.workspaceArea ?? false,
     },
   });
 }
@@ -102,26 +98,19 @@ describe("DialogView component (modal surface)", () => {
     });
   });
 
-  describe("workspace area offset", () => {
-    it("adds the workspace-area class when workspaceArea is true", () => {
-      const config: DialogConfig = {
-        sections: [{ type: "text", content: "Test", style: "heading" }],
-      };
-
-      renderDialog(config, { workspaceArea: true });
-
-      expect(document.querySelector(".dialog-view.workspace-area")).toBeInTheDocument();
-    });
-
-    it("omits the workspace-area class by default", () => {
+  describe("full-window modal", () => {
+    it("centers the dialog over the whole window (no sidebar offset)", () => {
       const config: DialogConfig = {
         sections: [{ type: "text", content: "Test", style: "heading" }],
       };
 
       renderDialog(config);
 
-      expect(document.querySelector(".dialog-view")).toBeInTheDocument();
-      expect(document.querySelector(".dialog-view.workspace-area")).not.toBeInTheDocument();
+      // Modals are full-window: no left offset, so they center over the sidebar
+      // rather than the content area.
+      const dialog = document.querySelector(".dialog-view");
+      expect(dialog).toBeInTheDocument();
+      expect(dialog).not.toHaveClass("workspace-area");
     });
   });
 

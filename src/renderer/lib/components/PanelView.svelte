@@ -7,8 +7,9 @@
   active panel-surface session (see dialog-framework's panelDialog).
 
   Shell behaviour (renderer-owned; the backend owns the form session):
-  - Docked over the content area (sidebar stays visible), z-index 1 so modal
-    dialogs (z 900) stack above.
+  - A centered floating card over a translucent scrim, painted above the
+    expanded sidebar but pointer-transparent so the sidebar stays clickable
+    (non-modal ground state); modal dialogs (z 1000) stack above.
   - Keyboard (Escape -> dismiss, Cmd/Ctrl+Enter -> primary, Tab trap) is owned
     by Form — shared with the modal surface.
   - When the last modal stacked above the panel closes, the panel re-places
@@ -56,21 +57,27 @@
 </section>
 
 <style>
+  /* Floating overlay centered over the whole window, above the expanded sidebar
+     (--ch-z-sidebar-expanded: 950), below modals (1000). A translucent scrim
+     dims the sidebar/content behind it, but the layer is pointer-transparent so
+     the sidebar stays clickable (this is the non-modal ground state); only the
+     card captures pointer events. */
   .panel-view {
     position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: var(--ch-sidebar-minimized-width, 20px);
-    background: var(--ch-surface-0, var(--ch-background));
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    overflow-y: auto;
-    z-index: 1;
+    background: var(--ch-overlay-bg);
+    backdrop-filter: var(--ch-overlay-blur, blur(8px));
+    z-index: 960;
+    pointer-events: none;
   }
 
   .panel-card {
+    pointer-events: auto;
+    max-height: 85vh;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 12px;
