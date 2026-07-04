@@ -3,16 +3,15 @@
 
   Root application component. Owns the single ui:state subscription + the
   ui-connected handshake (moved up from MainView so startup snapshots arrive
-  during the initializing phase — the presenter pushes the boot splash / setup /
-  agent-selection / loading surfaces before MainView would ever mount).
+  during the initializing phase — the presenter opens the startup dialogs (boot
+  splash / setup / agent picker / loading) before MainView would ever mount).
 
   Renders by the snapshot's main.kind:
-  - startup kinds (starting / setup / agent-selection / loading) → StartupView,
-    but only until the first normal snapshot. Thereafter MainView stays mounted
-    (see showMain) so a mid-session "loading" surface — the still-creating
-    active workspace — never tears down the workspace iframes; it renders as an
-    overlay inside MainView instead (mirroring the hibernated overlay).
-  - workspace / hibernated / creation → MainView
+  - starting (the single pre-app:started marker) → a blank base; the presenter's
+    startup surfaces render as modal dialogs via DialogHost, on top of it.
+  - workspace / hibernated / creation → MainView (once showMain latches). A
+    mid-session loading overlay (still-creating active workspace) is a system
+    dialog too, so it never tears the workspace iframes down.
   - before the first snapshot arrives → a minimal blank initializing state
 
   App.svelte owns:
@@ -32,7 +31,6 @@
   import { createLogger } from "$lib/logging";
   import { getFocusables } from "$lib/utils/focus-trap";
   import MainView from "$lib/components/MainView.svelte";
-  import StartupView from "$lib/components/StartupView.svelte";
   import DialogHost from "$lib/components/DialogHost.svelte";
 
   const logger = createLogger("ui");
@@ -65,13 +63,7 @@
    */
   let showMain = $state(false);
   $effect(() => {
-    if (
-      main !== null &&
-      main.kind !== "starting" &&
-      main.kind !== "setup" &&
-      main.kind !== "agent-selection" &&
-      main.kind !== "loading"
-    ) {
+    if (main !== null && main.kind !== "starting") {
       showMain = true;
     }
   });
@@ -87,10 +79,10 @@
       // Theme ships in the snapshot (no separate channel): mirror it onto the
       // document so the global --ch-* CSS vars resolve to the OS theme.
       document.documentElement.dataset.theme = state.theme;
-      // Focus the first control once, after the first normal snapshot renders
-      // (the startup surfaces own their own focus).
-      if (focused || state.main.kind === "starting" || state.main.kind === "setup") return;
-      if (state.main.kind === "agent-selection" || state.main.kind === "loading") return;
+      // Focus the first MainView control once, after the first ready
+      // (non-startup) snapshot renders. The startup surfaces are dialogs now —
+      // the Form owns their focus, so App skips focusing while main is starting.
+      if (focused || state.main.kind === "starting") return;
       focused = true;
       void tick().then(() => {
         const firstFocusable = containerRef ? getFocusables(containerRef)[0] : undefined;
@@ -143,11 +135,11 @@
 </div>
 
 <main class="app" aria-label={getAriaLabel()} bind:this={containerRef}>
-  {#if main === null}
-    <!-- Minimal blank state until the first snapshot arrives. -->
+  {#if !showMain}
+    <!-- Blank base until the first ready snapshot: pre-genesis, or during
+         startup where the presenter's startup dialog (DialogHost) owns the
+         screen over this base. -->
     <div class="initializing-container" aria-busy="true"></div>
-  {:else if !showMain && (main.kind === "starting" || main.kind === "setup" || main.kind === "agent-selection" || main.kind === "loading")}
-    <StartupView {main} workspaceArea={false} />
   {:else if ui !== null}
     <div class="main-view-container">
       <MainView {ui} />

@@ -37,7 +37,6 @@
   import WorkspaceFrames from "./WorkspaceFrames.svelte";
   import ShortcutOverlay from "./ShortcutOverlay.svelte";
   import HibernatedOverlay from "./HibernatedOverlay.svelte";
-  import StartupView from "./StartupView.svelte";
 
   import PanelView from "./PanelView.svelte";
 
@@ -89,12 +88,11 @@
   });
   const activeFrameKey = $derived(main?.kind === "workspace" ? main.frameKey : null);
 
-  // The mid-session "Loading workspace…" surface: the active workspace is still
-  // being created, so it has no frame yet. App keeps MainView mounted through
-  // this state (rather than swapping in StartupView) so the OTHER workspaces'
-  // iframes are not torn down and reloaded; we show the loading screen as an
-  // overlay over the kept-alive frames, reusing StartupView's loading visual.
-  const loadingMain = $derived(main?.kind === "loading" ? main : null);
+  // The mid-session "Loading workspace…" surface (a still-creating active
+  // workspace, no frame yet) is a modal system dialog now, driven by the
+  // presenter and rendered by App's DialogHost over the kept-alive frames —
+  // MainView no longer renders it. `main` reads `workspace` with a frameKey
+  // whose iframe is not mounted yet, so the workspace area is blank underneath.
 
   // Mode (including dialog/hover z-order) is now computed in main and shipped
   // in the snapshot; the renderer no longer mirrors dialog/hover state back.
@@ -210,13 +208,6 @@
 
   {#if main?.kind === "hibernated"}
     <HibernatedOverlay screenshot={main.screenshot} onWake={handleWakeActiveWorkspace} />
-  {/if}
-
-  <!-- Mid-session loading (still-creating active workspace): overlay the
-       workspace area, leaving the kept-alive frames mounted underneath so
-       creating a workspace never reloads the others. -->
-  {#if loadingMain}
-    <StartupView main={loadingMain} workspaceArea={true} />
   {/if}
 </div>
 

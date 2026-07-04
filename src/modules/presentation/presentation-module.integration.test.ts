@@ -134,6 +134,29 @@ function lastSnapshot(deps: Deps): UiState {
   return all[all.length - 1]!;
 }
 
+// The startup surfaces + mid-session loading are one reconciled modal "system
+// dialog" now. These build the exact expected UiDialog entries (the first
+// dialog minted gets id "dlg-1").
+const STARTING_SPINNER = {
+  type: "progress",
+  style: "spinner",
+  items: [{ id: "status", label: "CodeHydra is starting…", status: "running" }],
+};
+const LOADING_SPINNER = {
+  type: "progress",
+  style: "spinner",
+  items: [{ id: "status", label: "Loading workspace...", status: "running" }],
+};
+function systemDialog(sections: unknown[], id = "dlg-1"): unknown {
+  return { id, surface: "modal", config: { sections, modal: true } };
+}
+/** The single open system dialog in the latest snapshot (asserts exactly one). */
+function currentSystemDialog(deps: Deps): { id: string; config: { sections: unknown[] } } {
+  const dialogs = lastSnapshot(deps).dialogs;
+  expect(dialogs).toHaveLength(1);
+  return dialogs[0]! as unknown as { id: string; config: { sections: unknown[] } };
+}
+
 function makeWorkspace(
   name: string,
   options?: { url?: string; metadata?: Record<string, string> }
@@ -323,7 +346,8 @@ describe("PresentationModule - ui:state snapshots", () => {
 
     connect(deps);
 
-    // The genesis "starting" splash is flushed synchronously on connect.
+    // The genesis "starting" splash is flushed synchronously on connect: a
+    // blank `main: starting` base with the boot-splash system dialog on top.
     expect(snapshots(deps)).toEqual([
       {
         sidebar: { projects: [], width: SIDEBAR_DEFAULT_WIDTH },
@@ -333,7 +357,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         labelScroll: "hover",
         mode: "dialog",
         capturing: false,
-        dialogs: [],
+        dialogs: [systemDialog([STARTING_SPINNER])],
         notifications: [],
       },
     ]);
@@ -483,10 +507,12 @@ describe("PresentationModule - ui:state snapshots", () => {
         active: true,
       },
     ]);
-    // No runtime yet: the placeholder has no frame, and the active creating
-    // workspace shows the loading screen (not a blank workspace pane).
+    // No runtime yet: the placeholder has no frame, so main points at the
+    // creating workspace (blank behind the dialog) and the mid-session loading
+    // system dialog covers it.
     expect(snapshot.frames).toEqual({});
-    expect(snapshot.main).toEqual({ kind: "loading", label: "Loading workspace..." });
+    expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
   });
 
   it("workspace:created swaps the creating placeholder in place (same key)", async () => {
@@ -1182,14 +1208,21 @@ describe("PresentationModule - startup flow", () => {
     return module.hooks![opId]![point]!.handler(ctx as never) as Promise<unknown>;
   }
 
-  it("starts in the boot-splash phase and pushes { kind: 'starting' } on connect", async () => {
+  /** Emit a system-dialog action (the button clicks the renderer sends). */
+  function action(deps: Deps, actionId: string, data?: Record<string, string>): void {
+    const { id } = currentSystemDialog(deps);
+    emitUiEvent(deps, { kind: "dialog-action", dialogId: id, actionId, ...(data && { data }) });
+  }
+
+  it("starts in the boot-splash phase and shows the starting system dialog on connect", async () => {
     const deps = createDeps();
     createPresentationModule(deps);
     connect(deps);
 
+    // Blank base + the boot-splash dialog; the modal ⇒ dialog mode (Alt+X inert).
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
-    // Pre-interaction startup surface ⇒ dialog mode (Alt+X inert).
     expect(lastSnapshot(deps).mode).toBe("dialog");
+    expect(currentSystemDialog(deps).config.sections).toEqual([STARTING_SPINNER]);
   });
 
   it("app:start show-ui sets the starting phase and returns waitForRetry", async () => {
@@ -1208,7 +1241,7 @@ describe("PresentationModule - startup flow", () => {
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
   });
 
-  it("app:setup show-ui enters the setup phase with pending rows", async () => {
+  it("app:setup show-ui shows the setup dialog with pending rows", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1218,17 +1251,23 @@ describe("PresentationModule - startup flow", () => {
     });
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({
-      kind: "setup",
-      rows: [
-        { id: "vscode", label: "VSCode", status: "pending" },
-        { id: "agent", label: "Agent", status: "pending" },
-        { id: "setup", label: "Setup", status: "pending" },
-      ],
-    });
+    expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+    expect(currentSystemDialog(deps).config.sections).toEqual([
+      { type: "text", content: "Setting up CodeHydra", style: "heading" },
+      { type: "text", content: "This is only required on first startup.", style: "subtitle" },
+      {
+        type: "progress",
+        style: "spinner",
+        items: [
+          { id: "vscode", label: "VSCode", status: "pending" },
+          { id: "agent", label: "Agent", status: "pending" },
+          { id: "setup", label: "Setup", status: "pending" },
+        ],
+      },
+    ]);
   });
 
-  it("setup:progress accumulates rows; setup:error attaches the error", async () => {
+  it("setup:progress accumulates rows; setup:error adds the error text + Retry/Quit", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1246,9 +1285,10 @@ describe("PresentationModule - startup flow", () => {
     await emit(module, EVENT_SETUP_PROGRESS, { id: "setup", status: "failed" });
     await flush();
 
-    expect(lastSnapshot(deps).main).toEqual({
-      kind: "setup",
-      rows: [
+    expect(currentSystemDialog(deps).config.sections).toContainEqual({
+      type: "progress",
+      style: "spinner",
+      items: [
         { id: "vscode", label: "VSCode", status: "done" },
         { id: "agent", label: "Agent", status: "running", message: "Downloading", progress: 42 },
         // "failed" maps to "error".
@@ -1258,14 +1298,18 @@ describe("PresentationModule - startup flow", () => {
 
     await emit(module, EVENT_SETUP_ERROR, { message: "boom" });
     await flush();
-    const main = lastSnapshot(deps).main;
-    expect(main.kind).toBe("setup");
-    if (main.kind === "setup") {
-      expect(main.error).toEqual({ message: "boom" });
-    }
+    const sections = currentSystemDialog(deps).config.sections;
+    expect(sections).toContainEqual({ type: "text", content: "boom", style: "error" });
+    expect(sections).toContainEqual({
+      type: "group",
+      items: [
+        { type: "button", id: "retry", label: "Retry", variant: "primary", autofocus: true },
+        { type: "button", id: "quit", label: "Quit", variant: "secondary" },
+      ],
+    });
   });
 
-  it("agent-selection parks until agent-selected, then provides the agentType capability", async () => {
+  it("agent-selection parks until Continue, then provides the agentType capability", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1281,24 +1325,34 @@ describe("PresentationModule - startup flow", () => {
     const pending = handlerDecl.handler(ctx as never);
     await flush();
 
-    // The picker is shown with the available agents.
-    expect(lastSnapshot(deps).main).toEqual({
-      kind: "agent-selection",
-      agents: [
-        { agent: "claude", label: "Claude", icon: "sparkle" },
-        { agent: "opencode", label: "OpenCode", icon: "terminal" },
-      ],
-    });
+    // The picker dialog is shown with the available agents + a Continue button.
+    expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+    expect(currentSystemDialog(deps).config.sections).toEqual([
+      { type: "text", content: "Choose Agent", style: "heading" },
+      {
+        type: "radio",
+        id: "agent",
+        autofocus: true,
+        options: [
+          { id: "claude", label: "Claude", icon: "sparkle" },
+          { id: "opencode", label: "OpenCode", icon: "terminal" },
+        ],
+      },
+      {
+        type: "group",
+        items: [{ type: "button", id: "continue", label: "Continue", variant: "primary" }],
+      },
+    ]);
 
-    // The user picks opencode; the parked hook resolves.
-    emitUiEvent(deps, { kind: "agent-selected", agent: "opencode" });
+    // The user picks opencode and clicks Continue (a dialog action).
+    action(deps, "continue", { agent: "opencode" });
     const output = await pending;
 
     // The handler returns the chosen agent as the agentType capability.
     expect(output).toEqual({ provides: { agentType: "opencode" } });
   });
 
-  it("app:setup hide-ui returns to the boot-splash phase", async () => {
+  it("app:setup hide-ui returns to the boot-splash dialog", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1312,9 +1366,10 @@ describe("PresentationModule - startup flow", () => {
     await flush();
 
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+    expect(currentSystemDialog(deps).config.sections).toEqual([STARTING_SPINNER]);
   });
 
-  it("app:start start dispatches app:ready and shows the unified loading screen", async () => {
+  it("app:start start dispatches app:ready and shows the loading dialog until app:started", async () => {
     const deps = createDeps();
     const dispatched: Array<{ type: string }> = [];
     deps.dispatcher = {
@@ -1332,15 +1387,17 @@ describe("PresentationModule - startup flow", () => {
     await flush();
 
     expect(dispatched).toEqual([{ type: "app:ready", payload: {} }]);
-    expect(lastSnapshot(deps).main).toEqual({ kind: "loading", label: "Loading workspace..." });
+    expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+    expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
 
-    // app:started leaves the startup flow (creation panel is the ground state).
+    // app:started leaves the startup flow: the dialog closes, creation is ground.
     await emit(module, EVENT_APP_STARTED, {});
     await flush();
     expect(lastSnapshot(deps).main).toEqual({ kind: "creation" });
+    expect(lastSnapshot(deps).dialogs).toEqual([]);
   });
 
-  it("setup-retry resolves the parked waitForRetry", async () => {
+  it("the setup-error Retry action resolves the parked waitForRetry", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1349,18 +1406,24 @@ describe("PresentationModule - startup flow", () => {
         intent: { type: "app:start", payload: {} },
       })) as HookOutput<ShowUIHookResult>
     ).result!;
+    // Enter setup + fail so the dialog shows the Retry button.
+    await runHook(module, SETUP_OPERATION_ID, "show-ui", {
+      intent: { type: "app:setup", payload: {} },
+    });
+    await emit(module, EVENT_SETUP_ERROR, { message: "boom" });
+    await flush();
 
     let resolved = false;
     void result.waitForRetry!().then(() => {
       resolved = true;
     });
-    emitUiEvent(deps, { kind: "setup-retry" });
+    action(deps, "retry");
     await flush();
 
     expect(resolved).toBe(true);
   });
 
-  it("setup-quit dispatches app:shutdown", () => {
+  it("the setup-error Quit action dispatches app:shutdown", async () => {
     const deps = createDeps();
     const dispatched: Array<{ type: string }> = [];
     deps.dispatcher = {
@@ -1370,13 +1433,14 @@ describe("PresentationModule - startup flow", () => {
       }),
     } as unknown as Deps["dispatcher"];
     createPresentationModule(deps);
+    connect(deps);
 
-    emitUiEvent(deps, { kind: "setup-quit" });
+    action(deps, "quit");
 
     expect(dispatched).toEqual([{ type: "app:shutdown", payload: {} }]);
   });
 
-  it("app:shutdown stop resolves a parked agent-selection so quit can't hang", async () => {
+  it("app:shutdown stop REJECTS a parked agent-selection so nothing is persisted", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1391,8 +1455,11 @@ describe("PresentationModule - startup flow", () => {
       intent: { type: "app:shutdown", payload: {} },
     });
 
-    // The parked promise resolves (defaulting to the first option) — no hang.
-    await expect(pending).resolves.toEqual({ provides: { agentType: "claude" } });
+    // The parked promise rejects: app:setup unwinds WITHOUT reaching save-agent,
+    // so a quit-mid-selection never persists an agent the user didn't choose.
+    await expect(pending).rejects.toThrow(/shutting down/);
+    // The system dialog is closed and stays closed.
+    expect(lastSnapshot(deps).dialogs).toEqual([]);
   });
 });
 
@@ -1406,8 +1473,11 @@ describe("PresentationModule - close confirm", () => {
     input: { remoteUrl?: string; workspaceCount?: number }
   ): Promise<CloseConfirmHookResult> {
     const module = createPresentationModule(deps);
-    // Open the snapshot stream so the confirm dialog appears in ui:state.
+    // Open the snapshot stream so the confirm dialog appears in ui:state, and
+    // reach the steady state (app started) so the startup system dialog closes —
+    // project:close only happens post-startup, so the confirm dialog is alone.
     connect(deps);
+    void emit(module, EVENT_APP_STARTED, {});
     const workspaces = Array.from({ length: input.workspaceCount ?? 2 }, (_, i) => ({
       path: `${PROJECT_PATH}/.worktrees/ws${i + 1}`,
     }));

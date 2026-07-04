@@ -894,12 +894,17 @@ describe("Form component", () => {
       ],
     };
 
-    it("plain Enter in a radio group does NOT submit", async () => {
+    it("plain Enter in a radio group activates the primary button (submits once)", async () => {
       renderForm(radioWithPrimary, { dialogId: "enter" });
 
       await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter" });
 
-      expect(mockSendDialogEvent).not.toHaveBeenCalled();
+      expect(mockSendDialogEvent).toHaveBeenCalledTimes(1);
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "enter",
+        actionId: "select",
+        data: { agent: "claude" },
+      });
     });
 
     it("Cmd/Ctrl+Enter in a radio group activates the primary button", async () => {

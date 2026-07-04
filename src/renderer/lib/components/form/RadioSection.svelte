@@ -18,9 +18,11 @@
     value: string;
     layout: FormLayout;
     onSelect: (optionId: string) => void;
+    /** Enter on a focused card activates the form's primary action. */
+    onSubmit?: () => void;
   }
 
-  const { section, value, layout, onSelect }: Props = $props();
+  const { section, value, layout, onSelect, onSubmit }: Props = $props();
 </script>
 
 <div class="form-field">
@@ -45,6 +47,7 @@
         tabindex={value === option.id ? 0 : -1}
         disabled={section.disabled || undefined}
         data-option={option.id}
+        data-autofocus={section.autofocus && value === option.id ? true : undefined}
         onclick={() => {
           onSelect(option.id);
         }}
@@ -60,6 +63,14 @@
           } else if (e.key === " ") {
             e.preventDefault();
             onSelect(option.id);
+            return;
+          } else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+            // Plain Enter confirms the group by activating the form's primary
+            // action (preventDefault suppresses the native button click /
+            // re-select). Modified Enter (Cmd/Ctrl) is left to the form-global
+            // handler so it isn't submitted twice.
+            e.preventDefault();
+            onSubmit?.();
             return;
           }
           if (targetIndex >= 0) {

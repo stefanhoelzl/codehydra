@@ -8,10 +8,10 @@
  * pushing the current snapshot immediately. app:ready is no longer driven by
  * ui-connected — it is dispatched by the presenter's app:start `start` hook.
  *
- * The startup events drive the first-run flow that StartupView renders from the
- * `setup` / `agent-selection` main kinds: `agent-selected` resolves the parked
- * agent-selection hook; `setup-retry` / `setup-quit` answer a setup error
- * (retry resolves the app:start retry loop; quit dispatches app:shutdown).
+ * The first-run flow (boot splash, setup progress, agent picker, workspace
+ * loading) is presented entirely through the dialog framework now: the agent
+ * pick, and the setup-error Retry/Quit buttons, arrive as ordinary
+ * `dialog-action` events routed to the presenter's startup dialog session.
  *
  * All gesture events are load-bearing: the presenter resolves their identity
  * (the opaque workspace `key` / `projectId`) against its model and dispatches
@@ -59,13 +59,6 @@ export const uiEventSchema = z.discriminatedUnion("kind", [
     message: z.string(),
     context: logContextSchema.optional(),
   }),
-  // First-run agent picker: the chosen agent id, echoed from the snapshot's
-  // agent-selection options. Resolves the presenter's parked agent-selection
-  // hook (which provides the `agentType` capability to app:setup).
-  z.object({ kind: z.literal("agent-selected"), agent: z.string() }),
-  // Setup-error actions: retry resolves app:start's retry loop; quit shuts down.
-  z.object({ kind: z.literal("setup-retry") }),
-  z.object({ kind: z.literal("setup-quit") }),
   // Dialog user interactions. The
   // presenter routes these to the matching open dialog session by `dialogId`
   // (the opaque id echoed from the snapshot's `dialogs`). `data` is the flat
