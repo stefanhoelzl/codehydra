@@ -980,7 +980,7 @@ describe("Sidebar component", () => {
   });
 
   describe("workspace tags", () => {
-    it("renders tag badges when the row carries tags", () => {
+    it("renders tag pills on the second line when the row carries tags", () => {
       const ws = makeUiWorkspaceRow("ws1", {
         tags: [{ name: "bugfix" }, { name: "wip", color: "#ff0" }],
       });
@@ -990,12 +990,10 @@ describe("Sidebar component", () => {
         props: { ...defaultProps, projects: [project] },
       });
 
-      const tagsContainer = container.querySelector(".workspace-tags");
-      expect(tagsContainer).toBeInTheDocument();
-      // The tags row is hidden when collapsed via CSS keyed on .expanded
-      expect(container.querySelector(".workspace-tags-row")).toBeInTheDocument();
+      // Tags now live inline on the row's second (branch/tags) line.
+      expect(container.querySelector(".ws-secondary-line")).toBeInTheDocument();
 
-      const pills = container.querySelectorAll(".tag-pill");
+      const pills = container.querySelectorAll(".ws-tag");
       expect(pills).toHaveLength(2);
 
       const pillTexts = Array.from(pills).map((p) => p.textContent?.trim());
@@ -1003,15 +1001,47 @@ describe("Sidebar component", () => {
       expect(pillTexts).toContain("wip");
     });
 
-    it("does not render tags container when the row has no tags", () => {
+    it("does not render a second line when the row has no title and no tags", () => {
       const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
 
       const { container } = render(Sidebar, {
         props: { ...defaultProps, projects: [project] },
       });
 
-      expect(container.querySelector(".workspace-tags")).not.toBeInTheDocument();
-      expect(container.querySelector(".workspace-tags-row")).not.toBeInTheDocument();
+      expect(container.querySelector(".ws-secondary-line")).not.toBeInTheDocument();
+      expect(container.querySelector(".ws-tag")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("workspace title", () => {
+    it("shows the custom title as the primary label and the branch on the second line", () => {
+      const ws = makeUiWorkspaceRow("feat-branch", { title: "My nice title" });
+      const project = makeUiProjectRow([ws]);
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      expect(container.querySelector(".ws-primary-text")?.textContent?.trim()).toBe(
+        "My nice title"
+      );
+      // The branch name is demoted to the second line alongside any tags.
+      expect(container.querySelector(".ws-secondary-line .ws-branch")?.textContent?.trim()).toBe(
+        "feat-branch"
+      );
+    });
+
+    it("falls back to the branch name as the primary label when no title is set", () => {
+      const ws = makeUiWorkspaceRow("feat-branch");
+      const project = makeUiProjectRow([ws]);
+
+      const { container } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project] },
+      });
+
+      expect(container.querySelector(".ws-primary-text")?.textContent?.trim()).toBe("feat-branch");
+      // No title → no branch duplicated on a second line.
+      expect(container.querySelector(".ws-branch")).not.toBeInTheDocument();
     });
   });
 

@@ -484,6 +484,7 @@ const presentationModule = createPresentationModule({
   pathProvider,
   dispatcher,
   sidebarWidthConfig,
+  configService,
 });
 const cloneNotificationModule = createCloneNotificationModule({ ui: presentationModule });
 const errorNotificationModule = createErrorNotificationModule({ ui: presentationModule });
