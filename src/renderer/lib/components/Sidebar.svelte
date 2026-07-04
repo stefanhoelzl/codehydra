@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import * as api from "$lib/api";
-  import type { UiNotification, UiProjectRow } from "@shared/ui-state";
+  import type { SidebarLabelScroll, UiNotification, UiProjectRow } from "@shared/ui-state";
   import type { UIMode } from "@shared/ipc";
   import AgentStatusIndicator from "./AgentStatusIndicator.svelte";
-  import WorkspaceTags from "./WorkspaceTags.svelte";
+  import ScrollingLabel from "./ScrollingLabel.svelte";
   import Icon from "./Icon.svelte";
   import NotificationStack from "./NotificationStack.svelte";
   import {
@@ -27,6 +27,8 @@
     notifications: readonly UiNotification[];
     /** The single UI mode from the snapshot (main-owned). */
     mode?: UIMode;
+    /** How overflowing row labels scroll (config `sidebar.label-scroll`). */
+    labelScroll?: SidebarLabelScroll;
     shortcutModeActive?: boolean;
     /**
      * True while main is capturing the hibernation screenshot: force the
@@ -48,6 +50,7 @@
     sidebarWidth,
     notifications,
     mode = "workspace",
+    labelScroll = "hover",
     shortcutModeActive = false,
     capturing = false,
     newWorkspaceViewOpen = false,
@@ -75,6 +78,10 @@
   let isHovering = false;
   let openTimeout: ReturnType<typeof setTimeout> | null = null;
   let collapseTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // The workspace row currently under the cursor (its snapshot key), so the
+  // `hover` label-scroll mode can animate only that row's overflowing lines.
+  let hoveredRowKey = $state<string | null>(null);
 
   // Sidebar is expanded when:
   // - the snapshot mode is anything but "workspace" (hover, shortcut, dialog —
@@ -345,15 +352,25 @@
               {@const status = workspace.status}
               {@const hasTags = workspace.tags.length > 0}
               {@const hibernated = workspace.hibernated}
+              {@const hasTitle = workspace.title !== undefined}
+              {@const primaryLabel = workspace.title ?? workspace.name}
+              <!-- Second line: the branch (only when a title took line 1) plus
+                   any tags, scrolling as one unit. -->
+              {@const showSecondLine = hasTitle || hasTags}
+              {@const rowHovered = hoveredRowKey === workspace.key}
               <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
               <li
                 class="workspace-item"
                 class:active={isActive}
-                class:has-tags={hasTags}
+                class:has-second-line={showSecondLine}
                 class:hibernated
                 aria-current={isActive ? "true" : undefined}
                 onclick={() => {
                   if (status !== "creating") onSwitchWorkspace(workspace.key);
+                }}
+                onmouseenter={() => (hoveredRowKey = workspace.key)}
+                onmouseleave={() => {
+                  if (hoveredRowKey === workspace.key) hoveredRowKey = null;
                 }}
               >
                 <div class="workspace-row">
@@ -363,16 +380,34 @@
                       class="workspace-btn"
                       aria-label={workspace.name + (shortcutModeActive ? shortcutHint : "")}
                     >
-                      {#if shortcutModeActive && !hibernated}
-                        <vscode-badge
-                          class="shortcut-badge"
-                          class:badge-dimmed={displayIndex === null}
-                          aria-hidden="true"
-                        >
-                          {displayIndex ?? "·"}
-                        </vscode-badge>
+                      <span class="ws-line ws-primary-line">
+                        {#if shortcutModeActive && !hibernated}
+                          <vscode-badge
+                            class="shortcut-badge"
+                            class:badge-dimmed={displayIndex === null}
+                            aria-hidden="true"
+                          >
+                            {displayIndex ?? "·"}
+                          </vscode-badge>
+                        {/if}
+                        <ScrollingLabel mode={labelScroll} hovered={rowHovered}>
+                          <span class="ws-primary-text">{primaryLabel}</span>
+                        </ScrollingLabel>
+                      </span>
+                      {#if showSecondLine}
+                        <span class="ws-line ws-secondary-line">
+                          <ScrollingLabel mode={labelScroll} hovered={rowHovered}>
+                            {#if hasTitle}
+                              <span class="ws-branch">{workspace.name}</span>
+                            {/if}
+                            {#each workspace.tags as tag (tag.name)}
+                              <span class="ws-tag" style:--tag-color={tag.color ?? null}
+                                >{tag.name}</span
+                              >
+                            {/each}
+                          </ScrollingLabel>
+                        </span>
                       {/if}
-                      {workspace.name}
                     </button>
                     {#if status === "ready"}
                       <button
@@ -424,11 +459,6 @@
                     {/if}
                   </button>
                 </div>
-                {#if hasTags}
-                  <div class="workspace-tags-row">
-                    <WorkspaceTags tags={workspace.tags} />
-                  </div>
-                {/if}
               </li>
             {/each}
           </ul>
@@ -741,7 +771,7 @@
     position: relative;
   }
 
-  .sidebar.expanded .workspace-item.has-tags {
+  .sidebar.expanded .workspace-item.has-second-line {
     padding-bottom: 6px;
   }
 
@@ -760,10 +790,52 @@
     text-align: left;
     padding: 4px 8px 4px 20px;
     font-size: 13px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     border-radius: var(--ch-radius-sm, 6px);
+    /* Stack the primary label over the branch/tags line. */
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow: hidden;
+  }
+
+  .ws-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .ws-primary-line {
+    gap: 4px;
+  }
+
+  /* The scrolling label fills the line and clips; the shortcut badge (if any)
+     keeps its intrinsic width beside it. */
+  .ws-line :global(.scroll) {
+    flex: 1 1 0;
+  }
+
+  .ws-secondary-line {
+    font-size: 11px;
+  }
+
+  .ws-branch {
+    color: var(--ch-foreground);
+    opacity: 0.6;
+  }
+
+  /* Inline tag pill on the row's second line (branch + tags scroll together). */
+  .ws-tag {
+    --_color: var(--tag-color, var(--ch-foreground));
+    display: inline-block;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--_color);
+    background: color-mix(in srgb, var(--_color) 50%, transparent);
+    color: var(--ch-foreground);
+    white-space: nowrap;
+    font-weight: 500;
   }
 
   .status-cell {
@@ -826,14 +898,6 @@
   .workspace-item:hover .remove-btn,
   .workspace-item:focus-within .remove-btn {
     opacity: 0.7;
-  }
-
-  .workspace-tags-row {
-    padding-left: 12px;
-  }
-
-  .sidebar:not(.expanded) .workspace-tags-row {
-    display: none;
   }
 
   .shortcut-badge {

@@ -180,6 +180,7 @@
     sidebarWidth={ui.sidebar.width}
     notifications={ui.notifications}
     {mode}
+    labelScroll={ui.labelScroll}
     shortcutModeActive={mode === "shortcut"}
     capturing={ui.capturing}
     newWorkspaceViewOpen={creationShown}

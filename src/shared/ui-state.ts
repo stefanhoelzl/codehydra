@@ -29,6 +29,13 @@ export function clampSidebarWidthMin(width: number): number {
 }
 
 /**
+ * How an overflowing sidebar row label scrolls horizontally (config
+ * `sidebar.label-scroll`). `always` = overflowing lines scroll continuously,
+ * `hover` = only while the row is hovered, `off` = clip (no motion).
+ */
+export type SidebarLabelScroll = "always" | "hover" | "off";
+
+/**
  * An open dialog session, render-ready. The presenter owns the registry (via
  * its internal DialogManager) and folds it into the snapshot; the renderer
  * renders each declaratively and echoes the opaque `id` back in dialog ui:events.
@@ -80,6 +87,13 @@ export interface UiWorkspaceRow {
    */
   readonly key: string;
   readonly name: string;
+  /**
+   * User-given display title (workspace metadata `title`). Sidebar-only: the
+   * branch `name` stays the identity used for keys, sorting, and shortcut
+   * numbering. Absent when no title is set, in which case the row falls back to
+   * showing `name`.
+   */
+  readonly title?: string;
   readonly status: "creating" | "ready" | "deleting" | "delete-failed";
   /**
    * Orthogonal to `status`: a hibernated workspace is still `ready` (or even
@@ -160,6 +174,8 @@ export interface UiState {
   readonly frames: Readonly<Record<string, string>>;
   readonly main: UiMainView;
   readonly theme: UiTheme;
+  /** How overflowing sidebar row labels scroll (config `sidebar.label-scroll`). */
+  readonly labelScroll: SidebarLabelScroll;
   /**
    * The single UI mode, computed by the presenter (main-owned) with priority
    * shortcut > dialog > hover > workspace. The renderer reads mode only from

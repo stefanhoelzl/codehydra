@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import {
   AppShutdownOperation,
   INTENT_APP_SHUTDOWN,
@@ -100,6 +101,7 @@ function createDeps() {
     } as unknown as PathProvider,
     dispatcher: createMockDispatcher(),
     sidebarWidthConfig: createMockAccessor<number>("sidebar.width", SIDEBAR_DEFAULT_WIDTH),
+    configService: createMockConfig(),
   };
 }
 type Deps = ReturnType<typeof createDeps>;
@@ -328,6 +330,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         frames: {},
         main: { kind: "starting" },
         theme: "dark",
+        labelScroll: "hover",
         mode: "dialog",
         capturing: false,
         dialogs: [],
@@ -349,6 +352,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       frames: {},
       main: { kind: "creation" },
       theme: "dark",
+      labelScroll: "hover",
       mode: "hover",
       capturing: false,
       dialogs: [],
@@ -393,6 +397,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       frames: { [`${PROJECT_ID}/main`]: "http://127.0.0.1:1/main" },
       main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
       theme: "dark",
+      labelScroll: "hover",
       mode: "workspace",
       capturing: false,
       dialogs: [],
@@ -746,6 +751,37 @@ describe("PresentationModule - ui:state snapshots", () => {
     expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.tags).toEqual([
       { name: "wip", color: "#ff0" },
     ]);
+  });
+
+  it("reads the title metadata into the row, and clears it when emptied", async () => {
+    const deps = createDeps();
+    const module = await startModule(deps);
+    // Seed a workspace that already carries a title (project:open path).
+    const workspace = makeWorkspace("feat-branch", { metadata: { title: "  My title  " } });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await flush();
+    // Trimmed on intake; the branch name is untouched (identity).
+    const seeded = lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!;
+    expect(seeded.title).toBe("My title");
+    expect(seeded.name).toBe("feat-branch");
+
+    const change = (value: string | null): Promise<void> =>
+      emit(module, EVENT_METADATA_CHANGED, {
+        projectId: PROJECT_ID,
+        workspaceName: workspace.name,
+        workspacePath: workspace.path,
+        key: "title",
+        value,
+      });
+
+    await change("Renamed");
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.title).toBe("Renamed");
+
+    // Emptying the title clears it (row reverts to the branch name).
+    await change("");
+    await flush();
+    expect(lastSnapshot(deps).sidebar.projects[0]!.workspaces[0]!.title).toBeUndefined();
   });
 
   it("ignores metadata keys the UI does not care about (no push)", async () => {

@@ -119,6 +119,7 @@ import { uiEventSchema } from "../../shared/ui-event";
 import {
   clampSidebarWidthMin,
   compareDisplayNames,
+  type SidebarLabelScroll,
   type UiDeletionProgress,
   type UiMainView,
   type UiProjectRow,
@@ -126,6 +127,8 @@ import {
   type UiState,
   type UiWorkspaceRow,
 } from "../../shared/ui-state";
+import type { Config } from "../../boundaries/platform/config";
+import { storeEnum } from "../../boundaries/platform/store-definition";
 import { buildScreenshotPath } from "../hibernation-screenshot-module";
 import {
   DialogManager,
@@ -151,7 +154,11 @@ export interface PresentationModuleDeps {
    * region and written when the renderer emits a `resize-sidebar` drag result.
    */
   readonly sidebarWidthConfig: Pick<PersistedAccessor<number>, "get" | "set">;
+  readonly configService: Pick<Config, "register">;
 }
+
+/** Allowed values for the `sidebar.label-scroll` config key. */
+const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
 
 /**
  * The UI presenter: an IntentModule that also exposes the imperative
@@ -196,6 +203,11 @@ function toLoggerName(name: string): LoggerName {
  */
 interface WorkspaceModel {
   readonly name: string;
+  /**
+   * User-given display title (metadata `title`); undefined when unset, so the
+   * row falls back to `name`. Display-only — `name` stays the identity.
+   */
+  title: string | undefined;
   /** Real worktree path; null while the workspace is still being created. */
   path: string | null;
   hibernated: boolean;
@@ -204,13 +216,23 @@ interface WorkspaceModel {
   creating: boolean;
 }
 
+/**
+ * Interpret a raw metadata `title` into the model field: trim, and treat an
+ * empty string as unset (undefined) so an emptied title reverts to the branch.
+ */
+function readTitle(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 /** Interpret a workspace's domain metadata into the semantic model fields. */
 function fromMetadata(
   metadata: Readonly<Record<string, string>>
-): Pick<WorkspaceModel, "hibernated" | "tags"> {
+): Pick<WorkspaceModel, "hibernated" | "tags" | "title"> {
   return {
     hibernated: metadata["hibernated"] === "true",
     tags: extractTags(metadata),
+    title: readTitle(metadata["title"]),
   };
 }
 
@@ -337,6 +359,18 @@ function buildCloseConfirmConfig(
 
 export function createPresentationModule(deps: PresentationModuleDeps): UiPresenter {
   const logger = deps.loggingService.createLogger("presenter");
+
+  // Sidebar row labels can overflow the narrow rail; this key picks how the
+  // custom-title / branch / tags lines scroll when they do. Read (via the
+  // accessor) at snapshot-build time and shipped in every ui:state push.
+  const labelScrollConfig = deps.configService.register<SidebarLabelScroll>(
+    "sidebar.label-scroll",
+    {
+      default: "hover",
+      description: "How overflowing sidebar row labels scroll: always|hover|off",
+      ...storeEnum(LABEL_SCROLL_VALUES),
+    }
+  );
 
   // The presenter privately owns the dialog/notification registries. They hold
   // session state and hand out handles; every mutation calls scheduleUpdate so
@@ -528,6 +562,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     return {
       key,
       name: workspace.name,
+      ...(workspace.title !== undefined && { title: workspace.title }),
       status: rowStatus(workspace),
       hibernated: workspace.hibernated,
       agent:
@@ -666,6 +701,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       frames,
       main,
       theme,
+      labelScroll: labelScrollConfig.get(),
       mode: buildMode(main),
       capturing,
       dialogs: dialogs.getSnapshot(),
@@ -1154,6 +1190,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         }
         project.workspaces.set(p.workspaceName, {
           name: p.workspaceName,
+          title: undefined,
           path: null,
           hibernated: false,
           tags: [],
@@ -1239,6 +1276,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           workspace.hibernated = p.value === "true";
           // Flag flips invalidate the cached screenshot (deleted on wake).
           screenshots.delete(workspaceKey(p.projectId, p.workspaceName));
+        } else if (p.key === "title") {
+          // Empty/cleared title reverts the row to the branch name.
+          workspace.title = readTitle(p.value);
         } else if (p.key.startsWith(TAGS_METADATA_KEY_PREFIX)) {
           const name = p.key.slice(TAGS_METADATA_KEY_PREFIX.length);
           workspace.tags = workspace.tags.filter((tag) => tag.name !== name);
