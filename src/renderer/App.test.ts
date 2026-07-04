@@ -3,11 +3,12 @@
  * Tests for the App component.
  *
  * App owns the ui:state subscription + ui-connected handshake (on mount) and
- * routes by the snapshot's main.kind: startup kinds (starting / setup /
- * agent-selection / loading) render StartupView; workspace / hibernated /
- * creation render MainView. Until the first snapshot arrives it shows a blank
- * initializing state. ARIA announcements are driven by the snapshot mode
- * (keyboard shortcuts and UI mode are main-owned now).
+ * routes by the snapshot's main.kind: `starting` (the single pre-app:started
+ * marker) shows a blank base with the presenter's startup surfaces rendered as
+ * modal dialogs via DialogHost; workspace / hibernated / creation render
+ * MainView. Until the first snapshot arrives it shows a blank initializing
+ * state. ARIA announcements are driven by the snapshot mode (keyboard shortcuts
+ * and UI mode are main-owned now).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -133,29 +134,74 @@ describe("App component", () => {
       expect(container.querySelector(".main-view")).not.toBeInTheDocument();
     });
 
-    it("renders StartupView for startup snapshots, not MainView", async () => {
+    it("shows a blank base (no MainView) for the starting marker, with the startup dialog on top", async () => {
       const { container } = render(App);
       await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
 
-      pushState(makeUiState([], { main: { kind: "starting" }, mode: "dialog" }));
+      pushState(
+        makeUiState([], {
+          main: { kind: "starting" },
+          mode: "dialog",
+          dialogs: [
+            {
+              id: "dlg-startup-1",
+              surface: "modal",
+              config: {
+                modal: true,
+                sections: [
+                  {
+                    type: "progress",
+                    style: "spinner",
+                    items: [{ id: "status", label: "CodeHydra is starting…", status: "running" }],
+                  },
+                ],
+              },
+            },
+          ],
+        })
+      );
+
       await waitFor(() => {
-        expect(container.querySelector(".startup-view")).toBeInTheDocument();
+        expect(screen.getByText(/CodeHydra is starting/i)).toBeInTheDocument();
       });
+      // No MainView while starting; the blank base + startup dialog own the screen.
       expect(container.querySelector(".main-view")).not.toBeInTheDocument();
+      expect(container.querySelector(".initializing-container")).toBeInTheDocument();
     });
 
-    it("renders the setup progress rows and Retry/Quit on error", async () => {
+    it("renders the setup progress rows and Retry/Quit from the startup dialog on error", async () => {
       const { container } = render(App);
       await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
 
       pushState(
         makeUiState([], {
           mode: "dialog",
-          main: {
-            kind: "setup",
-            rows: [{ id: "vscode", label: "VSCode", status: "running" }],
-            error: { message: "it broke" },
-          },
+          main: { kind: "starting" },
+          dialogs: [
+            {
+              id: "dlg-setup-1",
+              surface: "modal",
+              config: {
+                modal: true,
+                sections: [
+                  { type: "text", content: "Setting up CodeHydra", style: "heading" },
+                  {
+                    type: "progress",
+                    style: "spinner",
+                    items: [{ id: "vscode", label: "VSCode", status: "running" }],
+                  },
+                  { type: "text", content: "it broke", style: "error" },
+                  {
+                    type: "group",
+                    items: [
+                      { type: "button", id: "retry", label: "Retry", variant: "primary" },
+                      { type: "button", id: "quit", label: "Quit", variant: "secondary" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
         })
       );
 
@@ -163,23 +209,45 @@ describe("App component", () => {
         expect(screen.getByText("VSCode")).toBeInTheDocument();
         expect(screen.getByText("it broke")).toBeInTheDocument();
       });
-      expect(container.querySelector(".startup-view")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Quit" })).toBeInTheDocument();
+      expect(container.querySelector(".main-view")).not.toBeInTheDocument();
     });
 
-    it("agent-selection Continue emits agent-selected with the picked agent", async () => {
+    it("agent picker Continue emits a dialog-action with the picked agent", async () => {
       render(App);
       await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
 
       pushState(
         makeUiState([], {
           mode: "dialog",
-          main: {
-            kind: "agent-selection",
-            agents: [
-              { agent: "claude", label: "Claude", icon: "sparkle" },
-              { agent: "opencode", label: "OpenCode", icon: "terminal" },
-            ],
-          },
+          main: { kind: "starting" },
+          dialogs: [
+            {
+              id: "dlg-agent-1",
+              surface: "modal",
+              config: {
+                modal: true,
+                sections: [
+                  { type: "text", content: "Choose Agent", style: "heading" },
+                  {
+                    type: "radio",
+                    id: "agent",
+                    options: [
+                      { id: "claude", label: "Claude", icon: "sparkle" },
+                      { id: "opencode", label: "OpenCode", icon: "terminal" },
+                    ],
+                  },
+                  {
+                    type: "group",
+                    items: [
+                      { type: "button", id: "continue", label: "Continue", variant: "primary" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
         })
       );
       await waitFor(() => expect(screen.getByText("OpenCode")).toBeInTheDocument());
@@ -187,9 +255,91 @@ describe("App component", () => {
       await fireEvent.click(screen.getByRole("radio", { name: /opencode/i }));
       await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
-      expect(mockApi.emitEvent).toHaveBeenCalledWith({
-        kind: "agent-selected",
-        agent: "opencode",
+      // Continue is an ordinary dialog action now; main resolves the pick.
+      expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dlg-agent-1",
+        actionId: "continue",
+        data: { agent: "opencode" },
+      });
+    });
+
+    it("agent picker keyboard works when the persistent startup dialog swaps spinner→radio", async () => {
+      // Reproduces the real flow: the startup surfaces are ONE modal dialog
+      // handle updated across phases, so the Form never remounts. Focus must
+      // follow onto the radio when the config changes, or arrows/Enter are dead.
+      render(App);
+      await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
+
+      const spinner = {
+        id: "dlg-sys",
+        surface: "modal" as const,
+        config: {
+          modal: true,
+          sections: [
+            {
+              type: "progress" as const,
+              style: "spinner" as const,
+              items: [
+                { id: "status", label: "CodeHydra is starting…", status: "running" as const },
+              ],
+            },
+          ],
+        },
+      };
+      pushState(
+        makeUiState([], { main: { kind: "starting" }, mode: "dialog", dialogs: [spinner] })
+      );
+
+      // Same dialog id, config swapped to the agent radio (autofocus opts in).
+      const agentDialog = {
+        id: "dlg-sys",
+        surface: "modal" as const,
+        config: {
+          modal: true,
+          sections: [
+            { type: "text" as const, content: "Choose Agent", style: "heading" as const },
+            {
+              type: "radio" as const,
+              id: "agent",
+              autofocus: true,
+              options: [
+                { id: "claude", label: "Claude", icon: "sparkle" },
+                { id: "opencode", label: "OpenCode", icon: "terminal" },
+              ],
+            },
+            {
+              type: "group" as const,
+              items: [
+                {
+                  type: "button" as const,
+                  id: "continue",
+                  label: "Continue",
+                  variant: "primary" as const,
+                },
+              ],
+            },
+          ],
+        },
+      };
+      pushState(
+        makeUiState([], { main: { kind: "starting" }, mode: "dialog", dialogs: [agentDialog] })
+      );
+
+      // The focus-follow lands focus on the selected (first) card — without this
+      // the arrow-key handler never fires (nothing is focused).
+      const claude = await screen.findByRole("radio", { name: /claude/i });
+      await waitFor(() => expect(document.activeElement).toBe(claude));
+
+      // ArrowDown moves the selection to opencode; Enter confirms it.
+      await fireEvent.keyDown(claude, { key: "ArrowDown" });
+      const opencode = screen.getByRole("radio", { name: /opencode/i });
+      await waitFor(() => expect(opencode).toHaveAttribute("aria-checked", "true"));
+
+      await fireEvent.keyDown(opencode, { key: "Enter" });
+      expect(mockApi.sendDialogEvent).toHaveBeenCalledWith({
+        dialogId: "dlg-sys",
+        actionId: "continue",
+        data: { agent: "opencode" },
       });
     });
 
@@ -236,11 +386,12 @@ describe("App component", () => {
   });
 
   describe("mid-session loading keeps workspace iframes mounted", () => {
-    it("overlays the loading surface instead of tearing MainView (and its iframes) down", async () => {
+    it("shows the loading dialog over a surviving MainView (iframes not torn down)", async () => {
       const { container } = render(App);
       await waitFor(() => expect(mockApi.onState).toHaveBeenCalled());
 
       const wsA = ws("alpha");
+      const creatingKey = "test-project-12345678/beta";
       const frames = { [wsA.key]: "http://127.0.0.1:25448/?workspace=alpha" };
 
       // First normal snapshot: one workspace active, its iframe mounted.
@@ -258,22 +409,36 @@ describe("App component", () => {
       });
       expect(container.querySelector(".main-view")).toBeInTheDocument();
 
-      // A new workspace is being created and becomes active: the presenter
-      // pushes main.kind="loading" (no frame for it yet) while keeping the
-      // existing workspace's frame in the snapshot. MainView must survive so
-      // the existing iframe is not destroyed and reloaded.
+      // A new workspace is being created and becomes active: the presenter opens
+      // a modal loading dialog and points main at the creating workspace, whose
+      // frame is NOT in the snapshot yet (blank behind the dialog). The existing
+      // workspace's frame stays in `frames`, so MainView must survive.
+      const loadingDialog = {
+        id: "dlg-loading-1",
+        surface: "modal" as const,
+        config: {
+          modal: true,
+          sections: [
+            {
+              type: "progress" as const,
+              style: "spinner" as const,
+              items: [{ id: "status", label: "Loading workspace...", status: "running" as const }],
+            },
+          ],
+        },
+      };
       pushState(
         makeUiState([makeUiProjectRow([{ ...wsA, active: false }])], {
           frames,
-          main: { kind: "loading", label: "Loading workspace..." },
+          main: { kind: "workspace", frameKey: creatingKey },
           mode: "dialog",
+          dialogs: [loadingDialog],
         })
       );
 
-      // Loading shows as an overlay (StartupView) rendered INSIDE MainView,
-      // not by swapping MainView out for a top-level StartupView.
+      // The loading dialog shows over the still-mounted MainView.
       await waitFor(() => {
-        expect(container.querySelector(".startup-view")).toBeInTheDocument();
+        expect(screen.getByText("Loading workspace...")).toBeInTheDocument();
       });
       expect(container.querySelector(".main-view")).toBeInTheDocument();
 
@@ -281,7 +446,7 @@ describe("App component", () => {
       const sameIframe = container.querySelector(`iframe[data-key="${wsA.key}"]`);
       expect(sameIframe).toBe(iframe);
 
-      // Creation completes: back to the workspace surface, frame still the same.
+      // Creation completes: the loading dialog closes, frame still the same.
       pushState(
         makeUiState([makeUiProjectRow([{ ...wsA, active: true }])], {
           frames,
@@ -289,7 +454,7 @@ describe("App component", () => {
         })
       );
       await waitFor(() => {
-        expect(container.querySelector(".startup-view")).not.toBeInTheDocument();
+        expect(screen.queryByText("Loading workspace...")).not.toBeInTheDocument();
       });
       expect(container.querySelector(`iframe[data-key="${wsA.key}"]`)).toBe(iframe);
     });

@@ -120,43 +120,21 @@ export interface UiProjectRow {
 }
 
 /**
- * A first-run setup progress row (vscode / agent / setup). Render-ready: the
- * presenter accumulates per-row status from setup:progress domain events.
- */
-export interface UiSetupRow {
-  readonly id: string;
-  readonly label: string;
-  readonly status: "pending" | "running" | "done" | "error";
-  readonly message?: string;
-  readonly progress?: number;
-}
-
-/** An agent option for the first-run agent picker. */
-export interface UiAgentOption {
-  readonly agent: string;
-  readonly label: string;
-  readonly icon: string;
-}
-
-/**
  * What the main view shows. The hibernated screen carries no workspace
  * identity: it always shows the active workspace, which main knows.
  * The creation panel is the ground state: it shows whenever no workspace is
  * active (there is no separate empty state).
  *
- * The startup kinds (starting / setup / agent-selection / loading) are pushed
- * by the presenter during app:start, before app:started — the renderer renders
- * them via StartupView in place of MainView.
+ * `starting` is the single pre-`app:started` marker: main shows nothing (a
+ * blank base) while the presenter drives the boot splash, first-run setup,
+ * agent picker, and workspace loading as modal dialogs layered on top (see
+ * `dialogs`). The renderer shows MainView only once `main.kind !== "starting"`.
+ * Mid-session workspace loading (a still-creating active workspace) is also a
+ * dialog — `main` then reads `workspace` with a frameKey whose iframe is not
+ * mounted yet, so the workspace area is blank behind the loading dialog.
  */
 export type UiMainView =
   | { readonly kind: "starting" }
-  | {
-      readonly kind: "setup";
-      readonly rows: readonly UiSetupRow[];
-      readonly error?: { readonly message: string };
-    }
-  | { readonly kind: "agent-selection"; readonly agents: readonly UiAgentOption[] }
-  | { readonly kind: "loading"; readonly label: string }
   | { readonly kind: "workspace"; readonly frameKey: string }
   | { readonly kind: "hibernated"; readonly screenshot: string | null }
   | { readonly kind: "creation" };

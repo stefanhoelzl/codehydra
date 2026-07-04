@@ -25,15 +25,17 @@ function renderRadio(
   options?: { value?: string; layout?: FormLayout }
 ) {
   const onSelect = vi.fn();
+  const onSubmit = vi.fn();
   render(RadioSection, {
     props: {
       section,
       value: options?.value ?? section.options[0]?.id ?? "",
       layout: options?.layout ?? "centered",
       onSelect,
+      onSubmit,
     },
   });
-  return { onSelect };
+  return { onSelect, onSubmit };
 }
 
 describe("RadioSection component", () => {
@@ -94,12 +96,28 @@ describe("RadioSection component", () => {
     expect(onSelect).toHaveBeenCalledWith("opt-b");
   });
 
-  it("Enter is a no-op (does not select; submit is the form's Cmd/Ctrl+Enter)", async () => {
-    const { onSelect } = renderRadio(twoOptions);
+  it("Enter activates the form's primary action (onSubmit) without re-selecting", async () => {
+    const { onSelect, onSubmit } = renderRadio(twoOptions);
 
     await fireEvent.keyDown(screen.getAllByRole("radio")[0]!, { key: "Enter" });
 
+    expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("marks the selected card data-autofocus only when the section opts in", () => {
+    const { unmount } = render(RadioSection, {
+      props: { section: twoOptions, value: "opt-b", layout: "centered", onSelect: vi.fn() },
+    });
+    // No autofocus flag → no card is a focus target.
+    expect(document.querySelector("[data-autofocus]")).toBeNull();
+    unmount();
+
+    renderRadio({ ...twoOptions, autofocus: true }, { value: "opt-b" });
+    // The flag lands on the selected (tabbable) card, so the form's focus-follow
+    // can move focus onto it when this section replaces another on a config push.
+    const focusTarget = document.querySelector("[data-autofocus]");
+    expect(focusTarget).toHaveAttribute("data-option", "opt-b");
   });
 
   it("disables all cards when the section is disabled", () => {

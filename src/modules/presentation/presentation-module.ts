@@ -114,7 +114,13 @@ import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/w
 import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../../shared/shortcuts";
 import type { UIMode } from "../../shared/ipc";
 import { ApiIpcChannels } from "../../shared/ipc";
-import type { DialogConfig, DialogSection, DialogSurface } from "../../shared/dialog-types";
+import type {
+  DialogActionEvent,
+  DialogConfig,
+  DialogSection,
+  DialogSurface,
+  ProgressItem,
+} from "../../shared/dialog-types";
 import { uiEventSchema } from "../../shared/ui-event";
 import {
   clampSidebarWidthMin,
@@ -123,7 +129,6 @@ import {
   type UiDeletionProgress,
   type UiMainView,
   type UiProjectRow,
-  type UiSetupRow,
   type UiState,
   type UiWorkspaceRow,
 } from "../../shared/ui-state";
@@ -414,7 +419,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   // ---------------------------------------------------------------------------
   // Startup flow view-model (boot splash, first-run setup, agent-selection,
-  // workspace loading). Drives the startup `main` kinds until app:started.
+  // workspace loading). Everything the user sees before app:started — and the
+  // mid-session "workspace still creating" overlay — is a single modal dialog
+  // (the "system dialog") layered over a blank `main: { kind: "starting" }`
+  // base; `reconcileSystemDialog()` (run inside push) projects it from state.
   // ---------------------------------------------------------------------------
 
   /**
@@ -426,6 +434,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   type StartupPhase = "starting" | "setup" | "agent-selection" | "running" | "done";
   let startupPhase: StartupPhase = "starting";
 
+  /** A first-run setup progress row, accumulated from setup:progress events. */
+  interface SetupRow {
+    readonly id: string;
+    readonly label: string;
+    readonly status: "pending" | "running" | "done" | "error";
+    readonly message?: string;
+    readonly progress?: number;
+  }
+
   const SETUP_ROW_LABELS: Record<string, string> = {
     vscode: "VSCode",
     agent: "Agent",
@@ -433,7 +450,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   };
   const SETUP_ROW_IDS = ["vscode", "agent", "setup"] as const;
   /** Accumulated setup row state, keyed by row id (persists across progress). */
-  const setupRows = new Map<string, UiSetupRow>();
+  const setupRows = new Map<string, SetupRow>();
   let setupError: { message: string } | undefined;
 
   /** Reset the three setup rows to pending (entering the setup phase). */
@@ -446,7 +463,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /** Current setup rows in canonical (vscode, agent, setup) order. */
-  function setupRowList(): UiSetupRow[] {
+  function setupRowList(): SetupRow[] {
     return SETUP_ROW_IDS.map(
       (id) => setupRows.get(id) ?? { id, label: SETUP_ROW_LABELS[id] ?? id, status: "pending" }
     );
@@ -454,10 +471,30 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   /** Available agents for the picker (set by the agent-selection hook). */
   let agentOptions: AgentSelectionHookContext["availableAgents"] = [];
-  /** Resolver for the parked agent-selection hook (set while awaiting a pick). */
+  /** Resolve/reject the parked agent-selection hook (set while awaiting a pick).
+   *  A pick resolves it; app:shutdown rejects it so app:setup unwinds WITHOUT
+   *  reaching save-agent (nothing persisted; next launch re-prompts). */
   let agentSelectionResolve: ((agent: LifecycleAgentType) => void) | null = null;
-  /** Resolver for app:start's waitForRetry (set while awaiting setup-retry). */
+  let agentSelectionReject: ((reason: Error) => void) | null = null;
+  /** Resolve/reject app:start's waitForRetry (set while awaiting a setup retry).
+   *  The Retry button resolves it; app:shutdown rejects it to unwind app:start. */
   let retryResolve: (() => void) | null = null;
+  let retryReject: ((reason: Error) => void) | null = null;
+
+  /**
+   * The single modal dialog projecting the startup surfaces + the mid-session
+   * loading overlay. Reconciled from state in push(); its action events (agent
+   * pick, setup Retry/Quit) route here via `handleSystemAction`.
+   */
+  let systemDialog: DialogHandle | null = null;
+  /** JSON of the last-applied system-dialog config (null = closed). Guards
+   *  reconcile against redundant updates (and thus push loops). */
+  let systemDialogConfigJson: string | null = null;
+  /** True only while push() is reconciling: suppresses the dialog mutations'
+   *  own scheduleUpdate (the in-flight push already carries them). */
+  let inPush = false;
+  /** Set once app:shutdown starts: the system dialog stays closed thereafter. */
+  let shuttingDown = false;
 
   // --- UI mode inputs (main-owned). Mode = shortcut > dialog > hover >
   //     workspace, computed in buildMode() from these four signals.
@@ -602,27 +639,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   function buildMain(): UiMainView {
-    // Startup flow owns the main view until app:started (phase → "done").
-    if (startupPhase === "starting") return { kind: "starting" };
-    if (startupPhase === "setup") {
-      return {
-        kind: "setup",
-        rows: setupRowList(),
-        ...(setupError !== undefined && { error: setupError }),
-      };
-    }
-    if (startupPhase === "agent-selection") {
-      return {
-        kind: "agent-selection",
-        agents: agentOptions.map((a) => ({ agent: a.agent, label: a.label, icon: a.icon })),
-      };
-    }
-    if (startupPhase === "running") {
-      // Unified startup loading window: from the `start` hook (app:ready
-      // dispatched) until app:started, the user sees one loading screen
-      // instead of starting → blank → projects-loading → workspace-loading.
-      return { kind: "loading", label: "Loading workspace..." };
-    }
+    // The startup flow (every phase before app:started) shows nothing in main:
+    // a blank base under the reconciled system dialog. `starting` is the single
+    // marker the renderer reads to keep MainView unmounted (showMain stays
+    // false until main.kind flips to a running kind at app:started).
+    if (startupPhase !== "done") return { kind: "starting" };
 
     // Normal main logic (startupPhase === "done").
     // The creation panel is the ground state: shown whenever nothing is
@@ -630,18 +651,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     if (activeKey === null) return { kind: "creation" };
     const active = findByKey(activeKey);
     if (!active) return { kind: "creation" };
-    // An active workspace still being created has no runtime/frame yet: show
-    // the loading screen (the mid-session equivalent of the startup loading
-    // window — replaces the former "Loading workspace..." dialog).
-    if (active.workspace.creating) {
-      return { kind: "loading", label: "Loading workspace..." };
-    }
     if (active.workspace.hibernated) {
       return {
         kind: "hibernated",
         screenshot: resolveScreenshot(activeKey, active.project, active.workspace),
       };
     }
+    // A still-creating active workspace has no mounted frame yet (its key is
+    // absent from `frames`), so the workspace area is blank behind the
+    // reconciled mid-session loading dialog until workspace:created arrives.
     return { kind: "workspace", frameKey: activeKey };
   }
 
@@ -651,20 +669,171 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * Alt+X still works.
    */
   function buildMode(main: UiMainView): UIMode {
-    // Startup surfaces are full-screen, pre-interaction, UI-on-top: treat them
-    // like a modal dialog so Alt+X is inert and the workspace stays behind.
-    if (
-      main.kind === "starting" ||
-      main.kind === "setup" ||
-      main.kind === "agent-selection" ||
-      main.kind === "loading"
-    ) {
-      return "dialog";
-    }
+    // The startup surfaces and the mid-session loading overlay are modal system
+    // dialogs now, so isModalOpen() already yields "dialog" for them — no
+    // startup special-case needed.
     if (shortcutActive) return "shortcut";
     if (dialogs.isModalOpen()) return "dialog";
     if (main.kind === "creation" || hoverRegion === "sidebar") return "hover";
     return "workspace";
+  }
+
+  // ---------------------------------------------------------------------------
+  // System dialog (startup surfaces + mid-session loading)
+  //
+  // One modal dialog projects the whole pre-`app:started` flow and the
+  // still-creating-workspace overlay. It is reconciled from state in push():
+  // computeSystemDialogConfig() maps the current phase (or mid-session loading)
+  // to a DialogConfig, or null when nothing should show. reconcileSystemDialog()
+  // opens/updates/closes the handle to match, guarded by a JSON compare so an
+  // unchanged config never re-pushes.
+  // ---------------------------------------------------------------------------
+
+  /** A centered spinner + label (boot splash / loading), via a spinner row. */
+  function spinnerConfig(label: string): DialogConfig {
+    return {
+      sections: [
+        { type: "progress", style: "spinner", items: [{ id: "status", label, status: "running" }] },
+      ],
+      modal: true,
+    };
+  }
+
+  /** The first-run setup surface: progress rows, plus Retry/Quit on error. */
+  function setupConfig(): DialogConfig {
+    const items: ProgressItem[] = setupRowList().map((row) => ({
+      id: row.id,
+      label: row.label,
+      status: row.status,
+      ...(row.message !== undefined && { message: row.message }),
+      ...(row.progress !== undefined && { progress: row.progress }),
+    }));
+    const sections: DialogSection[] = [
+      { type: "text", content: "Setting up CodeHydra", style: "heading" },
+      { type: "text", content: "This is only required on first startup.", style: "subtitle" },
+      { type: "progress", style: "spinner", items },
+    ];
+    if (setupError !== undefined) {
+      sections.push({ type: "text", content: setupError.message, style: "error" });
+      // Retry is primary (Enter activates it); Quit is a plain button; no
+      // cancel-role button, so Escape is a no-op (setup is mandatory).
+      sections.push({
+        type: "group",
+        items: [
+          // autofocus for the same reason as the agent radio: the persistent
+          // dialog doesn't remount when the error + buttons appear.
+          { type: "button", id: "retry", label: "Retry", variant: "primary", autofocus: true },
+          { type: "button", id: "quit", label: "Quit", variant: "secondary" },
+        ],
+      });
+    }
+    return { sections, modal: true };
+  }
+
+  /**
+   * The agent picker: a radio group (defaulting to the first option, focused on
+   * mount by the form) + a primary Continue button. Arrow keys move the
+   * selection, Enter / Ctrl+Enter activate Continue; no cancel button, so
+   * Escape is a no-op (selection is mandatory on first run).
+   */
+  function agentConfig(): DialogConfig {
+    return {
+      sections: [
+        { type: "text", content: "Choose Agent", style: "heading" },
+        {
+          type: "radio",
+          id: "agent",
+          // autofocus: the system dialog is one persistent handle updated across
+          // phases, so the Form never remounts — the focus-follow moves focus
+          // onto the selected radio card when this config replaces the spinner.
+          autofocus: true,
+          options: agentOptions.map((a) => ({ id: a.agent, label: a.label, icon: a.icon })),
+        },
+        {
+          type: "group",
+          items: [{ type: "button", id: "continue", label: "Continue", variant: "primary" }],
+        },
+      ],
+      modal: true,
+    };
+  }
+
+  /** The desired system-dialog config for the current state, or null for none. */
+  function computeSystemDialogConfig(): DialogConfig | null {
+    if (shuttingDown) return null;
+    switch (startupPhase) {
+      case "starting":
+        return spinnerConfig("CodeHydra is starting…");
+      case "setup":
+        return setupConfig();
+      case "agent-selection":
+        return agentConfig();
+      case "running":
+        return spinnerConfig("Loading workspace...");
+      case "done": {
+        // Mid-session: a still-creating active workspace has no frame yet.
+        if (activeKey === null) return null;
+        const active = findByKey(activeKey);
+        return active?.workspace.creating ? spinnerConfig("Loading workspace...") : null;
+      }
+    }
+  }
+
+  /** Route the system dialog's action events (agent pick, Retry, Quit). */
+  function handleSystemAction(event: DialogActionEvent): void {
+    switch (event.actionId) {
+      case "continue": {
+        const agent = event.data?.["agent"];
+        if (agentSelectionResolve && agent) {
+          logger.info("Agent selected", { agent });
+          agentSelectionResolve(agent as LifecycleAgentType);
+          agentSelectionResolve = null;
+          agentSelectionReject = null;
+        }
+        return;
+      }
+      case "retry":
+        if (retryResolve) {
+          retryResolve();
+          retryResolve = null;
+          retryReject = null;
+        }
+        return;
+      case "quit": {
+        const handle = deps.dispatcher.dispatch({
+          type: INTENT_APP_SHUTDOWN,
+          payload: {},
+        } as AppShutdownIntent);
+        void handle.catch((error: unknown) => {
+          logger.debug("app:shutdown dispatch rejected", { error: getErrorMessage(error) });
+        });
+        return;
+      }
+    }
+  }
+
+  /**
+   * Reconcile the system dialog with the current state. Called at the top of
+   * push() (inPush suppresses the dialog mutations' own scheduleUpdate — the
+   * in-flight push already reflects them). The JSON guard makes an unchanged
+   * config a no-op, so this never loops.
+   */
+  function reconcileSystemDialog(): void {
+    const config = computeSystemDialogConfig();
+    const json = config === null ? null : JSON.stringify(config);
+    if (json === systemDialogConfigJson) return;
+    systemDialogConfigJson = json;
+    if (config === null) {
+      systemDialog?.close();
+      systemDialog = null;
+      return;
+    }
+    if (systemDialog) {
+      systemDialog.update(config);
+    } else {
+      systemDialog = dialogs.open(config, { surface: "modal" });
+      systemDialog.onEvent(handleSystemAction);
+    }
   }
 
   function buildSnapshot(): UiState {
@@ -710,7 +879,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   function scheduleUpdate(): void {
-    if (!connected || pushScheduled) return;
+    // inPush: reconcileSystemDialog (running inside push) mutates the dialog
+    // registry, which calls this — the in-flight push already carries the
+    // change, so don't schedule a redundant follow-up.
+    if (!connected || pushScheduled || inPush) return;
     pushScheduled = true;
     queueMicrotask(() => {
       pushScheduled = false;
@@ -719,6 +891,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   function push(): void {
+    // Project the startup/loading system dialog from state before snapshotting,
+    // so this push carries the reconciled dialog (and mode reads isModalOpen()).
+    inPush = true;
+    reconcileSystemDialog();
+    inPush = false;
     const snapshot = buildSnapshot();
     deps.viewManager.sendToUI(ApiIpcChannels.UI_STATE, snapshot);
     logger.debug("ui:state push", { snapshot: JSON.stringify(snapshot) });
@@ -780,33 +957,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       // their state lives in the snapshot, which only ships once connected.
       connected = true;
       push();
-      return;
-    }
-    if (event.kind === "agent-selected") {
-      // Resolve the parked agent-selection hook with the user's choice.
-      if (agentSelectionResolve) {
-        agentSelectionResolve(event.agent as LifecycleAgentType);
-        agentSelectionResolve = null;
-      }
-      return;
-    }
-    if (event.kind === "setup-retry") {
-      // Answer a setup error: resolve app:start's retry loop.
-      if (retryResolve) {
-        retryResolve();
-        retryResolve = null;
-      }
-      return;
-    }
-    if (event.kind === "setup-quit") {
-      // Answer a setup error: shut the app down.
-      const handle = deps.dispatcher.dispatch({
-        type: INTENT_APP_SHUTDOWN,
-        payload: {},
-      } as AppShutdownIntent);
-      void handle.catch((error: unknown) => {
-        logger.debug("app:shutdown dispatch rejected", { error: getErrorMessage(error) });
-      });
       return;
     }
     if (event.kind === "log") {
@@ -1295,8 +1445,8 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     [EVENT_SETUP_PROGRESS]: {
       handler: async (event: DomainEvent): Promise<void> => {
         const row = (event as SetupProgressEvent).payload;
-        // Map SetupRowStatus ("failed") → UiSetupRow status ("error").
-        const status: UiSetupRow["status"] = row.status === "failed" ? "error" : row.status;
+        // Map SetupRowStatus ("failed") → SetupRow status ("error").
+        const status: SetupRow["status"] = row.status === "failed" ? "error" : row.status;
         setupRows.set(row.id, {
           id: row.id,
           label: SETUP_ROW_LABELS[row.id] ?? row.id,
@@ -1418,14 +1568,15 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   // ---------------------------------------------------------------------------
-  // Startup hooks (moved from view-module): the four startup surfaces are now
-  // pushed as `main` kinds, not DialogManager dialogs.
+  // Startup hooks: each just sets the phase + schedules a push; the system
+  // dialog is reconciled from that phase in push() (reconcileSystemDialog).
   // ---------------------------------------------------------------------------
 
   /**
    * app:start `show-ui`: set the boot-splash phase and hand app:start the
    * waitForRetry hook it needs for the setup retry loop. The promise resolves
-   * when the user emits `setup-retry` (preserving app-start.ts's loop exactly).
+   * when the user clicks Retry (a system-dialog action); app:shutdown rejects
+   * it so a quit-during-retry unwinds app:start instead of hanging.
    */
   async function appStartShowUi(): Promise<HookOutput<ShowUIHookResult>> {
     startupPhase = "starting";
@@ -1433,8 +1584,9 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     return {
       result: {
         waitForRetry: () =>
-          new Promise<void>((resolve) => {
+          new Promise<void>((resolve, reject) => {
             retryResolve = resolve;
+            retryReject = reject;
           }),
       },
     };
@@ -1468,10 +1620,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   }
 
   /**
-   * app:setup `agent-selection`: show the picker and park until the user emits
-   * `agent-selected`. The chosen agent is returned as the `agentType` capability
-   * (same contract the view-module hook provided). The handler awaits the pick
-   * before returning so the provided value is populated.
+   * app:setup `agent-selection`: show the picker (a radio system dialog) and
+   * park until the user clicks Continue, which arrives as a system-dialog
+   * action and resolves the parked promise with the chosen agent (returned as
+   * the `agentType` capability to app:setup). app:shutdown REJECTS the promise
+   * so a quit-during-selection throws here — app:setup unwinds without reaching
+   * save-agent, so no agent is persisted and the next launch re-prompts.
    */
   async function setupAgentSelection(ctx: HookContext): Promise<HookOutput> {
     const { availableAgents } = ctx as AgentSelectionHookContext;
@@ -1479,10 +1633,10 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     startupPhase = "agent-selection";
     scheduleUpdate();
 
-    const agent = await new Promise<LifecycleAgentType>((resolve) => {
+    const agent = await new Promise<LifecycleAgentType>((resolve, reject) => {
       agentSelectionResolve = resolve;
+      agentSelectionReject = reject;
     });
-    logger.info("Agent selected", { agent });
     return { provides: { agentType: agent } };
   }
 
@@ -1545,17 +1699,28 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
           handler: async (): Promise<void> => {
-            // Resolve any parked startup promises so app:start can't hang quit.
-            if (agentSelectionResolve) {
-              // Default to the first option so app:setup's agent-selection
-              // capability is still populated on a quit-during-setup.
-              agentSelectionResolve((agentOptions[0]?.agent ?? "claude") as LifecycleAgentType);
+            // Keep the system dialog closed for the rest of the process life,
+            // and reject any parked startup promises so app:setup / app:start
+            // unwind rather than hang. Rejecting the agent-selection promise
+            // (rather than resolving a default) is deliberate: a quit-mid-pick
+            // must NOT persist an agent the user never chose.
+            shuttingDown = true;
+            // Close the snapshot stream first so the dialog close below (and any
+            // late domain event) can't push another snapshot during teardown.
+            connected = false;
+            if (agentSelectionReject) {
+              agentSelectionReject(new Error("app shutting down during agent selection"));
               agentSelectionResolve = null;
+              agentSelectionReject = null;
             }
-            if (retryResolve) {
-              retryResolve();
+            if (retryReject) {
+              retryReject(new Error("app shutting down during setup retry"));
               retryResolve = null;
+              retryReject = null;
             }
+            systemDialog?.close();
+            systemDialog = null;
+            systemDialogConfigJson = null;
             unsubscribeFromUI();
             if (themeUnsubscribe) {
               themeUnsubscribe();
