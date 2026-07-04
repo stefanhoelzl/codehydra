@@ -533,6 +533,7 @@ export class McpServer {
       {
         description:
           "Set or delete a metadata key for the current workspace. " +
+          "Use key 'title' to set the workspace's sidebar display title; set value to null to delete/clear the title and revert the row to the branch name (this is how you 'delete the workspace title' — do not use workspace_delete for that). " +
           "To set tags, use the 'tags.' prefix for the key (e.g., key: 'tags.bugfix'). " +
           "The value is a JSON object with an optional color field: '{\"color\":\"#ff0000\"}' or '{}' for no color. " +
           "To remove a tag, set value to null.",
@@ -752,6 +753,9 @@ export class McpServer {
       {
         description:
           "Delete a workspace: terminates its agent session and removes the git worktree. " +
+          "This removes the entire workspace, not a label — to delete or change a workspace's " +
+          "display title, use workspace_set_metadata with key 'title' (value null clears it), " +
+          "NOT this tool. " +
           "Omit workspacePath to delete the current workspace, or pass a path to delete " +
           "another workspace (use project_list to discover paths). Blocks until deletion " +
           "finishes and returns { started: true } on success. Fails with an error if the " +
