@@ -22,7 +22,9 @@ import {
   EVENT_WORKSPACE_HIBERNATE_FAILED,
   HIBERNATED_METADATA_KEY,
   type HibernateWorkspaceIntent,
+  type PrepareCaptureHookResult,
   type CaptureHookResult,
+  type CleanupCaptureHookResult,
   type HibernateShutdownHookResult,
   type HibernateReleaseHookResult,
   type HibernatePipelineHookInput,
@@ -169,6 +171,44 @@ function createHibernateHookModule(
             if (opts.releaseThrows) {
               throw new Error("release boom");
             }
+            return { result: {} };
+          },
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Registers the prepare-capture → capture → cleanup-capture bracket, recording
+ * call order. `captureThrows` exercises the operation's finally: `collect`
+ * swallows the throw into its errors[] (never rejects), so hibernation still
+ * completes AND cleanup-capture still runs.
+ */
+function createCaptureBracketModule(
+  recorder: Recorder,
+  opts: { captureThrows?: boolean } = {}
+): IntentModule {
+  return {
+    name: "test-capture-bracket",
+    hooks: {
+      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
+        "prepare-capture": {
+          handler: async (): Promise<HookOutput<PrepareCaptureHookResult>> => {
+            recorder.callOrder.push("prepare-capture");
+            return { result: {} };
+          },
+        },
+        capture: {
+          handler: async (): Promise<HookOutput<CaptureHookResult>> => {
+            recorder.callOrder.push("capture");
+            if (opts.captureThrows) throw new Error("capture boom");
+            return { result: {} };
+          },
+        },
+        "cleanup-capture": {
+          handler: async (): Promise<HookOutput<CleanupCaptureHookResult>> => {
+            recorder.callOrder.push("cleanup-capture");
             return { result: {} };
           },
         },
@@ -381,6 +421,50 @@ describe("workspace:hibernate", () => {
       recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATE_FAILED)
     ).toBeUndefined();
     expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+  });
+
+  it("brackets the capture hook: prepare-capture → capture → cleanup-capture", async () => {
+    const { dispatcher, recorder, waitForBackground } = buildHarness((r) => [
+      createCaptureBracketModule(r),
+    ]);
+
+    await dispatcher.dispatch({
+      type: INTENT_HIBERNATE_WORKSPACE,
+      payload: { workspacePath: WORKSPACE_PATH },
+    } as HibernateWorkspaceIntent);
+    await waitForBackground();
+
+    // Foreground: the sidebar is collapsed (prepare), the screenshot is taken
+    // (capture), the sidebar is restored (cleanup) — all before metadata flips.
+    expect(recorder.callOrder).toEqual([
+      "prepare-capture",
+      "capture",
+      "cleanup-capture",
+      "set-metadata:true",
+    ]);
+  });
+
+  it("runs cleanup-capture even when the capture hook throws (finally)", async () => {
+    const { dispatcher, recorder, waitForBackground } = buildHarness((r) => [
+      createCaptureBracketModule(r, { captureThrows: true }),
+    ]);
+
+    await dispatcher.dispatch({
+      type: INTENT_HIBERNATE_WORKSPACE,
+      payload: { workspacePath: WORKSPACE_PATH },
+    } as HibernateWorkspaceIntent);
+    await waitForBackground();
+
+    // capture threw, but cleanup-capture still ran and hibernation completed —
+    // the sidebar can never be left stuck collapsed.
+    expect(recorder.callOrder).toEqual([
+      "prepare-capture",
+      "capture",
+      "cleanup-capture",
+      "set-metadata:true",
+    ]);
+    expect(recorder.metadataWrites).toEqual([{ key: HIBERNATED_METADATA_KEY, value: "true" }]);
+    expect(recorder.events.find((e) => e.type === EVENT_WORKSPACE_HIBERNATED)).toBeDefined();
   });
 
   it("hibernate completes when release throws (best-effort)", async () => {

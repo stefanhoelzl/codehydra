@@ -51,6 +51,10 @@ import {
   EVENT_WORKSPACE_DELETION_PROGRESS,
 } from "../../intents/delete-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../../intents/switch-workspace";
+import {
+  HIBERNATE_WORKSPACE_OPERATION_ID,
+  type HibernatePipelineHookInput,
+} from "../../intents/hibernate-workspace";
 import { EVENT_AGENT_STATUS_UPDATED } from "../../intents/update-agent-status";
 import { EVENT_METADATA_CHANGED } from "../../intents/set-metadata";
 import { EVENT_SHORTCUT_ACTIVE_CHANGED } from "../../intents/set-shortcut-active";
@@ -318,6 +322,7 @@ describe("PresentationModule - ui:state snapshots", () => {
         main: { kind: "starting" },
         theme: "dark",
         mode: "dialog",
+        capturing: false,
         dialogs: [],
         notifications: [],
       },
@@ -338,6 +343,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       main: { kind: "creation" },
       theme: "dark",
       mode: "hover",
+      capturing: false,
       dialogs: [],
       notifications: [],
     });
@@ -380,6 +386,7 @@ describe("PresentationModule - ui:state snapshots", () => {
       main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
       theme: "dark",
       mode: "workspace",
+      capturing: false,
       dialogs: [],
       notifications: [],
     });
@@ -1567,6 +1574,88 @@ describe("PresentationModule - UI mode", () => {
     module.dialog({ sections: [] }, { surface: "panel" });
     await flush();
     expect(mode(deps)).toBe("workspace");
+  });
+});
+
+// =============================================================================
+// Hibernation capture hooks (collapse the sidebar out of the screenshot)
+// =============================================================================
+
+describe("PresentationModule - hibernation capture hooks", () => {
+  function captureInput(active: boolean): HibernatePipelineHookInput {
+    return {
+      intent: { type: "workspace:hibernate", payload: {} },
+      projectPath: PROJECT_PATH,
+      workspacePath: `${PROJECT_PATH}/.worktrees/main`,
+      projectId: PROJECT_ID,
+      workspaceName: "main" as WorkspaceName,
+      active,
+    } as HibernatePipelineHookInput;
+  }
+
+  function prepare(module: UiPresenter, active: boolean): Promise<unknown> {
+    return module.hooks![HIBERNATE_WORKSPACE_OPERATION_ID]!["prepare-capture"]!.handler(
+      captureInput(active)
+    );
+  }
+
+  function cleanup(module: UiPresenter, active: boolean): Promise<unknown> {
+    return module.hooks![HIBERNATE_WORKSPACE_OPERATION_ID]!["cleanup-capture"]!.handler(
+      captureInput(active)
+    );
+  }
+
+  /** Active workspace + shortcut mode: the exact state hibernate fires from. */
+  async function activeInShortcutMode(deps: Deps): Promise<UiPresenter> {
+    const module = await startModule(deps);
+    const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
+    await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([workspace]) });
+    await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
+    await emit(module, EVENT_SHORTCUT_ACTIVE_CHANGED, { active: true });
+    await flush();
+    return module;
+  }
+
+  it("prepare-capture flips capturing on and waits for the collapsed paint", async () => {
+    const deps = createDeps();
+    const module = await activeInShortcutMode(deps);
+    expect(lastSnapshot(deps).capturing).toBe(false);
+    expect(lastSnapshot(deps).mode).toBe("shortcut");
+
+    await prepare(module, true);
+
+    // The snapshot carries capturing=true (the renderer folds this into an
+    // always-collapsed sidebar) while mode stays "shortcut", and main awaited
+    // the paint barrier so the following capture sees the collapsed sidebar.
+    expect(lastSnapshot(deps).capturing).toBe(true);
+    expect(lastSnapshot(deps).mode).toBe("shortcut");
+    expect(deps.viewManager.waitForUIPaint).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleanup-capture restores capturing to false", async () => {
+    const deps = createDeps();
+    const module = await activeInShortcutMode(deps);
+    await prepare(module, true);
+    expect(lastSnapshot(deps).capturing).toBe(true);
+
+    await cleanup(module, true);
+    await flush();
+
+    expect(lastSnapshot(deps).capturing).toBe(false);
+  });
+
+  it("is a no-op for a background (inactive) hibernation", async () => {
+    const deps = createDeps();
+    const module = await activeInShortcutMode(deps);
+    const pushesBefore = snapshots(deps).length;
+
+    await prepare(module, false);
+    await cleanup(module, false);
+    await flush();
+
+    expect(deps.viewManager.waitForUIPaint).not.toHaveBeenCalled();
+    expect(snapshots(deps).length).toBe(pushesBefore);
+    expect(lastSnapshot(deps).capturing).toBe(false);
   });
 });
 

@@ -112,6 +112,15 @@ export interface IViewManager {
   reloadFrames(): void;
 
   /**
+   * Resolve after the UI renderer has committed a paint for the current
+   * UiState (waits two animation frames). Used to sequence a screenshot after
+   * a state-driven layout change — collapsing the sidebar before a hibernation
+   * capture — has actually rendered. Best-effort: resolves immediately if the
+   * UI view is unavailable or mid-load.
+   */
+  waitForUIPaint(): Promise<void>;
+
+  /**
    * Capture a PNG screenshot of the active workspace iframe, by clipping a
    * full-view capture to the iframe's bounding rect (no API exists to
    * capture an out-of-process iframe directly).

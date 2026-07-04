@@ -152,6 +152,15 @@ export interface UiState {
    * eligibility, and z-order all derive from it.
    */
   readonly mode: UIMode;
+  /**
+   * True only while the presenter is capturing the active workspace's
+   * hibernation screenshot. Forces the sidebar to its collapsed resting state
+   * (overriding `mode`) so it is not baked into the screenshot; the existing
+   * `.sidebar:not(.expanded)` rule makes that collapse instant. Main-owned,
+   * set by the hibernate `prepare-capture` hook and always cleared by
+   * `cleanup-capture` (runs in the operation's finally).
+   */
+  readonly capturing: boolean;
   /** Open dialog sessions (modal cards + non-modal panels), in open order. */
   readonly dialogs: readonly UiDialog[];
   /** Open sidebar notifications, in open order. */

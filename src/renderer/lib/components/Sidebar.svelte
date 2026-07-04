@@ -25,6 +25,11 @@
     /** The single UI mode from the snapshot (main-owned). */
     mode?: UIMode;
     shortcutModeActive?: boolean;
+    /**
+     * True while main is capturing the hibernation screenshot: force the
+     * sidebar collapsed (overriding mode) so it is not baked into the shot.
+     */
+    capturing?: boolean;
     /** When true, the New workspace view is the current tab (highlight it instead of any workspace). */
     newWorkspaceViewOpen?: boolean;
     onCloseProject: (projectId: string) => void;
@@ -40,6 +45,7 @@
     notifications,
     mode = "workspace",
     shortcutModeActive = false,
+    capturing = false,
     newWorkspaceViewOpen = false,
     onCloseProject,
     onSwitchWorkspace,
@@ -70,7 +76,9 @@
   // - the snapshot mode is anything but "workspace" (hover, shortcut, dialog —
   //   the creation panel maps to hover), OR
   // - there are no workspaces (so user can open a project)
-  const isExpanded = $derived(mode !== "workspace" || totalWorkspaces === 0);
+  // ...unless main is capturing the hibernation screenshot, which forces the
+  // sidebar collapsed so it is not baked into the shot.
+  const isExpanded = $derived(!capturing && (mode !== "workspace" || totalWorkspaces === 0));
 
   // Hover may only initiate expansion when nothing else forces the UI on top
   // (i.e. the snapshot mode is "workspace"); otherwise the sidebar expanding

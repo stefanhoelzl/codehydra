@@ -8,7 +8,9 @@
  * Foreground (awaited by callers, ~500 ms):
  * 1. Dispatch workspace:resolve — yields projectPath, workspaceName, active
  * 2. Dispatch project:resolve — projectPath → projectId
- * 3. "capture" hook — best-effort screenshot capture
+ * 3. "prepare-capture" → "capture" (in a try) → "cleanup-capture" (finally)
+ *    hooks — collapse the sidebar out of the shot, take the best-effort
+ *    screenshot, then always restore the sidebar
  * 4. Dispatch workspace:set-metadata to persist `hibernated="true"` (this is
  *    what makes the renderer show HibernatedOverlay; switch-workspace's
  *    `c.hibernated` filter also begins excluding the workspace immediately)
@@ -98,7 +100,7 @@ export const EVENT_WORKSPACE_HIBERNATE_FAILED = "workspace:hibernate-failed" as 
 // Hook Types
 // =============================================================================
 
-/** Input for capture/shutdown/release hook handlers. */
+/** Input for prepare-capture/capture/cleanup-capture/shutdown/release hook handlers. */
 export interface HibernatePipelineHookInput extends HookContext {
   readonly projectPath: string;
   readonly workspacePath: string;
@@ -107,8 +109,21 @@ export interface HibernatePipelineHookInput extends HookContext {
   readonly active: boolean;
 }
 
+/**
+ * Per-handler result for the "prepare-capture" hook point. Runs before the
+ * screenshot so the presenter can collapse the sidebar out of the capture.
+ */
+export type PrepareCaptureHookResult = Record<string, never>;
+
 /** Per-handler result for the "capture" hook point. */
 export type CaptureHookResult = Record<string, never>;
+
+/**
+ * Per-handler result for the "cleanup-capture" hook point. Runs in the
+ * operation's `finally` (even if capture throws) so the presenter always
+ * restores the sidebar and can never leave it stuck collapsed.
+ */
+export type CleanupCaptureHookResult = Record<string, never>;
 
 /** Per-handler result for the "shutdown" hook point. */
 export type HibernateShutdownHookResult = Record<string, never>;
@@ -164,7 +179,17 @@ export class HibernateWorkspaceOperation implements Operation<
       // Capture screenshot (best-effort, errors logged but not propagated).
       // Must complete in the foreground so the overlay has a file:// URL to
       // load when the metadata flip below triggers the renderer.
-      await ctx.hooks.collect<CaptureHookResult>("capture", hookCtx);
+      //
+      // "prepare-capture" collapses the sidebar out of the shot (the presenter
+      // owns the sidebar UI state); "cleanup-capture" restores it. Cleanup runs
+      // in `finally` so a stuck capturing flag can never leave the sidebar
+      // permanently collapsed, even if the capture hook throws.
+      await ctx.hooks.collect<PrepareCaptureHookResult>("prepare-capture", hookCtx);
+      try {
+        await ctx.hooks.collect<CaptureHookResult>("capture", hookCtx);
+      } finally {
+        await ctx.hooks.collect<CleanupCaptureHookResult>("cleanup-capture", hookCtx);
+      }
 
       // Persist hibernated flag via existing set-metadata pipeline. This is
       // what makes the renderer swap in HibernatedOverlay via the
