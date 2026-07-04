@@ -32,6 +32,7 @@ function makeState(workspaces: UiWorkspaceRow[]): UiState {
     main: { kind: "creation" },
     theme: "dark",
     mode: "hover",
+    capturing: false,
     dialogs: [],
     notifications: [],
   };

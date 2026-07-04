@@ -180,6 +180,7 @@
     notifications={ui.notifications}
     {mode}
     shortcutModeActive={mode === "shortcut"}
+    capturing={ui.capturing}
     newWorkspaceViewOpen={creationShown}
     onCloseProject={handleCloseProject}
     onSwitchWorkspace={handleSwitchWorkspace}

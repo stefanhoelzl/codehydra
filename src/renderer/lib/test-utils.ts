@@ -54,6 +54,7 @@ export function makeUiState(
     main: { kind: "creation" },
     theme: "dark",
     mode: "workspace",
+    capturing: false,
     dialogs: [],
     notifications: [],
     ...overrides,

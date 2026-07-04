@@ -103,7 +103,11 @@ import {
 } from "../../intents/shortcut-key";
 import {
   INTENT_HIBERNATE_WORKSPACE,
+  HIBERNATE_WORKSPACE_OPERATION_ID,
   type HibernateWorkspaceIntent,
+  type HibernatePipelineHookInput,
+  type PrepareCaptureHookResult,
+  type CleanupCaptureHookResult,
 } from "../../intents/hibernate-workspace";
 import { INTENT_WAKE_WORKSPACE, type WakeWorkspaceIntent } from "../../intents/wake-workspace";
 import { isShortcutKey, jumpKeyToIndex, type JumpKey } from "../../shared/shortcuts";
@@ -132,7 +136,7 @@ import { getErrorMessage } from "../../shared/error-utils";
 
 export interface PresentationModuleDeps {
   readonly loggingService: Pick<Logging, "createLogger">;
-  readonly viewManager: Pick<IViewManager, "sendToUI" | "onFromUI">;
+  readonly viewManager: Pick<IViewManager, "sendToUI" | "onFromUI" | "waitForUIPaint">;
   readonly windowManager: {
     getTheme(): Theme;
     onThemeChange(callback: (theme: Theme) => void): Unsubscribe;
@@ -420,6 +424,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   let shortcutActive = false;
   /** Last settled hover region from the renderer's `hover` ui:event. */
   let hoverRegion: "sidebar" | null = null;
+  /**
+   * True only between the hibernate `prepare-capture` and `cleanup-capture`
+   * hooks, while the active workspace's screenshot is being taken. Forces the
+   * sidebar collapsed in the snapshot so it is not baked into the shot.
+   */
+  let capturing = false;
 
   /** Presenter-assigned opaque workspace identity. Never leaves main except inside UiState. */
   function workspaceKey(projectId: string, workspaceName: string): string {
@@ -644,6 +654,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       main,
       theme,
       mode: buildMode(main),
+      capturing,
       dialogs: dialogs.getSnapshot(),
       notifications: notifications.getSnapshot(),
     };
@@ -1264,6 +1275,38 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   };
 
   /**
+   * The "prepare-capture" hook on workspace:hibernate: collapse the sidebar out
+   * of the hibernation screenshot. Only the visible (active) workspace's iframe
+   * is captured, so this is a no-op for background hibernations. The snapshot is
+   * pushed immediately (not coalesced) and we wait for the renderer to paint the
+   * collapsed sidebar before the "capture" hook runs.
+   */
+  async function prepareCapture(ctx: HookContext): Promise<HookOutput<PrepareCaptureHookResult>> {
+    const { active } = ctx as HibernatePipelineHookInput;
+    if (!active) return {};
+    capturing = true;
+    // Flush synchronously so the capturing snapshot reaches the renderer before
+    // the paint barrier (scheduleUpdate would coalesce it onto a later tick).
+    push();
+    await deps.viewManager.waitForUIPaint();
+    return {};
+  }
+
+  /**
+   * The "cleanup-capture" hook on workspace:hibernate: restore the sidebar after
+   * the screenshot. Runs in the operation's `finally`, so it clears the flag
+   * even if the "capture" hook threw — the sidebar can never stay stuck
+   * collapsed.
+   */
+  async function cleanupCapture(ctx: HookContext): Promise<HookOutput<CleanupCaptureHookResult>> {
+    const { active } = ctx as HibernatePipelineHookInput;
+    if (!active) return {};
+    capturing = false;
+    scheduleUpdate();
+    return {};
+  }
+
+  /**
    * The "confirm" hook on project:close (interactive dispatches only): parks
    * the dispatch on the close confirmation dialog. Checkbox changes round-trip
    * through the backend model (interlock: keeping the cloned repository
@@ -1427,6 +1470,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       },
       [CLOSE_PROJECT_OPERATION_ID]: {
         confirm: { handler: confirmClose },
+      },
+      [HIBERNATE_WORKSPACE_OPERATION_ID]: {
+        // Collapse the sidebar out of the hibernation screenshot and restore it
+        // after (cleanup runs in the operation's finally).
+        "prepare-capture": { handler: prepareCapture },
+        "cleanup-capture": { handler: cleanupCapture },
       },
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {

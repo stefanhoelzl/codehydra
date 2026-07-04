@@ -61,6 +61,16 @@ const FOCUS_ACTIVE_FRAME = `window.__chFocusActiveFrame && window.__chFocusActiv
 const ACTIVE_FRAME_RECT = `window.__chActiveFrameRect ? window.__chActiveFrameRect() : null`;
 const RELOAD_FRAMES = `window.__chReloadFrames && window.__chReloadFrames()`;
 
+// Resolves after two animation frames — one committed paint of the current UI
+// state. executeJavaScript awaits the returned promise, giving main a paint
+// barrier to sequence a screenshot after a state-driven layout change (e.g.
+// the sidebar collapsing out of a hibernation capture) has actually rendered.
+const UI_PAINT_BARRIER = `new Promise(function (resolve) {
+  requestAnimationFrame(function () {
+    requestAnimationFrame(function () { resolve(true); });
+  });
+})`;
+
 const ALLOWED_PERMISSIONS = new Set([
   "clipboard-read",
   "clipboard-sanitized-write",
@@ -334,6 +344,16 @@ export class UiViewManager implements IViewManager {
   // ---------------------------------------------------------------------------
   // Capture
   // ---------------------------------------------------------------------------
+
+  async waitForUIPaint(): Promise<void> {
+    if (!this.uiViewHandle || !this.isUIAvailable()) return;
+    try {
+      await this.viewLayer.executeJavaScript(this.uiViewHandle, UI_PAINT_BARRIER);
+    } catch {
+      // UI may be mid-load; best-effort — a missed paint barrier at worst
+      // captures the pre-collapse frame, never fails the hibernation.
+    }
+  }
 
   async captureActiveWorkspaceView(): Promise<Buffer | null> {
     if (!this.uiViewHandle || !this.isUIAvailable()) return null;

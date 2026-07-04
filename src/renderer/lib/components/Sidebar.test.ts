@@ -641,6 +641,23 @@ describe("Sidebar component", () => {
       expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
     });
 
+    it("is forced collapsed while capturing, even in an otherwise-expanded mode", () => {
+      // capturing overrides mode: the hibernation screenshot must not bake in
+      // the sidebar. Shortcut mode (the state hibernate fires from) would
+      // normally expand it.
+      const { container } = render(Sidebar, {
+        props: { ...propsWithWorkspaces(), mode: "shortcut", capturing: true },
+      });
+      expect(container.querySelector(".sidebar")).not.toHaveClass("expanded");
+    });
+
+    it("expands again once capturing clears", () => {
+      const { container } = render(Sidebar, {
+        props: { ...propsWithWorkspaces(), mode: "shortcut", capturing: false },
+      });
+      expect(container.querySelector(".sidebar")).toHaveClass("expanded");
+    });
+
     it("emits a sidebar hover event after deliberate hover (trigger depth + open delay)", async () => {
       const { container } = render(Sidebar, { props: propsWithWorkspaces() });
 
