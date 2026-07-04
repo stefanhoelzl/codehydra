@@ -83,6 +83,7 @@ describe("getStatusText helper", () => {
 describe("Sidebar component", () => {
   const defaultProps = {
     projects: [],
+    sidebarWidth: 250,
     notifications: [],
     shortcutModeActive: false,
     onCloseProject: vi.fn(),
@@ -1214,6 +1215,88 @@ describe("Sidebar component", () => {
 
       const statusButton = screen.getByRole("button", { name: /ws1 in test.*creating/i });
       expect(statusButton).toBeInTheDocument();
+    });
+  });
+
+  describe("resize", () => {
+    // jsdom's window.innerWidth defaults to 1024, so the max clamp is
+    // 0.75 * 1024 = 768.
+    const MAX = 768;
+
+    function resizeHandle(): HTMLElement {
+      const handle = document.querySelector(".resize-handle");
+      if (!(handle instanceof HTMLElement)) throw new Error("no resize handle");
+      return handle;
+    }
+
+    function dragOverlay(): HTMLElement {
+      const overlay = document.querySelector(".resize-overlay");
+      if (!(overlay instanceof HTMLElement)) throw new Error("no drag overlay");
+      return overlay;
+    }
+
+    it("renders a resize handle while expanded", () => {
+      // No projects ⇒ expanded regardless of mode.
+      render(Sidebar, { props: defaultProps });
+      expect(document.querySelector(".resize-handle")).not.toBeNull();
+    });
+
+    it("hides the resize handle while collapsed", () => {
+      const project = makeUiProjectRow([makeUiWorkspaceRow("ws1")]);
+      render(Sidebar, { props: { ...defaultProps, projects: [project], mode: "workspace" } });
+      expect(document.querySelector(".resize-handle")).toBeNull();
+    });
+
+    it("emits a resize-sidebar event with the dragged width on release", async () => {
+      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
+
+      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
+      flushSync();
+      // Overlay is mounted for the duration of the drag.
+      await fireEvent.mouseMove(dragOverlay(), { clientX: 450 });
+      await fireEvent.mouseUp(dragOverlay(), { clientX: 450 });
+      flushSync();
+
+      expect(emitEvent).toHaveBeenCalledWith({ kind: "resize-sidebar", width: 450 });
+    });
+
+    it("clamps the dragged width to the window-relative maximum", async () => {
+      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
+
+      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
+      flushSync();
+      await fireEvent.mouseMove(dragOverlay(), { clientX: 5000 });
+      await fireEvent.mouseUp(dragOverlay(), { clientX: 5000 });
+      flushSync();
+
+      expect(emitEvent).toHaveBeenCalledWith({ kind: "resize-sidebar", width: MAX });
+    });
+
+    it("never goes below the grow-only floor when dragged left", async () => {
+      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
+
+      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
+      flushSync();
+      await fireEvent.mouseMove(dragOverlay(), { clientX: 50 });
+      await fireEvent.mouseUp(dragOverlay(), { clientX: 50 });
+      flushSync();
+
+      expect(emitEvent).toHaveBeenCalledWith({ kind: "resize-sidebar", width: 250 });
+    });
+
+    it("holds the dragged width after release (no flash back before the snapshot echo)", async () => {
+      render(Sidebar, { props: { ...defaultProps, sidebarWidth: 250 } });
+      const nav = screen.getByRole("navigation", { name: "Projects" });
+
+      await fireEvent.mouseDown(resizeHandle(), { clientX: 250 });
+      flushSync();
+      await fireEvent.mouseMove(dragOverlay(), { clientX: 450 });
+      await fireEvent.mouseUp(dragOverlay(), { clientX: 450 });
+      flushSync();
+
+      // The local override must persist past mouseup — the snapshot prop is
+      // still 250 here — so the sidebar does not snap back to 250 mid-round-trip.
+      expect(nav.style.getPropertyValue("--ch-sidebar-width")).toBe("450px");
     });
   });
 });

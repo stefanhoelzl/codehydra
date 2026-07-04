@@ -142,6 +142,43 @@ export function storeBoolean(): PersistedTypeBuilder<boolean> {
 }
 
 /**
+ * Builder for numeric config values, with optional inclusive `min`/`max`
+ * bounds. Values are integers by default; pass `integer: false` to allow
+ * fractionals. Out-of-range or non-numeric inputs are rejected (parse/validate
+ * return undefined), so the config layer reports them instead of silently
+ * coercing.
+ */
+export function storeNumber(options?: {
+  min?: number;
+  max?: number;
+  integer?: boolean;
+}): PersistedTypeBuilder<number> {
+  const { min, max, integer = true } = options ?? {};
+  const check = (n: number): number | undefined => {
+    if (!Number.isFinite(n)) return undefined;
+    if (integer && !Number.isInteger(n)) return undefined;
+    if (min !== undefined && n < min) return undefined;
+    if (max !== undefined && n > max) return undefined;
+    return n;
+  };
+  const validValues =
+    min !== undefined && max !== undefined
+      ? `${min}-${max}`
+      : min !== undefined
+        ? `>=${min}`
+        : max !== undefined
+          ? `<=${max}`
+          : integer
+            ? "<integer>"
+            : "<number>";
+  return {
+    parse: (raw: string) => (raw === "" ? undefined : check(Number(raw))),
+    validate: (v: unknown) => (typeof v === "number" ? check(v) : undefined),
+    validValues,
+  };
+}
+
+/**
  * Builder for enum config values.
  * Parses/validates against a fixed set of allowed string values.
  */

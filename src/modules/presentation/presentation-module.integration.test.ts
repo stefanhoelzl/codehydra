@@ -26,6 +26,7 @@ import type { IntentModule } from "../../intents/lib/module";
 import type { DomainEvent } from "../../intents/lib/types";
 import { createMockLogging } from "../../boundaries/platform/logging";
 import { createMockViewManager } from "../../boundaries/shell/view-manager.test-utils";
+import { createMockAccessor } from "../../boundaries/platform/config.test-utils";
 import type { PathProvider } from "../../boundaries/platform/path-provider";
 import { Path } from "../../utils/path/path";
 import { ApiIpcChannels } from "../../shared/ipc";
@@ -67,6 +68,11 @@ import { createPresentationModule, type UiPresenter } from "./presentation-modul
 
 const PROJECT_ID = "alpha-12345678" as ProjectId;
 const PROJECT_PATH = "/projects/alpha";
+// Local copies of the sidebar-width default/floor (the source constants are no
+// longer exported; the tests only need values that match main.ts's inlined
+// 250, which is stable).
+const SIDEBAR_DEFAULT_WIDTH = 250;
+const SIDEBAR_MIN_WIDTH = 250;
 
 function createDeps() {
   // Typed sendToUI spy for snapshot assertions; the rest of the view-manager
@@ -93,6 +99,7 @@ function createDeps() {
       dataPath: (subpath: string) => new Path(`/data/${subpath}`),
     } as unknown as PathProvider,
     dispatcher: createMockDispatcher(),
+    sidebarWidthConfig: createMockAccessor<number>("sidebar.width", SIDEBAR_DEFAULT_WIDTH),
   };
 }
 type Deps = ReturnType<typeof createDeps>;
@@ -317,7 +324,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     // The genesis "starting" splash is flushed synchronously on connect.
     expect(snapshots(deps)).toEqual([
       {
-        sidebar: { projects: [] },
+        sidebar: { projects: [], width: SIDEBAR_DEFAULT_WIDTH },
         frames: {},
         main: { kind: "starting" },
         theme: "dark",
@@ -338,7 +345,7 @@ describe("PresentationModule - ui:state snapshots", () => {
     await startModule(deps);
 
     expect(lastSnapshot(deps)).toEqual({
-      sidebar: { projects: [] },
+      sidebar: { projects: [], width: SIDEBAR_DEFAULT_WIDTH },
       frames: {},
       main: { kind: "creation" },
       theme: "dark",
@@ -381,6 +388,7 @@ describe("PresentationModule - ui:state snapshots", () => {
             ],
           },
         ],
+        width: SIDEBAR_DEFAULT_WIDTH,
       },
       frames: { [`${PROJECT_ID}/main`]: "http://127.0.0.1:1/main" },
       main: { kind: "workspace", frameKey: `${PROJECT_ID}/main` },
@@ -821,6 +829,51 @@ describe("PresentationModule - ui:state snapshots", () => {
     await flush();
 
     expect(lastSnapshot(deps).theme).toBe("light");
+  });
+});
+
+// =============================================================================
+// Sidebar resize
+// =============================================================================
+
+describe("PresentationModule - sidebar resize", () => {
+  it("ships the persisted width in the snapshot's sidebar region", async () => {
+    const deps = createDeps();
+    await deps.sidebarWidthConfig.set(420);
+    await startModule(deps);
+
+    expect(lastSnapshot(deps).sidebar.width).toBe(420);
+  });
+
+  it("clamps a below-floor persisted width up to the minimum in the snapshot", async () => {
+    const deps = createDeps();
+    // A hand-edited config.json could hold a value below the grow-only floor.
+    await deps.sidebarWidthConfig.set(120);
+    await startModule(deps);
+
+    expect(lastSnapshot(deps).sidebar.width).toBe(SIDEBAR_MIN_WIDTH);
+  });
+
+  it("persists a resize-sidebar event and echoes it in the next snapshot", async () => {
+    const deps = createDeps();
+    await startModule(deps);
+
+    emitUiEvent(deps, { kind: "resize-sidebar", width: 512 });
+    await flush();
+
+    expect(deps.sidebarWidthConfig.get()).toBe(512);
+    expect(lastSnapshot(deps).sidebar.width).toBe(512);
+  });
+
+  it("clamps a resize-sidebar width to the minimum before persisting", async () => {
+    const deps = createDeps();
+    await startModule(deps);
+
+    emitUiEvent(deps, { kind: "resize-sidebar", width: 10 });
+    await flush();
+
+    expect(deps.sidebarWidthConfig.get()).toBe(SIDEBAR_MIN_WIDTH);
+    expect(lastSnapshot(deps).sidebar.width).toBe(SIDEBAR_MIN_WIDTH);
   });
 });
 

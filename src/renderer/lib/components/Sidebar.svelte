@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import * as api from "$lib/api";
   import type { UiNotification, UiProjectRow } from "@shared/ui-state";
   import type { UIMode } from "@shared/ipc";
@@ -14,12 +14,15 @@
     getStatusText,
   } from "$lib/utils/sidebar-utils.js";
   import { createLogger } from "$lib/logging";
+  import { clampSidebarWidthMin } from "@shared/ui-state";
 
   const logger = createLogger("ui");
 
   interface SidebarProps {
     /** Render-ready project rows from the UiState snapshot. */
     projects: readonly UiProjectRow[];
+    /** Persisted expanded-sidebar width (px) from the snapshot. */
+    sidebarWidth: number;
     /** Open sidebar notifications from the snapshot. */
     notifications: readonly UiNotification[];
     /** The single UI mode from the snapshot (main-owned). */
@@ -42,6 +45,7 @@
 
   let {
     projects,
+    sidebarWidth,
     notifications,
     mode = "workspace",
     shortcutModeActive = false,
@@ -148,6 +152,9 @@
   }
 
   function handleMouseLeave(event: MouseEvent): void {
+    // Mid-resize the drag overlay sits on top and the nav emits a spurious
+    // mouseleave as the pointer "enters" it; never collapse while dragging.
+    if (dragging) return;
     // A leave through the left boundary while the window sits at the screen
     // edge means the cursor is pinned: the OS keeps the pointer there but
     // reports it just outside, and NO further events arrive while it rests
@@ -176,6 +183,81 @@
     clearCollapseTimeout();
   });
 
+  // ============ Resize ============
+  // The expanded sidebar's right edge is a drag handle. Dragging sets a local
+  // `liveWidth` override applied to --ch-sidebar-width; on release we persist
+  // it (resize-sidebar ui:event) and the presenter echoes the canonical value
+  // back in the next snapshot. The override lingers until the snapshot's
+  // `sidebarWidth` prop catches up, so there is no flash back to the old width.
+
+  let dragging = $state(false);
+  /** Live width while dragging / awaiting the snapshot echo; null = use prop. */
+  let liveWidth = $state<number | null>(null);
+  let dragStartX = 0;
+  let dragStartWidth = 0;
+  // Window inner width, tracked reactively so the max clamp follows resizes.
+  let winWidth = $state(typeof window !== "undefined" ? window.innerWidth : 0);
+
+  function clampWidth(width: number): number {
+    // Both bounds run through the shared floor helper: the max is 75% of the
+    // window width but never below the grow-only minimum (tiny windows), so the
+    // result is always >= the floor.
+    const floored = clampSidebarWidthMin(width);
+    const max = clampSidebarWidthMin(winWidth * 0.75);
+    return Math.min(floored, max);
+  }
+
+  const effectiveWidth = $derived(clampWidth(liveWidth ?? sidebarWidth));
+
+  // Drop the local override once the snapshot's width prop changes — i.e. it
+  // has caught up to (or overridden) the drag result — so there is no flash
+  // back to the old width while the resize round-trips. `dragging` is read via
+  // untrack so this fires only on a genuine prop change, never when a drag ends
+  // (which would otherwise clear the override before the echo arrives). While a
+  // drag is in flight the override wins.
+  $effect(() => {
+    void sidebarWidth;
+    if (!untrack(() => dragging)) liveWidth = null;
+  });
+
+  function handleResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    dragging = true;
+    dragStartX = event.clientX;
+    dragStartWidth = effectiveWidth;
+    liveWidth = dragStartWidth;
+    // Cancel any pending hover arm/collapse so the drawer stays put mid-drag.
+    clearOpenTimeout();
+    clearCollapseTimeout();
+    logger.debug("sidebar resize: start", { startX: dragStartX, startWidth: dragStartWidth });
+  }
+
+  function handleResizeMove(event: MouseEvent): void {
+    if (!dragging) return;
+    liveWidth = clampWidth(dragStartWidth + (event.clientX - dragStartX));
+  }
+
+  function handleResizeEnd(event: MouseEvent): void {
+    if (!dragging) return;
+    const finalWidth = clampWidth(dragStartWidth + (event.clientX - dragStartX));
+    dragging = false;
+    liveWidth = finalWidth;
+    logger.debug("sidebar resize: end", { finalWidth });
+    api.emitEvent({ kind: "resize-sidebar", width: finalWidth });
+    // If the cursor came to rest past the sidebar's new right edge — over the
+    // workspace, not the drawer — release the hover so it can collapse. The
+    // mouseleave suppressed during the drag would otherwise latch it open.
+    if (event.clientX > finalWidth) {
+      isHovering = false;
+      api.emitEvent({ kind: "hover", region: null });
+    }
+  }
+
+  function handleWindowResize(): void {
+    winWidth = window.innerWidth;
+  }
+
   // ============ Actions ============
 
   function handleWakeWorkspace(key: string): void {
@@ -188,10 +270,14 @@
   at the right edge]. Collapsing the sidebar shrinks the label cells to zero
   width, so the icon column IS the collapsed sidebar.
 -->
+<svelte:window onresize={handleWindowResize} />
+
 <nav
   class="sidebar"
-  class:expanded={isExpanded}
-  class:ch-sidebar-expanded={isExpanded}
+  class:expanded={isExpanded || dragging}
+  class:ch-sidebar-expanded={isExpanded || dragging}
+  class:dragging
+  style="--ch-sidebar-width: {effectiveWidth}px"
   aria-label="Projects"
   onmouseenter={handleMouseEnter}
   onmousemove={handleMouseMove}
@@ -352,7 +438,32 @@
   </div>
 
   <NotificationStack {notifications} {isExpanded} />
+
+  <!-- Drag handle on the expanded sidebar's right edge. Mouse-only (no keyboard
+       resize by design), so it is hidden from assistive tech. -->
+  {#if isExpanded || dragging}
+    <div
+      class="resize-handle"
+      class:dragging
+      aria-hidden="true"
+      title="Drag to resize"
+      onmousedown={handleResizeStart}
+    ></div>
+  {/if}
 </nav>
+
+<!-- Full-window capture layer active only while dragging: it sits above the
+     workspace iframes (which would otherwise swallow mousemove) so the drag
+     tracks smoothly, and ends the drag on release or when the pointer leaves. -->
+{#if dragging}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="resize-overlay"
+    onmousemove={handleResizeMove}
+    onmouseup={handleResizeEnd}
+    onmouseleave={handleResizeEnd}
+  ></div>
+{/if}
 
 <style>
   .sidebar {
@@ -387,6 +498,41 @@
     width: var(--ch-sidebar-width, 250px);
     z-index: var(--ch-z-sidebar-expanded, 50);
     box-shadow: var(--ch-shadow);
+  }
+
+  /* While dragging the width follows the cursor every frame; the transition
+     would only add lag. */
+  .sidebar.dragging {
+    transition: none;
+  }
+
+  /* ============ Resize handle ============ */
+
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: ew-resize;
+    z-index: 1;
+    /* A thin accent line, revealed on hover / while dragging. */
+    background: transparent;
+    transition: background-color 120ms ease-out;
+  }
+
+  .resize-handle:hover,
+  .resize-handle.dragging {
+    background: var(--ch-focus-border);
+  }
+
+  /* Full-window pointer capture during a drag: transparent, above every UI
+     layer and the workspace iframes, keeping the ew-resize cursor throughout. */
+  .resize-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    cursor: ew-resize;
   }
 
   /* Two-column row cells: .ch-icon-cell / .ch-label-cell come from global.css. */
