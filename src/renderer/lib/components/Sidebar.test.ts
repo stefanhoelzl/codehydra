@@ -123,6 +123,74 @@ describe("Sidebar component", () => {
     });
   });
 
+  describe("active row scroll-into-view", () => {
+    // Regression: Alt+X arrow/jump navigation switches the active workspace to
+    // a row that may be scrolled out of the sidebar's viewport. The sidebar
+    // must scroll the newly-active row back into view.
+
+    it("scrolls the newly-active row into view when the active workspace changes (expanded)", async () => {
+      const project = makeUiProjectRow([
+        makeUiWorkspaceRow("ws1", { active: true }),
+        makeUiWorkspaceRow("ws2", { active: false }),
+      ]);
+
+      const { rerender } = render(Sidebar, {
+        // shortcut mode keeps the sidebar expanded (as during Alt+X nav).
+        props: { ...defaultProps, projects: [project], mode: "shortcut" as const },
+      });
+
+      // Spy on the second row (jsdom's default scrollIntoView is a no-op). The
+      // keyed {#each} reuses this <li> across the rerender, so the spy survives.
+      const scrollSpy = vi.fn();
+      const ws2Item = screen.getByText("ws2").closest("li")!;
+      ws2Item.scrollIntoView = scrollSpy;
+
+      // Navigate: ws2 becomes active.
+      await rerender({
+        ...defaultProps,
+        projects: [
+          makeUiProjectRow([
+            makeUiWorkspaceRow("ws1", { active: false }),
+            makeUiWorkspaceRow("ws2", { active: true }),
+          ]),
+        ],
+        mode: "shortcut" as const,
+      });
+      flushSync();
+
+      expect(scrollSpy).toHaveBeenCalledWith({ block: "nearest" });
+    });
+
+    it("does not scroll while collapsed (workspace mode)", async () => {
+      const project = makeUiProjectRow([
+        makeUiWorkspaceRow("ws1", { active: true }),
+        makeUiWorkspaceRow("ws2", { active: false }),
+      ]);
+
+      const { rerender } = render(Sidebar, {
+        props: { ...defaultProps, projects: [project], mode: "workspace" as const },
+      });
+
+      const scrollSpy = vi.fn();
+      const ws2Item = screen.getByText("ws2").closest("li")!;
+      ws2Item.scrollIntoView = scrollSpy;
+
+      await rerender({
+        ...defaultProps,
+        projects: [
+          makeUiProjectRow([
+            makeUiWorkspaceRow("ws1", { active: false }),
+            makeUiWorkspaceRow("ws2", { active: true }),
+          ]),
+        ],
+        mode: "workspace" as const,
+      });
+      flushSync();
+
+      expect(scrollSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe("state rendering", () => {
     it("shows the New workspace entry and no 'no projects' text when there are no projects", () => {
       render(Sidebar, { props: defaultProps });

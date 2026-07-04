@@ -64,6 +64,29 @@
     projects.reduce((sum, project) => sum + project.workspaces.length, 0)
   );
 
+  // The snapshot key of the currently-active workspace row (or null when the
+  // creation panel is the current tab). Drives the scroll-into-view effect.
+  const activeWorkspaceKey = $derived(
+    projects.flatMap((project) => project.workspaces).find((workspace) => workspace.active)?.key ??
+      null
+  );
+
+  // The scrollable list container. Bound so the effect below can find the
+  // active row within it and scroll it into view.
+  let contentEl = $state<HTMLElement | null>(null);
+
+  // Keep the active row visible: when the active workspace changes (e.g. Alt+X
+  // arrow / jump-key navigation switches to a row scrolled out of view), or the
+  // sidebar expands into shortcut mode, scroll the active row into view. Uses
+  // `block: "nearest"`, so it is a no-op when the row is already visible (mouse
+  // clicks, in-view switches). Only runs while expanded — the collapsed gutter
+  // hides its scrollbar, and expanding re-runs this via the `isExpanded` read.
+  $effect(() => {
+    void activeWorkspaceKey;
+    if (!isExpanded) return;
+    contentEl?.querySelector(".workspace-item.active")?.scrollIntoView({ block: "nearest" });
+  });
+
   // ============ Expansion State ============
 
   /** Debounce for both arming expansion (deliberate-hover filter) and collapsing. */
@@ -301,7 +324,7 @@
     {/if}
   </header>
 
-  <div class="sidebar-content">
+  <div class="sidebar-content" bind:this={contentEl}>
     <!-- Global "New workspace" entry, pinned above the projects. -->
     <button
       type="button"
