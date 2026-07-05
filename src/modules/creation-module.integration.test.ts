@@ -223,18 +223,18 @@ function setup(options?: {
       if (active !== undefined) await emit(EVENT_WORKSPACE_SWITCHED, switchedPayload(active));
     }
     await emit(EVENT_APP_STARTED);
-    const panel = dialogs.panelHandles().find((h) => !h.closed);
-    expect(panel, "open panel session").toBeDefined();
+    const panel = dialogs.modelessHandles().find((h) => !h.closed);
+    expect(panel, "open creation session").toBeDefined();
     return panel!;
   };
 
   return { module, dialogs, dispatcher, openUrl, emit, start };
 }
 
-/** The currently open (non-closed) panel session. */
+/** The currently open (non-closed) creation session. */
 function currentPanel(s: Setup): MockDialogHandle {
-  const panel = s.dialogs.panelHandles().find((h) => !h.closed);
-  expect(panel, "open panel session").toBeDefined();
+  const panel = s.dialogs.modelessHandles().find((h) => !h.closed);
+  expect(panel, "open creation session").toBeDefined();
   return panel!;
 }
 
@@ -255,7 +255,7 @@ describe("CreationModule", () => {
       });
       const panel = await s.start();
 
-      expect(panel.surface).toBe("panel");
+      expect(panel.kind).toBe("modeless");
       const project = field(panel.config, "project");
       expect(project["value"]).toBe(PROJECT_A.path);
       expect(suggestionValues(project)).toEqual([PROJECT_B.path, PROJECT_A.path]);
@@ -773,7 +773,7 @@ describe("CreationModule", () => {
       await flush();
 
       const clone = s.dialogs.modalHandles()[0]!;
-      expect(clone.config.modal).toBe(true);
+      expect(clone.kind).toBe("modal");
       expect(field(clone.config, "do-clone")["disabled"]).toBe(true);
 
       clone.emitChange("url", { url: "not a url" });

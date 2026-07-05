@@ -118,7 +118,7 @@ import type {
   DialogActionEvent,
   DialogConfig,
   DialogSection,
-  DialogSurface,
+  DialogKind,
   ProgressItem,
 } from "../../shared/dialog-types";
 import { uiEventSchema } from "../../shared/ui-event";
@@ -179,11 +179,11 @@ const LABEL_SCROLL_VALUES = ["always", "hover", "off"] as const;
  * the snapshot.
  */
 export interface UiPresenter extends IntentModule {
-  /** Open a dialog (modal card or non-modal panel). Returns a handle. */
-  dialog(config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle;
+  /** Open a dialog (modal, modeless, or panel — see DialogKind). Returns a handle. */
+  dialog(config: DialogConfig, options?: { kind?: DialogKind }): DialogHandle;
   /** Open a sidebar notification. Returns a handle. */
   notification(config: NotificationConfig): NotificationHandle;
-  /** True while a modal-surface dialog is open (the shortcut-module Alt+X guard). */
+  /** True while a blocking modal dialog (kind === "modal") is open (the shortcut-module Alt+X guard). */
   isModalOpen(): boolean;
   /**
    * The current full deletion progress for a workspace path, or undefined when
@@ -365,7 +365,7 @@ function buildCloseConfirmConfig(
     ],
   });
 
-  return { sections, modal: true };
+  return { sections };
 }
 
 export function createPresentationModule(deps: PresentationModuleDeps): UiPresenter {
@@ -702,7 +702,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       sections: [
         { type: "progress", style: "spinner", items: [{ id: "status", label, status: "running" }] },
       ],
-      modal: true,
     };
   }
 
@@ -734,7 +733,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
         ],
       });
     }
-    return { sections, modal: true };
+    return { sections };
   }
 
   /**
@@ -761,7 +760,6 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           items: [{ type: "button", id: "continue", label: "Continue", variant: "primary" }],
         },
       ],
-      modal: true,
     };
   }
 
@@ -838,7 +836,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     if (systemDialog) {
       systemDialog.update(config);
     } else {
-      systemDialog = dialogs.open(config, { surface: "modal" });
+      systemDialog = dialogs.open(config, { kind: "modal" });
       systemDialog.onEvent(handleSystemAction);
     }
   }
@@ -1659,7 +1657,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
 
   return {
     name: "presentation",
-    dialog: (config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle =>
+    dialog: (config: DialogConfig, options?: { kind?: DialogKind }): DialogHandle =>
       dialogs.open(config, options),
     notification: (config: NotificationConfig): NotificationHandle => notifications.open(config),
     isModalOpen: (): boolean => dialogs.isModalOpen(),

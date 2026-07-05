@@ -41,8 +41,13 @@ function createConfig(overrides?: Partial<DialogConfig>): DialogConfig {
   };
 }
 
-function renderPanel(config: DialogConfig, dialogId = "panel-1", modalAbove = false) {
-  return render(PanelView, { props: { dialogId, config, modalAbove } });
+function renderPanel(
+  config: DialogConfig,
+  dialogId = "panel-1",
+  modalAbove = false,
+  kind: "modeless" | "panel" = "modeless"
+) {
+  return render(PanelView, { props: { dialogId, config, kind, modalAbove } });
 }
 
 describe("PanelView component (panel surface)", () => {

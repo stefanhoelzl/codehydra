@@ -49,10 +49,10 @@ import App from "../App.svelte";
 import { makeUiState, makeUiProjectRow, makeUiWorkspaceRow } from "$lib/test-utils";
 import type { UiDialog } from "@shared/ui-state";
 
-/** The backend creation module's always-alive panel session, as a snapshot entry. */
+/** The backend creation module's always-alive session, as a snapshot entry. */
 const PANEL_DIALOG: UiDialog = {
   id: "dlg-creation",
-  surface: "panel",
+  kind: "modeless",
   config: {
     layout: "form",
     sections: [{ type: "text", content: "New workspace", style: "heading" }],

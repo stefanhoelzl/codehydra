@@ -13,7 +13,7 @@ import type { DialogManager, DialogHandle } from "./sessions";
 import type { UiPresenter } from "./presentation-module";
 import type {
   DialogConfig,
-  DialogSurface,
+  DialogKind,
   DialogUserEvent,
   DialogActionEvent,
   DialogFieldChangeEvent,
@@ -21,7 +21,7 @@ import type {
 } from "../../shared/dialog-types";
 
 /**
- * Test-side view of an open dialog: latest/full config history, surface,
+ * Test-side view of an open dialog: latest/full config history, kind,
  * closed flag, the handle given to the module under test, and emit helpers
  * that fire the handle's listeners.
  */
@@ -31,7 +31,7 @@ export interface MockDialogHandle {
   config: DialogConfig;
   /** Every config this handle has seen (open + updates), in order. */
   readonly configs: DialogConfig[];
-  readonly surface: DialogSurface;
+  readonly kind: DialogKind;
   closed: boolean;
   /** The DialogHandle handed to the module under test (methods are spies). */
   readonly handle: DialogHandle;
@@ -54,9 +54,11 @@ export interface MockDialogManager {
   readonly handles: MockDialogHandle[];
   /** The most recently opened dialog, or null. */
   readonly lastHandle: MockDialogHandle | null;
-  /** Opened dialogs hosted in the panel surface. */
+  /** Opened dialogs of kind "panel" (deletion progress/failed). */
   panelHandles(): MockDialogHandle[];
-  /** Opened dialogs hosted in the modal surface. */
+  /** Opened dialogs of kind "modeless" (creation ground state). */
+  modelessHandles(): MockDialogHandle[];
+  /** Opened dialogs of kind "modal" (blocking). */
   modalHandles(): MockDialogHandle[];
 }
 
@@ -75,10 +77,10 @@ export function createMockDialogManager(): MockDialogManager {
     for (const listener of modalChangeListeners) listener(open);
   };
 
-  const open = vi.fn((config: DialogConfig, options?: { surface?: DialogSurface }) => {
+  const open = vi.fn((config: DialogConfig, options?: { kind?: DialogKind }) => {
     const id = `dlg-test-${nextId++}`;
-    const isModal = (options?.surface ?? "modal") === "modal";
-    const mock = createMockDialogHandle(id, config, options?.surface);
+    const isModal = (options?.kind ?? "modal") === "modal";
+    const mock = createMockDialogHandle(id, config, options?.kind);
     handles.push(mock);
     if (isModal) {
       const wasOpen = modalIds.size > 0;
@@ -115,8 +117,9 @@ export function createMockDialogManager(): MockDialogManager {
     get lastHandle() {
       return handles[handles.length - 1] ?? null;
     },
-    panelHandles: () => handles.filter((h) => h.surface === "panel"),
-    modalHandles: () => handles.filter((h) => h.surface === "modal"),
+    panelHandles: () => handles.filter((h) => h.kind === "panel"),
+    modelessHandles: () => handles.filter((h) => h.kind === "modeless"),
+    modalHandles: () => handles.filter((h) => h.kind === "modal"),
   };
 }
 
@@ -127,7 +130,7 @@ export function createMockDialogManager(): MockDialogManager {
 export function createMockDialogHandle(
   id: string,
   config: DialogConfig = { sections: [] },
-  surface: DialogSurface = "modal"
+  kind: DialogKind = "modal"
 ): MockDialogHandle {
   const actionListeners = new Set<(event: DialogActionEvent) => void>();
   const changeListeners = new Set<(event: DialogFieldChangeEvent) => void>();
@@ -199,7 +202,7 @@ export function createMockDialogHandle(
     id,
     config,
     configs: [config],
-    surface,
+    kind,
     closed: false,
     handle,
     emitAction(actionId, data = {}) {

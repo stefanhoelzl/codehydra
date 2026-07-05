@@ -1,35 +1,42 @@
 <!--
   PanelView.svelte
 
-  Panel surface for the declarative form framework: a non-modal, docked panel
-  shown in place of the main content area (the look of NewWorkspaceView), with
-  the sections + actions delegated to <Form>. Rendered by MainView for the
-  active panel-surface session (see dialog-framework's panelDialog).
+  Renderer for the two non-blocking dialog kinds — "modeless" (creation ground
+  state) and "panel" (deletion progress/failed) — with the sections + actions
+  delegated to <Form>. Rendered by MainView; DialogHost handles blocking modals.
 
   Shell behaviour (renderer-owned; the backend owns the form session):
-  - A centered floating card over a translucent scrim, painted above the
-    expanded sidebar but pointer-transparent so the sidebar stays clickable
-    (non-modal ground state); modal dialogs (z 1000) stack above.
-  - Keyboard (Escape -> dismiss, Cmd/Ctrl+Enter -> primary, Tab trap) is owned
-    by Form — shared with the modal surface.
-  - When the last modal stacked above the panel closes, the panel re-places
-    focus on the form's autofocus control (focus would otherwise be lost to
-    <body>, leaving the keyboard flow dead).
+  - "modeless" (creation) is a centered floating card with NO backdrop — the
+    layer is fully transparent and pointer-transparent, sitting ABOVE the
+    sidebar (a popup on top of the UI), so the sidebar and content behind stay
+    crisp and clickable. (No blur/dim: the sidebar is interactive, so dimming it
+    would misleadingly read as disabled.)
+  - "panel" (deletion) REPLACES the workspace view: an OPAQUE layer that masks
+    the torn-down / reconnecting code-server frame behind it, sitting BELOW the
+    sidebar so the sidebar (gutter or hover-expanded) renders on top and stays
+    navigable. It is not dimming a live view — the view is gone; the opacity
+    just keeps the empty/reconnecting frame from flickering through.
+  - Blocking modals (z 1000) stack above both.
+  - Keyboard (Escape, Cmd/Ctrl+Enter -> primary, Tab trap) is owned by Form.
+  - When the last blocking modal stacked above closes, the panel re-places focus
+    on the form's autofocus control (focus would otherwise be lost to <body>).
   - Form is keyed by dialogId: a backend close + reopen remounts it with fresh
     field values (the reset gesture).
 -->
 <script lang="ts">
-  import type { DialogConfig } from "@shared/dialog-types";
+  import type { DialogConfig, DialogKind } from "@shared/dialog-types";
   import Form from "./form/Form.svelte";
 
   interface Props {
     dialogId: string;
     config: DialogConfig;
-    /** Whether a modal dialog is open above the panel (drives refocus on close). */
+    /** "modeless" (creation, above sidebar) or "panel" (deletion, below sidebar). */
+    kind: Extract<DialogKind, "modeless" | "panel">;
+    /** Whether a blocking modal is open above (drives refocus on close). */
     modalAbove: boolean;
   }
 
-  const { dialogId, config, modalAbove }: Props = $props();
+  const { dialogId, config, kind, modalAbove }: Props = $props();
 
   let formRef: Form | undefined = $state();
 
@@ -48,30 +55,47 @@
   });
 </script>
 
-<section class="panel-view" aria-label={heading}>
+<section
+  class="panel-view"
+  class:above={kind === "modeless"}
+  class:below={kind === "panel"}
+  aria-label={heading}
+>
   <div class="panel-card">
     {#key dialogId}
-      <Form bind:this={formRef} {dialogId} {config} surface="panel" />
+      <Form bind:this={formRef} {dialogId} {config} {kind} />
     {/key}
   </div>
 </section>
 
 <style>
-  /* Floating overlay centered over the whole window, above the expanded sidebar
-     (--ch-z-sidebar-expanded: 950), below modals (1000). A translucent scrim
-     dims the sidebar/content behind it, but the layer is pointer-transparent so
-     the sidebar stays clickable (this is the non-modal ground state); only the
-     card captures pointer events. */
   .panel-view {
     position: absolute;
     inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--ch-overlay-bg);
-    backdrop-filter: var(--ch-overlay-blur, blur(8px));
+  }
+
+  /* "modeless" (creation ground state): a popup on top, above the expanded
+     sidebar (--ch-z-sidebar-expanded: 950), with NO backdrop and
+     pointer-transparent so the sidebar/content behind stay crisp and clickable;
+     only the card captures pointer events. */
+  .panel-view.above {
     z-index: 960;
     pointer-events: none;
+  }
+
+  /* "panel" (deletion): replaces the workspace view. An OPAQUE layer painted
+     above the frames (which carry no z-index) but BELOW the sidebar — z-index 0
+     sits under the sidebar's collapsed gutter (--ch-z-sidebar-minimized: 1) and
+     its expanded drawer (--ch-z-sidebar-expanded: 950), so the sidebar renders
+     on top and stays navigable. Opaque + pointer-capturing so the torn-down /
+     reconnecting frame behind neither flickers through nor takes clicks. */
+  .panel-view.below {
+    z-index: 0;
+    background: var(--ch-background);
+    pointer-events: auto;
   }
 
   .panel-card {

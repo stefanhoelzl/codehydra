@@ -54,8 +54,8 @@ function pushState(state: UiState): Promise<void> {
   return rerenderView({ ui: current });
 }
 
-/** Simulate the backend creation module's always-alive panel session by adding
- *  a panel-surface dialog to the current snapshot. */
+/** Simulate the backend creation module's always-alive session by adding
+ *  a "modeless" dialog to the current snapshot. */
 function openCreationPanelSession(dialogId = "dlg-creation-1"): Promise<void> {
   current = {
     ...current,
@@ -63,7 +63,7 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): Promise<void> {
       ...current.dialogs,
       {
         id: dialogId,
-        surface: "panel",
+        kind: "modeless",
         config: {
           layout: "form",
           sections: [{ type: "text", content: "New workspace", style: "heading" }],

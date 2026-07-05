@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
-import type { DialogConfig, DialogSurface } from "@shared/dialog-types";
+import type { DialogConfig, DialogKind } from "@shared/dialog-types";
 
 // Mock setup - must be hoisted
 const { mockSendDialogEvent } = vi.hoisted(() => ({
@@ -26,15 +26,12 @@ vi.mock("$lib/api", () => ({
 import Form from "./Form.svelte";
 
 /** Helper to render Form with a config. */
-function renderForm(
-  config: DialogConfig,
-  options?: { dialogId?: string; surface?: DialogSurface }
-) {
+function renderForm(config: DialogConfig, options?: { dialogId?: string; kind?: DialogKind }) {
   return render(Form, {
     props: {
       dialogId: options?.dialogId ?? "test-dialog",
       config,
-      ...(options?.surface ? { surface: options.surface } : {}),
+      ...(options?.kind ? { kind: options.kind } : {}),
     },
   });
 }
@@ -1113,17 +1110,20 @@ describe("Form component", () => {
       expect(mockSendDialogEvent).not.toHaveBeenCalled();
     });
 
-    it("Escape emits a dismiss event on the panel surface with no cancel-role button", async () => {
+    it("Escape emits a dismiss event on a modeless dialog with no cancel-role button", async () => {
       renderForm(
         {
           sections: [{ type: "input", id: "name", label: "Name" }],
         },
-        { dialogId: "kb-panel", surface: "panel" }
+        { dialogId: "kb-modeless", kind: "modeless" }
       );
 
       await fireEvent.keyDown(document.querySelector(".form")!, { key: "Escape" });
 
-      expect(mockSendDialogEvent).toHaveBeenCalledWith({ kind: "dismiss", dialogId: "kb-panel" });
+      expect(mockSendDialogEvent).toHaveBeenCalledWith({
+        kind: "dismiss",
+        dialogId: "kb-modeless",
+      });
     });
 
     it("an open dropdown consumes the first Escape; the second clicks cancel-role", async () => {

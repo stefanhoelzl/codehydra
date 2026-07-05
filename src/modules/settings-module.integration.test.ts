@@ -160,8 +160,8 @@ describe("SettingsModule — population", () => {
     openSettings();
 
     expect(dialogs.handles).toHaveLength(1);
+    expect(dialogs.lastHandle!.kind).toBe("modal");
     const cfg = dialogs.lastHandle!.config;
-    expect(cfg.modal).toBe(true);
     expect(cfg.layout).toBe("form");
 
     expect(rowByLabel(cfg, "agent")).toBeDefined();

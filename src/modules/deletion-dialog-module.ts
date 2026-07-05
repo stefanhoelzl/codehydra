@@ -195,7 +195,7 @@ function buildRemoveConfirmConfig(state: RemoveConfirmState): DialogConfig {
     ],
   });
 
-  return { sections, modal: true };
+  return { sections };
 }
 
 function truncate(str: string, max: number): string {
@@ -270,7 +270,7 @@ export function createDeletionDialogModule(deps: DeletionDialogModuleDeps): Inte
 
   /** Open the deletion dialog for a workspace from its current progress. */
   function showDialog(path: string, progress: DeletionProgress): void {
-    const handle = deps.ui.dialog(buildConfig(progress));
+    const handle = deps.ui.dialog(buildConfig(progress), { kind: "panel" });
     activeDialog = { path, handle };
     wireEvents(handle, path);
   }

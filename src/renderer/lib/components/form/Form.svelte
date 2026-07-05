@@ -30,7 +30,7 @@
   import type {
     DialogConfig,
     DialogSection,
-    DialogSurface,
+    DialogKind,
     DialogUserEvent,
   } from "@shared/dialog-types";
   import { onMount, onDestroy, untrack } from "svelte";
@@ -50,13 +50,14 @@
     dialogId: string;
     config: DialogConfig;
     /**
-     * Hosting surface. Governs Escape when no enabled cancel-role button
-     * exists: a "modal" swallows it (no-op); a "panel" emits a dismiss event.
+     * Presentation kind. Governs Escape when no enabled cancel-role button
+     * exists: "modeless" (creation) emits a dismiss event (reset); "modal" and
+     * "panel" swallow it (no-op).
      */
-    surface?: DialogSurface;
+    kind?: DialogKind;
   }
 
-  const { dialogId, config, surface = "modal" }: Props = $props();
+  const { dialogId, config, kind = "modal" }: Props = $props();
 
   /**
    * All field sections of the config in declaration order — top-level
@@ -107,7 +108,7 @@
     return -1;
   });
 
-  const splitFooter = $derived(surface === "modal" && layout === "form" && footerIndex >= 0);
+  const splitFooter = $derived(kind === "modal" && layout === "form" && footerIndex >= 0);
 
   /**
    * Stable keys for the sections each-block, so a config push that inserts or
@@ -556,8 +557,8 @@
    * the app root and replays them target-to-root, so only a delegated handler
    * keeps that ordering with the field components' handlers.
    * - Escape clicks the first enabled cancel-role button (identical to a real
-   *   click). With none, a modal swallows Escape (no-op); a panel emits a
-   *   "dismiss" event the session owner interprets (typically reset).
+   *   click). With none, "modeless" (creation) emits a "dismiss" event the
+   *   session owner interprets as reset; "modal" and "panel" swallow it (no-op).
    * - Cmd/Ctrl+Enter activates the primary button from anywhere in the form.
    * - Tab/Shift+Tab is trapped at the form boundary so focus never leaks out.
    */
@@ -582,11 +583,11 @@
       const cancel = findCancelButton(config);
       if (cancel) {
         handleButton(cancel);
-      } else if (surface === "panel") {
+      } else if (kind === "modeless") {
         const dismiss: DialogUserEvent = { kind: "dismiss", dialogId };
         sendDialogEvent(dismiss);
       }
-      // Modal with no enabled cancel-role button: Escape is a no-op.
+      // "modal"/"panel" with no enabled cancel-role button: Escape is a no-op.
       return;
     }
     if (formRef) {

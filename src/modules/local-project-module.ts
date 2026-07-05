@@ -346,7 +346,6 @@ export function createLocalProjectModule(deps: LocalProjectModuleDeps): IntentMo
                   ],
                 },
               ],
-              modal: true,
             });
 
             // Escape (dismiss) cancels, same as the Cancel button.

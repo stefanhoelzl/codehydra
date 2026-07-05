@@ -98,7 +98,7 @@ function openCreationPanelSession(dialogId = "dlg-creation-1"): void {
       ...current.dialogs,
       {
         id: dialogId,
-        surface: "panel",
+        kind: "modeless",
         config: {
           layout: "form",
           sections: [{ type: "text", content: "New workspace", style: "heading" }],
@@ -145,9 +145,8 @@ describe("App component", () => {
           dialogs: [
             {
               id: "dlg-startup-1",
-              surface: "modal",
+              kind: "modal",
               config: {
-                modal: true,
                 sections: [
                   {
                     type: "progress",
@@ -180,9 +179,8 @@ describe("App component", () => {
           dialogs: [
             {
               id: "dlg-setup-1",
-              surface: "modal",
+              kind: "modal",
               config: {
-                modal: true,
                 sections: [
                   { type: "text", content: "Setting up CodeHydra", style: "heading" },
                   {
@@ -225,9 +223,8 @@ describe("App component", () => {
           dialogs: [
             {
               id: "dlg-agent-1",
-              surface: "modal",
+              kind: "modal",
               config: {
-                modal: true,
                 sections: [
                   { type: "text", content: "Choose Agent", style: "heading" },
                   {
@@ -272,9 +269,8 @@ describe("App component", () => {
 
       const spinner = {
         id: "dlg-sys",
-        surface: "modal" as const,
+        kind: "modal" as const,
         config: {
-          modal: true,
           sections: [
             {
               type: "progress" as const,
@@ -293,9 +289,8 @@ describe("App component", () => {
       // Same dialog id, config swapped to the agent radio (autofocus opts in).
       const agentDialog = {
         id: "dlg-sys",
-        surface: "modal" as const,
+        kind: "modal" as const,
         config: {
-          modal: true,
           sections: [
             { type: "text" as const, content: "Choose Agent", style: "heading" as const },
             {
@@ -415,9 +410,8 @@ describe("App component", () => {
       // workspace's frame stays in `frames`, so MainView must survive.
       const loadingDialog = {
         id: "dlg-loading-1",
-        surface: "modal" as const,
+        kind: "modal" as const,
         config: {
-          modal: true,
           sections: [
             {
               type: "progress" as const,

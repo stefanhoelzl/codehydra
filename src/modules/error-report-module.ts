@@ -126,7 +126,6 @@ function buildDialogConfig(): DialogConfig {
         ],
       },
     ],
-    modal: true,
   };
 }
 
