@@ -48,6 +48,18 @@ export interface SettingsOption {
 export type SettingsControl =
   | { readonly kind: "boolean" }
   | { readonly kind: "string" }
+  | {
+      /**
+       * A filesystem path with a native "Browse…" picker. Renders as a text
+       * field plus a trailing picker action in the settings dialog. `extensions`
+       * scopes the picker's file filter (an "All Files" fallback is always
+       * offered); `template` is the default content seeded into a newly-named
+       * file via the picker's save flow.
+       */
+      readonly kind: "path";
+      readonly extensions?: readonly string[];
+      readonly template?: string;
+    }
   | { readonly kind: "number"; readonly min?: number; readonly max?: number }
   | {
       readonly kind: "enum";
@@ -342,10 +354,17 @@ export function storeString(options?: { nullable: true }): PersistedTypeBuilder<
 
 /**
  * Builder for nullable path config values.
- * Validates that the string has no null bytes and is a valid path.
+ *
+ * Validates that the string has no null bytes and is a valid path. Renders in
+ * the settings dialog as a `path` control (text field + native "Browse…"
+ * picker). `extensions` scopes the picker's file filter; `template` is the
+ * default content seeded into a newly-named file via the picker's save flow.
  */
-export function storePath(options: { nullable: true }): PersistedTypeBuilder<string | null> {
-  void options;
+export function storePath(options: {
+  nullable: true;
+  extensions?: readonly string[];
+  template?: string;
+}): PersistedTypeBuilder<string | null> {
   return {
     parse: (s: string) => {
       if (s === "") return null;
@@ -369,7 +388,11 @@ export function storePath(options: { nullable: true }): PersistedTypeBuilder<str
       }
     },
     validValues: "<path>",
-    settingsControl: { kind: "string" },
+    settingsControl: {
+      kind: "path",
+      ...(options.extensions !== undefined && { extensions: options.extensions }),
+      ...(options.template !== undefined && { template: options.template }),
+    },
   };
 }
 

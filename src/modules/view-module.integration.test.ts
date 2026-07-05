@@ -600,7 +600,7 @@ describe("ViewModule Integration", () => {
   describe("open-project/select-folder", () => {
     it("returns selected folder path from dialog", async () => {
       const mockDialogBoundary = {
-        showOpenDialog: vi.fn().mockResolvedValue({
+        showDialog: vi.fn().mockResolvedValue({
           canceled: false,
           filePaths: [{ toString: () => "/selected/project" }],
         }),
@@ -617,14 +617,14 @@ describe("ViewModule Integration", () => {
       })) as SelectFolderHookResult;
 
       expect(result.folderPath).toBe("/selected/project");
-      expect(mockDialogBoundary.showOpenDialog).toHaveBeenCalledWith({
+      expect(mockDialogBoundary.showDialog).toHaveBeenCalledWith({
         properties: ["openDirectory"],
       });
     });
 
     it("returns null when dialog canceled", async () => {
       const mockDialogBoundary = {
-        showOpenDialog: vi.fn().mockResolvedValue({
+        showDialog: vi.fn().mockResolvedValue({
           canceled: true,
           filePaths: [],
         }),

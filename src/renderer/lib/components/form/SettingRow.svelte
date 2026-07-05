@@ -19,9 +19,11 @@
     renderItem: Snippet<[DialogSection | ButtonItem]>;
     /** Reset this setting to its default. Rendered only when section.resetId is set. */
     onReset: () => void;
+    /** Trigger the row's inline action (e.g. a file picker). Rendered only when section.action is set. */
+    onRowAction: () => void;
   }
 
-  const { section, renderItem, onReset }: Props = $props();
+  const { section, renderItem, onReset, onRowAction }: Props = $props();
 </script>
 
 <div class="setting-row" style={section.indent ? `padding-left: ${section.indent}rem` : undefined}>
@@ -37,6 +39,14 @@
         {@render renderItem(field)}
       {/each}
     </div>
+    {#if section.action}
+      <button type="button" class="setting-action" onclick={onRowAction}>
+        {#if section.action.icon}
+          <Icon name={section.action.icon} size={14} />
+        {/if}
+        {section.action.label}
+      </button>
+    {/if}
     <button
       type="button"
       class="setting-reset"
@@ -144,6 +154,25 @@
   .setting-reset.hidden {
     visibility: hidden;
     pointer-events: none;
+  }
+
+  /* Inline row action (e.g. "Browse…" file picker), pinned right, before reset. */
+  .setting-action {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+    color: var(--ch-foreground);
+    background: var(--ch-list-hover-bg, rgba(255, 255, 255, 0.08));
+    border: 1px solid var(--ch-border);
+    border-radius: var(--ch-radius-sm, 6px);
+    cursor: pointer;
+  }
+
+  .setting-action:hover {
+    background: var(--ch-list-active-bg, rgba(255, 255, 255, 0.12));
   }
 
   .setting-note {

@@ -275,6 +275,10 @@ export type SettingRowField = CheckboxSection | InputSection | DropdownSection;
  * - resetId: when set, a reset-to-default icon button appears at the right of
  *   the row and emits a DialogActionEvent with this id. Omit to hide it (value
  *   already at default / not user-set).
+ * - action: an optional inline action button at the right of the row (before the
+ *   reset icon), e.g. a "Browse…" file picker for a path setting. Clicking it
+ *   emits a DialogActionEvent with `action.id`. `icon` is a codicon name shown
+ *   before the label.
  */
 interface SettingRowSection {
   readonly type: "setting-row";
@@ -285,6 +289,11 @@ interface SettingRowSection {
   readonly note?: string;
   readonly indent?: number;
   readonly resetId?: string;
+  readonly action?: {
+    readonly id: string;
+    readonly label: string;
+    readonly icon?: string;
+  };
 }
 
 export type DialogSection =

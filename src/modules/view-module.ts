@@ -71,7 +71,7 @@ export interface ViewModuleDeps {
   readonly viewLayer: ViewBoundary | null;
   readonly windowLayer: WindowBoundary | null;
   readonly sessionLayer: SessionBoundary | null;
-  readonly dialogLayer?: Pick<DialogBoundary, "showOpenDialog"> | null;
+  readonly dialogLayer?: Pick<DialogBoundary, "showDialog"> | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
   readonly windowManager?: {
     create(): void;
@@ -253,7 +253,7 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
             if (!deps.dialogLayer) {
               return { result: { folderPath: null } };
             }
-            const result = await deps.dialogLayer.showOpenDialog({
+            const result = await deps.dialogLayer.showDialog({
               properties: ["openDirectory"] as const,
             });
             if (result.canceled || result.filePaths.length === 0) {

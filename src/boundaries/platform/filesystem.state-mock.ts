@@ -418,13 +418,22 @@ export function createFileSystemMock(options?: MockFileSystemOptions): MockFileS
       return typeof fileContent === "string" ? Buffer.from(fileContent, "utf-8") : fileContent;
     },
 
-    async writeFile(pathLike: PathLike, content: string): Promise<void> {
+    async writeFile(
+      pathLike: PathLike,
+      content: string,
+      options?: { exclusive?: boolean }
+    ): Promise<void> {
       const path = normalizePath(pathLike);
       const existing = state.entries.get(path);
 
       // Check if path is a directory
       if (existing?.type === "directory") {
         throw new FileSystemError("EISDIR", path, `Is a directory: ${path}`);
+      }
+
+      // Exclusive (wx) write: fail if the file already exists.
+      if (options?.exclusive === true && existing !== undefined) {
+        throw new FileSystemError("EEXIST", path, `File already exists: ${path}`);
       }
 
       // Check if parent exists

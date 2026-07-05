@@ -197,6 +197,32 @@ describe("DefaultFileSystemBoundary", () => {
         expect((error as FileSystemError).path).toBe(dirPath);
       }
     });
+
+    it("creates a new file when exclusive", async () => {
+      const filePath = join(tempDir.path, "new.txt");
+
+      await fs.writeFile(filePath, "seed", { exclusive: true });
+
+      expect(await fs.readFile(filePath)).toBe("seed");
+    });
+
+    it("throws EEXIST when exclusive and the file already exists", async () => {
+      const filePath = join(tempDir.path, "existing.txt");
+      await nodeWriteFile(filePath, "original", "utf-8");
+
+      await expect(fs.writeFile(filePath, "seed", { exclusive: true })).rejects.toThrow(
+        FileSystemError
+      );
+
+      try {
+        await fs.writeFile(filePath, "seed", { exclusive: true });
+      } catch (error) {
+        expect((error as FileSystemError).fsCode).toBe("EEXIST");
+        expect((error as FileSystemError).path).toBe(filePath);
+      }
+      // The original content must be untouched.
+      expect(await fs.readFile(filePath)).toBe("original");
+    });
   });
 
   describe("mkdir", () => {
