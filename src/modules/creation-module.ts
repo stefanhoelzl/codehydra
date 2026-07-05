@@ -1,11 +1,12 @@
 /**
  * CreationModule - Backend owner of the "New workspace" creation form.
  *
- * Hosts a declarative Form on the persistent panel surface (the renderer's
- * PanelView). The session is always alive: it opens once on app:started and
+ * Hosts a declarative Form on a "modeless" dialog (a non-blocking popup on top,
+ * above the sidebar — the renderer's PanelView, rendered by MainView in the
+ * ground state). The session is always alive: it opens once on app:started and
  * is reset (close + reopen with fresh config = new dialogId) on every dismiss
- * event. The renderer owns visibility (the new-workspace-view store's isOpen
- * flag) and sends a dismiss both for Escape and when the panel is shown, so a
+ * event. The renderer owns visibility (shown while main.kind === "creation")
+ * and sends a dismiss both for Escape and when the panel is shown, so a
  * dismiss simply means "give me a fresh form".
  *
  * Responsibilities:
@@ -601,7 +602,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
 
     const config = buildConfig();
     lastConfigJson = JSON.stringify(config);
-    const newHandle = ui.dialog(config, { surface: "panel" });
+    const newHandle = ui.dialog(config, { kind: "modeless" });
     handle = newHandle;
     wireSession(newHandle);
 
@@ -910,7 +911,7 @@ export function createCreationModule(deps: CreationModuleDeps): IntentModule {
         };
     sections.push(footer);
 
-    return { sections, layout: "form", modal: true };
+    return { sections, layout: "form" };
   }
 
   function updateCloneDialog(): void {

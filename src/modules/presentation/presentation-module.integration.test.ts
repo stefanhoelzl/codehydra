@@ -148,7 +148,7 @@ const LOADING_SPINNER = {
   items: [{ id: "status", label: "Loading workspace...", status: "running" }],
 };
 function systemDialog(sections: unknown[], id = "dlg-1"): unknown {
-  return { id, surface: "modal", config: { sections, modal: true } };
+  return { id, kind: "modal", config: { sections } };
 }
 /** The single open system dialog in the latest snapshot (asserts exactly one). */
 function currentSystemDialog(deps: Deps): { id: string; config: { sections: unknown[] } } {
@@ -1519,7 +1519,7 @@ describe("PresentationModule - close confirm", () => {
 
   // The presenter owns the dialog now; read it from the snapshot and drive user
   // interactions via dialog ui:events (routed to the internal session by id).
-  type SnapshotDialog = { id: string; config: { sections: readonly unknown[]; modal?: boolean } };
+  type SnapshotDialog = { id: string; kind: string; config: { sections: readonly unknown[] } };
   function currentDialog(deps: Deps): SnapshotDialog {
     const dialogs = lastSnapshot(deps).dialogs;
     expect(dialogs.length).toBeGreaterThan(0);
@@ -1546,7 +1546,7 @@ describe("PresentationModule - close confirm", () => {
     await flush();
     const dialog = currentDialog(deps);
 
-    expect(dialog.config.modal).toBe(true);
+    expect(dialog.kind).toBe("modal");
     const texts = (dialog.config.sections as Array<{ type: string; content?: string }>)
       .filter((s) => s.type === "text")
       .map((s) => s.content);
@@ -1701,7 +1701,7 @@ describe("PresentationModule - UI mode", () => {
     expect(mode(deps)).toBe("hover");
 
     // Open a modal dialog → dialogModalOpen flips the mode to "dialog".
-    module.dialog({ sections: [], modal: true });
+    module.dialog({ sections: [] }, { kind: "modal" });
     await flush();
     expect(mode(deps)).toBe("dialog");
   });
@@ -1711,7 +1711,7 @@ describe("PresentationModule - UI mode", () => {
     const module = await startModule(deps);
     await emit(module, EVENT_PROJECT_OPENED, { project: makeProject([makeWorkspace("main")]) });
 
-    module.dialog({ sections: [], modal: true });
+    module.dialog({ sections: [] }, { kind: "modal" });
     await emit(module, EVENT_SHORTCUT_ACTIVE_CHANGED, { active: true });
     await flush();
     expect(mode(deps)).toBe("shortcut");
@@ -1722,7 +1722,7 @@ describe("PresentationModule - UI mode", () => {
     expect(mode(deps)).toBe("dialog");
   });
 
-  it("a panel-surface dialog does NOT count as a modal (no dialog mode)", async () => {
+  it("a panel-kind dialog does NOT count as a modal (no dialog mode)", async () => {
     const deps = createDeps();
     const module = await startModule(deps);
     const workspace = makeWorkspace("main", { url: "http://127.0.0.1:1/main" });
@@ -1730,7 +1730,7 @@ describe("PresentationModule - UI mode", () => {
     await emit(module, EVENT_WORKSPACE_SWITCHED, switchedPayload(workspace));
     await flush();
 
-    module.dialog({ sections: [] }, { surface: "panel" });
+    module.dialog({ sections: [] }, { kind: "panel" });
     await flush();
     expect(mode(deps)).toBe("workspace");
   });

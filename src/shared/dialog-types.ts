@@ -409,8 +409,6 @@ interface ButtonItem extends DialogButton {
  */
 export interface DialogConfig {
   readonly sections: readonly DialogSection[];
-  /** When true, the dialog is on top of everything and blocks keyboard shortcuts (Alt+X). Default: false. */
-  readonly modal?: boolean;
   /**
    * Section layout (renderer hint; the modal shell is unaffected).
    * - "centered" (default): centered stack, no field labels — today's behavior.
@@ -423,16 +421,21 @@ export interface DialogConfig {
 // ---- IPC Protocol ----
 
 /**
- * Surface hosting a form session.
- * - "modal" (default): centered card on a backdrop (DialogView), on top of the UI.
- * - "panel": non-modal docked panel shown in place of the main content area
- *   (PanelView); modal dialogs stack above it.
+ * How a form session is presented. One property, three mutually exclusive kinds
+ * (replaces the old surface + config.modal pair):
+ * - "modal" (default): a blocking popup on top of everything — centered card on
+ *   a dimmed/blurred backdrop that captures clicks and blocks Alt+X (DialogView,
+ *   via DialogHost). Use for anything that must be answered before proceeding.
+ * - "modeless": a non-blocking popup on top, above the sidebar — no backdrop,
+ *   clicks pass through so the sidebar stays live (PanelView). The creation
+ *   ground state: you leave it by clicking a workspace in the sidebar.
+ * - "panel": in place of the workspace view, below the sidebar — no backdrop,
+ *   the sidebar renders on top (PanelView). The deletion progress/failed view.
  *
  * Set once on the open command and immutable for the session's lifetime —
- * update commands carry only the config and cannot move a session between
- * surfaces.
+ * update commands carry only the config and cannot move a session between kinds.
  */
-export type DialogSurface = "modal" | "panel";
+export type DialogKind = "modal" | "modeless" | "panel";
 
 /**
  * Commands sent from main -> renderer to manage dialog lifecycle.
@@ -442,8 +445,8 @@ export type DialogCommand =
       readonly action: "open";
       readonly dialogId: string;
       readonly config: DialogConfig;
-      /** Hosting surface; absent = "modal". See DialogSurface. */
-      readonly surface?: DialogSurface;
+      /** Presentation kind; absent = "modal". See DialogKind. */
+      readonly kind?: DialogKind;
     }
   | { readonly action: "update"; readonly dialogId: string; readonly config: DialogConfig }
   | { readonly action: "close"; readonly dialogId: string };

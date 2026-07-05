@@ -43,21 +43,25 @@ describe("DialogHost surface routing", () => {
   });
 
   it("renders a DialogView for a modal entry", () => {
-    renderDialogs([{ id: "dlg-1", surface: "modal", config: createConfig("Modal") }]);
+    renderDialogs([{ id: "dlg-1", kind: "modal", config: createConfig("Modal") }]);
 
     expect(screen.getByRole("dialog", { name: "Modal" })).toBeInTheDocument();
   });
 
-  it("does not render panel-surface entries", () => {
-    renderDialogs([{ id: "dlg-1", surface: "panel", config: createConfig("Panel form") }]);
+  it("does not render modeless or panel entries", () => {
+    renderDialogs([
+      { id: "dlg-1", kind: "modeless", config: createConfig("Creation form") },
+      { id: "dlg-2", kind: "panel", config: createConfig("Deletion") },
+    ]);
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("renders only the modal entry when both surfaces are active", () => {
+  it("renders only the modal entry when several kinds are active", () => {
     renderDialogs([
-      { id: "dlg-1", surface: "modal", config: createConfig("Modal") },
-      { id: "dlg-2", surface: "panel", config: createConfig("Panel form") },
+      { id: "dlg-1", kind: "modal", config: createConfig("Modal") },
+      { id: "dlg-2", kind: "panel", config: createConfig("Panel form") },
+      { id: "dlg-3", kind: "modeless", config: createConfig("Creation form") },
     ]);
 
     expect(screen.getAllByRole("dialog")).toHaveLength(1);

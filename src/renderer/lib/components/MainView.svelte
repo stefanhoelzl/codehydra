@@ -59,13 +59,19 @@
   /** The single UI mode (main-owned). */
   const mode = $derived(ui.mode);
   /**
-   * The active panel-surface dialog session (the creation form is the only one
-   * today). View-only pick over the snapshot's dialogs; if several are open the
-   * most recently opened wins (snapshot order).
+   * The always-alive creation form session ("modeless" kind), rendered above
+   * the sidebar while main is in the creation ground state. View-only pick over
+   * the snapshot's dialogs.
    */
-  const panelDialog = $derived(ui.dialogs.filter((d) => d.surface === "panel").at(-1));
-  /** Whether any modal dialog is open above the panel (drives panel refocus). */
-  const modalAbove = $derived(ui.dialogs.some((d) => d.surface === "modal"));
+  const creationDialog = $derived(ui.dialogs.find((d) => d.kind === "modeless"));
+  /**
+   * The deletion progress/failed session ("panel" kind), rendered below the
+   * sidebar in place of the (already torn-down) workspace view. The deletion
+   * module opens it only while its workspace is the active one.
+   */
+  const deletionDialog = $derived(ui.dialogs.find((d) => d.kind === "panel"));
+  /** Whether a blocking modal is open above the panels (drives panel refocus). */
+  const modalAbove = $derived(ui.dialogs.some((d) => d.kind === "modal"));
   /** The creation panel is the ground state: shown whenever main says so. */
   const creationShown = $derived(main?.kind === "creation");
 
@@ -114,7 +120,7 @@
     if (shown && !prevShownForDismiss) showDismissPending = true;
     if (!shown) showDismissPending = false;
     prevShownForDismiss = shown;
-    const session = panelDialog;
+    const session = creationDialog;
     if (showDismissPending && session) {
       showDismissPending = false;
       api.sendDialogEvent({ kind: "dismiss", dialogId: session.id });
@@ -204,13 +210,30 @@
     {idleWorkspaceCount}
   />
 
-  <!-- Creation panel: the backend creation module's always-alive form
-       session, shown while the snapshot's main view is "creation" (the
-       ground state when no workspace is active). The creation form is the
-       only panel-surface session today; revisit the gating if another panel
-       session appears. -->
-  {#if creationShown && panelDialog}
-    <PanelView dialogId={panelDialog.id} config={panelDialog.config} {modalAbove} />
+  <!-- Creation panel ("modeless"): the backend creation module's always-alive
+       form session, a popup ABOVE the sidebar, shown while the snapshot's main
+       view is "creation" (the ground state when no workspace is active). -->
+  {#if creationShown && creationDialog}
+    <PanelView
+      dialogId={creationDialog.id}
+      config={creationDialog.config}
+      kind="modeless"
+      {modalAbove}
+    />
+  {/if}
+
+  <!-- Deletion panel ("panel"): the deletion module's progress/failed session,
+       shown in place of the active workspace's (already torn-down) view, BELOW
+       the sidebar so the sidebar stays on top and navigable. The module opens
+       it only while its workspace is the active one, so it never coexists with
+       the creation ground state. -->
+  {#if main?.kind === "workspace" && deletionDialog}
+    <PanelView
+      dialogId={deletionDialog.id}
+      config={deletionDialog.config}
+      kind="panel"
+      {modalAbove}
+    />
   {/if}
 
   {#if main?.kind === "hibernated"}

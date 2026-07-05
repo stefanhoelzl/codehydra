@@ -9,14 +9,14 @@
  *
  * The shared registry mechanics (id minting, the handle map, snapshot
  * projection, routing) live in `SessionRegistry`. Dialogs and notifications
- * differ only in their handle richness: a dialog carries a `surface` and a
+ * differ only in their handle richness: a dialog carries a `kind` and a
  * full action/change/dismiss/await contract; a notification is a lightweight
  * sidebar indicator with a single event channel.
  */
 
 import type {
   DialogConfig,
-  DialogSurface,
+  DialogKind,
   DialogUserEvent,
   DialogActionEvent,
   DialogFieldChangeEvent,
@@ -121,20 +121,21 @@ export interface DialogHandle {
 
 /**
  * DialogManager tracks open dialog sessions and exposes a render-ready
- * snapshot. It also exposes a synchronous "modal open" signal (a modal-surface
+ * snapshot. It also exposes a synchronous "modal open" signal (a blocking modal
  * dialog is currently open), consumed by the presenter (mode computation:
- * dialog beats hover/workspace) and the shortcut guard (Alt+X). "modal" means
- * surface === "modal" (the default); panel-surface sessions do NOT count.
+ * dialog beats hover/workspace) and the shortcut guard (Alt+X). Only
+ * kind === "modal" counts; "modeless" (creation) and "panel" (deletion) do NOT
+ * — they are non-blocking and the sidebar stays live.
  */
 export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
   constructor(notifyChange: () => void, logger?: Logger) {
     super("dlg", notifyChange, logger);
   }
 
-  /** True while at least one modal-surface dialog is open. Synchronous. */
+  /** True while at least one blocking modal dialog (kind === "modal") is open. Synchronous. */
   isModalOpen(): boolean {
     for (const handle of this.openSessions) {
-      if (handle.surface === "modal") return true;
+      if (handle.kind === "modal") return true;
     }
     return false;
   }
@@ -142,14 +143,14 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
   /**
    * Open a dialog. Returns a handle for updates and events.
    *
-   * The surface is a session property set once here — update commands carry
-   * only the config and cannot move a session between surfaces.
+   * The kind is a session property set once here — update commands carry
+   * only the config and cannot move a session between kinds.
    */
-  open(config: DialogConfig, options?: { surface?: DialogSurface }): DialogHandle {
-    // Default surface is "modal" (matches the renderer DialogHost default).
-    const surface: DialogSurface = options?.surface ?? "modal";
+  open(config: DialogConfig, options?: { kind?: DialogKind }): DialogHandle {
+    // Default kind is "modal" (matches the renderer DialogHost default).
+    const kind: DialogKind = options?.kind ?? "modal";
     return this.register(
-      (id, onRemove) => new DialogHandleImpl(id, surface, config, this.notifyChange, onRemove)
+      (id, onRemove) => new DialogHandleImpl(id, kind, config, this.notifyChange, onRemove)
     );
   }
 
@@ -179,7 +180,7 @@ export class DialogManager extends SessionRegistry<UiDialog, DialogHandleImpl> {
  */
 class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
   readonly id: string;
-  readonly surface: DialogSurface;
+  readonly kind: DialogKind;
   readonly closed: Promise<void>;
 
   /** Current render config — read by toSnapshot(). */
@@ -195,13 +196,13 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
 
   constructor(
     id: string,
-    surface: DialogSurface,
+    kind: DialogKind,
     config: DialogConfig,
     notifyChange: () => void,
     onRemove: () => void
   ) {
     this.id = id;
-    this.surface = surface;
+    this.kind = kind;
     this.config = config;
     this.notifyChange = notifyChange;
     this.onRemove = onRemove;
@@ -211,7 +212,7 @@ class DialogHandleImpl implements DialogHandle, RegistrySession<UiDialog> {
   }
 
   toSnapshot(): UiDialog {
-    return { id: this.id, surface: this.surface, config: this.config };
+    return { id: this.id, kind: this.kind, config: this.config };
   }
 
   update(config: DialogConfig): void {

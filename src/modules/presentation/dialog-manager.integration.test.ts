@@ -32,7 +32,7 @@ describe("DialogManager", () => {
       const handle = manager.open(config);
 
       expect(notifyChange).toHaveBeenCalled();
-      expect(manager.getSnapshot()).toEqual([{ id: handle.id, surface: "modal", config }]);
+      expect(manager.getSnapshot()).toEqual([{ id: handle.id, kind: "modal", config }]);
     });
 
     it("should generate unique dialog IDs", () => {
@@ -42,26 +42,26 @@ describe("DialogManager", () => {
       expect(h1.id).not.toBe(h2.id);
     });
 
-    it("records the surface in the snapshot when given", () => {
+    it("records the kind in the snapshot when given", () => {
       const config = createConfig("Panel form");
 
-      const handle = manager.open(config, { surface: "panel" });
+      const handle = manager.open(config, { kind: "panel" });
 
-      expect(manager.getSnapshot()).toEqual([{ id: handle.id, surface: "panel", config }]);
+      expect(manager.getSnapshot()).toEqual([{ id: handle.id, kind: "panel", config }]);
     });
 
-    it("defaults the surface to modal", () => {
+    it("defaults the kind to modal", () => {
       manager.open(createConfig("Modal"));
 
-      expect(manager.getSnapshot()[0]!.surface).toBe("modal");
+      expect(manager.getSnapshot()[0]!.kind).toBe("modal");
     });
 
-    it("keeps the surface across updates (session property, set once)", () => {
-      const handle = manager.open(createConfig("Panel"), { surface: "panel" });
+    it("keeps the kind across updates (session property, set once)", () => {
+      const handle = manager.open(createConfig("Panel"), { kind: "panel" });
 
       handle.update(createConfig("Updated"));
 
-      expect(manager.getSnapshot()[0]!.surface).toBe("panel");
+      expect(manager.getSnapshot()[0]!.kind).toBe("panel");
     });
   });
 
@@ -303,7 +303,7 @@ describe("DialogManager", () => {
 
   describe("onDismiss", () => {
     it("routes a dismiss event to onDismiss listeners only", () => {
-      const handle = manager.open(createConfig("Test"), { surface: "panel" });
+      const handle = manager.open(createConfig("Test"), { kind: "panel" });
       const onAction = vi.fn();
       const onChange = vi.fn();
       const onDismiss = vi.fn();

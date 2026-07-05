@@ -551,7 +551,7 @@ describe("DeletionDialogModule - remove confirm", () => {
 
     const handle = setup.dialogManager.lastHandle!;
     expect(handle).toBeTruthy();
-    expect(handle.config.modal).toBe(true);
+    expect(handle.kind).toBe("modal");
     expect(textsOf(handle.config)).toEqual([
       "Remove Workspace",
       `Remove workspace "${WS_NAME_A}"?`,

@@ -11,7 +11,7 @@
 
 import type { AgentStatus, WorkspaceTag } from "./api/types";
 import type { UIMode } from "./ipc";
-import type { DialogConfig, DialogSurface } from "./dialog-types";
+import type { DialogConfig, DialogKind } from "./dialog-types";
 import type { NotificationConfig } from "./notification-types";
 
 /** Resolved OS theme (mirrors the shell Theme type without importing it). */
@@ -42,7 +42,7 @@ export type SidebarLabelScroll = "always" | "hover" | "off";
  */
 export interface UiDialog {
   readonly id: string;
-  readonly surface: DialogSurface;
+  readonly kind: DialogKind;
   readonly config: DialogConfig;
 }
 

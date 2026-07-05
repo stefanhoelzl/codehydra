@@ -375,7 +375,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
       ],
     });
 
-    return { config: { sections, layout: "form", modal: true }, invalidCount };
+    return { config: { sections, layout: "form" }, invalidCount };
   }
 
   /** Small source badge; only env/CLI overrides are noteworthy. */
