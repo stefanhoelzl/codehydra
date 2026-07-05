@@ -95,6 +95,7 @@
     {section}
     {renderItem}
     onReset={() => onAction({ type: "button", id: section.resetId ?? "" })}
+    onRowAction={() => onAction({ type: "button", id: section.action?.id ?? "" })}
   />
 {:else if section.type === "table"}
   <TableSection {section} />

@@ -15,9 +15,17 @@ import type { Logger } from "../platform/logging";
 // ============================================================================
 
 /**
- * Options for open file/directory dialogs.
+ * Options for a native file dialog.
+ *
+ * `mode` selects the underlying Electron dialog: "open" (default) maps to
+ * `dialog.showOpenDialog` (pick existing files/directories); "save" maps to
+ * `dialog.showSaveDialog` (name a file that may not exist yet — the only
+ * cross-platform way to let the user create a new file). `properties` apply to
+ * open mode only.
  */
-export interface OpenDialogOptions {
+export interface ShowDialogOptions {
+  /** Which native dialog to show. Defaults to "open". */
+  readonly mode?: "open" | "save";
   /** Title of the dialog window */
   readonly title?: string;
   /** Default path to open dialog at */
@@ -26,7 +34,7 @@ export interface OpenDialogOptions {
   readonly buttonLabel?: string;
   /** Filter files by type */
   readonly filters?: readonly DialogFileFilter[];
-  /** Dialog behavior properties */
+  /** Dialog behavior properties (open mode only) */
   readonly properties?: readonly OpenDialogProperty[];
   /** Message to show above input boxes (macOS only) */
   readonly message?: string;
@@ -55,9 +63,13 @@ export type OpenDialogProperty =
   | "dontAddToRecent";
 
 /**
- * Result from an open dialog.
+ * Result from a file dialog.
+ *
+ * Unified across open and save modes: save mode yields a single chosen path (or
+ * none when canceled), surfaced as a 0-or-1 element `filePaths` array so callers
+ * read the result the same way regardless of mode.
  */
-export interface OpenDialogResult {
+export interface ShowDialogResult {
   /** Whether the dialog was canceled */
   readonly canceled: boolean;
   /** Selected file paths (as Path objects for normalized handling) */
@@ -107,12 +119,13 @@ export interface MessageBoxResult {
  */
 export interface DialogBoundary {
   /**
-   * Show an open file/directory dialog.
+   * Show a native file dialog. `options.mode` selects open (pick existing) or
+   * save (name a possibly-new file); defaults to open.
    *
    * @param options - Dialog options
    * @returns Result with selected paths as Path objects
    */
-  showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogResult>;
+  showDialog(options: ShowDialogOptions): Promise<ShowDialogResult>;
 
   /**
    * Show a message box dialog.
@@ -143,7 +156,7 @@ import { dialog } from "electron";
  * Helper to build Electron dialog options, excluding undefined values.
  * This satisfies exactOptionalPropertyTypes requirements.
  */
-function buildOpenDialogOptions(options: OpenDialogOptions): Electron.OpenDialogOptions {
+function buildOpenDialogOptions(options: ShowDialogOptions): Electron.OpenDialogOptions {
   const result: Electron.OpenDialogOptions = {};
   if (options.title !== undefined) result.title = options.title;
   if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
@@ -157,6 +170,21 @@ function buildOpenDialogOptions(options: OpenDialogOptions): Electron.OpenDialog
   }
   if (options.properties !== undefined) {
     result.properties = [...options.properties];
+  }
+  return result;
+}
+
+function buildSaveDialogOptions(options: ShowDialogOptions): Electron.SaveDialogOptions {
+  const result: Electron.SaveDialogOptions = {};
+  if (options.title !== undefined) result.title = options.title;
+  if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
+  if (options.buttonLabel !== undefined) result.buttonLabel = options.buttonLabel;
+  if (options.message !== undefined) result.message = options.message;
+  if (options.filters !== undefined) {
+    result.filters = options.filters.map((f) => ({
+      name: f.name,
+      extensions: [...f.extensions],
+    }));
   }
   return result;
 }
@@ -183,17 +211,27 @@ function buildMessageBoxOptions(options: DialogMessageBoxOptions): Electron.Mess
 export class DefaultDialogBoundary implements DialogBoundary {
   constructor(private readonly logger: Logger) {}
 
-  async showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogResult> {
-    this.logger.debug("Showing open dialog", { title: options.title ?? null });
+  async showDialog(options: ShowDialogOptions): Promise<ShowDialogResult> {
+    const mode = options.mode ?? "open";
+    this.logger.debug("Showing dialog", { mode, title: options.title ?? null });
 
-    const electronOptions = buildOpenDialogOptions(options);
-    const result = await dialog.showOpenDialog(electronOptions);
+    if (mode === "save") {
+      const result = await dialog.showSaveDialog(buildSaveDialogOptions(options));
+      this.logger.debug("Save dialog result", {
+        canceled: result.canceled,
+        hasPath: result.filePath !== undefined,
+      });
+      return {
+        canceled: result.canceled,
+        filePaths: result.filePath !== undefined ? [new Path(result.filePath)] : [],
+      };
+    }
 
+    const result = await dialog.showOpenDialog(buildOpenDialogOptions(options));
     this.logger.debug("Open dialog result", {
       canceled: result.canceled,
       count: result.filePaths.length,
     });
-
     return {
       canceled: result.canceled,
       filePaths: result.filePaths.map((p) => new Path(p)),

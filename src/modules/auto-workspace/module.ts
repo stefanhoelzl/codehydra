@@ -49,6 +49,7 @@ import {
   storeCustom,
   type PersistedAccessor,
 } from "../../boundaries/platform/store-definition";
+import { TEMPLATE_DEFAULTS } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
@@ -184,11 +185,16 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   // Register template-path config keys (sources register their own keys)
   const templatePathConfigs = new Map<string, PersistedAccessor<string | null>>();
   for (const source of deps.sources) {
+    const template = TEMPLATE_DEFAULTS[source.name];
     const tplConfig = deps.configService.register(`experimental.${source.name}.template-path`, {
       default: null,
       description: `Path to Liquid template for ${source.name} auto-workspaces`,
       redact: true,
-      ...storePath({ nullable: true }),
+      ...storePath({
+        nullable: true,
+        extensions: ["liquid"],
+        ...(template !== undefined && { template }),
+      }),
     });
     templatePathConfigs.set(source.name, tplConfig);
   }

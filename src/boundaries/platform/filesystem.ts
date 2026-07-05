@@ -98,18 +98,26 @@ export interface FileSystemBoundary {
   readFile(path: PathLike): Promise<string>;
 
   /**
-   * Write content to file. Overwrites existing file.
+   * Write content to file. Overwrites existing file by default.
+   *
+   * Pass `{ exclusive: true }` for an atomic create-if-absent write (the `wx`
+   * flag): it throws FileSystemError with code EEXIST when the file already
+   * exists instead of overwriting. This lets callers seed a file only when it is
+   * new without a separate (TOCTOU-prone) existence check.
    *
    * @param path - Absolute path to file (Path object or string)
    * @param content - String content to write (UTF-8)
+   * @param options.exclusive - Fail with EEXIST if the file already exists
    * @throws FileSystemError with code ENOENT if parent directory doesn't exist
    * @throws FileSystemError with code EACCES if permission denied
    * @throws FileSystemError with code EISDIR if path is a directory
+   * @throws FileSystemError with code EEXIST if exclusive and the file exists
    *
    * @example
    * await fs.writeFile('/path/to/config.json', JSON.stringify(data, null, 2));
+   * await fs.writeFile('/path/to/new.txt', tpl, { exclusive: true }); // create-only
    */
-  writeFile(path: PathLike, content: string): Promise<void>;
+  writeFile(path: PathLike, content: string, options?: { exclusive?: boolean }): Promise<void>;
 
   /**
    * Create directory. Creates parent directories as needed.
@@ -357,11 +365,18 @@ export class DefaultFileSystemBoundary implements FileSystemBoundary {
     }
   }
 
-  async writeFile(filePath: PathLike, content: string): Promise<void> {
+  async writeFile(
+    filePath: PathLike,
+    content: string,
+    options?: { exclusive?: boolean }
+  ): Promise<void> {
     const nativePath = toNativePath(filePath);
-    this.logger.debug("Write", { path: nativePath });
+    this.logger.debug("Write", { path: nativePath, exclusive: options?.exclusive ?? false });
     try {
-      await fs.writeFile(nativePath, content, "utf-8");
+      await fs.writeFile(nativePath, content, {
+        encoding: "utf-8",
+        ...(options?.exclusive === true && { flag: "wx" }),
+      });
     } catch (error) {
       throw mapError(error, nativePath);
     }

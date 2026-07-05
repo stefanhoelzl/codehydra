@@ -5,8 +5,8 @@
 
 import type {
   DialogBoundary,
-  OpenDialogOptions,
-  OpenDialogResult,
+  ShowDialogOptions,
+  ShowDialogResult,
   DialogMessageBoxOptions,
   MessageBoxResult,
 } from "./dialog";
@@ -17,9 +17,9 @@ import { Path } from "../../utils/path/path";
 // ============================================================================
 
 /**
- * Configured response for open dialog.
+ * Configured response for a file dialog.
  */
-export interface OpenDialogResponse {
+export interface ShowDialogResponse {
   readonly canceled: boolean;
   /** File paths as strings (will be converted to Path objects) */
   readonly filePaths: readonly string[];
@@ -37,8 +37,8 @@ export interface MessageBoxResponse {
  * Call record for dialog operations.
  */
 export interface DialogCall {
-  readonly method: "showOpenDialog" | "showMessageBox" | "showErrorBox";
-  readonly options?: OpenDialogOptions | DialogMessageBoxOptions;
+  readonly method: "showDialog" | "showMessageBox" | "showErrorBox";
+  readonly options?: ShowDialogOptions | DialogMessageBoxOptions;
   readonly title?: string;
   readonly content?: string;
 }
@@ -49,7 +49,7 @@ export interface DialogCall {
 export interface DialogBoundaryState {
   /** All dialog calls in order */
   readonly calls: readonly DialogCall[];
-  /** Count of showOpenDialog calls */
+  /** Count of showDialog calls */
   readonly openDialogCount: number;
   /** Count of showMessageBox calls */
   readonly messageBoxCount: number;
@@ -67,10 +67,10 @@ export interface BehavioralDialogBoundary extends DialogBoundary {
   _getState(): DialogBoundaryState;
 
   /**
-   * Set the next response for showOpenDialog.
+   * Set the next response for showDialog.
    * @param response - Response to return (used once, then returns to default)
    */
-  _setNextOpenDialogResponse(response: OpenDialogResponse): void;
+  _setNextOpenDialogResponse(response: ShowDialogResponse): void;
 
   /**
    * Set the next response for showMessageBox.
@@ -97,11 +97,11 @@ export interface BehavioralDialogBoundary extends DialogBoundary {
  * @example Basic usage - verify dialog was shown
  * ```typescript
  * const dialogLayer = createBehavioralDialogBoundary();
- * await dialogLayer.showOpenDialog({ properties: ["openDirectory"] });
+ * await dialogLayer.showDialog({ properties: ["openDirectory"] });
  *
  * const state = dialogLayer._getState();
  * expect(state.openDialogCount).toBe(1);
- * expect(state.calls[0].method).toBe("showOpenDialog");
+ * expect(state.calls[0].method).toBe("showDialog");
  * ```
  *
  * @example Configure response
@@ -112,7 +112,7 @@ export interface BehavioralDialogBoundary extends DialogBoundary {
  *   filePaths: ["/path/to/folder"],
  * });
  *
- * const result = await dialogLayer.showOpenDialog({ properties: ["openDirectory"] });
+ * const result = await dialogLayer.showDialog({ properties: ["openDirectory"] });
  * expect(result.canceled).toBe(false);
  * expect(result.filePaths[0].toString()).toBe("/path/to/folder");
  * ```
@@ -125,12 +125,12 @@ export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
   let errorBoxCount = 0;
 
   // Pending responses (used once then cleared)
-  let nextOpenDialogResponse: OpenDialogResponse | null = null;
+  let nextOpenDialogResponse: ShowDialogResponse | null = null;
   let nextMessageBoxResponse: MessageBoxResponse | null = null;
 
   return {
-    async showOpenDialog(options: OpenDialogOptions): Promise<OpenDialogResult> {
-      calls.push({ method: "showOpenDialog", options });
+    async showDialog(options: ShowDialogOptions): Promise<ShowDialogResult> {
+      calls.push({ method: "showDialog", options });
       openDialogCount++;
 
       // Use configured response or default to canceled
@@ -171,7 +171,7 @@ export function createBehavioralDialogBoundary(): BehavioralDialogBoundary {
       };
     },
 
-    _setNextOpenDialogResponse(response: OpenDialogResponse): void {
+    _setNextOpenDialogResponse(response: ShowDialogResponse): void {
       nextOpenDialogResponse = response;
     },
 

@@ -29,8 +29,11 @@ import type {
   SettingsControl,
 } from "../boundaries/platform/store-definition";
 import type { AppBoundary } from "../boundaries/shell/app";
+import type { DialogBoundary } from "../boundaries/shell/dialog";
+import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
 import type { DialogConfig, DialogSection, SettingRowField } from "../shared/dialog-types";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
+import { FileSystemError } from "../shared/errors/service-errors";
 
 // =============================================================================
 // Constants
@@ -48,6 +51,8 @@ const ACTION_CANCEL = "cancel";
 const ACTION_RESET_ALL = "reset-all";
 /** Per-row reset action ids are `${RESET_PREFIX}${key}`. */
 const RESET_PREFIX = "reset:";
+/** Per-row path-picker action ids are `${PICK_PREFIX}${key}`. */
+const PICK_PREFIX = "pick:";
 /** Sub-field id suffix for a guarded-text control's on/off checkbox. */
 const GUARD_ON_SUFFIX = "::on";
 
@@ -58,7 +63,9 @@ const GUARD_ON_SUFFIX = "::on";
 export interface SettingsModuleDeps {
   readonly ui: UiPresenter;
   readonly config: Config;
-  readonly app: AppBoundary;
+  readonly app: Pick<AppBoundary, "relaunch" | "openPath">;
+  readonly dialog: Pick<DialogBoundary, "showDialog">;
+  readonly fs: Pick<FileSystemBoundary, "writeFile">;
   readonly logger: Logger;
 }
 
@@ -122,11 +129,20 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
   module: IntentModule;
   openSettings: () => void;
 } {
-  const { ui, config, app, logger } = deps;
+  const { ui, config, app, dialog, fs, logger } = deps;
 
   let activeHandle: DialogHandle | null = null;
   /** Effective value per key when the dialog opened, for the restart-note diff. */
   let openValues: Record<string, unknown> = {};
+  /**
+   * Values set programmatically (by the file picker) that aren't yet persisted
+   * and don't come from the renderer's field data. Merged into each row's
+   * controlled value so a pick shows up immediately; persisted on Save, cleared
+   * on reset. Keyed by config key.
+   */
+  let pickedValues: Record<string, string | null> = {};
+  /** Latest renderer field data (from onChange), so a pick can rebuild without losing edits. */
+  let latestData: Record<string, string> | undefined;
 
   /** Settings-eligible keys (has a control, not excluded, not deprecated), sorted. */
   function settingKeys(): SettingKey[] {
@@ -149,7 +165,8 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         if (raw.trim() === "") return undefined;
         return def.validate(Number(raw));
       }
-      case "string": {
+      case "string":
+      case "path": {
         const raw = data[key] ?? "";
         if (raw === "" && isNullable(def)) return def.validate(null);
         return def.validate(raw);
@@ -186,6 +203,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         return [{ type: "checkbox", id: key, value: current === true, changeEvent: true }];
       case "number":
       case "string":
+      case "path":
         return [
           {
             type: "input",
@@ -278,7 +296,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         lastSubheading = parts.subheading;
       }
 
-      const current = config.getEffective()[key];
+      const current = key in pickedValues ? pickedValues[key] : config.getEffective()[key];
       const source = config.getSource(key);
 
       // Live validation from the latest field values.
@@ -314,6 +332,9 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         ...(def.description !== undefined && { description: def.description }),
         ...(badge !== undefined && { badge }),
         ...(note !== undefined && { note }),
+        ...(entry.control.kind === "path" && {
+          action: { id: `${PICK_PREFIX}${key}`, label: "Browse…", icon: "folder" },
+        }),
         ...(resettable && { resetId: `${RESET_PREFIX}${key}` }),
       };
       sections.push(row);
@@ -366,6 +387,59 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     return a === b || JSON.stringify(a) === JSON.stringify(b);
   }
 
+  /** File-type filters for the picker: the key's extensions plus an All-Files fallback. */
+  function pickerFilters(extensions: readonly string[] | undefined) {
+    if (!extensions || extensions.length === 0) return undefined;
+    return [
+      { name: extensions.map((e) => `.${e}`).join(", "), extensions: [...extensions] },
+      { name: "All Files", extensions: ["*"] },
+    ];
+  }
+
+  /**
+   * Run the native file picker (save mode, so the user can name a new file) for a
+   * path key. When the chosen path is new, atomically seed the key's template and
+   * open the file in the OS default app; when it already exists, adopt the path
+   * untouched. The chosen path is buffered (persisted on Save). Returns true when
+   * a path was chosen so the caller rebuilds the dialog.
+   */
+  async function pickPath(key: string): Promise<boolean> {
+    const entry = settingKeys().find((e) => e.key === key);
+    if (!entry || entry.control.kind !== "path") return false;
+    const { control } = entry;
+
+    const current = key in pickedValues ? pickedValues[key] : config.getEffective()[key];
+    const filters = pickerFilters(control.extensions);
+    const result = await dialog.showDialog({
+      mode: "save",
+      ...(typeof current === "string" && current !== "" && { defaultPath: current }),
+      ...(filters !== undefined && { filters }),
+    });
+    if (result.canceled || result.filePaths.length === 0) return false;
+    const picked = result.filePaths[0]!.toString();
+
+    // Seed the template only when the file is new (exclusive write → EEXIST means
+    // it already exists, so adopt it untouched). Open a freshly-created file so
+    // the user can edit it right away.
+    if (control.template !== undefined) {
+      try {
+        await fs.writeFile(picked, control.template, { exclusive: true });
+        await app.openPath(picked);
+      } catch (error) {
+        if (!(error instanceof FileSystemError && error.fsCode === "EEXIST")) {
+          logger.warn("Failed to seed template file", {
+            key,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    pickedValues[key] = picked;
+    if (latestData) latestData[key] = picked;
+    return true;
+  }
+
   /** Persist every changed key from the buffered field data. */
   async function save(data: Record<string, string>): Promise<boolean> {
     for (const entry of settingKeys()) {
@@ -392,6 +466,8 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     if (activeHandle) return;
 
     openValues = { ...config.getEffective() };
+    pickedValues = {};
+    latestData = undefined;
     const handle = ui.dialog(buildConfig().config);
     activeHandle = handle;
 
@@ -403,6 +479,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
     handle.onChange((event) => {
       // Rebuild with the latest field values so validation, guard enable/disable
       // and restart notes reflect the edit.
+      latestData = { ...event.data };
       handle.update(buildConfig(event.data).config);
     });
 
@@ -417,6 +494,7 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
           for (const entry of settingKeys()) {
             if (config.getSource(entry.key) !== "default") await config.reset(entry.key);
           }
+          pickedValues = {};
           openValues = { ...config.getEffective() };
           handle.update(buildConfig().config);
         })();
@@ -426,14 +504,29 @@ export function createSettingsModule(deps: SettingsModuleDeps): {
         const key = event.actionId.slice(RESET_PREFIX.length);
         void (async () => {
           await config.reset(key);
+          delete pickedValues[key];
           openValues = { ...config.getEffective() };
           handle.update(buildConfig().config);
         })();
         return;
       }
+      if (event.actionId.startsWith(PICK_PREFIX)) {
+        const key = event.actionId.slice(PICK_PREFIX.length);
+        void (async () => {
+          const picked = await pickPath(key);
+          if (picked) handle.update(buildConfig(latestData).config);
+        })();
+        return;
+      }
       if (event.actionId === ACTION_SAVE || event.actionId === ACTION_SAVE_RESTART) {
         void (async () => {
-          const ok = await save(data);
+          // Merge buffered picks (not necessarily reflected in the renderer data)
+          // so a picked path persists even if the field hasn't re-reported it.
+          const merged: Record<string, string> = { ...data };
+          for (const [key, value] of Object.entries(pickedValues)) {
+            merged[key] = value ?? "";
+          }
+          const ok = await save(merged);
           if (!ok) return;
           if (event.actionId === ACTION_SAVE_RESTART) {
             app.relaunch();
