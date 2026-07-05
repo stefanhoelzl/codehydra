@@ -333,15 +333,15 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       }
     : null;
 
-  // CodeServerModule: "finalize" hook — provides workspaceUrl capability
+  // CodeServerModule: "finalize" hook — returns workspaceUrl as its result
   const codeServerModule: IntentModule = {
     name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<HookOutput> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
             void (ctx as FinalizeHookInput).envVars;
-            return { provides: { workspaceUrl } };
+            return { result: workspaceUrl };
           },
         },
       },
@@ -991,9 +991,9 @@ describe("OpenWorkspace Operation", () => {
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
             finalize: {
-              handler: async (ctx: HookContext): Promise<HookOutput> => {
+              handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
                 capturedEnvVars = (ctx as FinalizeHookInput).envVars;
-                return { provides: { workspaceUrl: WORKSPACE_URL } };
+                return { result: WORKSPACE_URL };
               },
             },
           },

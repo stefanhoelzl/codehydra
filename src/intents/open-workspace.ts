@@ -174,6 +174,9 @@ export interface SetupHookInput extends HookContext {
 /** Result from the "setup" hook point. */
 export interface SetupHookResult {
   readonly envVars?: Record<string, string>;
+  /** Selected agent backend, contributed by the active agent module.
+   *  Operation-consumed (no sibling requires), so a result — not a capability. */
+  readonly agentType?: AgentType | null;
 }
 
 /** Input context for the "finalize" hook point (enriched with create+setup results). */
@@ -256,16 +259,19 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
 
     throwHookErrors(setupResult.errors, "workspace:open setup hooks failed");
 
-    // Accumulate env vars from all setup hook results (multiple modules can contribute)
+    // Accumulate env vars and read agentType from setup hook results. Multiple
+    // modules can contribute env vars; the active agent module contributes agentType
+    // (a result, not a capability — nothing in the hook point requires it).
     const envVars: Record<string, string> = {};
+    let agentType: AgentType | null = null;
     for (const result of setupResult.results) {
       if (result.envVars) {
         Object.assign(envVars, result.envVars);
       }
+      if (result.agentType != null) {
+        agentType = result.agentType;
+      }
     }
-
-    // Read agentType from capabilities (provided by active agent module)
-    const agentType = (setupResult.capabilities.agentType as AgentType) ?? null;
 
     // Hook 3c: "finalize" — workspace URL (fatal on error)
     const finalizeCtx: FinalizeHookInput = {
@@ -274,14 +280,16 @@ export class OpenWorkspaceOperation implements Operation<OpenWorkspaceIntent, Op
       envVars,
       agentType,
     };
-    const { errors: finalizeErrors, capabilities: finalizeCaps } = await ctx.hooks.collect<void>(
+    const { errors: finalizeErrors, results: finalizeResults } = await ctx.hooks.collect<string>(
       "finalize",
       finalizeCtx
     );
 
     throwHookErrors(finalizeErrors, "workspace:open finalize hooks failed");
 
-    const workspaceUrl = finalizeCaps.workspaceUrl as string | undefined;
+    // Only code-server produces a finalize result (the workspace URL); the other
+    // finalize handler (plugin-server) returns void, so results[0] is the URL.
+    const workspaceUrl = finalizeResults[0];
     if (!workspaceUrl) {
       throw new Error("Finalize hook did not provide workspaceUrl");
     }

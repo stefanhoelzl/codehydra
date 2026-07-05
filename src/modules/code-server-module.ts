@@ -898,7 +898,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       // -------------------------------------------------------------------
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<HookOutput> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
             let workspaceUrl: string;
             const finalizeCtx = ctx as FinalizeHookInput;
 
@@ -926,7 +926,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               workspaceUrl = urlForFolder(codeServerPort, finalizeCtx.workspacePath);
             }
 
-            return { provides: { workspaceUrl } };
+            return { result: workspaceUrl };
           },
         },
       },

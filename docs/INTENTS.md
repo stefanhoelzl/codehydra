@@ -278,6 +278,18 @@ The `ANY_VALUE` sentinel (exported from `operation.ts`) matches any value for a 
 
 Capabilities accumulate across handlers within a single `collect()` call and are available on `HookResult.capabilities` for the operation to inspect.
 
+### Capability vs. result: when to use which
+
+A `HookOutput` has two channels — `result` (accumulated into `results[]` for the **operation** to read after the wave) and `provides` (merged into the capability bag for **sibling handlers** to read during the wave). They are not interchangeable, and the choice follows one rule:
+
+> **A value is a capability if and only if a sibling handler `requires` it** (i.e. it exists to order handlers). Everything the operation consumes but no sibling requires is a **`result`**.
+
+Capabilities exist for ordering; results carry data out to the operation. Emitting a value as a capability that nothing requires couples the operation to the capability bag for no ordering benefit, and — because capabilities are keyed while results are positional — hides that the value is really operation output. (Example: `workspaceUrl` and `agentType` in `workspace:open` are read only by the operation, so they are results, not capabilities.)
+
+**Rider (multiple result-producers):** results are a positional array. If more than one handler on a hook point returns a result, the operation cannot pick one by key — type the result as a discriminated union (`collect<T>` with a discriminant), or keep the value keyed as a capability. When a single handler produces the result, `results[0]` is unambiguous.
+
+**Federation note:** this keeps the wire clean — `result` and `provides` are both plain data on the returned `HookOutput`, and `requires` is evaluated host-side by the single dispatcher (the `ANY_VALUE` symbol never crosses the wire). See `planning/REMOTE_WORKSPACES_FEDERATION.md`.
+
 ---
 
 ## Hook Result Policies

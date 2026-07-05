@@ -66,7 +66,8 @@ export interface RegisterAgentResult {
   readonly icon: string;
 }
 
-// AgentSelectionHookResult removed — selectedAgent is now the `agentType` capability.
+// selectedAgent is the agent-selection hook *result* (operation-consumed, not a
+// capability — nothing in the hook point requires it).
 
 /**
  * Input context for the "agent-selection" hook — carries available agents from register-agents.
@@ -171,12 +172,11 @@ export class SetupOperation implements Operation<SetupIntent, void> {
 
         // 2b: Show agent selection UI with collected agents
         const selectionCtx: AgentSelectionHookContext = { ...hookCtx, availableAgents: agentInfos };
-        const { errors: agentErrors, capabilities: agentCaps } = await ctx.hooks.collect<void>(
-          "agent-selection",
-          selectionCtx
-        );
+        const { errors: agentErrors, results: agentResults } =
+          await ctx.hooks.collect<LifecycleAgentType>("agent-selection", selectionCtx);
         throwHookErrors(agentErrors, "app:setup agent-selection hooks failed");
-        selectedAgent = agentCaps.agentType as ConfigAgentType | undefined;
+        // Single result-producer (the picker); results[0] is the chosen agent.
+        selectedAgent = agentResults[0] as ConfigAgentType | undefined;
       }
 
       // Hook 3: "save-agent" -- (conditional) Persist agent selection
