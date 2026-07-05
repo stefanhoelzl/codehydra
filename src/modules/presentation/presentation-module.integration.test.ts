@@ -1348,8 +1348,8 @@ describe("PresentationModule - startup flow", () => {
     action(deps, "continue", { agent: "opencode" });
     const output = await pending;
 
-    // The handler returns the chosen agent as the agentType capability.
-    expect(output).toEqual({ provides: { agentType: "opencode" } });
+    // The handler returns the chosen agent as the agent-selection hook result.
+    expect(output).toEqual({ result: "opencode" });
   });
 
   it("app:setup hide-ui returns to the boot-splash dialog", async () => {

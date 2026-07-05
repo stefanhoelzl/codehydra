@@ -250,24 +250,21 @@ class MinimalSetupOperation implements Operation<
   async execute(
     ctx: OperationContext<OpenWorkspaceIntent>
   ): Promise<SetupOperationResult | undefined> {
-    const { results, errors, capabilities } = await ctx.hooks.collect<SetupHookResult | undefined>(
-      "setup",
-      {
-        intent: ctx.intent,
-        workspacePath: "/test/workspace",
-        projectPath: "/test/project",
-        ...this.hookInput,
-        ...(this.agentCapability !== null && {
-          capabilities: { agent: this.agentCapability },
-        }),
-      }
-    );
+    const { results, errors } = await ctx.hooks.collect<SetupHookResult | undefined>("setup", {
+      intent: ctx.intent,
+      workspacePath: "/test/workspace",
+      projectPath: "/test/project",
+      ...this.hookInput,
+      ...(this.agentCapability !== null && {
+        capabilities: { agent: this.agentCapability },
+      }),
+    });
     if (errors.length > 0) throw errors[0]!;
     const result = results[0];
     if (result === undefined) return undefined;
     return {
-      ...result,
-      ...(capabilities.agentType !== undefined && { agentType: capabilities.agentType as string }),
+      ...(result.envVars !== undefined && { envVars: result.envVars }),
+      ...(result.agentType != null && { agentType: result.agentType }),
     };
   }
 }

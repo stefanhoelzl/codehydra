@@ -12,7 +12,7 @@ in **containers** — surfaced in the create-workspace dialog as a target select
 
 - **Remote machine over SSH first**, extensible to containers.
 - **Both agents** (Claude + OpenCode) supported from the start.
-- **Projects live on the remote** — managed (CodeHydra clones the repo) *or* an
+- **Projects live on the remote** — managed (CodeHydra clones the repo) _or_ an
   existing checkout already on the remote, mirroring today's local behavior.
   - Rationale: git worktrees require the parent repo on the same filesystem, so a
     remote **workspace** implies a remote **project**.
@@ -39,14 +39,16 @@ the wire sits at a **coarse, serializable, already-mostly-data layer** (intents,
 events, hook results) instead of hundreds of fine-grained syscalls per workspace.
 
 ### Module registration
+
 - **Static proxy, version-locked** to start: the host knows the module set at build
   time; a host-side proxy forwards to the remote; connection state is just up/down.
 - Dynamic registration (remote pushes its handler list at connect) is the general
   form — defer until heterogeneous remotes are actually needed.
 
 ### Wire protocol (asymmetric, minimal)
+
 - **host → remote:** operation/hook invocations + domain events (to remote subscribers)
-- **remote → host:** intents (the only thing a remote handler *initiates*)
+- **remote → host:** intents (the only thing a remote handler _initiates_)
 - **handler results + provided data** ride the invocation response
 
 Notably, `agent:update-status` is already an intent, so a remote agent signaling a
@@ -59,16 +61,18 @@ status change is just "dispatch that intent back to the host" — no new concept
 Placement is a **per-handler property**. The clean-up target is to make it so.
 
 ### Boundaries
+
 - **Host-only** — `WindowBoundary`, `ViewBoundary`, `SessionBoundary`, `IpcBoundary`,
   `DialogBoundary`, `ImageBoundary`, `AppBoundary`(+power), `MenuBoundary`,
   `PostHogBoundary`. (The Electron/UI surface + telemetry.)
 - **Both-sides** — `FileSystemBoundary`, `ProcessRunner`, `PortManager`,
   `IGitClient`/`GitWorktreeProvider`, `HttpClient`, `PathProvider`,
   `AgentServerManager`, code-server. (Run where the files live.)
-  - `SdkClientFactory` / `AgentProvider` *client* is host-side but reaches a
+  - `SdkClientFactory` / `AgentProvider` _client_ is host-side but reaches a
     both-sides server over the `-L` tunnel.
 
 ### Modules
+
 - **Host-only** — `view`, `presentation`, `creation`, `deletion-dialog`/`dialog-manager`,
   `badge`, `power`, window-title/shortcut/selection, `electron-lifecycle`, menu,
   `auto-updater`, `telemetry`, `error-report`, and the host-resident servers
@@ -93,33 +97,49 @@ is overwhelmingly plain serializable data. No structural blockers. What remains 
 bounded punch list.
 
 Non-JSON carriers found, all convertible:
+
 - `Path` instances in `OpenProjectPayload.path`, `ProjectOpenedPayload.path`,
   `ProjectOpenFailedPayload.path` (convertible via `toString()` / `new Path()`).
 - `Error[]` in `HookResult.errors`.
 - Capability values are primitives (enforced by strict `===` matching in `requires`).
 
 Orchestration facts that shape the work:
+
 - `collect()` ordering/merging is **centralizable** (single host dispatcher is natural).
-- `provides` is a **closure over handler-local mutable state** → must be reshaped to
-  returned data to federate.
-- Operations cast-inject `emit`/`dispatch` callbacks into extended hook contexts (not
-  in the core `create/setup/finalize` handlers) → remote signaling becomes a
-  dispatched-back intent, which is the model's `remote → host` channel.
+- The `provides`→returned-data reshape is **already done** (commit `d871aea6`): handlers
+  return a `HookOutput { result?, provides? }` and the dispatcher merges provided data as
+  plain data, no closure — the merge loop is already wire-ready. (The original audit
+  branched from a pre-`d871aea6` `origin/main` and mischaracterized this as an open
+  closure.)
+- **Handler emit invariant:** a handler's invocation payload and returned `HookOutput`
+  must be pure data; emitting/dispatching is sanctioned but must route through the
+  remote→host **channel** (an `emit`/`dispatch` shim), never a captured host closure. The
+  lone handler holding a live `emit` is code-server's app-resume handler → tracked under
+  item 3. (Operation bodies use `ctx.emit`/`ctx.dispatch` freely — they stay host-side.)
 
 ---
 
 ## 5. Punch list (sequenced 1 → 2 → 3, plus 4 & 5)
 
-Sequencing rationale: reshape the handler/capability **contract first** (1), so the
-wire schemas (2) are written against the final data shape rather than the
-closure-based one; only then are the leaky-module splits (3) worth doing, since they
-depend on both the reshaped contract and the validated wire boundary.
+Sequencing rationale: the handler/capability **contract came first** so the wire schemas
+(2) are written against the final data shape; only then are the leaky-module splits (3)
+worth doing, since they depend on both the reshaped contract and the validated wire
+boundary.
 
-**1. Reshape the capability contract.** Handlers **return** their provided data
-instead of a `provides()` closure. Going forward, **prefer hook results over
-`requires`/`provides`** — results federate for free (they ride the response);
-reserve capabilities for genuine declarative intra-hook ordering.
-→ research workspace `research-provides-closures`.
+**1. Reshape the capability contract — ✅ DONE.** The `provides()` closure → returned
+`HookOutput` reshape landed in commit `d871aea6` (pre-session). Remaining step-1 work,
+now also complete:
+
+- **Rule adopted & recorded** in `docs/INTENTS.md`: *a value is a capability iff a sibling
+  handler `requires` it (ordering); everything else the operation consumes is a `result`*
+  — with the rider that a hook point with multiple result-producers needs a discriminated
+  result type.
+- **Migration applied** (behavior-preserving, full suite green): `workspaceUrl`
+  (code-server finalize) and `agentType` (agent setup + the app:setup picker) moved from
+  operation-consumed capabilities to hook results.
+- `requires` unchanged — host-evaluated; `ANY_VALUE` never crosses the wire.
+
+(The `research-provides-closures` workspace is now moot — its subject is done.)
 
 **2. Wire codecs + schema validation (zod).** Define zod schemas for every
 wire-crossing type (intent payloads, hook results, provided-capability data, event
@@ -127,6 +147,7 @@ payloads), with `Path ↔ string` and `Error ↔ object` **transforms** baked in
 schemas. Validate + (de)serialize at the boundary so a malformed or hostile remote
 message is **rejected at the edge**, not deep inside a handler. Two alignments make
 this a natural fit:
+
 - zod is **already a project dependency** (e.g. the `AgentSpec` discriminated union
   in `src/shared/api/types.ts`), so no new dependency is added.
 - schema parsing **replaces unsafe `as` casts** (the audit found handlers do
@@ -139,7 +160,8 @@ Full sweep for any other non-JSON leaks (Maps/Sets/Buffers/class instances/funct
 covers the `Path`/`Error` codecs and the leak sweep; the zod-validation framing is an
 addition to fold in when it reports).
 
-**3. Split the three leaky handlers (results-first)** so every handler is single-tier:
+**3. Split the leaky handlers (results-first)** so every handler is single-tier:
+
 - **git-init dialog** (`local-project-module.prepare`): host `confirm` handler returns
   the decision; the operation runs the remote `git init` step. (results-first;
   `requires`/`provides` optional.)
@@ -148,6 +170,10 @@ addition to fold in when it reports).
   host-capture / remote-write with the PNG bytes crossing as base64.
 - **clone progress** (`remote-project-module`): invert the pushed-down `report`
   callback into a remote→host `emit` of `clone:progress`.
+- **app-resume health/restart** (`code-server-module` app-resume handler): runs remote
+  (health-probe + restart code-server); its `CODE_SERVER_RESTARTED` / `APP_RESUME_FAILED`
+  emits become remote→host channel events instead of the captured `ResumeHookContext.emit`
+  closure — same fix family as clone-progress.
 - → research workspaces `research-leaky-git-init-dialog`,
   `research-leaky-hibernation-capture`, `research-leaky-clone-progress`.
 
@@ -165,8 +191,10 @@ worktree **rollback**, `cleanupOrphanedWorkspaces` (reconciliation precedent), a
 this to client/server reconnect, **not** distributed consensus.
 
 ### The fix recipe for leaky handlers (general)
+
 Split a leaky handler along the boundary tier so each resulting handler is single-tier,
 and move **serializable data** between them (never host behavior into a remote handler):
+
 1. **No cross-handler dependency** → each handler just returns its result (or `emit`s).
 2. **Sequential/conditional dependency** → prefer **operation-coordinated results**
    (host handler returns → operation threads it into the resource step).
@@ -200,10 +228,14 @@ removing a raw `-R` socket in favor of the control-plane intent channel.
 
 ## 7. In flight / next steps
 
-- **5 research workspaces** running, each producing a `RESEARCH-*.md` for punch-list
-  items 1–3 (provides-reshape, wire codecs + zod validation, three leaky handlers).
+- **Step 1 is complete** (reshape pre-existing; rule recorded in `docs/INTENTS.md`; the
+  `workspaceUrl`/`agentType` migration landed, full suite green). Next open item is
+  **step 2** (wire codecs + zod validation).
+- **Research workspaces:** `research-wire-codecs` (item 2) and the three
+  `research-leaky-*` (item 3) are still relevant. `research-provides-closures` is **moot**
+  (item 1 done) and can be discarded.
 - **Recommended spike:** prove the reverse channel by hand — run code-server + one
   agent on a remote box with `ssh -L`/`-R` and confirm the Claude bridge callback and
   the OpenCode MCP round-trip both work through the tunnel — before committing.
 - **Then:** fold research findings into a phased implementation plan
-  (1 → 2 → 3, then 4/5), with the data-plane spike alongside.
+  (2 → 3, then 4/5), with the data-plane spike alongside.

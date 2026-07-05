@@ -163,7 +163,7 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, string 
   }
 
   async execute(ctx: OperationContext<OpenWorkspaceIntent>): Promise<string | undefined> {
-    const { errors, capabilities } = await ctx.hooks.collect<void>("finalize", {
+    const { errors, results } = await ctx.hooks.collect<string>("finalize", {
       intent: ctx.intent,
       workspacePath: "/test/project/.worktrees/feature-1",
       envVars: { OPENCODE_PORT: "8080" },
@@ -171,7 +171,7 @@ class MinimalFinalizeOperation implements Operation<OpenWorkspaceIntent, string 
       ...this.hookInput,
     });
     if (errors.length > 0) throw errors[0]!;
-    return capabilities.workspaceUrl as string | undefined;
+    return results[0];
   }
 }
 

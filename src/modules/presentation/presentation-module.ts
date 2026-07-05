@@ -1632,11 +1632,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * app:setup `agent-selection`: show the picker (a radio system dialog) and
    * park until the user clicks Continue, which arrives as a system-dialog
    * action and resolves the parked promise with the chosen agent (returned as
-   * the `agentType` capability to app:setup). app:shutdown REJECTS the promise
+   * the agent-selection hook result to app:setup). app:shutdown REJECTS the promise
    * so a quit-during-selection throws here — app:setup unwinds without reaching
    * save-agent, so no agent is persisted and the next launch re-prompts.
    */
-  async function setupAgentSelection(ctx: HookContext): Promise<HookOutput> {
+  async function setupAgentSelection(ctx: HookContext): Promise<HookOutput<LifecycleAgentType>> {
     const { availableAgents } = ctx as AgentSelectionHookContext;
     agentOptions = availableAgents;
     startupPhase = "agent-selection";
@@ -1646,7 +1646,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
       agentSelectionResolve = resolve;
       agentSelectionReject = reject;
     });
-    return { provides: { agentType: agent } };
+    return { result: agent };
   }
 
   /** app:setup `hide-ui`: return to the boot-splash phase. */

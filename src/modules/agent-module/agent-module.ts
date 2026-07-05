@@ -356,8 +356,7 @@ export function createAgentModule(
             });
 
             return {
-              result: { envVars: result.envVars },
-              provides: { agentType: provider.type },
+              result: { envVars: result.envVars, agentType: provider.type },
             };
           },
         },

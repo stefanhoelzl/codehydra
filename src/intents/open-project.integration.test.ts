@@ -497,9 +497,9 @@ function createTestHarness(options?: {
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
         finalize: {
-          handler: async (ctx: HookContext): Promise<HookOutput> => {
+          handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
             void (ctx as FinalizeHookInput).envVars;
-            return { provides: { workspaceUrl: WORKSPACE_URL } };
+            return { result: WORKSPACE_URL };
           },
         },
       },
