@@ -129,12 +129,28 @@ export interface DiscoverHookInput extends HookContext {
   readonly projectPath: string;
 }
 
-/** Callback for reporting clone progress from a resolve hook. */
-export type CloneProgressReporter = (stage: string, progress: number, name: string) => void;
+/**
+ * Progress frame yielded by the "resolve" hook while cloning (data only, no closure).
+ * The operation adds the `url` it knows and emits `clone:progress`.
+ */
+export interface CloneProgressFrame {
+  readonly stage: string;
+  readonly progress: number;
+  readonly name: string;
+}
 
-/** Input context for the "resolve" hook point. */
-export interface ResolveHookInput extends HookContext {
-  readonly report: CloneProgressReporter;
+/** Narrow an onYield frame to a CloneProgressFrame (plain-typed fields → cast-free). */
+export function isCloneProgressFrame(frame: unknown): frame is CloneProgressFrame {
+  return (
+    typeof frame === "object" &&
+    frame !== null &&
+    "stage" in frame &&
+    typeof frame.stage === "string" &&
+    "progress" in frame &&
+    typeof frame.progress === "number" &&
+    "name" in frame &&
+    typeof frame.name === "string"
+  );
 }
 
 // =============================================================================
@@ -211,19 +227,29 @@ export class OpenProjectOperation implements Operation<OpenProjectIntent, Projec
     }
 
     try {
-      // Create clone progress reporter that emits domain events
+      // The resolve hook streams clone progress by yielding CloneProgressFrame data;
+      // the operation adds the url it knows and emits clone:progress (operation owns emits).
       const gitUrl = effectiveIntent.payload.git ?? "";
-      const report: CloneProgressReporter = (stage, progress, name) => {
-        ctx.emit({
-          type: EVENT_CLONE_PROGRESS,
-          payload: { stage, progress, name, url: gitUrl },
-        } as CloneProgressEvent);
+      const emitCloneProgress = (frame: unknown): void => {
+        if (isCloneProgressFrame(frame)) {
+          void ctx.emit({
+            type: EVENT_CLONE_PROGRESS,
+            payload: {
+              stage: frame.stage,
+              progress: frame.progress,
+              name: frame.name,
+              url: gitUrl,
+            },
+          } satisfies CloneProgressEvent);
+        }
       };
 
       // 1. Resolve: clone if URL, validate git, return projectPath + remoteUrl
-      const resolveCtx: ResolveHookInput = { intent: effectiveIntent, report };
+      const resolveCtx: HookContext = { intent: effectiveIntent };
       const { results: resolveResults, errors: resolveErrors } =
-        await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx);
+        await ctx.hooks.collect<ResolveHookResult>("resolve", resolveCtx, {
+          onYield: emitCloneProgress,
+        });
       throwHookErrors(resolveErrors, "project:open resolve hooks failed");
       let projectPath: string | undefined;
       let resolvedRemoteUrl: string | undefined;

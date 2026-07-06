@@ -25,7 +25,12 @@ import type {
   CheckDepsResult,
   ConfigureResult,
 } from "../../intents/app-start";
-import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../../intents/setup";
+import type {
+  RegisterAgentResult,
+  SaveAgentHookInput,
+  BinaryHookInput,
+  SetupProgressPayload,
+} from "../../intents/setup";
 import type {
   SetupHookInput,
   SetupHookResult,
@@ -58,6 +63,7 @@ import {
   type LaunchOptionsHookResult,
 } from "../../intents/agent-launch-options";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
+import { streamProgress } from "../../intents/lib/hook-helpers";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
 import { GET_WORKSPACE_STATUS_OPERATION_ID } from "../../intents/get-workspace-status";
@@ -303,35 +309,45 @@ export function createAgentModule(
         },
 
         binary: {
-          handler: async (ctx: HookContext) => {
+          // Streaming handler: yield progress frames; the setup operation emits them.
+          handler: async function* (
+            ctx: HookContext
+          ): AsyncGenerator<SetupProgressPayload, void, void> {
             const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
-            const { report } = hookCtx;
 
             const agentType = hookCtx.selectedAgent ?? hookCtx.configuredAgent;
             if (agentType !== provider.type) return;
 
-            if (missingBinaries.includes(provider.binaryType)) {
-              report("agent", "running", "Downloading...");
-              try {
+            if (!missingBinaries.includes(provider.binaryType)) {
+              yield { id: "agent", status: "done" };
+              return;
+            }
+
+            yield { id: "agent", status: "running", message: "Downloading..." };
+            try {
+              yield* streamProgress<SetupProgressPayload>(async (emit) => {
                 await provider.downloadBinary((p) => {
                   if (p.phase === "downloading" && p.totalBytes) {
                     const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
-                    report("agent", "running", "Downloading...", undefined, pct);
+                    emit({
+                      id: "agent",
+                      status: "running",
+                      message: "Downloading...",
+                      progress: pct,
+                    });
                   } else if (p.phase === "extracting") {
-                    report("agent", "running", "Extracting...");
+                    emit({ id: "agent", status: "running", message: "Extracting..." });
                   }
                 });
-                report("agent", "done");
-              } catch (error) {
-                report("agent", "failed", undefined, getErrorMessage(error));
-                throw new SetupError(
-                  `Failed to download ${provider.binaryType}: ${getErrorMessage(error)}`,
-                  "BINARY_DOWNLOAD_FAILED"
-                );
-              }
-            } else {
-              report("agent", "done");
+              });
+              yield { id: "agent", status: "done" };
+            } catch (error) {
+              yield { id: "agent", status: "failed", error: getErrorMessage(error) };
+              throw new SetupError(
+                `Failed to download ${provider.binaryType}: ${getErrorMessage(error)}`,
+                "BINARY_DOWNLOAD_FAILED"
+              );
             }
           },
         },

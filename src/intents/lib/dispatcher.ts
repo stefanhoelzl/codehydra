@@ -21,8 +21,10 @@ import type {
   OperationContext,
   DispatchFn,
   ResolvedHooks,
+  CollectOptions,
   HookContext,
   HookHandler,
+  HookHandlerReturn,
   HookOutput,
   HookResult,
 } from "./operation";
@@ -260,7 +262,8 @@ export class Dispatcher implements IDispatcher {
   private async collectHookResults<T>(
     hookHandlers: HookHandler[],
     inputCtx: HookContext,
-    initialCaps: Readonly<Record<string, unknown>>
+    initialCaps: Readonly<Record<string, unknown>>,
+    onYield?: (frame: unknown) => void | Promise<void>
   ): Promise<CollectResult<T>> {
     const capabilities: Record<string, unknown> = {
       ...initialCaps,
@@ -284,8 +287,15 @@ export class Dispatcher implements IDispatcher {
           });
           try {
             // A handler returns a HookOutput (result and/or provided capabilities);
-            // void is shorthand for an empty output.
-            const output: HookOutput = (await entry.handler(frozenCtx)) ?? {};
+            // void is shorthand for an empty output. A streaming handler is an
+            // async generator: drain its yielded progress frames to onYield (host-side),
+            // and use its return value as the output. The non-generator path stays a
+            // plain await (no extra microtask hop) to preserve emit/dispatch timing.
+            const invoked = entry.handler(frozenCtx);
+            const output: HookOutput =
+              (isAsyncGenerator(invoked)
+                ? await drainGenerator(invoked, onYield)
+                : await invoked) ?? {};
             if (output.result !== undefined && output.result !== null) {
               results.push(output.result as T);
             }
@@ -339,7 +349,11 @@ export class Dispatcher implements IDispatcher {
     const initCaps = this.initialCapabilities;
     const logger = this.logger;
     return {
-      collect: async <T>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>> => {
+      collect: async <T>(
+        hookPointId: string,
+        ctx: HookContext,
+        options?: CollectOptions
+      ): Promise<HookResult<T>> => {
         const hookHandlers = opMap?.get(hookPointId);
         if (!hookHandlers) {
           return { results: [], errors: [], capabilities: initCaps };
@@ -348,7 +362,8 @@ export class Dispatcher implements IDispatcher {
         const { ran, skipped, ...hookResult } = await this.collectHookResults<T>(
           hookHandlers,
           ctx,
-          initCaps
+          initCaps,
+          options?.onYield
         );
         const duration = Math.round(performance.now() - start);
 
@@ -472,6 +487,33 @@ export class Dispatcher implements IDispatcher {
       handle.reject(e);
     }
   }
+}
+
+// =============================================================================
+// Hook handler draining
+// =============================================================================
+
+/** True when a handler's invocation returned an async generator (a streaming handler). */
+function isAsyncGenerator(
+  value: HookHandlerReturn
+): value is AsyncGenerator<unknown, HookOutput | void, void> {
+  return typeof value === "object" && value !== null && Symbol.asyncIterator in value;
+}
+
+/**
+ * Drain a streaming (`async function*`) handler: forward each yielded frame to `onYield`
+ * and return the generator's return value (its `HookOutput`).
+ */
+async function drainGenerator(
+  gen: AsyncGenerator<unknown, HookOutput | void, void>,
+  onYield?: (frame: unknown) => void | Promise<void>
+): Promise<HookOutput | void> {
+  let next = await gen.next();
+  while (!next.done) {
+    if (onYield) await onYield(next.value);
+    next = await gen.next();
+  }
+  return next.value;
 }
 
 // =============================================================================

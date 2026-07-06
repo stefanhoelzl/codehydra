@@ -59,7 +59,8 @@ export interface ExtensionInstallEntry {
   readonly vsixPath: string;
 }
 import { INTENT_SETUP } from "./setup";
-import { throwHookErrors, lastDefined } from "./lib/hook-helpers";
+import { INTENT_APP_READY, type AppReadyIntent } from "./app-ready";
+import { throwHookErrors } from "./lib/hook-helpers";
 
 // =============================================================================
 // Intent Types
@@ -118,10 +119,13 @@ export interface InitResult {
 
 /**
  * Per-handler result for "show-ui" hook point.
- * Only the retry module returns a value; UI module returns void.
+ * The UI module returns `{ retrySupported: true }` when it can host a setup retry loop;
+ * other handlers return void. Data-only: the actual "wait for the user to click Retry"
+ * is a separate `await-retry` hook point (the handler blocks internally and returns data),
+ * not a closure handed back to the operation.
  */
 export interface ShowUIHookResult {
-  readonly waitForRetry?: () => Promise<void>;
+  readonly retrySupported?: boolean;
 }
 
 // ActivateHookContext removed — ports are now read from capabilities within the "start" hook point.
@@ -186,18 +190,18 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       ? this.agentConfig.get()
       : null;
 
-    // Hook 3: "show-ui" -- Show starting screen, capture waitForRetry
+    // Hook 3: "show-ui" -- Show starting screen; learn whether a retry loop is supported.
     const { results: showUiResults, errors: showUiErrors } =
       await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
     throwHookErrors(showUiErrors, "app:start show-ui hooks failed");
-    const waitForRetry = lastDefined(showUiResults, (r) => r.waitForRetry);
+    const retrySupported = showUiResults.some((r) => r.retrySupported === true);
 
     // Hook 4: "check-deps" (collect, isolated contexts)
     let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
 
     // Dispatch app:setup if needed (blocking sub-operation)
     // Setup manages its own UI (shows/hides setup screen)
-    // Retry loop: if setup fails and waitForRetry is available, wait for user retry signal
+    // Retry loop: if setup fails and retry is supported, wait via the await-retry hook
     if (checkResult.needsSetup) {
       let setupComplete = false;
       while (!setupComplete) {
@@ -216,9 +220,12 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
           setupComplete = true;
         } catch (error) {
           // Setup failed -- error event already emitted by SetupOperation
-          // If retry is supported, wait for user to click retry
-          if (waitForRetry) {
-            await waitForRetry();
+          // If retry is supported, wait for user to click retry. The "await-retry"
+          // hook point blocks (host-side, in the UI handler) until the user clicks
+          // Retry and returns data — no closure crosses the hook contract.
+          if (retrySupported) {
+            const { errors: retryErrors } = await ctx.hooks.collect<void>("await-retry", hookCtx);
+            throwHookErrors(retryErrors, "app:start await-retry hooks failed");
             // Re-run check hooks to get fresh preflight state for retry
             checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
             if (!checkResult.needsSetup) {
@@ -239,6 +246,18 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
     // separate "activate" hook point.
     const { errors: startErrors } = await ctx.hooks.collect<void>("start", hookCtx);
     throwHookErrors(startErrors, "app:start start hooks failed");
+
+    // After all start handlers (code-server included) are up, load initial projects.
+    // Fire-and-forget: the snapshot stream carries the result, so startup must not
+    // block on projects finishing. (Operation owns this dispatch; the presentation
+    // start handler only advances the UI phase.)
+    const readyHandle = ctx.dispatch<AppReadyIntent>({
+      type: INTENT_APP_READY,
+      payload: {},
+    });
+    void readyHandle.catch(() => {
+      // app:ready failures surface via its own events/logging; don't fail startup.
+    });
   }
 
   /**

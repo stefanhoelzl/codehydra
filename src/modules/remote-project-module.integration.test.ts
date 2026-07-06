@@ -7,7 +7,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import type { HookContext, ResolvedHooks, HookResult, HookOutput } from "../intents/lib/operation";
+import type {
+  HookContext,
+  ResolvedHooks,
+  HookResult,
+  HookOutput,
+  CollectOptions,
+} from "../intents/lib/operation";
 import type { IntentModule } from "../intents/lib/module";
 
 import { SILENT_LOGGER } from "../boundaries/platform/logging";
@@ -21,9 +27,8 @@ import { createRemoteProjectModule } from "./remote-project-module";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
 import type {
   ResolveHookResult,
-  ResolveHookInput,
   OpenProjectIntent,
-  CloneProgressReporter,
+  CloneProgressFrame,
 } from "../intents/open-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 import type { CloseHookInput, CloseHookResult, CloseProjectIntent } from "../intents/close-project";
@@ -36,28 +41,44 @@ const URL_PROJECT_ID = "repo-4c06e3f1" as ProjectId;
 
 expect.extend(gitClientMatchers);
 
-const noopReport: CloneProgressReporter = () => {};
-
 // =============================================================================
 // Test Setup
 // =============================================================================
 
 /**
  * Build a ResolvedHooks from a module's hook declarations for a given operation.
+ * Mirrors the Dispatcher: awaits a plain handler, or drains a streaming
+ * (async-generator) handler, forwarding yielded frames to options.onYield.
  */
 function resolveHooksFromModule(module: IntentModule, operationId: string): ResolvedHooks {
   const opHooks = module.hooks?.[operationId] ?? {};
   return {
-    collect: async <T>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>> => {
+    collect: async <T>(
+      hookPointId: string,
+      ctx: HookContext,
+      options?: CollectOptions
+    ): Promise<HookResult<T>> => {
       const hookHandler = opHooks[hookPointId];
       if (!hookHandler) {
         return { results: [], errors: [], capabilities: {} };
       }
       try {
-        const output = await hookHandler.handler(ctx);
+        const invoked = hookHandler.handler(ctx);
+        let output: HookOutput<T> | void;
+        if (typeof invoked === "object" && invoked !== null && Symbol.asyncIterator in invoked) {
+          const gen = invoked as AsyncGenerator<unknown, HookOutput<T> | void, void>;
+          let next = await gen.next();
+          while (!next.done) {
+            if (options?.onYield) await options.onYield(next.value);
+            next = await gen.next();
+          }
+          output = next.value;
+        } else {
+          output = (await invoked) as HookOutput<T> | void;
+        }
         // Unwrap HookOutput.result; filter out undefined/null to match Dispatcher
         // behavior (undefined/null = "not handled")
-        const result = (output as HookOutput<T> | undefined)?.result;
+        const result = output?.result;
         const results: T[] = result !== undefined && result !== null ? [result] : [];
         return { results, errors: [], capabilities: {} };
       } catch (error) {
@@ -97,11 +118,8 @@ function openProjectIntent(payload: { git?: string; path?: Path }): OpenProjectI
   };
 }
 
-function resolveContext(
-  intent: OpenProjectIntent,
-  report: CloneProgressReporter = noopReport
-): ResolveHookInput {
-  return { intent, report };
+function resolveContext(intent: OpenProjectIntent): HookContext {
+  return { intent };
 }
 
 function closeProjectIntent(payload: {
@@ -218,13 +236,10 @@ describe("RemoteProjectModule Integration", () => {
       (gitClient as { clone: typeof gitClient.clone }).clone = originalClone;
     });
 
-    it("reports clone progress via report callback", async () => {
+    it("streams clone progress frames via onYield", async () => {
       const { hookRegistry, gitClient } = createTestSetup();
 
-      const progressEvents: Array<{ stage: string; progress: number; name: string }> = [];
-      const report: CloneProgressReporter = (stage, progress, name) => {
-        progressEvents.push({ stage, progress, name });
-      };
+      const progressFrames: CloneProgressFrame[] = [];
 
       // Override mock clone to invoke onProgress
       const originalClone = gitClient.clone.bind(gitClient);
@@ -241,9 +256,13 @@ describe("RemoteProjectModule Integration", () => {
       const hooks = hookRegistry.resolve(OPEN_PROJECT_OPERATION_ID);
       const intent = openProjectIntent({ git: "https://github.com/org/repo.git" });
 
-      await hooks.collect<ResolveHookResult | undefined>("resolve", resolveContext(intent, report));
+      await hooks.collect<ResolveHookResult | undefined>("resolve", resolveContext(intent), {
+        onYield: (frame) => {
+          progressFrames.push(frame as CloneProgressFrame);
+        },
+      });
 
-      expect(progressEvents).toEqual([
+      expect(progressFrames).toEqual([
         { stage: "receiving", progress: 0.5, name: "repo" },
         { stage: "resolving", progress: 1, name: "repo" },
       ]);

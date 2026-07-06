@@ -13,7 +13,7 @@ import type { HookHandler, HookContext, HookOutput } from "../intents/lib/operat
 import { createMockConfig, createMockAccessor } from "../boundaries/platform/config.test-utils";
 import type { Config } from "../boundaries/platform/config";
 import type { CheckDepsResult } from "../intents/app-start";
-import type { SetupProgressReporter } from "../intents/setup";
+import type { SetupProgressPayload } from "../intents/setup";
 import type { DeleteHookResult, DetectHookResult } from "../intents/delete-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { RESOLVE_WORKSPACE_OPERATION_ID } from "../intents/resolve-workspace";
@@ -36,23 +36,18 @@ function makeHookContext(): HookContext {
   return { intent: { type: "test", payload: {} } };
 }
 
-interface ReportCall {
-  id: string;
-  status: string;
-  message: string | undefined;
-  error: string | undefined;
-  progress: number | undefined;
-}
-
-function makeReportSpy(): {
-  report: SetupProgressReporter;
-  calls: ReportCall[];
-} {
-  const calls: ReportCall[] = [];
-  const report: SetupProgressReporter = (id, status, message?, error?, progress?) => {
-    calls.push({ id, status, message, error, progress });
-  };
-  return { report, calls };
+/** Drive a streaming (async-generator) binary hook, advancing fake timers per step. */
+async function collectSetupFrames(hook: HookHandler): Promise<SetupProgressPayload[]> {
+  const gen = hook.handler(makeHookContext()) as AsyncGenerator<SetupProgressPayload, void, void>;
+  const frames: SetupProgressPayload[] = [];
+  while (true) {
+    const nextPromise = gen.next();
+    await vi.advanceTimersByTimeAsync(300);
+    const res = await nextPromise;
+    if (res.done) break;
+    frames.push(res.value);
+  }
+  return frames;
 }
 
 // =============================================================================
@@ -186,13 +181,16 @@ describe("DebugModule Integration", () => {
       expect(result).toEqual({});
     });
 
-    it("binary hook returns immediately", async () => {
-      const module = createDebugModule({ configService: createMockConfig() });
-      const hook = getHook(module, SETUP_OPERATION_ID, "binary");
-      const { report, calls } = makeReportSpy();
-      const ctx = { ...makeHookContext(), report } as unknown as HookContext;
-      await hook.handler(ctx);
-      expect(calls).toHaveLength(0);
+    it("binary hook yields nothing when inactive", async () => {
+      vi.useFakeTimers();
+      try {
+        const module = createDebugModule({ configService: createMockConfig() });
+        const hook = getHook(module, SETUP_OPERATION_ID, "binary");
+        const frames = await collectSetupFrames(hook);
+        expect(frames).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -207,44 +205,20 @@ describe("DebugModule Integration", () => {
       expect(result.missingBinaries).toEqual(["claude"]);
     });
 
-    it("binary hook calls report with progress increments", async () => {
+    it("binary hook yields progress increments", async () => {
       vi.useFakeTimers();
       try {
         const module = createDebugModule({
           configService: createMockConfig({ defaults: { "debug.setup": true } }),
         });
         const hook = getHook(module, SETUP_OPERATION_ID, "binary");
-        const { report, calls } = makeReportSpy();
-        const ctx = { ...makeHookContext(), report } as unknown as HookContext;
 
-        const promise = hook.handler(ctx);
+        const frames = await collectSetupFrames(hook);
 
-        // Initial report("agent", "running", ..., 0)
-        expect(calls).toHaveLength(1);
-        expect(calls[0]).toEqual({
-          id: "agent",
-          status: "running",
-          message: undefined,
-          error: undefined,
-          progress: 0,
-        });
-
-        // Advance through all 10 increments (300ms each)
-        for (let i = 0; i < 10; i++) {
-          await vi.advanceTimersByTimeAsync(300);
-        }
-
-        await promise;
-
-        // 1 initial + 10 progress + 1 done = 12 calls
-        expect(calls).toHaveLength(12);
-        expect(calls[calls.length - 1]).toEqual({
-          id: "agent",
-          status: "done",
-          message: undefined,
-          error: undefined,
-          progress: undefined,
-        });
+        // 1 initial + 10 progress + 1 done = 12 frames
+        expect(frames).toHaveLength(12);
+        expect(frames[0]).toEqual({ id: "agent", status: "running", progress: 0 });
+        expect(frames[frames.length - 1]).toEqual({ id: "agent", status: "done" });
       } finally {
         vi.useRealTimers();
       }

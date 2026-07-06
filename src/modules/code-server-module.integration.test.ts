@@ -27,7 +27,7 @@ import {
 } from "../intents/app-resume";
 import type { DomainEvent } from "../intents/lib/types";
 import { SETUP_OPERATION_ID } from "../intents/setup";
-import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";
+import type { BinaryHookInput, ExtensionsHookInput, SetupProgressPayload } from "../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
@@ -117,19 +117,23 @@ class MinimalStartOperation implements Operation<Intent, number | undefined> {
 class MinimalBinaryOperation implements Operation<Intent, void> {
   readonly id = SETUP_OPERATION_ID;
   private readonly hookInput: Partial<BinaryHookInput>;
-  readonly report: ReturnType<typeof vi.fn>;
+  /** Progress frames yielded by the streaming binary handler. */
+  readonly frames: SetupProgressPayload[] = [];
 
   constructor(hookInput: Partial<BinaryHookInput> = {}) {
-    this.report = (hookInput.report as ReturnType<typeof vi.fn>) ?? vi.fn();
     this.hookInput = hookInput;
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect("binary", {
-      intent: ctx.intent,
-      report: this.report,
-      ...this.hookInput,
-    });
+    const { errors } = await ctx.hooks.collect(
+      "binary",
+      { intent: ctx.intent, ...this.hookInput },
+      {
+        onYield: (frame) => {
+          this.frames.push(frame as SetupProgressPayload);
+        },
+      }
+    );
     if (errors.length > 0) throw errors[0]!;
   }
 }
@@ -137,19 +141,23 @@ class MinimalBinaryOperation implements Operation<Intent, void> {
 class MinimalExtensionsOperation implements Operation<Intent, void> {
   readonly id = SETUP_OPERATION_ID;
   private readonly hookInput: Partial<ExtensionsHookInput>;
-  readonly report: ReturnType<typeof vi.fn>;
+  /** Progress frames yielded by the streaming extensions handler. */
+  readonly frames: SetupProgressPayload[] = [];
 
   constructor(hookInput: Partial<ExtensionsHookInput> = {}) {
-    this.report = (hookInput.report as ReturnType<typeof vi.fn>) ?? vi.fn();
     this.hookInput = hookInput;
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect("extensions", {
-      intent: ctx.intent,
-      report: this.report,
-      ...this.hookInput,
-    });
+    const { errors } = await ctx.hooks.collect(
+      "extensions",
+      { intent: ctx.intent, ...this.hookInput },
+      {
+        onYield: (frame) => {
+          this.frames.push(frame as SetupProgressPayload);
+        },
+      }
+    );
     if (errors.length > 0) throw errors[0]!;
   }
 }
@@ -600,7 +608,7 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(archiveExtractor.$.extractions.length).toBeGreaterThan(0);
-      expect(op.report).toHaveBeenCalledWith("vscode", "done");
+      expect(op.frames).toContainEqual({ id: "vscode", status: "done" });
     });
 
     it("skips download when not missing", async () => {
@@ -613,7 +621,7 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(archiveExtractor).toHaveNoExtractions();
-      expect(op.report).toHaveBeenCalledWith("vscode", "done");
+      expect(op.frames).toContainEqual({ id: "vscode", status: "done" });
     });
 
     it("reports progress during download", async () => {
@@ -631,8 +639,17 @@ describe("CodeServerModule", () => {
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(op.report).toHaveBeenCalledWith("vscode", "running", "Downloading...", undefined, 50);
-      expect(op.report).toHaveBeenCalledWith("vscode", "running", "Extracting...");
+      expect(op.frames).toContainEqual({
+        id: "vscode",
+        status: "running",
+        message: "Downloading...",
+        progress: 50,
+      });
+      expect(op.frames).toContainEqual({
+        id: "vscode",
+        status: "running",
+        message: "Extracting...",
+      });
     });
 
     it("throws SetupError on download failure", async () => {
@@ -645,11 +662,12 @@ describe("CodeServerModule", () => {
       dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(op.report).toHaveBeenCalledWith(
-        "vscode",
-        "failed",
-        undefined,
-        expect.stringContaining("Failed to download code-server")
+      expect(op.frames).toContainEqual(
+        expect.objectContaining({
+          id: "vscode",
+          status: "failed",
+          error: expect.stringContaining("Failed to download code-server"),
+        })
       );
     });
   });
@@ -679,7 +697,7 @@ describe("CodeServerModule", () => {
           ]) as unknown as string[],
         },
       ]);
-      expect(op.report).toHaveBeenCalledWith("setup", "done");
+      expect(op.frames).toContainEqual({ id: "setup", status: "done" });
     });
 
     it("removes old extension dir before reinstalling", async () => {
@@ -717,7 +735,7 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(() => asMockRunner(deps).$.spawned(0)).toThrow();
-      expect(op.report).toHaveBeenCalledWith("setup", "done");
+      expect(op.frames).toContainEqual({ id: "setup", status: "done" });
     });
 
     it("throws SetupError on install failure", async () => {
@@ -741,11 +759,12 @@ describe("CodeServerModule", () => {
       dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(op.report).toHaveBeenCalledWith(
-        "setup",
-        "failed",
-        undefined,
-        expect.stringContaining("Failed to install extension")
+      expect(op.frames).toContainEqual(
+        expect.objectContaining({
+          id: "setup",
+          status: "failed",
+          error: expect.stringContaining("Failed to install extension"),
+        })
       );
     });
   });

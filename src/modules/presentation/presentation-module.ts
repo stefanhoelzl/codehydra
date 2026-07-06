@@ -46,7 +46,7 @@ import {
   INTENT_APP_SHUTDOWN,
   type AppShutdownIntent,
 } from "../../intents/app-shutdown";
-import { EVENT_APP_STARTED, INTENT_APP_READY, type AppReadyIntent } from "../../intents/app-ready";
+import { EVENT_APP_STARTED } from "../../intents/app-ready";
 import { APP_START_OPERATION_ID, type ShowUIHookResult } from "../../intents/app-start";
 import {
   SETUP_OPERATION_ID,
@@ -1590,35 +1590,32 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   async function appStartShowUi(): Promise<HookOutput<ShowUIHookResult>> {
     startupPhase = "starting";
     scheduleUpdate();
-    return {
-      result: {
-        waitForRetry: () =>
-          new Promise<void>((resolve, reject) => {
-            retryResolve = resolve;
-            retryReject = reject;
-          }),
-      },
-    };
+    // Advertise that this (UI) module can host a setup retry loop. The actual wait
+    // happens in the `await-retry` hook below — data in, data out, no closure.
+    return { result: { retrySupported: true } };
   }
 
   /**
-   * app:start `start`: dispatch app:ready (load projects → app:started). Gated
-   * on code-server being up (mirrors view-module's old start hook ordering).
-   * The "running" phase shows the unified loading screen until app:started.
-   * Fire-and-forget: app:ready is awaited internally by the dispatcher, but the
-   * hook must not block startup on the projects finishing — the snapshot stream
-   * carries the result.
+   * app:start `await-retry`: block until the user clicks Retry (a system-dialog
+   * action resolves `retryResolve`), then return. app:shutdown rejects the parked
+   * promise so a quit-during-retry unwinds app:start instead of hanging. The promise
+   * is module-internal state; nothing crosses the hook contract but the returned void.
+   */
+  async function awaitRetry(): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+      retryResolve = resolve;
+      retryReject = reject;
+    });
+  }
+
+  /**
+   * app:start `start`: advance to the "running" phase (unified loading screen until
+   * app:started). The app:ready dispatch that loads projects is owned by the app:start
+   * operation now (fired after all start handlers), so this handler is pure UI state.
    */
   async function appStartStart(): Promise<void> {
     startupPhase = "running";
     scheduleUpdate();
-    const handle = deps.dispatcher.dispatch({
-      type: INTENT_APP_READY,
-      payload: {},
-    } as AppReadyIntent);
-    void handle.catch((error: unknown) => {
-      logger.debug("app:ready dispatch rejected", { error: getErrorMessage(error) });
-    });
   }
 
   /** app:setup `show-ui`: enter the setup phase with fresh pending rows. */
@@ -1682,9 +1679,12 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
           },
         },
         "show-ui": { handler: appStartShowUi },
+        "await-retry": { handler: awaitRetry },
         start: {
-          // Gate on code-server: app:ready dispatches project:open, whose
-          // workspace URLs must be servable when the renderer mounts iframes.
+          // Gate on code-server: the operation dispatches app:ready (→ project:open,
+          // whose workspace URLs must be servable when the renderer mounts iframes)
+          // only after this hook point completes, so advancing the phase here waits
+          // for code-server too.
           requires: { codeServerPort: ANY_VALUE },
           handler: appStartStart,
         },

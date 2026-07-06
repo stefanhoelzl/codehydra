@@ -29,7 +29,7 @@ import {
   type ResolveHookResult,
 } from "../intents/resolve-workspace";
 import type { WorkspaceName } from "../shared/api/types";
-import { SETUP_OPERATION_ID, type BinaryHookInput } from "../intents/setup";
+import { SETUP_OPERATION_ID, type SetupProgressPayload } from "../intents/setup";
 import type { NotificationHandle } from "./presentation/sessions";
 import type { UiPresenter } from "./presentation/presentation-module";
 import type { NotificationConfig } from "../shared/notification-types";
@@ -155,15 +155,15 @@ export function createDebugModule(deps: DebugModuleDeps): IntentModule {
       // --- Setup: binary download simulation ---
       [SETUP_OPERATION_ID]: {
         binary: {
-          handler: async (ctx: HookContext): Promise<void> => {
+          // Streaming handler: yield progress frames; the setup operation emits them.
+          handler: async function* (): AsyncGenerator<SetupProgressPayload, void, void> {
             if (!isActive("debug.setup")) return;
-            const { report } = ctx as BinaryHookInput;
-            report("agent", "running", undefined, undefined, 0);
+            yield { id: "agent", status: "running", progress: 0 };
             for (let progress = 10; progress <= 100; progress += 10) {
               await delay(300);
-              report("agent", "running", undefined, undefined, progress);
+              yield { id: "agent", status: "running", progress };
             }
-            report("agent", "done");
+            yield { id: "agent", status: "done" };
           },
         },
       },

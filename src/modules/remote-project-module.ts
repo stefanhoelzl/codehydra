@@ -24,9 +24,10 @@ import { expandGitUrl, normalizeGitUrl, extractRepoName } from "../utils/url-uti
 import type {
   OpenProjectIntent,
   ResolveHookResult,
-  ResolveHookInput,
+  CloneProgressFrame,
 } from "../intents/open-project";
 import { OPEN_PROJECT_OPERATION_ID } from "../intents/open-project";
+import { streamProgress } from "../intents/lib/hook-helpers";
 import type { CloseHookInput, CloseHookResult } from "../intents/close-project";
 import { CLOSE_PROJECT_OPERATION_ID } from "../intents/close-project";
 
@@ -69,10 +70,13 @@ export function createRemoteProjectModule(deps: {
       // -----------------------------------------------------------------------
       [OPEN_PROJECT_OPERATION_ID]: {
         resolve: {
-          handler: async (ctx: HookContext): Promise<HookOutput<ResolveHookResult>> => {
+          // Streaming handler: yield clone-progress frames; the open-project operation
+          // adds the url and emits clone:progress. Returns the resolved paths.
+          handler: async function* (
+            ctx: HookContext
+          ): AsyncGenerator<CloneProgressFrame, HookOutput<ResolveHookResult>, void> {
             const intent = ctx.intent as OpenProjectIntent;
             const { git } = intent.payload;
-            const { report } = ctx as ResolveHookInput;
 
             if (!git) {
               return {};
@@ -109,8 +113,10 @@ export function createRemoteProjectModule(deps: {
               gitPath: gitPath.toString(),
             });
 
-            await gitClient.clone(expanded, gitPath, (event) => {
-              report(event.stage, event.progress / 100, repoName);
+            yield* streamProgress<CloneProgressFrame>(async (emit) => {
+              await gitClient.clone(expanded, gitPath, (event) => {
+                emit({ stage: event.stage, progress: event.progress / 100, name: repoName });
+              });
             });
 
             // No saveProject call — LocalProjectModule.register handles persistence
