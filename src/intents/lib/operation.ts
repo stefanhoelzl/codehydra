@@ -60,17 +60,38 @@ export interface HookOutput<T = unknown> {
 }
 
 /**
+ * Return type of a hook handler.
+ *
+ * A handler is either:
+ *  - a plain async function returning a `HookOutput<T>` (or `void` for an empty output), or
+ *  - an `async function*` that **yields** progress frames of type `Y` (pure data) and
+ *    **returns** its `HookOutput<T>`. The dispatcher drains the generator, forwarding each
+ *    yielded frame to the `onYield` callback the operation passed to `collect()`, and uses
+ *    the generator's return value as the handler's output.
+ *
+ * The streaming form lets a long-running handler (clone, binary download) surface progress
+ * without holding a closure: it yields neutral data, and the host-side operation maps each
+ * frame to a domain event and emits it. The `onYield` callback lives operation ↔ `collect`,
+ * never in the handler's `HookContext`, so the data-only-context invariant holds.
+ */
+export type HookHandlerReturn<T = unknown, Y = unknown> =
+  | Promise<HookOutput<T> | void>
+  | AsyncGenerator<Y, HookOutput<T> | void, void>;
+
+/**
  * A handler registered for a hook point.
  *
  * Generic parameter `T` is the unwrapped result type for `collect()` — defaults to `unknown`
  * so that `HookDeclarations` (which uses `HookHandler`) accepts handlers with any result type.
+ * Generic parameter `Y` is the progress-frame type for streaming (`async function*`) handlers;
+ * it defaults to `unknown` and is irrelevant to non-streaming handlers.
  * A handler returns a `HookOutput<T>` (result and/or provided capabilities); returning `void`
  * is shorthand for an empty output (no result, no capabilities).
  */
-export interface HookHandler<T = unknown> {
+export interface HookHandler<T = unknown, Y = unknown> {
   /** Module name — set by the Dispatcher during registerModule(). */
   readonly name?: string;
-  readonly handler: (ctx: HookContext) => Promise<HookOutput<T> | void>;
+  readonly handler: (ctx: HookContext) => HookHandlerReturn<T, Y>;
   /** Capabilities this handler requires before it can execute.
    *  Key = capability name. Value = required value, or ANY_VALUE for "must exist, any value". */
   readonly requires?: Readonly<Record<string, unknown>>;
@@ -87,13 +108,32 @@ export interface HookResult<T = unknown> {
 }
 
 /**
+ * Options for `collect()`.
+ *
+ * `onYield` receives each progress frame yielded by a streaming (`async function*`) handler
+ * on this hook point. It runs host-side (operation ↔ dispatcher) — the operation typically
+ * narrows the frame and maps it to a domain event, then emits it. The frame is typed
+ * `unknown` because the dispatcher stores handlers without their yield type; a hook point
+ * carries a single progress semantic, so the operation knows how to narrow it (and a remote
+ * proxy will validate it against the wire schema before it reaches here).
+ */
+export interface CollectOptions {
+  readonly onYield?: (frame: unknown) => void | Promise<void>;
+}
+
+/**
  * Resolved hooks for a specific operation.
  *
  * `collect()` provides isolated-context execution: each handler receives a frozen
  * clone of the input context. All handlers always run. Returns typed results + errors.
+ * Streaming handlers' yielded frames are delivered to `options.onYield` as they occur.
  */
 export interface ResolvedHooks {
-  collect<T = unknown>(hookPointId: string, ctx: HookContext): Promise<HookResult<T>>;
+  collect<T = unknown>(
+    hookPointId: string,
+    ctx: HookContext,
+    options?: CollectOptions
+  ): Promise<HookResult<T>>;
 }
 
 // =============================================================================

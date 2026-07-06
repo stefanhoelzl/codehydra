@@ -46,7 +46,7 @@ stays a local-only concept in v1.
 ### Project identity depends on how it was obtained
 
 - **Managed → identity is the origin URL** (`sha256(normalizedUrl)`). The same origin
-  cloned on the host *and* on a remote box (and, later, mounted into a container) is
+  cloned on the host _and_ on a remote box (and, later, mounted into a container) is
   **one project**; its workspaces just live on different machines. Grouped under a
   single project node in the UI.
 - **Existing checkout → identity is `(machine, path)`.** No shared origin to unify on.
@@ -72,23 +72,23 @@ Today, open projects are persisted as one `config.json` per project under the ho
 `projects/` dir; on launch the app scans that dir and re-dispatches `project:open` for
 each, then discovers worktrees via `git worktree list`. Remote reconnect is the same
 loop with one addition: a project on a remote machine triggers an **SSH connect**, and
-the *remote* runs the discovery. Machine connect happens in the same post-`app-ready`
+the _remote_ runs the discovery. Machine connect happens in the same post-`app-ready`
 phase as project reopen (the `machines` registry is in `state.json`, which loads async).
 
 ---
 
 ## 3. What data lives where (decided)
 
-| Data | Lives | Persisted? | Owner |
-| --- | --- | --- | --- |
-| User config (UI, `agent`, `version.*`, telemetry toggle, electron/log) | **Host** `config.json` | yes | existing owners |
-| Identity, telemetry id, `update.dismissed-version`, `auto-workspaces` | **Host** `state.json` | yes | existing owners |
-| **`machines` registry** (SSH boxes) + **`host.id`** | **Host** `state.json` — *new* | yes | **`machine-registry` (new)** |
-| Project registry (managed→`{originUrl}`; local existing→`{machineId:local, path}`) | **Host** `projects/<id>/config.json` | yes | **`project-registry` (new, from local-project)** |
-| Screenshots, `electron/`, host logs, host temp | **Host** `dataRoot` | yes | existing owners |
-| Worktrees, managed clones, `vscode/`, `bin/`, `runtime/`, `claude/configs/`, remote logs/temp | **Remote** `<remoteBase>/<hostId>/…` | on box | remote-instanced modules |
-| Binaries (code-server, agents) | **Remote** `<remoteBase>/bundles/` (**shared** across hosts) | on box | code-server / agent modules |
-| The workspace list | nowhere — **discovered** per machine, grouped by origin | no | git-worktree (per machine) |
+| Data                                                                                          | Lives                                                        | Persisted? | Owner                                            |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ---------- | ------------------------------------------------ |
+| User config (UI, `agent`, `version.*`, telemetry toggle, electron/log)                        | **Host** `config.json`                                       | yes        | existing owners                                  |
+| Identity, telemetry id, `update.dismissed-version`, `auto-workspaces`                         | **Host** `state.json`                                        | yes        | existing owners                                  |
+| **`machines` registry** (SSH boxes) + **`host.id`**                                           | **Host** `state.json` — _new_                                | yes        | **`machine-registry` (new)**                     |
+| Project registry (managed→`{originUrl}`; local existing→`{machineId:local, path}`)            | **Host** `projects/<id>/config.json`                         | yes        | **`project-registry` (new, from local-project)** |
+| Screenshots, `electron/`, host logs, host temp                                                | **Host** `dataRoot`                                          | yes        | existing owners                                  |
+| Worktrees, managed clones, `vscode/`, `bin/`, `runtime/`, `claude/configs/`, remote logs/temp | **Remote** `<remoteBase>/<hostId>/…`                         | on box     | remote-instanced modules                         |
+| Binaries (code-server, agents)                                                                | **Remote** `<remoteBase>/bundles/` (**shared** across hosts) | on box     | code-server / agent modules                      |
+| The workspace list                                                                            | nowhere — **discovered** per machine, grouped by origin      | no         | git-worktree (per machine)                       |
 
 Notes:
 
@@ -117,7 +117,7 @@ That separation is reused on the remote:
 
 - **No `config.json` on the remote.** The remote holds files only; its data root and
   settings are injected at connect (§5).
-- **Multi-host isolation.** Two hosts often SSH in as the *same* unix user, so unix-user
+- **Multi-host isolation.** Two hosts often SSH in as the _same_ unix user, so unix-user
   separation can't be relied on; a managed clone keys off `sha256(origin)` and would
   otherwise be shared, leaking one host's worktrees into the other's `git worktree list`.
   Isolation is therefore structural: **per-host `dataRoot` namespace + a per-host
@@ -160,16 +160,16 @@ boundaries inside the per-host module-host process.
 
 All UI/Electron modules (presentation, view, settings, creation, deletion-dialog,
 clone/error-notification, workspace-selection, window-title, shortcut, devtools, badge,
-power), **hibernation-screenshot** *(reclassified host-only — the code-server iframe
-still renders in the host window even for a remote workspace)*, electron-lifecycle,
-host-logging, state, idempotency, debug, telemetry, **error-report** *(pulls a remote
-log bundle on demand, §7)*, auto-updater, and **mcp + plugin-server** *(host-central;
-remotes reach them via a reverse tunnel → the single host dispatcher)*.
+power), **hibernation-screenshot** _(reclassified host-only — the code-server iframe
+still renders in the host window even for a remote workspace)_, electron-lifecycle,
+host-logging, state, idempotency, debug, telemetry, **error-report** _(pulls a remote
+log bundle on demand, §7)_, auto-updater, and **mcp + plugin-server** _(host-central;
+remotes reach them via a reverse tunnel → the single host dispatcher)_.
 
 Plus two **new** host-only modules:
 
 - **`project-registry`** — extracted from `local-project`: persist/resolve/list projects
-  + the folder-picker Dialog (host-only). Single-tier.
+  - the folder-picker Dialog (host-only). Single-tier.
 - **`machine-registry`** — owns `machines` + `host.id`; connection lifecycle
   (bootstrap, heartbeat, reconnect-reconcile, deregister-on-drop); launches the per-host
   remote process; proxies remote module registration into the host dispatcher.
@@ -177,18 +177,18 @@ Plus two **new** host-only modules:
 ### Remote-instanced (per-host process)
 
 git-worktree, keepfiles, code-server, extension, metadata, workspace-agent-resolver,
-script, temp-dir, posix-process-cleanup, **managed-project** *(renamed from
-remote-project)*, and the **agent ServerManager**.
+script, temp-dir, posix-process-cleanup, **managed-project** _(renamed from
+remote-project)_, and the **agent ServerManager**.
 
 ### Split (each resulting handler single-tier)
 
 - **agent** — ServerManager = remote-instanced (co-located with the CLI); provider
   registration + availability + status intake = host. Status flows back as a dispatched
-  `agent:update-status` intent (already an intent — no new concept). *The healthy
-  reference shape for a split module.*
+  `agent:update-status` intent (already an intent — no new concept). _The healthy
+  reference shape for a split module._
 - **local-project → `project-registry` (host) + machine-instanced clone/discover.** The
   FS/git work — cloning a managed repo, discovering worktrees — runs where the repo lives.
-- *(`path-probe` for `remote+existing` — deferred to post-v1.)*
+- _(`path-probe` for `remote+existing` — deferred to post-v1.)_
 
 ### auto-workspace
 
@@ -222,14 +222,14 @@ is a bounded, sequenced list. Sequencing rationale unchanged: the handler/capabi
 
 **1. Reshape the capability contract — ✅ DONE** (commit `d871aea6`, pre-session).
 Handlers return a `HookOutput { result?, provides? }`; the merge loop is wire-ready. Rule
-recorded in `docs/INTENTS.md` (*a value is a capability iff a sibling handler `requires`
-it; everything else consumed is a `result`*). `workspaceUrl`/`agentType` migrated from
+recorded in `docs/INTENTS.md` (_a value is a capability iff a sibling handler `requires`
+it; everything else consumed is a `result`_). `workspaceUrl`/`agentType` migrated from
 capabilities to results. `requires` stays host-evaluated; `ANY_VALUE` never crosses the wire.
 
 **2. Wire codecs + zod validation (decided design).** The seam is **asymmetric**, and
 the untrusted direction is **remote→host**, which carries **three** independently-defined
 type families — not just intents: **intent payloads** (a remote handler dispatches),
-**hook results** (`HookOutput.result`, which *ride the invocation response* back — 6+ per
+**hook results** (`HookOutput.result`, which _ride the invocation response_ back — 6+ per
 op, e.g. `delete-workspace`), and **provided data** (`HookOutput.provides`). Event payloads
 travel host→remote (trusted). Today the dispatcher does **zero** validation
 (`dispatcher.ts:397`): intent payloads are `unknown`, hook results are merged via an
@@ -245,23 +245,23 @@ Resolved design:
   become `z.infer<schema>`, so the schema is the single source of truth (no separate
   hand-synced registry like today's `plugin-protocol.ts`).
 - **Data-only contract (global invariant — see item 2a).** With no functions anywhere in
-  the contract, the *entire* operation surface is schematizable; scope is not bounded by
+  the contract, the _entire_ operation surface is schematizable; scope is not bounded by
   serializability.
-- **Validate + transform anywhere.** Every dispatch runs `schema.parse` — validation *and*
+- **Validate + transform anywhere.** Every dispatch runs `schema.parse` — validation _and_
   `Path↔string` / `Error↔object` transforms — whether or not the message crosses the wire.
   **One code path, no local-vs-wire branch**, so the wire path is exercised on every local
   dispatch and a remote-only serialization bug cannot hide. This is safe because `Path` is a
   value object compared via `.equals()` / `.toString()` (never by reference) and
   `HookResult.errors` are data-only reports — a `Path` round-tripped through `string` back to
-  a fresh `new Path()`, or an `Error` through `{message,stack}`, is *equivalent*; instance
-  identity never mattered. *(Doc note for implementers: don't rely on `Path`/`Error`
+  a fresh `new Path()`, or an `Error` through `{message,stack}`, is _equivalent_; instance
+  identity never mattered. _(Doc note for implementers: don't rely on `Path`/`Error`
   instance identity or live `Error` prototypes across a dispatch — reconstructed instances
-  are equivalent by value only.)*
+  are equivalent by value only.)_
 - **The dispatcher is the validation home** — "the intent system handles validation,"
   literally. This replaces the unsafe `as` casts everywhere (aligned with CLAUDE.md's
   no-assertions rule), not only at the wire.
 - **`requires` stays host-evaluated** with the `ANY_VALUE` sentinel — it never needs a value
-  schema and never crosses the wire; only `provides` *data* is schematized.
+  schema and never crosses the wire; only `provides` _data_ is schematized.
 
 Cost: a `schema.parse` per dispatch, including the hot path (`project:resolve`) — mitigated
 by the item-4 host-cached projections; zod v4 (already imported for `agentSpecSchema`) is
@@ -269,9 +269,9 @@ fast. Still do the full sweep for other non-JSON leaks (Maps/Sets/Buffers/class 
 so every carrier has a transform.
 → research workspace `research-wire-codecs`.
 
-**2a. Enforce the data-only handler contract.** *Both a handler's `HookContext` (in) and its
+**2a. Enforce the data-only handler contract.** _Both a handler's `HookContext` (in) and its
 `HookOutput` (result + provides) — and every event payload — must be pure data: no
-functions, no host closures in either direction.* This is the precondition that makes item 2
+functions, no host closures in either direction._ This is the precondition that makes item 2
 total **and** the thing that makes a handler location-transparent: with a uniform data
 contract, the dispatch mechanism is identical local or remote, so **you never reason about
 placement when writing a handler**. Operations are exempt — they are the host-side
@@ -290,13 +290,14 @@ The closure fields to remove from the contract: `emit` (`app-resume.ts`), `repor
 (`open-project.ts`, `setup.ts` ×2), and the outbound `waitForRetry` (`app-start.ts`). The
 item-2 leak sweep confirms there are no other function carriers.
 
-**3. Make every handler single-tier + pure (operations own emits).** This is *not* a
+**3. Make every handler single-tier + pure (operations own emits).** This is _not_ a
 per-handler splitting exercise. "Operations own emits/dispatch; handlers return data" is
 already the **dominant pattern** (~61 of ~69 emit/dispatch sites are operation-side;
 `HookContext`/`HookOutput` carry no `emit`/`dispatch` by design). The work is to pull the
-**8 straggler hook handlers** back in line with item 2a, in two groups:
+**straggler hook handlers** back in line with item 2a, in two groups (one more — `delete
+confirm` — turned out to already satisfy the invariant; see below):
 
-- **Operation-owns (4 handlers, mechanical):**
+- **Operation-owns (3 handlers, mechanical):**
   - **resume** (`code-server` `resume`): handler returns outcome data (`{restarted}` /
     `{failed, error}`); the operation emits. Because `app-resume` now **fans out to N
     machines + local**, the `code-server:restarted` / `app:resume-failed` payloads gain a
@@ -305,9 +306,6 @@ already the **dominant pattern** (~61 of ~69 emit/dispatch sites are operation-s
     retry loop; the handler returns a data flag.
   - **appStartStart** (`presentation` `start`): the **operation** dispatches `app:ready`,
     not the handler.
-  - **delete `confirm`** (`deletion-dialog`): the operation gathers status/metadata
-    (dispatch) and threads that **data** into the confirm context; the host-pinned handler
-    renders the dialog and returns the decision.
 - **Streaming progress → async generators (4 handlers):** clone (`managed-project`) plus
   three provisioning reporters — agent-binary download (`agent-module`), code-server
   binary + extensions (`code-server`), debug binary (`debug-module`). Each becomes an
@@ -319,16 +317,25 @@ already the **dominant pattern** (~61 of ~69 emit/dispatch sites are operation-s
   first-connect provisioning, so progress streams remote→host.)
 
 **Not in scope / already right:**
+
 - **hibernation capture**: host-only (§6) — capture renders the host UI iframe, PNG →
   host `screenshots/`. No split; the sibling hibernate teardown handlers are the remote ones.
+- **delete `confirm`** (`deletion-dialog`): its `HookContext` (`DeletePipelineHookInput`) and
+  result (`ConfirmHookResult`) are **already pure data**, so the invariant holds. It is
+  **host-pinned** (`ui.dialog`) and its `deps.dispatcher` sub-dispatches (status/metadata) are
+  host-side UI orchestration that drives the _progressive_ dialog fill — the dialog opens
+  immediately and fills warnings in when the slow `refresh:true` git-fetch lands. Moving those
+  dispatches to the operation would block the dialog on that fetch (a UX regression) for no
+  invariant gain (host-pinned ⇒ never remote; the host dispatcher already federates the target
+  operations). Left as-is.
 - **git-init** (`local-project` `prepare`): the **sole** handler mixing a host-only boundary
   (`ui.dialog`) with both-sides work (`gitClient.init`). It only fires for **local**
   existing-checkouts in v1 (managed-on-remote clones instead), so the mix is harmless and
   host-local. **Deferred** — its `confirm`(host-pinned) / `init`(anywhere) split lands with
   `path-probe` + remote folder-browse when **remote+existing** checkout support arrives.
-→ research workspaces `research-leaky-*`.
+  → research workspaces `research-leaky-*`.
 
-*Implementation (decided):* the streaming framework change is an **`onYield` host-callback
+_Implementation (decided):_ the streaming framework change is an **`onYield` host-callback
 on `collect()`** — a handler may be an `async function*` that yields neutral progress data
 and returns its `HookOutput`; the operation passes `collect(hookPoint, ctx, { onYield })`,
 `collect` iterates the generator and calls `onYield(y)` per frame while the operation maps it

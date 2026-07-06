@@ -34,7 +34,7 @@ import { downloadBinary, isBinaryInstalled } from "../utils/binary-download";
 import type { ArchiveExtractor } from "../boundaries/platform/archive-extractor";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
-import type { BinaryHookInput, ExtensionsHookInput } from "../intents/setup";
+import type { BinaryHookInput, ExtensionsHookInput, SetupProgressPayload } from "../intents/setup";
 import type { FinalizeHookInput } from "../intents/open-workspace";
 import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
 import type { DeleteHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
@@ -43,11 +43,10 @@ import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import {
   APP_RESUME_OPERATION_ID,
   APP_RESUME_HOOK_RESUME,
-  EVENT_APP_RESUME_FAILED,
-  EVENT_CODE_SERVER_RESTARTED,
-  type ResumeHookContext,
+  type ResumeHookResult,
 } from "../intents/app-resume";
 import { SETUP_OPERATION_ID } from "../intents/setup";
+import { streamProgress } from "../intents/lib/hook-helpers";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
@@ -732,11 +731,11 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       // -------------------------------------------------------------------
       [APP_RESUME_OPERATION_ID]: {
         [APP_RESUME_HOOK_RESUME]: {
-          handler: async (ctx: HookContext): Promise<void> => {
+          handler: async (): Promise<HookOutput<ResumeHookResult>> => {
             const port = currentPort;
             if (port === null) {
               // Never started — nothing to probe or restart.
-              return;
+              return {};
             }
 
             try {
@@ -746,13 +745,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 intervalMs: 500,
                 errorMessage: "Code-server health check timed out after 5s",
               });
-              return;
+              return {};
             } catch {
               // Fall through to restart
             }
 
             logger.warn("Code-server unhealthy after resume, restarting");
-            const resumeCtx = ctx as ResumeHookContext;
             try {
               await stop();
               await ensureRunning();
@@ -760,20 +758,15 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             } catch (error) {
               const message = getErrorMessage(error);
               logger.error("Code-server restart failed after resume", { error: message });
-              await resumeCtx.emit({
-                type: EVENT_APP_RESUME_FAILED,
-                payload: { error: message },
-              });
-              throw error;
+              // Report the failure as data; the operation emits app:resume-failed.
+              return { result: { failed: { error: message } } };
             }
 
             // The fresh process invalidates every workspace iframe's connection
-            // to the old server. Tell view-module to reload them before
-            // code-server's client surfaces its own "Reload" dialog.
-            await resumeCtx.emit({
-              type: EVENT_CODE_SERVER_RESTARTED,
-              payload: {},
-            });
+            // to the old server. The operation emits code-server:restarted so
+            // view-module reloads them before code-server surfaces its own
+            // "Reload" dialog.
+            return { result: { restarted: true } };
           },
         },
       },
@@ -794,32 +787,42 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       // -------------------------------------------------------------------
       [SETUP_OPERATION_ID]: {
         binary: {
-          handler: async (ctx: HookContext) => {
+          // Streaming handler: yield progress frames; the setup operation emits them.
+          handler: async function* (
+            ctx: HookContext
+          ): AsyncGenerator<SetupProgressPayload, void, void> {
             const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
-            const { report } = hookCtx;
 
-            if (missingBinaries.includes("code-server")) {
-              report("vscode", "running", "Downloading...");
-              try {
+            if (!missingBinaries.includes("code-server")) {
+              yield { id: "vscode", status: "done" };
+              return;
+            }
+
+            yield { id: "vscode", status: "running", message: "Downloading..." };
+            try {
+              yield* streamProgress<SetupProgressPayload>(async (emit) => {
                 await downloadCodeServer((p) => {
                   if (p.phase === "downloading" && p.totalBytes) {
                     const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
-                    report("vscode", "running", "Downloading...", undefined, pct);
+                    emit({
+                      id: "vscode",
+                      status: "running",
+                      message: "Downloading...",
+                      progress: pct,
+                    });
                   } else if (p.phase === "extracting") {
-                    report("vscode", "running", "Extracting...");
+                    emit({ id: "vscode", status: "running", message: "Extracting..." });
                   }
                 });
-                report("vscode", "done");
-              } catch (error) {
-                report("vscode", "failed", undefined, getErrorMessage(error));
-                throw new SetupError(
-                  `Failed to download code-server: ${getErrorMessage(error)}`,
-                  "BINARY_DOWNLOAD_FAILED"
-                );
-              }
-            } else {
-              report("vscode", "done");
+              });
+              yield { id: "vscode", status: "done" };
+            } catch (error) {
+              yield { id: "vscode", status: "failed", error: getErrorMessage(error) };
+              throw new SetupError(
+                `Failed to download code-server: ${getErrorMessage(error)}`,
+                "BINARY_DOWNLOAD_FAILED"
+              );
             }
           },
         },
@@ -828,17 +831,19 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         // setup -> extensions: install extensions from install plan
         // -------------------------------------------------------------------
         extensions: {
-          handler: async (ctx: HookContext) => {
+          // Streaming handler: yield progress frames; the setup operation emits them.
+          handler: async function* (
+            ctx: HookContext
+          ): AsyncGenerator<SetupProgressPayload, void, void> {
             const hookCtx = ctx as ExtensionsHookInput;
             const installPlan = hookCtx.extensionInstallPlan ?? [];
-            const { report } = hookCtx;
 
             if (installPlan.length === 0) {
-              report("setup", "done");
+              yield { id: "setup", status: "done" };
               return;
             }
 
-            report("setup", "running", "Installing extensions...");
+            yield { id: "setup", status: "running", message: "Installing extensions..." };
 
             const extensionsDir = deps.pathProvider.dataPath("vscode/extensions");
 
@@ -847,7 +852,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               const installed = await listInstalledExtensions(fileSystemLayer, extensionsDir);
 
               for (const entry of installPlan) {
-                report("setup", "running", `Installing ${entry.id}...`);
+                yield { id: "setup", status: "running", message: `Installing ${entry.id}...` };
 
                 // Remove old directory if present
                 const oldVersion = installed.get(entry.id);
@@ -881,9 +886,9 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 }
                 logger.info("Extension installed", { extId: entry.id });
               }
-              report("setup", "done");
+              yield { id: "setup", status: "done" };
             } catch (error) {
-              report("setup", "failed", undefined, getErrorMessage(error));
+              yield { id: "setup", status: "failed", error: getErrorMessage(error) };
               throw new SetupError(
                 `Failed to install extensions: ${getErrorMessage(error)}`,
                 "EXTENSION_INSTALL_FAILED"

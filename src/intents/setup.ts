@@ -85,20 +85,21 @@ export interface SaveAgentHookInput extends HookContext {
 
 /**
  * Input context for the "binary" hook — carries agent and binary info from payload/selection.
+ * Progress is streamed by the handler (an async generator that yields `SetupProgressPayload`
+ * frames); the operation emits `setup:progress` for each — no `report` closure in the context.
  */
 export interface BinaryHookInput extends HookContext {
   readonly selectedAgent?: ConfigAgentType;
   readonly configuredAgent?: ConfigAgentType | null;
   readonly missingBinaries?: readonly BinaryType[];
-  readonly report: SetupProgressReporter;
 }
 
 /**
  * Input context for the "extensions" hook — carries install plan from payload.
+ * Progress streams the same way as the "binary" hook (yielded frames, not a closure).
  */
 export interface ExtensionsHookInput extends HookContext {
   readonly extensionInstallPlan?: readonly ExtensionInstallEntry[];
-  readonly report: SetupProgressReporter;
 }
 
 // =============================================================================
@@ -119,18 +120,6 @@ export interface SetupProgressEvent {
   readonly type: typeof EVENT_SETUP_PROGRESS;
   readonly payload: SetupProgressPayload;
 }
-
-/**
- * Progress reporter callback for setup screen rows.
- * Injected into hook contexts by SetupOperation.execute().
- */
-export type SetupProgressReporter = (
-  id: SetupRowId,
-  status: SetupRowStatus,
-  message?: string,
-  error?: string,
-  progress?: number
-) => void;
 
 export const EVENT_SETUP_ERROR = "setup:error" as const;
 
@@ -189,40 +178,36 @@ export class SetupOperation implements Operation<SetupIntent, void> {
         throwHookErrors(saveErrors, "app:setup save-agent hooks failed");
       }
 
-      // Create progress reporter that emits domain events
-      const report: SetupProgressReporter = (id, status, message?, error?, progress?) => {
-        const progressPayload: SetupProgressPayload = {
-          id,
-          status,
-          ...(message !== undefined && { message }),
-          ...(error !== undefined && { error }),
-          ...(progress !== undefined && { progress }),
-        };
-        ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: progressPayload });
+      // Streaming handlers (binary/extensions) yield SetupProgressPayload frames;
+      // the operation emits setup:progress for each. DomainEvent.payload is unknown,
+      // so the frame forwards straight through — the handler owns its typed yields.
+      const emitProgress = (frame: unknown): void => {
+        void ctx.emit({ type: EVENT_SETUP_PROGRESS, payload: frame });
       };
 
       // Hook 4: "binary" -- Update binary progress (downloads if needed)
       const binaryInput: BinaryHookInput = {
         intent: ctx.intent,
-        report,
         ...(selectedAgent !== undefined && { selectedAgent }),
         ...(payload.configuredAgent !== undefined && { configuredAgent: payload.configuredAgent }),
         ...(payload.missingBinaries !== undefined && { missingBinaries: payload.missingBinaries }),
       };
-      const { errors: binaryErrors } = await ctx.hooks.collect<void>("binary", binaryInput);
+      const { errors: binaryErrors } = await ctx.hooks.collect<void>("binary", binaryInput, {
+        onYield: emitProgress,
+      });
       throwHookErrors(binaryErrors, "app:setup binary hooks failed");
 
       // Hook 5: "extensions" -- Update extension progress (installs if needed)
       const extensionsInput: ExtensionsHookInput = {
         intent: ctx.intent,
-        report,
         ...(payload.extensionInstallPlan !== undefined && {
           extensionInstallPlan: payload.extensionInstallPlan,
         }),
       };
       const { errors: extensionsErrors } = await ctx.hooks.collect<void>(
         "extensions",
-        extensionsInput
+        extensionsInput,
+        { onYield: emitProgress }
       );
       throwHookErrors(extensionsErrors, "app:setup extensions hooks failed");
 

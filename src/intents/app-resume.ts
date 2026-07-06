@@ -3,11 +3,12 @@
  *
  * Single hook point:
  * - "resume" - Probe code-server health and restart it if the probe fails.
- *              The hook context includes `emit` so handlers can fire their own
- *              domain events: code-server-module emits `code-server:restarted`
- *              on a successful restart (view-module reacts by reloading the
- *              workspace iframes, whose connections to the replaced server are
- *              stale) and `app:resume-failed` if the restart fails.
+ *              Handlers return a `ResumeHookResult` (data only, no closures):
+ *              `{ restarted: true }` when a stale code-server was replaced, or
+ *              `{ failed: { error } }` when recovery failed. The operation turns
+ *              those results into domain events — `code-server:restarted`
+ *              (view-module reloads the workspace iframes whose connections to the
+ *              replaced server are stale) and `app:resume-failed`.
  *
  * After hooks complete, emits `app:resumed` for telemetry subscribers
  * (telemetry-module) that don't depend on server state.
@@ -35,11 +36,15 @@ export const APP_RESUME_OPERATION_ID = "app-resume";
 export const APP_RESUME_HOOK_RESUME = "resume";
 
 /**
- * Extended context for the "resume" hook point.
- * Exposes `emit` so handlers can fire domain events (e.g., restart failures).
+ * Per-handler result for the "resume" hook point (data only).
+ * A handler reports the outcome of its recovery attempt; the operation maps it to
+ * domain events. Omit both fields (return void) when there was nothing to recover.
  */
-export interface ResumeHookContext extends HookContext {
-  readonly emit: (event: DomainEvent) => Promise<void>;
+export interface ResumeHookResult {
+  /** A stale server was killed and a fresh one is now listening (→ code-server:restarted). */
+  readonly restarted?: boolean;
+  /** Recovery failed; human-readable error for display (→ app:resume-failed). */
+  readonly failed?: { readonly error: string };
 }
 
 // =============================================================================
@@ -87,11 +92,22 @@ export class AppResumeOperation implements Operation<AppResumeIntent, void> {
   readonly id = APP_RESUME_OPERATION_ID;
 
   async execute(ctx: OperationContext<AppResumeIntent>): Promise<void> {
-    const hookCtx: ResumeHookContext = {
-      intent: ctx.intent,
-      emit: ctx.emit,
-    };
-    await ctx.hooks.collect(APP_RESUME_HOOK_RESUME, hookCtx);
+    const hookCtx: HookContext = { intent: ctx.intent };
+    const { results } = await ctx.hooks.collect<ResumeHookResult>(APP_RESUME_HOOK_RESUME, hookCtx);
+
+    // Turn handler outcomes into domain events (operation owns emits).
+    for (const result of results) {
+      if (result.restarted) {
+        await ctx.emit({ type: EVENT_CODE_SERVER_RESTARTED, payload: {} });
+      }
+      if (result.failed) {
+        await ctx.emit({
+          type: EVENT_APP_RESUME_FAILED,
+          payload: { error: result.failed.error },
+        });
+      }
+    }
+
     await ctx.emit({ type: EVENT_APP_RESUMED, payload: {} });
   }
 }

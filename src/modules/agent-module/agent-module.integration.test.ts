@@ -25,7 +25,12 @@ import type {
 } from "../../intents/app-start";
 import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import { SETUP_OPERATION_ID } from "../../intents/setup";
-import type { RegisterAgentResult, SaveAgentHookInput, BinaryHookInput } from "../../intents/setup";
+import type {
+  RegisterAgentResult,
+  SaveAgentHookInput,
+  BinaryHookInput,
+  SetupProgressPayload,
+} from "../../intents/setup";
 import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import type {
   SetupHookResult,
@@ -212,19 +217,26 @@ class MinimalSaveAgentOperation implements Operation<Intent, void> {
 class MinimalBinaryOperation implements Operation<Intent, void> {
   readonly id = SETUP_OPERATION_ID;
   private readonly hookInput: Partial<BinaryHookInput>;
-  readonly report: ReturnType<typeof vi.fn>;
+  /** Progress frames yielded by the streaming binary handler. */
+  readonly frames: SetupProgressPayload[] = [];
 
   constructor(hookInput: Partial<BinaryHookInput> = {}) {
-    this.report = (hookInput.report as ReturnType<typeof vi.fn>) ?? vi.fn();
     this.hookInput = hookInput;
   }
 
   async execute(ctx: OperationContext<Intent>): Promise<void> {
-    const { errors } = await ctx.hooks.collect("binary", {
-      intent: ctx.intent,
-      report: this.report,
-      ...this.hookInput,
-    });
+    const { errors } = await ctx.hooks.collect(
+      "binary",
+      {
+        intent: ctx.intent,
+        ...this.hookInput,
+      },
+      {
+        onYield: (frame) => {
+          this.frames.push(frame as SetupProgressPayload);
+        },
+      }
+    );
     if (errors.length > 0) throw errors[0]!;
   }
 }
@@ -720,7 +732,7 @@ describe("createAgentModule", () => {
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(mockProvider.downloadBinary).toHaveBeenCalled();
-      expect(op.report).toHaveBeenCalledWith("agent", "done");
+      expect(op.frames).toContainEqual({ id: "agent", status: "done" });
     });
 
     it("reports done when agent matches but binary not missing", async () => {
@@ -734,7 +746,7 @@ describe("createAgentModule", () => {
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(mockProvider.downloadBinary).not.toHaveBeenCalled();
-      expect(op.report).toHaveBeenCalledWith("agent", "done");
+      expect(op.frames).toContainEqual({ id: "agent", status: "done" });
     });
 
     it("skips download and report when agent does not match", async () => {
@@ -748,7 +760,7 @@ describe("createAgentModule", () => {
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
       expect(mockProvider.downloadBinary).not.toHaveBeenCalled();
-      expect(op.report).not.toHaveBeenCalled();
+      expect(op.frames).toHaveLength(0);
     });
 
     it("reports progress during download", async () => {
@@ -772,8 +784,17 @@ describe("createAgentModule", () => {
 
       await dispatcher.dispatch({ type: "setup", payload: {} });
 
-      expect(op.report).toHaveBeenCalledWith("agent", "running", "Downloading...", undefined, 50);
-      expect(op.report).toHaveBeenCalledWith("agent", "running", "Extracting...");
+      expect(op.frames).toContainEqual({
+        id: "agent",
+        status: "running",
+        message: "Downloading...",
+        progress: 50,
+      });
+      expect(op.frames).toContainEqual({
+        id: "agent",
+        status: "running",
+        message: "Extracting...",
+      });
     });
 
     it("throws SetupError on download failure", async () => {
@@ -787,7 +808,7 @@ describe("createAgentModule", () => {
       dispatcher.registerOperation("setup", op);
 
       await expect(dispatcher.dispatch({ type: "setup", payload: {} })).rejects.toThrow(SetupError);
-      expect(op.report).toHaveBeenCalledWith("agent", "failed", undefined, "network error");
+      expect(op.frames).toContainEqual({ id: "agent", status: "failed", error: "network error" });
     });
 
     it("uses configuredAgent when selectedAgent not provided", async () => {

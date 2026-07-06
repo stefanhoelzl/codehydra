@@ -136,7 +136,9 @@ function createSetup(opts: {
         [TEST_OPERATION_ID]: {
           work: {
             ...h,
-            handler: async (ctx) => {
+            // Non-async so a streaming (async-generator) handler is forwarded as-is
+            // rather than wrapped in a Promise.
+            handler: (ctx) => {
               runs++;
               return h.handler(ctx);
             },

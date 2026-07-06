@@ -15,6 +15,9 @@
  *   each contribute a disjoint subset of fields).
  * - `collectErrorMessages` — fold collect() errors plus per-result `error`
  *   strings into one list (best-effort pipelines that report instead of throw).
+ * - `streamProgress` — bridge a progress-callback API into an async generator of
+ *   frames, so a streaming hook handler can `yield*` its progress while a
+ *   callback-driven task (binary download, git clone) runs.
  */
 
 /**
@@ -82,4 +85,59 @@ export function collectErrorMessages(
     if (result.error) errors.push(result.error);
   }
   return errors;
+}
+
+/**
+ * Bridge a callback-driven async task into an async generator of progress frames.
+ *
+ * A streaming hook handler `yield*`s this while `run` executes: `run` receives an
+ * `emit(frame)` callback (a plain local function — no host closure) and drives the
+ * underlying callback-based work (e.g. `downloadBinary`, `gitClient.clone`). Frames
+ * are buffered and yielded in order as they arrive; when `run` settles the generator
+ * finishes, re-throwing any error `run` produced (after draining remaining frames).
+ *
+ * Yielding is race-free: `emit` only runs on a later async tick, never interleaved
+ * within the synchronous stretch where the drain loop parks a `wake` resolver, so a
+ * frame emitted while parked always wakes the loop.
+ */
+export async function* streamProgress<F>(
+  run: (emit: (frame: F) => void) => Promise<void>
+): AsyncGenerator<F, void, void> {
+  const buffer: F[] = [];
+  let wake: (() => void) | null = null;
+  let done = false;
+  let failure: unknown;
+
+  const emit = (frame: F): void => {
+    buffer.push(frame);
+    if (wake) {
+      wake();
+      wake = null;
+    }
+  };
+
+  void run(emit)
+    .catch((err: unknown) => {
+      failure = err ?? new Error("progress task failed");
+    })
+    .finally(() => {
+      done = true;
+      if (wake) {
+        wake();
+        wake = null;
+      }
+    });
+
+  while (true) {
+    if (buffer.length > 0) {
+      yield buffer.shift()!;
+      continue;
+    }
+    if (done) break;
+    await new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+  }
+
+  if (failure !== undefined) throw failure;
 }

@@ -1225,7 +1225,7 @@ describe("PresentationModule - startup flow", () => {
     expect(currentSystemDialog(deps).config.sections).toEqual([STARTING_SPINNER]);
   });
 
-  it("app:start show-ui sets the starting phase and returns waitForRetry", async () => {
+  it("app:start show-ui sets the starting phase and advertises retry support", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
@@ -1237,7 +1237,7 @@ describe("PresentationModule - startup flow", () => {
     ).result!;
     await flush();
 
-    expect(typeof result.waitForRetry).toBe("function");
+    expect(result.retrySupported).toBe(true);
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
   });
 
@@ -1369,7 +1369,7 @@ describe("PresentationModule - startup flow", () => {
     expect(currentSystemDialog(deps).config.sections).toEqual([STARTING_SPINNER]);
   });
 
-  it("app:start start dispatches app:ready and shows the loading dialog until app:started", async () => {
+  it("app:start start shows the loading dialog until app:started", async () => {
     const deps = createDeps();
     const dispatched: Array<{ type: string }> = [];
     deps.dispatcher = {
@@ -1386,7 +1386,9 @@ describe("PresentationModule - startup flow", () => {
     });
     await flush();
 
-    expect(dispatched).toEqual([{ type: "app:ready", payload: {} }]);
+    // app:ready is dispatched by the app:start operation (after all start handlers),
+    // not by this handler — the handler only advances the UI phase.
+    expect(dispatched).toEqual([]);
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
     expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
 
@@ -1397,15 +1399,13 @@ describe("PresentationModule - startup flow", () => {
     expect(lastSnapshot(deps).dialogs).toEqual([]);
   });
 
-  it("the setup-error Retry action resolves the parked waitForRetry", async () => {
+  it("the setup-error Retry action resolves the parked await-retry hook", async () => {
     const deps = createDeps();
     const module = createPresentationModule(deps);
     connect(deps);
-    const result = (
-      (await runHook(module, APP_START_OPERATION_ID, "show-ui", {
-        intent: { type: "app:start", payload: {} },
-      })) as HookOutput<ShowUIHookResult>
-    ).result!;
+    await runHook(module, APP_START_OPERATION_ID, "show-ui", {
+      intent: { type: "app:start", payload: {} },
+    });
     // Enter setup + fail so the dialog shows the Retry button.
     await runHook(module, SETUP_OPERATION_ID, "show-ui", {
       intent: { type: "app:setup", payload: {} },
@@ -1413,10 +1413,15 @@ describe("PresentationModule - startup flow", () => {
     await emit(module, EVENT_SETUP_ERROR, { message: "boom" });
     await flush();
 
+    // The operation waits by collecting the await-retry hook; the handler parks
+    // until the Retry action resolves it, then returns.
     let resolved = false;
-    void result.waitForRetry!().then(() => {
+    void runHook(module, APP_START_OPERATION_ID, "await-retry", {
+      intent: { type: "app:start", payload: {} },
+    }).then(() => {
       resolved = true;
     });
+    await flush();
     action(deps, "retry");
     await flush();
 
@@ -1752,13 +1757,13 @@ describe("PresentationModule - hibernation capture hooks", () => {
     } as HibernatePipelineHookInput;
   }
 
-  function prepare(module: UiPresenter, active: boolean): Promise<unknown> {
+  async function prepare(module: UiPresenter, active: boolean): Promise<unknown> {
     return module.hooks![HIBERNATE_WORKSPACE_OPERATION_ID]!["prepare-capture"]!.handler(
       captureInput(active)
     );
   }
 
-  function cleanup(module: UiPresenter, active: boolean): Promise<unknown> {
+  async function cleanup(module: UiPresenter, active: boolean): Promise<unknown> {
     return module.hooks![HIBERNATE_WORKSPACE_OPERATION_ID]!["cleanup-capture"]!.handler(
       captureInput(active)
     );
