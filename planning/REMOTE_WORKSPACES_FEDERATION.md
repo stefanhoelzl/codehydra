@@ -269,23 +269,63 @@ fast. Still do the full sweep for other non-JSON leaks (Maps/Sets/Buffers/class 
 so every carrier has a transform.
 → research workspace `research-wire-codecs`.
 
-**2a. Enforce the data-only contract invariant.** *A handler's invocation payload and
-returned `HookOutput` (result + provides), and every event payload, must be pure data — no
-functions, no host closures.* This is the precondition that makes item 2 total. The one
-known violation is `ShowUIHookResult.waitForRetry` (`app-start.ts:124`), a callback field on
-a host-only hook result; **refactor it into an emitted retry-request event / data flag**
-(host-only, low risk). The leak sweep in item 2 confirms there are no others. (Operation
-bodies still use `ctx.emit` / `ctx.dispatch` freely — those stay host-side and are not part
-of the wire contract.)
+**2a. Enforce the data-only handler contract.** *Both a handler's `HookContext` (in) and its
+`HookOutput` (result + provides) — and every event payload — must be pure data: no
+functions, no host closures in either direction.* This is the precondition that makes item 2
+total **and** the thing that makes a handler location-transparent: with a uniform data
+contract, the dispatch mechanism is identical local or remote, so **you never reason about
+placement when writing a handler**. Operations are exempt — they are the host-side
+orchestrators and keep `ctx.emit` / `ctx.dispatch`.
 
-**3. Split the leaky handlers (results-first)** so every handler is single-tier:
-- **git-init dialog** (`local-project`): host `confirm` handler returns the decision; the
-  operation runs the remote `git init` step. *(Folds into the `project-registry` split.)*
-- **hibernation capture**: **reclassified host-only** (§6) — no split.
-- **clone progress** (`managed-project`): invert the pushed-down `report` callback into a
-  remote→host `emit` of `clone:progress`.
-- **app-resume health/restart** (`code-server`): runs remote; its `CODE_SERVER_RESTARTED`
-  / `APP_RESUME_FAILED` emits become remote→host channel events, not a captured closure.
+Placement then reduces to one mechanical rule (no per-handler judgement): **a handler is
+host-pinned iff its module injects a host-only boundary** (Dialog / View / Image / Window /
+Menu / Session / App); a handler that injects only both-sides boundaries runs anywhere.
+Host-pinned handlers are legitimate and already coexist with anywhere-handlers on the same
+operation (e.g. `delete-workspace` = host `confirm` dialog + remote teardown; `hibernate` =
+host screenshot + remote agent/code-server teardown; `setup` = host UI phases + both-sides
+downloads). The **only forbidden shape** is a single handler mixing a host-only boundary with
+both-sides work — see item 3, git-init, the sole instance.
+
+The closure fields to remove from the contract: `emit` (`app-resume.ts`), `report`
+(`open-project.ts`, `setup.ts` ×2), and the outbound `waitForRetry` (`app-start.ts`). The
+item-2 leak sweep confirms there are no other function carriers.
+
+**3. Make every handler single-tier + pure (operations own emits).** This is *not* a
+per-handler splitting exercise. "Operations own emits/dispatch; handlers return data" is
+already the **dominant pattern** (~61 of ~69 emit/dispatch sites are operation-side;
+`HookContext`/`HookOutput` carry no `emit`/`dispatch` by design). The work is to pull the
+**8 straggler hook handlers** back in line with item 2a, in two groups:
+
+- **Operation-owns (4 handlers, mechanical):**
+  - **resume** (`code-server` `resume`): handler returns outcome data (`{restarted}` /
+    `{failed, error}`); the operation emits. Because `app-resume` now **fans out to N
+    machines + local**, the `code-server:restarted` / `app:resume-failed` payloads gain a
+    **machine/workspace scope** so the host reloads only the affected iframes.
+  - **waitForRetry** (`presentation` `show-ui`, outbound closure): the operation owns the
+    retry loop; the handler returns a data flag.
+  - **appStartStart** (`presentation` `start`): the **operation** dispatches `app:ready`,
+    not the handler.
+  - **delete `confirm`** (`deletion-dialog`): the operation gathers status/metadata
+    (dispatch) and threads that **data** into the confirm context; the host-pinned handler
+    renders the dialog and returns the decision.
+- **Streaming progress → async generators (4 handlers):** clone (`managed-project`) plus
+  three provisioning reporters — agent-binary download (`agent-module`), code-server
+  binary + extensions (`code-server`), debug binary (`debug-module`). Each becomes an
+  `async function*` that **yields progress frames (data)** and **returns its result**; the
+  dispatcher consumes the stream (local: direct iteration; remote: wire frames) and the
+  **operation emits** the progress event. This is the streaming generalization of the
+  existing collect→emit pattern, and it removes the `report` closure from the
+  `open-project` / `setup` hook contexts. (These run where the files/binaries live, incl.
+  first-connect provisioning, so progress streams remote→host.)
+
+**Not in scope / already right:**
+- **hibernation capture**: host-only (§6) — capture renders the host UI iframe, PNG →
+  host `screenshots/`. No split; the sibling hibernate teardown handlers are the remote ones.
+- **git-init** (`local-project` `prepare`): the **sole** handler mixing a host-only boundary
+  (`ui.dialog`) with both-sides work (`gitClient.init`). It only fires for **local**
+  existing-checkouts in v1 (managed-on-remote clones instead), so the mix is harmless and
+  host-local. **Deferred** — its `confirm`(host-pinned) / `init`(anywhere) split lands with
+  `path-probe` + remote folder-browse when **remote+existing** checkout support arrives.
 → research workspaces `research-leaky-*`.
 
 **4. Pin replicated indices host-side.** The `project:resolve` identity map
