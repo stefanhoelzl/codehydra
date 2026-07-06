@@ -52,18 +52,17 @@ jobs:
             exit 1
           fi
 
-      - name: Verify version exists on npm
-        shell: bash
-        run: |
-          if ! npm view "code-server@$VERSION" version &>/dev/null; then
-            echo "::error::code-server@$VERSION not found on npm"
-            exit 1
-          fi
-
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      - name: Upgrade npm
+        # The windows-2025 image ships Visual Studio 2026 (v18). node-gyp only
+        # detects it from >= 12.1.0 (bundled in npm >= 11.6.3), so upgrade npm
+        # before the code-server postinstall compiles its native modules.
+        shell: bash
+        run: npm install -g npm@latest
 
       - name: Create build directory
         shell: bash
@@ -72,7 +71,12 @@ jobs:
       - name: Install code-server
         shell: bash
         working-directory: build
-        run: npm install "code-server@$VERSION"
+        run: |
+          # npm no longer publishes code-server; install from the package.tar.gz
+          # asset attached to every upstream GitHub release. This is the same
+          # package the npm registry served, so its postinstall still builds the
+          # Windows-native modules on this runner.
+          npm install "https://github.com/coder/code-server/releases/download/v$VERSION/package.tar.gz"
 
       - name: Download Node.js for Windows
         shell: bash
