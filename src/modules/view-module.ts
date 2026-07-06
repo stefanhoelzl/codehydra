@@ -24,6 +24,8 @@ import type { Logger } from "../boundaries/platform/logging";
 import type { ViewBoundary } from "../boundaries/shell/view";
 import type { WindowBoundary } from "../boundaries/shell/window";
 import type { SessionBoundary } from "../boundaries/shell/session";
+import type { WebPreferences } from "../boundaries/shell/types";
+import { GLOBAL_SESSION_PARTITION } from "../boundaries/shell/ui-view-manager";
 import type { WorkspaceRef } from "../shared/api/types";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
 import type { GetActiveWorkspaceHookResult } from "../intents/get-active-workspace";
@@ -74,11 +76,13 @@ export interface ViewModuleDeps {
   readonly dialogLayer?: Pick<DialogBoundary, "showDialog"> | null;
   readonly menuLayer?: { setApplicationMenu(menu: null): void } | null;
   readonly windowManager?: {
-    create(): void;
+    create(webPreferences?: WebPreferences): void;
     maximizeAsync(): Promise<void>;
     focus(): void;
   } | null;
   readonly uiHtmlPath?: string | null;
+  /** Preload script for the UI page hosted directly by the window. */
+  readonly uiPreloadPath?: string | null;
 }
 
 // =============================================================================
@@ -125,21 +129,30 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
               deps.menuLayer.setApplicationMenu(null);
             }
 
-            // Create window and views
+            // Create the window as a BrowserWindow hosting the UI page directly:
+            // its webContents (UI preload + shared partition) auto-fills the
+            // window, so there is no child view to size. viewManager.create()
+            // then adopts that webContents for the UI's webContents concerns.
             if (deps.windowManager) {
-              deps.windowManager.create();
+              deps.windowManager.create({
+                nodeIntegration: false,
+                contextIsolation: true,
+                sandbox: true,
+                partition: GLOBAL_SESSION_PARTITION,
+                ...(deps.uiPreloadPath ? { preload: deps.uiPreloadPath } : {}),
+              });
             }
             viewManager.create();
+
+            // Load the UI HTML into the window's own webContents.
+            if (deps.uiHtmlPath) {
+              await viewManager.loadUIContent(deps.uiHtmlPath);
+            }
 
             // Maximize and focus window
             if (deps.windowManager) {
               await deps.windowManager.maximizeAsync();
               deps.windowManager.focus();
-            }
-
-            // Load UI HTML
-            if (deps.uiHtmlPath) {
-              await viewManager.loadUIContent(deps.uiHtmlPath);
             }
 
             // Focus UI

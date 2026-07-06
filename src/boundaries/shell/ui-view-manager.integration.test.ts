@@ -2,10 +2,9 @@
 /**
  * Integration tests for UiViewManager with behavioral boundary mocks.
  *
- * Covers: UI view creation (preload, partition, attach, bounds, transparent
- * background, window-open handler), session handler wiring, mode state +
- * change notifications, mode-routed focus, renderer-hook-driven capture,
- * resize propagation, and destroy.
+ * Covers: UI webContents adoption (the window's own page, window-open
+ * handler), session handler wiring, mode state + change notifications,
+ * mode-routed focus, renderer-hook-driven capture, and destroy.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -41,7 +40,6 @@ function createDeps() {
     viewLayer,
     sessionLayer,
     appLayer,
-    config: { uiPreloadPath: "/path/to/preload.cjs" },
     logger,
   } as unknown as UiViewManagerDeps;
 
@@ -57,23 +55,19 @@ function createManager() {
 
 describe("UiViewManager", () => {
   describe("create", () => {
-    it("creates the UI view attached, full-window, transparent, with preload + shared partition", () => {
+    it("adopts the window's own webContents (no child view to size) and wires the window-open handler", () => {
       const { manager, viewLayer } = createManager();
 
       const handle = manager.getUIViewHandle();
       const snapshot = viewLayer.$.getViewSnapshot(handle.id);
+      // The UI is the window's own page — it auto-fills the window, so there is
+      // no bounds/backdrop on the adopted handle; it is associated with the
+      // window it adopted.
       expect(snapshot).toMatchObject({
         attachedTo: "test-window-1",
-        backgroundColor: "#00000000",
-        bounds: { x: 0, y: 0, width: 1200, height: 800 },
+        bounds: null,
+        backgroundColor: null,
         hasWindowOpenHandler: true,
-      });
-      expect(snapshot?.options.webPreferences).toMatchObject({
-        preload: "/path/to/preload.cjs",
-        partition: "persist:codehydra-global",
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
       });
     });
 
@@ -104,18 +98,9 @@ describe("UiViewManager", () => {
     });
   });
 
-  describe("resize", () => {
-    it("re-applies full-window bounds on window resize", () => {
-      const { manager, viewLayer, windowManager } = createManager();
-      const resizeCallback = windowManager.onResize.mock.calls[0]![0];
-
-      windowManager.getBounds.mockReturnValue({ width: 1600, height: 1000 });
-      resizeCallback();
-
-      const snapshot = viewLayer.$.getViewSnapshot(manager.getUIViewHandle().id);
-      expect(snapshot?.bounds).toEqual({ x: 0, y: 0, width: 1600, height: 1000 });
-    });
-  });
+  // Note: the UI view no longer tracks window resize or theme by re-sizing /
+  // re-coloring a child view — the window's own page auto-fills the window and
+  // the renderer paints its own background. See view-module for maximize.
 
   describe("focus routing", () => {
     it("focuses the view and asks the renderer to focus the active frame", () => {

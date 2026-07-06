@@ -347,6 +347,25 @@ export function createViewBoundaryMock(): MockViewBoundary {
       return { id, __brand: "ViewHandle" };
     },
 
+    adoptWindowWebContents(windowHandle: WindowHandle): ViewHandle {
+      const id = `view-${nextId++}`;
+      state.views.set(id, {
+        url: null,
+        // Adopted window webContents auto-fills the window — no bounds, and the
+        // backdrop lives on the window, not the view.
+        bounds: null,
+        backgroundColor: null,
+        attachedTo: windowHandle.id,
+        options: { label: "ui" },
+        hasWindowOpenHandler: false,
+        focused: false,
+      });
+      for (const registry of registries) {
+        registry.init(id);
+      }
+      return { id, __brand: "ViewHandle" };
+    },
+
     destroy(handle: ViewHandle): void {
       const view = state.views.get(handle.id);
       if (!view) {

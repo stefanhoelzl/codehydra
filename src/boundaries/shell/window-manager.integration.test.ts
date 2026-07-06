@@ -149,27 +149,14 @@ describe("WindowManager", () => {
   });
 
   describe("maximizeAsync", () => {
-    it("maximizes the window and notifies resize callbacks after delay", async () => {
-      vi.useFakeTimers();
+    it("maximizes the window (the page auto-fills, so no bounds settling)", async () => {
       const deps = createWindowManagerDeps();
       const manager = createWindowManager(deps);
-      const callback = vi.fn();
-      manager.onResize(callback);
-      callback.mockClear();
+      const maximizeSpy = vi.spyOn(deps.windowLayer, "maximize");
 
-      const promise = manager.maximizeAsync();
+      await manager.maximizeAsync();
 
-      // Callback not called yet (before delay)
-      expect(callback).not.toHaveBeenCalled();
-
-      // Fast-forward past the 50ms delay
-      await vi.advanceTimersByTimeAsync(50);
-      await promise;
-
-      // Callback called after delay
-      expect(callback).toHaveBeenCalled();
-
-      vi.useRealTimers();
+      expect(maximizeSpy).toHaveBeenCalledWith(manager.getWindowHandle());
     });
   });
 
