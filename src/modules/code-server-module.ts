@@ -65,7 +65,7 @@ import { waitForHealthy } from "../utils/health-check";
 /**
  * Current version of code-server to download.
  */
-export const CODE_SERVER_VERSION = "4.108.2";
+export const CODE_SERVER_VERSION = "4.127.0";
 
 /**
  * GitHub repository for Windows code-server builds.
