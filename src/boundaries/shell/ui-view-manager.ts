@@ -26,9 +26,15 @@ import type { ViewHandle } from "./types";
 import type { WindowBoundary } from "./window";
 import type { WindowManager } from "./window-manager";
 import type { IViewManager, Unsubscribe } from "./view-manager.interface";
-import { computeUIRect, type DevtoolsTarget, type KeyboardTarget } from "./view-manager-types";
+import { type DevtoolsTarget, type KeyboardTarget } from "./view-manager-types";
 
-const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
+/**
+ * Session partition shared by the UI page and the workspace iframes inside it.
+ * The window's webContents is created with this partition (see WindowManager),
+ * and UiViewManager installs the header/permission handlers on the same
+ * partition's session.
+ */
+export const GLOBAL_SESSION_PARTITION = "persist:codehydra-global";
 
 /**
  * Script injected into every workspace iframe to preserve focus across
@@ -85,18 +91,12 @@ const ALLOWED_PERMISSIONS = new Set([
   "usb",
 ]);
 
-export interface UiViewManagerConfig {
-  /** Path to the UI layer preload script */
-  readonly uiPreloadPath: string;
-}
-
 export interface UiViewManagerDeps {
   readonly windowManager: WindowManager;
   readonly windowLayer: WindowBoundary;
   readonly viewLayer: ViewBoundary;
   readonly sessionLayer: SessionBoundary;
   readonly appLayer: Pick<AppBoundary, "openUrl">;
-  readonly config: UiViewManagerConfig;
   readonly logger: Logger;
 }
 
@@ -106,12 +106,10 @@ export class UiViewManager implements IViewManager {
   private readonly viewLayer: ViewBoundary;
   private readonly sessionLayer: SessionBoundary;
   private readonly appLayer: Pick<AppBoundary, "openUrl">;
-  private readonly config: UiViewManagerConfig;
   private readonly logger: Logger;
 
   private uiViewHandle: ViewHandle | null = null;
   private destroying = false;
-  private unsubscribeResize: Unsubscribe | null = null;
 
   // Inbound IPC (renderer → main) from the UI view. Subscribers register via
   // onFromUI before the view exists; the actual webContents.ipc listener is
@@ -125,7 +123,6 @@ export class UiViewManager implements IViewManager {
     this.viewLayer = deps.viewLayer;
     this.sessionLayer = deps.sessionLayer;
     this.appLayer = deps.appLayer;
-    this.config = deps.config;
     this.logger = deps.logger;
   }
 
@@ -165,16 +162,14 @@ export class UiViewManager implements IViewManager {
       ALLOWED_PERMISSIONS.has(permission)
     );
 
-    const uiViewHandle = this.viewLayer.createView({
-      label: "ui",
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        preload: this.config.uiPreloadPath,
-        partition: GLOBAL_SESSION_PARTITION,
-      },
-    });
+    // Adopt the window's own webContents rather than creating a child view.
+    // The window is a BrowserWindow whose page (loaded with the UI preload +
+    // the shared partition) auto-fills the window — the compositor sizes it, so
+    // there is no manual bounds management and no transparent-compositing or
+    // stale-getContentBounds hazard (the Wayland fractional-scaling maximize
+    // bug can't manifest because we never read window bounds to size anything).
+    const windowHandle = this.windowManager.getWindowHandle();
+    const uiViewHandle = this.viewLayer.adoptWindowWebContents(windowHandle);
 
     // window.open from the UI or any workspace iframe opens externally.
     this.viewLayer.setWindowOpenHandler(uiViewHandle, (details: WindowOpenDetails) => {
@@ -187,17 +182,7 @@ export class UiViewManager implements IViewManager {
       return { action: "deny" };
     });
 
-    this.viewLayer.setBackgroundColor(uiViewHandle, "#00000000");
     this.viewLayer.installChildFrameScript(uiViewHandle, CHILD_FRAME_FOCUS_TRACKER);
-
-    const windowHandle = this.windowManager.getWindowHandle();
-    this.viewLayer.attachToWindow(uiViewHandle, windowHandle);
-    this.viewLayer.setBounds(uiViewHandle, computeUIRect(this.windowManager.getBounds()));
-
-    this.unsubscribeResize = this.windowManager.onResize(() => {
-      if (!this.uiViewHandle || !this.isWindowAlive()) return;
-      this.viewLayer.setBounds(this.uiViewHandle, computeUIRect(this.windowManager.getBounds()));
-    });
 
     this.uiViewHandle = uiViewHandle;
     // (Re)wire any onFromUI subscriptions onto the new view's webContents.
@@ -208,10 +193,6 @@ export class UiViewManager implements IViewManager {
 
   destroy(): void {
     this.destroying = true;
-    if (this.unsubscribeResize) {
-      this.unsubscribeResize();
-      this.unsubscribeResize = null;
-    }
     if (this.uiViewHandle) {
       try {
         this.viewLayer.destroy(this.uiViewHandle);

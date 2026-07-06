@@ -7,8 +7,8 @@
  * - Handle-based access pattern (no direct Electron types exposed)
  */
 
-import type { BaseWindow } from "electron";
-import type { WindowHandle, Rectangle } from "./types";
+import type { BrowserWindow, WebContents } from "electron";
+import type { WindowHandle, Rectangle, WebPreferences } from "./types";
 import { createWindowHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
 import type { Logger } from "../platform/logging";
@@ -31,6 +31,13 @@ export interface WindowOptions {
   readonly title?: string;
   readonly show?: boolean;
   readonly backgroundColor?: string;
+  /**
+   * Web preferences for the window's own webContents. When provided, the
+   * window hosts a full-size web page directly (BrowserWindow) — the page
+   * auto-fills the window, so no child view or manual bounds management is
+   * needed. Its webContents is reachable via getWebContents().
+   */
+  readonly webPreferences?: WebPreferences;
 }
 
 /**
@@ -202,6 +209,17 @@ export interface WindowBoundary {
   getContentView(handle: WindowHandle): ContentView;
 
   /**
+   * Get the window's own webContents (the full-size page hosted directly by a
+   * BrowserWindow). Only meaningful when the window was created with
+   * webPreferences. Used by ViewBoundary.adoptWindowWebContents so the UI's
+   * webContents concerns route through the ViewBoundary abstraction.
+   *
+   * @param handle - Handle to the window
+   * @throws ShellError with code WINDOW_NOT_FOUND if handle is invalid
+   */
+  getWebContents(handle: WindowHandle): WebContents;
+
+  /**
    * Dispose of all resources.
    * Does not throw if views are attached.
    * Used during app shutdown when views have already been disposed.
@@ -213,10 +231,10 @@ export interface WindowBoundary {
 // Default Implementation
 // ============================================================================
 
-import { BaseWindow as ElectronBaseWindow } from "electron";
+import { BrowserWindow as ElectronBrowserWindow } from "electron";
 
 interface WindowState {
-  window: BaseWindow;
+  window: BrowserWindow;
 }
 
 /**
@@ -244,6 +262,7 @@ export class DefaultWindowBoundary implements WindowBoundary {
       title?: string;
       show: boolean;
       backgroundColor?: string;
+      webPreferences?: Electron.WebPreferences;
     } = {
       width: options.width ?? 800,
       height: options.height ?? 600,
@@ -262,8 +281,22 @@ export class DefaultWindowBoundary implements WindowBoundary {
     if (options.backgroundColor !== undefined) {
       windowOptions.backgroundColor = options.backgroundColor;
     }
+    if (options.webPreferences !== undefined) {
+      const prefs: Electron.WebPreferences = {
+        nodeIntegration: options.webPreferences.nodeIntegration ?? false,
+        contextIsolation: options.webPreferences.contextIsolation ?? true,
+        sandbox: options.webPreferences.sandbox ?? true,
+      };
+      if (options.webPreferences.partition !== undefined) {
+        prefs.partition = options.webPreferences.partition;
+      }
+      if (options.webPreferences.preload !== undefined) {
+        prefs.preload = options.webPreferences.preload;
+      }
+      windowOptions.webPreferences = prefs;
+    }
 
-    const window = new ElectronBaseWindow(windowOptions);
+    const window = new ElectronBrowserWindow(windowOptions);
 
     this.windows.set(id, {
       window,
@@ -325,6 +358,11 @@ export class DefaultWindowBoundary implements WindowBoundary {
   setBackgroundColor(handle: WindowHandle, color: string): void {
     const state = this.getWindowState(handle);
     state.window.setBackgroundColor(color);
+  }
+
+  getWebContents(handle: WindowHandle): WebContents {
+    const state = this.getWindowState(handle);
+    return state.window.webContents;
   }
 
   focus(handle: WindowHandle): void {

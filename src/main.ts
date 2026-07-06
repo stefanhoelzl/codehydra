@@ -418,15 +418,15 @@ const windowManager = new WindowManager(
 // UiViewManager construction is cheap (no Electron resources). The UI view
 // is created inside create(), which runs later from the app-start/init hook,
 // once the window exists.
+// Preload for the UI page, hosted directly by the window's webContents.
+const uiPreloadPath = nodePath.join(__dirname, "../preload/index.cjs");
+
 const viewManager = new UiViewManager({
   windowManager,
   windowLayer,
   viewLayer,
   sessionLayer,
   appLayer,
-  config: {
-    uiPreloadPath: nodePath.join(__dirname, "../preload/index.cjs"),
-  },
   logger: loggingService.createLogger("view"),
 });
 
@@ -518,6 +518,7 @@ const viewModule = createViewModule({
   menuLayer,
   windowManager,
   uiHtmlPath,
+  uiPreloadPath,
 });
 
 const codeServerModule = createCodeServerModule({

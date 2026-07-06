@@ -114,6 +114,21 @@ export interface ViewBoundary {
   createView(options: ViewOptions): ViewHandle;
 
   /**
+   * Adopt a window's own webContents as a view handle, so the UI's webContents
+   * concerns (load, IPC, keyboard, devtools, capture, exceptions) route through
+   * this abstraction without owning a child WebContentsView. The window's page
+   * auto-fills the window, so there is nothing to size or attach.
+   *
+   * The returned handle does not own the webContents: destroy() unregisters it
+   * but does not close it (the window owns its lifecycle). setBounds/
+   * attachToWindow are no-ops for an adopted handle.
+   *
+   * @param windowHandle - Handle to the BrowserWindow whose webContents to adopt
+   * @returns Handle addressing the window's webContents
+   */
+  adoptWindowWebContents(windowHandle: WindowHandle): ViewHandle;
+
+  /**
    * Destroy a view.
    *
    * @param handle - Handle to the view
@@ -364,9 +379,16 @@ export interface ViewBoundary {
 // ============================================================================
 
 import { WebContentsView } from "electron";
+import type { WebContents } from "electron";
 
 interface ViewState {
-  view: WebContentsView;
+  /**
+   * The owned WebContentsView, or null when this state adopts a window's own
+   * webContents (a BrowserWindow page). Owned views are sized/attached/closed;
+   * adopted webContents are not (the window owns them).
+   */
+  ownedView: WebContentsView | null;
+  webContents: WebContents;
   attachedToWindow: WindowHandle | null;
   label: string;
 }
@@ -459,7 +481,8 @@ export class DefaultViewBoundary implements ViewBoundary {
     const label = options.label ?? id;
 
     this.views.set(id, {
-      view,
+      ownedView: view,
+      webContents: view.webContents,
       attachedToWindow: null,
       label,
     });
@@ -482,6 +505,35 @@ export class DefaultViewBoundary implements ViewBoundary {
     return handle;
   }
 
+  adoptWindowWebContents(windowHandle: WindowHandle): ViewHandle {
+    const id = `view-${this.nextId++}`;
+    const webContents = this.windowLayer.getWebContents(windowHandle);
+    const label = "ui";
+
+    this.views.set(id, {
+      ownedView: null,
+      // Not a child-view attachment — the window owns this webContents, so
+      // there is nothing to detach/removeChildView on destroy.
+      attachedToWindow: null,
+      webContents,
+      label,
+    });
+
+    webContents.on("blur", () => {
+      this.logger.debug(`blur ${label}`);
+    });
+    webContents.on("focus", () => {
+      this.logger.debug(`focus ${label}`);
+    });
+
+    const handle = createViewHandle(id);
+    this.logger.debug("Window webContents adopted as view", {
+      id,
+      windowId: windowHandle.id,
+    });
+    return handle;
+  }
+
   destroy(handle: ViewHandle): void {
     const state = this.getView(handle);
 
@@ -493,9 +545,13 @@ export class DefaultViewBoundary implements ViewBoundary {
     this.views.delete(handle.id);
     this.exceptionCallbacks.delete(handle.id);
 
-    const wc = state.view.webContents;
-    if (wc && !wc.isDestroyed()) {
-      wc.close();
+    // Only close a webContents we own (a WebContentsView we created). An adopted
+    // window webContents is owned by the window and closed with it.
+    if (state.ownedView) {
+      const wc = state.webContents;
+      if (wc && !wc.isDestroyed()) {
+        wc.close();
+      }
     }
 
     this.logger.debug("View destroyed", { id: handle.id });
@@ -510,7 +566,7 @@ export class DefaultViewBoundary implements ViewBoundary {
   async loadURL(handle: ViewHandle, url: string): Promise<void> {
     const state = this.getView(handle);
     try {
-      await state.view.webContents.loadURL(url);
+      await state.webContents.loadURL(url);
     } catch (error) {
       // Navigation failures are transient (network changes, sleep/resume, etc.)
       // and already handled by the did-fail-load event which triggers retry with backoff.
@@ -527,7 +583,7 @@ export class DefaultViewBoundary implements ViewBoundary {
   async capturePNG(handle: ViewHandle, rect?: Rectangle): Promise<Buffer | null> {
     try {
       const state = this.getView(handle);
-      const wc = state.view.webContents;
+      const wc = state.webContents;
       if (!wc || wc.isDestroyed()) return null;
       const image = await (rect
         ? wc.capturePage({
@@ -550,25 +606,37 @@ export class DefaultViewBoundary implements ViewBoundary {
 
   setBounds(handle: ViewHandle, bounds: Rectangle): void {
     const state = this.getView(handle);
-    state.view.setBounds(bounds);
+    // Adopted window webContents auto-fills the window; nothing to size.
+    if (state.ownedView) {
+      state.ownedView.setBounds(bounds);
+    }
   }
 
   setBackgroundColor(handle: ViewHandle, color: string): void {
     const state = this.getView(handle);
-    state.view.setBackgroundColor(color);
+    // A window's own backdrop is set on the window, not through an adopted
+    // webContents; only owned WebContentsViews have a settable background.
+    if (state.ownedView) {
+      state.ownedView.setBackgroundColor(color);
+    }
   }
 
   focus(handle: ViewHandle): void {
     const state = this.getView(handle);
-    state.view.webContents.focus();
+    state.webContents.focus();
   }
 
   attachToWindow(handle: ViewHandle, windowHandle: WindowHandle): void {
     const state = this.getView(handle);
 
+    // Adopted window webContents is the window's own page — nothing to attach.
+    if (!state.ownedView) {
+      return;
+    }
+
     // Get the content view from the window layer
     const contentView = this.windowLayer.getContentView(windowHandle);
-    contentView.addChildView(state.view);
+    contentView.addChildView(state.ownedView);
 
     // Track attachment in view state
     state.attachedToWindow = windowHandle;
@@ -590,11 +658,13 @@ export class DefaultViewBoundary implements ViewBoundary {
 
     const windowHandle = state.attachedToWindow;
 
-    try {
-      const contentView = this.windowLayer.getContentView(windowHandle);
-      contentView.removeChildView(state.view);
-    } catch {
-      // Window may have been destroyed - ignore
+    if (state.ownedView) {
+      try {
+        const contentView = this.windowLayer.getContentView(windowHandle);
+        contentView.removeChildView(state.ownedView);
+      } catch {
+        // Window may have been destroyed - ignore
+      }
     }
 
     state.attachedToWindow = null;
@@ -609,9 +679,9 @@ export class DefaultViewBoundary implements ViewBoundary {
     const state = this.getView(handle);
 
     if (handler === null) {
-      state.view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      state.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     } else {
-      state.view.webContents.setWindowOpenHandler((details) => {
+      state.webContents.setWindowOpenHandler((details) => {
         return handler({
           url: details.url,
           frameName: details.frameName,
@@ -625,12 +695,12 @@ export class DefaultViewBoundary implements ViewBoundary {
     const state = this.getView(handle);
     // userGesture=true so scripted cross-origin iframe focus
     // (iframe.contentWindow.focus()) isn't silently blocked by Chromium.
-    return state.view.webContents.executeJavaScript(code, true);
+    return state.webContents.executeJavaScript(code, true);
   }
 
   send(handle: ViewHandle, channel: string, ...args: unknown[]): void {
     const state = this.getView(handle);
-    const wc = state.view.webContents;
+    const wc = state.webContents;
     if (wc && !wc.isDestroyed()) {
       wc.send(channel, ...args);
     }
@@ -641,9 +711,9 @@ export class DefaultViewBoundary implements ViewBoundary {
     const handler = (_event: Electron.IpcMainEvent, ...args: unknown[]): void => {
       listener(...args);
     };
-    state.view.webContents.ipc.on(channel, handler);
+    state.webContents.ipc.on(channel, handler);
     return () => {
-      const wc = state.view.webContents;
+      const wc = state.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.ipc.removeListener(channel, handler);
       }
@@ -667,9 +737,9 @@ export class DefaultViewBoundary implements ViewBoundary {
       };
       callback(input, () => event.preventDefault());
     };
-    state.view.webContents.on("before-input-event", handler);
+    state.webContents.on("before-input-event", handler);
     return () => {
-      const wc = state.view.webContents;
+      const wc = state.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.off("before-input-event", handler);
       }
@@ -678,9 +748,9 @@ export class DefaultViewBoundary implements ViewBoundary {
 
   onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe {
     const state = this.getView(handle);
-    state.view.webContents.on("destroyed", callback);
+    state.webContents.on("destroyed", callback);
     return () => {
-      const wc = state.view.webContents;
+      const wc = state.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.off("destroyed", callback);
       }
@@ -695,9 +765,9 @@ export class DefaultViewBoundary implements ViewBoundary {
     const handler = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) => {
       callback({ reason: details.reason, exitCode: details.exitCode });
     };
-    state.view.webContents.on("render-process-gone", handler);
+    state.webContents.on("render-process-gone", handler);
     return () => {
-      const wc = state.view.webContents;
+      const wc = state.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.off("render-process-gone", handler);
       }
@@ -726,7 +796,7 @@ export class DefaultViewBoundary implements ViewBoundary {
    * events out to the registered callbacks.
    */
   private wireExceptionDebugger(id: string, state: ViewState): void {
-    const wc = state.view.webContents;
+    const wc = state.webContents;
 
     const attach = (): void => {
       if (wc.isDestroyed() || wc.debugger.isAttached()) return;
@@ -760,9 +830,9 @@ export class DefaultViewBoundary implements ViewBoundary {
 
   onUnresponsive(handle: ViewHandle, callback: () => void): Unsubscribe {
     const state = this.getView(handle);
-    state.view.webContents.on("unresponsive", callback);
+    state.webContents.on("unresponsive", callback);
     return () => {
-      const wc = state.view.webContents;
+      const wc = state.webContents;
       if (wc && !wc.isDestroyed()) {
         wc.off("unresponsive", callback);
       }
@@ -772,23 +842,23 @@ export class DefaultViewBoundary implements ViewBoundary {
   isAvailable(handle: ViewHandle): boolean {
     const state = this.views.get(handle.id);
     if (!state) return false;
-    const wc = state.view.webContents;
+    const wc = state.webContents;
     return !!wc && !wc.isDestroyed();
   }
 
   openDevTools(handle: ViewHandle, options?: { mode?: string }): void {
     const state = this.getView(handle);
-    state.view.webContents.openDevTools(options as Electron.OpenDevToolsOptions);
+    state.webContents.openDevTools(options as Electron.OpenDevToolsOptions);
   }
 
   closeDevTools(handle: ViewHandle): void {
     const state = this.getView(handle);
-    state.view.webContents.closeDevTools();
+    state.webContents.closeDevTools();
   }
 
   isDevToolsOpened(handle: ViewHandle): boolean {
     const state = this.getView(handle);
-    return state.view.webContents.isDevToolsOpened();
+    return state.webContents.isDevToolsOpened();
   }
 
   async dispose(): Promise<void> {
@@ -797,7 +867,7 @@ export class DefaultViewBoundary implements ViewBoundary {
 
   installChildFrameScript(handle: ViewHandle, script: string): void {
     const state = this.getView(handle);
-    const wc = state.view.webContents;
+    const wc = state.webContents;
     wc.on("did-frame-finish-load", (_event, isMainFrame, frameProcessId, frameRoutingId) => {
       if (isMainFrame) return;
       const frame = wc.mainFrame.framesInSubtree.find(
@@ -815,7 +885,7 @@ export class DefaultViewBoundary implements ViewBoundary {
     if (!state) {
       throw new ShellError("VIEW_NOT_FOUND", `View ${handle.id} not found`, handle.id);
     }
-    const wc = state.view.webContents;
+    const wc = state.webContents;
     if (!wc || wc.isDestroyed()) {
       this.views.delete(handle.id);
       throw new ShellError("VIEW_DESTROYED", `View ${handle.id} was destroyed`, handle.id);

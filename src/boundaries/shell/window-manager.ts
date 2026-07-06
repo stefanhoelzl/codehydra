@@ -15,7 +15,7 @@ import type { ImageBoundary } from "./image";
 import type { ImageHandle } from "./image-types";
 import type { WindowBoundary } from "./window";
 import type { AppBoundary } from "./app";
-import type { WindowHandle } from "./types";
+import type { WindowHandle, WebPreferences } from "./types";
 import { getErrorMessage } from "../../shared/error-utils";
 
 /**
@@ -85,7 +85,7 @@ export class WindowManager {
    * Creates the BaseWindow and wires event listeners.
    * Must be called before using any window operations.
    */
-  create(): void {
+  create(webPreferences?: WebPreferences): void {
     this.currentTheme = this.appLayer.shouldUseDarkColors() ? "dark" : "light";
 
     this.windowHandle = this.windowLayer.createWindow({
@@ -95,6 +95,9 @@ export class WindowManager {
       minHeight: 600,
       title: this.title,
       backgroundColor: colorForTheme(this.currentTheme),
+      // When provided, the window hosts the UI page directly (BrowserWindow):
+      // the page auto-fills the window, so no child view or manual sizing.
+      ...(webPreferences !== undefined ? { webPreferences } : {}),
     });
 
     this.appLayer.onThemeUpdated(() => {
@@ -199,18 +202,15 @@ export class WindowManager {
   }
 
   /**
-   * Maximizes the window and waits for bounds to stabilize.
+   * Maximizes the window.
    *
-   * On Linux/GTK, window.maximize() is asynchronous - the maximize event
-   * fires immediately but getContentBounds() returns stale values until
-   * GTK completes the operation (~16ms observed, 50ms for safety margin).
-   * User-initiated resizes work fine; this delay is only needed for
-   * programmatic maximize at startup.
+   * The window is a BrowserWindow whose page auto-fills the window, so there is
+   * nothing to size after maximizing — no bounds settling, no view resizing.
+   * (This is what makes the Wayland fractional-scaling maximize bug moot: we
+   * never read getContentBounds() to size anything.)
    */
   async maximizeAsync(): Promise<void> {
     this.windowLayer.maximize(this.windowHandle);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    this.notifyResizeCallbacks();
   }
 
   /**

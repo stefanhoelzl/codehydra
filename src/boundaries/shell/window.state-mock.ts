@@ -19,6 +19,7 @@
  */
 
 import { expect } from "vitest";
+import type { WebContents } from "electron";
 import type { WindowBoundary, WindowOptions, ContentView, Unsubscribe } from "./window";
 import type { WindowHandle, Rectangle } from "./types";
 import type { ImageHandle } from "./image-types";
@@ -361,6 +362,13 @@ export function createWindowBoundaryMock(): MockWindowBoundary {
     setBackgroundColor(handle: WindowHandle, color: string): void {
       const window = getWindow(handle);
       window.backgroundColor = color;
+    },
+
+    getWebContents(handle: WindowHandle): WebContents {
+      getWindow(handle); // Validate handle exists
+      // The mock ViewBoundary.adoptWindowWebContents fabricates its own view
+      // state and never consumes this, so a stub satisfies the interface.
+      return {} as unknown as WebContents;
     },
 
     focus(handle: WindowHandle): void {
