@@ -328,6 +328,19 @@ already the **dominant pattern** (~61 of ~69 emit/dispatch sites are operation-s
   `path-probe` + remote folder-browse when **remote+existing** checkout support arrives.
 → research workspaces `research-leaky-*`.
 
+*Implementation (decided):* the streaming framework change is an **`onYield` host-callback
+on `collect()`** — a handler may be an `async function*` that yields neutral progress data
+and returns its `HookOutput`; the operation passes `collect(hookPoint, ctx, { onYield })`,
+`collect` iterates the generator and calls `onYield(y)` per frame while the operation maps it
+to the right event and emits. The callback lives **operation ↔ `collect`** (both host), never
+in the handler's `HookContext`, so the data-only-context invariant holds by construction, and
+a remote proxy later forwards yield-frames into the same `onYield` with zero operation rework.
+(A hook point has one progress semantic — `resolve`→clone, `binary`/`extensions`→download — so
+`onYield` is unambiguous; assert it.) Landed as **one PR** (the local refactor is self-contained
+and needs no transport): the framework change + all 8 straggler conversions + the four
+closure-field removals together, so the data-only invariant lands atomically and CI proves the
+whole surface at once.
+
 **4. Pin replicated indices host-side.** The `project:resolve` identity map
 (`origin/path → projectId`, pure `sha256`) and the per-machine workspace inventory (for
 `switch`'s auto-select) are host-cached projections **refreshed by domain events**, so the
