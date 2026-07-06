@@ -1328,19 +1328,56 @@ describe("ClaudeCodeServerManager integration", () => {
         workspacePath: "/workspace/feature-a",
         agent_id: "sub-orphan",
       });
-      // Turn completes via Notification (idle_prompt) — bypasses sub-agent guard
+      // idle_prompt while a sub-agent is still tracked stays busy (Gap 1 guard),
+      // so an orphaned sub-agent keeps the workspace busy until the next turn.
       await sendHook(port, "Notification", {
         workspacePath: "/workspace/feature-a",
         notification_type: "idle_prompt",
       });
 
-      expect(lastStatus(statusChanges)).toBe("idle");
+      expect(lastStatus(statusChanges)).toBe("busy");
 
-      // Turn 2: normal turn, no sub-agents — Stop must go idle
+      // Turn 2: UserPromptSubmit clears the orphan, so Stop goes idle normally
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
 
-      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy", "idle"]);
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("idle_prompt Notification stays busy while a sub-agent is active", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Matches real log trace: main agent dispatches a sub-agent then goes quiet;
+      // Claude Code fires idle_prompt ~60s later while the sub-agent still runs.
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+      // idle_prompt must NOT blip to idle — the sub-agent is still working
+      await sendHook(port, "Notification", {
+        workspacePath: "/workspace/feature-a",
+        notification_type: "idle_prompt",
+      });
+
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // Sub-agent finishes, main agent resumes and finishes → single idle transition
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // No false idle blip across the whole sub-agent run
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
     it("Stop without sub-agents still transitions to idle normally", async () => {

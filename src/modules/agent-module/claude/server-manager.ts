@@ -710,8 +710,21 @@ export class ClaudeCodeServerManager implements AgentServerManager {
         payload.notification_type === "permission_prompt" ||
         payload.notification_type === "elicitation_dialog")
     ) {
-      newStatus = "idle";
-      state.ignoreNextSessionStart = false;
+      // idle_prompt fires ~60s after the main thread goes quiet, which is exactly
+      // what happens while the main agent waits on active sub-agents. Suppress it
+      // while sub-agents are still tracked so the workspace stays busy instead of
+      // blipping to idle — mirrors the background-shell guard below. The other two
+      // types genuinely need the user, so they still transition to idle.
+      if (payload.notification_type === "idle_prompt" && state.activeSubagents.size > 0) {
+        newStatus = null;
+        this.logger.debug("Idle suppressed for active sub-agents", {
+          workspacePath: normalizedPath,
+          activeSubagents: state.activeSubagents.size,
+        });
+      } else {
+        newStatus = "idle";
+        state.ignoreNextSessionStart = false;
+      }
     }
 
     // Sub-agent lifecycle tracking:
