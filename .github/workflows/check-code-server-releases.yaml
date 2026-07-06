@@ -28,15 +28,28 @@ jobs:
             echo "::notice::DRY RUN MODE - will not trigger builds"
           fi
 
-      - name: Get code-server releases from npm
+      - name: Get code-server releases from GitHub
         id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Get all versions from npm
-          ALL_VERSIONS=$(npm view code-server versions --json | jq -r '.[]')
+          # Get all release tags from the upstream repo (npm no longer publishes).
+          # Exclude drafts and pre-releases; strip the leading "v".
+          ALL_VERSIONS=$(gh release list \
+            --repo coder/code-server \
+            --exclude-drafts \
+            --exclude-pre-releases \
+            --limit 1000 \
+            --json tagName \
+            --jq '.[].tagName | ltrimstr("v")')
 
           # Filter to versions >= MIN_VERSION
           MIN="${{ env.MIN_VERSION }}"
           FILTERED_VERSIONS=$(echo "$ALL_VERSIONS" | while read -r version; do
+            # Keep only plain semver tags (X.Y.Z), skip anything else
+            if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              continue
+            fi
             # Compare versions using sort -V
             if [ "$(printf '%s\n' "$MIN" "$version" | sort -V | head -n1)" = "$MIN" ]; then
               # Exclude pre-release versions (containing -)
