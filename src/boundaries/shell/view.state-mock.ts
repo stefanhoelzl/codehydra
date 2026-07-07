@@ -9,14 +9,13 @@
  *
  * @example Basic usage
  * const mock = createViewBoundaryMock();
- * const handle = mock.createView({ backgroundColor: "#1e1e1e" });
- * expect(mock).toHaveView(handle.id, { backgroundColor: "#1e1e1e" });
+ * const handle = mock.adoptWindowWebContents(windowHandle);
+ * expect(mock).toHaveView(handle.id, { attachedTo: windowHandle.id });
  */
 
 import { expect } from "vitest";
 import type {
   ViewBoundary,
-  ViewOptions,
   WindowOpenHandler,
   Unsubscribe,
   KeyboardInput,
@@ -42,10 +41,7 @@ import { CallbackRegistry, createSnapshot } from "../../test/state-mock";
  */
 export interface ViewStateSnapshot {
   readonly url: string | null;
-  readonly bounds: Rectangle | null;
-  readonly backgroundColor: string | null;
   readonly attachedTo: string | null;
-  readonly options: ViewOptions;
   readonly hasWindowOpenHandler: boolean;
   readonly focused: boolean;
 }
@@ -59,10 +55,6 @@ export interface ViewExpectation {
   attachedTo?: string | null;
   /** null = must have no URL, string = must have that URL */
   url?: string | null;
-  /** Must have this background color */
-  backgroundColor?: string;
-  /** null = must have no bounds, Rectangle = must have those bounds */
-  bounds?: Rectangle | null;
   /** true = must have handler, false = must not have handler */
   hasWindowOpenHandler?: boolean;
   /** true = must be focused, false = must not be focused */
@@ -73,12 +65,6 @@ export interface ViewExpectation {
  * State interface with triggers and MockState methods.
  */
 export interface ViewBoundaryMockState extends MockState {
-  /**
-   * Window children z-order for assertions.
-   * Maps window ID to ordered array of view IDs (index 0 = bottom).
-   */
-  readonly windowChildren: Map<string, string[]>;
-
   /**
    * Simulates Electron's 'before-input-event' event.
    * Invokes all registered handlers for the specified view.
@@ -138,10 +124,7 @@ export type MockViewBoundary = ViewBoundary & MockWithState<ViewBoundaryMockStat
  */
 interface ViewState {
   url: string | null;
-  bounds: Rectangle | null;
-  backgroundColor: string | null;
   attachedTo: string | null;
-  options: ViewOptions;
   hasWindowOpenHandler: boolean;
   focused: boolean;
 }
@@ -152,7 +135,6 @@ interface ViewState {
 
 class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
   private readonly _views: Map<string, ViewState>;
-  private readonly _windowChildren: Map<string, string[]>;
   private readonly _devToolsOpen: Set<string>;
 
   readonly beforeInputEventCallbacks = new CallbackRegistry<[KeyboardInput, () => void]>();
@@ -164,17 +146,12 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
 
   constructor() {
     this._views = new Map();
-    this._windowChildren = new Map();
     this._devToolsOpen = new Set();
   }
 
   // Expose internals for the mock layer to mutate
   get views(): Map<string, ViewState> {
     return this._views;
-  }
-
-  get windowChildren(): Map<string, string[]> {
-    return this._windowChildren;
   }
 
   get devToolsOpen(): Set<string> {
@@ -232,28 +209,10 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
       if (state.attachedTo !== null) {
         props.push(`attachedTo=${state.attachedTo}`);
       }
-      if (state.backgroundColor !== null) {
-        props.push(`bg=${state.backgroundColor}`);
-      }
-      if (state.bounds !== null) {
-        props.push(
-          `bounds=${state.bounds.x},${state.bounds.y},${state.bounds.width},${state.bounds.height}`
-        );
-      }
       if (state.hasWindowOpenHandler) {
         props.push("windowOpenHandler");
       }
       lines.push(`view:${id}{${props.join(",")}}`);
-    }
-
-    // Window children (sorted by window ID)
-    const sortedWindows = [...this._windowChildren.entries()].sort(([a], [b]) =>
-      a.localeCompare(b)
-    );
-    for (const [windowId, children] of sortedWindows) {
-      if (children.length > 0) {
-        lines.push(`window:${windowId}[${children.join(",")}]`);
-      }
     }
 
     return lines.join("\n");
@@ -267,10 +226,7 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
     if (!state) return undefined;
     return {
       url: state.url,
-      bounds: state.bounds,
-      backgroundColor: state.backgroundColor,
       attachedTo: state.attachedTo,
-      options: state.options,
       hasWindowOpenHandler: state.hasWindowOpenHandler,
       focused: state.focused,
     };
@@ -293,12 +249,12 @@ class ViewBoundaryMockStateImpl implements ViewBoundaryMockState {
  *
  * @example Basic usage
  * const mock = createViewBoundaryMock();
- * const handle = mock.createView({});
+ * const handle = mock.adoptWindowWebContents(windowHandle);
  * expect(mock).toHaveView(handle.id);
  *
  * @example Snapshot comparison
  * const before = mock.$.snapshot();
- * mock.createView({});
+ * mock.adoptWindowWebContents(windowHandle);
  * expect(mock).not.toBeUnchanged(before);
  */
 export function createViewBoundaryMock(): MockViewBoundary {
@@ -320,43 +276,12 @@ export function createViewBoundaryMock(): MockViewBoundary {
     return view;
   }
 
-  function getWindowChildren(windowId: string): string[] {
-    let children = state.windowChildren.get(windowId);
-    if (!children) {
-      children = [];
-      state.windowChildren.set(windowId, children);
-    }
-    return children;
-  }
-
   const layer: ViewBoundary = {
-    createView(options: ViewOptions): ViewHandle {
-      const id = `view-${nextId++}`;
-      state.views.set(id, {
-        url: null,
-        bounds: null,
-        backgroundColor: options.backgroundColor ?? null,
-        attachedTo: null,
-        options,
-        hasWindowOpenHandler: false,
-        focused: false,
-      });
-      for (const registry of registries) {
-        registry.init(id);
-      }
-      return { id, __brand: "ViewHandle" };
-    },
-
     adoptWindowWebContents(windowHandle: WindowHandle): ViewHandle {
       const id = `view-${nextId++}`;
       state.views.set(id, {
         url: null,
-        // Adopted window webContents auto-fills the window — no bounds, and the
-        // backdrop lives on the window, not the view.
-        bounds: null,
-        backgroundColor: null,
         attachedTo: windowHandle.id,
-        options: { label: "ui" },
         hasWindowOpenHandler: false,
         focused: false,
       });
@@ -371,16 +296,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
       if (!view) {
         throw new ShellError("VIEW_NOT_FOUND", `View ${handle.id} not found`, handle.id);
       }
-      // Remove from window children if attached
-      if (view.attachedTo) {
-        const children = state.windowChildren.get(view.attachedTo);
-        if (children) {
-          const idx = children.indexOf(handle.id);
-          if (idx !== -1) {
-            children.splice(idx, 1);
-          }
-        }
-      }
       state.views.delete(handle.id);
       for (const registry of registries) {
         registry.delete(handle.id);
@@ -392,7 +307,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
       for (const registry of registries) {
         registry.clear();
       }
-      state.windowChildren.clear();
     },
 
     async loadURL(handle: ViewHandle, url: string): Promise<void> {
@@ -406,16 +320,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
       return Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG magic bytes
     },
 
-    setBounds(handle: ViewHandle, bounds: Rectangle): void {
-      const view = getView(handle);
-      view.bounds = bounds;
-    },
-
-    setBackgroundColor(handle: ViewHandle, color: string): void {
-      const view = getView(handle);
-      view.backgroundColor = color;
-    },
-
     focus(handle: ViewHandle): void {
       const view = getView(handle);
       // Clear focus from all other views
@@ -424,13 +328,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
       }
       // Set focus on this view
       view.focused = true;
-    },
-
-    attachToWindow(handle: ViewHandle, windowHandle: WindowHandle): void {
-      const view = getView(handle);
-      const children = getWindowChildren(windowHandle.id);
-      children.push(handle.id);
-      view.attachedTo = windowHandle.id;
     },
 
     setWindowOpenHandler(handle: ViewHandle, handler: WindowOpenHandler | null): void {
@@ -524,7 +421,6 @@ export function createViewBoundaryMock(): MockViewBoundary {
       for (const registry of registries) {
         registry.clear();
       }
-      state.windowChildren.clear();
     },
   };
 
@@ -555,7 +451,7 @@ interface ViewBoundaryMatchers {
    * expect(mock).toHaveView("view-1", {
    *   attachedTo: "window-1",
    *   url: "http://127.0.0.1:8080",
-   *   backgroundColor: "#1e1e1e"
+   *   hasWindowOpenHandler: true
    * });
    */
   toHaveView(id: string, expected?: ViewExpectation): void;
@@ -619,35 +515,6 @@ export const viewBoundaryMatchers: MatcherImplementationsFor<
           pass: false,
           message: () =>
             `Expected view "${id}" to have url ${JSON.stringify(expected.url)} but got ${JSON.stringify(view.url)}`,
-        };
-      }
-    }
-
-    if ("backgroundColor" in expected) {
-      if (view.backgroundColor !== expected.backgroundColor) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected view "${id}" to have backgroundColor ${JSON.stringify(expected.backgroundColor)} but got ${JSON.stringify(view.backgroundColor)}`,
-        };
-      }
-    }
-
-    if ("bounds" in expected) {
-      const boundsMatch =
-        expected.bounds === null
-          ? view.bounds === null
-          : view.bounds !== null &&
-            view.bounds.x === expected.bounds.x &&
-            view.bounds.y === expected.bounds.y &&
-            view.bounds.width === expected.bounds.width &&
-            view.bounds.height === expected.bounds.height;
-
-      if (!boundsMatch) {
-        return {
-          pass: false,
-          message: () =>
-            `Expected view "${id}" to have bounds ${JSON.stringify(expected.bounds)} but got ${JSON.stringify(view.bounds)}`,
         };
       }
     }

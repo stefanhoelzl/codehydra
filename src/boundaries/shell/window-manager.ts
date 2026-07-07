@@ -40,14 +40,6 @@ function colorForTheme(theme: Theme): string {
 export type Unsubscribe = () => void;
 
 /**
- * Content bounds of the window.
- */
-export interface ContentBounds {
-  readonly width: number;
-  readonly height: number;
-}
-
-/**
  * Dependencies for creating a WindowManager.
  */
 export interface WindowManagerDeps {
@@ -67,7 +59,6 @@ export class WindowManager {
   private readonly logger: Logger;
   private readonly title: string;
   private readonly iconPath: string | undefined;
-  private readonly resizeCallbacks: Set<() => void> = new Set();
   private readonly themeChangeCallbacks: Set<(theme: Theme) => void> = new Set();
   private windowHandle!: WindowHandle;
   private currentTheme: Theme = "dark";
@@ -136,22 +127,14 @@ export class WindowManager {
       }
     }
 
-    // Set up resize event handler
+    // Resize/maximize events are logged for diagnostics only.
     this.windowLayer.onResize(this.windowHandle, () => {
       const bounds = this.windowLayer.getContentBounds(this.windowHandle);
       this.logger.debug("Window resized", { width: bounds.width, height: bounds.height });
-      this.notifyResizeCallbacks();
     });
 
-    // On Linux, maximize/unmaximize may not trigger resize event,
-    // so we need to listen for these separately
     this.windowLayer.onMaximize(this.windowHandle, () => {
       this.logger.debug("Window maximized");
-      this.notifyResizeCallbacks();
-    });
-
-    this.windowLayer.onUnmaximize(this.windowHandle, () => {
-      this.notifyResizeCallbacks();
     });
 
     // Listen for close event
@@ -162,43 +145,11 @@ export class WindowManager {
     this.logger.info("Window created");
   }
 
-  private notifyResizeCallbacks(): void {
-    for (const callback of this.resizeCallbacks) {
-      callback();
-    }
-  }
-
   /**
    * Returns the WindowHandle for this window.
    */
   getWindowHandle(): WindowHandle {
     return this.windowHandle;
-  }
-
-  /**
-   * Returns the current content bounds of the window.
-   * Uses getContentBounds() to get the actual client area (excluding title bar).
-   */
-  getBounds(): ContentBounds {
-    const bounds = this.windowLayer.getContentBounds(this.windowHandle);
-    return {
-      width: bounds.width,
-      height: bounds.height,
-    };
-  }
-
-  /**
-   * Subscribes to window resize events.
-   *
-   * @param callback - Called when the window is resized
-   * @returns Unsubscribe function to remove the listener
-   */
-  onResize(callback: () => void): Unsubscribe {
-    this.resizeCallbacks.add(callback);
-
-    return () => {
-      this.resizeCallbacks.delete(callback);
-    };
   }
 
   /**

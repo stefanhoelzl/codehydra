@@ -60,13 +60,10 @@ describe("UiViewManager", () => {
 
       const handle = manager.getUIViewHandle();
       const snapshot = viewLayer.$.getViewSnapshot(handle.id);
-      // The UI is the window's own page — it auto-fills the window, so there is
-      // no bounds/backdrop on the adopted handle; it is associated with the
-      // window it adopted.
+      // The UI is the window's own page — it auto-fills the window, so the
+      // adopted handle is simply associated with the window it adopted.
       expect(snapshot).toMatchObject({
         attachedTo: "test-window-1",
-        bounds: null,
-        backgroundColor: null,
         hasWindowOpenHandler: true,
       });
     });

@@ -12,13 +12,6 @@ import type { ViewHandle } from "./types";
 import type { DevtoolsTarget, KeyboardTarget } from "./view-manager-types";
 
 /**
- * Timeout for workspace loading in milliseconds.
- * If the agent doesn't report status within this time, the loading
- * indication is dropped anyway.
- */
-export const WORKSPACE_LOADING_TIMEOUT_MS = 10000;
-
-/**
  * Function to unsubscribe from an event.
  */
 export type Unsubscribe = () => void;

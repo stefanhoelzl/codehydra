@@ -51,11 +51,6 @@ export interface ResumeHookResult {
 // Event Types
 // =============================================================================
 
-export interface AppResumedEvent extends DomainEvent {
-  readonly type: typeof EVENT_APP_RESUMED;
-  readonly payload: Record<string, never>;
-}
-
 export const EVENT_APP_RESUMED = "app:resumed" as const;
 
 /**

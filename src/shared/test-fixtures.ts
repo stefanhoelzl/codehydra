@@ -5,64 +5,12 @@
  * Uses v2 API types (Project with id, Workspace with projectId).
  */
 
-import type {
-  Project,
-  Workspace,
-  ProjectId,
-  WorkspaceName,
-  WorkspaceRef,
-  WorkspaceStatus,
-} from "./api/types";
-import type { ProjectPath } from "./ipc";
+import type { Project, Workspace, ProjectId, WorkspaceName } from "./api/types";
 
 /**
  * Default project ID used in test fixtures.
  */
 const DEFAULT_PROJECT_ID = "test-project-12345678" as ProjectId;
-
-// =============================================================================
-// Type Cast Helpers
-// =============================================================================
-
-/**
- * Cast a string to ProjectId.
- * Use in tests when you need to create a typed project ID from a plain string.
- */
-export function asProjectId(id: string): ProjectId {
-  return id as ProjectId;
-}
-
-/**
- * Cast a string to WorkspaceName.
- * Use in tests when you need to create a typed workspace name from a plain string.
- */
-function asWorkspaceName(name: string): WorkspaceName {
-  return name as WorkspaceName;
-}
-
-/**
- * Cast a string to ProjectPath.
- * Use in tests when you need to create a typed project path from a plain string.
- */
-export function asProjectPath(path: string): ProjectPath {
-  return path as ProjectPath;
-}
-
-/**
- * Create a WorkspaceRef from plain strings.
- * Use in tests when you need a typed workspace reference.
- */
-export function asWorkspaceRef(
-  projectId: string,
-  workspaceName: string,
-  path: string
-): WorkspaceRef {
-  return {
-    projectId: asProjectId(projectId),
-    workspaceName: asWorkspaceName(workspaceName),
-    path,
-  };
-}
 
 // =============================================================================
 // Workspace Mock Factory
@@ -195,26 +143,3 @@ export const delay = (ms: number): Promise<void> =>
 // Note: These are used by test-utils files that create mock APIs.
 // =============================================================================
 
-/**
- * Default values for mock workspace API responses.
- * Use these when creating mock workspace APIs in test files.
- */
-export const MOCK_WORKSPACE_API_DEFAULTS = {
-  workspace: {
-    name: "test" as WorkspaceName,
-    path: "/path",
-    branch: "main",
-    metadata: { base: "main" },
-    projectId: DEFAULT_PROJECT_ID,
-  } as Workspace,
-
-  status: {
-    isDirty: false,
-    unmergedCommits: 0,
-    agent: { type: "none" },
-  } as WorkspaceStatus,
-
-  removeResult: { started: true } as const,
-
-  metadata: { base: "main" } as Readonly<Record<string, string>>,
-};

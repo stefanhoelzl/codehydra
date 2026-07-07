@@ -6,6 +6,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createViewBoundaryMock, type MockViewBoundary } from "./view.state-mock";
 import { ShellError, isShellErrorWithCode } from "../../shared/errors/shell-errors";
 
+const windowHandle = { id: "window-1", __brand: "WindowHandle" as const };
+
 describe("ViewBoundary (integration)", () => {
   let viewLayer: MockViewBoundary;
 
@@ -13,24 +15,18 @@ describe("ViewBoundary (integration)", () => {
     viewLayer = createViewBoundaryMock();
   });
 
-  describe("createView", () => {
-    it("creates a view with default options", () => {
-      const handle = viewLayer.createView({});
+  describe("adoptWindowWebContents", () => {
+    it("adopts a window's webContents as a view", () => {
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       expect(handle.id).toMatch(/^view-\d+$/);
       expect(handle.__brand).toBe("ViewHandle");
-      expect(viewLayer).toHaveView(handle.id);
-    });
-
-    it("creates a view with background color", () => {
-      const handle = viewLayer.createView({ backgroundColor: "#ff0000" });
-
-      expect(viewLayer).toHaveView(handle.id, { backgroundColor: "#ff0000" });
+      expect(viewLayer).toHaveView(handle.id, { attachedTo: "window-1" });
     });
 
     it("creates multiple views with unique IDs", () => {
-      const handle1 = viewLayer.createView({});
-      const handle2 = viewLayer.createView({});
+      const handle1 = viewLayer.adoptWindowWebContents(windowHandle);
+      const handle2 = viewLayer.adoptWindowWebContents(windowHandle);
 
       expect(handle1.id).not.toBe(handle2.id);
       expect(viewLayer).toHaveViews([handle1.id, handle2.id]);
@@ -39,7 +35,7 @@ describe("ViewBoundary (integration)", () => {
 
   describe("destroy", () => {
     it("destroys an existing view", () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       viewLayer.destroy(handle);
 
@@ -54,7 +50,7 @@ describe("ViewBoundary (integration)", () => {
     });
 
     it("throws VIEW_NOT_FOUND for already destroyed view", () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
       viewLayer.destroy(handle);
 
       expect(() => viewLayer.destroy(handle)).toThrow(ShellError);
@@ -63,9 +59,9 @@ describe("ViewBoundary (integration)", () => {
 
   describe("destroyAll", () => {
     it("destroys all views", () => {
-      viewLayer.createView({});
-      viewLayer.createView({});
-      viewLayer.createView({});
+      viewLayer.adoptWindowWebContents(windowHandle);
+      viewLayer.adoptWindowWebContents(windowHandle);
+      viewLayer.adoptWindowWebContents(windowHandle);
 
       viewLayer.destroyAll();
 
@@ -75,7 +71,7 @@ describe("ViewBoundary (integration)", () => {
 
   describe("loadURL", () => {
     it("sets the URL on the view", async () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       await viewLayer.loadURL(handle, "http://127.0.0.1:8080");
 
@@ -89,30 +85,9 @@ describe("ViewBoundary (integration)", () => {
     });
   });
 
-  describe("bounds", () => {
-    it("sets bounds", () => {
-      const handle = viewLayer.createView({});
-      const bounds = { x: 10, y: 20, width: 800, height: 600 };
-
-      viewLayer.setBounds(handle, bounds);
-
-      expect(viewLayer).toHaveView(handle.id, { bounds });
-    });
-  });
-
-  describe("setBackgroundColor", () => {
-    it("sets background color", () => {
-      const handle = viewLayer.createView({});
-
-      viewLayer.setBackgroundColor(handle, "#00ff00");
-
-      expect(viewLayer).toHaveView(handle.id, { backgroundColor: "#00ff00" });
-    });
-  });
-
   describe("focus", () => {
     it("does not throw for valid view", () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       expect(() => viewLayer.focus(handle)).not.toThrow();
     });
@@ -124,20 +99,9 @@ describe("ViewBoundary (integration)", () => {
     });
   });
 
-  describe("attachToWindow", () => {
-    it("attaches view to window", () => {
-      const handle = viewLayer.createView({});
-      const windowHandle = { id: "window-1", __brand: "WindowHandle" as const };
-
-      viewLayer.attachToWindow(handle, windowHandle);
-
-      expect(viewLayer).toHaveView(handle.id, { attachedTo: "window-1" });
-    });
-  });
-
   describe("setWindowOpenHandler", () => {
     it("tracks handler state when set", () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       viewLayer.setWindowOpenHandler(handle, () => ({ action: "deny" }));
 
@@ -145,7 +109,7 @@ describe("ViewBoundary (integration)", () => {
     });
 
     it("tracks handler state when cleared", () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       viewLayer.setWindowOpenHandler(handle, () => ({ action: "deny" }));
       viewLayer.setWindowOpenHandler(handle, null);
@@ -156,7 +120,7 @@ describe("ViewBoundary (integration)", () => {
 
   describe("executeJavaScript", () => {
     it("resolves for valid view", async () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       await expect(viewLayer.executeJavaScript(handle, "1 + 1")).resolves.toBeUndefined();
     });
@@ -170,7 +134,7 @@ describe("ViewBoundary (integration)", () => {
 
   describe("send", () => {
     it("does not throw for valid view", () => {
-      const handle = viewLayer.createView({});
+      const handle = viewLayer.adoptWindowWebContents(windowHandle);
 
       expect(() => {
         viewLayer.send(handle, "test-channel", { data: "test" });
@@ -188,8 +152,8 @@ describe("ViewBoundary (integration)", () => {
 
   describe("dispose", () => {
     it("clears all views", async () => {
-      viewLayer.createView({});
-      viewLayer.createView({});
+      viewLayer.adoptWindowWebContents(windowHandle);
+      viewLayer.adoptWindowWebContents(windowHandle);
 
       await viewLayer.dispose();
 
@@ -203,10 +167,6 @@ describe("ViewBoundary (integration)", () => {
 
       // Sync methods
       expect(() => viewLayer.destroy(fakeHandle)).toThrow(ShellError);
-      expect(() =>
-        viewLayer.setBounds(fakeHandle, { x: 0, y: 0, width: 100, height: 100 })
-      ).toThrow(ShellError);
-      expect(() => viewLayer.setBackgroundColor(fakeHandle, "#fff")).toThrow(ShellError);
       expect(() => viewLayer.focus(fakeHandle)).toThrow(ShellError);
       expect(() => viewLayer.setWindowOpenHandler(fakeHandle, null)).toThrow(ShellError);
       expect(() => viewLayer.send(fakeHandle, "channel", {})).toThrow(ShellError);
