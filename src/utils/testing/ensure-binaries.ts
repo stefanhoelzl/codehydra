@@ -13,11 +13,9 @@ import { DefaultFileSystemBoundary } from "../../boundaries/platform/filesystem"
 import { DefaultNetworkLayer } from "../../boundaries/platform/network";
 import { DefaultArchiveExtractor } from "../../boundaries/platform/archive-extractor";
 import {
+  createCodeServerIdeServer,
   CODE_SERVER_VERSION,
-  getCodeServerUrl,
-  getCodeServerSubPath,
-  getCodeServerExecutablePath,
-} from "../../modules/code-server-module";
+} from "../../modules/ide-server-module/code-server";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
@@ -74,16 +72,17 @@ function buildDownloadRequest(
   const arch = platformInfo.arch as SupportedArch;
 
   if (binary === "code-server") {
-    const destDir = pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative();
-    const executablePath = getCodeServerExecutablePath(platform);
+    const ide = createCodeServerIdeServer();
+    const destDir = pathProvider.bundlePath(ide.bundleSubdir()).toNative();
+    const executablePath = ide.executablePath(platform);
     return {
       request: {
-        name: "code-server",
-        url: getCodeServerUrl(platform, arch),
+        name: ide.id,
+        url: ide.downloadUrl(platform, arch),
         destDir,
         archiveExtension: ".tar.gz",
         executablePath,
-        subPath: getCodeServerSubPath(platform, arch),
+        subPath: ide.archiveSubPath(platform, arch),
       },
       binaryPath: join(destDir, executablePath),
     };

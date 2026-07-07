@@ -97,9 +97,10 @@ export class WorkspaceError extends ServiceError {
 }
 
 /**
- * Error from code-server operations.
+ * Error from IDE server operations. The `type` discriminant stays "code-server"
+ * as a stable wire tag (serialized across IPC); only the class name is generic.
  */
-export class CodeServerError extends ServiceError {
+export class IdeServerError extends ServiceError {
   readonly type = "code-server" as const;
 }
 

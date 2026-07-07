@@ -163,7 +163,7 @@ import { ResolveProjectOperation, INTENT_RESOLVE_PROJECT } from "./intents/resol
 // Modules
 import { createExtensionModule } from "./modules/extension-module";
 import { createViewModule } from "./modules/view-module";
-import { createCodeServerModule } from "./modules/code-server-module";
+import { createIdeServerModule } from "./modules/ide-server-module/ide-server-module";
 import { createPluginServerModule } from "./modules/plugin-server-module";
 import { createAgentModule } from "./modules/agent-module/agent-module";
 import { createMetadataModule } from "./modules/metadata-module";
@@ -519,7 +519,7 @@ const viewModule = createViewModule({
   uiPreloadPath,
 });
 
-const codeServerModule = createCodeServerModule({
+const ideServerModule = createIdeServerModule({
   processRunner,
   httpClient: networkLayer,
   portManager: networkLayer,
@@ -908,7 +908,7 @@ dispatcher.registerModule(idempotencyModule);
 dispatcher.registerModule(viewModule);
 dispatcher.registerModule(pluginServerModule);
 dispatcher.registerModule(extensionModule);
-dispatcher.registerModule(codeServerModule);
+dispatcher.registerModule(ideServerModule);
 dispatcher.registerModule(workspaceAgentResolverModule);
 dispatcher.registerModule(claudeAgentModule);
 dispatcher.registerModule(opencodeAgentModule);

@@ -1,158 +1,80 @@
 /**
- * CodeServerModule - Manages code-server lifecycle, extensions, and per-workspace files.
+ * IdeServerModule - Manages IDE server lifecycle, extensions, and per-workspace files.
  *
- * Consolidates these concerns into a single extracted module:
- * - Binary preflight (code-server part)
- * - Extension preflight
- * - Binary download (code-server part)
- * - Extension install
- * - Code-server lifecycle (start/stop)
- * - Per-workspace file creation (finalize hook)
- * - Per-workspace file deletion (delete hook)
+ * Owns the distribution-agnostic concerns for the embedded IDE server:
+ * - Binary preflight + download
+ * - Extension preflight + install
+ * - Server lifecycle (start/stop/resume)
+ * - Per-workspace `.code-workspace` file creation (finalize hook) and deletion
  *
- * Internal state: code-server port set by `start` hook, read by `finalize` hook.
+ * Everything distribution-specific (download coordinates, serve args, readiness
+ * probe, URL scheme) is delegated to an `IdeServer` descriptor (see `./types`).
+ *
+ * Internal state: server port set by `start` hook, read by `finalize` hook.
  */
 
 import { join, delimiter } from "node:path";
 
-import type { IntentModule } from "../intents/lib/module";
-import type { HookContext, HookOutput } from "../intents/lib/operation";
-import { ANY_VALUE } from "../intents/lib/operation";
-import type { FileSystemBoundary } from "../boundaries/platform/filesystem";
-import type { ProcessRunner, SpawnedProcess } from "../boundaries/platform/process";
+import type { IntentModule } from "../../intents/lib/module";
+import type { HookContext, HookOutput } from "../../intents/lib/operation";
+import { ANY_VALUE } from "../../intents/lib/operation";
+import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
+import type { ProcessRunner, SpawnedProcess } from "../../boundaries/platform/process";
 import {
   PROCESS_KILL_GRACEFUL_TIMEOUT_MS,
   PROCESS_KILL_FORCE_TIMEOUT_MS,
-} from "../boundaries/platform/process";
-import type { HttpClient, PortManager } from "../boundaries/platform/network";
-import type { PathProvider } from "../boundaries/platform/path-provider";
-import type { Logger } from "../boundaries/platform/logging-types";
-import type { SupportedPlatform, SupportedArch } from "../boundaries/platform/platform-info";
-import type { BuildInfo } from "../boundaries/platform/build-info";
-import type { DownloadProgressCallback, DownloadRequest } from "../utils/binary-download";
-import { downloadBinary, isBinaryInstalled, assertWindowsX64 } from "../utils/binary-download";
-import type { ArchiveExtractor } from "../boundaries/platform/archive-extractor";
-import type { BinaryType } from "../utils/binary-resolution/types";
-import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
-import type { BinaryHookInput, ExtensionsHookInput, SetupProgressPayload } from "../intents/setup";
-import type { FinalizeHookInput } from "../intents/open-workspace";
-import type { DeleteWorkspaceIntent } from "../intents/delete-workspace";
-import type { DeleteHookResult, DeletePipelineHookInput } from "../intents/delete-workspace";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+} from "../../boundaries/platform/process";
+import type { HttpClient, PortManager } from "../../boundaries/platform/network";
+import type { PathProvider } from "../../boundaries/platform/path-provider";
+import type { Logger } from "../../boundaries/platform/logging-types";
+import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
+import type { BuildInfo } from "../../boundaries/platform/build-info";
+import type { DownloadProgressCallback, DownloadRequest } from "../../utils/binary-download";
+import { downloadBinary, isBinaryInstalled } from "../../utils/binary-download";
+import type { ArchiveExtractor } from "../../boundaries/platform/archive-extractor";
+import type { BinaryType } from "../../utils/binary-resolution/types";
+import type {
+  CheckDepsHookContext,
+  CheckDepsResult,
+  ConfigureResult,
+} from "../../intents/app-start";
+import type {
+  BinaryHookInput,
+  ExtensionsHookInput,
+  SetupProgressPayload,
+} from "../../intents/setup";
+import type { FinalizeHookInput } from "../../intents/open-workspace";
+import type { DeleteWorkspaceIntent } from "../../intents/delete-workspace";
+import type { DeleteHookResult, DeletePipelineHookInput } from "../../intents/delete-workspace";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import {
   APP_RESUME_OPERATION_ID,
   APP_RESUME_HOOK_RESUME,
   type ResumeHookResult,
-} from "../intents/app-resume";
-import { SETUP_OPERATION_ID } from "../intents/setup";
-import { streamProgress } from "../intents/lib/hook-helpers";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
-import { listInstalledExtensions, removeFromExtensionsJson } from "../utils/extension";
-import { Path } from "../utils/path/path";
-import { encodePathForUrl } from "../boundaries/platform/paths";
-import { storeString, storeNumber } from "../boundaries/platform/store-definition";
-import type { Config } from "../boundaries/platform/config";
-import { CodeServerError, SetupError, getErrorMessage } from "../shared/errors/service-errors";
-import { waitForHealthy } from "../utils/health-check";
-
-// =============================================================================
-// Code-Server Setup Info (inlined from services/code-server/setup-info.ts)
-// =============================================================================
-
-/**
- * Current version of code-server to download.
- */
-export const CODE_SERVER_VERSION = "4.117.0";
-
-/**
- * GitHub repository for Windows code-server builds.
- * Windows builds are not provided by the official code-server repo.
- */
-const CODEHYDRA_REPO = "stefanhoelzl/codehydra";
-
-/**
- * Architecture name mappings for code-server releases.
- */
-const CODE_SERVER_ARCH = {
-  x64: "amd64",
-  arm64: "arm64",
-} as const;
-
-/**
- * Get the download URL for a specific code-server version.
- *
- * @param version - Code-server version string
- * @param platform - Operating system platform
- * @param arch - CPU architecture
- * @returns Download URL for the code-server release
- * @throws Error if platform/arch combination is not supported
- */
-export function getCodeServerUrlForVersion(
-  version: string,
-  platform: SupportedPlatform,
-  arch: SupportedArch
-): string {
-  assertWindowsX64(platform, arch, "code-server");
-  if (platform === "win32") {
-    return `https://github.com/${CODEHYDRA_REPO}/releases/download/code-server-windows-v${version}/code-server-${version}-win32-x64.tar.gz`;
-  }
-  const os = platform === "darwin" ? "macos" : "linux";
-  const archName = CODE_SERVER_ARCH[arch];
-  return `https://github.com/coder/code-server/releases/download/v${version}/code-server-${version}-${os}-${archName}.tar.gz`;
-}
-
-/** Get the download URL using the built-in version (for scripts/tests). */
-export function getCodeServerUrl(platform: SupportedPlatform, arch: SupportedArch): string {
-  return getCodeServerUrlForVersion(CODE_SERVER_VERSION, platform, arch);
-}
-
-/**
- * Get the subpath within the extracted archive for a specific code-server version.
- *
- * @param version - Code-server version string
- * @param platform - Operating system platform
- * @param arch - CPU architecture
- * @returns Subpath prefix within the archive
- */
-function getCodeServerSubPathForVersion(
-  version: string,
-  platform: SupportedPlatform,
-  arch: SupportedArch
-): string {
-  if (platform === "win32") {
-    return `code-server-${version}-win32-x64`;
-  }
-  const os = platform === "darwin" ? "macos" : "linux";
-  const archName = CODE_SERVER_ARCH[arch];
-  return `code-server-${version}-${os}-${archName}`;
-}
-
-/** Get the subpath using the built-in version (for scripts/tests). */
-export function getCodeServerSubPath(platform: SupportedPlatform, arch: SupportedArch): string {
-  return getCodeServerSubPathForVersion(CODE_SERVER_VERSION, platform, arch);
-}
-
-/**
- * Get the relative path to the code-server executable within the extracted directory.
- *
- * @param platform - Operating system platform
- * @returns Relative path to the executable
- */
-export function getCodeServerExecutablePath(platform: SupportedPlatform): string {
-  return platform === "win32" ? "bin/code-server.cmd" : "bin/code-server";
-}
+} from "../../intents/app-resume";
+import { SETUP_OPERATION_ID } from "../../intents/setup";
+import { streamProgress } from "../../intents/lib/hook-helpers";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
+import { listInstalledExtensions, removeFromExtensionsJson } from "../../utils/extension";
+import { Path } from "../../utils/path/path";
+import { storeString, storeNumber } from "../../boundaries/platform/store-definition";
+import type { Config } from "../../boundaries/platform/config";
+import { IdeServerError, SetupError, getErrorMessage } from "../../shared/errors/service-errors";
+import { waitForHealthy } from "../../utils/health-check";
+import { createCodeServerIdeServer, CODE_SERVER_VERSION } from "./code-server";
+import type { IdeServer } from "./types";
 
 // =============================================================================
 // Internal Types
 // =============================================================================
 
-/** State of the code-server instance. */
+/** State of the IDE server instance. */
 type InstanceState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
-/** Internal configuration for code-server instance. */
-interface CodeServerConfig {
+/** Internal configuration for the IDE server instance. */
+interface IdeServerConfig {
   readonly runtimeDir: string;
   readonly extensionsDir: string;
   readonly userDataDir: string;
@@ -168,11 +90,11 @@ interface CodeServerConfig {
 const CODE_SERVER_PORT = 25448;
 
 /**
- * Determine the code-server port based on build info.
+ * Determine the IDE server port based on build info.
  * - Production: Fixed port (25448) for IndexedDB persistence
  * - Development: Port derived from git branch for consistency across restarts
  */
-function getCodeServerPort(buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">): number {
+function getIdeServerPort(buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">): number {
   if (buildInfo.isPackaged) {
     return CODE_SERVER_PORT;
   }
@@ -197,45 +119,13 @@ function derivePortFromString(input: string): number {
 }
 
 // =============================================================================
-// URL Helpers
-// =============================================================================
-
-/**
- * Normalize a path for use in code-server URLs.
- * Handles Windows path conversion and URL encoding.
- */
-function normalizePathForUrl(path: string): string {
-  let normalizedPath = path;
-  if (/^[A-Za-z]:/.test(path)) {
-    normalizedPath = "/" + path.replace(/\\/g, "/");
-  }
-  return encodePathForUrl(normalizedPath).replace(/%3A/g, ":");
-}
-
-/**
- * Generate URL for opening a folder in code-server.
- */
-function urlForFolder(port: number, folderPath: string): string {
-  const encodedPath = normalizePathForUrl(folderPath);
-  return `http://127.0.0.1:${port}/?folder=${encodedPath}`;
-}
-
-/**
- * Generate URL for opening a .code-workspace file in code-server.
- */
-function urlForWorkspace(port: number, workspaceFilePath: string): string {
-  const encodedPath = normalizePathForUrl(workspaceFilePath);
-  return `http://127.0.0.1:${port}/?workspace=${encodedPath}`;
-}
-
-// =============================================================================
 // Dependency Interfaces
 // =============================================================================
 
 /**
- * All dependencies for CodeServerModule.
+ * All dependencies for IdeServerModule.
  */
-export interface CodeServerModuleDeps {
+export interface IdeServerModuleDeps {
   readonly processRunner: Pick<ProcessRunner, "run">;
   readonly httpClient: Pick<HttpClient, "fetch">;
   readonly portManager: Pick<PortManager, "isPortAvailable">;
@@ -261,8 +151,8 @@ export interface CodeServerModuleDeps {
   readonly configService: Config;
   /**
    * Resolve the native path to the bundled OpenCode binary directory, injected
-   * into the code-server environment as `_CH_OPENCODE_DIR`. Owned by the
-   * OpenCode layer so code-server doesn't reach into agent-owned config.
+   * into the IDE server environment as `_CH_OPENCODE_DIR`. Owned by the
+   * OpenCode layer so the IDE server doesn't reach into agent-owned config.
    */
   readonly resolveOpencodeBundleDir: () => string;
 }
@@ -272,31 +162,34 @@ export interface CodeServerModuleDeps {
 // =============================================================================
 
 /**
- * Create a CodeServerModule that manages code-server lifecycle, extensions,
- * and per-workspace .code-workspace files.
- *
- * Returns the intent module plus a setPluginPort function for external callers.
+ * Create an IdeServerModule that manages the embedded IDE server lifecycle,
+ * extensions, and per-workspace .code-workspace files.
  */
-export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule {
+export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
   const { processRunner, fileSystemLayer, logger } = deps;
 
   // Register config keys
-  const codeServerVersionConfig = deps.configService.register("version.code-server", {
+  const ideServerVersionConfig = deps.configService.register("version.code-server", {
     default: CODE_SERVER_VERSION,
     description: "Code-server version",
     ...storeString(),
   });
-  const codeServerPortConfig = deps.configService.register("code-server.port", {
-    default: getCodeServerPort(deps.buildInfo),
+  const ideServerPortConfig = deps.configService.register("code-server.port", {
+    default: getIdeServerPort(deps.buildInfo),
     description: "Code-server port",
     ...storeNumber({ min: 1, max: 65535, integer: true }),
   });
+
+  /** Resolve the active IdeServer descriptor (call only after config load()). */
+  function getIdeServer(): IdeServer {
+    return createCodeServerIdeServer(ideServerVersionConfig.get());
+  }
 
   // -------------------------------------------------------------------------
   // Compute config from deps
   // -------------------------------------------------------------------------
 
-  const config: CodeServerConfig = {
+  const config: IdeServerConfig = {
     runtimeDir: deps.pathProvider.dataPath("runtime").toNative(),
     extensionsDir: deps.pathProvider.dataPath("vscode/extensions").toNative(),
     userDataDir: deps.pathProvider.dataPath("vscode/user-data").toNative(),
@@ -304,15 +197,13 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     pluginPort: undefined,
   };
 
-  /** Resolve version-derived paths from configService (call only after load()). */
-  function resolveCodeServerPaths() {
-    const version = codeServerVersionConfig.get();
+  /** Resolve version-derived paths (call only after load()). */
+  function resolveIdeServerPaths() {
+    const ide = getIdeServer();
+    const bundleDir = deps.pathProvider.bundlePath(ide.bundleSubdir());
     return {
-      binaryPath: new Path(
-        deps.pathProvider.bundlePath(`code-server/${version}`),
-        getCodeServerExecutablePath(deps.platform)
-      ).toNative(),
-      codeServerDir: deps.pathProvider.bundlePath(`code-server/${version}`).toNative(),
+      binaryPath: new Path(bundleDir, ide.executablePath(deps.platform)).toNative(),
+      ideServerDir: bundleDir.toNative(),
     };
   }
 
@@ -353,17 +244,17 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // Binary download state
   // -------------------------------------------------------------------------
 
-  /** Build download request from configService (call only after load()). */
+  /** Build download request from the active descriptor (call only after load()). */
   function getDownloadRequest(): DownloadRequest | null {
     if (!deps.archiveExtractor) return null;
-    const version = codeServerVersionConfig.get();
+    const ide = getIdeServer();
     return {
-      name: "code-server" as const,
-      url: getCodeServerUrlForVersion(version, deps.platform, deps.arch),
-      destDir: deps.pathProvider.bundlePath(`code-server/${version}`).toNative(),
+      name: ide.id,
+      url: ide.downloadUrl(deps.platform, deps.arch),
+      destDir: deps.pathProvider.bundlePath(ide.bundleSubdir()).toNative(),
       archiveExtension: ".tar.gz" as const,
-      executablePath: getCodeServerExecutablePath(deps.platform),
-      subPath: getCodeServerSubPathForVersion(version, deps.platform, deps.arch),
+      executablePath: ide.executablePath(deps.platform),
+      subPath: ide.archiveSubPath(deps.platform, deps.arch),
     };
   }
 
@@ -378,7 +269,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   let startPromise: Promise<number> | null = null;
 
   // Internal state: port set by start hook, read by finalize hook
-  let codeServerPort = 0;
+  let ideServerPort = 0;
 
   // -------------------------------------------------------------------------
   // Process lifecycle functions
@@ -399,7 +290,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     }
 
     try {
-      const response = await deps.httpClient.fetch(`http://127.0.0.1:${port}/healthz`, {
+      const response = await deps.httpClient.fetch(getIdeServer().healthUrl(port), {
         timeout: 1000,
       });
       const healthy = response.status === 200;
@@ -423,29 +314,24 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   async function doStart(): Promise<number> {
     logger.info("Starting code-server");
 
-    const port = codeServerPortConfig.get();
+    const port = ideServerPortConfig.get();
 
     const portAvailable = await deps.portManager.isPortAvailable(port);
     if (!portAvailable) {
-      throw new CodeServerError(
+      throw new IdeServerError(
         `Port ${port} is already in use. Another code-server or application may be running on this port.`
       );
     }
 
     currentPort = port;
 
+    const ide = getIdeServer();
     const args = [
-      "--bind-addr",
-      `127.0.0.1:${port}`,
-      "--auth",
-      "none",
-      "--disable-workspace-trust",
-      "--disable-update-check",
-      "--disable-telemetry",
-      "--extensions-dir",
-      config.extensionsDir,
-      "--user-data-dir",
-      config.userDataDir,
+      ...ide.buildServeArgs({
+        port,
+        extensionsDir: config.extensionsDir,
+        userDataDir: config.userDataDir,
+      }),
     ];
 
     try {
@@ -473,17 +359,17 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       cleanEnv.EDITOR = editorValue;
       cleanEnv.GIT_SEQUENCE_EDITOR = editorValue;
 
-      // Disable code-server's localhost URL rewriting
-      cleanEnv.VSCODE_PROXY_URI = "";
+      // Distribution-specific environment (e.g. code-server proxy disabling)
+      Object.assign(cleanEnv, ide.serveEnv());
 
       // Set plugin port for VS Code extension communication
       if (config.pluginPort !== undefined) {
         cleanEnv._CH_PLUGIN_PORT = String(config.pluginPort);
       }
 
-      // Set code-server and opencode directories for wrapper scripts
-      const { binaryPath, codeServerDir } = resolveCodeServerPaths();
-      cleanEnv._CH_CODE_SERVER_DIR = codeServerDir;
+      // Set IDE server and opencode directories for wrapper scripts
+      const { binaryPath, ideServerDir } = resolveIdeServerPaths();
+      cleanEnv._CH_IDE_SERVER_DIR = ideServerDir;
       cleanEnv._CH_OPENCODE_DIR = deps.resolveOpencodeBundleDir();
 
       serverProcess = processRunner.run(binaryPath, args, {
@@ -513,7 +399,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       }
 
       const errorMsg = getErrorMessage(error);
-      throw new CodeServerError(`Failed to start code-server: ${errorMsg}`);
+      throw new IdeServerError(`Failed to start code-server: ${errorMsg}`);
     }
   }
 
@@ -607,10 +493,10 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
     }
   }
 
-  async function downloadCodeServer(onProgress?: DownloadProgressCallback): Promise<void> {
+  async function downloadIdeServer(onProgress?: DownloadProgressCallback): Promise<void> {
     const request = getDownloadRequest();
     if (!request || !deps.archiveExtractor) {
-      throw new CodeServerError(
+      throw new IdeServerError(
         "Cannot download code-server binary: ArchiveExtractor not available"
       );
     }
@@ -631,7 +517,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       logger.info("Code-server binary download complete");
     } catch (error) {
       const message = getErrorMessage(error);
-      throw new CodeServerError(`Failed to download code-server: ${message}`);
+      throw new IdeServerError(`Failed to download code-server: ${message}`);
     }
   }
 
@@ -640,7 +526,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
   // -------------------------------------------------------------------------
 
   const module: IntentModule = {
-    name: "code-server",
+    name: "ide-server",
     hooks: {
       [APP_START_OPERATION_ID]: {
         // -------------------------------------------------------------------
@@ -653,17 +539,17 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         },
 
         // -------------------------------------------------------------------
-        // app-start -> check-deps: preflight code-server binary + extensions
+        // app-start -> check-deps: preflight IDE server binary + extensions
         // -------------------------------------------------------------------
         "check-deps": {
           handler: async (ctx: HookContext): Promise<HookOutput<CheckDepsResult>> => {
             const { extensionRequirements } = ctx as CheckDepsHookContext;
             const missingBinaries: BinaryType[] = [];
 
-            // Check code-server binary
-            const codeServerResult = await preflight();
-            if (codeServerResult.success && codeServerResult.needsDownload) {
-              missingBinaries.push("code-server");
+            // Check IDE server binary
+            const ideServerResult = await preflight();
+            if (ideServerResult.success && ideServerResult.needsDownload) {
+              missingBinaries.push(getIdeServer().id);
             }
 
             // Compare requirements against installed extensions
@@ -694,7 +580,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
         },
 
         // -------------------------------------------------------------------
-        // app-start -> start: start code-server, update port
+        // app-start -> start: start the IDE server, update port
         // -------------------------------------------------------------------
         start: {
           requires: { pluginPort: ANY_VALUE },
@@ -712,12 +598,12 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               fileSystemLayer.mkdir(config.userDataDir),
             ]);
 
-            // Start code-server
+            // Start the IDE server
             await ensureRunning();
             const port = currentPort!;
 
             // Update internal port (consumed by finalize hook for workspace URLs)
-            codeServerPort = port;
+            ideServerPort = port;
 
             return { provides: { codeServerPort: port } };
           },
@@ -725,7 +611,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       },
 
       // -------------------------------------------------------------------
-      // app-resume -> resume: probe /healthz, restart on failure
+      // app-resume -> resume: probe health, restart on failure
       // -------------------------------------------------------------------
       [APP_RESUME_OPERATION_ID]: {
         [APP_RESUME_HOOK_RESUME]: {
@@ -761,8 +647,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             }
 
             // The fresh process invalidates every workspace iframe's connection
-            // to the old server. The operation emits code-server:restarted so
-            // view-module reloads them before code-server surfaces its own
+            // to the old server. The operation emits ide-server:restarted so
+            // view-module reloads them before the IDE server surfaces its own
             // "Reload" dialog.
             return { result: { restarted: true } };
           },
@@ -770,7 +656,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       },
 
       // -------------------------------------------------------------------
-      // app-shutdown -> stop: stop code-server
+      // app-shutdown -> stop: stop the IDE server
       // -------------------------------------------------------------------
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {
@@ -781,7 +667,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
       },
 
       // -------------------------------------------------------------------
-      // setup -> binary: download code-server if missing
+      // setup -> binary: download the IDE server if missing
       // -------------------------------------------------------------------
       [SETUP_OPERATION_ID]: {
         binary: {
@@ -792,7 +678,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             const hookCtx = ctx as BinaryHookInput;
             const missingBinaries = hookCtx.missingBinaries ?? [];
 
-            if (!missingBinaries.includes("code-server")) {
+            if (!missingBinaries.includes(getIdeServer().id)) {
               yield { id: "vscode", status: "done" };
               return;
             }
@@ -801,7 +687,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             try {
               yield* streamProgress<SetupProgressPayload>(async (emit) => {
                 let lastKey = "";
-                await downloadCodeServer((p) => {
+                await downloadIdeServer((p) => {
                   const pct = p.totalBytes
                     ? Math.floor((p.bytesDownloaded / p.totalBytes) * 100)
                     : undefined;
@@ -871,8 +757,8 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 // Clean stale entry from extensions.json
                 await removeFromExtensionsJson(fileSystemLayer, extensionsDir, [entry.id]);
 
-                // Install via code-server
-                const proc = processRunner.run(resolveCodeServerPaths().binaryPath, [
+                // Install via the IDE server CLI
+                const proc = processRunner.run(resolveIdeServerPaths().binaryPath, [
                   "--install-extension",
                   entry.vsixPath,
                   "--extensions-dir",
@@ -908,6 +794,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
           handler: async (ctx: HookContext): Promise<HookOutput<string>> => {
             let workspaceUrl: string;
             const finalizeCtx = ctx as FinalizeHookInput;
+            const ide = getIdeServer();
 
             try {
               const workspacePathObj = new Path(finalizeCtx.workspacePath);
@@ -922,15 +809,16 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
                 "chat.agent.enabled": false,
                 "extensions.autoUpdate": false,
                 "extensions.autoCheckUpdates": false,
+                ...ide.extraWorkspaceSettings(),
               };
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
-              workspaceUrl = urlForWorkspace(codeServerPort, wsFilePath.toString());
+              workspaceUrl = ide.urlForWorkspace(ideServerPort, wsFilePath.toString());
             } catch (error) {
               logger.warn("Failed to ensure workspace file, using folder URL", {
                 workspacePath: finalizeCtx.workspacePath,
                 error: error instanceof Error ? error.message : String(error),
               });
-              workspaceUrl = urlForFolder(codeServerPort, finalizeCtx.workspacePath);
+              workspaceUrl = ide.urlForFolder(ideServerPort, finalizeCtx.workspacePath);
             }
 
             return { result: workspaceUrl };
@@ -955,7 +843,7 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
               return { result: {} };
             } catch (error) {
               if (payload.force) {
-                logger.warn("CodeServerModule: error in force mode (ignored)", {
+                logger.warn("IdeServerModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
                 return { result: {} };

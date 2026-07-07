@@ -39,8 +39,8 @@ import type {
   ActivateHookInput,
   WorkspaceSwitchedEvent,
 } from "../intents/switch-workspace";
-import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
-import type { CodeServerRestartedEvent } from "../intents/app-resume";
+import { EVENT_IDE_SERVER_RESTARTED } from "../intents/app-resume";
+import type { IdeServerRestartedEvent } from "../intents/app-resume";
 import {
   INTENT_DELETE_WORKSPACE,
   DELETE_WORKSPACE_OPERATION_ID,
@@ -228,17 +228,17 @@ async function resolveActive(module: IntentModule, workspacePath: string): Promi
 
 describe("ViewModule Integration", () => {
   // -------------------------------------------------------------------------
-  // code-server:restarted → reload workspace iframes
+  // ide-server:restarted → reload workspace iframes
   // -------------------------------------------------------------------------
-  describe("code-server:restarted", () => {
+  describe("ide-server:restarted", () => {
     it("asks the view manager to reload frames", async () => {
       const { viewManager, module } = createTestSetup();
 
-      const event: CodeServerRestartedEvent = {
-        type: EVENT_CODE_SERVER_RESTARTED,
+      const event: IdeServerRestartedEvent = {
+        type: EVENT_IDE_SERVER_RESTARTED,
         payload: {},
       };
-      await module.events![EVENT_CODE_SERVER_RESTARTED]!.handler(event);
+      await module.events![EVENT_IDE_SERVER_RESTARTED]!.handler(event);
 
       expect(viewManager.reloadFrames).toHaveBeenCalledTimes(1);
     });

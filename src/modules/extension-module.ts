@@ -2,7 +2,7 @@
  * ExtensionModule - Declares required extensions from the bundled manifest.
  *
  * Loads extensions/manifest.json at init time, validates it, and returns
- * ExtensionRequirement[] for downstream modules (code-server-module) to
+ * ExtensionRequirement[] for downstream modules (ide-server-module) to
  * compare against installed extensions and build an install plan.
  */
 

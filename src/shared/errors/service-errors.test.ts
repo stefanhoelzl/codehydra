@@ -4,7 +4,7 @@ import {
   ServiceError,
   GitError,
   WorkspaceError,
-  CodeServerError,
+  IdeServerError,
   ProjectStoreError,
   OpenCodeError,
   FileSystemError,
@@ -79,14 +79,14 @@ describe("ServiceError", () => {
     });
   });
 
-  describe("CodeServerError", () => {
+  describe("IdeServerError", () => {
     it("has correct type", () => {
-      const error = new CodeServerError("Failed to start");
+      const error = new IdeServerError("Failed to start");
       expect(error.type).toBe("code-server");
     });
 
     it("serializes correctly", () => {
-      const error = new CodeServerError("Failed to start", "START_FAILED");
+      const error = new IdeServerError("Failed to start", "START_FAILED");
       const json = error.toJSON();
 
       expect(json).toEqual({

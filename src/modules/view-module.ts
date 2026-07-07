@@ -52,7 +52,7 @@ import {
   type ResolveHookResult,
 } from "../intents/resolve-workspace";
 import { EVENT_WORKSPACE_SWITCHED } from "../intents/switch-workspace";
-import { EVENT_CODE_SERVER_RESTARTED } from "../intents/app-resume";
+import { EVENT_IDE_SERVER_RESTARTED } from "../intents/app-resume";
 
 // =============================================================================
 // Types
@@ -326,12 +326,12 @@ export function createViewModule(deps: ViewModuleDeps): IntentModule {
       },
 
       // -------------------------------------------------------------------
-      // code-server:restarted → reload every workspace iframe. A resume
+      // ide-server:restarted → reload every workspace iframe. A resume
       // restart replaced the code-server process, so each frame's connection
       // to the old server is dead; reloading reconnects them to the fresh
       // server instead of leaving code-server's "Reload" dialog in each one.
       // -------------------------------------------------------------------
-      [EVENT_CODE_SERVER_RESTARTED]: {
+      [EVENT_IDE_SERVER_RESTARTED]: {
         handler: async (): Promise<void> => {
           viewManager.reloadFrames();
         },
