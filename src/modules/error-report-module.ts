@@ -13,6 +13,12 @@
  *     uncaughtException  → log; report + flush (if telemetry on, with timeout);
  *       ALWAYS exit(1). Logging + exit are unconditional (crash behavior is
  *       preserved with telemetry off); only the telemetry report is gated.
+ * - app:start / error: a fatal startup failure (any app:start hook rejected, e.g.
+ *     code-server health check timed out) ran the app:start "error" hook. Report
+ *     (if telemetry on) with crash_source: "startup" + the failing phase, then
+ *     flush. The operation awaits this hook, so the report lands before the
+ *     composition root shows the native "Startup Failed" box and quits — the
+ *     rejection is caught there, so it never surfaces as an uncaughtException.
  * - app:start / init (after "ui-ready"): subscribe the UI renderer crash guard
  *     on the UI view. An uncaught exception in the UI renderer (e.g. a Svelte
  *     effect loop killing the effect runtime) bricks the UI silently, so:
@@ -49,8 +55,12 @@ import type { DialogBoundary } from "../boundaries/shell/dialog";
 import type { ViewBoundary, UncaughtExceptionDetails } from "../boundaries/shell/view";
 import type { IViewManager } from "../boundaries/shell/view-manager.interface";
 import { ANY_VALUE } from "../intents/lib/operation";
-import type { HookOutput } from "../intents/lib/operation";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
+import type { HookOutput, HookContext } from "../intents/lib/operation";
+import {
+  APP_START_OPERATION_ID,
+  APP_START_ERROR_HOOK,
+  type AppStartErrorHookContext,
+} from "../intents/app-start";
 import { INTENT_APP_SHUTDOWN, type AppShutdownIntent } from "../intents/app-shutdown";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import { INTENT_SUBMIT_BUG_REPORT, type SubmitBugReportIntent } from "../intents/submit-bug-report";
@@ -428,6 +438,24 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
           requires: { "ui-ready": ANY_VALUE },
           handler: async (): Promise<HookOutput<Record<string, never>>> => {
             subscribeUiCrashGuard();
+            return { result: {} };
+          },
+        },
+        // A fatal startup failure. The operation runs this hook (awaited) in its
+        // catch before re-throwing, so we can capture + flush the report before the
+        // composition root shows the native box and quits. Gated on telemetry, like
+        // the other automatic crash reports; the manual bug-report path is separate.
+        [APP_START_ERROR_HOOK]: {
+          handler: async (ctx: HookContext): Promise<HookOutput<Record<string, never>>> => {
+            const { error, phase } = ctx as AppStartErrorHookContext;
+            if (deps.telemetryEnabled.get()) {
+              try {
+                await captureCrash(error, { crash_source: "startup", phase });
+                await flushWithTimeout();
+              } catch {
+                // Best-effort: reporting must never block or alter the fatal path.
+              }
+            }
             return { result: {} };
           },
         },

@@ -31,9 +31,15 @@ import { createMockDispatcher } from "./lib/dispatcher.test-utils";
 import { describe, it, expect } from "vitest";
 import { Dispatcher } from "./lib/dispatcher";
 
-import { AppStartOperation, INTENT_APP_START, APP_START_OPERATION_ID } from "./app-start";
+import {
+  AppStartOperation,
+  INTENT_APP_START,
+  APP_START_OPERATION_ID,
+  APP_START_ERROR_HOOK,
+} from "./app-start";
 import type {
   AppStartIntent,
+  AppStartErrorHookContext,
   CheckDepsHookContext,
   CheckDepsResult,
   ConfigureResult,
@@ -900,6 +906,89 @@ describe("AppStart Operation", () => {
       await dispatcher.dispatch(appStartIntent());
 
       expect(capturedScripts).toEqual([]);
+    });
+  });
+
+  // ===========================================================================
+  // Startup failure "error" hook (#19)
+  // ===========================================================================
+
+  describe("startup failure error hook (#19)", () => {
+    function createErrorHookCaptureModule(captured: {
+      ctx?: AppStartErrorHookContext;
+    }): IntentModule {
+      return {
+        name: "test",
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            [APP_START_ERROR_HOOK]: {
+              handler: async (ctx: HookContext): Promise<void> => {
+                captured.ctx = ctx as AppStartErrorHookContext;
+              },
+            },
+          },
+        },
+      };
+    }
+
+    it("runs the error hook with the failing error + phase, then still rejects", async () => {
+      const state = createTestState();
+      const captured: { ctx?: AppStartErrorHookContext } = {};
+      const { dispatcher } = createTestSetup([
+        createErrorHookCaptureModule(captured),
+        createCodeServerModule(state, { fail: true }),
+        createMcpModule(state),
+        createDataModule(state),
+        createViewModule(state),
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
+        "CodeServer failed to start"
+      );
+
+      expect(captured.ctx).toBeDefined();
+      expect(captured.ctx!.phase).toBe("start");
+      expect(captured.ctx!.error).toBeInstanceOf(Error);
+      expect(captured.ctx!.error.message).toBe("CodeServer failed to start");
+    });
+
+    it("attributes an early before-ready failure to the before-ready phase", async () => {
+      const captured: { ctx?: AppStartErrorHookContext } = {};
+      const failingBeforeReady: IntentModule = {
+        name: "test",
+        hooks: {
+          [APP_START_OPERATION_ID]: {
+            "before-ready": {
+              handler: async (): Promise<void> => {
+                throw new Error("early boom");
+              },
+            },
+          },
+        },
+      };
+
+      const { dispatcher } = createTestSetup([
+        createErrorHookCaptureModule(captured),
+        failingBeforeReady,
+      ]);
+
+      await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("early boom");
+      expect(captured.ctx!.phase).toBe("before-ready");
+    });
+
+    it("does not run the error hook on a successful startup", async () => {
+      const state = createTestState();
+      const captured: { ctx?: AppStartErrorHookContext } = {};
+      const { dispatcher } = createTestSetup([
+        createErrorHookCaptureModule(captured),
+        createCodeServerModule(state),
+        createMcpModule(state),
+        createDataModule(state),
+        createViewModule(state),
+      ]);
+
+      await dispatcher.dispatch(appStartIntent());
+      expect(captured.ctx).toBeUndefined();
     });
   });
 });
