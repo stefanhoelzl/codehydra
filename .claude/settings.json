@@ -7,7 +7,8 @@
       "Bash(pnpm validate:*)",
       "Bash(pnpm build:*)",
       "Bash(pnpm --version:*)",
-      "Bash(tsc --version:*)"
+      "Bash(tsc --version:*)",
+      "Bash(gh pr merge:*)"
     ]
   },
   "enabledPlugins": {
