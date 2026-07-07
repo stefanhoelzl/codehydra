@@ -20,6 +20,21 @@ import { Path } from "../../utils/path/path.js";
 export type ExtractProgressCallback = (processed: number, total: number) => void;
 
 /**
+ * Map an extraction failure to an ArchiveError, distinguishing OS permission
+ * errors (EACCES/EPERM) from generic failures. Shared by both extractors.
+ */
+function mapExtractionFailure(error: unknown, archivePath: string, destPath: string): ArchiveError {
+  const message = getErrorMessage(error);
+  if (message.includes("EACCES") || message.includes("EPERM")) {
+    return new ArchiveError(
+      `Permission denied extracting to ${destPath}: ${message}`,
+      "PERMISSION_DENIED"
+    );
+  }
+  return new ArchiveError(`Failed to extract ${archivePath}: ${message}`, "EXTRACTION_FAILED");
+}
+
+/**
  * Interface for extracting archives.
  */
 export interface ArchiveExtractor {
@@ -61,12 +76,6 @@ export class TarExtractor implements ArchiveExtractor {
       await pipeline(fs.createReadStream(archivePath), counter, tar.extract({ cwd: destPath }));
     } catch (error) {
       const message = getErrorMessage(error);
-      if (message.includes("EACCES") || message.includes("EPERM")) {
-        throw new ArchiveError(
-          `Permission denied extracting to ${destPath}: ${message}`,
-          "PERMISSION_DENIED"
-        );
-      }
       if (
         message.includes("TAR") ||
         message.includes("zlib") ||
@@ -77,7 +86,7 @@ export class TarExtractor implements ArchiveExtractor {
           "INVALID_ARCHIVE"
         );
       }
-      throw new ArchiveError(`Failed to extract ${archivePath}: ${message}`, "EXTRACTION_FAILED");
+      throw mapExtractionFailure(error, archivePath, destPath);
     }
   }
 }
@@ -99,14 +108,7 @@ export class ZipExtractor implements ArchiveExtractor {
       if (error instanceof ArchiveError) {
         throw error;
       }
-      const message = getErrorMessage(error);
-      if (message.includes("EACCES") || message.includes("EPERM")) {
-        throw new ArchiveError(
-          `Permission denied extracting to ${destPath}: ${message}`,
-          "PERMISSION_DENIED"
-        );
-      }
-      throw new ArchiveError(`Failed to extract ${archivePath}: ${message}`, "EXTRACTION_FAILED");
+      throw mapExtractionFailure(error, archivePath, destPath);
     }
   }
 

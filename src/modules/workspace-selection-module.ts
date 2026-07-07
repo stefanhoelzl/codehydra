@@ -10,24 +10,21 @@
 
 import type { IntentModule } from "../intents/lib/module";
 import type { HookContext, HookOutput } from "../intents/lib/operation";
-import type { DomainEvent } from "../intents/lib/types";
 import { SWITCH_WORKSPACE_OPERATION_ID, selectNextWorkspace } from "../intents/switch-workspace";
 import type {
   SelectNextHookInput,
   SelectNextHookResult,
   AgentStatusScorer,
 } from "../intents/switch-workspace";
-import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
-import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import type { WorkspacePath } from "../shared/ipc";
+import { createWorkspaceStatusCache } from "./workspace-status-cache";
 
 export function createWorkspaceSelectionModule(): IntentModule {
-  const workspaceStatuses = new Map<WorkspacePath, AggregatedAgentStatus>();
+  // Reads the cache lazily on each selection, so no onChange callback is needed.
+  const cache = createWorkspaceStatusCache();
 
   const scorer: AgentStatusScorer = (workspacePath: WorkspacePath): number => {
-    const status = workspaceStatuses.get(workspacePath);
+    const status = cache.statuses.get(workspacePath);
     if (!status || status.status === "none") return 2;
     if (status.status === "busy") return 1;
     return 0;
@@ -46,19 +43,6 @@ export function createWorkspaceSelectionModule(): IntentModule {
         },
       },
     },
-    events: {
-      [EVENT_AGENT_STATUS_UPDATED]: {
-        handler: async (event: DomainEvent) => {
-          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
-          workspaceStatuses.set(workspace.path, status);
-        },
-      },
-      [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent) => {
-          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-          workspaceStatuses.delete(workspacePath as WorkspacePath);
-        },
-      },
-    },
+    events: cache.events,
   };
 }

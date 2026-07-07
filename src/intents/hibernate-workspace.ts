@@ -40,11 +40,9 @@
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { ProjectId, WorkspaceName } from "../shared/api/types";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
-import { getErrorMessage } from "../shared/error-utils";
+import { resolveWorkspaceIdentity, emitWorkspaceFailure } from "./lib/workspace-identity";
 
 // =============================================================================
 // Intent Types
@@ -156,16 +154,9 @@ export class HibernateWorkspaceOperation implements Operation<
 
     try {
       // ─── Foreground ──────────────────────────────────────────────────────
-      let active: boolean;
-      ({ projectPath, workspaceName, active } = await ctx.dispatch({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath: payload.workspacePath },
-      } as ResolveWorkspaceIntent));
-
-      ({ projectId } = await ctx.dispatch({
-        type: INTENT_RESOLVE_PROJECT,
-        payload: { projectPath },
-      } as ResolveProjectIntent));
+      const identity = await resolveWorkspaceIdentity(ctx.dispatch, payload.workspacePath);
+      ({ projectPath, workspaceName, projectId } = identity);
+      const { active } = identity;
 
       hookCtx = {
         intent: ctx.intent,
@@ -225,14 +216,12 @@ export class HibernateWorkspaceOperation implements Operation<
         }
       }
     } catch (error) {
-      const failedEvent: WorkspaceHibernateFailedEvent = {
-        type: EVENT_WORKSPACE_HIBERNATE_FAILED,
-        payload: {
-          workspacePath: payload.workspacePath,
-          error: getErrorMessage(error),
-        },
-      };
-      ctx.emit(failedEvent);
+      emitWorkspaceFailure(
+        ctx.emit,
+        EVENT_WORKSPACE_HIBERNATE_FAILED,
+        payload.workspacePath,
+        error
+      );
       throw error;
     }
 

@@ -22,13 +22,9 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import { createWorkspaceStatusCache } from "./workspace-status-cache";
 import type { AppBoundary } from "../boundaries/shell/app";
 import type { Logger } from "../boundaries/platform/logging";
 
@@ -77,31 +73,16 @@ export interface PowerModuleDeps {
 export function createPowerModule(deps: PowerModuleDeps): IntentModule {
   const { appLayer, logger } = deps;
 
-  const workspaceStatuses = new Map<WorkspacePath, AggregatedAgentStatus>();
-
   function applyBlocker(): void {
-    const prevent = shouldPreventSleep(workspaceStatuses);
+    const prevent = shouldPreventSleep(cache.statuses);
     appLayer.allowPowerSaving(!prevent);
   }
 
+  const cache = createWorkspaceStatusCache(applyBlocker);
+
   return {
     name: "power",
-    events: {
-      [EVENT_AGENT_STATUS_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
-          workspaceStatuses.set(workspace.path, status);
-          applyBlocker();
-        },
-      },
-      [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-          workspaceStatuses.delete(workspacePath as WorkspacePath);
-          applyBlocker();
-        },
-      },
-    },
+    events: cache.events,
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {

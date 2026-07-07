@@ -12,6 +12,7 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
   import type { FormLayout, RadioSectionConfig } from "./types";
+  import { isPlainEnter } from "$lib/utils/keyboard";
 
   interface Props {
     section: RadioSectionConfig;
@@ -64,7 +65,7 @@
             e.preventDefault();
             onSelect(option.id);
             return;
-          } else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+          } else if (isPlainEnter(e)) {
             // Plain Enter confirms the group by activating the form's primary
             // action (preventDefault suppresses the native button click /
             // re-select). Modified Enter (Cmd/Ctrl) is left to the form-global

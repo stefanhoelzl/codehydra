@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
   import type { InputSectionConfig } from "./types";
+  import { isPlainEnter } from "$lib/utils/keyboard";
 
   interface Props {
     section: InputSectionConfig;
@@ -73,7 +74,7 @@
     const handler = (e: KeyboardEvent): void => {
       // Plain Enter submits the single-line field; Cmd/Ctrl+Enter is the
       // form-global gesture, handled by Form (let it fall through here).
-      if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+      if (isPlainEnter(e)) {
         e.preventDefault();
         onSubmit();
       }

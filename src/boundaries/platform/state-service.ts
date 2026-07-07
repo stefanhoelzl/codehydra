@@ -25,6 +25,7 @@ import type { FileSystemBoundary } from "./filesystem";
 import type { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
 import { PersistedStore } from "./persisted-store";
+import { getErrorMessage, isEnoent } from "../../shared/error-utils";
 
 // State keys never use build-dependent (computed) defaults, so the seed context
 // is a constant — the values are app runtime state, not environment-derived.
@@ -119,7 +120,7 @@ export class DefaultStateService implements StateService {
     try {
       raw = await fileSystem.readFile(statePath);
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      if (isEnoent(error)) {
         // No state file yet — defaults stand.
         return;
       }
@@ -134,7 +135,7 @@ export class DefaultStateService implements StateService {
       // back the file up to <file>.broken via PersistedStore.persistMutation.
       logger.warn("Invalid JSON in state.json; using defaults", {
         path: statePath.toString(),
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return;
     }

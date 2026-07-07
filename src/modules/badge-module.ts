@@ -13,13 +13,9 @@
  */
 
 import type { IntentModule } from "../intents/lib/module";
-import type { DomainEvent } from "../intents/lib/types";
-import type { AgentStatusUpdatedEvent } from "../intents/update-agent-status";
-import { EVENT_AGENT_STATUS_UPDATED } from "../intents/update-agent-status";
-import type { WorkspaceDeletedEvent } from "../intents/delete-workspace";
-import { EVENT_WORKSPACE_DELETED } from "../intents/delete-workspace";
 import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
 import type { WorkspacePath, AggregatedAgentStatus } from "../shared/ipc";
+import { createWorkspaceStatusCache } from "./workspace-status-cache";
 import type { PlatformInfo } from "../boundaries/platform/platform-info";
 import type { AppBoundary } from "../boundaries/shell/app";
 import type { ImageBoundary } from "../boundaries/shell/image";
@@ -410,31 +406,16 @@ export function createBadgeModule(deps: BadgeModuleDeps): IntentModule {
     deps.logger
   );
 
-  const workspaceStatuses = new Map<WorkspacePath, AggregatedAgentStatus>();
-
   function updateBadge(): void {
-    const state = aggregateWorkspaceStates(workspaceStatuses);
+    const state = aggregateWorkspaceStates(cache.statuses);
     badgeManager.updateBadge(state);
   }
 
+  const cache = createWorkspaceStatusCache(updateBadge);
+
   return {
     name: "badge",
-    events: {
-      [EVENT_AGENT_STATUS_UPDATED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspace, status } = (event as AgentStatusUpdatedEvent).payload;
-          workspaceStatuses.set(workspace.path, status);
-          updateBadge();
-        },
-      },
-      [EVENT_WORKSPACE_DELETED]: {
-        handler: async (event: DomainEvent): Promise<void> => {
-          const { workspacePath } = (event as WorkspaceDeletedEvent).payload;
-          workspaceStatuses.delete(workspacePath as WorkspacePath);
-          updateBadge();
-        },
-      },
-    },
+    events: cache.events,
     hooks: {
       [APP_SHUTDOWN_OPERATION_ID]: {
         stop: {

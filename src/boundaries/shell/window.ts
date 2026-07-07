@@ -10,6 +10,7 @@
 import type { BrowserWindow, WebContents } from "electron";
 import type { WindowHandle, Rectangle, WebPreferences } from "./types";
 import { createWindowHandle } from "./types";
+import { guardedUnsubscribe } from "./subscription";
 import { ShellError } from "../../shared/errors/shell-errors";
 import type { Logger } from "../platform/logging";
 import type { ImageBoundary } from "./image";
@@ -373,51 +374,31 @@ export class DefaultWindowBoundary implements WindowBoundary {
   onResize(handle: WindowHandle, callback: () => void): Unsubscribe {
     const state = this.getWindowState(handle);
     state.window.on("resize", callback);
-    return () => {
-      if (!state.window.isDestroyed()) {
-        state.window.off("resize", callback);
-      }
-    };
+    return guardedUnsubscribe(state.window, () => state.window.off("resize", callback));
   }
 
   onMaximize(handle: WindowHandle, callback: () => void): Unsubscribe {
     const state = this.getWindowState(handle);
     state.window.on("maximize", callback);
-    return () => {
-      if (!state.window.isDestroyed()) {
-        state.window.off("maximize", callback);
-      }
-    };
+    return guardedUnsubscribe(state.window, () => state.window.off("maximize", callback));
   }
 
   onUnmaximize(handle: WindowHandle, callback: () => void): Unsubscribe {
     const state = this.getWindowState(handle);
     state.window.on("unmaximize", callback);
-    return () => {
-      if (!state.window.isDestroyed()) {
-        state.window.off("unmaximize", callback);
-      }
-    };
+    return guardedUnsubscribe(state.window, () => state.window.off("unmaximize", callback));
   }
 
   onClose(handle: WindowHandle, callback: () => void): Unsubscribe {
     const state = this.getWindowState(handle);
     state.window.on("close", callback);
-    return () => {
-      if (!state.window.isDestroyed()) {
-        state.window.off("close", callback);
-      }
-    };
+    return guardedUnsubscribe(state.window, () => state.window.off("close", callback));
   }
 
   onBlur(handle: WindowHandle, callback: () => void): Unsubscribe {
     const state = this.getWindowState(handle);
     state.window.on("blur", callback);
-    return () => {
-      if (!state.window.isDestroyed()) {
-        state.window.off("blur", callback);
-      }
-    };
+    return guardedUnsubscribe(state.window, () => state.window.off("blur", callback));
   }
 
   getContentView(handle: WindowHandle): ContentView {

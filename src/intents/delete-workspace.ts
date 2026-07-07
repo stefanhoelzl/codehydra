@@ -36,8 +36,7 @@ import type {
 } from "../shared/api/types";
 import type { WorkspacePath } from "../shared/ipc";
 import { INTENT_SWITCH_WORKSPACE, type SwitchWorkspaceIntent } from "./switch-workspace";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
+import { resolveWorkspaceIdentity } from "./lib/workspace-identity";
 import { INTENT_GET_ACTIVE_WORKSPACE, type GetActiveWorkspaceIntent } from "./get-active-workspace";
 import { throwHookErrors, collectErrorMessages, lastDefined } from "./lib/hook-helpers";
 
@@ -378,17 +377,11 @@ export class DeleteWorkspaceOperation implements Operation<
   ): Promise<PipelineResult> {
     const { payload } = ctx.intent;
 
-    // --- Resolve (workspacePath → projectPath + workspaceName) via dispatch ---
-    const { projectPath, workspaceName, active } = await ctx.dispatch({
-      type: INTENT_RESOLVE_WORKSPACE,
-      payload: { workspacePath: payload.workspacePath },
-    } as ResolveWorkspaceIntent);
-
-    // --- Resolve Project (projectPath → projectId) via dispatch ---
-    const { projectId } = await ctx.dispatch({
-      type: INTENT_RESOLVE_PROJECT,
-      payload: { projectPath },
-    } as ResolveProjectIntent);
+    // --- Resolve (workspacePath → projectPath + workspaceName + projectId) ---
+    const { projectPath, workspaceName, active, projectId } = await resolveWorkspaceIdentity(
+      ctx.dispatch,
+      payload.workspacePath
+    );
 
     const identity: ResolvedIdentity = { projectId, workspaceName, projectPath };
 

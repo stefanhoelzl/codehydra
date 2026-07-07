@@ -159,7 +159,7 @@ export class GitWorktreeProvider {
       if (error instanceof WorkspaceError) {
         throw error;
       }
-      const message = error instanceof Error ? error.message : "Unknown error checking repository";
+      const message = getErrorMessage(error, "Unknown error checking repository");
       throw new WorkspaceError(`Failed to validate repository: ${message}`);
     }
   }
@@ -217,7 +217,7 @@ export class GitWorktreeProvider {
             }
           : {};
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const message = getErrorMessage(error, "Unknown error");
         this.logger.warn("Failed to get metadata config", { workspace: wt.name, error: message });
         metadata = {};
       }
@@ -385,7 +385,7 @@ export class GitWorktreeProvider {
         await this.gitClient.fetch(projectRoot, remote);
         fetchedRemotes.push(remote);
       } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown fetch error";
+        const errorMessage = getErrorMessage(error, "Unknown fetch error");
         failedRemotes.push({ remote, error: errorMessage });
       }
     }
@@ -453,7 +453,7 @@ export class GitWorktreeProvider {
               `refs/heads/${remoteBranch}`
             );
           } catch (error: unknown) {
-            const message = error instanceof Error ? error.message : "Unknown error";
+            const message = getErrorMessage(error, "Unknown error");
             this.logger.warn("Failed to configure upstream tracking", {
               branch: name,
               tracking,
@@ -472,7 +472,7 @@ export class GitWorktreeProvider {
         }
         createdBranch = true;
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Unknown error creating branch";
+        const message = getErrorMessage(error, "Unknown error creating branch");
         throw new WorkspaceError(message);
       }
     }
@@ -490,7 +490,7 @@ export class GitWorktreeProvider {
         }
       }
 
-      const message = error instanceof Error ? error.message : "Unknown error creating worktree";
+      const message = getErrorMessage(error, "Unknown error creating worktree");
       throw new WorkspaceError(message);
     }
 
@@ -506,7 +506,7 @@ export class GitWorktreeProvider {
         baseBranch
       );
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = getErrorMessage(error, "Unknown error");
       this.logger.warn("Failed to save base branch config", { branch: name, error: message });
     }
 
@@ -746,7 +746,7 @@ export class GitWorktreeProvider {
       }
       return undefined;
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+      const message = getErrorMessage(error, "Unknown error");
       this.logger.warn("Failed to get default base branch", { error: message });
       return undefined;
     }

@@ -14,3 +14,6 @@ export type {
 // Download functions
 export type { DownloadDeps } from "./download.js";
 export { downloadBinary, isBinaryInstalled } from "./download.js";
+
+// Platform guards
+export { assertWindowsX64 } from "./platform.js";

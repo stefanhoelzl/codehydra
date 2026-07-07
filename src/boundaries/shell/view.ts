@@ -9,6 +9,7 @@
 
 import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { createViewHandle } from "./types";
+import { guardedUnsubscribe } from "./subscription";
 import { ShellError } from "../../shared/errors/shell-errors";
 import type { Logger } from "../platform/logging";
 import type { WindowBoundary } from "./window";
@@ -524,12 +525,9 @@ export class DefaultViewBoundary implements ViewBoundary {
       listener(...args);
     };
     state.webContents.ipc.on(channel, handler);
-    return () => {
-      const wc = state.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.ipc.removeListener(channel, handler);
-      }
-    };
+    return guardedUnsubscribe(state.webContents, () =>
+      state.webContents.ipc.removeListener(channel, handler)
+    );
   }
 
   onBeforeInputEvent(
@@ -550,23 +548,17 @@ export class DefaultViewBoundary implements ViewBoundary {
       callback(input, () => event.preventDefault());
     };
     state.webContents.on("before-input-event", handler);
-    return () => {
-      const wc = state.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("before-input-event", handler);
-      }
-    };
+    return guardedUnsubscribe(state.webContents, () =>
+      state.webContents.off("before-input-event", handler)
+    );
   }
 
   onDestroyed(handle: ViewHandle, callback: () => void): Unsubscribe {
     const state = this.getView(handle);
     state.webContents.on("destroyed", callback);
-    return () => {
-      const wc = state.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("destroyed", callback);
-      }
-    };
+    return guardedUnsubscribe(state.webContents, () =>
+      state.webContents.off("destroyed", callback)
+    );
   }
 
   onRenderProcessGone(
@@ -578,12 +570,9 @@ export class DefaultViewBoundary implements ViewBoundary {
       callback({ reason: details.reason, exitCode: details.exitCode });
     };
     state.webContents.on("render-process-gone", handler);
-    return () => {
-      const wc = state.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("render-process-gone", handler);
-      }
-    };
+    return guardedUnsubscribe(state.webContents, () =>
+      state.webContents.off("render-process-gone", handler)
+    );
   }
 
   onUncaughtException(
@@ -643,12 +632,9 @@ export class DefaultViewBoundary implements ViewBoundary {
   onUnresponsive(handle: ViewHandle, callback: () => void): Unsubscribe {
     const state = this.getView(handle);
     state.webContents.on("unresponsive", callback);
-    return () => {
-      const wc = state.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.off("unresponsive", callback);
-      }
-    };
+    return guardedUnsubscribe(state.webContents, () =>
+      state.webContents.off("unresponsive", callback)
+    );
   }
 
   isAvailable(handle: ViewHandle): boolean {

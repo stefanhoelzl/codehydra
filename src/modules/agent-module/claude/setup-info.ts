@@ -4,6 +4,7 @@
  */
 
 import type { SupportedArch, SupportedPlatform } from "../types";
+import { assertWindowsX64 } from "../../../utils/binary-download";
 
 /**
  * Current version of Claude to download.
@@ -29,9 +30,7 @@ const CLAUDE_DOWNLOAD_BASE =
  * @throws Error if platform/arch combination is not supported
  */
 export function getClaudeUrl(platform: SupportedPlatform, arch: SupportedArch): string {
-  if (platform === "win32" && arch !== "x64") {
-    throw new Error(`Windows Claude builds only support x64, got: ${arch}`);
-  }
+  assertWindowsX64(platform, arch, "Claude");
 
   // Claude binaries are tarballs: claude-{platform}-{arch}.tar.gz
   return `${CLAUDE_DOWNLOAD_BASE}/claude-${platform}-${arch}.tar.gz`;
