@@ -48,8 +48,6 @@ export interface WorkspaceState {
   sessionId?: string;
   /** Callbacks for status changes */
   statusCallbacks: Set<(status: AgentStatus) => void>;
-  /** Flag set after PermissionRequest, cleared on PreToolUse */
-  awaitingPermissionResolution?: boolean;
   /** Flag set when PreCompact arrives while busy, cleared on SessionStart */
   ignoreNextSessionStart?: boolean;
   /** Path to the initial prompt file (for getInitialPromptPath) */
@@ -667,12 +665,17 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       }
     }
 
-    // Special handling for permission resolution flow:
-    // PermissionRequest sets flag, PreToolUse clears it and transitions to busy
-    if (hookName === "PermissionRequest") {
-      state.awaitingPermissionResolution = true;
-    } else if (hookName === "PreToolUse" && state.awaitingPermissionResolution) {
-      state.awaitingPermissionResolution = false;
+    // A tool starting while the workspace reads idle means the agent is
+    // actually working — flip to busy. Two paths reach here:
+    //  1. Permission resolution: PermissionRequest transitioned us to idle
+    //     (waiting for the user); once approved, the tool runs.
+    //  2. Bash-mode ("!cmd") turns: Claude Code runs a user-typed shell command
+    //     without emitting UserPromptSubmit, so the ensuing agent turn never
+    //     flipped to busy. The first tool call is the earliest reliable signal
+    //     that the agent is working. (A text-only reply has no hook and can't
+    //     be caught here.)
+    // PreToolUse while already busy (normal mid-turn tool use) is a no-op.
+    if (hookName === "PreToolUse" && state.status === "idle") {
       newStatus = "busy";
     }
 

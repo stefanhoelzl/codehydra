@@ -95,8 +95,9 @@ export type HookStatusChange = AgentStatus | null;
  * - idle: Waiting for user (submit prompt, answer permission, etc.)
  * - busy: Agent is working, no action needed
  *
- * Note: PreToolUse is handled specially in server-manager.ts
- * to only transition to busy after a PermissionRequest (flag-based).
+ * Note: PreToolUse is handled specially in server-manager.ts — a tool starting
+ * while the workspace reads idle transitions it to busy (covers permission
+ * resolution and bash-mode "!cmd" turns that never emit UserPromptSubmit).
  */
 const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChange>> = {
   // Wrapper started, Claude about to be spawned
@@ -117,7 +118,7 @@ const HOOK_STATUS_MAP: Readonly<Record<ClaudeCodeHookName, HookStatusChange>> = 
   StopFailure: "idle",
   // Subagent done, main agent continues (no change)
   SubagentStop: null,
-  // Tool starting - handled specially with flag (see server-manager.ts)
+  // Tool starting - handled specially: busy if workspace was idle (see server-manager.ts)
   PreToolUse: null,
   // Tool done, back to busy (handles return from PermissionRequest idle state)
   PostToolUse: "busy",
