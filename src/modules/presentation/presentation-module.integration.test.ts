@@ -151,10 +151,18 @@ function systemDialog(sections: unknown[], id = "dlg-1"): unknown {
   return { id, kind: "modal", config: { sections } };
 }
 /** The single open system dialog in the latest snapshot (asserts exactly one). */
-function currentSystemDialog(deps: Deps): { id: string; config: { sections: unknown[] } } {
+function currentSystemDialog(deps: Deps): {
+  id: string;
+  kind: string;
+  config: { sections: unknown[] };
+} {
   const dialogs = lastSnapshot(deps).dialogs;
   expect(dialogs).toHaveLength(1);
-  return dialogs[0]! as unknown as { id: string; config: { sections: unknown[] } };
+  return dialogs[0]! as unknown as {
+    id: string;
+    kind: string;
+    config: { sections: unknown[] };
+  };
 }
 
 function makeWorkspace(
@@ -512,7 +520,12 @@ describe("PresentationModule - ui:state snapshots", () => {
     // system dialog covers it.
     expect(snapshot.frames).toEqual({});
     expect(snapshot.main).toEqual({ kind: "workspace", frameKey: `${PROJECT_ID}/feat` });
+    // Mid-session loading is a "panel" (no blur/dim over the live sidebar), not a
+    // blocking modal — rendered below the sidebar by PanelView, like the deletion
+    // panel. A panel does not count as a modal, so the mode is not "dialog".
+    expect(currentSystemDialog(deps).kind).toBe("panel");
     expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
+    expect(snapshot.mode).not.toBe("dialog");
   });
 
   it("workspace:created swaps the creating placeholder in place (same key)", async () => {
@@ -1390,6 +1403,9 @@ describe("PresentationModule - startup flow", () => {
     // not by this handler — the handler only advances the UI phase.
     expect(dispatched).toEqual([]);
     expect(lastSnapshot(deps).main).toEqual({ kind: "starting" });
+    // Boot-phase loading stays a blocking modal (MainView is unmounted while
+    // main is "starting", so DialogHost must own the screen).
+    expect(currentSystemDialog(deps).kind).toBe("modal");
     expect(currentSystemDialog(deps).config.sections).toEqual([LOADING_SPINNER]);
 
     // app:started leaves the startup flow: the dialog closes, creation is ground.

@@ -65,11 +65,15 @@
    */
   const creationDialog = $derived(ui.dialogs.find((d) => d.kind === "modeless"));
   /**
-   * The deletion progress/failed session ("panel" kind), rendered below the
-   * sidebar in place of the (already torn-down) workspace view. The deletion
-   * module opens it only while its workspace is the active one.
+   * The "panel" kind session, rendered below the sidebar in place of the
+   * workspace view (opaque, no blur/dim). Two mutually-exclusive producers use
+   * it for the active workspace: the deletion module (progress/failed over the
+   * already-torn-down frame) and the presenter's mid-session "Loading
+   * workspace…" overlay (over the not-yet-mounted frame of a still-creating
+   * workspace). An active workspace is only ever creating xor deleting, so at
+   * most one panel dialog exists at a time.
    */
-  const deletionDialog = $derived(ui.dialogs.find((d) => d.kind === "panel"));
+  const panelDialog = $derived(ui.dialogs.find((d) => d.kind === "panel"));
   /** Whether a blocking modal is open above the panels (drives panel refocus). */
   const modalAbove = $derived(ui.dialogs.some((d) => d.kind === "modal"));
   /** The creation panel is the ground state: shown whenever main says so. */
@@ -95,10 +99,11 @@
   const activeFrameKey = $derived(main?.kind === "workspace" ? main.frameKey : null);
 
   // The mid-session "Loading workspace…" surface (a still-creating active
-  // workspace, no frame yet) is a modal system dialog now, driven by the
-  // presenter and rendered by App's DialogHost over the kept-alive frames —
-  // MainView no longer renders it. `main` reads `workspace` with a frameKey
-  // whose iframe is not mounted yet, so the workspace area is blank underneath.
+  // workspace, no frame yet) is a "panel" kind system dialog driven by the
+  // presenter, rendered by the panelDialog branch below (NOT a blurring modal:
+  // the sidebar stays crisp and navigable). `main` reads `workspace` with a
+  // frameKey whose iframe is not mounted yet, so the workspace area is blank
+  // underneath and the opaque panel masks it.
 
   // Mode (including dialog/hover z-order) is now computed in main and shipped
   // in the snapshot; the renderer no longer mirrors dialog/hover state back.
@@ -222,18 +227,14 @@
     />
   {/if}
 
-  <!-- Deletion panel ("panel"): the deletion module's progress/failed session,
-       shown in place of the active workspace's (already torn-down) view, BELOW
-       the sidebar so the sidebar stays on top and navigable. The module opens
-       it only while its workspace is the active one, so it never coexists with
-       the creation ground state. -->
-  {#if main?.kind === "workspace" && deletionDialog}
-    <PanelView
-      dialogId={deletionDialog.id}
-      config={deletionDialog.config}
-      kind="panel"
-      {modalAbove}
-    />
+  <!-- Panel ("panel"): the deletion module's progress/failed session OR the
+       presenter's mid-session "Loading workspace…" overlay, shown in place of
+       the active workspace's (torn-down or not-yet-mounted) view, BELOW the
+       sidebar so the sidebar stays on top and navigable. Both target the active
+       workspace and are mutually exclusive, so they never coexist with the
+       creation ground state or each other. -->
+  {#if main?.kind === "workspace" && panelDialog}
+    <PanelView dialogId={panelDialog.id} config={panelDialog.config} kind="panel" {modalAbove} />
   {/if}
 
   {#if main?.kind === "hibernated"}

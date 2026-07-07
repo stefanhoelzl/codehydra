@@ -427,9 +427,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // ---------------------------------------------------------------------------
   // Startup flow view-model (boot splash, first-run setup, agent-selection,
   // workspace loading). Everything the user sees before app:started — and the
-  // mid-session "workspace still creating" overlay — is a single modal dialog
-  // (the "system dialog") layered over a blank `main: { kind: "starting" }`
-  // base; `reconcileSystemDialog()` (run inside push) projects it from state.
+  // mid-session "workspace still creating" overlay — is a single reconciled
+  // "system dialog". The startup surfaces are modals over a blank
+  // `main: { kind: "starting" }` base; the mid-session loading overlay is a
+  // "panel" (no blur/dim) below the sidebar over the not-yet-mounted frame.
+  // `reconcileSystemDialog()` (run inside push) projects it from state.
   // ---------------------------------------------------------------------------
 
   /**
@@ -497,6 +499,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   /** JSON of the last-applied system-dialog config (null = closed). Guards
    *  reconcile against redundant updates (and thus push loops). */
   let systemDialogConfigJson: string | null = null;
+  /** Kind of the currently-open system dialog (null = closed). A dialog's kind
+   *  is immutable, so a kind change (e.g. boot "running" loading modal → the
+   *  mid-session loading panel, both carrying the identical spinner config)
+   *  forces a close + reopen rather than an update(). */
+  let systemDialogKind: DialogKind | null = null;
   /** True only while push() is reconciling: suppresses the dialog mutations'
    *  own scheduleUpdate (the in-flight push already carries them). */
   let inPush = false;
@@ -676,9 +683,11 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * Alt+X still works.
    */
   function buildMode(main: UiMainView): UIMode {
-    // The startup surfaces and the mid-session loading overlay are modal system
-    // dialogs now, so isModalOpen() already yields "dialog" for them — no
-    // startup special-case needed.
+    // The startup surfaces are modal system dialogs, so isModalOpen() already
+    // yields "dialog" for them — no startup special-case needed. The mid-session
+    // loading surface is a "panel" (not modal), so it falls through to the
+    // active workspace's mode, keeping the sidebar navigable — same as the
+    // deletion panel.
     if (shortcutActive) return "shortcut";
     if (dialogs.isModalOpen()) return "dialog";
     if (main.kind === "creation" || hoverRegion === "sidebar") return "hover";
@@ -688,12 +697,13 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
   // ---------------------------------------------------------------------------
   // System dialog (startup surfaces + mid-session loading)
   //
-  // One modal dialog projects the whole pre-`app:started` flow and the
+  // One dialog handle projects the whole pre-`app:started` flow and the
   // still-creating-workspace overlay. It is reconciled from state in push():
-  // computeSystemDialogConfig() maps the current phase (or mid-session loading)
-  // to a DialogConfig, or null when nothing should show. reconcileSystemDialog()
-  // opens/updates/closes the handle to match, guarded by a JSON compare so an
-  // unchanged config never re-pushes.
+  // computeSystemDialog() maps the current phase (or mid-session loading) to a
+  // { config, kind } (modal for startup, panel for mid-session loading), or null
+  // when nothing should show. reconcileSystemDialog() opens/updates/closes the
+  // handle to match, guarded by a JSON+kind compare so an unchanged state never
+  // re-pushes; a kind change forces close + reopen (kind is immutable).
   // ---------------------------------------------------------------------------
 
   /** A centered spinner + label (boot splash / loading), via a spinner row. */
@@ -763,23 +773,33 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     };
   }
 
-  /** The desired system-dialog config for the current state, or null for none. */
-  function computeSystemDialogConfig(): DialogConfig | null {
+  /**
+   * The desired system-dialog config + kind for the current state, or null for
+   * none. All startup-phase surfaces are blocking modals (MainView is unmounted
+   * then, so DialogHost must own the screen). The mid-session loading surface is
+   * a "panel" instead: MainView is mounted, so blurring/dimming the live sidebar
+   * would wrongly read as disabled — the workspace frame is simply not up yet,
+   * exactly like the deletion panel masking a torn-down frame. Both render via
+   * PanelView, below the sidebar, with no backdrop.
+   */
+  function computeSystemDialog(): { config: DialogConfig; kind: DialogKind } | null {
     if (shuttingDown) return null;
     switch (startupPhase) {
       case "starting":
-        return spinnerConfig("CodeHydra is starting…");
+        return { config: spinnerConfig("CodeHydra is starting…"), kind: "modal" };
       case "setup":
-        return setupConfig();
+        return { config: setupConfig(), kind: "modal" };
       case "agent-selection":
-        return agentConfig();
+        return { config: agentConfig(), kind: "modal" };
       case "running":
-        return spinnerConfig("Loading workspace...");
+        return { config: spinnerConfig("Loading workspace..."), kind: "modal" };
       case "done": {
         // Mid-session: a still-creating active workspace has no frame yet.
         if (activeKey === null) return null;
         const active = findByKey(activeKey);
-        return active?.workspace.creating ? spinnerConfig("Loading workspace...") : null;
+        return active?.workspace.creating
+          ? { config: spinnerConfig("Loading workspace..."), kind: "panel" }
+          : null;
       }
     }
   }
@@ -824,19 +844,25 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
    * config a no-op, so this never loops.
    */
   function reconcileSystemDialog(): void {
-    const config = computeSystemDialogConfig();
-    const json = config === null ? null : JSON.stringify(config);
-    if (json === systemDialogConfigJson) return;
+    const desired = computeSystemDialog();
+    const json = desired === null ? null : JSON.stringify(desired.config);
+    const kind = desired?.kind ?? null;
+    if (json === systemDialogConfigJson && kind === systemDialogKind) return;
+    const kindChanged = kind !== systemDialogKind;
     systemDialogConfigJson = json;
-    if (config === null) {
+    systemDialogKind = kind;
+    if (desired === null) {
       systemDialog?.close();
       systemDialog = null;
       return;
     }
-    if (systemDialog) {
-      systemDialog.update(config);
+    // Kind is immutable per session: a kind change (config may be identical, as
+    // on the boot "running" → mid-session loading transition) needs close + reopen.
+    if (systemDialog && !kindChanged) {
+      systemDialog.update(desired.config);
     } else {
-      systemDialog = dialogs.open(config, { kind: "modal" });
+      systemDialog?.close();
+      systemDialog = dialogs.open(desired.config, { kind: desired.kind });
       systemDialog.onEvent(handleSystemAction);
     }
   }
@@ -1730,6 +1756,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
             systemDialog?.close();
             systemDialog = null;
             systemDialogConfigJson = null;
+            systemDialogKind = null;
             unsubscribeFromUI();
             if (themeUnsubscribe) {
               themeUnsubscribe();
