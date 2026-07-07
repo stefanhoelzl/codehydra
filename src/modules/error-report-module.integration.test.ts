@@ -408,15 +408,15 @@ describe("ErrorReportModule — UI renderer crash guard", () => {
     expect(module.hooks![APP_START_OPERATION_ID]!["init"]!.requires).toHaveProperty("ui-ready");
   });
 
-  it("uncaught exception: logs, reports with crash_source + logs/config, shows the quit dialog", async () => {
+  it("uncaught exception: logs + reports with crash_source + logs/config, but does NOT show a dialog or quit", async () => {
     const s = setup({ telemetryEnabled: true, configOverrides: { "log.level": "debug" } });
     await subscribeUiCrashGuard(s.module);
 
     s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
 
     expect(s.logger.error).toHaveBeenCalledWith(
-      "UI renderer crashed",
-      { source: "ui-renderer-exception" },
+      "Uncaught exception in UI renderer",
+      {},
       expect.any(Error)
     );
     await vi.waitFor(() => {
@@ -427,19 +427,17 @@ describe("ErrorReportModule — UI renderer crash guard", () => {
       expect(captured!.properties["config"]).toEqual({ "log.level": "debug" });
     });
 
-    const state = s.dialogBoundary._getState();
-    expect(state.messageBoxCount).toBe(1);
-    const options = state.calls[0]!.options as DialogMessageBoxOptions;
-    expect(options.type).toBe("error");
-    expect(options.buttons).toEqual(["Quit CodeHydra"]);
-    expect(options.detail).toContain("effect_update_depth_exceeded");
+    // The renderer process is still alive — a single mid-session throw must NOT
+    // force-quit the app (only render-process-gone does).
+    expect(s.dialogBoundary._getState().messageBoxCount).toBe(0);
+    expect(s.deps.dispatcher.dispatch).not.toHaveBeenCalled();
   });
 
-  it("dispatches app:shutdown once the quit dialog is dismissed", async () => {
+  it("dispatches app:shutdown once the quit dialog is dismissed (render-process-gone)", async () => {
     const s = setup();
     await subscribeUiCrashGuard(s.module);
 
-    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
+    s.viewLayer.$.triggerRenderProcessGone(s.uiViewHandle, { reason: "crashed", exitCode: 1 });
 
     await vi.waitFor(() => {
       expect(s.deps.dispatcher.dispatch).toHaveBeenCalledWith(
@@ -448,15 +446,16 @@ describe("ErrorReportModule — UI renderer crash guard", () => {
     });
   });
 
-  it("still shows the dialog but does NOT report when telemetry is off", async () => {
+  it("uncaught exception: logs but does NOT report when telemetry is off, and never quits", async () => {
     const s = setup({ telemetryEnabled: false });
     await subscribeUiCrashGuard(s.module);
 
     s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
 
-    expect(s.dialogBoundary._getState().messageBoxCount).toBe(1);
     await Promise.resolve();
     expect(s.boundary.$.capturedEvents).toHaveLength(0);
+    expect(s.dialogBoundary._getState().messageBoxCount).toBe(0);
+    expect(s.deps.dispatcher.dispatch).not.toHaveBeenCalled();
   });
 
   it("unhandled rejection: reports without a dialog", async () => {
@@ -484,7 +483,12 @@ describe("ErrorReportModule — UI renderer crash guard", () => {
 
     s.viewLayer.$.triggerRenderProcessGone(s.uiViewHandle, { reason: "oom", exitCode: 137 });
 
-    expect(s.dialogBoundary._getState().messageBoxCount).toBe(1);
+    const state = s.dialogBoundary._getState();
+    expect(state.messageBoxCount).toBe(1);
+    const options = state.calls[0]!.options as DialogMessageBoxOptions;
+    expect(options.type).toBe("error");
+    expect(options.buttons).toEqual(["Quit CodeHydra"]);
+    expect(options.detail).toContain("UI renderer process gone: oom (exit code 137)");
     await vi.waitFor(() => {
       const captured = s.boundary.$.capturedEvents.find((e) => e.event === "$exception");
       expect(captured).toBeDefined();
@@ -499,8 +503,10 @@ describe("ErrorReportModule — UI renderer crash guard", () => {
     const s = setup();
     await subscribeUiCrashGuard(s.module);
 
+    // Uncaught exceptions never open a dialog; repeated render-process-gone
+    // signals must not stack a second quit dialog on top of the first.
     s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
-    s.viewLayer.$.triggerUncaughtException(s.uiViewHandle, UI_EXCEPTION);
+    s.viewLayer.$.triggerRenderProcessGone(s.uiViewHandle, { reason: "crashed", exitCode: 1 });
     s.viewLayer.$.triggerRenderProcessGone(s.uiViewHandle, { reason: "crashed", exitCode: 1 });
 
     expect(s.dialogBoundary._getState().messageBoxCount).toBe(1);
