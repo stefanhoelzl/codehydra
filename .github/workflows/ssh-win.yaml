@@ -1,0 +1,228 @@
+name: ssh-win
+
+# Headless, agent-driveable Windows build box (DEV INFRASTRUCTURE, not a merge gate).
+#
+# Why: the Windows code-server source build (build-code-server-windows.yaml) can only run on a
+# windows-2025 runner, and native module builds there are intermittently flaky. The normal loop is
+# edit -> push -> wait ~15-20min -> read logs -> repeat, blind. This workflow collapses that: it opens
+# ONE long-lived windows-2025 job with an SSH server the sandbox connects to, pre-staged with the whole
+# toolchain (checked-out code-server + submodule, Node, VS toolchain env, signtool, MSYS2 tools, patches
+# applied, build tooling installed). The agent then iterates `npm ci` / gulp / release INTERACTIVELY
+# against one warm runner and reads the crashes live.
+#
+# NON-GATING & dispatch-only: `on: workflow_dispatch` only; posts no status check.
+#
+# Connection (same design as stefanhoelzl/SnapSync ssh-mac):
+#   * Auth: caller passes its PUBLIC key as `ssh_pubkey`; we authorize exactly that key on our own sshd.
+#     A public key is public by design, so it is safe in a dispatch input and in logs. Private key never
+#     leaves the sandbox.
+#   * Connectivity: runner has no public inbound IP, so a cloudflared quick tunnel fronts sshd. Cloudflare
+#     relays encrypted TCP only.
+#   * Hostname handoff: job logs are unreadable until the job completes and the session step blocks the
+#     whole time, so the connect target is written to a file and uploaded as the `ssh-win-host` ARTIFACT
+#     (available the instant its step finishes, mid-run). The sandbox polls `gh run download -n
+#     ssh-win-host`, reads "<user>@<host>", and connects with
+#         ssh -i <privkey> -o ProxyCommand="cloudflared access ssh --hostname %h" <user>@<host>
+#
+# Lifecycle: the session step BLOCKS on a stop sentinel (C:\ssh-win-stop, create it to end) OR
+# `stop_after` minutes, whichever first; `timeout-minutes` is the hard backstop.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh_pubkey:
+        description: "SSH PUBLIC key authorized to connect (sandbox holds the private half). Safe to paste."
+        required: true
+        type: string
+      version:
+        description: "code-server version to stage (e.g., 4.127.0)"
+        required: false
+        default: "4.127.0"
+        type: string
+      stop_after:
+        description: "Auto-close the interactive session after this many minutes."
+        required: false
+        default: "120"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ssh:
+    name: ssh-win
+    runs-on: windows-2025
+    timeout-minutes: 180
+    env:
+      VERSION: ${{ inputs.version }}
+      OS: windows
+      ARCH: amd64
+      VSCODE_ARCH: x64
+      VSCODE_TARGET: win32-x64
+      npm_config_arch: x64
+      npm_config_build_from_source: "true"
+      npm_config_script_shell: bash
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - name: Checkout code-server ${{ inputs.version }}
+        uses: actions/checkout@v6
+        with:
+          repository: coder/code-server
+          ref: v${{ inputs.version }}
+          submodules: true
+          path: code-server
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: code-server/.node-version
+
+      - name: Upgrade npm
+        shell: bash
+        run: npm install -g npm@latest
+
+      - name: Locate Visual Studio + signtool
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsPath) { $vsPath = & $vswhere -latest -property installationPath }
+          Write-Host "VS: $vsPath"
+          "vs2022_install=$vsPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = Get-ChildItem -Path $sdkBin -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          $signdir = Split-Path $signtool.FullName
+          Write-Host "signtool dir: $signdir"
+          "SIGNTOOL_DIR=$signdir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Exclude build directories from Windows Defender scanning
+        shell: pwsh
+        run: |
+          foreach ($p in @("${{ github.workspace }}", $env:RUNNER_TEMP, "C:\npm\cache", "C:\msys64")) {
+            try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop; Write-Host "excluded: $p" }
+            catch { Write-Host "exclusion failed for ${p}: $_" }
+          }
+
+      - name: Ensure MSYS2 build tools (rsync, quilt, jq)
+        shell: pwsh
+        run: |
+          $pacman = "C:\msys64\usr\bin\pacman.exe"
+          if (-not (Test-Path $pacman)) { Write-Error "MSYS2 not found at C:\msys64"; exit 1 }
+          & $pacman -Sy --noconfirm --needed rsync quilt jq unzip
+          if ($LASTEXITCODE -ne 0) { Write-Error "pacman install failed"; exit 1 }
+
+      - name: Apply patches + stage build (best-effort)
+        shell: C:\msys64\usr\bin\bash.exe --noprofile --norc -eo pipefail {0}
+        working-directory: code-server
+        run: |
+          export PATH="/c/msys64/usr/bin:$PATH"
+          # Apply code-server's quilt patches to the VS Code submodule.
+          quilt push -a || echo "::warning::quilt push -a returned non-zero (may already be applied)"
+          # Stage the same source patches the build workflow applies.
+          sed -i 's/Math\.min(os\.cpus()\.length, 8)/1/' lib/vscode/build/npm/postinstall.ts || true
+          sed -i 's#fix-bin-script remote-cli/code\.cmd#fix-bin-script remote-cli/code-server.cmd#' ci/build/build-vscode.sh || true
+          echo "patches applied"
+
+      - name: Write build-env helper for the SSH session
+        shell: pwsh
+        run: |
+          $nodeDir = Split-Path (Get-Command node).Source
+          $lines = @(
+            '#!/usr/bin/env bash',
+            '# Source me in the SSH session: source /c/ch-buildenv.sh',
+            'export OS=windows ARCH=amd64 VSCODE_ARCH=x64 VSCODE_TARGET=win32-x64',
+            'export npm_config_arch=x64 npm_config_build_from_source=true npm_config_script_shell=bash',
+            'export ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1',
+            "export VERSION='$env:VERSION'",
+            "export vs2022_install='$env:vs2022_install'",
+            # Deterministic PATH: msys2 tools + node + signtool + system.
+            "export PATH=`"/c/msys64/usr/bin:$([string](($nodeDir -replace '\\','/') -replace '^([A-Za-z]):','/$1')):$([string](($env:SIGNTOOL_DIR -replace '\\','/') -replace '^([A-Za-z]):','/$1')):/c/Windows/System32:/c/Windows`"",
+            "cd '$env:GITHUB_WORKSPACE/code-server' 2>/dev/null || cd /d/a/codehydra/codehydra/code-server 2>/dev/null || true",
+            'echo \"build-env ready: $(node --version), target=$VSCODE_TARGET, cwd=$(pwd)\"'
+          )
+          Set-Content -Path 'C:\ch-buildenv.sh' -Value $lines -Encoding ASCII
+          Write-Host "wrote C:\ch-buildenv.sh"
+
+      - name: Install cloudflared
+        shell: pwsh
+        run: |
+          $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          $dst = "$env:RUNNER_TEMP\cloudflared.exe"
+          Invoke-WebRequest -Uri $url -OutFile $dst
+          Write-Host "cloudflared at $dst"
+          & $dst --version
+
+      - name: Start sshd + cloudflared tunnel
+        shell: pwsh
+        env:
+          SSH_PUBKEY: ${{ inputs.ssh_pubkey }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Ensure OpenSSH Server binaries are present.
+          if (-not (Test-Path "$env:SystemRoot\System32\OpenSSH\sshd.exe")) {
+            Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+          }
+          $sshdir = "$env:RUNNER_TEMP\sshd"
+          New-Item -ItemType Directory -Force -Path $sshdir | Out-Null
+          # authorized_keys (exactly the caller's pubkey)
+          Set-Content -Path "$sshdir\authorized_keys" -Value $env:SSH_PUBKEY -NoNewline -Encoding ASCII
+          # host key
+          & "$env:SystemRoot\System32\OpenSSH\ssh-keygen.exe" -q -t ed25519 -N '""' -f "$sshdir\host_ed25519"
+          # standalone sshd config (forward slashes; StrictModes off avoids Windows ACL friction)
+          $cfg = @"
+          Port 2222
+          HostKey $($sshdir -replace '\\','/')/host_ed25519
+          AuthorizedKeysFile $($sshdir -replace '\\','/')/authorized_keys
+          PasswordAuthentication no
+          PubkeyAuthentication yes
+          StrictModes no
+          Subsystem sftp sftp-server.exe
+          "@
+          Set-Content -Path "$sshdir\sshd_config" -Value $cfg -Encoding ASCII
+          # start sshd detached so it survives into the blocking wait step
+          Start-Process -FilePath "$env:SystemRoot\System32\OpenSSH\sshd.exe" `
+            -ArgumentList "-f `"$sshdir\sshd_config`" -D -e" `
+            -RedirectStandardError "$sshdir\sshd.log" -RedirectStandardOutput "$sshdir\sshd.out" -PassThru | Out-Null
+          # start cloudflared quick tunnel detached
+          Start-Process -FilePath "$env:RUNNER_TEMP\cloudflared.exe" `
+            -ArgumentList "tunnel --no-autoupdate --url ssh://localhost:2222" `
+            -RedirectStandardError "$sshdir\cf.log" -RedirectStandardOutput "$sshdir\cf.out" -PassThru | Out-Null
+          # wait for the trycloudflare hostname
+          $host_url = $null
+          for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Seconds 2
+            $log = (Get-Content "$sshdir\cf.log","$sshdir\cf.out" -ErrorAction SilentlyContinue) -join "`n"
+            if ($log -match 'https://[a-z0-9-]+\.trycloudflare\.com') { $host_url = $Matches[0]; break }
+          }
+          if (-not $host_url) { Write-Error "cloudflared produced no hostname"; Get-Content "$sshdir\cf.log" -ErrorAction SilentlyContinue; exit 1 }
+          $bare = $host_url -replace 'https://',''
+          $conn = "$env:USERNAME@$bare"
+          Set-Content -Path "$env:RUNNER_TEMP\ssh-win-host.txt" -Value $conn -NoNewline -Encoding ASCII
+          Write-Host "==================== ssh-win ready ===================="
+          Write-Host "CONNECT: ssh -o ProxyCommand=`"cloudflared access ssh --hostname %h`" $conn"
+          Write-Host "then in the session: C:\msys64\usr\bin\bash.exe --noprofile --norc  ; source /c/ch-buildenv.sh"
+          Write-Host "======================================================="
+
+      - name: Publish connect-target artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ssh-win-host
+          path: ${{ runner.temp }}/ssh-win-host.txt
+          retention-days: 1
+          if-no-files-found: warn
+
+      - name: Wait for session
+        shell: pwsh
+        env:
+          STOP_AFTER: ${{ inputs.stop_after }}
+        run: |
+          $end = (Get-Date).AddMinutes([int]$env:STOP_AFTER)
+          Write-Host "Session open. Create C:\ssh-win-stop to end early (backstop: $($env:STOP_AFTER)m)."
+          while (-not (Test-Path "C:\ssh-win-stop") -and (Get-Date) -lt $end) {
+            Start-Sleep -Seconds 5
+          }
+          Write-Host "Session ending."
+          Get-Process cloudflared,sshd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

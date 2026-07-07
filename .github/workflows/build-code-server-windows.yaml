@@ -380,8 +380,19 @@ jobs:
           pkgset "verify/lin/code-server-$VERSION-linux-amd64" > verify/lin.txt
 
           # Packages the reference has that we are missing (Windows adds windows-*
-          # natives, so extras on our side are expected and fine).
-          missing="$(comm -23 verify/lin.txt verify/win.txt || true)"
+          # natives, so extras on our side are expected and fine). Exclude
+          # legitimately platform-specific packages: the Linux reference ships
+          # *-linux-*/*-darwin-*/... optional deps that Windows correctly replaces
+          # with its *-win32-* variant (e.g. @github/copilot-linux-x64 ->
+          # @github/copilot-win32-x64); comparing those across platforms is a
+          # false positive.
+          platform_re='[-/](linux|linuxmusl|alpine|darwin|freebsd|android|sunos)-'
+          excluded="$(comm -23 verify/lin.txt verify/win.txt | grep -iE "$platform_re" || true)"
+          if [ -n "$excluded" ]; then
+            echo "::notice::Ignoring platform-specific reference packages (win32 variants ship instead):"
+            printf '%s\n' "$excluded" | sed 's/^/  ~ /'
+          fi
+          missing="$(comm -23 verify/lin.txt verify/win.txt | grep -viE "$platform_re" || true)"
           if [ -n "$missing" ]; then
             echo "::error::Incomplete build - dependency packages present in the reference Linux release but MISSING here:"
             printf '%s\n' "$missing" | sed 's/^/  - /'
