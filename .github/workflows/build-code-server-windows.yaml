@@ -239,6 +239,15 @@ jobs:
           grep -q 'const concurrency = 1;' lib/vscode/build/npm/postinstall.ts \
             || { echo "::error::failed to pin extension-install concurrency"; exit 1; }
 
+          # 1c. Fix a bug in code-server's untested Windows branch of
+          #     build-vscode.sh: it fixes the remote-cli launcher at
+          #     bin/remote-cli/code.cmd, but VS Code's reh build emits it as
+          #     bin/remote-cli/${applicationName}.cmd = code-server.cmd. (The
+          #     later `copy-bin-script remote-cli/code.cmd` is correct and stays.)
+          sed -i 's#fix-bin-script remote-cli/code\.cmd#fix-bin-script remote-cli/code-server.cmd#' ci/build/build-vscode.sh
+          grep -q 'fix-bin-script remote-cli/code-server.cmd' ci/build/build-vscode.sh \
+            || { echo "::error::failed to patch build-vscode.sh remote-cli bin path"; exit 1; }
+
           # 2. code-server + submodule deps. The root postinstall
           #    (ci/dev/postinstall.sh) runs `npm ci` inside lib/vscode, which
           #    installs EVERY built-in extension's nested deps - including
