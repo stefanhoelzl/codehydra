@@ -5,10 +5,10 @@
  * and automatically creates/deletes workspaces to match.
  *
  * Each source is activated independently when its config is fully set.
- * A source needs both a template-path and source.isConfigured() to be active.
+ * A source needs both an inline template and source.isConfigured() to be active.
  *
  * Hooks:
- * - app:start -> "start": read template paths from config
+ * - app:start -> "start": migrate any legacy template-path into the inline template key
  * - app:shutdown -> "stop": clear poll timer, dispose sources
  *
  * Events:
@@ -45,17 +45,19 @@ import { INTENT_LIST_PROJECTS, type ListProjectsIntent } from "../../intents/lis
 import type { Config } from "../../boundaries/platform/config";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "../../intents/set-metadata";
 import {
-  storePath,
+  storeString,
+  storeText,
   storeCustom,
   type PersistedAccessor,
+  type DeprecatedPersistedAccessor,
 } from "../../boundaries/platform/store-definition";
-import { TEMPLATE_DEFAULTS } from "./template-defaults";
+import { TEMPLATE_HELP } from "./template-defaults";
 import type { StateService } from "../../boundaries/platform/state-service";
 import type { FileSystemBoundary } from "../../boundaries/platform/filesystem";
 import type { Logger } from "../../boundaries/platform/logging-types";
 import type { AgentSpec } from "../../shared/api/types";
 import { getErrorMessage } from "../../shared/error-utils";
-import { renderTemplate } from "../../utils/liquid/liquid-renderer";
+import { renderTemplate, isValidLiquidTemplate } from "../../utils/liquid/liquid-renderer";
 import { parseTemplateOutput } from "./template";
 import { Path } from "../../utils/path/path";
 import type { AutoWorkspaceSource, PollItem, PollResult } from "./source";
@@ -182,21 +184,44 @@ function stateKey(sourceName: string, itemKey: string): string {
 // =============================================================================
 
 export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): IntentModule {
-  // Register template-path config keys (sources register their own keys)
-  const templatePathConfigs = new Map<string, PersistedAccessor<string | null>>();
+  // Register the inline-template config keys (sources register their own keys).
+  // The value IS the Liquid template content — empty/null means the source is
+  // inactive. The old `experimental.<source>.template-path` key stays registered
+  // as a deprecated migration source (see migrateTemplatePaths).
+  const templateConfigs = new Map<string, PersistedAccessor<string | null>>();
+  const legacyTemplatePathConfigs = new Map<string, DeprecatedPersistedAccessor>();
   for (const source of deps.sources) {
-    const template = TEMPLATE_DEFAULTS[source.name];
-    const tplConfig = deps.configService.register(`experimental.${source.name}.template-path`, {
-      default: null,
-      description: `Path to Liquid template for ${source.name} auto-workspaces`,
-      redact: true,
-      ...storePath({
-        nullable: true,
-        extensions: ["liquid"],
-        ...(template !== undefined && { template }),
-      }),
+    const base = storeText({
+      nullable: true,
+      rows: 14,
+      helpLabel: "Available fields and front-matter keys",
+      ...(TEMPLATE_HELP[source.name] !== undefined && { helpPanel: TEMPLATE_HELP[source.name] }),
     });
-    templatePathConfigs.set(source.name, tplConfig);
+    const tplConfig = deps.configService.register(`experimental.${source.name}.template`, {
+      default: null,
+      description: `Liquid template for ${source.name} auto-workspaces`,
+      applies: "live",
+      // Kept out of bug reports (a template can embed private detail) but shown
+      // in the clear in the settings editor — hence omit, not redact.
+      omit: true,
+      ...base,
+      // Compose the base (nullable string) validation with a Liquid syntax check
+      // so a malformed template is rejected in the settings dialog and on set().
+      validate: (v: unknown): string | null | undefined => {
+        const parsed = base.validate(v);
+        if (parsed === undefined || parsed === null) return parsed;
+        return isValidLiquidTemplate(parsed) ? parsed : undefined;
+      },
+    });
+    templateConfigs.set(source.name, tplConfig);
+
+    const legacyConfig = deps.configService.register(`experimental.${source.name}.template-path`, {
+      default: null,
+      deprecated: true,
+      description: `(deprecated) Path to Liquid template for ${source.name} auto-workspaces`,
+      ...storeString({ nullable: true }),
+    });
+    legacyTemplatePathConfigs.set(source.name, legacyConfig);
   }
 
   // Persisted tracking map, owned in state.json under the `auto-workspaces` key.
@@ -213,7 +238,6 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   let entries: AutoWorkspaceEntries = {};
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   // Per-source activation state
-  const templatePaths = new Map<string, string | null>(); // sourceName → template path
   const activeSources = new Set<string>(); // currently polling source names
   const deletingKeys = new Set<string>(); // sentinel for auto-deletions
 
@@ -274,6 +298,53 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
     await deps.fs.rm(deps.legacyStateFilePath, { force: true }).catch(() => {});
   }
 
+  /**
+   * One-shot migration of the pre-inline `experimental.<source>.template-path`
+   * config key into the new inline `experimental.<source>.template` key. For each
+   * source, if the new key is still unset and the old path key points somewhere,
+   * read that file's content into the new key and strip the old key from
+   * config.json. If the file can't be read (missing/unreadable), the old key is
+   * left in place and a warning logged, so the user can fix the path — nothing is
+   * silently lost. Runs during app:start, before sources activate.
+   */
+  async function migrateTemplatePaths(): Promise<void> {
+    for (const source of deps.sources) {
+      const tplConfig = templateConfigs.get(source.name);
+      const legacyConfig = legacyTemplatePathConfigs.get(source.name);
+      if (!tplConfig || !legacyConfig) continue;
+      if (!tplConfig.isDefault()) continue; // new key already set — don't clobber
+
+      const legacyPath = legacyConfig.get();
+      if (typeof legacyPath !== "string" || legacyPath === "") continue;
+
+      let content: string;
+      try {
+        content = await deps.fs.readFile(legacyPath);
+      } catch (error) {
+        deps.logger.warn("Could not migrate template-path (file unreadable; leaving key)", {
+          source: source.name,
+          path: legacyPath,
+          error: getErrorMessage(error),
+        });
+        continue;
+      }
+
+      try {
+        await tplConfig.set(content);
+        await legacyConfig.reset();
+        deps.logger.info("Migrated template-path into inline template", { source: source.name });
+      } catch (error) {
+        // set() can reject if the file's content isn't valid Liquid; keep the old
+        // key so the migration can be retried after the user fixes the template.
+        deps.logger.warn("Could not migrate template-path (invalid template; leaving key)", {
+          source: source.name,
+          path: legacyPath,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
   // ------ Tracked Paths (metadata-based) ------
 
   async function buildTrackedPaths(): Promise<Set<string>> {
@@ -297,18 +368,22 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
 
   async function createWorkspace(source: AutoWorkspaceSource, item: PollItem): Promise<void> {
     const key = stateKey(source.name, item.key);
-    const tplPath = templatePaths.get(source.name);
+    // Read the template content live so settings edits apply on the next poll.
+    const templateContent = templateConfigs.get(source.name)?.get() ?? null;
     deps.logger.info("Creating auto-workspace", { source: source.name, key });
 
     try {
-      const templateContent = await deps.fs.readFile(tplPath!);
+      if (templateContent === null) {
+        deps.logger.warn("Skipping auto-workspace (no template configured)", { key });
+        return;
+      }
       const rendered = renderTemplate(templateContent, item.data);
       const { config, warnings } = parseTemplateOutput(rendered);
 
       for (const warning of warnings) {
         deps.logger.warn("Template front-matter warning", {
           warning,
-          templatePath: tplPath ?? null,
+          source: source.name,
         });
       }
 
@@ -612,8 +687,8 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
   // ------ Source Activation ------
 
   function isSourceActive(source: AutoWorkspaceSource): boolean {
-    const tplPath = templatePaths.get(source.name);
-    return tplPath !== null && tplPath !== undefined && source.isConfigured();
+    const template = templateConfigs.get(source.name)?.get() ?? null;
+    return template !== null && source.isConfigured();
   }
 
   async function activateSource(source: AutoWorkspaceSource): Promise<void> {
@@ -664,11 +739,9 @@ export function createAutoWorkspaceModule(deps: AutoWorkspaceModuleDeps): Intent
       [APP_START_OPERATION_ID]: {
         start: {
           handler: async (): Promise<void> => {
-            // Read template paths from config
-            for (const source of deps.sources) {
-              const tplValue = templatePathConfigs.get(source.name)?.get() ?? null;
-              templatePaths.set(source.name, tplValue);
-            }
+            // Migrate any legacy template-path into the inline template key before
+            // sources activate (on the app:started event).
+            await migrateTemplatePaths();
           },
         },
       },

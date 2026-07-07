@@ -50,6 +50,9 @@ export interface PersistedStoreDeps {
 /** Token substituted for redacted values in getRedactedOverrides(). */
 const REDACTED = "<redacted>";
 
+/** Token substituted for `omit: true` values in getRedactedOverrides(). */
+const OMITTED = "<omitted>";
+
 // =============================================================================
 // Defaults / Equality Helpers
 // =============================================================================
@@ -407,7 +410,9 @@ export class PersistedStore {
     for (const [key, def] of this.definitions) {
       if (def.deprecated) continue;
       if (overrideEquals(this.effective[key], this.defaults[key])) continue;
-      out[key] = this.redactValue(def, this.effective[key]);
+      // `omit` withholds the value from diagnostics entirely (the key still
+      // appears so a set value is visible); it wins over any `redact` policy.
+      out[key] = def.omit ? OMITTED : this.redactValue(def, this.effective[key]);
     }
     return out;
   }

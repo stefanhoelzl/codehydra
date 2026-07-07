@@ -13,12 +13,6 @@ import { createSettingsModule } from "./settings-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
 import { createMockDialogManager } from "./presentation/dialog-manager.state-mock";
 import { createAppBoundaryMock } from "../boundaries/shell/app.state-mock";
-import { createBehavioralDialogBoundary } from "../boundaries/shell/dialog.test-utils";
-import {
-  createFileSystemMock,
-  file,
-  directory,
-} from "../boundaries/platform/filesystem.state-mock";
 import { createMockLogger } from "../boundaries/platform/logging.test-utils";
 import { configBusyDuringBackgroundShell } from "./agent-module/claude/types";
 import {
@@ -26,10 +20,9 @@ import {
   storeEnum,
   storeEnumList,
   storeNumber,
-  storePath,
   storeString,
+  storeText,
 } from "../boundaries/platform/store-definition";
-import type { Entry } from "../boundaries/platform/filesystem.state-mock";
 import type { Config } from "../boundaries/platform/config";
 import type { UiPresenter } from "./presentation/presentation-module";
 import type { DialogConfig, DialogSection } from "../shared/dialog-types";
@@ -69,42 +62,40 @@ function registerKeys(config: Config): void {
     default: true,
     ...configBusyDuringBackgroundShell(),
   });
-  config.register("experimental.github.template-path", {
+  config.register("experimental.youtrack.template", {
     default: null,
-    description: "Path to Liquid template for github auto-workspaces",
-    redact: true,
-    ...storePath({ nullable: true, extensions: ["liquid"], template: TEMPLATE_CONTENT }),
+    description: "Liquid template for youtrack auto-workspaces",
+    applies: "live",
+    omit: true,
+    ...storeText({
+      nullable: true,
+      rows: 14,
+      helpPanel: TEMPLATE_HELP,
+      helpLabel: TEMPLATE_HELP_LABEL,
+    }),
   });
 }
 
-const TEMPLATE_CONTENT = "---\nname: {{ title }}\n---\nReview {{ title }}\n";
-const PICK_ID = "pick:experimental.github.template-path";
+const TEMPLATE_HELP = "Available fields:\n  summary\n  description";
+const TEMPLATE_HELP_LABEL = "Available fields and front-matter keys";
 
-function setup(options?: { fsEntries?: Record<string, Entry> }): {
+function setup(): {
   openSettings: () => void;
   config: Config;
   dialogs: ReturnType<typeof createMockDialogManager>;
   app: ReturnType<typeof createAppBoundaryMock>;
-  dialog: ReturnType<typeof createBehavioralDialogBoundary>;
-  fs: ReturnType<typeof createFileSystemMock>;
-  openPath: ReturnType<typeof vi.spyOn>;
 } {
   const config = createMockConfig();
   registerKeys(config);
   const dialogs = createMockDialogManager();
   const app = createAppBoundaryMock({ platform: "linux" });
-  const openPath = vi.spyOn(app, "openPath");
-  const dialog = createBehavioralDialogBoundary();
-  const fs = createFileSystemMock({ entries: options?.fsEntries ?? {} });
   const { openSettings } = createSettingsModule({
     ui: dialogs.ui as unknown as UiPresenter,
     config,
     app,
-    dialog,
-    fs,
     logger: createMockLogger(),
   });
-  return { openSettings, config, dialogs, app, dialog, fs, openPath };
+  return { openSettings, config, dialogs, app };
 }
 
 /** Flush pending microtasks (the module's async save/reset handlers). */
@@ -368,109 +359,48 @@ describe("SettingsModule — reset", () => {
   });
 });
 
-describe("SettingsModule — path picker", () => {
-  const NEW_PATH = "/home/me/templates/gh.liquid";
-
-  it("renders a path key as a masked input with a Browse action", () => {
+describe("SettingsModule — text (inline template) control", () => {
+  it("renders a multiline, unmasked input with a help panel/label and no action", () => {
     const { openSettings, dialogs } = setup();
     openSettings();
-    const row = rowByLabel(dialogs.lastHandle!.config, "template-path")!;
-    expect(row.fields[0]!.type).toBe("input");
-    expect((row.fields[0] as { masked?: boolean }).masked).toBe(true);
-    expect(row.action).toEqual({ id: PICK_ID, label: "Browse…", icon: "folder" });
+    const row = rowByLabel(dialogs.lastHandle!.config, "template")!;
+    const field = row.fields[0] as { type: string; multiline?: boolean; masked?: boolean };
+    expect(field.type).toBe("input");
+    expect(field.multiline).toBe(true);
+    // omit (not redact) → the editor is shown in the clear.
+    expect(field.masked).toBeUndefined();
+    expect(row.helpPanel).toBe(TEMPLATE_HELP);
+    expect(row.helpLabel).toBe(TEMPLATE_HELP_LABEL);
+    expect(row.action).toBeUndefined();
   });
 
-  it("shows a save-mode dialog with the extension filter", async () => {
-    const { openSettings, dialogs, dialog } = setup();
+  it("persists edited template content on save", async () => {
+    const { openSettings, dialogs, config } = setup();
     openSettings();
-    dialogs.lastHandle!.emitAction(PICK_ID, {});
+    const next = "---\nname: {{ summary }}\n---\nWork on {{ summary }}";
+    dialogs.lastHandle!.emitAction("save", { "experimental.youtrack.template": next });
     await flush();
-
-    const call = dialog._getState().calls[0]!;
-    expect(call.method).toBe("showDialog");
-    const opts = call.options as { mode?: string; filters?: { extensions: string[] }[] };
-    expect(opts.mode).toBe("save");
-    expect(opts.filters?.[0]?.extensions).toEqual(["liquid"]);
-    expect(opts.filters?.[1]?.extensions).toEqual(["*"]); // All Files fallback
+    expect(config.getEffective()["experimental.youtrack.template"]).toBe(next);
   });
 
-  it("seeds the template and opens a newly-named file, then buffers the path", async () => {
-    const { openSettings, dialogs, dialog, fs, openPath, config } = setup({
-      fsEntries: { "/home/me": directory(), "/home/me/templates": directory() },
-    });
+  it("treats an empty editor as unset (null)", async () => {
+    const { openSettings, dialogs, config } = setup();
     openSettings();
-    dialog._setNextOpenDialogResponse({ canceled: false, filePaths: [NEW_PATH] });
-
-    dialogs.lastHandle!.emitAction(PICK_ID, {});
+    // Seed a value, then clear it.
+    await config.set("experimental.youtrack.template", "something");
+    dialogs.lastHandle!.emitAction("save", { "experimental.youtrack.template": "" });
     await flush();
-
-    // Template seeded and the new file opened in the default app.
-    expect(await fs.readFile(NEW_PATH)).toBe(TEMPLATE_CONTENT);
-    expect(openPath).toHaveBeenCalledWith(NEW_PATH);
-    // Path is buffered into the field but not yet persisted.
-    const row = rowByLabel(dialogs.lastHandle!.config, "template-path")!;
-    expect((row.fields[0] as { value?: string }).value).toBe(NEW_PATH);
-    expect(config.getEffective()["experimental.github.template-path"]).toBeNull();
-
-    // Save persists it.
-    dialogs.lastHandle!.emitAction("save", {});
-    await flush();
-    expect(config.getEffective()["experimental.github.template-path"]).toBe(NEW_PATH);
-  });
-
-  it("adopts an existing file without overwriting or opening it", async () => {
-    const existing = "/home/me/existing.liquid";
-    const { openSettings, dialogs, dialog, fs, openPath } = setup({
-      fsEntries: { [existing]: file("USER CONTENT") },
-    });
-    openSettings();
-    dialog._setNextOpenDialogResponse({ canceled: false, filePaths: [existing] });
-
-    dialogs.lastHandle!.emitAction(PICK_ID, {});
-    await flush();
-
-    // The user's file is untouched and not opened (EEXIST → adopt).
-    expect(await fs.readFile(existing)).toBe("USER CONTENT");
-    expect(openPath).not.toHaveBeenCalled();
-    const row = rowByLabel(dialogs.lastHandle!.config, "template-path")!;
-    expect((row.fields[0] as { value?: string }).value).toBe(existing);
-  });
-
-  it("does nothing when the picker is canceled", async () => {
-    const { openSettings, dialogs, openPath, config } = setup();
-    openSettings();
-    // Default behavioral response is canceled.
-    dialogs.lastHandle!.emitAction(PICK_ID, {});
-    await flush();
-
-    expect(openPath).not.toHaveBeenCalled();
-    dialogs.lastHandle!.emitAction("save", {});
-    await flush();
-    expect(config.getEffective()["experimental.github.template-path"]).toBeNull();
-  });
-
-  it("does not persist a picked path when the dialog is canceled", async () => {
-    const { openSettings, dialogs, dialog, config } = setup();
-    openSettings();
-    dialog._setNextOpenDialogResponse({ canceled: false, filePaths: [NEW_PATH] });
-    dialogs.lastHandle!.emitAction(PICK_ID, {});
-    await flush();
-
-    dialogs.lastHandle!.emitAction("cancel", {});
-    await flush();
-    expect(config.getEffective()["experimental.github.template-path"]).toBeNull();
+    expect(config.getEffective()["experimental.youtrack.template"]).toBeNull();
   });
 });
 
 describe("SettingsModule — shortcut", () => {
   it("opens on the 's' shortcut key", async () => {
-    const { config, dialogs, app, dialog, fs } = setup();
+    const { config, dialogs, app } = setup();
     const { module } = createSettingsModule({
       ui: dialogs.ui as unknown as UiPresenter,
       config,
       app,
-      dialog,
-      fs,
       logger: createMockLogger(),
     });
     const event: ShortcutKeyPressedEvent = {

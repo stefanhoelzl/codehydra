@@ -270,7 +270,6 @@ function createMockSource(
 // Test Setup
 // =============================================================================
 
-const DEFAULT_TEMPLATE_PATH = "/data/template.liquid";
 const DEFAULT_TEMPLATE =
   "---\ngit: https://github.com/org/repo.git\nname: {{ id }}\n---\nWork on {{ id }}";
 
@@ -317,22 +316,14 @@ function createTestSetup(options?: {
   existingState?: string;
   /** Seed the legacy on-disk auto-workspaces.json to exercise the one-shot migration. */
   legacyStateFileContent?: string;
-  templatePath?: string | null;
   templateContent?: string;
+  /** Set the deprecated template-path key (leaving `template` unset) to exercise migration. */
+  migrateFromPath?: string;
+  /** Content written at migrateFromPath; omit to simulate a missing/unreadable file. */
+  migrateFileContent?: string;
   sourceName?: string;
 }): TestSetup {
   const sourceName = options?.sourceName ?? "test-source";
-  const tplPath = options?.disabled
-    ? null
-    : options?.templatePath !== undefined
-      ? options.templatePath
-      : DEFAULT_TEMPLATE_PATH;
-  const tplContent =
-    options?.templateContent !== undefined
-      ? options.templateContent
-      : options?.templatePath !== undefined
-        ? undefined
-        : DEFAULT_TEMPLATE;
 
   const source = createMockSource(sourceName, options?.sourceOptions);
 
@@ -342,8 +333,8 @@ function createTestSetup(options?: {
   if (options?.legacyStateFileContent !== undefined) {
     fsEntries["/data/auto-workspaces.json"] = file(options.legacyStateFileContent);
   }
-  if (tplPath && tplContent !== undefined) {
-    fsEntries[tplPath] = file(tplContent);
+  if (options?.migrateFromPath !== undefined && options?.migrateFileContent !== undefined) {
+    fsEntries[options.migrateFromPath] = file(options.migrateFileContent);
   }
   const fs = createFileSystemMock({ entries: fsEntries });
 
@@ -366,8 +357,11 @@ function createTestSetup(options?: {
   const getProjectBasesOp = new TrackingGetProjectBasesOperation();
 
   const configValues: Record<string, unknown> = {};
-  if (tplPath !== null) {
-    configValues[`experimental.${sourceName}.template-path`] = tplPath;
+  if (options?.migrateFromPath !== undefined) {
+    configValues[`experimental.${sourceName}.template-path`] = options.migrateFromPath;
+  } else if (!options?.disabled) {
+    configValues[`experimental.${sourceName}.template`] =
+      options?.templateContent ?? DEFAULT_TEMPLATE;
   }
 
   const mockConfig = createMockConfig({ defaults: configValues });
@@ -1365,10 +1359,26 @@ describe("AutoWorkspaceModule Integration", () => {
     });
   });
 
-  describe("error handling", () => {
-    it("skips workspace when template file not found", async () => {
-      const { dispatcher, source, openProjectOp, state } = createTestSetup({
-        templatePath: "/data/nonexistent.liquid",
+  describe("template-path migration", () => {
+    it("migrates a legacy template-path into the inline template and activates", async () => {
+      const { dispatcher, source, mockConfig } = createTestSetup({
+        migrateFromPath: "/data/legacy.liquid",
+        migrateFileContent: DEFAULT_TEMPLATE,
+      });
+      source.pollResult = { activeKeys: new Set(), newItems: [] };
+
+      await dispatcher.dispatch(startIntent());
+
+      expect(source.initializeCalled).toBe(true);
+      const eff = mockConfig.getEffective();
+      expect(eff["experimental.test-source.template"]).toBe(DEFAULT_TEMPLATE);
+      // The legacy key is stripped once migrated.
+      expect(eff["experimental.test-source.template-path"]).toBeUndefined();
+    });
+
+    it("leaves the legacy key and stays inactive when the file is unreadable", async () => {
+      const { dispatcher, source, openProjectOp, mockConfig } = createTestSetup({
+        migrateFromPath: "/data/nonexistent.liquid",
       });
 
       source.pollResult = {
@@ -1378,8 +1388,13 @@ describe("AutoWorkspaceModule Integration", () => {
 
       await dispatcher.dispatch(startIntent());
 
+      // Migration failed → template still unset → source never activates.
+      expect(source.initializeCalled).toBe(false);
       expect(openProjectOp.dispatched).toHaveLength(0);
-      expect(entriesOf(state)["test-source/item-1"]).toBeNull();
+      // The legacy key is left in place so the user can fix the path and retry.
+      expect(mockConfig.getEffective()["experimental.test-source.template-path"]).toBe(
+        "/data/nonexistent.liquid"
+      );
     });
   });
 });

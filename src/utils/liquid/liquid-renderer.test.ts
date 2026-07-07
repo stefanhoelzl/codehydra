@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderTemplate } from "./liquid-renderer";
+import { renderTemplate, isValidLiquidTemplate } from "./liquid-renderer";
 
 describe("renderTemplate", () => {
   it("substitutes simple variables", () => {
@@ -30,5 +30,19 @@ describe("renderTemplate", () => {
 
   it("handles numeric values", () => {
     expect(renderTemplate("#{{ number }}", { number: 42 })).toBe("#42");
+  });
+});
+
+describe("isValidLiquidTemplate", () => {
+  it("accepts valid Liquid (including plain text and front-matter bodies)", () => {
+    expect(isValidLiquidTemplate("plain text, no tags")).toBe(true);
+    expect(isValidLiquidTemplate("---\nname: {{ title }}\n---\nReview {{ number }}")).toBe(true);
+    expect(isValidLiquidTemplate("{% if draft %}DRAFT{% endif %}")).toBe(true);
+    expect(isValidLiquidTemplate("")).toBe(true);
+  });
+
+  it("rejects malformed Liquid syntax", () => {
+    expect(isValidLiquidTemplate("{% if draft %}unclosed")).toBe(false);
+    expect(isValidLiquidTemplate("{{ unclosed")).toBe(false);
   });
 });

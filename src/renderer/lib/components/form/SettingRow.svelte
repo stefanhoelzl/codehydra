@@ -24,6 +24,10 @@
   }
 
   const { section, renderItem, onReset, onRowAction }: Props = $props();
+
+  /** Help panel (fields/front-matter reference) starts collapsed. */
+  let helpOpen = $state(false);
+  const helpId = $derived(`${section.fields[0]?.id ?? section.label}-help`);
 </script>
 
 <div class="setting-row" style={section.indent ? `padding-left: ${section.indent}rem` : undefined}>
@@ -34,11 +38,13 @@
         <span class="setting-badge">{section.badge}</span>
       {/if}
     </div>
-    <div class="setting-controls">
-      {#each section.fields as field, index (field.id + index)}
-        {@render renderItem(field)}
-      {/each}
-    </div>
+    {#if !section.helpPanel}
+      <div class="setting-controls">
+        {#each section.fields as field, index (field.id + index)}
+          {@render renderItem(field)}
+        {/each}
+      </div>
+    {/if}
     {#if section.action}
       <button type="button" class="setting-action" onclick={onRowAction}>
         {#if section.action.icon}
@@ -59,6 +65,31 @@
       <Icon name="discard" size={14} />
     </button>
   </div>
+  {#if section.helpPanel}
+    <!-- Full-width editor below the label, with the fields/front-matter
+         reference collapsed behind a toggle beneath the textarea. -->
+    <div class="setting-editor">
+      <div class="setting-controls">
+        {#each section.fields as field, index (field.id + index)}
+          {@render renderItem(field)}
+        {/each}
+      </div>
+      <button
+        type="button"
+        class="setting-help-toggle"
+        aria-expanded={helpOpen}
+        aria-controls={helpId}
+        onclick={() => (helpOpen = !helpOpen)}
+      >
+        <Icon name={helpOpen ? "chevron-down" : "chevron-right"} size={14} />
+        <Icon name="question" size={14} />
+        <span>{section.helpLabel ?? "Reference"}</span>
+      </button>
+      {#if helpOpen}
+        <pre id={helpId} class="setting-help">{section.helpPanel}</pre>
+      {/if}
+    </div>
+  {/if}
   {#if section.description}
     <p class="setting-description">{section.description}</p>
   {/if}
@@ -90,6 +121,59 @@
     gap: 1rem;
   }
 
+  /* Editor stacked above its help panel, spanning the full row width below the
+     label. */
+  .setting-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .setting-editor .setting-controls {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Disclosure toggle for the reference panel, sitting under the textarea. */
+  .setting-help-toggle {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 2px 6px;
+    font-size: 0.8rem;
+    color: var(--ch-foreground-dim, rgba(255, 255, 255, 0.7));
+    background: transparent;
+    border: none;
+    border-radius: var(--ch-radius-sm, 6px);
+    cursor: pointer;
+  }
+
+  .setting-help-toggle:hover {
+    color: var(--ch-foreground);
+    background: var(--ch-list-hover-bg, rgba(255, 255, 255, 0.08));
+  }
+
+  /* Reference text (available fields, output keys, example) below the editor. */
+  .setting-help {
+    width: 100%;
+    min-width: 0;
+    max-height: 40vh;
+    margin: 0;
+    padding: 0.5rem;
+    overflow: auto;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--ch-foreground-dim, rgba(255, 255, 255, 0.7));
+    background: var(--ch-list-hover-bg, rgba(255, 255, 255, 0.04));
+    border: 1px solid var(--ch-border);
+    border-radius: var(--ch-radius-sm, 6px);
+  }
+
   .setting-label-cell {
     flex: 0 0 40%;
     display: flex;
@@ -101,6 +185,13 @@
   .setting-label {
     font-weight: 500;
     overflow-wrap: anywhere;
+  }
+
+  /* Help rows render the editor on its own full-width line below, so their
+     label row has no control column — let the label span it (keeping the reset
+     button pinned right). */
+  .setting-main:not(:has(.setting-controls)) .setting-label-cell {
+    flex: 1 1 auto;
   }
 
   /* Source badge (env / cli): a small muted tag. */
