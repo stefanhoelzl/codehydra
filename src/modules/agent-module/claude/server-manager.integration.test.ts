@@ -1399,30 +1399,111 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "none"]);
     });
 
-    it("stale sub-agent IDs from previous turn do not block next Stop", async () => {
+    it("orphaned sub-agent (SubagentStop never fires) stays busy until a terminal hook clears it", async () => {
+      // Deliberate trade-off: UserPromptSubmit no longer clears sub-agent tracking
+      // (that dropped still-running background sub-agents). Claude Code pairs
+      // SubagentStart/SubagentStop reliably, so a missing SubagentStop is a crash —
+      // rare — and is cleared by the terminal hooks rather than a timeout reaper.
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
         statusChanges.push(status);
       });
 
-      // Turn 1: sub-agent spawned but SubagentStop never fires (e.g., sub-agent crashes)
+      // Sub-agent spawned but SubagentStop never fires (e.g., sub-agent crashes).
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "SubagentStart", {
         workspacePath: "/workspace/feature-a",
         agent_id: "sub-orphan",
       });
-      // idle_prompt while a sub-agent is still tracked stays busy (Gap 1 guard),
-      // so an orphaned sub-agent keeps the workspace busy until the next turn.
-      await sendHook(port, "Notification", {
-        workspacePath: "/workspace/feature-a",
-        notification_type: "idle_prompt",
-      });
 
+      // The orphan keeps the workspace busy — Stop is suppressed and a new prompt
+      // no longer clears it.
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
       expect(lastStatus(statusChanges)).toBe("busy");
 
-      // Turn 2: UserPromptSubmit clears the orphan, so Stop goes idle normally
+      // A terminal hook (workspace close) clears the orphan.
+      serverManager.triggerWrapperLifecycle("/workspace/feature-a", "WrapperEnd");
+      expect(lastStatus(statusChanges)).toBe("none");
+    });
+
+    it("concurrent sub-agents: UserPromptSubmit mid-run does not drop still-running sub-agents", async () => {
+      // Reproduces the real 2026-07-07 trace: 3 background sub-agents spawned, one
+      // finishes and the main agent resumes (UserPromptSubmit) then Stops while the
+      // other two are still running. The workspace must stay busy until the last
+      // SubagentStop, not blip to idle when the resume-prompt arrives.
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      for (const id of ["sub-1", "sub-2", "sub-3"]) {
+        await sendHook(port, "SubagentStart", {
+          workspacePath: "/workspace/feature-a",
+          agent_id: id,
+        });
+      }
+      // Main agent goes quiet with 3 sub-agents running (Stop suppressed).
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // First sub-agent finishes; main agent resumes to consume its result, then Stops.
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+      // Two sub-agents still running — must NOT go idle here (the reported bug).
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // Remaining sub-agents finish; main agent resumes and finishes → real idle.
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-2",
+      });
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-3",
+      });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+
+      // Single clean idle transition — no premature blip while sub-agents ran.
+      expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("single sub-agent: UserPromptSubmit between start and stop keeps workspace busy", async () => {
+      // A UserPromptSubmit landing while one sub-agent is still running (the main
+      // agent resumed) must not drop it and let the following Stop go idle.
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      // Interleaved resume-prompt while the sub-agent is still running.
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // Sub-agent finishes, main agent resumes and finishes → idle.
+      await sendHook(port, "SubagentStop", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "Stop", { workspacePath: "/workspace/feature-a" });
 
