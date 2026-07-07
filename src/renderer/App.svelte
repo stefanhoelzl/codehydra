@@ -32,6 +32,7 @@
   import { getFocusables } from "$lib/utils/focus-trap";
   import MainView from "$lib/components/MainView.svelte";
   import DialogHost from "$lib/components/DialogHost.svelte";
+  import ErrorBoundary from "$lib/components/ErrorBoundary.svelte";
 
   const logger = createLogger("ui");
 
@@ -142,7 +143,11 @@
     <div class="initializing-container" aria-busy="true"></div>
   {:else if ui !== null}
     <div class="main-view-container">
-      <MainView {ui} />
+      <!-- Wall off the main workspace UI: a render/effect throw here degrades to
+           a fallback + telemetry instead of escaping to the crash guard. -->
+      <ErrorBoundary label="main-view">
+        <MainView {ui} />
+      </ErrorBoundary>
     </div>
   {/if}
 
