@@ -20,11 +20,16 @@
  *     composition root shows the native "Startup Failed" box and quits — the
  *     rejection is caught there, so it never surfaces as an uncaughtException.
  * - app:start / init (after "ui-ready"): subscribe the UI renderer crash guard
- *     on the UI view. An uncaught exception in the UI renderer (e.g. a Svelte
- *     effect loop killing the effect runtime) bricks the UI silently, so:
- *     uncaught exception / render-process-gone → log; report (if telemetry on);
- *       show a quit-only native dialog (the UI itself can't be trusted to
- *       render anything), then dispatch app:shutdown.
+ *     on the UI view.
+ *     render-process-gone → log; report (if telemetry on); show a quit-only
+ *       native dialog, then dispatch app:shutdown. The renderer PROCESS is dead
+ *       and can't re-bootstrap mid-session — the only truly unrecoverable
+ *       signal, so a restart is the only recovery.
+ *     uncaught exception → log; report (if telemetry on); NO dialog. Unlike
+ *       render-process-gone the renderer process is still alive and the DOM is
+ *       intact, so a single mid-session throw (e.g. a transient reactive
+ *       teardown error) usually recovers — force-quitting the whole app is a
+ *       worse outcome than surviving it. Treated like a rejection.
  *     unhandled rejection → log; report (if telemetry on); no dialog —
  *       rejections rarely brick the UI and may even be handled later.
  *     unresponsive → log only.
@@ -361,12 +366,17 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
 
     deps.viewLayer.onUncaughtException(uiViewHandle, (details) => {
       const error = toUiError(details);
+      // Neither an uncaught exception nor a rejection is fatal: the renderer
+      // process is still alive (unlike render-process-gone) and a single throw
+      // typically doesn't brick the UI. Log + report both, never force-quit.
+      // Only render-process-gone routes to handleUiCrash (below).
       if (details.isPromiseRejection) {
         deps.logger.error("Unhandled promise rejection in UI renderer", {}, error);
         reportUiError(error, "ui-renderer-rejection");
         return;
       }
-      handleUiCrash(error, "ui-renderer-exception");
+      deps.logger.error("Uncaught exception in UI renderer", {}, error);
+      reportUiError(error, "ui-renderer-exception");
     });
 
     deps.viewLayer.onRenderProcessGone(uiViewHandle, ({ reason, exitCode }) => {
