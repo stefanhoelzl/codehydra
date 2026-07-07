@@ -568,7 +568,7 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle"]);
     });
 
-    it("PreToolUse does not change status without prior PermissionRequest", async () => {
+    it("PreToolUse while busy does not change status", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
       serverManager.onStatusChange("/workspace/feature-a", (status) => {
@@ -579,13 +579,37 @@ describe("ClaudeCodeServerManager integration", () => {
       await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
       await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
 
-      // PreToolUse without PermissionRequest should not change status
+      // PreToolUse mid-turn (already busy) should not change status
       await sendHook(port, "PreToolUse", {
         workspacePath: "/workspace/feature-a",
         tool_name: "bash",
       });
 
       // Status should remain busy
+      expect(statusChanges).toEqual(["idle", "busy"]);
+    });
+
+    it("PreToolUse transitions to busy when idle without UserPromptSubmit (bash-mode turn)", async () => {
+      // Claude Code's bash-mode ("!cmd") commands run a user-typed shell command
+      // without emitting UserPromptSubmit, so the ensuing agent turn never flips
+      // to busy. The first tool call the agent makes is our signal that it's
+      // working — it must transition the idle workspace to busy.
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Session is idle, waiting for the user; no UserPromptSubmit is sent.
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      // Agent runs a tool as part of a bash-mode-triggered turn.
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "bash",
+      });
+
       expect(statusChanges).toEqual(["idle", "busy"]);
     });
 
@@ -605,6 +629,41 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(lastStatus(statusChanges)).toBe("idle");
 
       // PreToolUse after PermissionRequest should transition to busy
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "bash",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
+    });
+
+    it("permission dialog: real hook ordering stays idle while pending, busy on approve", async () => {
+      // Mirrors the real Claude Code ordering observed in the bridge logs, which
+      // differs from the simplified test above:
+      //   PreToolUse (busy, pre-dialog) → no change
+      //   PermissionRequest             → idle  (dialog shown)
+      //   PreToolUse (idle, on approve) → busy  (tool runs)
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      // Tool wants to run — PreToolUse fires first, while still busy (no change).
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "bash",
+      });
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // Dialog appears → idle while it waits for the user.
+      await sendHook(port, "PermissionRequest", { workspacePath: "/workspace/feature-a" });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      // User approves → the tool runs, PreToolUse fires again → busy.
       await sendHook(port, "PreToolUse", {
         workspacePath: "/workspace/feature-a",
         tool_name: "bash",
