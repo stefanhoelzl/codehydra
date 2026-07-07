@@ -121,6 +121,22 @@ jobs:
         shell: bash
         run: npm install -g npm@latest
 
+      - name: Locate Visual Studio for VS Code's toolchain check
+        # VS Code's lib/vscode/build/npm/preinstall.ts only recognizes VS
+        # 2022/2019 and aborts ("Invalid C/C++ Compiler Toolchain") on newer
+        # editions. Its env override (`vs2022_install`) is validated with a bare
+        # fs.existsSync, so pointing it at the VS actually installed on the
+        # runner (2026 on this image) satisfies the check. node-gyp does its own
+        # detection (npm >= 11.6.3) and compiles with whatever VS is present.
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsPath) { $vsPath = & $vswhere -latest -property installationPath }
+          if (-not $vsPath) { Write-Error "No Visual Studio with C++ tools found on the runner"; exit 1 }
+          Write-Host "Using Visual Studio at: $vsPath"
+          "vs2022_install=$vsPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       # code-server's scripts (ci/lib.sh, build-vscode.sh, build-release.sh) are
       # bash and call rsync / quilt / jq. Provide them via MSYS2. `path-type:
       # inherit` keeps the Windows Node.js + MSVC toolchain on PATH for node-gyp.
