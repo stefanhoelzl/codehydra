@@ -183,20 +183,39 @@ simply have higher z-index than the frames container.
 
 Services are pure Node.js for testability without Electron:
 
-| Service                  | Responsibility                                                  | Status      |
-| ------------------------ | --------------------------------------------------------------- | ----------- |
-| Git Worktree Provider    | Discover worktrees (not main dir), create, remove               | Implemented |
-| Code-Server Manager      | Start/stop code-server, port management                         | Implemented |
-| Project Store            | Persist open projects across sessions                           | Implemented |
-| OpenCode Server Manager  | Spawn/manage one `opencode serve` per workspace                 | Implemented |
-| OpenCode Status Provider | SSE connections, status aggregation                             | Implemented |
-| VS Code Setup Service    | First-run extension and config installation                     | Implemented |
-| KeepFiles Service        | Copy gitignored files from project root to new workspaces       | Implemented |
-| NetworkLayer             | HTTP, SSE, port operations (HttpClient, SseClient, PortManager) | Implemented |
-| PluginServer             | Socket.IO server for VS Code extension communication            | Implemented |
-| McpServerManager         | MCP server for AI agent workspace API access                    | Implemented |
-| PosthogModule            | PostHog analytics for DAU, version, platform, errors            | Implemented |
-| AutoUpdater              | Check for updates daily, apply on quit (electron-updater)       | Implemented |
+| Service                      | Responsibility                                                                                     | Status      |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- | ----------- |
+| Git Worktree Provider        | Discover worktrees (not main dir), create, remove                                                  | Implemented |
+| IDE Server (IdeServerModule) | Download/start/stop the embedded IDE server + per-workspace files, behind the `IdeServer` boundary | Implemented |
+| Project Store                | Persist open projects across sessions                                                              | Implemented |
+| OpenCode Server Manager      | Spawn/manage one `opencode serve` per workspace                                                    | Implemented |
+| OpenCode Status Provider     | SSE connections, status aggregation                                                                | Implemented |
+| VS Code Setup Service        | First-run extension and config installation                                                        | Implemented |
+| KeepFiles Service            | Copy gitignored files from project root to new workspaces                                          | Implemented |
+| NetworkLayer                 | HTTP, SSE, port operations (HttpClient, SseClient, PortManager)                                    | Implemented |
+| PluginServer                 | Socket.IO server for VS Code extension communication                                               | Implemented |
+| McpServerManager             | MCP server for AI agent workspace API access                                                       | Implemented |
+| PosthogModule                | PostHog analytics for DAU, version, platform, errors                                               | Implemented |
+| AutoUpdater                  | Check for updates daily, apply on quit (electron-updater)                                          | Implemented |
+
+### IDE Server boundary
+
+The embedded browser IDE that renders inside each workspace iframe is abstracted
+behind the **`IdeServer`** boundary (`src/modules/ide-server-module/`). The
+generic `IdeServerModule` owns the distribution-agnostic lifecycle — download,
+spawn, health-poll, resume, extension install, and per-workspace
+`.code-workspace` files — and delegates every distribution-specific fact
+(download coordinates, serve args, readiness probe, folder/workspace URL scheme,
+remote-cli invocation, node path) to a per-distribution descriptor.
+
+Two implementations ship: **code-server** (default) and **VSCodium reh-web**,
+selected via the `ide-server` config key. code-server is Coder's build (Open
+VSX, a CodeHydra-maintained Windows fork); VSCodium is the official reh-web build
+(Open VSX, first-class Windows). Each runs on its own fixed port (25448 / 25449) so it keeps a distinct IndexedDB origin. The `code`/`ch-*` terminal
+wrapper scripts are fully distribution-agnostic: the module passes the
+descriptor's concrete remote-cli/node paths as env vars
+(`_CH_IDE_REMOTE_CLI`, `_CH_IDE_NODE`), so adding a new distribution touches only
+its descriptor.
 
 ### Workspace Cleanup
 
@@ -1205,7 +1224,7 @@ Binary versions are defined in `src/services/binary-download/versions.ts`:
 | Linux (arm64) | coder/code-server (tar.gz)   | sst/opencode (tar.gz) |
 | Windows (x64) | stefanhoelzl/codehydra (zip) | sst/opencode (tar.gz) |
 
-**Windows Note**: code-server doesn't publish Windows binaries, so CodeHydra builds and publishes them via GitHub Actions (see `.github/workflows/build-code-server-windows.yaml`).
+**Windows Note**: code-server doesn't publish Windows binaries; the pinned version's Windows build is served from a GitHub release in this repo (the auto-build workflows have been removed — see `docs/RELEASE.md`). For a maintained Windows path, select VSCodium (`ide-server: vscodium`), whose official reh-web build ships Windows binaries.
 
 ## VS Code Setup
 
@@ -1539,7 +1558,7 @@ User: Click [+], fill dialog, click OK
   → OpenWorkspaceOperation runs hook points:
       → "create": GitWorktreeWorkspaceModule creates git worktree
       → "setup": KeepFilesModule copies .keepfiles, AgentModule starts agent server
-      → "finalize": CodeServerModule creates .code-workspace file
+      → "finalize": IdeServerModule creates .code-workspace file
   → Operation dispatches workspace:switch to activate the new workspace
   → Emits workspace:created domain event → UiIpcModule → sendToUI → Renderer
 ```

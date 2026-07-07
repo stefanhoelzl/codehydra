@@ -267,7 +267,7 @@ Code change involves external system interface?
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |
 | Module is pure utility function               | Focused test (no entry point)      | generateProjectId, normalizeMetadataKey     |
 | New operation                                 | Operation tests + module tests     | CreateWorkspaceOperation, AppStartOperation |
-| New hook module                               | Module tests (integration tests)   | KeepFilesModule, CodeServerModule           |
+| New hook module                               | Module tests (integration tests)   | KeepFilesModule, IdeServerModule            |
 
 ---
 

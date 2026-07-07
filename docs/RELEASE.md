@@ -141,51 +141,15 @@ The pending publisher automatically converts to a regular publisher on first suc
 
 ---
 
-## code-server Windows Builds
+## code-server Windows Builds (removed)
 
-code-server doesn't publish Windows binaries. CodeHydra automatically builds and publishes Windows versions via GitHub Actions.
+code-server doesn't publish Windows binaries, so CodeHydra historically built and
+published them via GitHub Actions. Those workflows
+(`build-code-server-windows.yaml`, `check-code-server-releases.yaml`) have been
+**removed**. The currently pinned code-server version's Windows build is already
+published as a GitHub release in this repo (tag `code-server-windows-v{version}`),
+and Windows now has a first-class path via **VSCodium** (`ide-server: vscodium`),
+whose official reh-web build ships Windows binaries directly.
 
-### Release Naming Convention
-
-| Item           | Format                                | Example                             |
-| -------------- | ------------------------------------- | ----------------------------------- |
-| Git tag        | `code-server-windows-v{version}`      | `code-server-windows-v4.106.3`      |
-| Release title  | `code-server {version} for Windows`   | `code-server 4.106.3 for Windows`   |
-| Asset filename | `code-server-{version}-win32-x64.zip` | `code-server-4.106.3-win32-x64.zip` |
-
-### Automation
-
-- **Daily check**: `check-code-server-releases.yaml` runs at 6 AM UTC
-- **Build trigger**: Automatically triggers builds for missing versions (>= 4.106.3)
-- **Releases**: Published to GitHub Releases in this repository
-
-### Package Layout
-
-Matches official Linux/macOS releases:
-
-```
-code-server-{version}-win32-x64/
-├── bin/
-│   └── code-server.cmd       # Windows launcher script
-├── lib/
-│   ├── node.exe              # Bundled Node.js (downloaded for Windows)
-│   └── vscode/               # VS Code distribution
-├── out/
-│   └── node/
-│       └── entry.js          # Main entry point
-├── package.json
-├── LICENSE                   # MIT license from code-server
-└── ThirdPartyNotices.txt     # Third-party licenses
-```
-
-### Manual Triggering
-
-Both workflows support manual dispatch:
-
-```bash
-# Build a specific version (dry run for testing)
-gh workflow run build-code-server-windows.yaml -f version="4.106.3" -f dry_run=true
-
-# Check for missing versions (dry run)
-gh workflow run check-code-server-releases.yaml -f dry_run=true
-```
+If a new code-server Windows version is ever required, it must be built manually,
+or `version.code-server` kept at an already-published build.

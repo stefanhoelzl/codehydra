@@ -490,13 +490,13 @@ The `open-workspace` operation uses these hook modules:
 
 - **create**: WorktreeModule (creates git worktree, or populates context from `existingWorkspace` data when activating discovered workspaces)
 - **setup**: KeepFilesModule (copies .keepfiles), AgentModule (starts agent server) -- both best-effort with internal try/catch
-- **finalize**: CodeServerModule (creates .code-workspace file)
+- **finalize**: IdeServerModule (creates .code-workspace file)
 
 The `delete-workspace` operation uses these hook modules:
 
 - **shutdown**: ViewModule (switch active workspace + destroy view), AgentModule (kill terminals, stop server, clear MCP/TUI tracking)
 - **release**: WindowsLockModule (detect + kill/close blocking processes) -- Windows-only, skipped in force mode. Skipped when `removeWorktree` is false.
-- **delete**: WorktreeModule (remove git worktree), CodeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
+- **delete**: WorktreeModule (remove git worktree), IdeServerModule (delete .code-workspace file). Skipped when `removeWorktree` is false.
 
 The delete operation uses an `IdempotencyInterceptor` to prevent duplicate deletions of the same workspace. Force mode (`force: true`) bypasses the interceptor and wraps hook errors in try/catch. The `workspace:deleted` domain event triggers StateModule (removes workspace from state), the presenter (drops the row from the next `UiState` snapshot), and clears the idempotency flag. When `removeWorktree` is false, only the shutdown hooks run (runtime teardown without deleting the git worktree).
 
@@ -594,7 +594,7 @@ index.ts (composition root)
               +-- "check-deps" (binary/extension checks -> app:setup if needed)
               |
               +-- "start" hook point (servers, wiring)
-              |     PluginServerModule -> CodeServerModule -> AgentModules,
+              |     PluginServerModule -> IdeServerModule -> AgentModules,
               |     TelemetryModule, AutoUpdaterModule, McpModule, etc.
               |
               +-- Renderer notified -> ready
