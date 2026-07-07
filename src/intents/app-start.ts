@@ -128,6 +128,27 @@ export interface ShowUIHookResult {
   readonly retrySupported?: boolean;
 }
 
+/** The app:start hook point that runs when startup fails fatally. */
+export const APP_START_ERROR_HOOK = "error" as const;
+
+/**
+ * The startup phase in which a fatal error occurred. Mirrors the hook-point
+ * sequence, plus "setup" for the app:setup sub-operation region. Attached to the
+ * startup failure report so a crash can be attributed to a phase.
+ */
+export type AppStartPhase = "before-ready" | "init" | "show-ui" | "check-deps" | "setup" | "start";
+
+/**
+ * Input context for the "error" hook point. Carries the fatal error and the
+ * phase it occurred in. Run inside execute()'s catch — awaited, so a handler can
+ * report + flush — before the operation re-throws to the composition root, which
+ * shows the native failure box and quits.
+ */
+export interface AppStartErrorHookContext extends HookContext {
+  readonly error: Error;
+  readonly phase: AppStartPhase;
+}
+
 // ActivateHookContext removed — ports are now read from capabilities within the "start" hook point.
 
 /** Merged check results produced by runChecks(). */
@@ -159,105 +180,134 @@ export class AppStartOperation implements Operation<AppStartIntent, void> {
       intent: ctx.intent,
     };
 
-    // --- Hook 1: "before-ready" (pre-ready) ---
-    // Script declarations, noAsar, data paths, electron flags. All independent.
-    const { results: configResults, errors: configErrors } =
-      await ctx.hooks.collect<ConfigureResult>("before-ready", hookCtx);
-    throwHookErrors(configErrors, "app:start before-ready hooks failed");
-    const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
+    // Track the current phase so a fatal failure can be attributed to it in the
+    // startup report (crash_source: "startup"). The catch runs the "error" hook —
+    // awaited, so its handler can capture + flush — before re-throwing to the
+    // composition root, which shows the native failure box and quits.
+    let phase: AppStartPhase = "before-ready";
+    try {
+      // --- Hook 1: "before-ready" (pre-ready) ---
+      // Script declarations, noAsar, data paths, electron flags. All independent.
+      phase = "before-ready";
+      const { results: configResults, errors: configErrors } =
+        await ctx.hooks.collect<ConfigureResult>("before-ready", hookCtx);
+      throwHookErrors(configErrors, "app:start before-ready hooks failed");
+      const requiredScripts = configResults.flatMap((r) => r.scripts ?? []);
 
-    // --- Hook 2: "init" ---
-    // Electron lifecycle module provides "app-ready" capability after whenReady().
-    // Handlers needing Electron declare requires: { "app-ready": ANY_VALUE }.
-    // Receives requiredScripts from before-ready results.
-    const initCtx: InitHookContext = { ...hookCtx, requiredScripts };
-    const { results: initResults, errors: initErrors } = await ctx.hooks.collect<InitResult>(
-      "init",
-      initCtx
-    );
-    throwHookErrors(initErrors, "app:start init hooks failed");
+      // --- Hook 2: "init" ---
+      // Electron lifecycle module provides "app-ready" capability after whenReady().
+      // Handlers needing Electron declare requires: { "app-ready": ANY_VALUE }.
+      // Receives requiredScripts from before-ready results.
+      phase = "init";
+      const initCtx: InitHookContext = { ...hookCtx, requiredScripts };
+      const { results: initResults, errors: initErrors } = await ctx.hooks.collect<InitResult>(
+        "init",
+        initCtx
+      );
+      throwHookErrors(initErrors, "app:start init hooks failed");
 
-    // Extract extensionRequirements from init results
-    const extensionRequirements: ExtensionRequirement[] = [];
-    for (const result of initResults) {
-      if (result.extensionRequirements) extensionRequirements.push(...result.extensionRequirements);
-    }
+      // Extract extensionRequirements from init results
+      const extensionRequirements: ExtensionRequirement[] = [];
+      for (const result of initResults) {
+        if (result.extensionRequirements)
+          extensionRequirements.push(...result.extensionRequirements);
+      }
 
-    // On first run (no config.json yet) the agent is treated as "not chosen":
-    // null defers binary checks and drives needsAgentSelection, exactly as a null
-    // agent value used to. Once configured, the real (non-null) agent is used.
-    const configuredAgent: ConfigAgentType | null = this.wasConfigured()
-      ? this.agentConfig.get()
-      : null;
+      // On first run (no config.json yet) the agent is treated as "not chosen":
+      // null defers binary checks and drives needsAgentSelection, exactly as a null
+      // agent value used to. Once configured, the real (non-null) agent is used.
+      const configuredAgent: ConfigAgentType | null = this.wasConfigured()
+        ? this.agentConfig.get()
+        : null;
 
-    // Hook 3: "show-ui" -- Show starting screen; learn whether a retry loop is supported.
-    const { results: showUiResults, errors: showUiErrors } =
-      await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
-    throwHookErrors(showUiErrors, "app:start show-ui hooks failed");
-    const retrySupported = showUiResults.some((r) => r.retrySupported === true);
+      // Hook 3: "show-ui" -- Show starting screen; learn whether a retry loop is supported.
+      phase = "show-ui";
+      const { results: showUiResults, errors: showUiErrors } =
+        await ctx.hooks.collect<ShowUIHookResult>("show-ui", hookCtx);
+      throwHookErrors(showUiErrors, "app:start show-ui hooks failed");
+      const retrySupported = showUiResults.some((r) => r.retrySupported === true);
 
-    // Hook 4: "check-deps" (collect, isolated contexts)
-    let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
+      // Hook 4: "check-deps" (collect, isolated contexts)
+      phase = "check-deps";
+      let checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
 
-    // Dispatch app:setup if needed (blocking sub-operation)
-    // Setup manages its own UI (shows/hides setup screen)
-    // Retry loop: if setup fails and retry is supported, wait via the await-retry hook
-    if (checkResult.needsSetup) {
-      let setupComplete = false;
-      while (!setupComplete) {
-        try {
-          await ctx.dispatch({
-            type: INTENT_SETUP,
-            payload: {
-              needsAgentSelection: checkResult.needsAgentSelection,
-              needsBinaryDownload: checkResult.needsBinaryDownload,
-              missingBinaries: checkResult.missingBinaries,
-              needsExtensions: checkResult.needsExtensions,
-              extensionInstallPlan: checkResult.extensionInstallPlan,
-              configuredAgent: checkResult.configuredAgent,
-            },
-          });
-          setupComplete = true;
-        } catch (error) {
-          // Setup failed -- error event already emitted by SetupOperation
-          // If retry is supported, wait for user to click retry. The "await-retry"
-          // hook point blocks (host-side, in the UI handler) until the user clicks
-          // Retry and returns data — no closure crosses the hook contract.
-          if (retrySupported) {
-            const { errors: retryErrors } = await ctx.hooks.collect<void>("await-retry", hookCtx);
-            throwHookErrors(retryErrors, "app:start await-retry hooks failed");
-            // Re-run check hooks to get fresh preflight state for retry
-            checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
-            if (!checkResult.needsSetup) {
-              setupComplete = true;
+      // Dispatch app:setup if needed (blocking sub-operation)
+      // Setup manages its own UI (shows/hides setup screen)
+      // Retry loop: if setup fails and retry is supported, wait via the await-retry hook
+      if (checkResult.needsSetup) {
+        phase = "setup";
+        let setupComplete = false;
+        while (!setupComplete) {
+          try {
+            await ctx.dispatch({
+              type: INTENT_SETUP,
+              payload: {
+                needsAgentSelection: checkResult.needsAgentSelection,
+                needsBinaryDownload: checkResult.needsBinaryDownload,
+                missingBinaries: checkResult.missingBinaries,
+                needsExtensions: checkResult.needsExtensions,
+                extensionInstallPlan: checkResult.extensionInstallPlan,
+                configuredAgent: checkResult.configuredAgent,
+              },
+            });
+            setupComplete = true;
+          } catch (setupError) {
+            // Setup failed -- error event already emitted by SetupOperation
+            // If retry is supported, wait for user to click retry. The "await-retry"
+            // hook point blocks (host-side, in the UI handler) until the user clicks
+            // Retry and returns data — no closure crosses the hook contract.
+            if (retrySupported) {
+              const { errors: retryErrors } = await ctx.hooks.collect<void>("await-retry", hookCtx);
+              throwHookErrors(retryErrors, "app:start await-retry hooks failed");
+              // Re-run check hooks to get fresh preflight state for retry
+              checkResult = await this.runChecks(ctx, configuredAgent, extensionRequirements);
+              if (!checkResult.needsSetup) {
+                setupComplete = true;
+              }
+              // Otherwise loop continues to retry app:setup
+            } else {
+              // No retry support -- propagate the error with original cause
+              throw new Error("Setup failed and no retry mechanism available", {
+                cause: setupError,
+              });
             }
-            // Otherwise loop continues to retry app:setup
-          } else {
-            // No retry support -- propagate the error with original cause
-            throw new Error("Setup failed and no retry mechanism available", { cause: error });
           }
         }
       }
+
+      // Hook 5: "start" -- Start servers, wire callbacks, mount renderer
+      // Handlers that need ports (mcpPort, codeServerPort) declare `requires` and
+      // read from ctx.capabilities. Capability-based ordering replaces the former
+      // separate "activate" hook point.
+      phase = "start";
+      const { errors: startErrors } = await ctx.hooks.collect<void>("start", hookCtx);
+      throwHookErrors(startErrors, "app:start start hooks failed");
+
+      // After all start handlers (code-server included) are up, load initial projects.
+      // Fire-and-forget: the snapshot stream carries the result, so startup must not
+      // block on projects finishing. (Operation owns this dispatch; the presentation
+      // start handler only advances the UI phase.)
+      const readyHandle = ctx.dispatch<AppReadyIntent>({
+        type: INTENT_APP_READY,
+        payload: {},
+      });
+      void readyHandle.catch(() => {
+        // app:ready failures surface via its own events/logging; don't fail startup.
+      });
+    } catch (error) {
+      // Fatal startup failure. Run the "error" hook so the failure is captured and
+      // flushed (hook collection is awaited, unlike fire-and-forget events) before
+      // we re-throw. collect() never throws — it swallows handler errors — so the
+      // ORIGINAL error is what propagates, leaving the composition root's native
+      // box + app.quit path unchanged.
+      const errorCtx: AppStartErrorHookContext = {
+        intent: ctx.intent,
+        error: error instanceof Error ? error : new Error(String(error)),
+        phase,
+      };
+      await ctx.hooks.collect(APP_START_ERROR_HOOK, errorCtx);
+      throw error;
     }
-
-    // Hook 5: "start" -- Start servers, wire callbacks, mount renderer
-    // Handlers that need ports (mcpPort, codeServerPort) declare `requires` and
-    // read from ctx.capabilities. Capability-based ordering replaces the former
-    // separate "activate" hook point.
-    const { errors: startErrors } = await ctx.hooks.collect<void>("start", hookCtx);
-    throwHookErrors(startErrors, "app:start start hooks failed");
-
-    // After all start handlers (code-server included) are up, load initial projects.
-    // Fire-and-forget: the snapshot stream carries the result, so startup must not
-    // block on projects finishing. (Operation owns this dispatch; the presentation
-    // start handler only advances the UI phase.)
-    const readyHandle = ctx.dispatch<AppReadyIntent>({
-      type: INTENT_APP_READY,
-      payload: {},
-    });
-    void readyHandle.catch(() => {
-      // app:ready failures surface via its own events/logging; don't fail startup.
-    });
   }
 
   /**

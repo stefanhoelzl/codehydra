@@ -980,7 +980,14 @@ void dispatcher
       error instanceof Error ? error : undefined
     );
 
-    dialogLayer.showErrorBox("Startup Failed", getErrorMessage(error));
+    // The app:start "error" hook has already captured + flushed a diagnostic
+    // report when telemetry is on (see error-report-module). Only tell the user a
+    // report was sent when it actually was — with telemetry off nothing left the
+    // machine, so we keep the bare message.
+    const message = telemetryEnabledConfig.get()
+      ? `${getErrorMessage(error)}\n\nA diagnostic report has been sent to the developers.`
+      : getErrorMessage(error);
+    dialogLayer.showErrorBox("Startup Failed", message);
 
     app.quit();
   });

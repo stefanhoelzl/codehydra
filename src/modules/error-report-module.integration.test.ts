@@ -15,8 +15,11 @@ import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
 import { createMinimalOperation } from "../intents/lib/operation.test-utils";
 import {
   APP_START_OPERATION_ID,
+  APP_START_ERROR_HOOK,
   INTENT_APP_START,
   type AppStartIntent,
+  type AppStartErrorHookContext,
+  type AppStartPhase,
 } from "../intents/app-start";
 import { EVENT_SHORTCUT_KEY_PRESSED, type ShortcutKeyPressedEvent } from "../intents/shortcut-key";
 import {
@@ -135,6 +138,20 @@ async function registerCrashHandlers(
     process.on = originalOn;
   }
   return handlers;
+}
+
+/** Run the app:start "error" hook with a fatal error + phase (as the operation does). */
+async function runStartupErrorHook(
+  module: ReturnType<typeof setup>["module"],
+  error: Error,
+  phase: AppStartPhase
+): Promise<void> {
+  const ctx: AppStartErrorHookContext = {
+    intent: { type: INTENT_APP_START, payload: {} } as AppStartIntent,
+    error,
+    phase,
+  };
+  await module.hooks![APP_START_OPERATION_ID]![APP_START_ERROR_HOOK]!.handler(ctx);
 }
 
 // =============================================================================
@@ -484,5 +501,41 @@ describe("ErrorReportModule — UI renderer crash guard", () => {
     s.viewLayer.$.triggerRenderProcessGone(s.uiViewHandle, { reason: "crashed", exitCode: 1 });
 
     expect(s.dialogBoundary._getState().messageBoxCount).toBe(1);
+  });
+});
+
+// =============================================================================
+// Startup failure report (app:start "error" hook)
+// =============================================================================
+
+describe("ErrorReportModule — startup failure report", () => {
+  it("reports crash_source:startup + phase with logs/config on a fatal startup failure", async () => {
+    const { module, boundary } = setup({
+      telemetryEnabled: true,
+      configOverrides: { "log.level": "debug" },
+    });
+
+    await runStartupErrorHook(module, new Error("Failed to start code-server"), "start");
+
+    const captured = boundary.$.capturedEvents.find((e) => e.event === "$exception");
+    expect(captured).toBeDefined();
+    expect(captured!.properties["crash_source"]).toBe("startup");
+    expect(captured!.properties["phase"]).toBe("start");
+    expect(captured!.properties["logs_format"]).toBe("gzip+base64");
+    expect(captured!.properties["config"]).toEqual({ "log.level": "debug" });
+    expect(captured!.properties["$exception_list"]).toEqual([
+      { type: "Error", value: "Failed to start code-server" },
+    ]);
+    // flushed (shutdown) so the report lands before the app quits
+    expect(boundary.$.shutdownCalled).toBe(true);
+  });
+
+  it("does NOT report when telemetry is off", async () => {
+    const { module, boundary } = setup({ telemetryEnabled: false });
+
+    await runStartupErrorHook(module, new Error("boom"), "start");
+
+    expect(boundary.$.capturedEvents).toHaveLength(0);
+    expect(boundary.$.shutdownCalled).toBe(false);
   });
 });
