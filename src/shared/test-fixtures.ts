@@ -137,9 +137,3 @@ export function createMockProject(
  */
 export const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
-
-// =============================================================================
-// API Mock Factory Defaults
-// Note: These are used by test-utils files that create mock APIs.
-// =============================================================================
-
