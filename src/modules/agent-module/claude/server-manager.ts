@@ -64,7 +64,12 @@ export interface WorkspaceState {
   noSessionMarkerPath?: Path;
   /** Flag: first WrapperStart should set status to busy (a non-empty initial prompt) */
   busyOnWrapperStart?: boolean;
-  /** Set of active sub-agent IDs (tracked via SubagentStart/SubagentStop) */
+  /**
+   * Active sub-agent IDs (tracked via SubagentStart/SubagentStop). Claude Code
+   * pairs these reliably by agent_id, so an entry is added on SubagentStart and
+   * removed on its matching SubagentStop. A sub-agent that never reports
+   * SubagentStop (a crash) is cleared by the terminal hooks (WrapperEnd/SessionEnd).
+   */
   activeSubagents: Set<string>;
   /** True when main agent has stopped but sub-agents are still running */
   mainAgentStopped?: boolean;
@@ -784,10 +789,13 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       state.mainAgentStopped = true;
       newStatus = null;
     } else if (hookName === "UserPromptSubmit") {
-      // New turn — clear stale sub-agent tracking. SubagentStop may never fire
-      // (e.g., sub-agent crashes), leaving orphan IDs that permanently block
-      // Stop → idle. Clearing here ensures each turn starts clean.
-      state.activeSubagents.clear();
+      // New user activity — the main agent is running again. Do NOT clear
+      // activeSubagents here: background sub-agents from the previous prompt may
+      // still be running, and UserPromptSubmit also fires when the main agent
+      // resumes to consume a background sub-agent result. Clearing on every
+      // prompt dropped still-live sub-agents and let a following Stop go idle
+      // prematurely. A sub-agent that never reports SubagentStop (a crash) is
+      // cleared by the terminal hooks (WrapperEnd/SessionEnd) instead.
       state.mainAgentStopped = false;
     }
 
