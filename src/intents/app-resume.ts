@@ -2,11 +2,11 @@
  * AppResumeOperation - Orchestrates recovery after system wake from sleep/hibernate.
  *
  * Single hook point:
- * - "resume" - Probe code-server health and restart it if the probe fails.
+ * - "resume" - Probe IDE server health and restart it if the probe fails.
  *              Handlers return a `ResumeHookResult` (data only, no closures):
- *              `{ restarted: true }` when a stale code-server was replaced, or
+ *              `{ restarted: true }` when a stale IDE server was replaced, or
  *              `{ failed: { error } }` when recovery failed. The operation turns
- *              those results into domain events — `code-server:restarted`
+ *              those results into domain events — `ide-server:restarted`
  *              (view-module reloads the workspace iframes whose connections to the
  *              replaced server are stale) and `app:resume-failed`.
  *
@@ -41,7 +41,7 @@ export const APP_RESUME_HOOK_RESUME = "resume";
  * domain events. Omit both fields (return void) when there was nothing to recover.
  */
 export interface ResumeHookResult {
-  /** A stale server was killed and a fresh one is now listening (→ code-server:restarted). */
+  /** A stale server was killed and a fresh one is now listening (→ ide-server:restarted). */
   readonly restarted?: boolean;
   /** Recovery failed; human-readable error for display (→ app:resume-failed). */
   readonly failed?: { readonly error: string };
@@ -66,18 +66,18 @@ export interface AppResumeFailedEvent extends DomainEvent {
 export const EVENT_APP_RESUME_FAILED = "app:resume-failed" as const;
 
 /**
- * Emitted by code-server-module after it kills and restarts code-server on
- * resume (the /healthz probe failed and a fresh process is now listening).
+ * Emitted by ide-server-module after it kills and restarts the IDE server on
+ * resume (the readiness probe failed and a fresh process is now listening).
  * view-module reacts by reloading all workspace iframes, whose connections to
- * the replaced server are stale — otherwise code-server shows its own "Reload"
- * dialog in each workspace.
+ * the replaced server are stale — otherwise the IDE server shows its own
+ * "Reload" dialog in each workspace.
  */
-export interface CodeServerRestartedEvent extends DomainEvent {
-  readonly type: typeof EVENT_CODE_SERVER_RESTARTED;
+export interface IdeServerRestartedEvent extends DomainEvent {
+  readonly type: typeof EVENT_IDE_SERVER_RESTARTED;
   readonly payload: Record<string, never>;
 }
 
-export const EVENT_CODE_SERVER_RESTARTED = "code-server:restarted" as const;
+export const EVENT_IDE_SERVER_RESTARTED = "ide-server:restarted" as const;
 
 // =============================================================================
 // Operation
@@ -93,7 +93,7 @@ export class AppResumeOperation implements Operation<AppResumeIntent, void> {
     // Turn handler outcomes into domain events (operation owns emits).
     for (const result of results) {
       if (result.restarted) {
-        await ctx.emit({ type: EVENT_CODE_SERVER_RESTARTED, payload: {} });
+        await ctx.emit({ type: EVENT_IDE_SERVER_RESTARTED, payload: {} });
       }
       if (result.failed) {
         await ctx.emit({

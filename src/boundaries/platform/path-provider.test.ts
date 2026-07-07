@@ -8,7 +8,7 @@ import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "../../utils/path/path";
-import { CODE_SERVER_VERSION } from "../../modules/code-server-module";
+import { CODE_SERVER_VERSION } from "../../modules/ide-server-module/code-server";
 import { OPENCODE_VERSION } from "../../modules/agent-module/opencode/setup-info";
 
 describe("createMockPathProvider", () => {

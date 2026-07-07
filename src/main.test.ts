@@ -12,7 +12,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { DefaultPathProvider } from "./boundaries/platform/path-provider";
 import { createMockBuildInfo } from "./boundaries/platform/build-info.test-utils";
 import { createMockPlatformInfo } from "./boundaries/platform/platform-info.test-utils";
-import { CODE_SERVER_VERSION, getCodeServerExecutablePath } from "./modules/code-server-module";
+import {
+  createCodeServerIdeServer,
+  CODE_SERVER_VERSION,
+} from "./modules/ide-server-module/code-server";
 import { OPENCODE_VERSION } from "./modules/agent-module/opencode/setup-info";
 import { Path } from "./utils/path/path";
 import type { PathProvider } from "./boundaries/platform/path-provider";
@@ -76,7 +79,7 @@ describe("Main process wiring", () => {
     ): TestCodeServerConfig {
       const codeServerBinaryPath = new Path(
         pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`),
-        getCodeServerExecutablePath(platform)
+        createCodeServerIdeServer().executablePath(platform)
       ).toNative();
 
       return {

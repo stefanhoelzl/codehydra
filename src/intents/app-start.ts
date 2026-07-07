@@ -45,7 +45,7 @@ export type { BinaryType } from "../utils/binary-resolution/types";
 // Extension Types (operation contract types for check-deps and setup hooks)
 // =============================================================================
 
-/** What the manifest declares — produced by extension-module, consumed by code-server-module. */
+/** What the manifest declares — produced by extension-module, consumed by ide-server-module. */
 export interface ExtensionRequirement {
   readonly id: string;
   readonly version: string;
@@ -53,7 +53,7 @@ export interface ExtensionRequirement {
   readonly vsixPath: string;
 }
 
-/** What needs to be installed — produced by code-server-module check-deps, consumed by setup. */
+/** What needs to be installed — produced by ide-server-module check-deps, consumed by setup. */
 export interface ExtensionInstallEntry {
   readonly id: string;
   readonly vsixPath: string;

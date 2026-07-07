@@ -24,11 +24,9 @@ import { DefaultArchiveExtractor } from "../src/boundaries/platform/archive-extr
 import { DefaultNetworkLayer } from "../src/boundaries/platform/network";
 import { DefaultFileSystemBoundary } from "../src/boundaries/platform/filesystem";
 import {
+  createCodeServerIdeServer,
   CODE_SERVER_VERSION,
-  getCodeServerUrl,
-  getCodeServerSubPath,
-  getCodeServerExecutablePath,
-} from "../src/modules/code-server-module";
+} from "../src/modules/ide-server-module/code-server";
 import {
   OPENCODE_VERSION,
   getOpencodeUrl,
@@ -172,13 +170,14 @@ async function main(): Promise<void> {
 
   // Download binaries to production paths
   console.log("Checking code-server...");
+  const ide = createCodeServerIdeServer();
   const codeServerRequest: DownloadRequest = {
-    name: "code-server",
-    url: getCodeServerUrl(platform, arch),
-    destDir: pathProvider.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toNative(),
+    name: ide.id,
+    url: ide.downloadUrl(platform, arch),
+    destDir: pathProvider.bundlePath(ide.bundleSubdir()).toNative(),
     archiveExtension: ".tar.gz",
-    executablePath: getCodeServerExecutablePath(platform),
-    subPath: getCodeServerSubPath(platform, arch),
+    executablePath: ide.executablePath(platform),
+    subPath: ide.archiveSubPath(platform, arch),
   };
   await downloadBinary(deps, codeServerRequest, CODE_SERVER_VERSION);
 

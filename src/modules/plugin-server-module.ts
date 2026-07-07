@@ -9,7 +9,7 @@
  * - VS Code UI event proxying (notifications, status bar, quick pick, input box)
  * - VS Code command execution
  *
- * Provides `pluginPort` capability for code-server-module.
+ * Provides `pluginPort` capability for ide-server-module.
  */
 
 import { Server, type Socket } from "socket.io";

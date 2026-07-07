@@ -7,49 +7,57 @@
  * so tests use processRunner/httpClient/portManager mocks directly.
  */
 
-import { createMockDispatcher } from "../intents/lib/dispatcher.test-utils";
+import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { delimiter, join } from "node:path";
 
-import type { Operation, OperationContext } from "../intents/lib/operation";
-import type { Intent } from "../intents/lib/types";
-import type { IntentModule } from "../intents/lib/module";
-import { createMinimalOperation } from "../intents/lib/operation.test-utils";
-import { APP_START_OPERATION_ID } from "../intents/app-start";
-import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import type { Operation, OperationContext } from "../../intents/lib/operation";
+import type { Intent } from "../../intents/lib/types";
+import type { IntentModule } from "../../intents/lib/module";
+import { createMinimalOperation } from "../../intents/lib/operation.test-utils";
+import { APP_START_OPERATION_ID } from "../../intents/app-start";
+import type {
+  CheckDepsHookContext,
+  CheckDepsResult,
+  ConfigureResult,
+} from "../../intents/app-start";
+import { APP_SHUTDOWN_OPERATION_ID } from "../../intents/app-shutdown";
 import {
   AppResumeOperation,
   INTENT_APP_RESUME,
   EVENT_APP_RESUMED,
   EVENT_APP_RESUME_FAILED,
-  EVENT_CODE_SERVER_RESTARTED,
-} from "../intents/app-resume";
-import type { DomainEvent } from "../intents/lib/types";
-import { SETUP_OPERATION_ID } from "../intents/setup";
-import type { BinaryHookInput, ExtensionsHookInput, SetupProgressPayload } from "../intents/setup";
-import { OPEN_WORKSPACE_OPERATION_ID } from "../intents/open-workspace";
-import type { FinalizeHookInput, OpenWorkspaceIntent } from "../intents/open-workspace";
-import { DELETE_WORKSPACE_OPERATION_ID } from "../intents/delete-workspace";
+  EVENT_IDE_SERVER_RESTARTED,
+} from "../../intents/app-resume";
+import type { DomainEvent } from "../../intents/lib/types";
+import { SETUP_OPERATION_ID } from "../../intents/setup";
+import type {
+  BinaryHookInput,
+  ExtensionsHookInput,
+  SetupProgressPayload,
+} from "../../intents/setup";
+import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
+import type { FinalizeHookInput, OpenWorkspaceIntent } from "../../intents/open-workspace";
+import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
 import type {
   DeleteWorkspaceIntent,
   DeletePipelineHookInput,
   DeleteHookResult,
-} from "../intents/delete-workspace";
-import { createCodeServerModule, type CodeServerModuleDeps } from "./code-server-module";
-import { createMockConfig } from "../boundaries/platform/config.test-utils";
-import type { ExtensionRequirement, ExtensionInstallEntry } from "../intents/app-start";
-import type { DirEntry } from "../boundaries/platform/filesystem";
+} from "../../intents/delete-workspace";
+import { createIdeServerModule, type IdeServerModuleDeps } from "./ide-server-module";
+import { createMockConfig } from "../../boundaries/platform/config.test-utils";
+import type { ExtensionRequirement, ExtensionInstallEntry } from "../../intents/app-start";
+import type { DirEntry } from "../../boundaries/platform/filesystem";
 import {
   createMockProcessRunner,
   type MockProcessRunner,
   type SpawnConfig,
-} from "../boundaries/platform/process.state-mock";
-import { createArchiveExtractorMock } from "../boundaries/platform/archive-extractor.state-mock";
-import { SILENT_LOGGER } from "../boundaries/platform/logging";
-import { Path } from "../utils/path/path";
-import { FileSystemError, SetupError } from "../shared/errors/service-errors";
-import type { ProjectId, WorkspaceName } from "../shared/api/types";
+} from "../../boundaries/platform/process.state-mock";
+import { createArchiveExtractorMock } from "../../boundaries/platform/archive-extractor.state-mock";
+import { SILENT_LOGGER } from "../../boundaries/platform/logging";
+import { Path } from "../../utils/path/path";
+import { FileSystemError, SetupError } from "../../shared/errors/service-errors";
+import type { ProjectId, WorkspaceName } from "../../shared/api/types";
 
 // =============================================================================
 // Minimal Test Operations
@@ -219,11 +227,11 @@ function defaultSpawnConfig(): SpawnConfig {
 }
 
 /** Access deps.processRunner as the state-mock for behavioral assertions. */
-function asMockRunner(deps: CodeServerModuleDeps): MockProcessRunner {
+function asMockRunner(deps: IdeServerModuleDeps): MockProcessRunner {
   return deps.processRunner as MockProcessRunner;
 }
 
-function createMockDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
+function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModuleDeps {
   return {
     processRunner: createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() }),
     httpClient: {
@@ -285,14 +293,14 @@ function createPluginPortProvider(port: number | null = null): IntentModule {
   };
 }
 
-function createTestSetup(mockDeps?: CodeServerModuleDeps, pluginPort: number | null = null) {
+function createTestSetup(mockDeps?: IdeServerModuleDeps, pluginPort: number | null = null) {
   const deps = mockDeps ?? createMockDeps();
   const dispatcher = createMockDispatcher();
 
   // Register pluginPort provider before code-server module so the capability is available
   dispatcher.registerModule(createPluginPortProvider(pluginPort));
 
-  const module = createCodeServerModule(deps);
+  const module = createIdeServerModule(deps);
   dispatcher.registerModule(module);
 
   return { deps, dispatcher };
@@ -581,7 +589,7 @@ describe("CodeServerModule", () => {
     }
 
     /** Create deps with additional fileSystemLayer methods needed by downloadBinary. */
-    function createDownloadDeps(overrides?: Partial<CodeServerModuleDeps>): CodeServerModuleDeps {
+    function createDownloadDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModuleDeps {
       const base = createMockDeps(overrides);
       // Add methods that downloadBinary needs but createMockDeps doesn't provide
       const fs = base.fileSystemLayer as Record<string, unknown>;
@@ -810,7 +818,7 @@ describe("CodeServerModule", () => {
       // Create single setup with both operations
       const dispatcher = createMockDispatcher();
       dispatcher.registerModule(createPluginPortProvider());
-      const module = createCodeServerModule(deps);
+      const module = createIdeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Register start operation and run it to set port
@@ -870,7 +878,7 @@ describe("CodeServerModule", () => {
 
       const dispatcher = createMockDispatcher();
       dispatcher.registerModule(createPluginPortProvider());
-      const module = createCodeServerModule(deps);
+      const module = createIdeServerModule(deps);
       dispatcher.registerModule(module);
 
       // Start to set port
@@ -1125,7 +1133,7 @@ describe("CodeServerModule", () => {
       expect(env._CH_PLUGIN_PORT).toBeUndefined();
     });
 
-    it("includes _CH_CODE_SERVER_DIR and _CH_OPENCODE_DIR", async () => {
+    it("includes _CH_IDE_SERVER_DIR and _CH_OPENCODE_DIR", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
@@ -1134,7 +1142,7 @@ describe("CodeServerModule", () => {
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string>;
-      expect(env._CH_CODE_SERVER_DIR).toContain("code-server");
+      expect(env._CH_IDE_SERVER_DIR).toContain("code-server");
       expect(env._CH_OPENCODE_DIR).toContain("opencode");
     });
   });
@@ -1201,7 +1209,7 @@ describe("CodeServerModule", () => {
 
   describe("app-resume probe + restart", () => {
     async function startCodeServer(
-      deps: CodeServerModuleDeps
+      deps: IdeServerModuleDeps
     ): Promise<{ dispatcher: ReturnType<typeof createTestSetup>["dispatcher"] }> {
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
@@ -1246,7 +1254,7 @@ describe("CodeServerModule", () => {
         fetch.mockResolvedValue({ status: 200 });
 
         const restartedEvents: DomainEvent[] = [];
-        dispatcher.subscribe(EVENT_CODE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
+        dispatcher.subscribe(EVENT_IDE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
 
         const resumePromise = dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
 
@@ -1264,7 +1272,7 @@ describe("CodeServerModule", () => {
       }
     });
 
-    it("does not emit code-server:restarted when the restart fails", async () => {
+    it("does not emit ide-server:restarted when the restart fails", async () => {
       vi.useFakeTimers();
 
       try {
@@ -1279,7 +1287,7 @@ describe("CodeServerModule", () => {
         const failureEvents: DomainEvent[] = [];
         const restartedEvents: DomainEvent[] = [];
         dispatcher.subscribe(EVENT_APP_RESUME_FAILED, (e) => failureEvents.push(e));
-        dispatcher.subscribe(EVENT_CODE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
+        dispatcher.subscribe(EVENT_IDE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
 
         const resumePromise = dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
         await vi.advanceTimersByTimeAsync(6000);
@@ -1302,7 +1310,7 @@ describe("CodeServerModule", () => {
       const resumedEvents: DomainEvent[] = [];
       const restartedEvents: DomainEvent[] = [];
       dispatcher.subscribe(EVENT_APP_RESUMED, (e) => resumedEvents.push(e));
-      dispatcher.subscribe(EVENT_CODE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
+      dispatcher.subscribe(EVENT_IDE_SERVER_RESTARTED, (e) => restartedEvents.push(e));
 
       await dispatcher.dispatch({ type: INTENT_APP_RESUME, payload: {} });
 
