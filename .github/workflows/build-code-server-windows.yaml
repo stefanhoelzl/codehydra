@@ -269,7 +269,29 @@ jobs:
           #    installs EVERY built-in extension's nested deps - including
           #    lib/vscode/extensions/git/node_modules/@vscode/fs-copyfile - and
           #    compiles native modules for win32.
-          npm ci
+          #
+          #    Native module builds on this Windows/MSYS2 runner are intermittently
+          #    flaky - a different native module fails each run (transient
+          #    0xC0000409 crashes, build-from-source 127s). Retry with a clean
+          #    slate between attempts; the install is deterministic once it lands.
+          attempt=1; max=3
+          until npm ci; do
+            if [ "$attempt" -ge "$max" ]; then
+              echo "::error::npm ci failed after $max attempts"; exit 1
+            fi
+            echo "::warning::npm ci failed (attempt $attempt/$max); cleaning node_modules and retrying"
+            # Remove the trees npm ci populates (keep lib/vscode/build/node_modules,
+            # the build tooling, and the tracked concurrency patch). Locks from a
+            # crashed process may linger briefly, so pause before retrying.
+            rm -rf node_modules \
+                   lib/vscode/node_modules \
+                   lib/vscode/extensions/node_modules \
+                   lib/vscode/extensions/*/node_modules \
+                   test/node_modules \
+                   test/e2e/extensions/test-extension/node_modules 2>/dev/null || true
+            attempt=$((attempt + 1))
+            sleep 10
+          done
 
           # 3. Compile code-server (tsc) and the VS Code reh-web bundle for the
           #    win32-x64 target (gulp vscode-reh-web-win32-x64-min-ci).
