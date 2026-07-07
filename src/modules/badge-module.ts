@@ -369,13 +369,10 @@ function aggregateWorkspaceStates(
     }
   }
 
-  if (!hasReady && !hasWorking) {
+  if (!hasWorking) {
     return "none";
   }
-  if (hasReady && !hasWorking) {
-    return "none";
-  }
-  if (!hasReady && hasWorking) {
+  if (!hasReady) {
     return "all-working";
   }
   return "mixed";

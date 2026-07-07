@@ -7,7 +7,7 @@
  * - Handle-based access pattern (no direct Electron types exposed)
  */
 
-import type { ViewHandle, Rectangle, WebPreferences, WindowHandle } from "./types";
+import type { ViewHandle, Rectangle, WindowHandle } from "./types";
 import { createViewHandle } from "./types";
 import { ShellError } from "../../shared/errors/shell-errors";
 import type { Logger } from "../platform/logging";
@@ -16,16 +16,6 @@ import type { WindowBoundary } from "./window";
 // ============================================================================
 // Types
 // ============================================================================
-
-/**
- * Options for creating a view.
- */
-export interface ViewOptions {
-  readonly webPreferences?: WebPreferences;
-  readonly backgroundColor?: string;
-  /** Debug label for logging (e.g., "ui", workspace name). */
-  readonly label?: string;
-}
 
 /**
  * Details about a window.open() request.
@@ -106,22 +96,13 @@ export interface KeyboardInput {
 export interface ViewBoundary {
   // Lifecycle
   /**
-   * Create a new view.
-   *
-   * @param options - View creation options
-   * @returns Handle to the created view
-   */
-  createView(options: ViewOptions): ViewHandle;
-
-  /**
    * Adopt a window's own webContents as a view handle, so the UI's webContents
    * concerns (load, IPC, keyboard, devtools, capture, exceptions) route through
    * this abstraction without owning a child WebContentsView. The window's page
    * auto-fills the window, so there is nothing to size or attach.
    *
    * The returned handle does not own the webContents: destroy() unregisters it
-   * but does not close it (the window owns its lifecycle). setBounds/
-   * attachToWindow are no-ops for an adopted handle.
+   * but does not close it (the window owns its lifecycle).
    *
    * @param windowHandle - Handle to the BrowserWindow whose webContents to adopt
    * @returns Handle addressing the window's webContents
@@ -151,25 +132,6 @@ export interface ViewBoundary {
    */
   loadURL(handle: ViewHandle, url: string): Promise<void>;
 
-  // Layout
-  /**
-   * Set the bounds of the view.
-   *
-   * @param handle - Handle to the view
-   * @param bounds - The new bounds
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  setBounds(handle: ViewHandle, bounds: Rectangle): void;
-
-  /**
-   * Set the background color of the view.
-   *
-   * @param handle - Handle to the view
-   * @param color - CSS color string
-   * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
-   */
-  setBackgroundColor(handle: ViewHandle, color: string): void;
-
   // Focus
   /**
    * Focus the view.
@@ -178,16 +140,6 @@ export interface ViewBoundary {
    * @throws ShellError with code VIEW_NOT_FOUND if handle is invalid
    */
   focus(handle: ViewHandle): void;
-
-  // Window attachment
-  /**
-   * Attach the view to a window's content view.
-   *
-   * @param handle - Handle to the view
-   * @param windowHandle - Handle to the window
-   * @throws ShellError with code VIEW_NOT_FOUND if view handle is invalid
-   */
-  attachToWindow(handle: ViewHandle, windowHandle: WindowHandle): void;
 
   // Events
   /**
@@ -378,18 +330,10 @@ export interface ViewBoundary {
 // Default Implementation
 // ============================================================================
 
-import { WebContentsView } from "electron";
 import type { WebContents } from "electron";
 
 interface ViewState {
-  /**
-   * The owned WebContentsView, or null when this state adopts a window's own
-   * webContents (a BrowserWindow page). Owned views are sized/attached/closed;
-   * adopted webContents are not (the window owns them).
-   */
-  ownedView: WebContentsView | null;
   webContents: WebContents;
-  attachedToWindow: WindowHandle | null;
   label: string;
 }
 
@@ -455,66 +399,12 @@ export class DefaultViewBoundary implements ViewBoundary {
     private readonly logger: Logger
   ) {}
 
-  createView(options: ViewOptions): ViewHandle {
-    const id = `view-${this.nextId++}`;
-
-    // Build webPreferences, only including defined properties
-    const webPreferences: Electron.WebPreferences = {
-      nodeIntegration: options.webPreferences?.nodeIntegration ?? false,
-      contextIsolation: options.webPreferences?.contextIsolation ?? true,
-      sandbox: options.webPreferences?.sandbox ?? true,
-      focusOnNavigation: true,
-    };
-    if (options.webPreferences?.partition !== undefined) {
-      webPreferences.partition = options.webPreferences.partition;
-    }
-    if (options.webPreferences?.preload !== undefined) {
-      webPreferences.preload = options.webPreferences.preload;
-    }
-
-    const view = new WebContentsView({ webPreferences });
-
-    if (options.backgroundColor) {
-      view.setBackgroundColor(options.backgroundColor);
-    }
-
-    const label = options.label ?? id;
-
-    this.views.set(id, {
-      ownedView: view,
-      webContents: view.webContents,
-      attachedToWindow: null,
-      label,
-    });
-
-    view.webContents.on("blur", () => {
-      this.logger.debug(`blur ${label}`);
-    });
-
-    view.webContents.on("focus", () => {
-      this.logger.debug(`focus ${label}`);
-    });
-
-    const handle = createViewHandle(id);
-    this.logger.debug("View created", {
-      id,
-      handleId: handle.id,
-      viewsCount: this.views.size,
-      isDestroyed: view.webContents.isDestroyed(),
-    });
-    return handle;
-  }
-
   adoptWindowWebContents(windowHandle: WindowHandle): ViewHandle {
     const id = `view-${this.nextId++}`;
     const webContents = this.windowLayer.getWebContents(windowHandle);
     const label = "ui";
 
     this.views.set(id, {
-      ownedView: null,
-      // Not a child-view attachment — the window owns this webContents, so
-      // there is nothing to detach/removeChildView on destroy.
-      attachedToWindow: null,
       webContents,
       label,
     });
@@ -535,24 +425,12 @@ export class DefaultViewBoundary implements ViewBoundary {
   }
 
   destroy(handle: ViewHandle): void {
-    const state = this.getView(handle);
-
-    // Detach from window if attached
-    if (state.attachedToWindow) {
-      this.detachFromWindow(handle);
-    }
+    // Validate the handle. An adopted window webContents is owned by the window
+    // and closed with it, so destroy() only unregisters our tracking.
+    this.getView(handle);
 
     this.views.delete(handle.id);
     this.exceptionCallbacks.delete(handle.id);
-
-    // Only close a webContents we own (a WebContentsView we created). An adopted
-    // window webContents is owned by the window and closed with it.
-    if (state.ownedView) {
-      const wc = state.webContents;
-      if (wc && !wc.isDestroyed()) {
-        wc.close();
-      }
-    }
 
     this.logger.debug("View destroyed", { id: handle.id });
   }
@@ -604,75 +482,9 @@ export class DefaultViewBoundary implements ViewBoundary {
     }
   }
 
-  setBounds(handle: ViewHandle, bounds: Rectangle): void {
-    const state = this.getView(handle);
-    // Adopted window webContents auto-fills the window; nothing to size.
-    if (state.ownedView) {
-      state.ownedView.setBounds(bounds);
-    }
-  }
-
-  setBackgroundColor(handle: ViewHandle, color: string): void {
-    const state = this.getView(handle);
-    // A window's own backdrop is set on the window, not through an adopted
-    // webContents; only owned WebContentsViews have a settable background.
-    if (state.ownedView) {
-      state.ownedView.setBackgroundColor(color);
-    }
-  }
-
   focus(handle: ViewHandle): void {
     const state = this.getView(handle);
     state.webContents.focus();
-  }
-
-  attachToWindow(handle: ViewHandle, windowHandle: WindowHandle): void {
-    const state = this.getView(handle);
-
-    // Adopted window webContents is the window's own page — nothing to attach.
-    if (!state.ownedView) {
-      return;
-    }
-
-    // Get the content view from the window layer
-    const contentView = this.windowLayer.getContentView(windowHandle);
-    contentView.addChildView(state.ownedView);
-
-    // Track attachment in view state
-    state.attachedToWindow = windowHandle;
-
-    this.logger.debug("View attached to window", {
-      viewId: handle.id,
-      windowId: windowHandle.id,
-      newChildCount: contentView.children.length,
-    });
-  }
-
-  private detachFromWindow(handle: ViewHandle): void {
-    const state = this.getView(handle);
-
-    // If not attached, no-op
-    if (!state.attachedToWindow) {
-      return;
-    }
-
-    const windowHandle = state.attachedToWindow;
-
-    if (state.ownedView) {
-      try {
-        const contentView = this.windowLayer.getContentView(windowHandle);
-        contentView.removeChildView(state.ownedView);
-      } catch {
-        // Window may have been destroyed - ignore
-      }
-    }
-
-    state.attachedToWindow = null;
-
-    this.logger.debug("View detached from window", {
-      viewId: handle.id,
-      windowId: windowHandle.id,
-    });
   }
 
   setWindowOpenHandler(handle: ViewHandle, handler: WindowOpenHandler | null): void {

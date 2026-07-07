@@ -10,7 +10,6 @@ export type {
   LogFormat,
   LoggerName,
   LogLevel,
-  LogOutput,
 } from "./logging-types";
 export { logAtLevel } from "./logging-types";
 export { ElectronLog } from "./electron-log";

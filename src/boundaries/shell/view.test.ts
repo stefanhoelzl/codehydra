@@ -1,13 +1,15 @@
 /**
- * Tests for DefaultViewBoundary with a mocked Electron module.
+ * Tests for DefaultViewBoundary against a fake window webContents.
  *
- * The behavioral mock (view.state-mock.ts) stubs installChildFrameScript,
- * so the real did-frame-finish-load injection path is covered here.
+ * The view boundary adopts the window's own webContents; these tests drive the
+ * real installChildFrameScript did-frame-finish-load injection path through a
+ * fake webContents supplied by a stub WindowBoundary.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../platform/logging";
 import type { WindowBoundary } from "./window";
+import type { WindowHandle } from "./types";
 
 type FrameLoadListener = (
   event: unknown,
@@ -22,35 +24,31 @@ interface FakeFrame {
   executeJavaScript: ReturnType<typeof vi.fn>;
 }
 
-const { fakeState } = vi.hoisted(() => {
-  const state = {
-    listeners: new Map<string, FrameLoadListener[]>(),
-    frames: [] as FakeFrame[],
-  };
-  return { fakeState: state };
-});
+const listeners = new Map<string, FrameLoadListener[]>();
+let frames: FakeFrame[] = [];
 
-vi.mock("electron", () => ({
-  WebContentsView: class {
-    setBackgroundColor = vi.fn();
-    webContents = {
-      isDestroyed: () => false,
-      on: (event: string, listener: FrameLoadListener) => {
-        const list = fakeState.listeners.get(event) ?? [];
-        list.push(listener);
-        fakeState.listeners.set(event, list);
-      },
-      get mainFrame() {
-        return { framesInSubtree: fakeState.frames };
-      },
-    };
+const fakeWebContents = {
+  isDestroyed: () => false,
+  on: (event: string, listener: FrameLoadListener) => {
+    const list = listeners.get(event) ?? [];
+    list.push(listener);
+    listeners.set(event, list);
   },
-}));
+  get mainFrame() {
+    return { framesInSubtree: frames };
+  },
+};
+
+const windowLayer = {
+  getWebContents: () => fakeWebContents,
+} as unknown as WindowBoundary;
+
+const windowHandle: WindowHandle = { id: "window-1", __brand: "WindowHandle" };
 
 import { DefaultViewBoundary } from "./view";
 
 function emitFrameFinishLoad(isMainFrame: boolean, processId: number, routingId: number): void {
-  for (const listener of fakeState.listeners.get("did-frame-finish-load") ?? []) {
+  for (const listener of listeners.get("did-frame-finish-load") ?? []) {
     listener(undefined, isMainFrame, processId, routingId);
   }
 }
@@ -59,9 +57,9 @@ describe("DefaultViewBoundary installChildFrameScript", () => {
   let boundary: DefaultViewBoundary;
 
   beforeEach(() => {
-    fakeState.listeners.clear();
-    fakeState.frames = [];
-    boundary = new DefaultViewBoundary({} as WindowBoundary, createMockLogger());
+    listeners.clear();
+    frames = [];
+    boundary = new DefaultViewBoundary(windowLayer, createMockLogger());
   });
 
   it("injects the script into matching child frames", () => {
@@ -70,8 +68,8 @@ describe("DefaultViewBoundary installChildFrameScript", () => {
       routingId: 7,
       executeJavaScript: vi.fn().mockResolvedValue(undefined),
     };
-    fakeState.frames = [frame];
-    const handle = boundary.createView({});
+    frames = [frame];
+    const handle = boundary.adoptWindowWebContents(windowHandle);
 
     boundary.installChildFrameScript(handle, "tracker()");
     emitFrameFinishLoad(false, 1, 7);
@@ -85,8 +83,8 @@ describe("DefaultViewBoundary installChildFrameScript", () => {
       routingId: 7,
       executeJavaScript: vi.fn().mockResolvedValue(undefined),
     };
-    fakeState.frames = [frame];
-    const handle = boundary.createView({});
+    frames = [frame];
+    const handle = boundary.adoptWindowWebContents(windowHandle);
 
     boundary.installChildFrameScript(handle, "tracker()");
     emitFrameFinishLoad(true, 1, 7);
@@ -114,8 +112,8 @@ describe("DefaultViewBoundary installChildFrameScript", () => {
       routingId: 7,
       executeJavaScript: vi.fn().mockReturnValue(trackedPromise),
     };
-    fakeState.frames = [frame];
-    const handle = boundary.createView({});
+    frames = [frame];
+    const handle = boundary.adoptWindowWebContents(windowHandle);
 
     boundary.installChildFrameScript(handle, "tracker()");
     emitFrameFinishLoad(false, 1, 7);

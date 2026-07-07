@@ -85,7 +85,6 @@
   /* Overlay/shadow colors */
   --ch-overlay-bg: rgba(0, 0, 0, 0.6);
   --ch-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --ch-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.6);
   --ch-overlay-blur: blur(1px);
 
   /* Accent muted (for active/selected backgrounds) */
@@ -107,7 +106,6 @@
   --ch-sidebar-width: 250px;
   --ch-sidebar-minimized-width: 20px;
   --ch-sidebar-transition: 150ms ease-out;
-  --ch-dialog-max-width: 480px;
 
   /* Z-index layers */
   --ch-z-sidebar-minimized: 1;
@@ -239,7 +237,6 @@
   /* Overlay/shadow colors */
   --ch-overlay-bg: rgba(0, 0, 0, 0.2);
   --ch-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --ch-shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.15);
 
   /* Accent muted (light) */
   --ch-accent-muted: rgba(75, 109, 232, 0.1);

@@ -172,54 +172,6 @@ describe("WindowManager", () => {
     });
   });
 
-  describe("getBounds", () => {
-    it("returns window content bounds", () => {
-      const deps = createWindowManagerDeps();
-      const manager = createWindowManager(deps);
-
-      const bounds = manager.getBounds();
-
-      expect(bounds.width).toBe(1200);
-      expect(bounds.height).toBe(800);
-    });
-  });
-
-  describe("onResize", () => {
-    it("calls callback when resize is triggered", () => {
-      const deps = createWindowManagerDeps();
-      const manager = createWindowManager(deps);
-      const callback = vi.fn();
-
-      manager.onResize(callback);
-      callback.mockClear(); // Clear any initial calls
-
-      // Trigger resize via the behavioral mock
-      const handle = manager.getWindowHandle();
-      deps.windowLayer.$.triggerResize(handle);
-
-      expect(callback).toHaveBeenCalled();
-    });
-
-    it("returns unsubscribe function that removes listener", () => {
-      const deps = createWindowManagerDeps();
-      const manager = createWindowManager(deps);
-      const callback = vi.fn();
-
-      const unsubscribe = manager.onResize(callback);
-      callback.mockClear();
-
-      // Unsubscribe
-      unsubscribe();
-
-      // Trigger resize
-      const handle = manager.getWindowHandle();
-      deps.windowLayer.$.triggerResize(handle);
-
-      // Callback should not be called after unsubscribe
-      expect(callback).not.toHaveBeenCalled();
-    });
-  });
-
   describe("setTitle", () => {
     it("sets the window title", () => {
       const deps = createWindowManagerDeps();

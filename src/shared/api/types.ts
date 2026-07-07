@@ -283,25 +283,6 @@ export type SetupRowId = "vscode" | "agent" | "setup";
 export type SetupRowStatus = "pending" | "running" | "done" | "failed";
 
 // =============================================================================
-// Clone Progress Types
-// =============================================================================
-
-/**
- * Progress update during git clone.
- * Sent as events from main → renderer during repository cloning.
- */
-export interface CloneProgress {
-  /** Git operation stage (e.g., "receiving", "resolving", "counting", "compressing") */
-  readonly stage: string;
-  /** Progress as a 0-1 float (e.g., 0.75 = 75%) */
-  readonly progress: number;
-  /** Repository name (e.g., "my-project") */
-  readonly name: string;
-  /** Git URL being cloned (for routing progress to the correct clone) */
-  readonly url: string;
-}
-
-// =============================================================================
 // Blocking Process Types
 // =============================================================================
 
@@ -421,14 +402,6 @@ export type AgentSpec =
       readonly model?: PromptModel;
       readonly agentName?: string;
     };
-
-/**
- * Whether an agent spec carries a non-empty prompt the agent will run on start.
- * Used to signal optimistic "busy" state to the renderer.
- */
-export function agentSpecHasPrompt(spec: AgentSpec | undefined): boolean {
-  return spec?.prompt !== undefined && spec.prompt.trim() !== "";
-}
 
 /**
  * Zod schema for validating PromptModel.

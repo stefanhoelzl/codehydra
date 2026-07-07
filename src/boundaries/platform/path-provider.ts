@@ -85,7 +85,7 @@ export class DefaultPathProvider implements PathProvider {
       ? new Path(buildInfo.resourcesPath)
       : this.assetsRoot;
     this.tempRoot = new Path(this.dataRoot, "temp");
-    this.appIconPath = this.computeAppIconPath(buildInfo);
+    this.appIconPath = this.computeAppIconPath();
   }
 
   dataPath(subpath: string, options?: PathOptions): Path {
@@ -117,10 +117,7 @@ export class DefaultPathProvider implements PathProvider {
     return new Path(this.dataRoot, "projects", projectDirName(pathStr), "workspaces");
   }
 
-  private computeAppIconPath(buildInfo: BuildInfo): Path {
-    if (!buildInfo.isPackaged) {
-      return new Path(process.cwd(), "resources", "icon.png");
-    }
+  private computeAppIconPath(): Path {
     return new Path(process.cwd(), "resources", "icon.png");
   }
 

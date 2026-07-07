@@ -62,7 +62,10 @@ function setup(overrides?: SetupOverrides) {
   const logger = createMockLogger();
   const exits: number[] = [];
   const viewLayer = createViewBoundaryMock();
-  const uiViewHandle = viewLayer.createView({ label: "ui" });
+  const uiViewHandle = viewLayer.adoptWindowWebContents({
+    id: "window-1",
+    __brand: "WindowHandle",
+  });
   const dialogBoundary = createBehavioralDialogBoundary();
 
   const deps: ErrorReportModuleDeps = {

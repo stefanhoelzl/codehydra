@@ -13,7 +13,7 @@
  * emits an `app:started` domain event so the renderer knows startup is done.
  */
 
-import type { Intent, DomainEvent } from "./lib/types";
+import type { Intent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import { INTENT_OPEN_PROJECT, type OpenProjectIntent } from "./open-project";
 import { Path } from "../utils/path/path";
@@ -54,11 +54,6 @@ export const INTENT_APP_READY = "app:ready" as const;
 // =============================================================================
 
 /** Emitted after all initial project:open dispatches complete. */
-export interface AppStartedEvent extends DomainEvent {
-  readonly type: typeof EVENT_APP_STARTED;
-  readonly payload: Record<string, never>;
-}
-
 export const EVENT_APP_STARTED = "app:started" as const;
 
 // =============================================================================

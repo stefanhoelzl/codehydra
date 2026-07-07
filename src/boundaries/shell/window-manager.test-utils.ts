@@ -4,7 +4,7 @@
  */
 
 import { vi, type Mock } from "vitest";
-import type { WindowManager, ContentBounds, Unsubscribe, Theme } from "./window-manager";
+import type { WindowManager, Unsubscribe, Theme } from "./window-manager";
 import type { WindowHandle } from "./types";
 import { createWindowHandle } from "./types";
 import type { ImageHandle } from "./image-types";
@@ -16,8 +16,6 @@ import type { ImageHandle } from "./image-types";
 export interface MockWindowManager {
   create: Mock<WindowManager["create"]>;
   getWindowHandle: Mock<WindowManager["getWindowHandle"]>;
-  getBounds: Mock<WindowManager["getBounds"]>;
-  onResize: Mock<WindowManager["onResize"]>;
   maximizeAsync: Mock<WindowManager["maximizeAsync"]>;
   focus: Mock<WindowManager["focus"]>;
   setTitle: Mock<WindowManager["setTitle"]>;
@@ -42,8 +40,6 @@ export interface MockWindowManager {
 export interface MockWindowManagerOptions {
   /** WindowHandle returned by getWindowHandle(). Defaults to createWindowHandle("test-window-1"). */
   readonly windowHandle?: WindowHandle;
-  /** Bounds returned by getBounds(). Defaults to { width: 1200, height: 800 }. */
-  readonly bounds?: ContentBounds;
   /** Theme returned by getTheme(). Defaults to "dark". */
   readonly theme?: Theme;
 }
@@ -67,7 +63,6 @@ export interface MockWindowManagerOptions {
  */
 export function createMockWindowManager(options?: MockWindowManagerOptions): MockWindowManager {
   const windowHandle = options?.windowHandle ?? createWindowHandle("test-window-1");
-  const bounds = options?.bounds ?? { width: 1200, height: 800 };
   let currentTheme: Theme = options?.theme ?? "dark";
   const overlayIconCalls: Array<{ image: ImageHandle | null; description: string }> = [];
   const themeCallbacks = new Set<(theme: Theme) => void>();
@@ -75,8 +70,6 @@ export function createMockWindowManager(options?: MockWindowManagerOptions): Moc
   return {
     create: vi.fn(),
     getWindowHandle: vi.fn(() => windowHandle),
-    getBounds: vi.fn(() => bounds),
-    onResize: vi.fn((): Unsubscribe => vi.fn()),
     maximizeAsync: vi.fn(async () => {}),
     focus: vi.fn(),
     setTitle: vi.fn(),

@@ -71,11 +71,6 @@ export type LoggerName =
 export type LogContext = Record<string, string | number | boolean | null>;
 
 /**
- * Log output destinations.
- */
-export type LogOutput = "file" | "console";
-
-/**
  * Log output format.
  * - "text": Human-readable text lines (default)
  * - "json": JSONL with structured context
