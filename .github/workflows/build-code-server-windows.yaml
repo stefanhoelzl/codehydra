@@ -1,10 +1,35 @@
 name: Build code-server for Windows
 
+# Builds a COMPLETE, standalone code-server for Windows from source, mirroring
+# coder's own release pipeline (.github/workflows/release.yaml upstream) but
+# targeted at win32-x64.
+#
+# Why from source (and not from the published package.tar.gz)?
+#   coder's release runs one source build and emits two artifacts:
+#     - `npm run release`                 -> package.tar.gz   (KEEP_MODULES=0)
+#     - `KEEP_MODULES=1 npm run release`  -> standalone tarball (COMPLETE)
+#   package.tar.gz is deliberately stripped of ALL node_modules and relies on a
+#   postinstall to reconstitute them - but that postinstall only restores
+#   lib/vscode's product deps + extensions/typescript. It never restores the
+#   per-built-in-extension nested deps. That is why a build assembled from
+#   package.tar.gz was missing lib/vscode/extensions/git/node_modules/@vscode/
+#   fs-copyfile, which the Git extension top-level `require()`s -> Git
+#   integration broke on Windows.
+#   The only correct fix is to produce the KEEP_MODULES=1 standalone ourselves,
+#   which keeps the full, platform-native node_modules (including every built-in
+#   extension's nested deps). This is future-proof: new nested deps, native
+#   modules, and patches are all handled automatically.
+#
+# The build runs under MSYS2 because code-server's shell scripts assume a Unix
+# environment with rsync/quilt/jq (absent from stock Git Bash). MSYS2 is started
+# with `path-type: inherit` so the Windows Node.js and the MSVC toolchain remain
+# visible for node-gyp native-module compilation.
+
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "code-server version to build (e.g., 4.106.3)"
+        description: "code-server version to build (e.g., 4.127.0)"
         required: true
         type: string
       dry_run:
@@ -18,9 +43,6 @@ permissions:
   id-token: write # Required for artifact attestation
   attestations: write # Required for artifact attestation
 
-env:
-  NODE_VERSION: "22"
-
 jobs:
   build:
     runs-on: windows-2025
@@ -28,15 +50,30 @@ jobs:
       VERSION: ${{ inputs.version }}
       PACKAGE_DIR: code-server-${{ inputs.version }}-win32-x64
       ARCHIVE_NAME: code-server-${{ inputs.version }}-win32-x64.tar.gz
+      # --- code-server / VS Code build target -------------------------------
+      # Consumed by ci/lib.sh, build-vscode.sh and build-release.sh to select
+      # the gulp target (vscode-reh-web-win32-x64-min-ci) and the release paths.
+      OS: windows
+      ARCH: amd64
+      VSCODE_ARCH: x64
+      VSCODE_TARGET: win32-x64
+      npm_config_arch: x64
+      # Build native modules from source (no prebuilds) so their .node binaries
+      # match this runner's Node ABI and the win32 target. Same flag coder uses.
+      npm_config_build_from_source: "true"
+      # Keep the build lean and offline-friendly.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
     steps:
       - name: Validate version format
         shell: bash
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid version format '$VERSION'. Expected semver (e.g., 4.106.3)"
+            echo "::error::Invalid version format '$VERSION'. Expected semver (e.g., 4.127.0)"
             exit 1
           fi
-          echo "::notice::Building code-server version $VERSION"
+          echo "::notice::Building code-server version $VERSION from source (win32-x64)"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "::notice::DRY RUN MODE - will upload as artifact instead of creating release"
           fi
@@ -52,124 +89,177 @@ jobs:
             exit 1
           fi
 
+      # code-server's VS Code lives in a git submodule (microsoft/vscode); the
+      # patches under patches/ are applied to it via quilt. Check out the exact
+      # tag WITH submodules so the pinned VS Code commit comes along.
+      - name: Checkout code-server ${{ inputs.version }}
+        uses: actions/checkout@v6
+        with:
+          repository: coder/code-server
+          ref: v${{ inputs.version }}
+          submodules: true
+          path: code-server
+
+      # Build with the Node version code-server pins (.node-version). The build
+      # path uses code-server's DEV postinstall (installs lib/vscode deps); it
+      # does not run the release postinstall's node-v22 gate, so the pinned
+      # version is fine.
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version-file: code-server/.node-version
 
       - name: Upgrade npm
-        # The windows-2025 image ships Visual Studio 2026 (v18). node-gyp only
-        # detects it from >= 12.1.0 (bundled in npm >= 11.6.3), so upgrade npm
-        # before the code-server postinstall compiles its native modules.
+        # windows-2025 ships Visual Studio 2026 (v18). node-gyp only detects it
+        # from >= 12.1.0 (bundled in npm >= 11.6.3), so upgrade npm before any
+        # native module compiles.
         shell: bash
         run: npm install -g npm@latest
 
-      - name: Create build directory
-        shell: bash
-        run: mkdir -p build
+      # code-server's scripts (ci/lib.sh, build-vscode.sh, build-release.sh) are
+      # bash and call rsync / quilt / jq. Provide them via MSYS2. `path-type:
+      # inherit` keeps the Windows Node.js + MSVC toolchain on PATH for node-gyp.
+      - name: Setup MSYS2 (rsync, quilt, jq for the build scripts)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          release: false
+          install: >-
+            rsync
+            quilt
+            jq
+            unzip
+            zip
+            patch
+            diffutils
+            make
 
-      - name: Install code-server
-        shell: bash
-        working-directory: build
+      - name: Apply code-server patches to the VS Code submodule
+        shell: msys2 {0}
+        working-directory: code-server
         run: |
-          # npm no longer publishes code-server; install from the package.tar.gz
-          # asset attached to every upstream GitHub release. This is the same
-          # package the npm registry served, so its postinstall still builds the
-          # Windows-native modules on this runner.
-          npm install "https://github.com/coder/code-server/releases/download/v$VERSION/package.tar.gz"
+          # Same as upstream release.yaml `- run: quilt push -a`, applied from
+          # the code-server root (QUILT_PATCHES defaults to ./patches).
+          quilt push -a
+          echo "::notice::Applied $(wc -l < patches/series) patch(es)"
 
-      - name: Download Node.js for Windows
-        shell: bash
-        working-directory: build
+      - name: Build code-server and VS Code (win32-x64)
+        shell: msys2 {0}
+        working-directory: code-server
         run: |
-          # Get the Node.js version from the runner
-          NODE_FULL_VERSION=$(node --version)  # e.g., v22.12.0
-          NODE_FULL_VERSION=${NODE_FULL_VERSION#v}  # Remove leading 'v'
+          set -euo pipefail
 
-          # Download Node.js Windows x64 zip
+          # 1. VS Code build tooling.
+          (cd lib/vscode/build && npm ci)
+
+          # 2. code-server + submodule deps. The root postinstall
+          #    (ci/dev/postinstall.sh) runs `npm ci` inside lib/vscode, which
+          #    installs EVERY built-in extension's nested deps - including
+          #    lib/vscode/extensions/git/node_modules/@vscode/fs-copyfile - and
+          #    compiles native modules for win32.
+          npm ci
+
+          # 3. Compile code-server (tsc) and the VS Code reh-web bundle for the
+          #    win32-x64 target (gulp vscode-reh-web-win32-x64-min-ci).
+          npm run build
+          VERSION="$VERSION" npm run build:vscode
+
+          # 4. Assemble the COMPLETE release. KEEP_MODULES=1 keeps the full,
+          #    win32-native node_modules trees in ./release/lib/vscode - the
+          #    exact structure coder ships for Linux/macOS.
+          KEEP_MODULES=1 npm run release
+
+      # code-server's npm package has no bundled Node runtime; the app's launcher
+      # runs `lib\node.exe out\node\entry.js`, so bundle a matching Windows Node.
+      - name: Bundle Windows Node.js runtime
+        shell: msys2 {0}
+        working-directory: code-server
+        run: |
+          NODE_FULL_VERSION="$(node --version)"   # e.g. v24.15.0
+          NODE_FULL_VERSION="${NODE_FULL_VERSION#v}"
           NODE_URL="https://nodejs.org/dist/v${NODE_FULL_VERSION}/node-v${NODE_FULL_VERSION}-win-x64.zip"
           curl -fsSL "$NODE_URL" -o node-windows.zip
-
-          # Extract node.exe
           unzip -q node-windows.zip "node-v${NODE_FULL_VERSION}-win-x64/node.exe"
-          mv "node-v${NODE_FULL_VERSION}-win-x64/node.exe" node.exe
+          mkdir -p release/lib
+          mv "node-v${NODE_FULL_VERSION}-win-x64/node.exe" release/lib/node.exe
           rm -rf "node-v${NODE_FULL_VERSION}-win-x64" node-windows.zip
+          echo "::notice::Bundled Node.js v${NODE_FULL_VERSION} (win-x64)"
 
-          echo "::notice::Downloaded Node.js v${NODE_FULL_VERSION} for Windows"
-
-      - name: Create package directory with flattened structure
+      - name: Stage package with win32-x64 layout
         shell: bash
-        working-directory: build
+        working-directory: code-server
         run: |
-          mkdir -p "$PACKAGE_DIR/lib"
+          set -euo pipefail
+          # The app downloads code-server-<v>-win32-x64.tar.gz and expects the
+          # archive to contain a top-level dir named code-server-<v>-win32-x64
+          # (see getCodeServerSubPathForVersion in src/modules/code-server-module.ts).
+          rm -rf "../$PACKAGE_DIR"
+          mv release "../$PACKAGE_DIR"
 
-          # Move contents of node_modules/code-server to package root (flattened)
-          # This includes lib/vscode and license files (but not Node.js - npm package doesn't include it)
-          cp -r node_modules/code-server/* "$PACKAGE_DIR/"
-
-          # Bundle code-server's runtime dependencies. The upstream package.tar.gz
-          # ships no node_modules, so `npm install` resolves code-server's deps
-          # (@coder/logger, express, ...) and HOISTS them next to code-server in
-          # build/node_modules. The flatten above only copies code-server's own
-          # folder, so without this step the release ships zero dependencies and
-          # crashes at out/node/entry.js with "Cannot find module '@coder/logger'".
-          # Copy every hoisted sibling into a package-root node_modules dir so
-          # entry.js can resolve them at runtime (Node walks up to <root>/node_modules).
-          mkdir -p "$PACKAGE_DIR/node_modules"
-          for dep in node_modules/*; do
-            [ "$(basename "$dep")" = "code-server" ] && continue
-            cp -r "$dep" "$PACKAGE_DIR/node_modules/"
-          done
-
-          # Add downloaded Node.js for Windows
-          mv node.exe "$PACKAGE_DIR/lib/node.exe"
-
-      - name: Create launcher script
-        shell: bash
-        working-directory: build
-        run: |
-          mkdir -p "$PACKAGE_DIR/bin"
-
-          # Create Windows batch launcher script
-          cat > "$PACKAGE_DIR/bin/code-server.cmd" << 'LAUNCHER'
+          # Windows launcher: app runs `bin\code-server.cmd`, which execs the
+          # bundled node against out/node/entry.js.
+          mkdir -p "../$PACKAGE_DIR/bin"
+          cat > "../$PACKAGE_DIR/bin/code-server.cmd" << 'LAUNCHER'
           @echo off
           setlocal
-
-          :: Get the directory where this script is located
           set "SCRIPT_DIR=%~dp0"
-
-          :: Go up one level to package root
           set "ROOT_DIR=%SCRIPT_DIR%.."
-
-          :: Run code-server with bundled node
           "%ROOT_DIR%\lib\node.exe" "%ROOT_DIR%\out\node\entry.js" %*
           LAUNCHER
 
       - name: Create tar.gz package
         shell: bash
-        working-directory: build
         run: tar -czf "$ARCHIVE_NAME" "$PACKAGE_DIR"
 
-      - name: Verify packaged artifact starts in a clean directory
+      - name: Verify package boots in a clean directory
         shell: cmd
-        working-directory: build
         run: |
-          :: Extract the freshly built archive into a throwaway directory that has
-          :: NO ancestor node_modules, then launch it. This is the authoritative
-          :: smoke test: code-server can only report its version if every runtime
-          :: dependency is actually inside the package. The old "Test package" step
-          :: ran from build\ and falsely passed by resolving hoisted deps from
-          :: build\node_modules - a location that does not exist on a user's machine.
+          :: Extract into a throwaway dir with NO ancestor node_modules and boot
+          :: it there via the real launcher - proves the server starts and can
+          :: resolve its own runtime dependencies from inside the package alone.
           set "VERIFY_DIR=%RUNNER_TEMP%\cs-verify"
           if exist "%VERIFY_DIR%" rmdir /s /q "%VERIFY_DIR%"
           mkdir "%VERIFY_DIR%"
           tar -xzf "%ARCHIVE_NAME%" -C "%VERIFY_DIR%" || exit /b 1
           "%VERIFY_DIR%\%PACKAGE_DIR%\bin\code-server.cmd" --version || exit /b 1
 
+      - name: Verify build completeness against reference Linux release
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          # A build is "complete" when it ships every dependency package that the
+          # known-good reference build ships. coder's official Linux standalone
+          # for the SAME version is built with KEEP_MODULES=1 and is complete, so
+          # it is the authoritative reference. VS Code's JS/extension dependency
+          # SET is platform-independent (only the compiled .node binaries differ),
+          # so any package present in the Linux tree but absent from ours means an
+          # incomplete build. This is general: it catches ANY missing nested dep,
+          # not one hardcoded module.
+          rm -rf verify && mkdir -p verify/win verify/lin
+          tar -xzf "$ARCHIVE_NAME" -C verify/win
+          curl -fsSL "https://github.com/coder/code-server/releases/download/v$VERSION/code-server-$VERSION-linux-amd64.tar.gz" -o verify/linux.tar.gz
+          tar -xzf verify/linux.tar.gz -C verify/lin
+
+          # Every dependency package is identified by its node_modules/.../package.json.
+          pkgset() { ( cd "$1" && find . -type f -name package.json -path '*/node_modules/*' -printf '%P\n' | sed 's#/package.json$##' | sort -u ); }
+          pkgset "verify/win/$PACKAGE_DIR" > verify/win.txt
+          pkgset "verify/lin/code-server-$VERSION-linux-amd64" > verify/lin.txt
+
+          # Packages the reference has that we are missing (Windows adds windows-*
+          # natives, so extras on our side are expected and fine).
+          missing="$(comm -23 verify/lin.txt verify/win.txt || true)"
+          if [ -n "$missing" ]; then
+            echo "::error::Incomplete build - dependency packages present in the reference Linux release but MISSING here:"
+            printf '%s\n' "$missing" | sed 's/^/  - /'
+            echo "missing count: $(printf '%s\n' "$missing" | grep -c .)"
+            exit 1
+          fi
+          echo "::notice::Completeness OK - all $(grep -c . verify/lin.txt) reference dependency packages are present ($(grep -c . verify/win.txt) total, incl. windows-specific extras)"
+
       - name: Calculate SHA256 checksum
         id: checksum
         shell: bash
-        working-directory: build
         run: |
           hash=$(sha256sum "$ARCHIVE_NAME" | cut -d' ' -f1)
           echo "sha256=$hash" >> $GITHUB_OUTPUT
@@ -178,14 +268,14 @@ jobs:
         if: ${{ inputs.dry_run == false }}
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: build/${{ env.ARCHIVE_NAME }}
+          subject-path: ${{ env.ARCHIVE_NAME }}
 
       - name: Upload artifact (dry run)
         if: ${{ inputs.dry_run == true }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARCHIVE_NAME }}
-          path: build/${{ env.ARCHIVE_NAME }}
+          path: ${{ env.ARCHIVE_NAME }}
           retention-days: 7
 
       - name: Create GitHub Release
@@ -194,42 +284,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SHA256: ${{ steps.checksum.outputs.sha256 }}
-        working-directory: build
         run: |
           TAG="code-server-windows-v$VERSION"
           BUNDLED_NODE_VERSION=$("$PACKAGE_DIR/lib/node.exe" --version)
 
-          # Create release notes
           cat > release-notes.md << 'EOF'
           ## code-server $VERSION for Windows
 
-          Windows build of [code-server $VERSION](https://github.com/coder/code-server/releases/tag/v$VERSION).
+          Standalone Windows build of [code-server $VERSION](https://github.com/coder/code-server/releases/tag/v$VERSION),
+          built from source with `KEEP_MODULES=1` so the package matches the
+          structure of coder's official Linux/macOS releases (complete, native
+          node_modules including every built-in extension's nested dependencies).
 
           ### Contents
 
-          This is a standalone package that includes:
-          - code-server $VERSION
+          - code-server $VERSION (VS Code reh-web, win32-x64)
           - Node.js $NODE_VERSION (bundled)
 
-          Package layout matches official Linux/macOS releases.
-
           ### Usage
-
-          Extract the archive and run:
 
           ```powershell
           bin\code-server.cmd --help
           ```
-
-          Or directly with the bundled node:
-
-          ```powershell
-          lib\node.exe out\node\entry.js --help
-          ```
-
-          ### Official Release Notes
-
-          See the [upstream release notes](https://github.com/coder/code-server/releases/tag/v$VERSION) for changes in this version.
 
           ### Checksums
 
@@ -240,7 +316,7 @@ jobs:
 
           ### Supply Chain Security
 
-          This release includes an artifact attestation for supply chain security.
+          This release includes an artifact attestation.
           Verify with: `gh attestation verify $ARCHIVE_NAME --repo ${{ github.repository }}`
 
           ### License
@@ -249,7 +325,6 @@ jobs:
           Node.js is also MIT licensed.
           EOF
 
-          # Replace placeholders
           sed -i "s/\$VERSION/$VERSION/g" release-notes.md
           sed -i "s/\$ARCHIVE_NAME/$ARCHIVE_NAME/g" release-notes.md
           sed -i "s/\$SHA256/$SHA256/g" release-notes.md
@@ -266,10 +341,8 @@ jobs:
         shell: bash
         env:
           SHA256: ${{ steps.checksum.outputs.sha256 }}
-        working-directory: build
         run: |
           BUNDLED_NODE_VERSION=$("$PACKAGE_DIR/lib/node.exe" --version)
-
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             echo "::notice::DRY RUN complete - Package: $ARCHIVE_NAME, Node: $BUNDLED_NODE_VERSION, SHA256: $SHA256"
           else
