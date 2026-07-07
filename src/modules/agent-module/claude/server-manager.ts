@@ -48,6 +48,14 @@ export interface WorkspaceState {
   sessionId?: string;
   /** Callbacks for status changes */
   statusCallbacks: Set<(status: AgentStatus) => void>;
+  /**
+   * Flag set while the workspace is parked on an AskUserQuestion (the main agent
+   * is blocked on the user). Set by PreToolUse(AskUserQuestion), cleared by
+   * PostToolUse(AskUserQuestion). While set, busy transitions from concurrent
+   * sub-agent tool activity on this shared workspace bridge are suppressed so the
+   * workspace stays idle until the user answers.
+   */
+  awaitingUserInputResolution?: boolean;
   /** Flag set when PreCompact arrives while busy, cleared on SessionStart */
   ignoreNextSessionStart?: boolean;
   /** Path to the initial prompt file (for getInitialPromptPath) */
@@ -679,6 +687,32 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       newStatus = "busy";
     }
 
+    // AskUserQuestion parks the workspace on the user: the main agent is blocked
+    // until the user answers. It surfaces as a normal tool
+    // (PreToolUse → PermissionRequest → PostToolUse, all tool_name
+    // "AskUserQuestion"), but the generic handling above can't cope when
+    // sub-agents run concurrently:
+    //  - the "PreToolUse while idle → busy" rule would un-park us the moment a
+    //    *sub-agent's* tool call fires, not the user's answer;
+    //  - concurrent sub-agent tool calls emit PostToolUse (→busy) on this same
+    //    workspace bridge, which would immediately overwrite the idle.
+    // So we bracket it explicitly: PreToolUse(AskUserQuestion) parks (→idle),
+    // PostToolUse(AskUserQuestion) unparks (→busy); while parked, every busy
+    // transition is suppressed (guard near the end of this method). This block
+    // runs after the generalized PreToolUse rule so the park wins.
+    if (hookName === "PreToolUse" && payload.tool_name === "AskUserQuestion") {
+      state.awaitingUserInputResolution = true;
+      newStatus = "idle";
+    } else if (
+      (hookName === "PostToolUse" || hookName === "PostToolUseFailure") &&
+      payload.tool_name === "AskUserQuestion"
+    ) {
+      // Unpark on either outcome (answered or cancelled/errored) so the flag can
+      // never get stuck and keep the workspace suppressed to idle.
+      state.awaitingUserInputResolution = false;
+      newStatus = "busy";
+    }
+
     // Special handling for compaction flow:
     // PreCompact while busy sets flag (automatic compaction mid-turn).
     // Stop/StopFailure between PreCompact and SessionStart is suppressed so the
@@ -790,6 +824,7 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     }
     if (hookName === "UserPromptSubmit") {
       state.busyForBackgroundShells = false;
+      state.awaitingUserInputResolution = false;
     }
 
     // Terminal hooks clear sub-agent and background shell state as defensive cleanup
@@ -797,6 +832,20 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       state.activeSubagents.clear();
       state.mainAgentStopped = false;
       state.busyForBackgroundShells = false;
+      state.awaitingUserInputResolution = false;
+    }
+
+    // While parked on an AskUserQuestion the main agent is blocked on the user;
+    // any "busy" computed above comes from concurrent sub-agent tool activity on
+    // this shared workspace bridge, not real main-agent progress. Suppress it so
+    // the workspace stays idle. The AskUserQuestion PostToolUse clears the flag
+    // above before reaching here, so the user's answer still returns us to busy.
+    if (state.awaitingUserInputResolution && newStatus === "busy") {
+      newStatus = null;
+      this.logger.debug("Busy suppressed while parked on AskUserQuestion", {
+        workspacePath: normalizedPath,
+        hookName,
+      });
     }
 
     this.logger.debug("Hook received", {

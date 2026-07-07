@@ -531,6 +531,32 @@ describe("ClaudeCodeServerManager integration", () => {
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
     });
 
+    it("AskUserQuestion parks the workspace on idle until answered", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+
+      // AskUserQuestion surfaces as a tool: PreToolUse parks on the user (idle),
+      // PostToolUse (the answer) returns to busy.
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      await sendHook(port, "PostToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
+    });
+
     it("Notification(auth_success) does not change status", async () => {
       const port = await serverManager.startServer("/workspace/feature-a");
       const statusChanges: AgentStatus[] = [];
@@ -1437,6 +1463,120 @@ describe("ClaudeCodeServerManager integration", () => {
 
       // No false idle blip across the whole sub-agent run
       expect(statusChanges).toEqual(["idle", "busy", "idle"]);
+    });
+
+    it("AskUserQuestion idle survives concurrent sub-agent tool activity", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // Real trace: the main agent dispatches background sub-agents, then asks the
+      // user a question. While the question is open, the sub-agents' own tool
+      // calls emit PostToolUse (→busy) on this same workspace bridge — which used
+      // to stomp the ask-user idle. They must now be suppressed so the workspace
+      // stays idle until the user actually answers.
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      // Concurrent sub-agent tool traffic — none of this may flip us to busy.
+      await sendHook(port, "PostToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "Agent",
+      });
+      await sendHook(port, "PostToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "WebSearch",
+      });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      // The user answers → PostToolUse(AskUserQuestion) returns to busy.
+      await sendHook(port, "PostToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
+    });
+
+    it("AskUserQuestion idle is not resolved by a concurrent sub-agent PreToolUse", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      // AskUserQuestion also fires its own PermissionRequest. The generic
+      // permission flow would let the *next* PreToolUse (here a sub-agent's)
+      // resolve it back to busy — that must not happen while parked.
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "SubagentStart", {
+        workspacePath: "/workspace/feature-a",
+        agent_id: "sub-1",
+      });
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+      await sendHook(port, "PermissionRequest", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+      // A sub-agent starts a tool while the question is open.
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "Bash",
+      });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      await sendHook(port, "PostToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
+    });
+
+    it("AskUserQuestion unparks (→busy) on PostToolUseFailure so the flag can't stick", async () => {
+      const port = await serverManager.startServer("/workspace/feature-a");
+      const statusChanges: AgentStatus[] = [];
+      serverManager.onStatusChange("/workspace/feature-a", (status) => {
+        statusChanges.push(status);
+      });
+
+      await sendHook(port, "SessionStart", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "UserPromptSubmit", { workspacePath: "/workspace/feature-a" });
+      await sendHook(port, "PreToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+      expect(lastStatus(statusChanges)).toBe("idle");
+
+      // The question is cancelled/errors → PostToolUseFailure must clear the park.
+      await sendHook(port, "PostToolUseFailure", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "AskUserQuestion",
+      });
+      expect(lastStatus(statusChanges)).toBe("busy");
+
+      // Subsequent normal work is no longer suppressed to idle.
+      await sendHook(port, "PostToolUse", {
+        workspacePath: "/workspace/feature-a",
+        tool_name: "Bash",
+      });
+
+      expect(statusChanges).toEqual(["idle", "busy", "idle", "busy"]);
     });
 
     it("Stop without sub-agents still transitions to idle normally", async () => {
