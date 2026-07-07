@@ -222,7 +222,9 @@ export class DefaultDialogBoundary implements DialogBoundary {
       });
       return {
         canceled: result.canceled,
-        filePaths: result.filePath !== undefined ? [new Path(result.filePath)] : [],
+        // On cancel, Electron may return filePath as "" (Windows) rather than
+        // undefined; a truthiness check covers both so we never build new Path("").
+        filePaths: result.filePath ? [new Path(result.filePath)] : [],
       };
     }
 
