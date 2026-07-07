@@ -59,11 +59,12 @@ import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../../utils/extension";
 import { Path } from "../../utils/path/path";
-import { storeString, storeNumber } from "../../boundaries/platform/store-definition";
+import { storeString, storeNumber, storeEnum } from "../../boundaries/platform/store-definition";
 import type { Config } from "../../boundaries/platform/config";
 import { IdeServerError, SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import { waitForHealthy } from "../../utils/health-check";
 import { createCodeServerIdeServer, CODE_SERVER_VERSION } from "./code-server";
+import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./vscodium";
 import type { IdeServer } from "./types";
 
 // =============================================================================
@@ -86,20 +87,40 @@ interface IdeServerConfig {
 // Port Helpers
 // =============================================================================
 
-/** Fixed port for production to maintain consistent origin for IndexedDB storage */
+/**
+ * Fixed production ports — distinct per distribution so each keeps its own
+ * IndexedDB origin (no cross-distro state bleed when switching).
+ */
 const CODE_SERVER_PORT = 25448;
+const VSCODIUM_PORT = 25449;
 
 /**
- * Determine the IDE server port based on build info.
- * - Production: Fixed port (25448) for IndexedDB persistence
- * - Development: Port derived from git branch for consistency across restarts
+ * Determine an IDE server port from build info.
+ * - Production: the given fixed port (stable IndexedDB origin)
+ * - Development: derived from the git branch (+ salt) for stability across restarts
  */
-function getIdeServerPort(buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">): number {
+function getIdeServerPort(
+  buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">,
+  packagedPort: number,
+  devSalt = ""
+): number {
   if (buildInfo.isPackaged) {
-    return CODE_SERVER_PORT;
+    return packagedPort;
   }
-  const input = buildInfo.gitBranch ?? "development";
+  const input = (buildInfo.gitBranch ?? "development") + devSalt;
   return derivePortFromString(input);
+}
+
+/**
+ * Format a remote-cli's leading arguments for the platform's wrapper script.
+ * Windows re-parses the expanded `%VAR%`, so each token is quoted; POSIX passes
+ * them through unquoted (current distributions use no leading arguments there).
+ */
+function formatRemoteCliArgs(args: readonly string[], platform: SupportedPlatform): string {
+  if (platform === "win32") {
+    return args.map((arg) => `"${arg}"`).join(" ");
+  }
+  return args.join(" ");
 }
 
 /**
@@ -169,20 +190,47 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
   const { processRunner, fileSystemLayer, logger } = deps;
 
   // Register config keys
-  const ideServerVersionConfig = deps.configService.register("version.code-server", {
+  const ideServerSelection = deps.configService.register("ide-server", {
+    default: "code-server",
+    description: "IDE server distribution: code-server|vscodium",
+    ...storeEnum(["code-server", "vscodium"]),
+  });
+  const codeServerVersionConfig = deps.configService.register("version.code-server", {
     default: CODE_SERVER_VERSION,
     description: "Code-server version",
     ...storeString(),
   });
-  const ideServerPortConfig = deps.configService.register("code-server.port", {
-    default: getIdeServerPort(deps.buildInfo),
+  const vscodiumVersionConfig = deps.configService.register("version.vscodium", {
+    default: VSCODIUM_VERSION,
+    description: "VSCodium version",
+    ...storeString(),
+  });
+  const codeServerPortConfig = deps.configService.register("code-server.port", {
+    default: getIdeServerPort(deps.buildInfo, CODE_SERVER_PORT),
     description: "Code-server port",
     ...storeNumber({ min: 1, max: 65535, integer: true }),
   });
+  const vscodiumPortConfig = deps.configService.register("vscodium.port", {
+    default: getIdeServerPort(deps.buildInfo, VSCODIUM_PORT, ":vscodium"),
+    description: "VSCodium port",
+    ...storeNumber({ min: 1, max: 65535, integer: true }),
+  });
+
+  /** Whether VSCodium is the selected distribution (call only after load()). */
+  function isVscodium(): boolean {
+    return ideServerSelection.get() === "vscodium";
+  }
 
   /** Resolve the active IdeServer descriptor (call only after config load()). */
   function getIdeServer(): IdeServer {
-    return createCodeServerIdeServer(ideServerVersionConfig.get());
+    return isVscodium()
+      ? createVscodiumIdeServer(vscodiumVersionConfig.get())
+      : createCodeServerIdeServer(codeServerVersionConfig.get());
+  }
+
+  /** The port the selected distribution serves on (call only after load()). */
+  function getPort(): number {
+    return isVscodium() ? vscodiumPortConfig.get() : codeServerPortConfig.get();
   }
 
   // -------------------------------------------------------------------------
@@ -248,13 +296,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
   function getDownloadRequest(): DownloadRequest | null {
     if (!deps.archiveExtractor) return null;
     const ide = getIdeServer();
+    const subPath = ide.archiveSubPath(deps.platform, deps.arch);
     return {
       name: ide.id,
       url: ide.downloadUrl(deps.platform, deps.arch),
       destDir: deps.pathProvider.bundlePath(ide.bundleSubdir()).toNative(),
       archiveExtension: ".tar.gz" as const,
       executablePath: ide.executablePath(deps.platform),
-      subPath: ide.archiveSubPath(deps.platform, deps.arch),
+      ...(subPath !== undefined ? { subPath } : {}),
     };
   }
 
@@ -314,7 +363,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
   async function doStart(): Promise<number> {
     logger.info("Starting code-server");
 
-    const port = ideServerPortConfig.get();
+    const port = getPort();
 
     const portAvailable = await deps.portManager.isPortAvailable(port);
     if (!portAvailable) {
@@ -367,9 +416,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
         cleanEnv._CH_PLUGIN_PORT = String(config.pluginPort);
       }
 
-      // Set IDE server and opencode directories for wrapper scripts
+      // Concrete wrapper invocations resolved from the active descriptor, so
+      // the wrapper scripts stay distribution-agnostic. Plus the opencode dir
+      // for the agent wrappers.
       const { binaryPath, ideServerDir } = resolveIdeServerPaths();
-      cleanEnv._CH_IDE_SERVER_DIR = ideServerDir;
+      const remoteCli = ide.remoteCli(ideServerDir, deps.platform);
+      cleanEnv._CH_IDE_REMOTE_CLI = remoteCli.exe;
+      cleanEnv._CH_IDE_REMOTE_CLI_ARGS = formatRemoteCliArgs(remoteCli.args, deps.platform);
+      cleanEnv._CH_IDE_NODE = ide.nodeBinary(ideServerDir, deps.platform);
       cleanEnv._CH_OPENCODE_DIR = deps.resolveOpencodeBundleDir();
 
       serverProcess = processRunner.run(binaryPath, args, {
@@ -809,7 +863,6 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
                 "chat.agent.enabled": false,
                 "extensions.autoUpdate": false,
                 "extensions.autoCheckUpdates": false,
-                ...ide.extraWorkspaceSettings(),
               };
               const wsFilePath = await writeWorkspaceFile(workspacePathObj, agentSettings);
               workspaceUrl = ide.urlForWorkspace(ideServerPort, wsFilePath.toString());

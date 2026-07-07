@@ -533,6 +533,60 @@ describe("CodeServerModule", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // IDE server selection (vscodium)
+  // ---------------------------------------------------------------------------
+
+  describe("IDE server selection", () => {
+    function vscodiumDeps(): IdeServerModuleDeps {
+      return createMockDeps({
+        configService: createMockConfig({
+          defaults: { "ide-server": "vscodium", "version.opencode": "1.0.223" },
+        }),
+      });
+    }
+
+    it("spawns codium-server with reh-web arguments on the vscodium port", async () => {
+      const deps = vscodiumDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(25449);
+      expect(asMockRunner(deps)).toHaveSpawned([
+        {
+          command: expect.stringContaining("codium-server") as string,
+          args: expect.arrayContaining([
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "25449",
+            "--without-connection-token",
+            "--accept-server-license-terms",
+            "--telemetry-level",
+            "off",
+          ]) as unknown as string[],
+          cwd: expect.stringContaining("runtime") as unknown as string,
+        },
+      ]);
+    });
+
+    it("points the wrappers at the vscodium remote-cli and root-level node", async () => {
+      const deps = vscodiumDeps();
+      const { dispatcher } = createTestSetup(deps);
+      dispatcher.registerOperation("app:start", new MinimalStartOperation());
+
+      await dispatcher.dispatch({ type: "app:start", payload: {} });
+
+      const env = asMockRunner(deps).$.spawned(0).$.env as Record<string, string>;
+      expect(env._CH_IDE_REMOTE_CLI).toContain("vscodium");
+      expect(env._CH_IDE_REMOTE_CLI).toContain("bin/remote-cli/codium");
+      expect(env._CH_IDE_NODE).toContain("vscodium");
+      expect(env._CH_IDE_NODE).toMatch(/\/node$/);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // stop
   // ---------------------------------------------------------------------------
 
@@ -1133,7 +1187,7 @@ describe("CodeServerModule", () => {
       expect(env._CH_PLUGIN_PORT).toBeUndefined();
     });
 
-    it("includes _CH_IDE_SERVER_DIR and _CH_OPENCODE_DIR", async () => {
+    it("points the wrappers at the code-server remote-cli/node, plus opencode dir", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation("app:start", new MinimalStartOperation());
@@ -1142,7 +1196,9 @@ describe("CodeServerModule", () => {
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string>;
-      expect(env._CH_IDE_SERVER_DIR).toContain("code-server");
+      expect(env._CH_IDE_REMOTE_CLI).toContain("lib/vscode/bin/remote-cli/code-linux.sh");
+      expect(env._CH_IDE_NODE).toContain("code-server");
+      expect(env._CH_IDE_NODE).toMatch(/\/lib\/node$/);
       expect(env._CH_OPENCODE_DIR).toContain("opencode");
     });
   });

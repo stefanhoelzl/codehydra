@@ -1,6 +1,6 @@
 @echo off
-if "%_CH_IDE_SERVER_DIR%"=="" (
-  echo Error: _CH_IDE_SERVER_DIR not set. >&2
+if "%_CH_IDE_NODE%"=="" (
+  echo Error: _CH_IDE_NODE not set. >&2
   exit /b 1
 )
-"%_CH_IDE_SERVER_DIR%\lib\node.exe" "%~dp0ch-claude.cjs" %*
+"%_CH_IDE_NODE%" "%~dp0ch-claude.cjs" %*
