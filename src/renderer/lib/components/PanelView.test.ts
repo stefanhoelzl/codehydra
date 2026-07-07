@@ -154,4 +154,39 @@ describe("PanelView component (panel surface)", () => {
       );
     });
   });
+
+  // When the owning dialog leaves the ui:state snapshot, MainView's
+  // `xDialog?.config` getter yields `undefined` for the frame between the
+  // dialog disappearing and this component being destroyed. Dereferencing it
+  // (the old `config.sections` / non-null props) threw a TypeError that the
+  // main-process crash guard reported and — until fixed — force-quit the app.
+  describe("teardown tolerance (dialog leaves the snapshot mid-flush)", () => {
+    it("renders only the shell, no Form, when config/dialogId are undefined", () => {
+      expect(() =>
+        render(PanelView, {
+          props: { dialogId: undefined, config: undefined, kind: "modeless", modalAbove: false },
+        })
+      ).not.toThrow();
+
+      expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+      expect(document.querySelector("textarea")).toBeNull();
+      // Heading derivation short-circuits to the default accessible name.
+      expect(screen.getByRole("region", { name: "Panel" })).toBeInTheDocument();
+    });
+
+    it("survives config/dialogId going undefined on the teardown flush", async () => {
+      const { rerender } = renderPanel(createConfig(), "panel-1");
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("New Workspace");
+
+      // The teardown frame: no throw, and the Form is torn down.
+      await rerender({
+        dialogId: undefined,
+        config: undefined,
+        kind: "modeless",
+        modalAbove: false,
+      });
+
+      expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    });
+  });
 });

@@ -261,6 +261,13 @@
   // effect above — so backend-driven config updates never re-emit (no loop).
   const changeTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
+  // The deferred focus timer (mount auto-focus / refocus, both a setTimeout(0)).
+  // Tracked so it can be canceled on unmount: its callback reads reactive state
+  // (`layout` → `config.layout`), and a config-less teardown flush leaves the
+  // prop getter dereferencing an undefined dialog — firing this after destroy
+  // threw the "reading 'config'" crash. At most one is pending at a time.
+  let focusTimer: ReturnType<typeof setTimeout> | undefined;
+
   /**
    * Effective debounce (ms) for a field's change-event opt-in, or null when the
    * field does not opt in. Default debounce per field type: continuous editing
@@ -328,14 +335,28 @@
 
   onDestroy(() => {
     cancelChangeTimers();
+    if (focusTimer !== undefined) clearTimeout(focusTimer);
   });
+
+  /**
+   * Defer `run` to the next tick, tracking the handle so unmount can cancel it.
+   * Focus placement always waits a tick (for mount / DOM settle); a pending one
+   * must not fire after the component is torn down (see `focusTimer`).
+   */
+  function scheduleFocus(run: () => void): void {
+    if (focusTimer !== undefined) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      focusTimer = undefined;
+      run();
+    }, 0);
+  }
 
   /** Focus the control marked data-autofocus (after a tick for mounting). */
   function focusAutofocusTarget(): void {
-    setTimeout(() => {
+    scheduleFocus(() => {
       const target = formRef?.querySelector<HTMLElement>("[data-autofocus]");
       target?.focus();
-    }, 0);
+    });
   }
 
   /**
@@ -391,7 +412,7 @@
   // first field would open its dropdown list, so we leave focus unset unless a
   // control opts in with an explicit autofocus flag.
   onMount(() => {
-    setTimeout(() => {
+    scheduleFocus(() => {
       const explicit = formRef?.querySelector<HTMLElement>("[data-autofocus]");
       if (explicit) {
         explicit.focus();
@@ -399,7 +420,7 @@
       }
       if (layout === "form") return;
       defaultFocusTarget()?.focus();
-    }, 0);
+    });
   });
 
   // Focus follows when a config update MOVES the autofocus flag to a
