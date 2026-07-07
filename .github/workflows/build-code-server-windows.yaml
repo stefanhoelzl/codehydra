@@ -215,6 +215,15 @@ jobs:
           # 1. VS Code build tooling.
           (cd lib/vscode/build && npm ci)
 
+          # 1b. Serialize the built-in extension installs. VS Code's postinstall
+          #     fans out `npm ci` per extension at concurrency min(cpus,8) (=4 on
+          #     the runner). Under that contention the heaviest one - copilot,
+          #     ~1177 deps - hard-crashes with 0xC0000409; installed on its own it
+          #     succeeds fine. There is no env knob, so pin concurrency to 1.
+          sed -i 's/Math\.min(os\.cpus()\.length, 8)/1/' lib/vscode/build/npm/postinstall.ts
+          grep -q 'const concurrency = 1;' lib/vscode/build/npm/postinstall.ts \
+            || { echo "::error::failed to pin extension-install concurrency"; exit 1; }
+
           # 2. code-server + submodule deps. The root postinstall
           #    (ci/dev/postinstall.sh) runs `npm ci` inside lib/vscode, which
           #    installs EVERY built-in extension's nested deps - including
