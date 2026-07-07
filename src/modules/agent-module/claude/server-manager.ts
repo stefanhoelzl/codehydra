@@ -65,16 +65,11 @@ export interface WorkspaceState {
   /** Flag: first WrapperStart should set status to busy (a non-empty initial prompt) */
   busyOnWrapperStart?: boolean;
   /**
-   * Active sub-agent IDs (tracked via SubagentStart/SubagentStop). Claude Code
-   * pairs these reliably by agent_id, so an entry is added on SubagentStart and
-   * removed on its matching SubagentStop. A sub-agent that never reports
-   * SubagentStop (a crash) is cleared by the terminal hooks (WrapperEnd/SessionEnd).
+   * True when the last Stop was suppressed because background tasks keep the
+   * workspace busy — running shells and/or background sub-agents, read from the
+   * Stop payload's background_tasks. Also suppresses the ~60s-lagging idle_prompt.
    */
-  activeSubagents: Set<string>;
-  /** True when main agent has stopped but sub-agents are still running */
-  mainAgentStopped?: boolean;
-  /** True when the last Stop was suppressed because background shells keep the workspace busy */
-  busyForBackgroundShells?: boolean;
+  busyForBackgroundTasks?: boolean;
 }
 
 /**
@@ -186,7 +181,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.workspaces.set(normalizedPath, {
       status: "none",
       statusCallbacks: new Set(),
-      activeSubagents: new Set(),
     });
 
     // Generate config files for this workspace
@@ -267,7 +261,6 @@ export class ClaudeCodeServerManager implements AgentServerManager {
     this.workspaces.set(normalizedPath, {
       status: "none",
       statusCallbacks: savedCallbacks,
-      activeSubagents: new Set(),
     });
 
     // Regenerate config files
@@ -666,6 +659,20 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       state.sessionId = session_id;
     }
 
+    // A Stop/StopFailure carrying an agent_id is a *sub-agent's* turn end, not the
+    // main agent's (the main agent's Stop has no agent_id). Sub-agent turn-ends
+    // must not drive the workspace status — the main agent's own Stop does that,
+    // and background sub-agents are already reflected in that Stop's
+    // background_tasks. Ignore it entirely.
+    if ((hookName === "Stop" || hookName === "StopFailure") && payload.agent_id) {
+      this.logger.silly("Ignoring sub-agent Stop for main status", {
+        hookName,
+        workspacePath: normalizedPath,
+        agentId: payload.agent_id,
+      });
+      return;
+    }
+
     // Determine status change for this hook
     let newStatus = getStatusChangeForHook(hookName);
 
@@ -752,16 +759,16 @@ export class ClaudeCodeServerManager implements AgentServerManager {
         payload.notification_type === "permission_prompt" ||
         payload.notification_type === "elicitation_dialog")
     ) {
-      // idle_prompt fires ~60s after the main thread goes quiet, which is exactly
-      // what happens while the main agent waits on active sub-agents. Suppress it
-      // while sub-agents are still tracked so the workspace stays busy instead of
-      // blipping to idle — mirrors the background-shell guard below. The other two
-      // types genuinely need the user, so they still transition to idle.
-      if (payload.notification_type === "idle_prompt" && state.activeSubagents.size > 0) {
+      // idle_prompt fires ~60s after the main thread goes quiet — which also
+      // happens while the main agent waits on background tasks (a running shell
+      // or a background sub-agent). When the preceding Stop was suppressed for
+      // that reason (busyForBackgroundTasks), this idle_prompt is just its
+      // lagging echo, so suppress it too and stay busy. The other two types
+      // genuinely need the user, so they still transition to idle.
+      if (payload.notification_type === "idle_prompt" && state.busyForBackgroundTasks) {
         newStatus = null;
-        this.logger.debug("Idle suppressed for active sub-agents", {
+        this.logger.debug("Idle suppressed for background tasks", {
           workspacePath: normalizedPath,
-          activeSubagents: state.activeSubagents.size,
         });
       } else {
         newStatus = "idle";
@@ -769,77 +776,50 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       }
     }
 
-    // Sub-agent lifecycle tracking:
-    // SubagentStart adds to active set, SubagentStop removes.
-    // When Stop fires with active sub-agents, suppress idle transition.
-    // When last sub-agent stops and main agent has stopped, transition to idle.
-    if (hookName === "SubagentStart" && payload.agent_id) {
-      state.activeSubagents.add(payload.agent_id);
-    } else if (hookName === "SubagentStop" && payload.agent_id) {
-      state.activeSubagents.delete(payload.agent_id);
-      if (state.activeSubagents.size === 0 && state.mainAgentStopped) {
-        // Don't go idle here — the main agent will resume via UserPromptSubmit
-        // to process the sub-agent result, then Stop will transition to idle.
-        state.mainAgentStopped = false;
-      }
-    } else if (
-      (hookName === "Stop" || hookName === "StopFailure") &&
-      state.activeSubagents.size > 0
-    ) {
-      state.mainAgentStopped = true;
-      newStatus = null;
-    } else if (hookName === "UserPromptSubmit") {
-      // New user activity — the main agent is running again. Do NOT clear
-      // activeSubagents here: background sub-agents from the previous prompt may
-      // still be running, and UserPromptSubmit also fires when the main agent
-      // resumes to consume a background sub-agent result. Clearing on every
-      // prompt dropped still-live sub-agents and let a following Stop go idle
-      // prematurely. A sub-agent that never reports SubagentStop (a crash) is
-      // cleared by the terminal hooks (WrapperEnd/SessionEnd) instead.
-      state.mainAgentStopped = false;
-    }
+    // Sub-agent status is derived from the Stop payload's background_tasks below
+    // (background sub-agents surface there as type "subagent"), so SubagentStart/
+    // SubagentStop no longer drive status — they stay subscribed for logging only.
+    // A synchronous sub-agent runs nested inside its parent Agent tool call, so
+    // no Stop fires while it runs and the workspace stays busy from the tool.
 
-    // Background shell handling (experimental.busy-during-background-shell):
-    // The Stop/StopFailure payload carries background_tasks — the live list of
-    // still-running background tasks. When any running shell task qualifies
-    // under the config value (true = all, string[] = command regexes), the
-    // idle transition is suppressed and the decision is stashed so the later
-    // idle_prompt Notification (~60s after Stop) stays suppressed too. When a
-    // shell exits, Claude Code re-invokes the agent (UserPromptSubmit), which
-    // clears the stash — the next Stop re-evaluates from fresh ground truth.
-    // PermissionRequest is deliberately NOT suppressed: a pending permission
-    // needs the user regardless.
+    // Background task handling: the Stop payload carries background_tasks — the
+    // live list of still-running background work (shells and background
+    // sub-agents). taskKeepsBusy() decides which keep the workspace busy:
+    // sub-agents always do; shells only when experimental.busy-during-background-
+    // shell selects them (true = all, string[] = command regexes). When any
+    // qualifies, the idle transition is suppressed and the decision is stashed so
+    // the ~60s-later idle_prompt Notification (handled above) stays suppressed
+    // too. When a task finishes, Claude Code re-invokes the agent
+    // (UserPromptSubmit), which clears the stash — the next Stop re-evaluates from
+    // fresh ground truth. PermissionRequest is deliberately NOT suppressed.
+    //
+    // StopFailure carries no background_tasks (it's an API error — rate limit,
+    // auth, max-tokens — and the payload omits the field), so it always goes idle
+    // to surface the stuck main agent regardless of background work; clear the
+    // stash there.
     const busyConfig: BusyDuringBackgroundShell = this.busyDuringBackgroundShell?.get() ?? false;
-    if (busyConfig !== false) {
-      if (hookName === "Stop" || hookName === "StopFailure") {
-        const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
-        const busyTasks = tasks.filter((task) => taskKeepsBusy(busyConfig, task));
-        state.busyForBackgroundShells = busyTasks.length > 0;
-        if (busyTasks.length > 0) {
-          newStatus = null;
-          this.logger.debug("Idle suppressed for background shells", {
-            workspacePath: normalizedPath,
-            commands: busyTasks.map((task) => task.command).join(", "),
-          });
-        }
-      } else if (
-        hookName === "Notification" &&
-        payload.notification_type === "idle_prompt" &&
-        state.busyForBackgroundShells
-      ) {
+    if (hookName === "Stop") {
+      const tasks = Array.isArray(payload.background_tasks) ? payload.background_tasks : [];
+      const busyTasks = tasks.filter((task) => taskKeepsBusy(busyConfig, task));
+      state.busyForBackgroundTasks = busyTasks.length > 0;
+      if (busyTasks.length > 0) {
         newStatus = null;
+        this.logger.debug("Idle suppressed for background tasks", {
+          workspacePath: normalizedPath,
+          tasks: busyTasks.map((task) => task.command ?? task.agent_type ?? task.type).join(", "),
+        });
       }
+    } else if (hookName === "StopFailure") {
+      state.busyForBackgroundTasks = false;
     }
     if (hookName === "UserPromptSubmit") {
-      state.busyForBackgroundShells = false;
+      state.busyForBackgroundTasks = false;
       state.awaitingUserInputResolution = false;
     }
 
-    // Terminal hooks clear sub-agent and background shell state as defensive cleanup
+    // Terminal hooks clear background-task state as defensive cleanup
     if (hookName === "WrapperEnd" || hookName === "SessionEnd") {
-      state.activeSubagents.clear();
-      state.mainAgentStopped = false;
-      state.busyForBackgroundShells = false;
+      state.busyForBackgroundTasks = false;
       state.awaitingUserInputResolution = false;
     }
 
@@ -885,7 +865,41 @@ export class ClaudeCodeServerManager implements AgentServerManager {
       if (hookName === "WrapperStart" || newStatus === "idle") {
         this.markActiveHandler?.(normalizedPath);
       }
+    } else if (
+      hookName === "Stop" &&
+      newStatus === "idle" &&
+      state.status === "idle" &&
+      !state.awaitingUserInputResolution
+    ) {
+      // The main agent's Stop landed on an already-idle workspace — a turn ran
+      // that we never saw start. Bash-mode ("!cmd") turns emit only a Stop (no
+      // UserPromptSubmit, no PreToolUse), so a text-only reply never flipped the
+      // workspace to busy. Emit a synthetic busy→idle edge so the "agent
+      // finished" signal (badge/chime) still fires — the transition is what
+      // matters, not the dwell time, so this is a plain synchronous edge rather
+      // than a timed flash.
+      this.emitBusyIdleEdge(normalizedPath, state);
     }
+  }
+
+  /**
+   * Emit a synthetic busy→idle status edge (the workspace ends back at idle).
+   * Used when a main-agent turn completes that we never saw start, so the
+   * status-change consumers still see the "finished" edge. The status-cache
+   * dedup layer treats each emission as a distinct edge, so no dwell time is
+   * needed. Final status is idle, so a following real turn proceeds normally.
+   */
+  private emitBusyIdleEdge(workspacePath: string, state: WorkspaceState): void {
+    this.logger.info("Emitting busy→idle edge for untracked turn", { workspacePath });
+    state.status = "busy";
+    for (const callback of state.statusCallbacks) {
+      callback("busy");
+    }
+    state.status = "idle";
+    for (const callback of state.statusCallbacks) {
+      callback("idle");
+    }
+    this.markActiveHandler?.(workspacePath);
   }
 
   /**

@@ -59,9 +59,11 @@ export interface ClaudeCodeHookPayload {
 }
 
 /**
- * A background task entry from the Stop/StopFailure payload's background_tasks
- * array. Shape verified against Claude Code 2.1.170:
- * `{id, type: "shell", status: "running", description, command}`.
+ * A background task entry from the Stop payload's background_tasks array.
+ * (StopFailure omits background_tasks entirely.) Shape verified against Claude
+ * Code 2.1.202:
+ * - shell:    `{id, type: "shell", status: "running", description, command}`
+ * - subagent: `{id, type: "subagent", status: "running", description, agent_type}`
  * All fields optional — the payload is external input.
  */
 export interface ClaudeCodeBackgroundTask {
@@ -70,6 +72,7 @@ export interface ClaudeCodeBackgroundTask {
   readonly status?: string;
   readonly description?: string;
   readonly command?: string;
+  readonly agent_type?: string;
 }
 
 /**
@@ -209,17 +212,26 @@ export function configBusyDuringBackgroundShell(): PersistedTypeBuilder<BusyDuri
 }
 
 /**
- * Decide whether a background task keeps the workspace busy under the given
- * config value. Only running shell tasks qualify (background agents are
- * covered by sub-agent tracking). true keeps every qualifying shell busy;
- * a pattern array keeps a shell busy if any regex tests true against its
- * command (partial, case-sensitive). false never matches.
+ * Decide whether a running background task keeps the workspace busy.
+ *
+ * A background sub-agent (type "subagent") is unambiguous agent work and always
+ * keeps the workspace busy, independent of config. A background shell (type
+ * "shell") keeps it busy only when the experimental.busy-during-background-shell
+ * config selects it: true keeps every shell busy; a pattern array keeps a shell
+ * busy if any regex tests true against its command (partial, case-sensitive);
+ * false never matches. Non-running tasks and other types never qualify.
  */
 export function taskKeepsBusy(
   config: BusyDuringBackgroundShell,
   task: ClaudeCodeBackgroundTask
 ): boolean {
-  if (task.type !== "shell" || (task.status !== undefined && task.status !== "running")) {
+  if (task.status !== undefined && task.status !== "running") {
+    return false;
+  }
+  if (task.type === "subagent") {
+    return true;
+  }
+  if (task.type !== "shell") {
     return false;
   }
   if (typeof config === "boolean") {
