@@ -195,8 +195,11 @@ jobs:
           echo "===== @typescript/native-preview (tsgo) presence ====="
           ls -d node_modules/@typescript/native-preview* 2>&1 || echo "(none)"
 
-          echo "===== STEP 2: run copilot's own postinstall explicitly ====="
-          node --stack-trace-limit=50 ./node_modules/.bin/tsx ./script/postinstall.ts 2>&1
+          echo "===== STEP 2: run copilot's own postinstall the way npm does ====="
+          # npm runs `postinstall` (tsx ./script/postinstall.ts) via script-shell.
+          # --foreground-scripts streams its output so the last action before a
+          # hard crash is visible.
+          npm run postinstall --foreground-scripts 2>&1
           s2=$?; echo "STEP2_EXIT=$s2"
 
           echo "===== DIAGNOSTIC COMPLETE (step1=$s1 step2=$s2) - stopping ====="
