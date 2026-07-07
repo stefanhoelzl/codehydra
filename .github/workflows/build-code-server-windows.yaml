@@ -142,6 +142,21 @@ jobs:
           Write-Host "Using Visual Studio at: $vsPath"
           "vs2022_install=$vsPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Add Windows SDK signtool to PATH
+        # VS Code's win32 reh build strips Authenticode signatures from bundled
+        # binaries (rg.exe / tgrep.exe / *.node) with signtool.exe before rcedit.
+        # signtool ships in the Windows SDK but is not on PATH by default, so the
+        # build fails with `spawn signtool.exe ENOENT`. Put the newest one on PATH.
+        shell: pwsh
+        run: |
+          $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $signtool = Get-ChildItem -Path $sdkBin -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { Write-Error "signtool.exe not found under $sdkBin"; exit 1 }
+          Write-Host "Using signtool: $($signtool.FullName)"
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $signtool.FullName)
+
       # code-server's scripts (ci/lib.sh, build-vscode.sh, build-release.sh) are
       # bash and call rsync / quilt / jq. Provide them via MSYS2. `path-type:
       # inherit` keeps the Windows Node.js + MSVC toolchain on PATH for node-gyp.
