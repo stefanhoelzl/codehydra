@@ -26,6 +26,7 @@
 <script lang="ts">
   import type { DialogConfig, DialogKind } from "@shared/dialog-types";
   import Form from "./form/Form.svelte";
+  import ErrorBoundary from "./ErrorBoundary.svelte";
 
   interface Props {
     // dialogId/config are optional to survive the teardown flush: when the
@@ -68,9 +69,13 @@
 >
   <div class="panel-card">
     {#if config && dialogId}
-      {#key dialogId}
-        <Form bind:this={formRef} {dialogId} {config} {kind} />
-      {/key}
+      <!-- Wall off the form: a render error in the panel's form degrades to a
+           fallback instead of escaping to the crash guard. -->
+      <ErrorBoundary label="panel:{kind}">
+        {#key dialogId}
+          <Form bind:this={formRef} {dialogId} {config} {kind} />
+        {/key}
+      </ErrorBoundary>
     {/if}
   </div>
 </section>
