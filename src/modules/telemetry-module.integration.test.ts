@@ -80,6 +80,8 @@ function createTestSetup(overrides?: {
   agent?: ConfigAgentType;
   configOverrides?: Record<string, unknown>;
   workspacePayload?: WorkspaceCreatedPayload;
+  /** Which app:start hook point the minimal operation runs (default "start"). */
+  startHookPoint?: "before-ready" | "start";
 }): TestSetup {
   const platformInfo = createMockPlatformInfo({ platform: "darwin", arch: "arm64" });
   const buildInfo = { version: "1.0.0", isDevelopment: true, isPackaged: false, appPath: "/app" };
@@ -119,7 +121,7 @@ function createTestSetup(overrides?: {
 
   dispatcher.registerOperation(
     INTENT_APP_START,
-    createMinimalOperation(APP_START_OPERATION_ID, "start")
+    createMinimalOperation(APP_START_OPERATION_ID, overrides?.startHookPoint ?? "start")
   );
   dispatcher.registerOperation(INTENT_APP_SHUTDOWN, new AppShutdownOperation());
   dispatcher.registerOperation(
@@ -252,6 +254,30 @@ describe("TelemetryModule Integration", () => {
       await dispatcher.dispatch(startIntent());
 
       expect(boundary.$.identifyCalls).toHaveLength(0);
+    });
+  });
+
+  describe("app:start before-ready (early metadata)", () => {
+    it("configures commonProps before 'start' so early reports/crashes carry build + OS", async () => {
+      // Even with telemetry disabled: a manual bug report sends unconditionally,
+      // so commonProps must be stamped regardless of `enabled`.
+      const { dispatcher, boundary } = createTestSetup({
+        telemetryEnabled: false,
+        agent: "claude",
+        startHookPoint: "before-ready",
+      });
+
+      await dispatcher.dispatch(startIntent());
+
+      // Simulate an early bug report / crash, before the "start" hook has run.
+      boundary.captureException(new Error("early failure"));
+
+      expect(boundary).toHaveCaptured("$exception", {
+        version: "1.0.0",
+        platform: "darwin",
+        arch: "arm64",
+        agent: "claude",
+      });
     });
   });
 

@@ -661,12 +661,12 @@ See [VS Code Setup](#vs-code-setup) for the main process side of this flow.
 
 The application uses a unified UI mode system with four modes:
 
-| Mode        | UI Z-Order | Focus          | Description                              |
-| ----------- | ---------- | -------------- | ---------------------------------------- |
-| `workspace` | Behind     | Workspace view | Normal editing mode                      |
-| `shortcut`  | On top     | UI layer       | Shortcut overlay visible                 |
-| `dialog`    | On top     | Dialog (no-op) | Modal dialog open (blocks Alt+X)         |
-| `hover`     | On top     | No change      | Sidebar expanded on hover (allows Alt+X) |
+| Mode        | UI Z-Order | Focus          | Description                               |
+| ----------- | ---------- | -------------- | ----------------------------------------- |
+| `workspace` | Behind     | Workspace view | Normal editing mode                       |
+| `shortcut`  | On top     | UI layer       | Shortcut overlay visible                  |
+| `dialog`    | On top     | Dialog (no-op) | Modal open (Alt+X → restricted: `b` only) |
+| `hover`     | On top     | No change      | Sidebar expanded on hover (allows Alt+X)  |
 
 ```
 WORKSPACE MODE (normal):
@@ -702,12 +702,18 @@ SHORTCUT/DIALOG MODE (overlay):
 | Sidebar hover stops  | hover → workspace    |
 | Dialog opens (hover) | hover → dialog       |
 
-**Alt+X Blocking:**
+**Alt+X over a modal (restricted mode):**
 
-Alt+X is blocked when `mode === "dialog"` but allowed for all other modes including `"hover"`. This allows:
-
-- Activating shortcut mode while hovering over the expanded sidebar
-- Blocking shortcut mode when a modal dialog is open (focus trap is active)
+Alt+X is never fully blocked. When a modal is open (`isModalOpen()`), Alt+X still
+activates but in a **restricted** mode: only the bug-report key (`b`) is forwarded
+and the module does **not** broadcast `ui:set-shortcut-active`, so the presenter is
+untouched — no overlay, no sidebar badges, no ARIA, no workspace blur, and `mode`
+stays `dialog`. This keeps a **bug report reachable in every state**, including over
+the startup/setup screens (themselves modal system dialogs) and over ordinary
+modals like settings. `isModalOpen()` is read live per key press, so a modal opening
+mid-gesture transparently narrows to `b`. With no modal open, Alt+X behaves as
+before (full mode, all keys + affordances) — including while hovering the expanded
+sidebar. See `shortcut-module.ts`.
 
 **Computation:** mode is derived in main by the presenter, not commanded by the
 renderer. The presenter folds it into the `UiState` snapshot as `ui.mode`; the
@@ -1425,7 +1431,8 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ Main Process — capture: shortcut-module                                  │
 │  ├─ Registers before-input-event on ALL WebViews (workspace + UI)       │
-│  ├─ Alt+X (unless presenter.isModalOpen) → dispatch set-shortcut-active │
+│  ├─ Alt+X → dispatch set-shortcut-active (skipped if isModalOpen:       │
+│  │    restricted mode, only "b" forwarded, no broadcast)                │
 │  ├─ Action keys while active → dispatch shortcut:key                    │
 │  └─ Alt release / Escape / blur → dispatch set-shortcut-active(false)   │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -1490,7 +1497,7 @@ CodeHydra uses a **unified main-process keyboard capture system** where all shor
 
 1. **Main owns detection AND interpretation**: capture (shortcut-module) and navigation/mode (presenter) both live in main — no renderer shortcut logic, eliminating focus/key races.
 2. **Mode is computed, not commanded**: the presenter derives `ui.mode` from its own state and ships it in the snapshot; the renderer never sets mode.
-3. **Alt+X guard**: the presenter's `isModalOpen()` blocks Alt+X while a modal dialog is open (focus trap active).
+3. **Alt+X over a modal**: `isModalOpen()` doesn't block Alt+X — it downgrades it to restricted mode (only the bug-report key `b` forwarded, no `set-shortcut-active` broadcast), so a bug report stays reachable over any modal / the startup screens without lighting up the overlay or trapping focus.
 4. **Coalesced pushes**: snapshot pushes batch per microtask, so mode recomputes that don't change anything are collapsed.
 
 ## Data Flow

@@ -1,18 +1,25 @@
 /**
  * ShortcutModule - Owns the Alt+X shortcut-mode state machine.
  *
- * It detects Alt+X activation, owns the `shortcutActive` flag (it is the one
- * toggling it), and broadcasts entry/exit via the ui:set-shortcut-active
- * intent (→ ui:shortcut-active-changed, which the presenter folds into its UI
- * mode computation). While shortcut mode is active, every key press is
- * forwarded as a shortcut:key intent — the presenter runs navigation over its
- * authoritative model. Escape exits shortcut mode; so does window blur (unless
- * a navigation-initiated workspace switch is in flight — Electron fires blur
- * when the view bounds change during a switch).
+ * It detects Alt+X activation, owns the local `shortcutActive` flag (it is the
+ * one toggling it), and — in full mode — broadcasts entry/exit via the
+ * ui:set-shortcut-active intent (→ ui:shortcut-active-changed, which the
+ * presenter folds into its UI mode computation). While shortcut mode is active,
+ * every key press is forwarded as a shortcut:key intent — the presenter runs
+ * navigation over its authoritative model. Escape exits shortcut mode; so does
+ * window blur (unless a navigation-initiated workspace switch is in flight —
+ * Electron fires blur when the view bounds change during a switch).
  *
- * The Alt+X guard reads the dialog-manager's synchronous "modal open" signal
- * instead of a mirrored view-manager mode (dialog and shortcut modes are
- * mutually exclusive).
+ * Restricted (over-a-modal) mode: a bug report must be reachable in EVERY state,
+ * including while a modal is open (the startup/setup screens are themselves modal
+ * system dialogs). So Alt+X is no longer blocked when a modal is open — instead
+ * it enters a restricted mode that forwards ONLY the bug-report key ("b") and
+ * does NOT broadcast ui:set-shortcut-active. Not broadcasting keeps the presenter
+ * untouched: no overlay, no sidebar badges, no ARIA announcement, no workspace
+ * blur — the modal stays exactly as it was, with the bug dialog layered on top.
+ * The broadcast (full mode, all keys + affordances) fires only when no modal is
+ * open. `isModalOpen()` is read live per key press, so a modal opening mid-gesture
+ * transparently narrows to the bug-report key.
  *
  * IMPORTANT: Does NOT call event.preventDefault() on any keys.
  * Electron bug #37336 causes keyUp events to not fire when keyDown was
@@ -48,6 +55,14 @@ type ShortcutActivationState = "NORMAL" | "ALT_WAITING";
 
 const SHORTCUT_MODIFIER_KEY = "Alt";
 const SHORTCUT_ACTIVATION_KEY = "x";
+
+/**
+ * The only shortcut honored while a modal is open (restricted mode): opens the
+ * bug report dialog (handled by error-report-module on shortcut:key-pressed).
+ * Every other key is dropped so nav/settings/hibernate/devtools stay inert over
+ * a modal or the startup/setup screens.
+ */
+const BUG_REPORT_KEY = "b";
 
 /**
  * Window (ms) after a navigation-initiated workspace switch during which a
@@ -94,20 +109,46 @@ export interface ShortcutModuleDeps {
 
 export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
   let state: ShortcutActivationState = "NORMAL";
-  /** Locally-owned shortcut-mode flag (this module is the sole toggler). */
+  /** Locally-owned shortcut-mode flag: while true, key presses are forwarded. */
   let shortcutActive = false;
+  /**
+   * Whether entry broadcast ui:set-shortcut-active (active:true) — i.e. full mode
+   * with UI affordances. False for a restricted (over-a-modal) activation, which
+   * forwards only the bug-report key and leaves the presenter untouched. Mirrored
+   * on exit so we only broadcast active:false when we broadcast active:true.
+   */
+  let broadcasted = false;
   /** Timestamp (ms) of the last navigation-initiated workspace switch. */
   let lastSwitchAt = 0;
   let unsubscribeBeforeInput: Unsubscribe | null = null;
   let unsubscribeDestroyed: Unsubscribe | null = null;
   let unsubscribeBlur: Unsubscribe | null = null;
 
-  function setShortcutActive(active: boolean): void {
-    if (shortcutActive === active) return;
-    shortcutActive = active;
+  /**
+   * Enter shortcut mode. `restricted` (a modal is open) forwards only the
+   * bug-report key and does NOT broadcast — the UI stays exactly as the modal
+   * left it. Full activation broadcasts so the overlay/nav affordances light up.
+   */
+  function enterShortcut(restricted: boolean): void {
+    if (shortcutActive) return;
+    shortcutActive = true;
+    if (restricted) return;
+    broadcasted = true;
     void deps.dispatcher.dispatch({
       type: INTENT_SET_SHORTCUT_ACTIVE,
-      payload: { active },
+      payload: { active: true },
+    } as SetShortcutActiveIntent);
+  }
+
+  /** Exit shortcut mode. Broadcasts active:false only if entry broadcast true. */
+  function exitShortcut(): void {
+    if (!shortcutActive) return;
+    shortcutActive = false;
+    if (!broadcasted) return;
+    broadcasted = false;
+    void deps.dispatcher.dispatch({
+      type: INTENT_SET_SHORTCUT_ACTIVE,
+      payload: { active: false },
     } as SetShortcutActiveIntent);
   }
 
@@ -143,9 +184,11 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
    * Algorithm:
    * 1. Handle keyUp: Alt release exits shortcut mode
    * 2. Skip auto-repeat events
-   * 3. In shortcut mode: Escape exits, every other key is forwarded
+   * 3. In shortcut mode: Escape exits; otherwise the key is forwarded — but while
+   *    a modal is open (restricted mode) only the bug-report key gets through
    * 4. Alt keydown: NORMAL → ALT_WAITING
-   * 5. In ALT_WAITING + X keydown: activate shortcut (unless a modal is open)
+   * 5. In ALT_WAITING + X keydown: activate shortcut — full mode, or restricted
+   *    (bug-report key only, no broadcast) when a modal is open. Never blocked.
    * 6. In ALT_WAITING + other key: exit to NORMAL, let through
    */
   function handleInput(input: KeyboardInput): void {
@@ -162,9 +205,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     // Handle Alt keyUp: exit shortcut mode
     if (input.type === "keyUp" && isAltKey) {
       deps.logger.debug("Alt keyUp detected", { willExitShortcutMode: shortcutActive });
-      if (shortcutActive) {
-        setShortcutActive(false);
-      }
+      exitShortcut();
       state = "NORMAL";
       return;
     }
@@ -181,14 +222,20 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     // NOTE: This runs before Alt+X detection because shortcut mode is already active
     if (shortcutActive) {
       const normalized = normalizeKey(input.key);
-      // Escape exits shortcut mode (no preventDefault — see #37336). Dialog
-      // and shortcut modes are mutually exclusive, so this never steals a
-      // dialog's Escape.
+      // Escape exits shortcut mode (no preventDefault — see #37336). In full
+      // mode dialog and shortcut modes are mutually exclusive, so this never
+      // steals a dialog's Escape; in restricted mode (bug dialog not yet open)
+      // there is no dialog to steal from either.
       if (normalized === "escape") {
-        setShortcutActive(false);
+        exitShortcut();
         state = "NORMAL";
         return;
       }
+      // Restricted mode: while a modal is open, only the bug-report key is
+      // honored (so a report is reachable over any modal / the startup screens);
+      // every other key is dropped. Read isModalOpen() live so a modal opening
+      // mid-gesture narrows to "b" from that point on.
+      if (deps.ui.isModalOpen() && normalized !== BUG_REPORT_KEY) return;
       // NOTE: Do NOT call event.preventDefault() - see Electron bug #37336
       dispatchShortcutKey(normalized);
       return;
@@ -203,16 +250,15 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     // ALT_WAITING state
     if (state === "ALT_WAITING") {
       if (isActivationKey) {
-        // Don't activate shortcut mode if a modal dialog is open.
-        if (deps.ui.isModalOpen()) {
-          state = "NORMAL";
-          return;
-        }
+        // A modal open at activation → restricted mode (bug-report key only, no
+        // broadcast). Otherwise full mode. Never blocked: a bug report must be
+        // reachable in every state, including over the startup/setup screens.
+        const restricted = deps.ui.isModalOpen();
 
         // Defer activation to next tick to avoid interfering with keyboard
         // event delivery.
         setImmediate(() => {
-          setShortcutActive(true);
+          enterShortcut(restricted);
         });
 
         state = "NORMAL";
@@ -235,9 +281,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
       deps.logger.debug("Blur during workspace switch ignored");
       return;
     }
-    if (shortcutActive) {
-      setShortcutActive(false);
-    }
+    exitShortcut();
     state = "NORMAL";
   }
 
@@ -249,6 +293,7 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
     unsubscribeBlur = null;
     state = "NORMAL";
     shortcutActive = false;
+    broadcasted = false;
   }
 
   // While shortcut mode is active, a workspace:switched is navigation-initiated

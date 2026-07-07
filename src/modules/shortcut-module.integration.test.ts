@@ -4,9 +4,11 @@
  *
  * The module owns the Alt+X state machine and the local `shortcutActive` flag,
  * broadcasting entry/exit via the ui:set-shortcut-active intent and forwarding
- * keys (while active) via shortcut:key. The Alt+X guard reads the
- * dialog-manager's synchronous isModalOpen() signal. Escape and window blur
- * exit shortcut mode (blur is suppressed briefly after a navigation switch).
+ * keys (while active) via shortcut:key. When a modal is open (isModalOpen()),
+ * Alt+X still activates but in a restricted mode: only the bug-report key ("b")
+ * is forwarded and nothing is broadcast (no UI affordances) — so a bug report is
+ * reachable over any modal / the startup screens. Escape and window blur exit
+ * shortcut mode (blur is suppressed briefly after a navigation switch).
  *
  * IMPORTANT: These tests verify that NO keys are prevented via preventDefault().
  * Electron bug #37336 causes keyUp events to not fire when keyDown was
@@ -295,7 +297,7 @@ describe("ShortcutModule integration", () => {
       expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }]);
     });
 
-    it("does not activate when a modal dialog is open", async () => {
+    it("does not broadcast when a modal dialog is open (enters restricted mode)", async () => {
       const { callbacks, dispatchSpy } = await createHarness(true);
       activate(callbacks);
       expect(dispatchSpy).not.toHaveBeenCalledWith(
@@ -456,6 +458,65 @@ describe("ShortcutModule integration", () => {
       expect(dispatchSpy).not.toHaveBeenCalledWith(
         expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
       );
+    });
+  });
+
+  describe("restricted mode (modal open)", () => {
+    it("forwards the bug-report key 'b' while a modal is open", async () => {
+      const { callbacks, dispatchSpy } = await createHarness(true);
+      activate(callbacks);
+      simulateInput(callbacks, "ui-view", createKeyboardInput("b", "keyDown"));
+      expect(dispatchSpy).toHaveBeenCalledWith({
+        type: INTENT_SHORTCUT_KEY,
+        payload: { key: "b" },
+      });
+    });
+
+    it("drops non-'b' keys while a modal is open", async () => {
+      const { callbacks, dispatchSpy } = await createHarness(true);
+      activate(callbacks);
+      for (const key of ["ArrowUp", "s", "h", "1"]) {
+        simulateInput(callbacks, "ui-view", createKeyboardInput(key, "keyDown"));
+      }
+      expect(dispatchSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+      );
+    });
+
+    it("Escape exits restricted mode without a broadcast or a forwarded key", async () => {
+      const { callbacks, dispatchSpy } = await createHarness(true);
+      activate(callbacks);
+      simulateInput(callbacks, "ui-view", createKeyboardInput("Escape", "keyDown"));
+      // Never broadcast on entry → nothing to reverse on exit.
+      expect(setActiveCalls(dispatchSpy)).toEqual([]);
+      expect(dispatchSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY })
+      );
+    });
+
+    it("Alt keyUp exits restricted mode without a broadcast", async () => {
+      const { callbacks, dispatchSpy } = await createHarness(true);
+      activate(callbacks);
+      simulateInput(callbacks, "ui-view", createKeyboardInput("Alt", "keyUp"));
+      expect(setActiveCalls(dispatchSpy)).toEqual([]);
+    });
+
+    it("a modal opening mid-gesture narrows full mode to 'b' only", async () => {
+      const { callbacks, dispatchSpy, setModalOpen } = await createHarness(false);
+      activate(callbacks);
+      // Full mode broadcast on entry (no modal at activation).
+      expect(setActiveCalls(dispatchSpy)).toEqual([{ active: true }]);
+      // A modal opens while shortcut mode is still active.
+      setModalOpen(true);
+      simulateInput(callbacks, "ui-view", createKeyboardInput("ArrowUp", "keyDown"));
+      expect(dispatchSpy).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: INTENT_SHORTCUT_KEY, payload: { key: "up" } })
+      );
+      simulateInput(callbacks, "ui-view", createKeyboardInput("b", "keyDown"));
+      expect(dispatchSpy).toHaveBeenCalledWith({
+        type: INTENT_SHORTCUT_KEY,
+        payload: { key: "b" },
+      });
     });
   });
 

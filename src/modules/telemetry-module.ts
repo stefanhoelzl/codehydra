@@ -6,8 +6,13 @@
  * shares the same boundary instance.
  *
  * Hooks:
+ * - app:start → "before-ready": configure the boundary with commonProps only, as
+ *   early as possible, so a bug report or crash during the setup/boot phases (before
+ *   "start" runs) still carries version/platform/arch/agent. The distinct id is not
+ *   resolved yet → anonymous fallback at send time, which is correct for first-run
+ *   (no id exists yet anyway).
  * - app:start → "start": resolve distinct id (generate+persist if needed),
- *   configure the boundary (commonProps + distinct id), capture "app_launched",
+ *   re-configure the boundary (commonProps + distinct id), capture "app_launched",
  *   and sync config overrides as person properties.
  * - app:shutdown → "stop": flush + close the boundary (best-effort).
  *
@@ -98,6 +103,14 @@ export function createTelemetryModule(deps: TelemetryModuleDeps): IntentModule {
     name: "telemetry",
     hooks: {
       [APP_START_OPERATION_ID]: {
+        // Stamp commonProps onto the boundary before any dependency check or setup
+        // screen, so early reports/crashes are triageable (build + OS). distinctId
+        // stays null here; "start" resolves and re-configures it below.
+        "before-ready": {
+          handler: async (): Promise<void> => {
+            deps.boundary.configure({ commonProps: commonProps() });
+          },
+        },
         start: {
           handler: async (): Promise<void> => {
             enabled = deps.telemetryEnabled.get();
