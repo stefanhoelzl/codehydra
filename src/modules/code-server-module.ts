@@ -802,18 +802,22 @@ export function createCodeServerModule(deps: CodeServerModuleDeps): IntentModule
             yield { id: "vscode", status: "running", message: "Downloading..." };
             try {
               yield* streamProgress<SetupProgressPayload>(async (emit) => {
+                let lastKey = "";
                 await downloadCodeServer((p) => {
-                  if (p.phase === "downloading" && p.totalBytes) {
-                    const pct = Math.floor((p.bytesDownloaded / p.totalBytes) * 100);
-                    emit({
-                      id: "vscode",
-                      status: "running",
-                      message: "Downloading...",
-                      progress: pct,
-                    });
-                  } else if (p.phase === "extracting") {
-                    emit({ id: "vscode", status: "running", message: "Extracting..." });
-                  }
+                  const pct = p.totalBytes
+                    ? Math.floor((p.bytesDownloaded / p.totalBytes) * 100)
+                    : undefined;
+                  // Throttle: only forward when the phase or integer % changes.
+                  const key = `${p.phase}:${pct ?? "x"}`;
+                  if (key === lastKey) return;
+                  lastKey = key;
+                  const message = p.phase === "downloading" ? "Downloading..." : "Extracting...";
+                  emit({
+                    id: "vscode",
+                    status: "running",
+                    message,
+                    ...(pct !== undefined && { progress: pct }),
+                  });
                 });
               });
               yield { id: "vscode", status: "done" };

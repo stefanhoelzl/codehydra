@@ -727,7 +727,7 @@ export function createPresentationModule(deps: PresentationModuleDeps): UiPresen
     const sections: DialogSection[] = [
       { type: "text", content: "Setting up CodeHydra", style: "heading" },
       { type: "text", content: "This is only required on first startup.", style: "subtitle" },
-      { type: "progress", style: "spinner", items },
+      { type: "progress", style: "bar", items },
     ];
     if (setupError !== undefined) {
       sections.push({ type: "text", content: setupError.message, style: "error" });

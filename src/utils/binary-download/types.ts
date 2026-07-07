@@ -18,9 +18,16 @@ export type DownloadPhase = "downloading" | "extracting";
 export interface DownloadProgress {
   /** Current phase of operation */
   phase: DownloadPhase;
-  /** Number of bytes downloaded so far (only for downloading phase) */
+  /**
+   * Units processed so far: bytes downloaded (downloading phase), or extraction
+   * progress (extracting phase) — compressed bytes for tar, entry count for zip.
+   */
   bytesDownloaded: number;
-  /** Total bytes to download, null if Content-Length not provided (only for downloading phase) */
+  /**
+   * Total units to process: Content-Length (downloading, null if not provided),
+   * or the extraction total (extracting) — archive size for tar, entry count for
+   * zip. null when unknown.
+   */
   totalBytes: number | null;
 }
 
