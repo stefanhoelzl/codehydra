@@ -28,8 +28,13 @@
   import Form from "./form/Form.svelte";
 
   interface Props {
-    dialogId: string;
-    config: DialogConfig;
+    // dialogId/config are optional to survive the teardown flush: when the
+    // owning dialog leaves the ui:state snapshot, MainView's `xDialog?.config`
+    // getter yields `undefined` for the frame between the dialog disappearing
+    // and this component being destroyed. Rendering nothing that frame beats
+    // dereferencing undefined and throwing (which the crash guard would report).
+    dialogId: string | undefined;
+    config: DialogConfig | undefined;
     /** "modeless" (creation, above sidebar) or "panel" (deletion, below sidebar). */
     kind: Extract<DialogKind, "modeless" | "panel">;
     /** Whether a blocking modal is open above (drives refocus on close). */
@@ -42,7 +47,7 @@
 
   /** Derive heading text from sections for the accessible name. */
   const heading = $derived.by(() => {
-    const headingSection = config.sections.find((s) => s.type === "text" && s.style === "heading");
+    const headingSection = config?.sections.find((s) => s.type === "text" && s.style === "heading");
     return headingSection?.type === "text" ? headingSection.content : "Panel";
   });
 
@@ -62,9 +67,11 @@
   aria-label={heading}
 >
   <div class="panel-card">
-    {#key dialogId}
-      <Form bind:this={formRef} {dialogId} {config} {kind} />
-    {/key}
+    {#if config && dialogId}
+      {#key dialogId}
+        <Form bind:this={formRef} {dialogId} {config} {kind} />
+      {/key}
+    {/if}
   </div>
 </section>
 

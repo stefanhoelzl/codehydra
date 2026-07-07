@@ -220,8 +220,8 @@
        view is "creation" (the ground state when no workspace is active). -->
   {#if creationShown && creationDialog}
     <PanelView
-      dialogId={creationDialog.id}
-      config={creationDialog.config}
+      dialogId={creationDialog?.id}
+      config={creationDialog?.config}
       kind="modeless"
       {modalAbove}
     />
@@ -234,7 +234,7 @@
        workspace and are mutually exclusive, so they never coexist with the
        creation ground state or each other. -->
   {#if main?.kind === "workspace" && panelDialog}
-    <PanelView dialogId={panelDialog.id} config={panelDialog.config} kind="panel" {modalAbove} />
+    <PanelView dialogId={panelDialog?.id} config={panelDialog?.config} kind="panel" {modalAbove} />
   {/if}
 
   {#if main?.kind === "hibernated"}
