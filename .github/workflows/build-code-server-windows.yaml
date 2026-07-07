@@ -160,6 +160,22 @@ jobs:
       # code-server's scripts (ci/lib.sh, build-vscode.sh, build-release.sh) are
       # bash and call rsync / quilt / jq. Provide them via MSYS2. `path-type:
       # inherit` keeps the Windows Node.js + MSVC toolchain on PATH for node-gyp.
+      - name: Exclude build directories from Windows Defender scanning
+        # Freshly compiled/downloaded native binaries (rg.exe, tgrep.exe, *.node,
+        # node-gyp output) that are executed immediately during the extension
+        # installs intermittently crash with 0xC0000409
+        # (STATUS_STACK_BUFFER_OVERRUN) when Defender's real-time scanner races
+        # their first execution - a different extension each run. Scope Defender
+        # exclusions to just the build directories (real-time protection stays on
+        # everywhere else) to stop the flake.
+        shell: pwsh
+        run: |
+          $paths = @("${{ github.workspace }}", $env:RUNNER_TEMP, "C:\npm\cache", "C:\msys64")
+          foreach ($p in $paths) {
+            try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop; Write-Host "excluded: $p" }
+            catch { Write-Host "exclusion failed for ${p}: $_" }
+          }
+
       - name: Setup MSYS2 (rsync, quilt, jq for the build scripts)
         uses: msys2/setup-msys2@v2
         with:
