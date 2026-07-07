@@ -107,6 +107,20 @@ jobs:
           # This includes lib/vscode and license files (but not Node.js - npm package doesn't include it)
           cp -r node_modules/code-server/* "$PACKAGE_DIR/"
 
+          # Bundle code-server's runtime dependencies. The upstream package.tar.gz
+          # ships no node_modules, so `npm install` resolves code-server's deps
+          # (@coder/logger, express, ...) and HOISTS them next to code-server in
+          # build/node_modules. The flatten above only copies code-server's own
+          # folder, so without this step the release ships zero dependencies and
+          # crashes at out/node/entry.js with "Cannot find module '@coder/logger'".
+          # Copy every hoisted sibling into a package-root node_modules dir so
+          # entry.js can resolve them at runtime (Node walks up to <root>/node_modules).
+          mkdir -p "$PACKAGE_DIR/node_modules"
+          for dep in node_modules/*; do
+            [ "$(basename "$dep")" = "code-server" ] && continue
+            cp -r "$dep" "$PACKAGE_DIR/node_modules/"
+          done
+
           # Add downloaded Node.js for Windows
           mv node.exe "$PACKAGE_DIR/lib/node.exe"
 
@@ -131,17 +145,26 @@ jobs:
           "%ROOT_DIR%\lib\node.exe" "%ROOT_DIR%\out\node\entry.js" %*
           LAUNCHER
 
-      - name: Test package
-        shell: cmd
-        working-directory: build
-        run: |
-          :: Test the launcher script
-          %PACKAGE_DIR%\bin\code-server.cmd --version
-
       - name: Create tar.gz package
         shell: bash
         working-directory: build
         run: tar -czf "$ARCHIVE_NAME" "$PACKAGE_DIR"
+
+      - name: Verify packaged artifact starts in a clean directory
+        shell: cmd
+        working-directory: build
+        run: |
+          :: Extract the freshly built archive into a throwaway directory that has
+          :: NO ancestor node_modules, then launch it. This is the authoritative
+          :: smoke test: code-server can only report its version if every runtime
+          :: dependency is actually inside the package. The old "Test package" step
+          :: ran from build\ and falsely passed by resolving hoisted deps from
+          :: build\node_modules - a location that does not exist on a user's machine.
+          set "VERIFY_DIR=%RUNNER_TEMP%\cs-verify"
+          if exist "%VERIFY_DIR%" rmdir /s /q "%VERIFY_DIR%"
+          mkdir "%VERIFY_DIR%"
+          tar -xzf "%ARCHIVE_NAME%" -C "%VERIFY_DIR%" || exit /b 1
+          "%VERIFY_DIR%\%PACKAGE_DIR%\bin\code-server.cmd" --version || exit /b 1
 
       - name: Calculate SHA256 checksum
         id: checksum
