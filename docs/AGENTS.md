@@ -256,19 +256,46 @@ For agents like OpenCode, sessions waiting for user permission are displayed as 
 - `session.deleted`: Clears pending permissions for that session
 - Disconnect: Clears all pending permissions (reconnection safety)
 
-### Background Shell Handling (Claude Code)
+### Background Tasks: Sub-agents and Shells (Claude Code)
 
-With `experimental.busy-during-background-shell` enabled, the workspace stays busy while
-the agent has a qualifying background shell running (Bash with `run_in_background`),
-instead of going idle when the turn ends. The Stop/StopFailure hook payload carries
-`background_tasks` — the live list of still-running background tasks — which the bridge
-evaluates on every Stop: `true` keeps the workspace busy for any running shell task;
-an array of regexes (config.json only) keeps it busy only for shells whose command
-matches (e.g. `["ship-wait"]` for a CI-wait script), so dev servers don't pin the
-workspace busy. The decision is stashed to also suppress the `idle_prompt` notification
-that fires ~60s after Stop, and cleared when the agent is re-invoked (`UserPromptSubmit`,
-which happens automatically when a background shell exits) or the session ends.
-`PermissionRequest` → idle is never suppressed. Default: disabled.
+The `Stop` hook payload carries `background_tasks` — the live snapshot of still-running
+background work, each entry tagged `type: "shell"` or `type: "subagent"`. On every `Stop`
+the bridge evaluates it (`taskKeepsBusy`) and, when any qualifies, keeps the workspace
+busy instead of going idle:
+
+- A running **sub-agent** (`type: "subagent"`, from an `Agent` tool call with
+  `run_in_background`) always keeps the workspace busy — it is unambiguous agent work,
+  independent of config.
+- A running **shell** (`type: "shell"`, Bash with `run_in_background`) keeps it busy only
+  when `experimental.busy-during-background-shell` selects it: `true` for any shell, or an
+  array of regexes (config.json only) for shells whose command matches (e.g. `["ship-wait"]`
+  for a CI-wait script), so dev servers don't pin the workspace busy.
+
+The decision is stashed to also suppress the `idle_prompt` notification that fires ~60s
+after Stop, and cleared when the agent is re-invoked (`UserPromptSubmit`, which fires
+automatically when a task finishes) or the session ends. Because the snapshot is re-read
+from ground truth on every Stop, no per-sub-agent bookkeeping is needed —
+`SubagentStart`/`SubagentStop` are subscribed for logging only and don't drive status,
+and a sub-agent that crashes without reporting completion can't leak (the next empty Stop
+is authoritative). `StopFailure` carries no `background_tasks` (it's an API error — rate
+limit, auth, max-tokens), so it always transitions to idle to surface the stuck main agent
+regardless of background work. `PermissionRequest` → idle is never suppressed.
+
+A `Stop`/`StopFailure` that carries an `agent_id` is a **sub-agent's** turn end (the main
+agent's `Stop` has none) and is ignored for the workspace status entirely.
+
+### Busy→Idle Edge for Untracked Turns (Claude Code)
+
+Bash-mode turns (`!cmd`) emit **only** a `Stop` — no `UserPromptSubmit` and no
+`PreToolUse` — so a text-only reply never flips the workspace to busy, and the closing
+`Stop` lands on an already-idle workspace with no transition (so the "agent finished"
+signal/chime never fires). To surface that a turn happened, a main-agent `Stop` that
+arrives while the workspace is already `idle` emits a **synthetic busy→idle edge**: it
+sets busy then immediately idle. The status-cache dedup (`module-provider`) treats each
+emission as a distinct edge, so both propagate and the finished-signal fires — no timer or
+dwell time; the transition is what matters, not how long it stays red. Final status is
+idle, so a following real turn proceeds normally. A tool-using bash-mode turn still flips
+to busy for real via the `PreToolUse`-while-idle rule.
 
 ---
 
@@ -389,7 +416,7 @@ Content-Type: application/json
 
 ### Status Derivation
 
-Status is driven by the Claude CLI's hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, ...) routed through a per-workspace state machine in the server manager (see `claude/types.ts` for the hook → status mapping). It also handles compaction, sub-agent tracking, and permission-resolution edge cases. `WrapperStart`/`WrapperEnd` are not accepted over HTTP — they are driven by the sidekick via the `agent:lifecycle` intent (`triggerWrapperLifecycle`).
+Status is driven by the Claude CLI's hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, ...) routed through a per-workspace state machine in the server manager (see `claude/types.ts` for the hook → status mapping). It also handles compaction, background tasks (sub-agents and shells via the `Stop` payload's `background_tasks`), AskUserQuestion parking, and permission-resolution edge cases. `WrapperStart`/`WrapperEnd` are not accepted over HTTP — they are driven by the sidekick via the `agent:lifecycle` intent (`triggerWrapperLifecycle`).
 
 ### Session Resumption
 
