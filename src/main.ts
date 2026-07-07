@@ -769,6 +769,7 @@ const shortcutModule = createShortcutModule({
   windowManager,
   ui: presentationModule,
   dispatcher,
+  platform: platformInfo.platform,
   logger: loggingService.createLogger("shortcut"),
 });
 

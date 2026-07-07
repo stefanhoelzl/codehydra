@@ -151,7 +151,10 @@ interface TestHarness {
   emitSwitched: () => Promise<void>;
 }
 
-async function createHarness(modalOpen = false): Promise<TestHarness> {
+async function createHarness(
+  modalOpen = false,
+  platform: NodeJS.Platform = "linux"
+): Promise<TestHarness> {
   const dispatcher = createMockDispatcher();
   const uiHandle = createViewHandle("ui-view");
   const callbacks = createMockCallbacks();
@@ -181,6 +184,7 @@ async function createHarness(modalOpen = false): Promise<TestHarness> {
     windowManager: { getWindowHandle: () => createWindowHandle() },
     ui: dialogManager as unknown as ShortcutModuleDeps["ui"],
     dispatcher: { dispatch: dispatchSpy } as unknown as ShortcutModuleDeps["dispatcher"],
+    platform,
     logger: SILENT_LOGGER,
   });
 
@@ -584,6 +588,64 @@ describe("ShortcutModule integration", () => {
       expect(callbacks.inputUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.destroyedUnsubscribes.get("ui-view")).toHaveBeenCalled();
       expect(callbacks.blurUnsubscribe).toHaveBeenCalled();
+    });
+  });
+
+  describe("Alt+F4 quit", () => {
+    const shutdownCount = (dispatchSpy: ReturnType<typeof vi.fn>): number =>
+      dispatchSpy.mock.calls.filter(
+        (c: unknown[]) => (c[0] as { type: string }).type === INTENT_APP_SHUTDOWN
+      ).length;
+
+    it("dispatches app:shutdown on Alt+F4 (linux)", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      simulateInput(callbacks, "ui-view", createKeyboardInput("F4", "keyDown", { alt: true }));
+      expect(shutdownCount(dispatchSpy)).toBe(1);
+    });
+
+    it("quits even while shortcut mode is active", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      activate(callbacks);
+      simulateInput(callbacks, "ui-view", createKeyboardInput("F4", "keyDown", { alt: true }));
+      expect(shutdownCount(dispatchSpy)).toBe(1);
+    });
+
+    it("does not preventDefault the Alt+F4 key (Electron #37336)", async () => {
+      const { callbacks } = await createHarness();
+      const { preventDefault } = simulateInput(
+        callbacks,
+        "ui-view",
+        createKeyboardInput("F4", "keyDown", { alt: true })
+      );
+      expect(preventDefault).not.toHaveBeenCalled();
+    });
+
+    it("ignores F4 without Alt", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      simulateInput(callbacks, "ui-view", createKeyboardInput("F4", "keyDown", { alt: false }));
+      expect(shutdownCount(dispatchSpy)).toBe(0);
+    });
+
+    it("ignores the Alt+F4 keyUp (acts only on keydown)", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      simulateInput(callbacks, "ui-view", createKeyboardInput("F4", "keyUp", { alt: true }));
+      expect(shutdownCount(dispatchSpy)).toBe(0);
+    });
+
+    it("ignores auto-repeat Alt+F4 (does not re-dispatch while held)", async () => {
+      const { callbacks, dispatchSpy } = await createHarness();
+      simulateInput(
+        callbacks,
+        "ui-view",
+        createKeyboardInput("F4", "keyDown", { alt: true, isAutoRepeat: true })
+      );
+      expect(shutdownCount(dispatchSpy)).toBe(0);
+    });
+
+    it.each(["darwin", "win32"] as const)("does not quit on Alt+F4 on %s", async (platform) => {
+      const { callbacks, dispatchSpy } = await createHarness(false, platform);
+      simulateInput(callbacks, "ui-view", createKeyboardInput("F4", "keyDown", { alt: true }));
+      expect(shutdownCount(dispatchSpy)).toBe(0);
     });
   });
 });

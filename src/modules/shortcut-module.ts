@@ -43,7 +43,11 @@ import type { WindowManager } from "../boundaries/shell/window-manager";
 import type { IDispatcher } from "../intents/lib/dispatcher";
 import type { UiPresenter } from "./presentation/presentation-module";
 import { APP_START_OPERATION_ID } from "../intents/app-start";
-import { APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
+import {
+  APP_SHUTDOWN_OPERATION_ID,
+  INTENT_APP_SHUTDOWN,
+  type AppShutdownIntent,
+} from "../intents/app-shutdown";
 import {
   INTENT_SET_SHORTCUT_ACTIVE,
   type SetShortcutActiveIntent,
@@ -55,6 +59,22 @@ type ShortcutActivationState = "NORMAL" | "ALT_WAITING";
 
 const SHORTCUT_MODIFIER_KEY = "Alt";
 const SHORTCUT_ACTIVATION_KEY = "x";
+
+/**
+ * Alt+<QUIT_KEY> quits the app. This shares ShortcutModule's before-input stream
+ * rather than living in its own module, since both are UI-view accelerators read
+ * off the same subscription. It is NOT part of the Alt+X shortcut-mode state
+ * machine — it fires directly, in any state.
+ *
+ * Why the app handles Alt+F4 at all: normally the window manager owns it and
+ * sends a window close. Under native Wayland (Linux, Electron 43+) Chromium uses
+ * the keyboard-shortcuts-inhibit protocol so the focused code-server surface
+ * receives ALL keys — the compositor stops acting on Alt+F4 and forwards it here
+ * instead. Owning it restores quit. Linux-only (see `deps.platform` guard):
+ * Windows closes via the OS (SC_CLOSE) and macOS uses Cmd+Q, so Alt+F4 must not
+ * quit there.
+ */
+const QUIT_KEY = "F4";
 
 /**
  * The only shortcut honored while a modal is open (restricted mode): opens the
@@ -104,6 +124,8 @@ export interface ShortcutModuleDeps {
   readonly windowManager: Pick<WindowManager, "getWindowHandle">;
   readonly ui: Pick<UiPresenter, "isModalOpen">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
+  /** Host platform; Alt+F4-to-quit is honored only on `"linux"`. */
+  readonly platform: NodeJS.Platform;
   readonly logger: Logger;
 }
 
@@ -215,6 +237,17 @@ export function createShortcutModule(deps: ShortcutModuleDeps): IntentModule {
 
     // Ignore auto-repeat events (fires dozens per second on key hold)
     if (input.isAutoRepeat) return;
+
+    // Alt+F4 quits the app (Linux only — see QUIT_KEY). Handled here, ahead of
+    // the Alt+X state machine, so it fires in any state (including shortcut mode).
+    if (deps.platform === "linux" && input.key === QUIT_KEY && input.alt) {
+      deps.logger.info("Alt+F4 pressed — dispatching app:shutdown");
+      void deps.dispatcher.dispatch({
+        type: INTENT_APP_SHUTDOWN,
+        payload: {},
+      } as AppShutdownIntent);
+      return;
+    }
 
     const isActivationKey = input.key.toLowerCase() === SHORTCUT_ACTIVATION_KEY;
 
