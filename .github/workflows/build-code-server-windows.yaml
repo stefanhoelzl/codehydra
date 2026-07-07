@@ -64,6 +64,11 @@ jobs:
       # Keep the build lean and offline-friendly.
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      # code-server's npm lifecycle scripts (preinstall/postinstall) are bash.
+      # npm runs them through cmd.exe on Windows by default, which cannot execute
+      # a .sh - so route script execution through bash (resolved from the shell
+      # running each npm command; MSYS2 for the build, Git Bash otherwise).
+      npm_config_script_shell: bash
 
     steps:
       - name: Validate version format
