@@ -76,13 +76,17 @@ export async function downloadBinary(
     // Download to temp file
     await downloadToFile(url, tempFile, deps, onProgress);
 
-    // Signal extraction phase before starting
+    // Signal extraction phase before starting so the UI flips to "Extracting..."
+    // immediately, even before the first progress callback arrives.
     if (onProgress) {
       onProgress({ phase: "extracting", bytesDownloaded: 0, totalBytes: null });
     }
 
-    // Extract archive
-    await deps.archiveExtractor.extract(tempFile, new Path(destDir));
+    // Extract archive, forwarding extraction progress (unit-agnostic:
+    // compressed bytes for tar, entry counts for zip).
+    await deps.archiveExtractor.extract(tempFile, new Path(destDir), (processed, total) => {
+      onProgress?.({ phase: "extracting", bytesDownloaded: processed, totalBytes: total });
+    });
 
     // Promote subPath contents to destDir root if specified
     await extractSubPath(destDir, request.subPath ?? "", deps);

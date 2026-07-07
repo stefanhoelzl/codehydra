@@ -238,9 +238,14 @@ describe("downloadBinary (integration)", () => {
         expect(lastDownloadProgress?.bytesDownloaded).toBe(archiveContent.length);
         expect(lastDownloadProgress?.totalBytes).toBe(archiveContent.length);
 
-        // Should have extracting phase at the end
+        // Should report the extracting phase, ending at 100% (compressed bytes
+        // consumed == archive size).
         const extractUpdates = progressUpdates.filter((p) => p.phase === "extracting");
-        expect(extractUpdates.length).toBe(1);
+        expect(extractUpdates.length).toBeGreaterThan(0);
+        const measuredExtract = extractUpdates.filter((p) => p.totalBytes !== null);
+        expect(measuredExtract.length).toBeGreaterThan(0);
+        const lastExtract = measuredExtract[measuredExtract.length - 1];
+        expect(lastExtract?.bytesDownloaded).toBe(lastExtract?.totalBytes);
       } finally {
         await cleanupTestArchive(archivePath);
       }

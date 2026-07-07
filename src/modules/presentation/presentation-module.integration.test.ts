@@ -1270,7 +1270,7 @@ describe("PresentationModule - startup flow", () => {
       { type: "text", content: "This is only required on first startup.", style: "subtitle" },
       {
         type: "progress",
-        style: "spinner",
+        style: "bar",
         items: [
           { id: "vscode", label: "VSCode", status: "pending" },
           { id: "agent", label: "Agent", status: "pending" },
@@ -1300,7 +1300,7 @@ describe("PresentationModule - startup flow", () => {
 
     expect(currentSystemDialog(deps).config.sections).toContainEqual({
       type: "progress",
-      style: "spinner",
+      style: "bar",
       items: [
         { id: "vscode", label: "VSCode", status: "done" },
         { id: "agent", label: "Agent", status: "running", message: "Downloading", progress: 42 },

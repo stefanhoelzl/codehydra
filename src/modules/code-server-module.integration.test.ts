@@ -652,6 +652,36 @@ describe("CodeServerModule", () => {
       });
     });
 
+    it("reports extraction progress on the vscode row", async () => {
+      const archiveExtractor = createArchiveExtractorMock({
+        defaultResult: {
+          progressFrames: [
+            [50, 100],
+            [100, 100],
+          ],
+        },
+      });
+      const deps = createDownloadDeps({ archiveExtractor });
+      const { dispatcher } = createTestSetup(deps);
+      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      dispatcher.registerOperation("setup", op);
+
+      await dispatcher.dispatch({ type: "setup", payload: {} });
+
+      expect(op.frames).toContainEqual({
+        id: "vscode",
+        status: "running",
+        message: "Extracting...",
+        progress: 50,
+      });
+      expect(op.frames).toContainEqual({
+        id: "vscode",
+        status: "running",
+        message: "Extracting...",
+        progress: 100,
+      });
+    });
+
     it("throws SetupError on download failure", async () => {
       const archiveExtractor = createArchiveExtractorMock({
         defaultResult: { error: { message: "corrupt archive", code: "INVALID_ARCHIVE" } },

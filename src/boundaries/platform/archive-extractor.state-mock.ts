@@ -10,7 +10,7 @@
  */
 
 import { expect } from "vitest";
-import type { ArchiveExtractor } from "./archive-extractor";
+import type { ArchiveExtractor, ExtractProgressCallback } from "./archive-extractor";
 import type { ArchiveErrorCode } from "../../shared/errors/service-errors";
 import { ArchiveError } from "../../shared/errors/service-errors";
 import { Path } from "../../utils/path/path";
@@ -40,6 +40,12 @@ export interface ExtractionResult {
     readonly message: string;
     readonly code: ArchiveErrorCode;
   };
+  /**
+   * Progress frames `[processed, total]` to feed to the extract `onProgress`
+   * callback (in order) before the extraction resolves. Lets tests drive
+   * extraction-progress behavior without a real archive.
+   */
+  readonly progressFrames?: ReadonlyArray<readonly [number, number]>;
 }
 
 /** Mock state - pure data, logic in matchers. */
@@ -132,7 +138,11 @@ export function createArchiveExtractorMock(
   const mock: MockArchiveExtractor = {
     $: state,
 
-    async extract(archivePath: string, destDir: Path): Promise<void> {
+    async extract(
+      archivePath: string,
+      destDir: Path,
+      onProgress?: ExtractProgressCallback
+    ): Promise<void> {
       // Normalize the archive path for lookup
       const normalizedArchivePath = new Path(archivePath).toString();
       const normalizedDestDir = destDir.toString();
@@ -143,6 +153,13 @@ export function createArchiveExtractorMock(
       // If error is configured, throw without recording
       if (result.error) {
         throw new ArchiveError(result.error.message, result.error.code);
+      }
+
+      // Drive any configured progress frames through the callback
+      if (onProgress && result.progressFrames) {
+        for (const [processed, total] of result.progressFrames) {
+          onProgress(processed, total);
+        }
       }
 
       // Record successful extraction

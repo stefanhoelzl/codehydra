@@ -794,6 +794,7 @@ describe("createAgentModule", () => {
         id: "agent",
         status: "running",
         message: "Extracting...",
+        progress: 100,
       });
     });
 

@@ -84,6 +84,26 @@ describe("TarExtractor (boundary)", () => {
     expect(nestedContent).toBe("Nested content");
   });
 
+  it("reports extraction progress ending at 100% of the archive size", async () => {
+    const sourceDir = path.join(tempDir, "source");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "test.txt"), "Hello, World!");
+    await tar.create({ gzip: true, file: archivePath, cwd: sourceDir }, ["."]);
+
+    const archiveSize = (await fs.stat(archivePath)).size;
+    const updates: { processed: number; total: number }[] = [];
+
+    const extractor = new TarExtractor();
+    await extractor.extract(archivePath, new Path(destDir), (processed, total) => {
+      updates.push({ processed, total });
+    });
+
+    expect(updates.length).toBeGreaterThan(0);
+    // Total is the archive's compressed byte size, monotonic and terminating at 100%.
+    expect(updates.every((u) => u.total === archiveSize)).toBe(true);
+    expect(updates[updates.length - 1]?.processed).toBe(archiveSize);
+  });
+
   it("preserves file permissions", async () => {
     // Skip on Windows where permissions work differently
     if (process.platform === "win32") {
@@ -210,6 +230,26 @@ describe("ZipExtractor (boundary)", () => {
 
     const nestedContent = await fs.readFile(path.join(destDir, "subdir", "nested.txt"), "utf-8");
     expect(nestedContent).toBe("Nested zip content");
+  });
+
+  it("reports extraction progress by entry count", async () => {
+    const sourceDir = path.join(tempDir, "source");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "a.txt"), "one");
+    await fs.writeFile(path.join(sourceDir, "b.txt"), "two");
+    await fs.writeFile(path.join(sourceDir, "c.txt"), "three");
+    await createTestZip(sourceDir, archivePath);
+
+    const updates: { processed: number; total: number }[] = [];
+    const extractor = new ZipExtractor();
+    await extractor.extract(archivePath, new Path(destDir), (processed, total) => {
+      updates.push({ processed, total });
+    });
+
+    // One update per entry (3 files), each reporting the same total, ending at total.
+    expect(updates.length).toBe(3);
+    expect(updates.every((u) => u.total === 3)).toBe(true);
+    expect(updates.map((u) => u.processed)).toEqual([1, 2, 3]);
   });
 
   it("throws ArchiveError for corrupt zip file", async () => {
