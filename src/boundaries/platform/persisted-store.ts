@@ -30,6 +30,7 @@ import { PersistedValidationError, PersistedDefinitions } from "./store-definiti
 import type { FileSystemBoundary } from "./filesystem";
 import { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
+import { getErrorMessage, isEnoent } from "../../shared/error-utils";
 
 // =============================================================================
 // Dependency Interface
@@ -361,7 +362,7 @@ export class PersistedStore {
     try {
       raw = await fileSystem.readFile(filePath);
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      if (isEnoent(error)) {
         // File doesn't exist yet — start fresh.
       } else {
         throw error;
@@ -376,7 +377,7 @@ export class PersistedStore {
         logger.warn(`Invalid JSON in ${filePath.basename}, backed up; writing fresh`, {
           path: filePath.toString(),
           backup: backupPath.toString(),
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         });
         fileContent = {};
       }

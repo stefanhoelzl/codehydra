@@ -30,7 +30,7 @@ import type { Logger } from "../boundaries/platform/logging-types";
 import type { SupportedPlatform, SupportedArch } from "../boundaries/platform/platform-info";
 import type { BuildInfo } from "../boundaries/platform/build-info";
 import type { DownloadProgressCallback, DownloadRequest } from "../utils/binary-download";
-import { downloadBinary, isBinaryInstalled } from "../utils/binary-download";
+import { downloadBinary, isBinaryInstalled, assertWindowsX64 } from "../utils/binary-download";
 import type { ArchiveExtractor } from "../boundaries/platform/archive-extractor";
 import type { BinaryType } from "../utils/binary-resolution/types";
 import type { CheckDepsHookContext, CheckDepsResult, ConfigureResult } from "../intents/app-start";
@@ -94,10 +94,8 @@ export function getCodeServerUrlForVersion(
   platform: SupportedPlatform,
   arch: SupportedArch
 ): string {
+  assertWindowsX64(platform, arch, "code-server");
   if (platform === "win32") {
-    if (arch !== "x64") {
-      throw new Error(`Windows code-server builds only support x64, got: ${arch}`);
-    }
     return `https://github.com/${CODEHYDRA_REPO}/releases/download/code-server-windows-v${version}/code-server-${version}-win32-x64.tar.gz`;
   }
   const os = platform === "darwin" ? "macos" : "linux";

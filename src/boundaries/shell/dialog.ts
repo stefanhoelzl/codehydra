@@ -156,8 +156,11 @@ import { dialog } from "electron";
  * Helper to build Electron dialog options, excluding undefined values.
  * This satisfies exactOptionalPropertyTypes requirements.
  */
-function buildOpenDialogOptions(options: ShowDialogOptions): Electron.OpenDialogOptions {
-  const result: Electron.OpenDialogOptions = {};
+/** Copy the fields common to open and save dialogs onto the target options. */
+function applyCommonDialogOptions(
+  result: Electron.OpenDialogOptions | Electron.SaveDialogOptions,
+  options: ShowDialogOptions
+): void {
   if (options.title !== undefined) result.title = options.title;
   if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
   if (options.buttonLabel !== undefined) result.buttonLabel = options.buttonLabel;
@@ -168,6 +171,11 @@ function buildOpenDialogOptions(options: ShowDialogOptions): Electron.OpenDialog
       extensions: [...f.extensions],
     }));
   }
+}
+
+function buildOpenDialogOptions(options: ShowDialogOptions): Electron.OpenDialogOptions {
+  const result: Electron.OpenDialogOptions = {};
+  applyCommonDialogOptions(result, options);
   if (options.properties !== undefined) {
     result.properties = [...options.properties];
   }
@@ -176,16 +184,7 @@ function buildOpenDialogOptions(options: ShowDialogOptions): Electron.OpenDialog
 
 function buildSaveDialogOptions(options: ShowDialogOptions): Electron.SaveDialogOptions {
   const result: Electron.SaveDialogOptions = {};
-  if (options.title !== undefined) result.title = options.title;
-  if (options.defaultPath !== undefined) result.defaultPath = options.defaultPath;
-  if (options.buttonLabel !== undefined) result.buttonLabel = options.buttonLabel;
-  if (options.message !== undefined) result.message = options.message;
-  if (options.filters !== undefined) {
-    result.filters = options.filters.map((f) => ({
-      name: f.name,
-      extensions: [...f.extensions],
-    }));
-  }
+  applyCommonDialogOptions(result, options);
   return result;
 }
 

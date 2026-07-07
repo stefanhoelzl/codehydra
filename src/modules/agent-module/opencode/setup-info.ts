@@ -6,6 +6,7 @@
 import type { SupportedArch, SupportedPlatform } from "../types";
 import type { PathProvider } from "../../../boundaries/platform/path-provider";
 import { Path } from "../../../utils/path/path";
+import { assertWindowsX64 } from "../../../utils/binary-download";
 
 /**
  * Current version of OpenCode to download.
@@ -47,10 +48,8 @@ export function getOpencodeUrlForVersion(
   platform: SupportedPlatform,
   arch: SupportedArch
 ): string {
+  assertWindowsX64(platform, arch, "OpenCode");
   if (platform === "win32") {
-    if (arch !== "x64") {
-      throw new Error(`Windows OpenCode builds only support x64, got: ${arch}`);
-    }
     return `https://github.com/sst/opencode/releases/download/v${version}/opencode-windows-x64.zip`;
   }
   const archName = OPENCODE_ARCH[arch];

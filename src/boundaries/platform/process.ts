@@ -328,23 +328,16 @@ class ExecaSpawnedProcess implements SpawnedProcess {
    */
   private attachStreamLogger(stream: Readable, name: "stdout" | "stderr"): void {
     let buffer = "";
-    const prefix = `[${this.command} ${this.pid ?? 0}]`;
 
     stream.on("data", (chunk: Buffer) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop()!;
-
-      for (const line of lines) {
-        if (line.trim() === "") continue;
-        this.logger.debug(`${prefix} ${name}: ${line}`);
-      }
+      this.logLines(lines, name);
     });
 
     stream.on("end", () => {
-      if (buffer.trim() !== "") {
-        this.logger.debug(`${prefix} ${name}: ${buffer}`);
-      }
+      this.logLines([buffer], name);
     });
   }
 
@@ -376,14 +369,17 @@ class ExecaSpawnedProcess implements SpawnedProcess {
    */
   private logOutputLines(output: string, stream: "stdout" | "stderr"): void {
     if (!output) return;
+    this.logLines(output.split("\n"), stream);
+  }
 
-    const lines = output.split("\n");
+  /**
+   * Log non-empty lines at DEBUG level, prefixed with the command + pid.
+   * Shared by the streaming logger and the batch (post-exit) logger.
+   */
+  private logLines(lines: string[], stream: "stdout" | "stderr"): void {
     const prefix = `[${this.command} ${this.pid ?? 0}]`;
-
     for (const line of lines) {
-      // Skip empty lines
       if (line.trim() === "") continue;
-
       this.logger.debug(`${prefix} ${stream}: ${line}`);
     }
   }

@@ -38,6 +38,7 @@ import { PersistedValidationError } from "./store-definition";
 import type { FileSystemBoundary } from "./filesystem";
 import { Path } from "../../utils/path/path";
 import type { Logger } from "./logging-types";
+import { getErrorMessage, isEnoent } from "../../shared/error-utils";
 import { PersistedStore } from "./persisted-store";
 
 const BROKEN_CONFIG_FILENAME = "config.json.broken";
@@ -302,7 +303,7 @@ function readConfigFile(
   } catch (error) {
     // ENOENT = genuinely first run (no file). Any other read error means the file
     // is there but unreadable — still "configured" for onboarding purposes.
-    const existed = !(error instanceof Error && "code" in error && error.code === "ENOENT");
+    const existed = !isEnoent(error);
     return { data: {}, issues: [], existed };
   }
 
@@ -320,7 +321,7 @@ function readConfigFile(
           kind: "broken-json",
           path: configPath.toString(),
           backup: backupPath.toString(),
-          error: error instanceof Error ? error.message : String(error),
+          error: getErrorMessage(error),
         },
       ],
     };

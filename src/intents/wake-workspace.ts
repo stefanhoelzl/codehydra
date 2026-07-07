@@ -23,8 +23,6 @@
 import type { Intent, DomainEvent } from "./lib/types";
 import type { Operation, OperationContext, HookContext } from "./lib/operation";
 import type { ProjectId, WorkspaceName, Workspace } from "../shared/api/types";
-import { INTENT_RESOLVE_WORKSPACE, type ResolveWorkspaceIntent } from "./resolve-workspace";
-import { INTENT_RESOLVE_PROJECT, type ResolveProjectIntent } from "./resolve-project";
 import { INTENT_SET_METADATA, type SetMetadataIntent } from "./set-metadata";
 import { INTENT_GET_METADATA, type GetMetadataIntent } from "./get-metadata";
 import {
@@ -33,7 +31,7 @@ import {
   type WorkspaceOpenSource,
 } from "./open-workspace";
 import { HIBERNATED_METADATA_KEY } from "./hibernate-workspace";
-import { getErrorMessage } from "../shared/error-utils";
+import { resolveWorkspaceIdentity, emitWorkspaceFailure } from "./lib/workspace-identity";
 
 // =============================================================================
 // Intent Types
@@ -112,15 +110,10 @@ export class WakeWorkspaceOperation implements Operation<WakeWorkspaceIntent, Wo
     const { payload } = ctx.intent;
 
     try {
-      const { projectPath, workspaceName, branch } = await ctx.dispatch({
-        type: INTENT_RESOLVE_WORKSPACE,
-        payload: { workspacePath: payload.workspacePath },
-      } as ResolveWorkspaceIntent);
-
-      const { projectId } = await ctx.dispatch({
-        type: INTENT_RESOLVE_PROJECT,
-        payload: { projectPath },
-      } as ResolveProjectIntent);
+      const { projectPath, workspaceName, projectId, branch } = await resolveWorkspaceIdentity(
+        ctx.dispatch,
+        payload.workspacePath
+      );
 
       // Clear the hibernated metadata flag before re-init so any consumers
       // observing the metadata-changed event see the workspace as awake.
@@ -183,14 +176,7 @@ export class WakeWorkspaceOperation implements Operation<WakeWorkspaceIntent, Wo
 
       return workspace;
     } catch (error) {
-      const failedEvent: WorkspaceWakeFailedEvent = {
-        type: EVENT_WORKSPACE_WAKE_FAILED,
-        payload: {
-          workspacePath: payload.workspacePath,
-          error: getErrorMessage(error),
-        },
-      };
-      ctx.emit(failedEvent);
+      emitWorkspaceFailure(ctx.emit, EVENT_WORKSPACE_WAKE_FAILED, payload.workspacePath, error);
       throw error;
     }
   }
