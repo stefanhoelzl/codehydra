@@ -37,6 +37,11 @@ on:
         required: false
         type: boolean
         default: false
+      diagnose:
+        description: "Diagnostic mode: install only extensions/copilot with full logging, then stop"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write # Required to create releases
@@ -165,7 +170,40 @@ jobs:
           quilt push -a
           echo "::notice::Applied $(wc -l < patches/series) patch(es)"
 
+      - name: Diagnose copilot extension install
+        if: ${{ inputs.diagnose }}
+        shell: msys2 {0}
+        working-directory: code-server/lib/vscode/extensions/copilot
+        run: |
+          # The copilot extension is the only install that hard-crashes
+          # (0xC0000409) during the parallel fan-out, and the crash eats stderr.
+          # Reproduce it in isolation, decomposed, with foreground/streamed output
+          # to pinpoint the faulting step and native binary.
+          set -uo pipefail
+          echo "===== node/npm/env ====="
+          node --version; npm --version; echo "arch=$npm_config_arch build_from_source=$npm_config_build_from_source"
+
+          echo "===== STEP 1: install deps WITHOUT lifecycle scripts ====="
+          npm install --ignore-scripts --no-audit --no-fund --foreground-scripts --verbose 2>&1
+          s1=$?; echo "STEP1_EXIT=$s1"
+
+          echo "===== @github platform packages resolved ====="
+          ls -la node_modules/@github 2>&1 || echo "(no node_modules/@github)"
+          echo "--- @github/copilot* dirs ---"
+          ls -d node_modules/@github/copilot* 2>&1 || echo "(none)"
+
+          echo "===== @typescript/native-preview (tsgo) presence ====="
+          ls -d node_modules/@typescript/native-preview* 2>&1 || echo "(none)"
+
+          echo "===== STEP 2: run copilot's own postinstall explicitly ====="
+          node --stack-trace-limit=50 ./node_modules/.bin/tsx ./script/postinstall.ts 2>&1
+          s2=$?; echo "STEP2_EXIT=$s2"
+
+          echo "===== DIAGNOSTIC COMPLETE (step1=$s1 step2=$s2) - stopping ====="
+          exit 1
+
       - name: Build code-server and VS Code (win32-x64)
+        if: ${{ inputs.diagnose == false }}
         shell: msys2 {0}
         working-directory: code-server
         run: |
