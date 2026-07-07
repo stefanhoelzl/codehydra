@@ -75,6 +75,7 @@ function buildDownloadRequest(
     const ide = createCodeServerIdeServer();
     const destDir = pathProvider.bundlePath(ide.bundleSubdir()).toNative();
     const executablePath = ide.executablePath(platform);
+    const subPath = ide.archiveSubPath(platform, arch);
     return {
       request: {
         name: ide.id,
@@ -82,7 +83,7 @@ function buildDownloadRequest(
         destDir,
         archiveExtension: ".tar.gz",
         executablePath,
-        subPath: ide.archiveSubPath(platform, arch),
+        ...(subPath !== undefined ? { subPath } : {}),
       },
       binaryPath: join(destDir, executablePath),
     };

@@ -9,8 +9,8 @@
 
 import type { SupportedPlatform, SupportedArch } from "../../boundaries/platform/platform-info";
 import { assertWindowsX64 } from "../../utils/binary-download";
-import { encodePathForUrl } from "../../boundaries/platform/paths";
-import type { IdeServer, ServeArgsInput } from "./types";
+import type { IdeServer, ServeArgsInput, RemoteCliInvocation } from "./types";
+import { folderUrl, workspaceUrl } from "./url-scheme";
 
 /** Current version of code-server to download. */
 export const CODE_SERVER_VERSION = "4.117.0";
@@ -26,19 +26,6 @@ const CODE_SERVER_ARCH = {
   x64: "amd64",
   arm64: "arm64",
 } as const;
-
-/**
- * Normalize a path for use in code-server URLs. Handles Windows path
- * conversion (drive letters → leading-slash forward-slash form) and URL
- * encoding, preserving the drive-letter colon.
- */
-function normalizePathForUrl(path: string): string {
-  let normalizedPath = path;
-  if (/^[A-Za-z]:/.test(path)) {
-    normalizedPath = "/" + path.replace(/\\/g, "/");
-  }
-  return encodePathForUrl(normalizedPath).replace(/%3A/g, ":");
-}
 
 /**
  * Create the code-server IdeServer descriptor for a specific version
@@ -102,16 +89,32 @@ export function createCodeServerIdeServer(version: string = CODE_SERVER_VERSION)
     },
 
     urlForFolder(port: number, folderPath: string): string {
-      return `http://127.0.0.1:${port}/?folder=${normalizePathForUrl(folderPath)}`;
+      return folderUrl(port, folderPath);
     },
 
     urlForWorkspace(port: number, workspaceFilePath: string): string {
-      return `http://127.0.0.1:${port}/?workspace=${normalizePathForUrl(workspaceFilePath)}`;
+      return workspaceUrl(port, workspaceFilePath);
     },
 
-    extraWorkspaceSettings(): Record<string, unknown> {
-      // code-server disables workspace trust via a CLI flag, so no settings.
-      return {};
+    remoteCli(bundleDir: string, platform: SupportedPlatform): RemoteCliInvocation {
+      if (platform === "win32") {
+        return {
+          exe: `${bundleDir}\\lib\\node.exe`,
+          args: [
+            `${bundleDir}\\lib\\vscode\\out\\server-cli.js`,
+            "code-server",
+            "",
+            "",
+            "code.cmd",
+          ],
+        };
+      }
+      const os = platform === "darwin" ? "darwin" : "linux";
+      return { exe: `${bundleDir}/lib/vscode/bin/remote-cli/code-${os}.sh`, args: [] };
+    },
+
+    nodeBinary(bundleDir: string, platform: SupportedPlatform): string {
+      return platform === "win32" ? `${bundleDir}\\lib\\node.exe` : `${bundleDir}/lib/node`;
     },
   };
 }

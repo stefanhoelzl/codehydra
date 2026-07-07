@@ -126,8 +126,31 @@ describe("code-server descriptor: serve + URL scheme", () => {
       "http://127.0.0.1:25448/?folder=/C:/Users/me/ws"
     );
   });
+});
 
-  it("adds no extra workspace settings (trust handled via CLI flag)", () => {
-    expect(ide.extraWorkspaceSettings()).toEqual({});
+describe("code-server descriptor: wrapper invocations", () => {
+  const ide = createCodeServerIdeServer();
+
+  it("remoteCli execs the per-OS remote-cli script on posix", () => {
+    expect(ide.remoteCli("/b/cs", "linux")).toEqual({
+      exe: "/b/cs/lib/vscode/bin/remote-cli/code-linux.sh",
+      args: [],
+    });
+    expect(ide.remoteCli("/b/cs", "darwin")).toEqual({
+      exe: "/b/cs/lib/vscode/bin/remote-cli/code-darwin.sh",
+      args: [],
+    });
+  });
+
+  it("remoteCli invokes node + server-cli.js on Windows", () => {
+    expect(ide.remoteCli("C:\\b\\cs", "win32")).toEqual({
+      exe: "C:\\b\\cs\\lib\\node.exe",
+      args: ["C:\\b\\cs\\lib\\vscode\\out\\server-cli.js", "code-server", "", "", "code.cmd"],
+    });
+  });
+
+  it("nodeBinary points under lib/", () => {
+    expect(ide.nodeBinary("/b/cs", "linux")).toBe("/b/cs/lib/node");
+    expect(ide.nodeBinary("C:\\b\\cs", "win32")).toBe("C:\\b\\cs\\lib\\node.exe");
   });
 });

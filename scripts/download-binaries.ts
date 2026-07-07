@@ -171,13 +171,14 @@ async function main(): Promise<void> {
   // Download binaries to production paths
   console.log("Checking code-server...");
   const ide = createCodeServerIdeServer();
+  const codeServerSubPath = ide.archiveSubPath(platform, arch);
   const codeServerRequest: DownloadRequest = {
     name: ide.id,
     url: ide.downloadUrl(platform, arch),
     destDir: pathProvider.bundlePath(ide.bundleSubdir()).toNative(),
     archiveExtension: ".tar.gz",
     executablePath: ide.executablePath(platform),
-    subPath: ide.archiveSubPath(platform, arch),
+    ...(codeServerSubPath !== undefined ? { subPath: codeServerSubPath } : {}),
   };
   await downloadBinary(deps, codeServerRequest, CODE_SERVER_VERSION);
 

@@ -22,6 +22,15 @@ export interface ServeArgsInput {
   readonly userDataDir: string;
 }
 
+/**
+ * How the `code` terminal wrapper invokes this distribution's remote-cli:
+ * an executable plus fixed leading arguments (empty for a direct script).
+ */
+export interface RemoteCliInvocation {
+  readonly exe: string;
+  readonly args: readonly string[];
+}
+
 export interface IdeServer {
   /** Binary identifier, also the download/preflight name (e.g. "code-server"). */
   readonly id: BinaryType;
@@ -30,8 +39,11 @@ export interface IdeServer {
 
   /** Download URL for the given platform/arch. */
   downloadUrl(platform: SupportedPlatform, arch: SupportedArch): string;
-  /** Prefix of the extracted archive's top-level directory. */
-  archiveSubPath(platform: SupportedPlatform, arch: SupportedArch): string;
+  /**
+   * Prefix of the extracted archive's top-level directory, or `undefined` when
+   * the archive has no wrapping directory (contents sit at the root).
+   */
+  archiveSubPath(platform: SupportedPlatform, arch: SupportedArch): string | undefined;
   /** Relative path to the server executable within the extracted bundle. */
   executablePath(platform: SupportedPlatform): string;
   /** Bundle subdirectory under bundlePath (e.g. "code-server/<version>"). */
@@ -50,6 +62,13 @@ export interface IdeServer {
   /** URL that opens a `.code-workspace` file. */
   urlForWorkspace(port: number, workspaceFilePath: string): string;
 
-  /** Settings merged into every generated `.code-workspace` (e.g. trust disable). */
-  extraWorkspaceSettings(): Record<string, unknown>;
+  /**
+   * The remote-cli invocation the `code` terminal wrapper runs, given the
+   * extracted bundle directory. Owns the distribution's on-disk layout so the
+   * wrapper scripts stay distribution-agnostic.
+   */
+  remoteCli(bundleDir: string, platform: SupportedPlatform): RemoteCliInvocation;
+
+  /** Absolute path to the bundled Node binary used by the agent wrappers. */
+  nodeBinary(bundleDir: string, platform: SupportedPlatform): string;
 }
