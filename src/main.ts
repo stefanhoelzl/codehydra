@@ -500,8 +500,6 @@ const settingsModule = createSettingsModule({
   ui: presentationModule,
   config: configService,
   app: appLayer,
-  dialog: dialogLayer,
-  fs: fileSystemLayer,
   logger: loggingService.createLogger("settings"),
 });
 openSettings = settingsModule.openSettings;

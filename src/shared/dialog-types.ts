@@ -279,6 +279,10 @@ export type SettingRowField = CheckboxSection | InputSection | DropdownSection;
  *   reset icon), e.g. a "Browse…" file picker for a path setting. Clicking it
  *   emits a DialogActionEvent with `action.id`. `icon` is a codicon name shown
  *   before the label.
+ * - helpPanel: optional preformatted reference text (e.g. the fields a template
+ *   may reference), revealed by a disclosure toggle beneath the control.
+ *   Presentational only; shown in a monospace, whitespace-preserving panel.
+ * - helpLabel: label for that disclosure toggle (defaults to a generic label).
  */
 interface SettingRowSection {
   readonly type: "setting-row";
@@ -294,6 +298,8 @@ interface SettingRowSection {
     readonly label: string;
     readonly icon?: string;
   };
+  readonly helpPanel?: string;
+  readonly helpLabel?: string;
 }
 
 export type DialogSection =

@@ -7,8 +7,6 @@
  * store uses it for parsing, validation, and (for Config) help-text generation.
  */
 
-import { Path } from "../../utils/path/path";
-
 // =============================================================================
 // Shared Type Aliases
 // =============================================================================
@@ -50,15 +48,17 @@ export type SettingsControl =
   | { readonly kind: "string" }
   | {
       /**
-       * A filesystem path with a native "Browse…" picker. Renders as a text
-       * field plus a trailing picker action in the settings dialog. `extensions`
-       * scopes the picker's file filter (an "All Files" fallback is always
-       * offered); `template` is the default content seeded into a newly-named
-       * file via the picker's save flow.
+       * A multi-line text value edited inline in the settings dialog (renders as
+       * a textarea, no picker). `rows` seeds the textarea's initial height;
+       * `helpPanel` is preformatted reference text shown beside the editor (e.g.
+       * the fields a template may use). Unlike `path`, the value IS the content,
+       * not a pointer to a file.
        */
-      readonly kind: "path";
-      readonly extensions?: readonly string[];
-      readonly template?: string;
+      readonly kind: "text";
+      readonly rows?: number;
+      readonly helpPanel?: string;
+      /** Label for the disclosure toggle that reveals `helpPanel`. */
+      readonly helpLabel?: string;
     }
   | { readonly kind: "number"; readonly min?: number; readonly max?: number }
   | {
@@ -118,6 +118,15 @@ export interface PersistedKeyDefinition<T> {
    * getRedactedOverrides falls back to the token if it does.
    */
   readonly redact?: true | ((value: T, redacted: string) => unknown);
+  /**
+   * When true, the key's value is kept out of contexts like bug reports: it still
+   * appears in getRedactedOverrides() (so a diagnostician knows it is set), but
+   * its value is replaced with the `<omitted>` token. Unlike `redact: true`, this
+   * does NOT mask the settings field in the UI — the value is shown and edited in
+   * the clear; it is only withheld from diagnostics. Independent of `redact`
+   * (`omit` wins on the report token when both are set).
+   */
+  readonly omit?: true;
   /**
    * When true, the key is recognized and loaded read-only: its on-disk value is
    * preserved (so a downgrade doesn't lose it) and readable via get(), but set()
@@ -353,45 +362,29 @@ export function storeString(options?: { nullable: true }): PersistedTypeBuilder<
 }
 
 /**
- * Builder for nullable path config values.
- *
- * Validates that the string has no null bytes and is a valid path. Renders in
- * the settings dialog as a `path` control (text field + native "Browse…"
- * picker). `extensions` scopes the picker's file filter; `template` is the
- * default content seeded into a newly-named file via the picker's save flow.
+ * Builder for nullable multi-line text config values, edited inline in the
+ * settings dialog as a textarea (see the `text` settings control). Accepts any
+ * string (empty text → null, i.e. "unset"); pass `rows` to seed the editor
+ * height and `helpPanel` for reference text rendered beside the editor. Callers
+ * that need extra validation (e.g. a Liquid parse check) compose their own
+ * `validate` on top of the returned one.
  */
-export function storePath(options: {
+export function storeText(options: {
   nullable: true;
-  extensions?: readonly string[];
-  template?: string;
+  rows?: number;
+  helpPanel?: string;
+  helpLabel?: string;
 }): PersistedTypeBuilder<string | null> {
   return {
-    parse: (s: string) => {
-      if (s === "") return null;
-      if (s.includes("\0")) return undefined;
-      try {
-        new Path(s);
-        return s;
-      } catch {
-        return undefined;
-      }
-    },
-    validate: (v: unknown) => {
-      if (v === null) return null;
-      if (typeof v !== "string") return undefined;
-      if (v.includes("\0")) return undefined;
-      try {
-        new Path(v);
-        return v;
-      } catch {
-        return undefined;
-      }
-    },
-    validValues: "<path>",
+    parse: (s: string): string | null | undefined => (s === "" ? null : s),
+    validate: (v: unknown): string | null | undefined =>
+      v === null ? null : typeof v === "string" ? v : undefined,
+    validValues: "<text>",
     settingsControl: {
-      kind: "path",
-      ...(options.extensions !== undefined && { extensions: options.extensions }),
-      ...(options.template !== undefined && { template: options.template }),
+      kind: "text",
+      ...(options.rows !== undefined && { rows: options.rows }),
+      ...(options.helpPanel !== undefined && { helpPanel: options.helpPanel }),
+      ...(options.helpLabel !== undefined && { helpLabel: options.helpLabel }),
     },
   };
 }

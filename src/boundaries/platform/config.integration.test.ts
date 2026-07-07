@@ -895,6 +895,20 @@ describe("Config", () => {
 
       expect(svc.getRedactedOverrides()).toEqual({ "test.boom": "<redacted>" });
     });
+
+    it("replaces an omit key's value with <omitted> while keeping the key", () => {
+      const svc = createService({
+        fileEntries: {
+          "/app": directory(),
+          "/app/config.json": file(JSON.stringify({ "test.tpl": "secret content" })),
+        },
+      });
+      svc.register("test.tpl", { ...stringDef("test.tpl"), omit: true });
+      svc.load();
+
+      // The key is present (so a set value is visible) but its value is withheld.
+      expect(svc.getRedactedOverrides()).toEqual({ "test.tpl": "<omitted>" });
+    });
   });
 
   describe("getEffective", () => {
