@@ -11,7 +11,7 @@
  * - Exit code propagation
  */
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { join, resolve, dirname, delimiter } from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -134,15 +134,27 @@ function buildPath(fakeBinDir: string): string {
 
 describe("ch-claude.cjs boundary tests", () => {
   let tempDir: { path: string; cleanup: () => Promise<void> };
+  let sharedBinTempDir: { path: string; cleanup: () => Promise<void> };
   let fakeBinDir: string;
 
   beforeAll(async () => {
     await assertCompiledScript(COMPILED_SCRIPT_PATH);
+    // Compile the fake claude binary ONCE for the whole file. On Windows,
+    // createFakeClaudeBinary invokes @yao-pkg/pkg to bundle a real .exe, which
+    // takes seconds; doing it per-test in beforeEach blew the default 10s hook
+    // timeout under CI contention (the dominant flaky-test failure). The fake
+    // binary's behavior is driven entirely by env vars (CLAUDE_EXIT_CODE,
+    // CLAUDE_COUNTER_FILE, …), so a single shared binary serves every test.
+    sharedBinTempDir = await createTempDir();
+    fakeBinDir = await createFakeClaudeBinary(join(sharedBinTempDir.path, "bin"));
+  });
+
+  afterAll(async () => {
+    await sharedBinTempDir.cleanup();
   });
 
   beforeEach(async () => {
     tempDir = await createTempDir();
-    fakeBinDir = await createFakeClaudeBinary(join(tempDir.path, "bin"));
   });
 
   afterEach(async () => {
