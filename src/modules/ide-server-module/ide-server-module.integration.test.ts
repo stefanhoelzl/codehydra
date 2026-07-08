@@ -9,6 +9,10 @@
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// The watcher shim's own behavior is covered in watcher-shim.integration.test.ts;
+// here we only assert the download step wires it in (and gates it to Windows).
+vi.mock("./watcher-shim", () => ({ applyWatcherShim: vi.fn().mockResolvedValue(1) }));
 import { delimiter, join } from "node:path";
 
 import type { Operation, OperationContext } from "../../intents/lib/operation";
@@ -45,6 +49,7 @@ import type {
   DeleteHookResult,
 } from "../../intents/delete-workspace";
 import { createIdeServerModule, type IdeServerModuleDeps } from "./ide-server-module";
+import { applyWatcherShim } from "./watcher-shim";
 import { createMockConfig } from "../../boundaries/platform/config.test-utils";
 import type { ExtensionRequirement, ExtensionInstallEntry } from "../../intents/app-start";
 import type { DirEntry } from "../../boundaries/platform/filesystem";
@@ -761,6 +766,37 @@ describe("CodeServerModule", () => {
           error: expect.stringContaining("Failed to download code-server"),
         })
       );
+    });
+
+    it("applies the watcher shim to the downloaded bundle on Windows", async () => {
+      vi.mocked(applyWatcherShim).mockClear();
+      const deps = createDownloadDeps({
+        platform: "win32",
+        arch: "x64",
+        archiveExtractor: createArchiveExtractorMock(),
+      });
+      const { dispatcher } = createTestSetup(deps);
+      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      dispatcher.registerOperation("setup", op);
+
+      await dispatcher.dispatch({ type: "setup", payload: {} });
+
+      expect(applyWatcherShim).toHaveBeenCalledWith(
+        expect.objectContaining({ fileSystemLayer: deps.fileSystemLayer }),
+        expect.stringContaining("code-server")
+      );
+    });
+
+    it("does not apply the watcher shim on non-Windows platforms", async () => {
+      vi.mocked(applyWatcherShim).mockClear();
+      const deps = createDownloadDeps({ archiveExtractor: createArchiveExtractorMock() });
+      const { dispatcher } = createTestSetup(deps);
+      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      dispatcher.registerOperation("setup", op);
+
+      await dispatcher.dispatch({ type: "setup", payload: {} });
+
+      expect(applyWatcherShim).not.toHaveBeenCalled();
     });
   });
 

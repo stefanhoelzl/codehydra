@@ -31,7 +31,18 @@ export class SimpleGitClient implements IGitClient {
       trimmed: true,
       config: process.platform === "win32" ? ["core.longpaths=true"] : [],
     };
-    return simpleGit(options);
+    // GIT_OPTIONAL_LOCKS=0 suppresses only *optional* locks — the ones git takes
+    // as a side-effect optimization, e.g. `git status` grabbing index.lock to
+    // rewrite the index it didn't need to. Write operations (add/commit/branch/
+    // worktree) still take their *required* locks and behave normally, so this is
+    // safe to apply uniformly here. The win is that our status checks stop
+    // contending with the embedded editor's watcher/refresh for index.lock while
+    // an agent is writing. This mirrors VS Code's own git extension.
+    //
+    // process.env must be spread in: simple-git passes `env` straight to
+    // child_process.spawn, which *replaces* (not merges) the child environment,
+    // so a bare { GIT_OPTIONAL_LOCKS } would drop PATH/HOME and break git.
+    return simpleGit(options).env({ ...process.env, GIT_OPTIONAL_LOCKS: "0" });
   }
 
   /**
