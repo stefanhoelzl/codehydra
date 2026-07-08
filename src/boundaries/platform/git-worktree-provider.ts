@@ -36,6 +36,47 @@ interface ProjectRegistration {
 }
 
 /**
+ * Parse flat `git config` entries into per-branch metadata records.
+ *
+ * Each input key is a full config key (e.g. `branch.<branch>.<prefix>.<subkey>`);
+ * only keys matching `branch.<branch>.<prefix>.<subkey>` contribute, with the
+ * `branch.<branch>.<prefix>.` part stripped. Branch names may contain dots
+ * (e.g. `release/1.2`), so the branch/subkey split is anchored on the
+ * `.<prefix>.` marker rather than naive dot-splitting.
+ *
+ * @param entries Map of full git config key → value
+ * @param prefix Metadata prefix (e.g. "codehydra")
+ * @returns Map of branch name → { subkey: value }
+ */
+export function parseBranchConfigs(
+  entries: ReadonlyMap<string, string>,
+  prefix: string
+): Map<string, Record<string, string>> {
+  const result = new Map<string, Record<string, string>>();
+  const branchPrefix = "branch.";
+  const marker = `.${prefix}.`;
+
+  for (const [fullKey, value] of entries) {
+    if (!fullKey.startsWith(branchPrefix)) continue;
+    const markerIndex = fullKey.indexOf(marker);
+    if (markerIndex === -1) continue;
+
+    const branch = fullKey.substring(branchPrefix.length, markerIndex);
+    const subKey = fullKey.substring(markerIndex + marker.length);
+    if (!branch || !subKey) continue;
+
+    let record = result.get(branch);
+    if (!record) {
+      record = {};
+      result.set(branch, record);
+    }
+    record[subKey] = value;
+  }
+
+  return result;
+}
+
+/**
  * Global provider managing git worktree operations across all projects.
  *
  * Maintains two internal registries:
@@ -182,6 +223,31 @@ export class GitWorktreeProvider {
     };
   }
 
+  /**
+   * Read all `codehydra.*` branch metadata for a repository in a single git config
+   * call, keyed by branch name. Replaces per-branch / per-worktree config reads.
+   */
+  private async getAllBranchMetadata(
+    projectRoot: Path
+  ): Promise<ReadonlyMap<string, Readonly<Record<string, string>>>> {
+    const prefix = GitWorktreeProvider.METADATA_CONFIG_PREFIX;
+    const entries = await this.gitClient.getGitConfig(projectRoot, {
+      regex: `^branch\\..*\\.${prefix}\\.`,
+    });
+    return parseBranchConfigs(entries, prefix);
+  }
+
+  /**
+   * Read one branch's `codehydra.*` metadata (empty record if the branch has none).
+   */
+  private async getBranchMetadata(
+    projectRoot: Path,
+    branch: string
+  ): Promise<Readonly<Record<string, string>>> {
+    const all = await this.getAllBranchMetadata(projectRoot);
+    return all.get(branch) ?? {};
+  }
+
   async discover(projectRoot: Path): Promise<readonly Workspace[]> {
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
 
@@ -196,6 +262,16 @@ export class GitWorktreeProvider {
       await this.gitClient.pruneWorktrees(projectRoot);
     }
 
+    // Read every branch's metadata in one git config call (was one read per worktree)
+    let branchMetadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
+    try {
+      branchMetadata = await this.getAllBranchMetadata(projectRoot);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, "Unknown error");
+      this.logger.warn("Failed to get metadata config", { error: message });
+      branchMetadata = new Map();
+    }
+
     // Filter out the main worktree and prunable entries, map to Workspace objects
     const workspaces: Workspace[] = [];
     for (const wt of worktrees) {
@@ -204,23 +280,9 @@ export class GitWorktreeProvider {
       // Register workspace in the workspace registry for metadata resolution
       this.ensureWorkspaceRegistered(wt.path, projectRoot);
 
-      // Get metadata from git config
-      let metadata: Record<string, string>;
-      try {
-        metadata = wt.branch
-          ? {
-              ...(await this.gitClient.getBranchConfigsByPrefix(
-                projectRoot,
-                wt.branch,
-                GitWorktreeProvider.METADATA_CONFIG_PREFIX
-              )),
-            }
-          : {};
-      } catch (error: unknown) {
-        const message = getErrorMessage(error, "Unknown error");
-        this.logger.warn("Failed to get metadata config", { workspace: wt.name, error: message });
-        metadata = {};
-      }
+      const metadata: Record<string, string> = wt.branch
+        ? { ...(branchMetadata.get(wt.branch) ?? {}) }
+        : {};
 
       workspaces.push({
         name: wt.branch ?? wt.name,
@@ -235,6 +297,15 @@ export class GitWorktreeProvider {
   async listBases(projectRoot: Path): Promise<readonly BaseInfo[]> {
     const branches = await this.gitClient.listBranches(projectRoot);
     const worktrees = await this.gitClient.listWorktrees(projectRoot);
+
+    // Read every branch's metadata in one git config call (was one read per local branch)
+    let branchMetadata: ReadonlyMap<string, Readonly<Record<string, string>>>;
+    try {
+      branchMetadata = await this.getAllBranchMetadata(projectRoot);
+    } catch {
+      // Ignore config errors; bases fall back to origin/* detection below
+      branchMetadata = new Map();
+    }
 
     // Build set of branches that have worktrees
     const branchesWithWorktrees = new Set<string>();
@@ -280,24 +351,16 @@ export class GitWorktreeProvider {
 
         // Compute base: codehydra.base config or matching origin/* branch
         let base: string | undefined;
-        try {
-          const configBase = await this.gitClient.getBranchConfig(
-            projectRoot,
-            branch.name,
-            `${GitWorktreeProvider.METADATA_CONFIG_PREFIX}.base`
-          );
-          if (configBase) {
-            base = configBase;
-          } else {
-            // Check for matching origin/* branch
-            const originBranch = `origin/${branch.name}`;
-            const hasOriginBranch = branches.some((b) => b.isRemote && b.name === originBranch);
-            if (hasOriginBranch) {
-              base = originBranch;
-            }
+        const configBase = branchMetadata.get(branch.name)?.base;
+        if (configBase) {
+          base = configBase;
+        } else {
+          // Check for matching origin/* branch
+          const originBranch = `origin/${branch.name}`;
+          const hasOriginBranch = branches.some((b) => b.isRemote && b.name === originBranch);
+          if (hasOriginBranch) {
+            base = originBranch;
           }
-        } catch {
-          // Ignore config errors, base stays undefined
         }
 
         // Build BaseInfo with conditional optional properties
@@ -541,11 +604,7 @@ export class GitWorktreeProvider {
     // not in the worktree, and clearing after removal can race with shutdown hooks.
     if (branchName) {
       try {
-        const metadata = await this.gitClient.getBranchConfigsByPrefix(
-          projectRoot,
-          branchName,
-          GitWorktreeProvider.METADATA_CONFIG_PREFIX
-        );
+        const metadata = await this.getBranchMetadata(projectRoot, branchName);
         for (const key of Object.keys(metadata)) {
           await this.gitClient.unsetBranchConfig(
             projectRoot,
@@ -676,11 +735,7 @@ export class GitWorktreeProvider {
       const projectRoot = this.workspaceRegistry.get(workspacePath.toString());
       if (!projectRoot) return 0;
 
-      const metadata = await this.gitClient.getBranchConfigsByPrefix(
-        projectRoot,
-        branch,
-        GitWorktreeProvider.METADATA_CONFIG_PREFIX
-      );
+      const metadata = await this.getBranchMetadata(projectRoot, branch);
       let base = metadata.base;
       if (!base) {
         base = await this.defaultBase(projectRoot);
@@ -950,13 +1005,7 @@ export class GitWorktreeProvider {
     }
 
     const metadata: Record<string, string> = worktree.branch
-      ? {
-          ...(await this.gitClient.getBranchConfigsByPrefix(
-            projectRoot,
-            worktree.branch,
-            GitWorktreeProvider.METADATA_CONFIG_PREFIX
-          )),
-        }
+      ? { ...(await this.getBranchMetadata(projectRoot, worktree.branch)) }
       : {};
 
     return metadata;

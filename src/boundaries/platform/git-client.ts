@@ -148,14 +148,26 @@ export interface IGitClient {
   getDefaultBranch(repoPath: Path, remote?: string): Promise<string | null>;
 
   /**
-   * Get a branch-specific configuration value.
+   * Read git config entries in a single git invocation.
+   *
+   * Pass `key` for an exact lookup (`git config --get <key>`) or `regex` for a
+   * pattern match (`git config --get-regexp <regex>`). Returns a map of full
+   * config key → value; empty when nothing matches (an unset key is not an error).
+   *
+   * All keys CodeHydra reads/writes are single-valued. A broad pattern that
+   * matched a git-native multi-valued key (e.g. `remote.*.fetch`) would keep only
+   * the last value — callers must scope the filter to single-valued keys.
+   *
    * @param repoPath Absolute path to the git repository
-   * @param branch Name of the branch
-   * @param key Configuration key (without the branch prefix)
-   * @returns Promise resolving to the config value, or null if not set
+   * @param options.key   Exact config key to read
+   * @param options.regex Key pattern (git regex) to read matching entries
+   * @returns Promise resolving to a map of config key to value
    * @throws GitError if not a git repository
    */
-  getBranchConfig(repoPath: Path, branch: string, key: string): Promise<string | null>;
+  getGitConfig(
+    repoPath: Path,
+    options: { key: string } | { regex: string }
+  ): Promise<ReadonlyMap<string, string>>;
 
   /**
    * Set a branch-specific configuration value.
@@ -167,29 +179,6 @@ export interface IGitClient {
    * @throws GitError if not a git repository
    */
   setBranchConfig(repoPath: Path, branch: string, key: string, value: string): Promise<void>;
-
-  /**
-   * Get all branch configuration values under a prefix.
-   * Returns config values under `branch.<branch>.<prefix>.*` with the prefix stripped.
-   *
-   * @example
-   * // Git config has:
-   * // branch.main.codehydra.base = develop
-   * // branch.main.codehydra.note = WIP feature
-   * const configs = await client.getBranchConfigsByPrefix(repoPath, "main", "codehydra");
-   * // Returns: { base: "develop", note: "WIP feature" }
-   *
-   * @param repoPath Absolute path to the git repository
-   * @param branch Name of the branch
-   * @param prefix Configuration key prefix (e.g., "codehydra")
-   * @returns Promise resolving to a record of key-value pairs (keys have prefix stripped)
-   * @throws GitError if not a git repository
-   */
-  getBranchConfigsByPrefix(
-    repoPath: Path,
-    branch: string,
-    prefix: string
-  ): Promise<Readonly<Record<string, string>>>;
 
   /**
    * Remove a branch-specific configuration value.

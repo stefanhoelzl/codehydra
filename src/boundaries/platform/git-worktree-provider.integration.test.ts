@@ -677,6 +677,63 @@ describe("GitWorktreeProvider", () => {
     });
   });
 
+  describe("config read batching (regression)", () => {
+    it("listBases issues exactly one getGitConfig call regardless of branch count", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "a", "b", "c", "d"],
+            currentBranch: "main",
+            branchConfigs: {
+              a: { "codehydra.base": "main" },
+              b: { "codehydra.base": "main" },
+            },
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+      const spy = vi.spyOn(mockClient, "getGitConfig");
+
+      await provider.listBases(PROJECT_ROOT);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("discover issues exactly one getGitConfig call regardless of worktree count", async () => {
+      const mockClient = createMockGitClient({
+        repositories: {
+          [PROJECT_ROOT.toString()]: {
+            branches: ["main", "a", "b", "c"],
+            currentBranch: "main",
+            worktrees: [
+              { name: "a", path: "/data/workspaces/a", branch: "a" },
+              { name: "b", path: "/data/workspaces/b", branch: "b" },
+              { name: "c", path: "/data/workspaces/c", branch: "c" },
+            ],
+          },
+        },
+      });
+      const provider = await createProvider(
+        PROJECT_ROOT,
+        mockClient,
+        WORKSPACES_DIR,
+        mockFs,
+        worktreeLogger
+      );
+      const spy = vi.spyOn(mockClient, "getGitConfig");
+
+      await provider.discover(PROJECT_ROOT);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("listBases", () => {
     it("returns local and remote branches", async () => {
       const mockClient = createMockGitClient({
@@ -1560,12 +1617,10 @@ describe("GitWorktreeProvider", () => {
 
       // Branch still exists but metadata should be cleared
       expect(mockClient).toHaveBranch(PROJECT_ROOT, "feature-x");
-      const metadata = await mockClient.getBranchConfigsByPrefix(
-        PROJECT_ROOT,
-        "feature-x",
-        "codehydra"
-      );
-      expect(metadata).toEqual({});
+      const metadata = await mockClient.getGitConfig(PROJECT_ROOT, {
+        regex: "^branch\\.feature-x\\.codehydra\\.",
+      });
+      expect(metadata.size).toBe(0);
     });
 
     it("clears metadata even when worktree removal fails", async () => {
@@ -1605,12 +1660,10 @@ describe("GitWorktreeProvider", () => {
       );
 
       // Metadata should still have been cleared before the failing worktree removal
-      const metadata = await mockClient.getBranchConfigsByPrefix(
-        PROJECT_ROOT,
-        "feature-x",
-        "codehydra"
-      );
-      expect(metadata).toEqual({});
+      const metadata = await mockClient.getGitConfig(PROJECT_ROOT, {
+        regex: "^branch\\.feature-x\\.codehydra\\.",
+      });
+      expect(metadata.size).toBe(0);
     });
   });
 

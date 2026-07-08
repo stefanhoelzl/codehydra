@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { GitWorktreeProvider } from "./git-worktree-provider";
+import { GitWorktreeProvider, parseBranchConfigs } from "./git-worktree-provider";
 import { WorkspaceError } from "../../shared/errors/service-errors";
 import {
   createFileSystemMock,
@@ -36,6 +36,47 @@ async function createProvider(
   return provider;
 }
 
+describe("parseBranchConfigs", () => {
+  it("groups prefix-stripped keys by branch", () => {
+    const entries = new Map([
+      ["branch.main.codehydra.base", "develop"],
+      ["branch.main.codehydra.note", "WIP feature"],
+      ["branch.feature.codehydra.base", "main"],
+    ]);
+
+    const result = parseBranchConfigs(entries, "codehydra");
+
+    expect(Object.fromEntries(result)).toEqual({
+      main: { base: "develop", note: "WIP feature" },
+      feature: { base: "main" },
+    });
+  });
+
+  it("handles branch names containing dots and slashes", () => {
+    const entries = new Map([["branch.release/1.2.codehydra.base", "main"]]);
+
+    const result = parseBranchConfigs(entries, "codehydra");
+
+    expect(result.get("release/1.2")).toEqual({ base: "main" });
+  });
+
+  it("ignores keys that do not match the branch prefix or metadata prefix", () => {
+    const entries = new Map([
+      ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
+      ["branch.main.other.key", "value"],
+      ["branch.main.codehydra.base", "develop"],
+    ]);
+
+    const result = parseBranchConfigs(entries, "codehydra");
+
+    expect(Object.fromEntries(result)).toEqual({ main: { base: "develop" } });
+  });
+
+  it("returns an empty map for empty input", () => {
+    expect(parseBranchConfigs(new Map(), "codehydra").size).toBe(0);
+  });
+});
+
 describe("GitWorktreeProvider error injection", () => {
   const PROJECT_ROOT = new Path("/home/user/projects/my-repo");
   const WORKSPACES_DIR = new Path("/home/user/app-data/projects/my-repo-abc12345/workspaces");
@@ -58,7 +99,7 @@ describe("GitWorktreeProvider error injection", () => {
   });
 
   describe("discover", () => {
-    it("logs warning and uses fallback when getBranchConfigsByPrefix throws", async () => {
+    it("logs warning and uses fallback when getGitConfig throws", async () => {
       const mockClient = createMockGitClient({
         repositories: {
           [PROJECT_ROOT.toString()]: {
@@ -71,9 +112,7 @@ describe("GitWorktreeProvider error injection", () => {
         },
       });
       // Override to throw an error
-      mockClient.getBranchConfigsByPrefix = vi
-        .fn()
-        .mockRejectedValue(new Error("Config read failed"));
+      mockClient.getGitConfig = vi.fn().mockRejectedValue(new Error("Config read failed"));
 
       const provider = await createProvider(
         PROJECT_ROOT,

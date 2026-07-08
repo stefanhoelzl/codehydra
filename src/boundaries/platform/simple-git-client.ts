@@ -376,26 +376,50 @@ export class SimpleGitClient implements IGitClient {
     }, "Failed to list remotes");
   }
 
-  async getBranchConfig(repoPath: Path, branch: string, key: string): Promise<string | null> {
-    // First, verify it's a git repository
+  async getGitConfig(
+    repoPath: Path,
+    options: { key: string } | { regex: string }
+  ): Promise<ReadonlyMap<string, string>> {
+    // First, verify it's a git repository (handles bare repos correctly)
     const isRepo = await this.isInsideRepository(repoPath);
     if (!isRepo) {
       throw new GitError(`Not a git repository: ${repoPath.toString()}`);
     }
 
+    const result = new Map<string, string>();
+    const args =
+      "key" in options
+        ? ["config", "--get", options.key]
+        : ["config", "--get-regexp", options.regex];
+
     try {
       const git = this.getGit(repoPath);
-      const configKey = `branch.${branch}.${key}`;
-      const value = await git.raw(["config", "--get", configKey]);
-      return value.trim() || null;
+      const output = await git.raw(args);
+
+      if ("key" in options) {
+        // --get returns a single value; empty output means no value
+        const value = output.trim();
+        if (value) {
+          result.set(options.key, value);
+        }
+        return result;
+      }
+
+      // --get-regexp: each line is "key value" (value is everything after the first space)
+      for (const line of output.split("\n")) {
+        if (!line.trim()) continue;
+        const spaceIndex = line.indexOf(" ");
+        if (spaceIndex === -1) continue;
+        result.set(line.substring(0, spaceIndex), line.substring(spaceIndex + 1));
+      }
+      return result;
     } catch (error: unknown) {
-      // Exit code 1 means key not found - return null
-      // Exit code 128 or other errors mean git error
+      // Exit code 1 means no match / key unset - return empty map
       if (error instanceof Error && error.message.includes("exit code 1")) {
-        return null;
+        return result;
       }
       const errMsg = getErrorMessage(error);
-      throw new GitError(`Failed to get branch config: ${errMsg}`);
+      throw new GitError(`Failed to get git config: ${errMsg}`);
     }
   }
 
@@ -405,56 +429,6 @@ export class SimpleGitClient implements IGitClient {
       const configKey = `branch.${branch}.${key}`;
       await git.raw(["config", configKey, value]);
     }, `Failed to set branch config branch.${branch}.${key}`);
-  }
-
-  async getBranchConfigsByPrefix(
-    repoPath: Path,
-    branch: string,
-    prefix: string
-  ): Promise<Readonly<Record<string, string>>> {
-    // First, verify it's a git repository
-    const isRepo = await this.isInsideRepository(repoPath);
-    if (!isRepo) {
-      throw new GitError(`Not a git repository: ${repoPath.toString()}`);
-    }
-
-    try {
-      const git = this.getGit(repoPath);
-      // Pattern: branch.<branch>.<prefix>.*
-      const pattern = `^branch\\.${branch}\\.${prefix}\\.`;
-      const output = await git.raw(["config", "--get-regexp", pattern]);
-
-      const result: Record<string, string> = {};
-
-      // Parse output: each line is "key value" where value is everything after first space
-      // Example: "branch.main.codehydra.base develop"
-      for (const line of output.split("\n")) {
-        if (!line.trim()) continue;
-
-        // Find first space - everything before is key, everything after is value
-        const spaceIndex = line.indexOf(" ");
-        if (spaceIndex === -1) continue;
-
-        const fullKey = line.substring(0, spaceIndex);
-        const configValue = line.substring(spaceIndex + 1);
-
-        // Extract the key after the prefix (branch.<branch>.<prefix>.<key>)
-        const prefixPattern = `branch.${branch}.${prefix}.`;
-        if (fullKey.startsWith(prefixPattern)) {
-          const configKeyName = fullKey.substring(prefixPattern.length);
-          result[configKeyName] = configValue;
-        }
-      }
-
-      return result;
-    } catch (error: unknown) {
-      // Exit code 1 means no matching keys - return empty object
-      if (error instanceof Error && error.message.includes("exit code 1")) {
-        return {};
-      }
-      const errMsg = getErrorMessage(error);
-      throw new GitError(`Failed to get branch configs: ${errMsg}`);
-    }
   }
 
   async unsetBranchConfig(repoPath: Path, branch: string, key: string): Promise<void> {
