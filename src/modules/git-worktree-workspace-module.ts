@@ -93,6 +93,10 @@ export function createGitWorktreeWorkspaceModule(
   // Internal state
   const workspaces = new Map<string, Workspace[]>();
   const deletionPending = new Map<string, { projectPath: string; workspace: Workspace }>();
+  // Per-project default base branch, computed at project:open (discover) and
+  // refreshed by the get-project-bases list hook. Surfaced via list-workspaces
+  // so the creation form can seed the base field without a git round-trip.
+  const projectDefaults = new Map<string, string>();
 
   // ---------------------------------------------------------------------------
   // Private Helpers
@@ -222,6 +226,9 @@ export function createGitWorktreeWorkspaceModule(
               });
 
             const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj);
+            if (defaultBaseBranch !== undefined) {
+              projectDefaults.set(key, defaultBaseBranch);
+            }
 
             return {
               result: {
@@ -259,6 +266,7 @@ export function createGitWorktreeWorkspaceModule(
             gitWorktreeProvider.unregisterProject(projectPathObj);
             const key = projectPathObj.toString();
             workspaces.delete(key);
+            projectDefaults.delete(key);
 
             // Clear deletion-pending entries for this project
             for (const [wsPath, entry] of deletionPending) {
@@ -374,8 +382,13 @@ export function createGitWorktreeWorkspaceModule(
             const { projectPath } = ctx as ListBasesHookInput;
             const projectPathObj = new Path(projectPath);
 
+            // Enumerate once and reuse for the default (avoids a second full
+            // branch enumeration inside defaultBase).
             const bases = await gitWorktreeProvider.listBases(projectPathObj);
-            const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj);
+            const defaultBaseBranch = await gitWorktreeProvider.defaultBase(projectPathObj, bases);
+            if (defaultBaseBranch !== undefined) {
+              projectDefaults.set(projectPathObj.toString(), defaultBaseBranch);
+            }
 
             return {
               result: {
@@ -496,9 +509,11 @@ export function createGitWorktreeWorkspaceModule(
           handler: async (): Promise<HookOutput<ListWorkspacesHookResult>> => {
             const entries: ListWorkspacesHookEntry[] = [];
             for (const [key, wsList] of getMergedWorkspaces()) {
+              const defaultBaseBranch = projectDefaults.get(key);
               entries.push({
                 projectPath: key,
                 workspaces: wsList,
+                ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
               });
             }
             return { result: { entries } };

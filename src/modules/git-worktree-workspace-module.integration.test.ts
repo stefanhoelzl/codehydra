@@ -553,6 +553,19 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
 
       expect(provider.cleanupOrphanedWorkspaces).toHaveBeenCalledWith(new Path("/projects/my-app"));
     });
+
+    it("caches the default base from discover and surfaces it via list-workspaces", async () => {
+      const { dispatcher, provider } = setup;
+      const projectPath = "/projects/my-app";
+      provider.discover.mockResolvedValue([]);
+      provider.defaultBase.mockResolvedValue("origin/main");
+
+      await dispatchOpenProject(dispatcher, projectPath);
+      const listed = await dispatchListWorkspaces(dispatcher);
+
+      const entry = listed.entries!.find((e) => e.projectPath === new Path(projectPath).toString());
+      expect(entry?.defaultBaseBranch).toBe("origin/main");
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1007,16 +1020,18 @@ describe("GitWorktreeWorkspaceModule Integration", () => {
       const { dispatcher, provider } = setup;
       const projectPath = "/projects/my-app";
 
-      provider.listBases.mockResolvedValue([
+      const bases = [
         { name: "origin/main", isRemote: true, base: "origin/main" },
         { name: "main", isRemote: false, base: "origin/main" },
-      ]);
+      ];
+      provider.listBases.mockResolvedValue(bases);
       provider.defaultBase.mockResolvedValue("origin/main");
 
       const result = await dispatchListBases(dispatcher, projectPath);
 
       expect(provider.listBases).toHaveBeenCalledWith(new Path(projectPath));
-      expect(provider.defaultBase).toHaveBeenCalledWith(new Path(projectPath));
+      // defaultBase reuses the already-enumerated bases (no second listBases).
+      expect(provider.defaultBase).toHaveBeenCalledWith(new Path(projectPath), bases);
       expect(result.bases).toHaveLength(2);
       expect(result.defaultBaseBranch).toBe("origin/main");
     });

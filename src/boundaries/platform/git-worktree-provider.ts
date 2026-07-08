@@ -709,12 +709,15 @@ export class GitWorktreeProvider {
    * over local ones to ensure proper tracking. Purely local: never hits the network.
    *
    * @param projectRoot Root of the git repository
+   * @param bases Pre-fetched bases to reuse; when omitted, listBases() is called.
+   *   Callers that already enumerated bases (e.g. the get-project-bases list
+   *   hook) pass them to avoid a second full branch enumeration.
    * @returns Promise resolving to the default base branch, or undefined if none found
    */
-  async defaultBase(projectRoot: Path): Promise<string | undefined> {
+  async defaultBase(projectRoot: Path, bases?: readonly BaseInfo[]): Promise<string | undefined> {
     try {
-      const bases = await this.listBases(projectRoot);
-      const branchNames = new Set(bases.map((b) => b.name));
+      const resolvedBases = bases ?? (await this.listBases(projectRoot));
+      const branchNames = new Set(resolvedBases.map((b) => b.name));
 
       // Resolve a detected branch name to a selectable base, preferring remote-tracking
       const pick = (branchName: string | null, remote?: string): string | undefined => {

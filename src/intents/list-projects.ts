@@ -47,6 +47,12 @@ export interface ListProjectsHookResult {
 export interface ListWorkspacesHookEntry {
   readonly projectPath: string;
   readonly workspaces: readonly InternalWorkspace[];
+  /**
+   * Per-project default base branch, computed once at project:open and cached
+   * by the contributing module. Carried here so the creation form can seed the
+   * base field synchronously on first paint instead of awaiting a git round-trip.
+   */
+  readonly defaultBaseBranch?: string;
 }
 
 export interface ListWorkspacesHookResult {
@@ -81,14 +87,18 @@ export class ListProjectsOperation implements Operation<ListProjectsIntent, Proj
     );
     throwHookErrors(workspacesResult.errors, "Multiple errors listing workspaces");
 
-    // Build workspace lookup by projectPath
+    // Build workspace + default-base lookups by projectPath
     const workspaceMap = new Map<string, InternalWorkspace[]>();
+    const defaultBaseMap = new Map<string, string>();
     for (const result of workspacesResult.results) {
       if (result.entries) {
         for (const entry of result.entries) {
           const existing = workspaceMap.get(entry.projectPath) ?? [];
           existing.push(...entry.workspaces);
           workspaceMap.set(entry.projectPath, existing);
+          if (entry.defaultBaseBranch !== undefined) {
+            defaultBaseMap.set(entry.projectPath, entry.defaultBaseBranch);
+          }
         }
       }
     }
@@ -99,11 +109,13 @@ export class ListProjectsOperation implements Operation<ListProjectsIntent, Proj
       if (result.projects) {
         for (const entry of result.projects) {
           const internalWorkspaces = workspaceMap.get(entry.path) ?? [];
+          const defaultBaseBranch = defaultBaseMap.get(entry.path);
           projects.push({
             id: entry.projectId,
             name: entry.name,
             path: entry.path,
             workspaces: toIpcWorkspaces(internalWorkspaces, entry.projectId),
+            ...(defaultBaseBranch !== undefined && { defaultBaseBranch }),
           });
         }
       }
