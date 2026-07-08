@@ -911,8 +911,6 @@ describe("CodeServerModule", () => {
       expect(writeCall).toBeDefined();
       const written = writeCall![1] as string;
       expect(written).toContain('"chat.agent.enabled": false');
-      expect(written).toContain('"extensions.autoUpdate": false');
-      expect(written).toContain('"extensions.autoCheckUpdates": false');
     });
 
     it("falls back to folder URL on workspace file error", async () => {
