@@ -137,21 +137,45 @@ jobs:
           name: build-output
           path: out
 
-      - name: Cache Wine packages
+      - name: Restore Wine package cache
         if: matrix.wine
         id: wine-cache
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-wine-ubuntu-24.04-v2
+          path: ~/wine-debs
+          key: apt-wine-ubuntu-24.04-v4
 
       - name: Install Wine
         if: matrix.wine
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: |
           sudo dpkg --add-architecture i386
+          # Drop the flaky third-party apt sources: packages.microsoft.com has
+          # served invalid InRelease files that break `apt-get update`. Wine is
+          # not published there, so removing them is safe and closes that
+          # failure mode.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/*azure* || true
           sudo apt-get update
-          sudo apt-get install -y wine64 wine32:i386
+          # apt stages in-flight downloads in partial/; -p also creates ~/wine-debs
+          mkdir -p ~/wine-debs/partial
+          # Install via apt (not bare `dpkg -i`) so the multiarch packages get
+          # configured correctly — dpkg -i of the cached .debs leaves 32-bit wine
+          # unregistered ("experimental wow64 mode"), which breaks electron-builder.
+          # Point apt's archive cache at the runner-owned ~/wine-debs so a warm
+          # cache serves every .deb and no bulk download happens (the default
+          # /var/cache/apt/archives is root-owned and can't be cached).
+          sudo apt-get install -y \
+            -o Dir::Cache::archives="$HOME/wine-debs/" \
+            wine64 wine32:i386
+          sudo chown -R "$USER:$USER" ~/wine-debs
+
+      - name: Save Wine package cache
+        if: matrix.wine && steps.wine-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/wine-debs
+          key: apt-wine-ubuntu-24.04-v4
 
       - name: Package
         env:
