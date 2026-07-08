@@ -732,8 +732,6 @@ const loggingModule = createLoggingModule({
   platformInfo,
   logger: appLogger,
   configService,
-  app,
-  fileSystem: fileSystemLayer,
 });
 
 const scriptModule = createScriptModule({

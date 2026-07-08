@@ -18,8 +18,6 @@ import type {
 } from "../intents/lib/operation";
 import { INTENT_APP_START, APP_START_OPERATION_ID } from "../intents/app-start";
 import type { AppStartIntent, InitHookContext, ConfigureResult } from "../intents/app-start";
-import { INTENT_APP_SHUTDOWN, APP_SHUTDOWN_OPERATION_ID } from "../intents/app-shutdown";
-import type { AppShutdownIntent } from "../intents/app-shutdown";
 import { createMockLogger } from "../boundaries/platform/logging";
 import { createLoggingModule } from "./logging-module";
 import { createMockConfig } from "../boundaries/platform/config.test-utils";
@@ -56,21 +54,6 @@ class MinimalAppStartOperation implements Operation<typeof appStartSchemas> {
   }
 }
 
-const appShutdownSchemas = {
-  type: INTENT_APP_SHUTDOWN,
-  payload: z.unknown(),
-} satisfies OperationSchemas;
-
-/** Runs the "stop" hook for shutdown. */
-class MinimalAppShutdownOperation implements Operation<typeof appShutdownSchemas> {
-  readonly id = APP_SHUTDOWN_OPERATION_ID;
-  readonly schemas = appShutdownSchemas;
-  async execute(ctx: OperationContext<IntentOf<typeof appShutdownSchemas>>): Promise<void> {
-    const hookCtx: HookContext = { intent: ctx.intent };
-    await ctx.hooks.collect<void>("stop", hookCtx);
-  }
-}
-
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -79,7 +62,6 @@ function createDeps(configValues?: Record<string, unknown>) {
   const loggingService = {
     initialize: vi.fn(),
     configure: vi.fn(),
-    getElectronLogFilePath: vi.fn().mockReturnValue("/logs/electron.log"),
   };
   const buildInfo = {
     version: "2026.2.0-test",
@@ -99,30 +81,6 @@ function createDeps(configValues?: Record<string, unknown>) {
       ...configValues,
     },
   });
-  const app = {
-    commandLine: { appendSwitch: vi.fn() },
-  };
-  const files = new Map<string, string>();
-  const fileSystem = {
-    readFile: vi.fn(async (path: string) => {
-      if (!files.has(path)) throw new Error("ENOENT");
-      return files.get(path)!;
-    }),
-    writeFile: vi.fn(async (path: string, content: string) => {
-      files.set(path, content);
-    }),
-  };
-  const scheduledTicks: Array<{ handler: () => void; ms: number; cleared: boolean }> = [];
-  const scheduler = {
-    setInterval: vi.fn((handler: () => void, ms: number) => {
-      const entry = { handler, ms, cleared: false };
-      scheduledTicks.push(entry);
-      return entry;
-    }),
-    clearInterval: vi.fn((handle: unknown) => {
-      (handle as { cleared: boolean }).cleared = true;
-    }),
-  };
 
   return {
     loggingService,
@@ -130,11 +88,6 @@ function createDeps(configValues?: Record<string, unknown>) {
     platformInfo,
     logger,
     configService,
-    app,
-    fileSystem,
-    scheduler,
-    scheduledTicks,
-    files,
   };
 }
 
@@ -244,103 +197,5 @@ describe("LoggingModule Integration", () => {
       allowedLoggers: undefined,
       logFormat: "text",
     });
-  });
-
-  it("appends --enable-logging=file, --log-file, and --v=1 during before-ready", async () => {
-    const deps = createDeps();
-    const dispatcher = createMockDispatcher();
-
-    dispatcher.registerOperation(new MinimalAppStartOperation());
-    dispatcher.registerModule(createLoggingModule(deps));
-
-    await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
-
-    expect(deps.app.commandLine.appendSwitch).toHaveBeenCalledWith("enable-logging", "file");
-    expect(deps.app.commandLine.appendSwitch).toHaveBeenCalledWith(
-      "log-file",
-      "/logs/electron.log"
-    );
-    expect(deps.app.commandLine.appendSwitch).toHaveBeenCalledWith("v", "1");
-  });
-
-  it("starts the truncation watcher during init", async () => {
-    const deps = createDeps();
-    const dispatcher = createMockDispatcher();
-
-    dispatcher.registerOperation(new MinimalAppStartOperation());
-    dispatcher.registerModule(createLoggingModule(deps));
-
-    await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
-
-    expect(deps.scheduler.setInterval).toHaveBeenCalledOnce();
-    expect(deps.scheduledTicks).toHaveLength(1);
-    expect(deps.scheduledTicks[0]!.ms).toBe(15 * 60 * 1000);
-  });
-
-  it("truncates electron.log to last 20 MB when the watcher fires on an oversize file", async () => {
-    const deps = createDeps();
-    // Seed an oversize file (21 MB of 'A')
-    const oversize = "A".repeat(21 * 1024 * 1024);
-    deps.files.set("/logs/electron.log", oversize);
-
-    const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(new MinimalAppStartOperation());
-    dispatcher.registerModule(createLoggingModule(deps));
-    await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
-
-    // Manually fire the watcher tick
-    deps.scheduledTicks[0]!.handler();
-    // Tick handler is sync-scheduled but async-internal; wait a microtask
-    await new Promise((r) => setImmediate(r));
-
-    const truncated = deps.files.get("/logs/electron.log");
-    expect(truncated).toBeDefined();
-    expect(Buffer.byteLength(truncated!, "utf8")).toBe(20 * 1024 * 1024);
-  });
-
-  it("does nothing when the watcher fires and the file is within size", async () => {
-    const deps = createDeps();
-    deps.files.set("/logs/electron.log", "small");
-
-    const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(new MinimalAppStartOperation());
-    dispatcher.registerModule(createLoggingModule(deps));
-    await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
-
-    deps.scheduledTicks[0]!.handler();
-    await new Promise((r) => setImmediate(r));
-
-    expect(deps.fileSystem.writeFile).not.toHaveBeenCalled();
-    expect(deps.files.get("/logs/electron.log")).toBe("small");
-  });
-
-  it("silently ignores missing electron.log when the watcher fires", async () => {
-    const deps = createDeps();
-    // No file seeded — readFile rejects with ENOENT
-
-    const dispatcher = createMockDispatcher();
-    dispatcher.registerOperation(new MinimalAppStartOperation());
-    dispatcher.registerModule(createLoggingModule(deps));
-    await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
-
-    deps.scheduledTicks[0]!.handler();
-    await new Promise((r) => setImmediate(r));
-
-    expect(deps.fileSystem.writeFile).not.toHaveBeenCalled();
-  });
-
-  it("stops the truncation watcher on app:shutdown stop hook", async () => {
-    const deps = createDeps();
-    const dispatcher = createMockDispatcher();
-
-    dispatcher.registerOperation(new MinimalAppStartOperation());
-    dispatcher.registerOperation(new MinimalAppShutdownOperation());
-    dispatcher.registerModule(createLoggingModule(deps));
-
-    await dispatcher.dispatch({ type: INTENT_APP_START, payload: {} } as AppStartIntent);
-    await dispatcher.dispatch({ type: INTENT_APP_SHUTDOWN, payload: {} } as AppShutdownIntent);
-
-    expect(deps.scheduler.clearInterval).toHaveBeenCalledOnce();
-    expect(deps.scheduledTicks[0]!.cleared).toBe(true);
   });
 });

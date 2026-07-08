@@ -194,15 +194,6 @@ export interface Logging {
    * @returns Absolute path to the session log file
    */
   getLogFilePath(): string;
-
-  /**
-   * Get the path where Chromium writes its native log when --enable-logging=file
-   * is set. This is a fixed path (not session-suffixed) because Chromium
-   * overwrites the file on each launch.
-   *
-   * @returns Absolute path to the Electron/Chromium log file
-   */
-  getElectronLogFilePath(): string;
 }
 
 /**
