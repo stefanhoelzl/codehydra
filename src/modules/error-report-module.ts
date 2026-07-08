@@ -116,14 +116,7 @@ function compressAndTrim(raw: string): { compressed: string; rawBytesKept: numbe
   return { compressed, rawBytesKept: kept.length };
 }
 
-/**
- * Build the bug-report dialog config. When `busy` is set (after the user hits
- * Send / Ctrl+Enter), the primary button shows a spinner label and the form is
- * frozen — the report can't hide instantly because it first reads the log files
- * off disk, so the button carries that in-flight state until the dialog closes.
- */
-function buildDialogConfig(options?: { busy?: boolean }): DialogConfig {
-  const busy = options?.busy ?? false;
+function buildDialogConfig(): DialogConfig {
   return {
     sections: [
       { type: "text", content: "Report a Bug", style: "heading", icon: "bug" },
@@ -134,7 +127,6 @@ function buildDialogConfig(options?: { busy?: boolean }): DialogConfig {
         multiline: true,
         initialValue: DESCRIPTION_INITIAL,
         selectInitialValue: true,
-        disabled: busy,
       },
       {
         type: "text",
@@ -144,22 +136,8 @@ function buildDialogConfig(options?: { busy?: boolean }): DialogConfig {
       {
         type: "group",
         items: [
-          {
-            type: "button",
-            id: "send",
-            label: "Send",
-            variant: "primary",
-            busy,
-            busyLabel: "Sending...",
-          },
-          {
-            type: "button",
-            id: "cancel",
-            label: "Cancel",
-            variant: "secondary",
-            role: "cancel",
-            disabled: busy,
-          },
+          { type: "button", id: "send", label: "Send", variant: "primary" },
+          { type: "button", id: "cancel", label: "Cancel", variant: "secondary", role: "cancel" },
         ],
       },
     ],
@@ -423,34 +401,26 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
     const handle = deps.ui.dialog(buildDialogConfig());
     activeHandle = handle;
 
-    // Guards against a second Send firing while the first is in flight (e.g. a
-    // double Ctrl+Enter before the busy config reaches the renderer).
+    // Guards against a second Send being processed if two "send" events are
+    // queued (e.g. a double Ctrl+Enter) before the dialog closes below.
     let sending = false;
 
     handle.onEvent((event) => {
       if (event.actionId === "send") {
         if (sending) return;
         sending = true;
-        // Reflect the in-flight send on the primary button (spinner label) and
-        // freeze the form until the dialog closes — the log reads below can take
-        // a perceptible moment, so the button must not look unresponsive.
-        handle.update(buildDialogConfig({ busy: true }));
+        const description = event.data?.["description"] ?? "";
 
-        void (async () => {
-          const [logs, electronLogs] = await Promise.all([
-            readLogContent(),
-            readElectronLogContent(),
-          ]);
-          const description = event.data?.["description"] ?? "";
+        // Log-gathering lives in the bug-report:submitted handler, so the
+        // dialog only forwards the description. Fire-and-forget: the dialog
+        // closes immediately (the awaited flush happens in the subscriber).
+        void deps.dispatcher.dispatch({
+          type: INTENT_SUBMIT_BUG_REPORT,
+          payload: { description },
+        } as SubmitBugReportIntent);
 
-          void deps.dispatcher.dispatch({
-            type: INTENT_SUBMIT_BUG_REPORT,
-            payload: { description, logs, electronLogs },
-          } as SubmitBugReportIntent);
-
-          handle.close();
-          activeHandle = null;
-        })();
+        handle.close();
+        activeHandle = null;
       } else if (event.actionId === "cancel") {
         handle.close();
         activeHandle = null;
@@ -515,7 +485,15 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
       },
       [EVENT_BUG_REPORT_SUBMITTED]: {
         handler: async (event: DomainEvent): Promise<void> => {
-          const { description, logs, electronLogs } = (event as BugReportSubmittedEvent).payload;
+          const { description } = (event as BugReportSubmittedEvent).payload;
+
+          // The module owns log-gathering for every bug report, so both the
+          // dialog and the MCP report_bug tool only need to supply a
+          // description. Read both streams here, then capture + flush.
+          const [logs, electronLogs] = await Promise.all([
+            readLogContent(),
+            readElectronLogContent(),
+          ]);
 
           // Synthetic error so the SDK formats it as $exception_list. Manual
           // reports always send (explicit consent), even with telemetry off.
