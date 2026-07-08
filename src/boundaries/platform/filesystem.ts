@@ -281,8 +281,27 @@ export interface FileSystemBoundary {
 // Helper Functions
 // ============================================================================
 
-import * as fs from "node:fs/promises";
+import { createRequire } from "node:module";
+import * as nodeFsPromises from "node:fs/promises";
 import { FileSystemError } from "../../shared/errors/service-errors";
+
+// In the packaged Electron main process, node:fs is asar-patched: any op on a path
+// containing a *.asar treats it as a virtual directory and caches the archive fd for
+// the process lifetime, so recursive rm/readdir over a workspace's node_modules opens
+// and locks an embedded electron default_app.asar — which made orphaned-workspace
+// cleanup fail with ENOTEMPTY in packaged builds (process.noAsar is intentionally left
+// off there so the app can load its own asar). original-fs is Electron's un-patched fs,
+// present ONLY in the Electron runtime; fall back to node:fs/promises everywhere else
+// (Vitest, tsx-run build/install scripts, plain Node) where it does not resolve.
+function resolveFsPromises(): typeof nodeFsPromises {
+  try {
+    return (createRequire(import.meta.url)("original-fs") as { promises: typeof nodeFsPromises })
+      .promises;
+  } catch {
+    return nodeFsPromises;
+  }
+}
+const fs = resolveFsPromises();
 import type { Logger } from "./logging";
 
 /**

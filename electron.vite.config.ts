@@ -51,7 +51,10 @@ export default defineConfig({
     },
     plugins: [
       // bufferutil and utf-8-validate are optional native deps for ws (used by socket.io)
-      codehydraDefaults({ external: ["bufferutil", "utf-8-validate"] }),
+      // original-fs is an Electron runtime builtin (not an npm package); it must be
+      // externalized so Rollup doesn't try to resolve/bundle it (which would trip the
+      // throw-on-warning onLog in codehydraDefaults and fail the build).
+      codehydraDefaults({ external: ["bufferutil", "utf-8-validate", "original-fs"] }),
       viteStaticCopy({
         targets: [
           { src: "dist/extensions/*", dest: "assets/extensions" },
