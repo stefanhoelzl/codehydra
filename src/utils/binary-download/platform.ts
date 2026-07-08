@@ -6,7 +6,7 @@ import type { SupportedArch, SupportedPlatform } from "../../boundaries/platform
 
 /**
  * Assert that a Windows download is only ever requested for x64 — every binary
- * we ship (Claude, OpenCode, code-server) provides Windows builds for x64 only.
+ * we ship (Claude, OpenCode, VSCodium) provides Windows builds for x64 only.
  *
  * @param label - Human-readable binary name for the error message.
  * @throws Error when `platform` is win32 and `arch` is not x64.

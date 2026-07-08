@@ -4,7 +4,7 @@
  * The generic `IdeServerModule` owns the shared lifecycle (download, spawn,
  * health-poll, kill, resume, extension install, and per-workspace
  * `.code-workspace` file writing). Everything that differs between IDE server
- * distributions (code-server, VSCodium reh-web, …) lives behind this
+ * distributions (VSCodium reh-web, …) lives behind this
  * descriptor: download coordinates, serve arguments, the readiness probe, the
  * folder/workspace URL scheme, and any settings a distribution needs injected.
  *
@@ -32,7 +32,7 @@ export interface RemoteCliInvocation {
 }
 
 export interface IdeServer {
-  /** Binary identifier, also the download/preflight name (e.g. "code-server"). */
+  /** Binary identifier, also the download/preflight name (e.g. "vscodium"). */
   readonly id: BinaryType;
   /** Distribution version; drives download coordinates and the bundle directory. */
   readonly version: string;
@@ -46,7 +46,7 @@ export interface IdeServer {
   archiveSubPath(platform: SupportedPlatform, arch: SupportedArch): string | undefined;
   /** Relative path to the server executable within the extracted bundle. */
   executablePath(platform: SupportedPlatform): string;
-  /** Bundle subdirectory under bundlePath (e.g. "code-server/<version>"). */
+  /** Bundle subdirectory under bundlePath (e.g. "vscodium/<version>"). */
   bundleSubdir(): string;
 
   /** CLI arguments to serve on `port` with the given extension/user-data dirs. */

@@ -7,7 +7,7 @@
  * Architecture: Playwright Electron
  * - _electron.launch() manages process lifecycle, page access, and dialog mocking
  * - The app has a single WebContentsView (the UI page); workspaces are
- *   code-server iframes inside it. Workspace targeting resolves a Playwright
+ *   VSCodium iframes inside it. Workspace targeting resolves a Playwright
  *   Frame within the UI page (OOPIFs are fully scriptable through CDP).
  *
  * Usage:
@@ -138,7 +138,7 @@ async function isActiveFrame(frame: Frame): Promise<boolean> {
 
 /**
  * Resolved interaction target. The app has one page (the UI); workspaces are
- * code-server iframes inside it, addressed as Playwright Frames.
+ * VSCodium iframes inside it, addressed as Playwright Frames.
  */
 interface ResolvedTarget {
   /** The UI page (host of all frames). Keyboard input is page-level. */
@@ -231,7 +231,7 @@ const server = new McpServer(
       '  target: "ui", code: "(() => { document.querySelector(\'nav.sidebar\')' +
       "?.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true })); " +
       "return 'expanded'; })()\"\n\n" +
-      "CODE-SERVER: Workspaces are code-server iframes inside the single UI view, NOT VS Code extensions. " +
+      "IDE SERVER: Workspaces are VSCodium iframes inside the single UI view, NOT VS Code extensions. " +
       "acquireVsCodeApi is NOT available. dispatchEvent(new KeyboardEvent(...)) does NOT work. " +
       "Use appctrl_key for shortcuts (Control+p, Control+Shift+p, Enter, Escape) " +
       "and appctrl_type for text input.\n\n" +
@@ -489,9 +489,9 @@ server.registerTool(
     description:
       "Press a keyboard shortcut or key in a CodeHydra view. " +
       "Uses Playwright's keyboard.press() which sends trusted CDP events — " +
-      "unlike dispatchEvent(new KeyboardEvent(...)) which does NOT work in code-server. " +
+      "unlike dispatchEvent(new KeyboardEvent(...)) which does NOT work in the IDE server. " +
       "Key format: 'Enter', 'Escape', 'Tab', 'Control+p', 'Control+Shift+p', 'ArrowDown'. " +
-      "Use this for code-server shortcuts (Ctrl+P for Quick Open, Ctrl+Shift+P for Command Palette).",
+      "Use this for IDE-server shortcuts (Ctrl+P for Quick Open, Ctrl+Shift+P for Command Palette).",
     inputSchema: z.object({
       key: z
         .string()
@@ -529,7 +529,7 @@ server.registerTool(
       "NEVER use bare `return` statements — they cause SyntaxError. " +
       "Use an IIFE: (() => { ...; return result; })(). " +
       "NOTE: acquireVsCodeApi and VS Code extension APIs are NOT available. " +
-      "The UI view runs Svelte, workspace views run code-server. " +
+      "The UI view runs Svelte, workspace views run VSCodium. " +
       "Examples: " +
       "'document.querySelector(\".dialog\")?.textContent' " +
       "'document.querySelectorAll(\"vscode-button\").length' " +
@@ -738,7 +738,7 @@ server.registerTool(
   {
     description:
       "List the UI view and all workspace iframes in the running CodeHydra instance. " +
-      "The UI is the single page (file:// URL); workspaces are code-server iframes " +
+      "The UI is the single page (file:// URL); workspaces are VSCodium iframes " +
       'inside it (URLs with "folder=" or "workspace=" parameter; `active` marks the visible one).',
     inputSchema: z.object({}),
   },
@@ -786,9 +786,9 @@ server.registerResource(
           "",
           "## Views",
           "The app has a single WebContentsView (the UI page); workspaces are",
-          "code-server iframes inside it, addressed as Playwright Frames:",
+          "VSCodium iframes inside it, addressed as Playwright Frames:",
           '- **UI**: `file://` URL — the Svelte app, hosts everything (target: "ui")',
-          '- **Workspace**: `http://127.0.0.1:{port}/?workspace=...` — a code-server iframe (target: "workspace" = the visible one)',
+          '- **Workspace**: `http://127.0.0.1:{port}/?workspace=...` — a VSCodium iframe (target: "workspace" = the visible one)',
           "- All non-hibernated workspaces have mounted iframes; only the active one is visible",
           '- `appctrl_screenshot target="ui"` captures the whole window; target="workspace" clips to the active iframe',
           "",
@@ -849,7 +849,7 @@ server.registerResource(
           "IMPORTANT: Never open the user's real projects. Always create and use temporary git repos.",
           "",
           "## Code-Server (Workspace) Views",
-          "- `acquireVsCodeApi` is NOT available — this is code-server, not a VS Code extension",
+          "- `acquireVsCodeApi` is NOT available — this is the IDE server, not a VS Code extension",
           "- `document.dispatchEvent(new KeyboardEvent(...))` does NOT work — these are untrusted events",
           "- Use Playwright keyboard instead: `appctrl_type` for text, `appctrl_key` for shortcuts",
           "- Ctrl+P (Quick Open), Ctrl+Shift+P (Command Palette) work via `appctrl_key`",

@@ -66,8 +66,8 @@ export type ConfigSource = "default" | "user" | "env" | "cli";
  * Rules: strip CH_, lowercase, __ → ., _ → -.
  *
  * Naming conventions:
- *   Config key / CLI flag: dot-separated, kebab-case  (e.g. "version.code-server")
- *   Env var:               CH_ prefix, . → __, - → _, UPPER  (e.g. CH_VERSION__CODE_SERVER)
+ *   Config key / CLI flag: dot-separated, kebab-case  (e.g. "version.vscodium")
+ *   Env var:               CH_ prefix, . → __, - → _, UPPER  (e.g. CH_VERSION__VSCODIUM)
  */
 function envVarToConfigKey(envVar: string): string | undefined {
   if (!envVar.startsWith("CH_")) return undefined;

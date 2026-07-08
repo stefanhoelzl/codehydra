@@ -345,10 +345,10 @@ export interface MockProcessRunnerOptions {
  * @example
  * // Simple usage - all processes succeed
  * const runner = createMockProcessRunner();
- * const manager = new CodeServerManager(runner, ...);
+ * const manager = new IdeServerManager(runner, ...);
  * await manager.ensureRunning();
  * expect(runner).toHaveSpawned([
- *   { command: "/path/to/code-server" }
+ *   { command: "/path/to/codium-server" }
  * ]);
  *
  * @example
@@ -361,7 +361,7 @@ export interface MockProcessRunnerOptions {
  * // Per-spawn customization
  * const runner = createMockProcessRunner({
  *   onSpawn: (command) => {
- *     if (command.includes("code-server")) {
+ *     if (command.includes("codium-server")) {
  *       return { exitCode: 0, stdout: "started" };
  *     }
  *     return { exitCode: 1, stderr: "not found" };

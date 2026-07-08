@@ -97,7 +97,7 @@ export const workspaceSchema = z
     /** Workspace metadata stored in git config (always contains `base`). */
     metadata: z.record(z.string(), z.string()).readonly(),
     path: z.string(),
-    /** code-server URL for the iframe. Absent for hibernated workspaces until they wake. */
+    /** IDE server URL for the iframe. Absent for hibernated workspaces until they wake. */
     url: z.string().optional(),
   })
   .readonly();

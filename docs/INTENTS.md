@@ -274,7 +274,7 @@ A handler advertises capabilities by returning `{ provides: { … } }` (optional
 
 The `ANY_VALUE` sentinel (exported from `operation.ts`) matches any value for a required capability -- it means "this capability must exist, but I do not care about its value."
 
-**Example**: In the `app:start` operation's `start` hook point, the code-server module's start handler returns `{ provides: { codeServerPort } }` after starting code-server. The presentation module requires `{ codeServerPort: ANY_VALUE }` so it runs after the port is known.
+**Example**: In the `app:start` operation's `start` hook point, the IDE server module's start handler returns `{ provides: { ideServerPort } }` after starting the IDE server. The presentation module requires `{ ideServerPort: ANY_VALUE }` so it runs after the port is known.
 
 Capabilities accumulate across handlers within a single `collect()` call and are available on `HookResult.capabilities` for the operation to inspect.
 
@@ -516,7 +516,7 @@ The `app-start` operation runs five hook points in sequence:
 - **init**: Initialization (logging, shell, scripts). ElectronLifecycleModule provides `"app-ready"` capability after `app.whenReady()`; handlers needing Electron declare `requires: { "app-ready": ANY_VALUE }`.
 - **show-ui**: Show starting screen, capture waitForRetry callback
 - **check-deps**: Binary + extension checks (collect, isolated contexts). Dispatches `app:setup` if needed.
-- **start**: Start servers with capability-based ordering (`pluginPort` → `codeServerPort` → downstream handlers).
+- **start**: Start servers with capability-based ordering (`pluginPort` → `ideServerPort` → downstream handlers).
 
 The multi-phase design ensures config is loaded before Electron ready, servers are running before data is loaded (start hook modules read ports from capabilities). Errors in early hooks abort startup.
 
@@ -769,10 +769,10 @@ NetworkLayer provides unified interfaces for all localhost network operations, d
 
 **Interface Responsibilities:**
 
-| Interface     | Methods               | Purpose                       | Used By                                                    |
-| ------------- | --------------------- | ----------------------------- | ---------------------------------------------------------- |
-| `HttpClient`  | `fetch(url, options)` | HTTP GET with timeout support | CodeServerManager, OpenCodeServerManager                   |
-| `PortManager` | `findFreePort()`      | Find available ports          | CodeServerManager, OpenCodeServerManager, McpServerManager |
+| Interface     | Methods               | Purpose                       | Used By                                                  |
+| ------------- | --------------------- | ----------------------------- | -------------------------------------------------------- |
+| `HttpClient`  | `fetch(url, options)` | HTTP GET with timeout support | IdeServerModule, OpenCodeServerManager                   |
+| `PortManager` | `findFreePort()`      | Find available ports          | IdeServerModule, OpenCodeServerManager, McpServerManager |
 
 **Dependency Injection:**
 
@@ -789,7 +789,7 @@ const serverManager = new OpenCodeServerManager(
   pathProvider,
   logger
 );
-const codeServerManager = new CodeServerManager(config, runner, networkLayer, networkLayer);
+const ideServerModule = new IdeServerModule(config, runner, networkLayer, networkLayer);
 ```
 
 **Testing with Mock Utilities:**
@@ -832,7 +832,7 @@ await waitForPort(8080, timeout);
 
 ```typescript
 // ProcessRunner returns a SpawnedProcess handle synchronously
-const proc = runner.run("code-server", ["--port", "8080"], { cwd: "/app", env: cleanEnv });
+const proc = runner.run("codium-server", ["--port", "8080"], { cwd: "/app", env: cleanEnv });
 console.log(`PID: ${proc.pid}`);
 
 // Wait for completion (never throws for exit status)
@@ -1016,7 +1016,7 @@ The application uses dependency injection to abstract build mode detection and p
 2. In `bootstrap()`:
    - Pass `pathProvider` and `fileSystemLayer` to services via constructor DI
 3. In `startServices()` (construction phase):
-   - Construct all remaining services (CodeServerManager, agent services, etc.)
+   - Construct all remaining services (IdeServerModule, agent services, etc.)
    - No I/O -- constructors/factories only
 4. In `startServices()` (dispatch phase):
    - Wire intent dispatcher, get API, then dispatch `app:start`
@@ -1200,7 +1200,7 @@ const networkLayer = new DefaultNetworkLayer();
 const processRunner = new ExecaProcessRunner();
 const binaryDownloadService = new DefaultBinaryDownloadService(...);
 vscodeSetupService = new VscodeSetupService(processRunner, pathProvider, fsLayer, platformInfo, binaryDownloadService);
-codeServerManager = new CodeServerManager(config, processRunner, networkLayer, networkLayer);
+ideServerModule = new IdeServerModule(config, processRunner, networkLayer, networkLayer);
 ```
 
 ### WorkspaceLockHandler

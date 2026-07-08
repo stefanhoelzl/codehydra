@@ -59,11 +59,10 @@ import { OPEN_WORKSPACE_OPERATION_ID } from "../../intents/open-workspace";
 import { DELETE_WORKSPACE_OPERATION_ID } from "../../intents/delete-workspace";
 import { listInstalledExtensions, removeFromExtensionsJson } from "../../utils/extension";
 import { Path } from "../../utils/path/path";
-import { storeString, storeNumber, storeEnum } from "../../boundaries/platform/store-definition";
+import { storeString, storeNumber } from "../../boundaries/platform/store-definition";
 import type { Config } from "../../boundaries/platform/config";
 import { IdeServerError, SetupError, getErrorMessage } from "../../shared/errors/service-errors";
 import { waitForHealthy } from "../../utils/health-check";
-import { createCodeServerIdeServer, CODE_SERVER_VERSION } from "./code-server";
 import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./vscodium";
 import { applyWatcherShim } from "./watcher-shim";
 import type { IdeServer } from "./types";
@@ -88,28 +87,19 @@ interface IdeServerConfig {
 // Port Helpers
 // =============================================================================
 
-/**
- * Fixed production ports — distinct per distribution so each keeps its own
- * IndexedDB origin (no cross-distro state bleed when switching).
- */
-const CODE_SERVER_PORT = 25448;
-const VSCODIUM_PORT = 25449;
+/** Fixed production port for the embedded IDE server (stable IndexedDB origin). */
+const IDE_SERVER_PORT = 25448;
 
 /**
- * Determine an IDE server port from build info.
- * - Production: the given fixed port (stable IndexedDB origin)
- * - Development: derived from the git branch (+ salt) for stability across restarts
+ * Determine the IDE server port from build info.
+ * - Production: the fixed port (stable IndexedDB origin)
+ * - Development: derived from the git branch for stability across restarts
  */
-function getIdeServerPort(
-  buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">,
-  packagedPort: number,
-  devSalt = ""
-): number {
+function getIdeServerPort(buildInfo: Pick<BuildInfo, "isPackaged" | "gitBranch">): number {
   if (buildInfo.isPackaged) {
-    return packagedPort;
+    return IDE_SERVER_PORT;
   }
-  const input = (buildInfo.gitBranch ?? "development") + devSalt;
-  return derivePortFromString(input);
+  return derivePortFromString(buildInfo.gitBranch ?? "development");
 }
 
 /**
@@ -191,47 +181,32 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
   const { processRunner, fileSystemLayer, logger } = deps;
 
   // Register config keys
-  const ideServerSelection = deps.configService.register("ide-server", {
-    default: "code-server",
-    description: "IDE server distribution: code-server|vscodium",
-    ...storeEnum(["code-server", "vscodium"]),
-  });
-  const codeServerVersionConfig = deps.configService.register("version.code-server", {
-    default: CODE_SERVER_VERSION,
-    description: "Code-server version",
-    ...storeString(),
-  });
   const vscodiumVersionConfig = deps.configService.register("version.vscodium", {
     default: VSCODIUM_VERSION,
     description: "VSCodium version",
     ...storeString(),
   });
-  const codeServerPortConfig = deps.configService.register("code-server.port", {
-    default: getIdeServerPort(deps.buildInfo, CODE_SERVER_PORT),
-    description: "Code-server port",
-    ...storeNumber({ min: 1, max: 65535, integer: true }),
-  });
-  const vscodiumPortConfig = deps.configService.register("vscodium.port", {
-    default: getIdeServerPort(deps.buildInfo, VSCODIUM_PORT, ":vscodium"),
-    description: "VSCodium port",
-    ...storeNumber({ min: 1, max: 65535, integer: true }),
+  // `ide-server.port` is the rename of the retired `code-server.port`: a config
+  // file still carrying the old key is translated to this one at load (env/CLI
+  // legacy names honored too). The legacy value shares this key's validation.
+  // Min 1024: the server binds an unprivileged loopback port, so reject the
+  // privileged range (<1024, which needs root on Unix) at config-validation time.
+  const portType = storeNumber({ min: 1024, max: 65535, integer: true });
+  const ideServerPortConfig = deps.configService.register("ide-server.port", {
+    default: getIdeServerPort(deps.buildInfo),
+    description: "IDE server port",
+    legacyNames: { "code-server.port": (value) => portType.validate(value) },
+    ...portType,
   });
 
-  /** Whether VSCodium is the selected distribution (call only after load()). */
-  function isVscodium(): boolean {
-    return ideServerSelection.get() === "vscodium";
-  }
-
-  /** Resolve the active IdeServer descriptor (call only after config load()). */
+  /** Resolve the IdeServer descriptor (call only after config load()). */
   function getIdeServer(): IdeServer {
-    return isVscodium()
-      ? createVscodiumIdeServer(vscodiumVersionConfig.get())
-      : createCodeServerIdeServer(codeServerVersionConfig.get());
+    return createVscodiumIdeServer(vscodiumVersionConfig.get());
   }
 
-  /** The port the selected distribution serves on (call only after load()). */
+  /** The port the IDE server serves on (call only after load()). */
   function getPort(): number {
-    return isVscodium() ? vscodiumPortConfig.get() : codeServerPortConfig.get();
+    return ideServerPortConfig.get();
   }
 
   // -------------------------------------------------------------------------
@@ -362,14 +337,14 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
   }
 
   async function doStart(): Promise<number> {
-    logger.info("Starting code-server");
+    logger.info("Starting IDE server");
 
     const port = getPort();
 
     const portAvailable = await deps.portManager.isPortAvailable(port);
     if (!portAvailable) {
       throw new IdeServerError(
-        `Port ${port} is already in use. Another code-server or application may be running on this port.`
+        `Port ${port} is already in use. Another IDE server or application may be running on this port.`
       );
     }
 
@@ -385,7 +360,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
     ];
 
     try {
-      // Create clean environment without VS Code/code-server variables
+      // Create clean environment without VS Code/IDE-server variables
       const cleanEnv = { ...process.env };
 
       // Remove all VSCODE_* variables
@@ -409,7 +384,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
       cleanEnv.EDITOR = editorValue;
       cleanEnv.GIT_SEQUENCE_EDITOR = editorValue;
 
-      // Distribution-specific environment (e.g. code-server proxy disabling)
+      // Distribution-specific environment (from the active IdeServer descriptor)
       Object.assign(cleanEnv, ide.serveEnv());
 
       // Set plugin port for VS Code extension communication
@@ -449,12 +424,12 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
         try {
           await proc.kill(PROCESS_KILL_GRACEFUL_TIMEOUT_MS, PROCESS_KILL_FORCE_TIMEOUT_MS);
         } catch {
-          logger.warn("Failed to kill code-server after start failure");
+          logger.warn("Failed to kill IDE server after start failure");
         }
       }
 
       const errorMsg = getErrorMessage(error);
-      throw new IdeServerError(`Failed to start code-server: ${errorMsg}`);
+      throw new IdeServerError(`Failed to start IDE server: ${errorMsg}`);
     }
   }
 
@@ -498,7 +473,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
       );
 
       if (!result.success) {
-        logger.warn("Failed to kill code-server", { pid: pid ?? 0 });
+        logger.warn("Failed to kill IDE server", { pid: pid ?? 0 });
       }
 
       logger.info("Stopped", {
@@ -532,7 +507,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
         fileSystemLayer: deps.fileSystemLayer,
       });
 
-      logger.debug("Code-server binary preflight", {
+      logger.debug("IDE server binary preflight", {
         isInstalled,
         needsDownload: !isInstalled,
       });
@@ -540,7 +515,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
       return { success: true, needsDownload: !isInstalled };
     } catch (error) {
       const message = getErrorMessage(error);
-      logger.warn("Code-server binary preflight failed", { error: message });
+      logger.warn("IDE server binary preflight failed", { error: message });
       return {
         success: false,
         error: { type: "preflight-failed", message },
@@ -551,12 +526,10 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
   async function downloadIdeServer(onProgress?: DownloadProgressCallback): Promise<void> {
     const request = getDownloadRequest();
     if (!request || !deps.archiveExtractor) {
-      throw new IdeServerError(
-        "Cannot download code-server binary: ArchiveExtractor not available"
-      );
+      throw new IdeServerError("Cannot download IDE server binary: ArchiveExtractor not available");
     }
 
-    logger.info("Downloading code-server binary");
+    logger.info("Downloading IDE server binary");
 
     try {
       await downloadBinary(
@@ -569,10 +542,10 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
         },
         onProgress
       );
-      logger.info("Code-server binary download complete");
+      logger.info("IDE server binary download complete");
     } catch (error) {
       const message = getErrorMessage(error);
-      throw new IdeServerError(`Failed to download code-server: ${message}`);
+      throw new IdeServerError(`Failed to download IDE server: ${message}`);
     }
 
     // Windows-only: patch the freshly extracted bundle's native file watcher so
@@ -676,7 +649,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
             // Update internal port (consumed by finalize hook for workspace URLs)
             ideServerPort = port;
 
-            return { provides: { codeServerPort: port } };
+            return { provides: { ideServerPort: port } };
           },
         },
       },
@@ -698,21 +671,21 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
                 checkFn: () => checkHealth(port),
                 timeoutMs: 5000,
                 intervalMs: 500,
-                errorMessage: "Code-server health check timed out after 5s",
+                errorMessage: "IDE server health check timed out after 5s",
               });
               return {};
             } catch {
               // Fall through to restart
             }
 
-            logger.warn("Code-server unhealthy after resume, restarting");
+            logger.warn("IDE server unhealthy after resume, restarting");
             try {
               await stop();
               await ensureRunning();
-              logger.info("Code-server restarted after resume");
+              logger.info("IDE server restarted after resume");
             } catch (error) {
               const message = getErrorMessage(error);
-              logger.error("Code-server restart failed after resume", { error: message });
+              logger.error("IDE server restart failed after resume", { error: message });
               // Report the failure as data; the operation emits app:resume-failed.
               return { result: { failed: { error: message } } };
             }
@@ -779,7 +752,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
             } catch (error) {
               yield { id: "vscode", status: "failed", error: getErrorMessage(error) };
               throw new SetupError(
-                `Failed to download code-server: ${getErrorMessage(error)}`,
+                `Failed to download IDE server: ${getErrorMessage(error)}`,
                 "BINARY_DOWNLOAD_FAILED"
               );
             }
@@ -839,7 +812,7 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
                 if (result.exitCode !== 0) {
                   throw new Error(
                     result.stderr.includes("ENOENT") || result.stderr.includes("spawn")
-                      ? `Failed to run code-server: ${result.stderr || "Binary not found"}`
+                      ? `Failed to run IDE server: ${result.stderr || "Binary not found"}`
                       : `Failed to install extension: ${entry.id}`
                   );
                 }

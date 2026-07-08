@@ -870,7 +870,7 @@ export function createPluginServerModule(deps: PluginServerModuleDeps): IntentMo
         start: {
           handler: async (): Promise<HookOutput> => {
             // pluginPort stays null on failure; the key is still provided (null,
-            // not undefined) so code-server's `requires: { pluginPort: ANY_VALUE }`
+            // not undefined) so the IDE server's `requires: { pluginPort: ANY_VALUE }`
             // gate is satisfied and it runs in degraded mode.
             let pluginPort: number | null = null;
 

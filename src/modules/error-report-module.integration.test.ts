@@ -526,7 +526,7 @@ describe("ErrorReportModule — startup failure report", () => {
       configOverrides: { "log.level": "debug" },
     });
 
-    await runStartupErrorHook(module, new Error("Failed to start code-server"), "start");
+    await runStartupErrorHook(module, new Error("Failed to start IDE server"), "start");
 
     const captured = boundary.$.capturedEvents.find((e) => e.event === "$exception");
     expect(captured).toBeDefined();
@@ -535,7 +535,7 @@ describe("ErrorReportModule — startup failure report", () => {
     expect(captured!.properties["logs_format"]).toBe("gzip+base64");
     expect(captured!.properties["config"]).toEqual({ "log.level": "debug" });
     expect(captured!.properties["$exception_list"]).toEqual([
-      { type: "Error", value: "Failed to start code-server" },
+      { type: "Error", value: "Failed to start IDE server" },
     ]);
     // flushed (shutdown) so the report lands before the app quits
     expect(boundary.$.shutdownCalled).toBe(true);

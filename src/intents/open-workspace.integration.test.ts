@@ -333,8 +333,8 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
       }
     : null;
 
-  // CodeServerModule: "finalize" hook — returns workspaceUrl as its result
-  const codeServerModule: IntentModule = {
+  // IdeServerModule: "finalize" hook — returns workspaceUrl as its result
+  const ideServerModule: IntentModule = {
     name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
@@ -353,7 +353,7 @@ function createTestSetup(opts?: TestSetupOptions): TestSetup {
     worktreeModule,
     keepFilesModule,
     agentModule,
-    codeServerModule,
+    ideServerModule,
   ];
   if (failingSetupModule) {
     // Insert before keepFilesModule so the failing handler runs first on the "setup" hook
@@ -986,7 +986,7 @@ describe("OpenWorkspace Operation", () => {
       };
       // Finalize module captures envVars for verification
       let capturedEnvVars: Record<string, string> = {};
-      const codeServerModule: IntentModule = {
+      const ideServerModule: IntentModule = {
         name: "test",
         hooks: {
           [OPEN_WORKSPACE_OPERATION_ID]: {
@@ -1004,7 +1004,7 @@ describe("OpenWorkspace Operation", () => {
       dispatcher.registerModule(worktreeModule);
       dispatcher.registerModule(agentModule);
       dispatcher.registerModule(extraEnvModule);
-      dispatcher.registerModule(codeServerModule);
+      dispatcher.registerModule(ideServerModule);
 
       await dispatcher.dispatch(createIntent());
 

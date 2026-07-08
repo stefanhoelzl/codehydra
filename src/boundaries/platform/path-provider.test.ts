@@ -8,7 +8,7 @@ import { DefaultPathProvider, type PathProvider } from "./path-provider";
 import { createMockBuildInfo } from "./build-info.test-utils";
 import { createMockPlatformInfo } from "./platform-info.test-utils";
 import { Path } from "../../utils/path/path";
-import { CODE_SERVER_VERSION } from "../../modules/ide-server-module/code-server";
+import { VSCODIUM_VERSION } from "../../modules/ide-server-module/vscodium";
 import { OPENCODE_VERSION } from "../../modules/agent-module/opencode/setup-info";
 
 describe("createMockPathProvider", () => {
@@ -30,12 +30,10 @@ describe("createMockPathProvider", () => {
   it("bundlePath returns correct paths", () => {
     const pp = createMockPathProvider();
 
-    expect(pp.bundlePath("code-server").toString()).toBe("/test/bundles/code-server");
+    expect(pp.bundlePath("vscodium").toString()).toBe("/test/bundles/vscodium");
     expect(pp.bundlePath("opencode").toString()).toBe("/test/bundles/opencode");
     expect(pp.bundlePath("claude").toString()).toBe("/test/bundles/claude");
-    expect(pp.bundlePath("code-server/4.107.0").toString()).toBe(
-      "/test/bundles/code-server/4.107.0"
-    );
+    expect(pp.bundlePath("vscodium/4.107.0").toString()).toBe("/test/bundles/vscodium/4.107.0");
     expect(pp.bundlePath("opencode/1.0.223").toString()).toBe("/test/bundles/opencode/1.0.223");
   });
 
@@ -73,7 +71,7 @@ describe("createMockPathProvider", () => {
     });
 
     expect(pp.dataPath("projects").toString()).toBe("/custom/root/projects");
-    expect(pp.bundlePath("code-server").toString()).toBe("/custom/bundles/code-server");
+    expect(pp.bundlePath("vscodium").toString()).toBe("/custom/bundles/vscodium");
     expect(pp.runtimePath("extensions").toString()).toBe("/custom/runtime/extensions");
     expect(pp.assetPath("manifest.json").toString()).toBe("/custom/assets/manifest.json");
   });
@@ -169,8 +167,8 @@ describe("DefaultPathProvider", () => {
       const platformInfo = createMockPlatformInfo({ platform: "linux" });
       const pp = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pp.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toString()).toMatch(
-        new RegExp(`\\.local/share/codehydra/code-server/${CODE_SERVER_VERSION}$`)
+      expect(pp.bundlePath(`vscodium/${VSCODIUM_VERSION}`).toString()).toMatch(
+        new RegExp(`\\.local/share/codehydra/vscodium/${VSCODIUM_VERSION}$`)
       );
       expect(pp.bundlePath(`opencode/${OPENCODE_VERSION}`).toString()).toMatch(
         new RegExp(`\\.local/share/codehydra/opencode/${OPENCODE_VERSION}$`)
@@ -338,8 +336,8 @@ describe("DefaultPathProvider", () => {
       });
       const pp = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pp.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toString()).toBe(
-        `/home/testuser/.local/share/codehydra/code-server/${CODE_SERVER_VERSION}`
+      expect(pp.bundlePath(`vscodium/${VSCODIUM_VERSION}`).toString()).toBe(
+        `/home/testuser/.local/share/codehydra/vscodium/${VSCODIUM_VERSION}`
       );
       expect(pp.bundlePath(`opencode/${OPENCODE_VERSION}`).toString()).toBe(
         `/home/testuser/.local/share/codehydra/opencode/${OPENCODE_VERSION}`
@@ -389,8 +387,8 @@ describe("DefaultPathProvider", () => {
       });
       const pp = new DefaultPathProvider(buildInfo, platformInfo);
 
-      expect(pp.bundlePath(`code-server/${CODE_SERVER_VERSION}`).toString()).toBe(
-        `/Users/testuser/Library/Application Support/Codehydra/code-server/${CODE_SERVER_VERSION}`
+      expect(pp.bundlePath(`vscodium/${VSCODIUM_VERSION}`).toString()).toBe(
+        `/Users/testuser/Library/Application Support/Codehydra/vscodium/${VSCODIUM_VERSION}`
       );
       expect(pp.bundlePath(`opencode/${OPENCODE_VERSION}`).toString()).toBe(
         `/Users/testuser/Library/Application Support/Codehydra/opencode/${OPENCODE_VERSION}`

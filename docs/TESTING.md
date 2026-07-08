@@ -262,7 +262,7 @@ Code change involves external system interface?
 | Condition                                     | Entry Point                        | Example                                     |
 | --------------------------------------------- | ---------------------------------- | ------------------------------------------- |
 | Module is public API                          | `CodeHydraApi` or `LifecycleApi`   | ProjectStore, AgentModule                   |
-| Module is internal service with complex state | Direct service                     | CodeServerManager, PluginServer             |
+| Module is internal service with complex state | Direct service                     | IdeServerModule, PluginServer               |
 | Module is Electron wrapper                    | Direct with mocked Electron APIs   | ViewManager, WindowManager                  |
 | Module is UI component                        | Component with mocked `window.api` | Sidebar, CreateWorkspaceDialog              |
 | Module is pure utility function               | Focused test (no entry point)      | generateProjectId, normalizeMetadataKey     |
@@ -923,7 +923,7 @@ The ProcessRunner state mock provides behavioral simulation for process spawning
 // Factory with per-spawn configuration
 const runner = createMockProcessRunner({
   onSpawn: (command, args, cwd) => {
-    if (command.includes("code-server")) {
+    if (command.includes("codium-server")) {
       return { pid: 12345, exitCode: 0 };
     }
     return { pid: undefined, stderr: "spawn ENOENT" }; // Spawn failure
@@ -931,12 +931,12 @@ const runner = createMockProcessRunner({
 });
 
 // Use in tests
-const manager = new CodeServerManager(runner, ...);
+const manager = new IdeServerModule(runner, ...);
 await manager.ensureRunning();
 
 // Custom matchers for verification
 expect(runner).toHaveSpawned([
-  { command: expect.stringContaining("code-server"), cwd: "/workspace" },
+  { command: expect.stringContaining("codium-server"), cwd: "/workspace" },
 ]);
 
 // Stop and verify kill was called
@@ -1191,7 +1191,7 @@ This is especially important when multiple agents run concurrently, as running `
 | `pnpm validate:quick`   | Format + lint + types       | Quick validation (~15s)       |
 | `pnpm validate`         | Integration + check + build | Pre-commit validation (fast)  |
 
-**Why validate excludes boundary tests**: Boundary tests may be slower, require specific binaries (code-server, opencode), and are only relevant when working on external interface code.
+**Why validate excludes boundary tests**: Boundary tests may be slower, require specific binaries (vscodium, opencode), and are only relevant when working on external interface code.
 
 ---
 
@@ -1216,7 +1216,7 @@ Integration tests go through specific entry points, not arbitrary internal modul
 | -------------------- | ------------------------ | ---------------------------------------------------------------------------------------------- |
 | `CodeHydraApi`       | Main application facade  | ProjectStore, GitWorktreeProvider, AgentStatusManager, OpenCodeServerManager, KeepFilesService |
 | `LifecycleApi`       | Setup/bootstrap facade   | VscodeSetupService, BinaryDownloadService, WrapperScriptGenerationService                      |
-| `CodeServerManager`  | Direct (not via API)     | Just CodeServerManager                                                                         |
+| `IdeServerModule`    | Direct (not via API)     | Just IdeServerModule                                                                           |
 | `PluginServer`       | Direct (not via API)     | Just PluginServer                                                                              |
 | `McpServerManager`   | Direct (not via API)     | McpServerManager, McpServer                                                                    |
 | `ViewManager`        | Direct (mocked Electron) | Just ViewManager                                                                               |
@@ -1843,7 +1843,7 @@ expect(mockApi.fetch).toHaveBeenCalledTimes(3);
 
 ```typescript
 expect(mockServer).toBeStopped();
-expect(runner).toHaveSpawned([{ command: "code-server", cwd: "/workspace" }]);
+expect(runner).toHaveSpawned([{ command: "codium-server", cwd: "/workspace" }]);
 ```
 
 **Rationale:**

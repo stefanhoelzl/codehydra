@@ -64,7 +64,7 @@ function parseElectronFlags(flags: string | undefined): { name: string; value?: 
 
 /**
  * Default Chromium features to disable. Curated for CodeHydra's use case:
- * a desktop dev tool hosting code-server and agent UIs, with no media playback,
+ * a desktop dev tool hosting the IDE server and agent UIs, with no media playback,
  * autofill, translate, casting, ad-tech, or web device APIs.
  *
  * Excludes BackForwardCache, IsolateOrigins/SitePerProcess, NetworkService,

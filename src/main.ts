@@ -277,7 +277,7 @@ const opencodeVersionConfig = configService.register("version.opencode", {
 // Expanded-sidebar width (px). Written by the renderer's drag-to-resize gesture
 // and also user-editable here. The [250, 100000] bounds enforce the grow-only
 // floor at the config layer: an out-of-range hand-edited value fails load with
-// a help message (like code-server.port), rather than being silently coerced.
+// a help message (like ide-server.port), rather than being silently coerced.
 const sidebarWidthConfig = configService.register("sidebar.width", {
   default: 250,
   description: "Expanded sidebar width in pixels (drag its right edge to resize; min 250)",

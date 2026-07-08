@@ -8,7 +8,7 @@
  *
  * Test plan items covered:
  * #1: all start hooks run (servers, data, view)
- * #2: start abort on CodeServer failure
+ * #2: start abort on IdeServer failure
  * #3: start abort on MCP failure (non-optional)
  * #4: start hook failure (data) propagates
  * #5: PluginServer graceful degradation
@@ -79,7 +79,7 @@ function createMockAgentAccessor(
 // =============================================================================
 
 interface TestState {
-  codeServerStarted: boolean;
+  ideServerStarted: boolean;
   mcpStarted: boolean;
   dataLoaded: boolean;
   viewActivated: boolean;
@@ -89,7 +89,7 @@ interface TestState {
 
 function createTestState(): TestState {
   return {
-    codeServerStarted: false,
+    ideServerStarted: false,
     mcpStarted: false,
     dataLoaded: false,
     viewActivated: false,
@@ -97,7 +97,7 @@ function createTestState(): TestState {
   };
 }
 
-function createCodeServerModule(state: TestState, options?: { fail?: boolean }): IntentModule {
+function createIdeServerModule(state: TestState, options?: { fail?: boolean }): IntentModule {
   return {
     name: "test",
     hooks: {
@@ -105,11 +105,11 @@ function createCodeServerModule(state: TestState, options?: { fail?: boolean }):
         start: {
           handler: async (): Promise<HookOutput> => {
             if (options?.fail) {
-              throw new Error("CodeServer failed to start");
+              throw new Error("IdeServer failed to start");
             }
-            state.codeServerStarted = true;
+            state.ideServerStarted = true;
             state.executionOrder.push("codeserver-start");
-            return { provides: { codeServerPort: 8080 } };
+            return { provides: { ideServerPort: 8080 } };
           },
         },
       },
@@ -173,11 +173,11 @@ function createViewModule(state: TestState): IntentModule {
 }
 
 /**
- * Simulates PluginServer graceful degradation inside CodeServerModule.
- * In the real implementation, CodeServerModule tries to start PluginServer
- * internally and catches its error, then starts code-server without the plugin port.
+ * Simulates PluginServer graceful degradation inside IdeServerModule.
+ * In the real implementation, IdeServerModule tries to start PluginServer
+ * internally and catches its error, then starts the IDE server without the plugin port.
  */
-function createCodeServerModuleWithGracefulPluginDegradation(
+function createIdeServerModuleWithGracefulPluginDegradation(
   state: TestState,
   pluginFails: boolean
 ): IntentModule {
@@ -200,10 +200,10 @@ function createCodeServerModuleWithGracefulPluginDegradation(
             }
 
             // Code-server starts regardless
-            state.codeServerStarted = true;
+            state.ideServerStarted = true;
             state.executionOrder.push("codeserver-start");
-            void pluginPort; // Used for code-server config in real impl
-            return { provides: { codeServerPort: 8080 } };
+            void pluginPort; // Used for IDE server config in real impl
+            return { provides: { ideServerPort: 8080 } };
           },
         },
       },
@@ -264,7 +264,7 @@ describe("AppStart Operation", () => {
     it("all start handlers execute in dependency order", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
@@ -272,7 +272,7 @@ describe("AppStart Operation", () => {
 
       await dispatcher.dispatch(appStartIntent());
 
-      expect(state.codeServerStarted).toBe(true);
+      expect(state.ideServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(true);
       expect(state.dataLoaded).toBe(true);
       expect(state.viewActivated).toBe(true);
@@ -287,22 +287,22 @@ describe("AppStart Operation", () => {
     });
   });
 
-  describe("start abort on CodeServer failure (#2)", () => {
+  describe("start abort on IdeServer failure (#2)", () => {
     it("propagates error and remaining start hooks still run (collect)", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
-        createCodeServerModule(state, { fail: true }),
+        createIdeServerModule(state, { fail: true }),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
       ]);
 
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
-        "CodeServer failed to start"
+        "IdeServer failed to start"
       );
 
-      expect(state.codeServerStarted).toBe(false);
-      // With collect(), MCP still runs even though CodeServer threw (errors collected).
+      expect(state.ideServerStarted).toBe(false);
+      // With collect(), MCP still runs even though IdeServer threw (errors collected).
       // Data and view modules also run since they are in the same "start" hook point.
       expect(state.mcpStarted).toBe(true);
       expect(state.dataLoaded).toBe(true);
@@ -314,7 +314,7 @@ describe("AppStart Operation", () => {
     it("propagates error, remaining start modules skipped", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state, { fail: true }),
         createDataModule(state),
         createViewModule(state),
@@ -324,8 +324,8 @@ describe("AppStart Operation", () => {
         "MCP server failed to start"
       );
 
-      // CodeServer ran before MCP
-      expect(state.codeServerStarted).toBe(true);
+      // IdeServer ran before MCP
+      expect(state.ideServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(false);
       // Data and view modules also run since they are in the same "start" hook point
       expect(state.dataLoaded).toBe(true);
@@ -337,7 +337,7 @@ describe("AppStart Operation", () => {
     it("propagates error from data handler, other start handlers still run", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state, { fail: true }),
         createViewModule(state),
@@ -348,7 +348,7 @@ describe("AppStart Operation", () => {
       );
 
       // All start hooks ran (collect() continues after errors)
-      expect(state.codeServerStarted).toBe(true);
+      expect(state.ideServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(true);
       // DataModule failed, but with collect() other start handlers still run
       expect(state.dataLoaded).toBe(false);
@@ -357,10 +357,10 @@ describe("AppStart Operation", () => {
   });
 
   describe("PluginServer graceful degradation (#5)", () => {
-    it("CodeServerModule catches PluginServer error, startup succeeds", async () => {
+    it("IdeServerModule catches PluginServer error, startup succeeds", async () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
-        createCodeServerModuleWithGracefulPluginDegradation(state, true),
+        createIdeServerModuleWithGracefulPluginDegradation(state, true),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
@@ -369,7 +369,7 @@ describe("AppStart Operation", () => {
       // Should not throw despite PluginServer failure
       await dispatcher.dispatch(appStartIntent());
 
-      expect(state.codeServerStarted).toBe(true);
+      expect(state.ideServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(true);
       expect(state.dataLoaded).toBe(true);
       expect(state.viewActivated).toBe(true);
@@ -482,7 +482,7 @@ describe("AppStart Operation", () => {
           createConfigCheckModule("claude"),
           createBinaryCheckModule([]),
           createExtensionCheckModule({}),
-          createCodeServerModule(state),
+          createIdeServerModule(state),
           createMcpModule(state),
           createDataModule(state),
           createViewModule(state),
@@ -495,7 +495,7 @@ describe("AppStart Operation", () => {
       // Setup was never dispatched
       expect(state.executionOrder).not.toContain("setup");
       // start hooks ran
-      expect(state.codeServerStarted).toBe(true);
+      expect(state.ideServerStarted).toBe(true);
       expect(state.mcpStarted).toBe(true);
     });
 
@@ -507,7 +507,7 @@ describe("AppStart Operation", () => {
           createConfigCheckModule(null),
           createBinaryCheckModule([]),
           createExtensionCheckModule({}),
-          createCodeServerModule(state),
+          createIdeServerModule(state),
           createMcpModule(state),
           createDataModule(state),
           createViewModule(state),
@@ -519,7 +519,7 @@ describe("AppStart Operation", () => {
 
       expect(state.executionOrder).toContain("setup");
       // start hooks still ran after setup
-      expect(state.codeServerStarted).toBe(true);
+      expect(state.ideServerStarted).toBe(true);
     });
 
     it("setup needed -- missing binaries triggers app:setup (#8)", async () => {
@@ -528,9 +528,9 @@ describe("AppStart Operation", () => {
       const { dispatcher } = createCheckTestSetup(
         [
           createConfigCheckModule("claude"),
-          createBinaryCheckModule(["code-server"]),
+          createBinaryCheckModule(["vscodium"]),
           createExtensionCheckModule({}),
-          createCodeServerModule(state),
+          createIdeServerModule(state),
           createMcpModule(state),
           createDataModule(state),
           createViewModule(state),
@@ -553,7 +553,7 @@ describe("AppStart Operation", () => {
           createExtensionCheckModule({
             installPlan: [{ id: "ext-a", vsixPath: "/path/ext-a.vsix" }],
           }),
-          createCodeServerModule(state),
+          createIdeServerModule(state),
           createMcpModule(state),
           createDataModule(state),
           createViewModule(state),
@@ -584,11 +584,11 @@ describe("AppStart Operation", () => {
       const { dispatcher } = createCheckTestSetup([
         failingInitConfigModule,
         createBinaryCheckModule([]),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
       ]);
 
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Config load failed");
-      expect(state.codeServerStarted).toBe(false);
+      expect(state.ideServerStarted).toBe(false);
     });
 
     it("check-deps error aborts startup (#11)", async () => {
@@ -609,7 +609,7 @@ describe("AppStart Operation", () => {
       const { dispatcher } = createCheckTestSetup([
         createConfigCheckModule("claude"),
         failingDepsModule,
-        createCodeServerModule(state),
+        createIdeServerModule(state),
       ]);
 
       // A lone failing handler surfaces its raw error (multiple would aggregate
@@ -617,7 +617,7 @@ describe("AppStart Operation", () => {
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
         "Binary preflight failed"
       );
-      expect(state.codeServerStarted).toBe(false);
+      expect(state.ideServerStarted).toBe(false);
     });
 
     it("configuredAgent flows from init results to check-deps context (#12)", async () => {
@@ -643,7 +643,7 @@ describe("AppStart Operation", () => {
         [
           createConfigCheckModule("opencode"),
           agentReadingDepsModule,
-          createCodeServerModule(state),
+          createIdeServerModule(state),
           createMcpModule(state),
           createDataModule(state),
           createViewModule(state),
@@ -665,27 +665,27 @@ describe("AppStart Operation", () => {
     it.each([
       {
         portName: "mcpPort" as const,
-        modules: (s: TestState) => [createCodeServerModule(s), createMcpModule(s)],
+        modules: (s: TestState) => [createIdeServerModule(s), createMcpModule(s)],
         expected: 9090,
         label: "mcpPort available via capabilities from MCP start handler",
       },
       {
         portName: "mcpPort" as const,
-        modules: (s: TestState) => [createCodeServerModule(s)],
+        modules: (s: TestState) => [createIdeServerModule(s)],
         expected: undefined,
         label: "mcpPort undefined when no start handler provides it",
       },
       {
-        portName: "codeServerPort" as const,
-        modules: (s: TestState) => [createCodeServerModule(s), createMcpModule(s)],
+        portName: "ideServerPort" as const,
+        modules: (s: TestState) => [createIdeServerModule(s), createMcpModule(s)],
         expected: 8080,
-        label: "codeServerPort available via capabilities from CodeServer start handler",
+        label: "ideServerPort available via capabilities from IdeServer start handler",
       },
       {
-        portName: "codeServerPort" as const,
+        portName: "ideServerPort" as const,
         modules: (s: TestState) => [createMcpModule(s)],
         expected: undefined,
-        label: "codeServerPort undefined when no start handler provides it",
+        label: "ideServerPort undefined when no start handler provides it",
       },
     ])("$label", async ({ portName, modules, expected }) => {
       const state = createTestState();
@@ -788,7 +788,7 @@ describe("AppStart Operation", () => {
             capturedScripts = scripts;
           },
         }),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
@@ -803,7 +803,7 @@ describe("AppStart Operation", () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createFailingConfigureModule("Config failed"),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
       ]);
@@ -811,7 +811,7 @@ describe("AppStart Operation", () => {
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Config failed");
 
       // Nothing else ran
-      expect(state.codeServerStarted).toBe(false);
+      expect(state.ideServerStarted).toBe(false);
       expect(state.dataLoaded).toBe(false);
     });
 
@@ -826,7 +826,7 @@ describe("AppStart Operation", () => {
             capturedScripts = scripts;
           },
         }),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
@@ -841,14 +841,14 @@ describe("AppStart Operation", () => {
       const state = createTestState();
       const { dispatcher } = createTestSetup([
         createInitModule(state, { fail: true }),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
       ]);
 
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow("Init failed");
 
-      expect(state.codeServerStarted).toBe(false);
+      expect(state.ideServerStarted).toBe(false);
       expect(state.dataLoaded).toBe(false);
     });
 
@@ -872,7 +872,7 @@ describe("AppStart Operation", () => {
       const { dispatcher } = createTestSetup([
         configureTracker,
         createInitModule(state),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
@@ -900,7 +900,7 @@ describe("AppStart Operation", () => {
             capturedScripts = scripts;
           },
         }),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
@@ -939,20 +939,20 @@ describe("AppStart Operation", () => {
       const captured: { ctx?: AppStartErrorHookContext } = {};
       const { dispatcher } = createTestSetup([
         createErrorHookCaptureModule(captured),
-        createCodeServerModule(state, { fail: true }),
+        createIdeServerModule(state, { fail: true }),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),
       ]);
 
       await expect(dispatcher.dispatch(appStartIntent())).rejects.toThrow(
-        "CodeServer failed to start"
+        "IdeServer failed to start"
       );
 
       expect(captured.ctx).toBeDefined();
       expect(captured.ctx!.phase).toBe("start");
       expect(captured.ctx!.error).toBeInstanceOf(Error);
-      expect(captured.ctx!.error.message).toBe("CodeServer failed to start");
+      expect(captured.ctx!.error.message).toBe("IdeServer failed to start");
     });
 
     it("attributes an early before-ready failure to the before-ready phase", async () => {
@@ -984,7 +984,7 @@ describe("AppStart Operation", () => {
       const captured: { ctx?: AppStartErrorHookContext } = {};
       const { dispatcher } = createTestSetup([
         createErrorHookCaptureModule(captured),
-        createCodeServerModule(state),
+        createIdeServerModule(state),
         createMcpModule(state),
         createDataModule(state),
         createViewModule(state),

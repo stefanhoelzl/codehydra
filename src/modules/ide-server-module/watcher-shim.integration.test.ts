@@ -3,8 +3,7 @@
  * Tests for the watcher forward-slash shim.
  *
  * - Behavioral-mock tests cover discovery, application, idempotency, and the
- *   layouts of both supported distributions (reh-web `@parcel/watcher` at the
- *   bundle root; code-server `@vscode/watcher` under `lib/vscode`).
+ *   reh-web `@parcel/watcher` layout at the bundle root.
  * - A real-filesystem test loads the generated shim and proves it rewrites
  *   backslash `ignore` globs to forward slashes (the actual crash fix).
  */
@@ -37,7 +36,7 @@ function deps(fsLayer: MockFileSystemBoundary) {
  */
 function bundleWithWatcher(
   nodeModulesDir: string,
-  scope: "@parcel" | "@vscode",
+  scope: "@parcel",
   main = "index.js"
 ): MockFileSystemBoundary {
   const fsLayer = createFileSystemMock();
@@ -60,13 +59,13 @@ describe("applyWatcherShim (behavioral)", () => {
     expect(fsLayer).toHaveFileContaining(`${pkg}/index.js`, "fixIgnore");
   });
 
-  it("shims the code-server @vscode/watcher nested under lib/vscode", async () => {
-    const fsLayer = bundleWithWatcher("/bundle/lib/vscode/node_modules", "@vscode");
+  it("shims a watcher nested deeper in the bundle tree", async () => {
+    const fsLayer = bundleWithWatcher("/bundle/lib/node_modules", "@parcel");
 
     const applied = await applyWatcherShim(deps(fsLayer), "/bundle");
 
     expect(applied).toBe(1);
-    const pkg = "/bundle/lib/vscode/node_modules/@vscode/watcher";
+    const pkg = "/bundle/lib/node_modules/@parcel/watcher";
     expect(fsLayer).toHaveFile(`${pkg}/index.orig.js`, ORIGINAL);
     expect(fsLayer).toHaveFileContaining(`${pkg}/index.js`, "fixIgnore");
   });
@@ -97,7 +96,7 @@ describe("applyWatcherShim (behavioral)", () => {
 
   it("returns 0 and does not throw when no watcher is present", async () => {
     const fsLayer = createFileSystemMock();
-    fsLayer.$.setEntry("/bundle/bin/code-server", file("#!/bin/sh\n"));
+    fsLayer.$.setEntry("/bundle/bin/codium-server", file("#!/bin/sh\n"));
 
     expect(await applyWatcherShim(deps(fsLayer), "/bundle")).toBe(0);
   });

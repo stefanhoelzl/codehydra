@@ -490,8 +490,8 @@ function createTestHarness(options?: {
     },
   };
 
-  // CodeServerModule for workspace:open
-  const codeServerModule: IntentModule = {
+  // IdeServerModule for workspace:open
+  const ideServerModule: IntentModule = {
     name: "test",
     hooks: {
       [OPEN_WORKSPACE_OPERATION_ID]: {
@@ -596,7 +596,7 @@ function createTestHarness(options?: {
     appStateRegisterModule,
     discoverModule,
     worktreeModule,
-    codeServerModule,
+    ideServerModule,
     stateModule,
     viewModule,
     projectViewModule,

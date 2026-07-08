@@ -30,7 +30,7 @@ The sidebar minimizes by default to 20px, showing status indicators only. Hover 
 ├──┬──────────────────────────────────────────────────────────────────────────────┤
 │▸ │                                                                              │
 │██│                                                                              │
-│░░│                        VS CODE (code-server)                                 │
+│░░│                        VS CODE (VSCodium)                                    │
 │  │                                                                              │
 │▸ │                        Active workspace view                                 │
 └──┴──────────────────────────────────────────────────────────────────────────────┘
@@ -57,7 +57,7 @@ The sidebar minimizes by default to show only 20px of status indicators, maximiz
 │▸ │                                                                │
 ├──┼                                                                │
 │██│                                                                │
-│░░│                     VS CODE (code-server)                      │
+│░░│                     VS CODE (VSCodium)                         │
 │  │                                                                │
 ├──┼                     Active workspace view                      │
 │  │                                                                │
@@ -73,7 +73,7 @@ The sidebar minimizes by default to show only 20px of status indicators, maximiz
 ┌────────────────────────┬──────────────────────────────────────────┐
 │  PROJECTS              │                                          │
 │                        │                                          │
-│  📁 my-project   [+][×]│         VS CODE (code-server)            │
+│  📁 my-project   [+][×]│         VS CODE (VSCodium)               │
 │    └─ 🌿 feature   ░░  │                                          │
 │    └─ 🌿 bugfix    ██  │         Active workspace view            │
 │                        │         (sidebar overlays VS Code)       │
@@ -132,11 +132,11 @@ Buttons appear on hover.
 └────────────────────────────────┘
 ```
 
-| Element          | Behavior                                       |
-| ---------------- | ---------------------------------------------- |
-| Row click        | Activates workspace, shows in code-server view |
-| [×] button       | Opens remove workspace dialog                  |
-| Status indicator | Shows OpenCode agent status (if running)       |
+| Element          | Behavior                                    |
+| ---------------- | ------------------------------------------- |
+| Row click        | Activates workspace, shows in VSCodium view |
+| [×] button       | Opens remove workspace dialog               |
+| Status indicator | Shows OpenCode agent status (if running)    |
 
 [×] button appears on hover.
 

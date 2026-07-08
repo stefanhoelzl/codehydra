@@ -1,10 +1,10 @@
 // @vitest-environment node
 /**
- * Integration tests for CodeServerModule through the Dispatcher.
+ * Integration tests for IdeServerModule through the Dispatcher.
  *
  * Tests verify the full pipeline: dispatcher -> operation -> hook handlers.
- * The module now owns all code-server lifecycle logic (previously in CodeServerManager),
- * so tests use processRunner/httpClient/portManager mocks directly.
+ * The module owns all IDE server (VSCodium) lifecycle logic, so tests use
+ * processRunner/httpClient/portManager mocks directly.
  */
 
 import { createMockDispatcher } from "../../intents/lib/dispatcher.test-utils";
@@ -156,7 +156,7 @@ class MinimalStartOperation implements Operation<typeof startSchemas> {
       intent: ctx.intent,
     });
     if (errors.length > 0) throw errors[0]!;
-    return capabilities.codeServerPort as number | undefined;
+    return capabilities.ideServerPort as number | undefined;
   }
 }
 
@@ -339,7 +339,7 @@ function createMockDeps(overrides?: Partial<IdeServerModuleDeps>): IdeServerModu
 
 /**
  * Helper module that provides the pluginPort capability (null by default).
- * Code-server-module's start handler has `requires: { pluginPort: ANY_VALUE }`,
+ * The IDE server module's start handler has `requires: { pluginPort: ANY_VALUE }`,
  * so a provider must be registered before it.
  */
 function createPluginPortProvider(port: number | null = null): IntentModule {
@@ -359,7 +359,7 @@ function createTestSetup(mockDeps?: IdeServerModuleDeps, pluginPort: number | nu
   const deps = mockDeps ?? createMockDeps();
   const dispatcher = createMockDispatcher();
 
-  // Register pluginPort provider before code-server module so the capability is available
+  // Register pluginPort provider before the IDE server module so the capability is available
   dispatcher.registerModule(createPluginPortProvider(pluginPort));
 
   const module = createIdeServerModule(deps);
@@ -372,13 +372,13 @@ function createTestSetup(mockDeps?: IdeServerModuleDeps, pluginPort: number | nu
 // Tests
 // =============================================================================
 
-describe("CodeServerModule", () => {
+describe("IdeServerModule", () => {
   // ---------------------------------------------------------------------------
   // before-ready
   // ---------------------------------------------------------------------------
 
   describe("before-ready", () => {
-    it("declares code-server wrapper scripts", async () => {
+    it("declares IDE server wrapper scripts", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalBeforeReadyOperation());
@@ -398,11 +398,11 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("check-deps", () => {
-    it("returns code-server in missingBinaries when download needed", async () => {
+    it("returns vscodium in missingBinaries when download needed", async () => {
       const deps = createMockDeps();
       // isBinaryInstalled calls readdir(destDir) - throw ENOENT to simulate not installed
       (deps.fileSystemLayer.readdir as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new FileSystemError("ENOENT", "/bundles/code-server", "not found")
+        new FileSystemError("ENOENT", "/bundles/vscodium", "not found")
       );
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalCheckDepsOperation());
@@ -412,7 +412,7 @@ describe("CodeServerModule", () => {
         payload: {},
       })) as CheckDepsResult;
 
-      expect(result.missingBinaries).toContain("code-server");
+      expect(result.missingBinaries).toContain("vscodium");
     });
 
     it("returns empty missingBinaries when up-to-date", async () => {
@@ -425,7 +425,7 @@ describe("CodeServerModule", () => {
         payload: {},
       })) as CheckDepsResult;
 
-      expect(result.missingBinaries ?? []).not.toContain("code-server");
+      expect(result.missingBinaries ?? []).not.toContain("vscodium");
     });
 
     it("returns needsDownload false when no ArchiveExtractor available", async () => {
@@ -440,7 +440,7 @@ describe("CodeServerModule", () => {
         payload: {},
       })) as CheckDepsResult;
 
-      expect(result.missingBinaries ?? []).not.toContain("code-server");
+      expect(result.missingBinaries ?? []).not.toContain("vscodium");
     });
 
     it("builds install plan for missing extensions", async () => {
@@ -533,18 +533,18 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("start", () => {
-    it("starts code-server and returns port", async () => {
+    it("starts the IDE server and returns port", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
 
-      const codeServerPort = (await dispatcher.dispatch({
+      const ideServerPort = (await dispatcher.dispatch({
         type: "app:start",
         payload: {},
       })) as number | undefined;
 
       // Port is 25448 (packaged mode)
-      expect(codeServerPort).toBe(25448);
+      expect(ideServerPort).toBe(25448);
       expect(() => asMockRunner(deps).$.spawned(0)).not.toThrow();
     });
 
@@ -568,53 +568,14 @@ describe("CodeServerModule", () => {
       expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(25448);
     });
 
-    it("spawns code-server with correct arguments", async () => {
+    it("spawns the IDE server with reh-web arguments on the IDE server port", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
 
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
-      expect(asMockRunner(deps)).toHaveSpawned([
-        {
-          command: expect.stringContaining("code-server") as string,
-          args: expect.arrayContaining([
-            "--bind-addr",
-            "127.0.0.1:25448",
-            "--auth",
-            "none",
-            "--extensions-dir",
-            expect.stringContaining("extensions"),
-            "--user-data-dir",
-            expect.stringContaining("user-data"),
-          ]) as unknown as string[],
-          cwd: expect.stringContaining("runtime") as unknown as string,
-        },
-      ]);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // IDE server selection (vscodium)
-  // ---------------------------------------------------------------------------
-
-  describe("IDE server selection", () => {
-    function vscodiumDeps(): IdeServerModuleDeps {
-      return createMockDeps({
-        configService: createMockConfig({
-          defaults: { "ide-server": "vscodium", "version.opencode": "1.0.223" },
-        }),
-      });
-    }
-
-    it("spawns codium-server with reh-web arguments on the vscodium port", async () => {
-      const deps = vscodiumDeps();
-      const { dispatcher } = createTestSetup(deps);
-      dispatcher.registerOperation(new MinimalStartOperation());
-
-      await dispatcher.dispatch({ type: "app:start", payload: {} });
-
-      expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(25449);
+      expect(deps.portManager.isPortAvailable).toHaveBeenCalledWith(25448);
       expect(asMockRunner(deps)).toHaveSpawned([
         {
           command: expect.stringContaining("codium-server") as string,
@@ -622,9 +583,13 @@ describe("CodeServerModule", () => {
             "--host",
             "127.0.0.1",
             "--port",
-            "25449",
+            "25448",
             "--without-connection-token",
             "--accept-server-license-terms",
+            "--extensions-dir",
+            expect.stringContaining("extensions"),
+            "--server-data-dir",
+            expect.stringContaining("user-data"),
             "--telemetry-level",
             "off",
           ]) as unknown as string[],
@@ -634,7 +599,7 @@ describe("CodeServerModule", () => {
     });
 
     it("points the wrappers at the vscodium remote-cli and root-level node", async () => {
-      const deps = vscodiumDeps();
+      const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
 
@@ -649,11 +614,38 @@ describe("CodeServerModule", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // code-server.port -> ide-server.port rename (Config legacyNames)
+  // ---------------------------------------------------------------------------
+
+  describe("code-server.port rename", () => {
+    it("registers ide-server.port with code-server.port as a legacy name", () => {
+      const deps = createMockDeps();
+      createIdeServerModule(deps); // registers config keys on the mock Config
+
+      const def = deps.configService.getDefinitions().get("ide-server.port");
+      const translate = def?.legacyNames?.["code-server.port"];
+      expect(translate).toBeTypeOf("function");
+      // A valid legacy port carries over; privileged (<1024) / non-numbers are
+      // rejected (→ the new key falls back to its default, per legacyNames rules).
+      expect(translate!(40000)).toBe(40000);
+      expect(translate!(1023)).toBeUndefined();
+      expect(translate!("nope")).toBeUndefined();
+    });
+
+    it("does not register the retired code-server.port key", () => {
+      const deps = createMockDeps();
+      createIdeServerModule(deps);
+
+      expect(deps.configService.getDefinitions().has("code-server.port")).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // stop
   // ---------------------------------------------------------------------------
 
   describe("stop", () => {
-    it("stops code-server by killing the process", async () => {
+    it("stops the IDE server by killing the process", async () => {
       const processRunner = createMockProcessRunner({ onSpawn: () => defaultSpawnConfig() });
       const deps = createMockDeps({ processRunner });
       const { dispatcher } = createTestSetup(deps);
@@ -723,11 +715,11 @@ describe("CodeServerModule", () => {
       return base;
     }
 
-    it("downloads code-server when missing", async () => {
+    it("downloads the IDE server when missing", async () => {
       const archiveExtractor = createArchiveExtractorMock();
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -759,7 +751,7 @@ describe("CodeServerModule", () => {
         },
       });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -788,7 +780,7 @@ describe("CodeServerModule", () => {
       });
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -813,7 +805,7 @@ describe("CodeServerModule", () => {
       });
       const deps = createDownloadDeps({ archiveExtractor });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await expect(dispatcher.dispatch({ type: INTENT_SETUP, payload: {} })).rejects.toThrow(
@@ -823,7 +815,7 @@ describe("CodeServerModule", () => {
         expect.objectContaining({
           id: "vscode",
           status: "failed",
-          error: expect.stringContaining("Failed to download code-server"),
+          error: expect.stringContaining("Failed to download IDE server"),
         })
       );
     });
@@ -836,14 +828,14 @@ describe("CodeServerModule", () => {
         archiveExtractor: createArchiveExtractorMock(),
       });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
 
       expect(applyWatcherShim).toHaveBeenCalledWith(
         expect.objectContaining({ fileSystemLayer: deps.fileSystemLayer }),
-        expect.stringContaining("code-server")
+        expect.stringContaining("vscodium")
       );
     });
 
@@ -851,7 +843,7 @@ describe("CodeServerModule", () => {
       vi.mocked(applyWatcherShim).mockClear();
       const deps = createDownloadDeps({ archiveExtractor: createArchiveExtractorMock() });
       const { dispatcher } = createTestSetup(deps);
-      const op = new MinimalBinaryOperation({ missingBinaries: ["code-server"] });
+      const op = new MinimalBinaryOperation({ missingBinaries: ["vscodium"] });
       dispatcher.registerOperation(op);
 
       await dispatcher.dispatch({ type: INTENT_SETUP, payload: {} });
@@ -878,7 +870,7 @@ describe("CodeServerModule", () => {
 
       expect(asMockRunner(deps)).toHaveSpawned([
         {
-          command: expect.stringContaining("code-server") as string,
+          command: expect.stringContaining("codium-server") as string,
           args: expect.arrayContaining([
             "--install-extension",
             "/path/ext-one.vsix",
@@ -1257,7 +1249,7 @@ describe("CodeServerModule", () => {
       expect(env.VSCODE_CODE_CACHE_PATH).toBeUndefined();
     });
 
-    it("sets VSCODE_PROXY_URI to empty string", async () => {
+    it("strips VSCODE_* variables from the child environment", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
@@ -1265,8 +1257,9 @@ describe("CodeServerModule", () => {
       await dispatcher.dispatch({ type: "app:start", payload: {} });
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
-      const env = runCall.env as Record<string, string>;
-      expect(env.VSCODE_PROXY_URI).toBe("");
+      const env = runCall.env as Record<string, string | undefined>;
+      // VSCodium's serveEnv() adds nothing; the base env has all VSCODE_* removed.
+      expect(env.VSCODE_PROXY_URI).toBeUndefined();
     });
 
     it("omits _CH_PLUGIN_PORT when plugin port not set", async () => {
@@ -1281,7 +1274,7 @@ describe("CodeServerModule", () => {
       expect(env._CH_PLUGIN_PORT).toBeUndefined();
     });
 
-    it("points the wrappers at the code-server remote-cli/node, plus opencode dir", async () => {
+    it("points the wrappers at the vscodium remote-cli/node, plus opencode dir", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new MinimalStartOperation());
@@ -1290,9 +1283,9 @@ describe("CodeServerModule", () => {
 
       const runCall = asMockRunner(deps).$.spawned(0).$;
       const env = runCall.env as Record<string, string>;
-      expect(env._CH_IDE_REMOTE_CLI).toContain("lib/vscode/bin/remote-cli/code-linux.sh");
-      expect(env._CH_IDE_NODE).toContain("code-server");
-      expect(env._CH_IDE_NODE).toMatch(/\/lib\/node$/);
+      expect(env._CH_IDE_REMOTE_CLI).toContain("bin/remote-cli/codium");
+      expect(env._CH_IDE_NODE).toContain("vscodium");
+      expect(env._CH_IDE_NODE).toMatch(/\/node$/);
       expect(env._CH_OPENCODE_DIR).toContain("opencode");
     });
   });
@@ -1343,7 +1336,7 @@ describe("CodeServerModule", () => {
         await startPromise;
 
         expect(caughtError).toBeDefined();
-        expect(String(caughtError)).toContain("Failed to start code-server");
+        expect(String(caughtError)).toContain("Failed to start IDE server");
 
         // Verify the spawned process was killed to avoid orphaning
         expect(processRunner.$.spawned(0)).toHaveBeenKilled();
@@ -1358,7 +1351,7 @@ describe("CodeServerModule", () => {
   // ---------------------------------------------------------------------------
 
   describe("app-resume probe + restart", () => {
-    async function startCodeServer(
+    async function startIdeServer(
       deps: IdeServerModuleDeps
     ): Promise<{ dispatcher: ReturnType<typeof createTestSetup>["dispatcher"] }> {
       const { dispatcher } = createTestSetup(deps);
@@ -1368,9 +1361,9 @@ describe("CodeServerModule", () => {
       return { dispatcher };
     }
 
-    it("passes through without restart when /healthz succeeds", async () => {
+    it("passes through without restart when the health probe succeeds", async () => {
       const deps = createMockDeps();
-      const { dispatcher } = await startCodeServer(deps);
+      const { dispatcher } = await startIdeServer(deps);
 
       const initialRunCount = asMockRunner(deps).$.spawnedCount;
 
@@ -1380,12 +1373,12 @@ describe("CodeServerModule", () => {
       expect(asMockRunner(deps).$.spawnedCount).toBe(initialRunCount);
     });
 
-    it("restarts code-server when probe fails (unhealthy response)", async () => {
+    it("restarts the IDE server when probe fails (unhealthy response)", async () => {
       vi.useFakeTimers();
 
       try {
         const deps = createMockDeps();
-        const { dispatcher } = await startCodeServer(deps);
+        const { dispatcher } = await startIdeServer(deps);
 
         const initialProcess = asMockRunner(deps).$.spawned(0);
 
@@ -1427,7 +1420,7 @@ describe("CodeServerModule", () => {
 
       try {
         const deps = createMockDeps();
-        const { dispatcher } = await startCodeServer(deps);
+        const { dispatcher } = await startIdeServer(deps);
 
         // Force probe to keep returning unhealthy
         (deps.httpClient.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 503 });
@@ -1455,7 +1448,7 @@ describe("CodeServerModule", () => {
 
     it("emits app:resumed without restarting when healthy", async () => {
       const deps = createMockDeps();
-      const { dispatcher } = await startCodeServer(deps);
+      const { dispatcher } = await startIdeServer(deps);
 
       const resumedEvents: DomainEvent[] = [];
       const restartedEvents: DomainEvent[] = [];
@@ -1469,7 +1462,7 @@ describe("CodeServerModule", () => {
       expect(restartedEvents).toHaveLength(0);
     });
 
-    it("skips probe when code-server was never started", async () => {
+    it("skips probe when the IDE server was never started", async () => {
       const deps = createMockDeps();
       const { dispatcher } = createTestSetup(deps);
       dispatcher.registerOperation(new AppResumeOperation());

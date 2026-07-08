@@ -1,7 +1,7 @@
 /**
  * Shared folder/workspace URL scheme for IDE servers.
  *
- * code-server and VSCodium's web workbench both open a folder or workspace via
+ * VSCodium's web workbench opens a folder or workspace via
  * the same `?folder=` / `?workspace=` query params (upstream VS Code behavior),
  * so both descriptors reuse these helpers.
  */

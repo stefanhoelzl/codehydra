@@ -595,7 +595,7 @@ function createTestHarness(options?: {
     },
   };
 
-  const deleteCodeServerModule: IntentModule = {
+  const deleteIdeServerModule: IntentModule = {
     name: "test",
     hooks: {
       [DELETE_WORKSPACE_OPERATION_ID]: {
@@ -612,7 +612,7 @@ function createTestHarness(options?: {
               return { result: {} };
             } catch (error) {
               if (payload.force) {
-                logger.warn("CodeServerModule: error in force mode (ignored)", {
+                logger.warn("IdeServerModule: error in force mode (ignored)", {
                   error: getErrorMessage(error),
                 });
                 return { result: {} };
@@ -782,7 +782,7 @@ function createTestHarness(options?: {
     deleteAgentModule,
     deleteWindowsLockModule,
     deleteWorktreeModule,
-    deleteCodeServerModule,
+    deleteIdeServerModule,
     deleteStateModule,
     switchViewModule,
     switchFindCandidatesModule,
