@@ -46,7 +46,6 @@ import type { DialogConfig } from "../shared/dialog-types";
 
 function defaultReadFile(path: string): Promise<string> {
   if (path === "/logs/test-session.log") return Promise.resolve("test log content\nline 2");
-  if (path === "/logs/electron.log") return Promise.resolve("electron log content");
   return Promise.reject(new Error("ENOENT"));
 }
 
@@ -76,7 +75,6 @@ function setup(overrides?: SetupOverrides) {
     fileSystem: { readFile: vi.fn().mockImplementation(defaultReadFile) },
     loggingService: {
       getLogFilePath: vi.fn().mockReturnValue("/logs/test-session.log"),
-      getElectronLogFilePath: vi.fn().mockReturnValue("/logs/electron.log"),
     },
     dispatcher: {
       dispatch: vi.fn(overrides?.dispatch ?? (async () => {})),
@@ -253,7 +251,7 @@ describe("ErrorReportModule — bug-report:submitted capture", () => {
     });
 
     // The handler gathers logs from the filesystem; the event carries only the
-    // description (defaultReadFile supplies the log/electron-log content).
+    // description (defaultReadFile supplies the log content).
     await emitBugReport(module, { description: "It crashed" });
 
     const captured = boundary.$.capturedEvents.find((e) => e.event === "$exception");
@@ -262,7 +260,6 @@ describe("ErrorReportModule — bug-report:submitted capture", () => {
     expect(props["$exception_list"]).toEqual([{ type: "BugReport", value: "It crashed" }]);
     expect(props["logs_format"]).toBe("gzip+base64");
     expect(decompressLog(props["logs"])).toBe("test log content\nline 2");
-    expect(decompressLog(props["electron_logs"])).toBe("electron log content");
     expect(props["config"]).toEqual({ agent: "claude", "log.level": "debug" });
     expect(props["state"]).toEqual({
       "auto-workspaces": { "github/1": { workspaceName: "pr-1" } },

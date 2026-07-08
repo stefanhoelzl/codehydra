@@ -84,11 +84,10 @@ const MAX_LOG_SIZE = 20 * 1024 * 1024;
 const DESCRIPTION_INITIAL = "# describe your issue";
 
 /**
- * Per-field compressed cap for log payloads. With two log streams (app +
- * electron) this gives ~900 KB combined, leaving ~148 KB under PostHog's 1 MB
- * hard cap for description, metadata, and SDK overhead.
+ * Compressed cap for the log payload. A single app-log stream leaves ~148 KB
+ * under PostHog's 1 MB hard cap for description, metadata, and SDK overhead.
  */
-const LOG_FIELD_COMPRESSED_CAP = 450_000;
+const LOG_FIELD_COMPRESSED_CAP = 900_000;
 const COMPRESS_SAFETY_FACTOR = 0.95;
 
 /** How long to wait for a flush before forcing the process to exit on a crash. */
@@ -151,7 +150,7 @@ function buildDialogConfig(): DialogConfig {
 export interface ErrorReportModuleDeps {
   readonly ui: Pick<UiPresenter, "dialog">;
   readonly fileSystem: Pick<FileSystemBoundary, "readFile">;
-  readonly loggingService: Pick<Logging, "getLogFilePath" | "getElectronLogFilePath">;
+  readonly loggingService: Pick<Logging, "getLogFilePath">;
   readonly dispatcher: Pick<IDispatcher, "dispatch">;
   /** The shared PostHog sink. */
   readonly boundary: PostHogBoundary;
@@ -205,15 +204,6 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
     return combined.length > MAX_LOG_SIZE ? combined.slice(-MAX_LOG_SIZE) : combined;
   }
 
-  async function readElectronLogContent(): Promise<string> {
-    const path = deps.loggingService.getElectronLogFilePath();
-    const content = await deps.fileSystem.readFile(path).catch(() => {
-      deps.logger.warn("Failed to read electron log file");
-      return "";
-    });
-    return content.length > MAX_LOG_SIZE ? content.slice(-MAX_LOG_SIZE) : content;
-  }
-
   // ---------------------------------------------------------------------------
   // Incident capture (shared by crashes and manual reports)
   // ---------------------------------------------------------------------------
@@ -222,14 +212,8 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
    * Compress logs, attach redacted config + state, and send the exception
    * through the boundary. The boundary stamps version/platform/arch/agent.
    */
-  function captureIncident(
-    error: Error,
-    logs: string,
-    electronLogs: string,
-    extraProps?: Record<string, unknown>
-  ): void {
+  function captureIncident(error: Error, logs: string, extraProps?: Record<string, unknown>): void {
     const appLogs = compressAndTrim(logs);
-    const electronLogsBlob = compressAndTrim(electronLogs);
 
     deps.boundary.captureException(error, {
       ...extraProps,
@@ -237,19 +221,15 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
       logs_format: appLogs.compressed ? "gzip+base64" : "none",
       logs_raw_bytes: appLogs.rawBytesKept,
       logs_raw_bytes_dropped: logs.length - appLogs.rawBytesKept,
-      electron_logs: electronLogsBlob.compressed,
-      electron_logs_format: electronLogsBlob.compressed ? "gzip+base64" : "none",
-      electron_logs_raw_bytes: electronLogsBlob.rawBytesKept,
-      electron_logs_raw_bytes_dropped: electronLogs.length - electronLogsBlob.rawBytesKept,
       config: deps.configService.getRedactedOverrides(),
       state: deps.stateService.getRedactedOverrides(),
     });
   }
 
-  /** Read both log streams, then capture the crash. */
+  /** Read the app log, then capture the crash. */
   async function captureCrash(error: Error, extraProps?: Record<string, unknown>): Promise<void> {
-    const [logs, electronLogs] = await Promise.all([readLogContent(), readElectronLogContent()]);
-    captureIncident(error, logs, electronLogs, extraProps);
+    const logs = await readLogContent();
+    captureIncident(error, logs, extraProps);
   }
 
   /** Flush (and close) the boundary, but never block the exit beyond the cap. */
@@ -489,11 +469,8 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
 
           // The module owns log-gathering for every bug report, so both the
           // dialog and the MCP report_bug tool only need to supply a
-          // description. Read both streams here, then capture + flush.
-          const [logs, electronLogs] = await Promise.all([
-            readLogContent(),
-            readElectronLogContent(),
-          ]);
+          // description. Read the app log here, then capture + flush.
+          const logs = await readLogContent();
 
           // Synthetic error so the SDK formats it as $exception_list. Manual
           // reports always send (explicit consent), even with telemetry off.
@@ -501,7 +478,7 @@ export function createErrorReportModule(deps: ErrorReportModuleDeps): IntentModu
           bugError.name = "BugReport";
           bugError.stack = "";
 
-          captureIncident(bugError, logs, electronLogs);
+          captureIncident(bugError, logs);
           await deps.boundary.flush();
         },
       },
