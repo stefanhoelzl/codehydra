@@ -286,6 +286,33 @@ describe("SimpleGitClient", () => {
       expect(status.stagedCount).toBe(1);
       expect(status.isDirty).toBe(true);
     });
+
+    it("does not take optional index locks, unlike a plain git status", async () => {
+      // Bump the working file's mtime clearly past the index's cached stat so git
+      // wants to refresh the index. Optional-lock refresh rewrites .git/index;
+      // GIT_OPTIONAL_LOCKS=0 suppresses it. Comparing the index bytes before/after
+      // is a deterministic signal of whether the optional lock was taken.
+      const future = new Date("2035-01-01T00:00:00Z");
+
+      // Control (optional locks ON): a plain simple-git status rewrites the index.
+      const controlRepo = await createTestGitRepo();
+      try {
+        const controlIndex = nodePath.join(controlRepo.path, ".git", "index");
+        await fs.utimes(nodePath.join(controlRepo.path, "README.md"), future, future);
+        const before = await fs.readFile(controlIndex);
+        await simpleGit(controlRepo.path).status();
+        expect((await fs.readFile(controlIndex)).equals(before)).toBe(false);
+      } finally {
+        await controlRepo.cleanup();
+      }
+
+      // Client (optional locks OFF): getStatus leaves .git/index untouched.
+      const indexPath = nodePath.join(repoPath.toNative(), ".git", "index");
+      await fs.utimes(nodePath.join(repoPath.toNative(), "README.md"), future, future);
+      const before = await fs.readFile(indexPath);
+      await client.getStatus(repoPath);
+      expect((await fs.readFile(indexPath)).equals(before)).toBe(true);
+    });
   });
 
   describe("fetch", () => {

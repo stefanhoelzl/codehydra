@@ -65,6 +65,7 @@ import { IdeServerError, SetupError, getErrorMessage } from "../../shared/errors
 import { waitForHealthy } from "../../utils/health-check";
 import { createCodeServerIdeServer, CODE_SERVER_VERSION } from "./code-server";
 import { createVscodiumIdeServer, VSCODIUM_VERSION } from "./vscodium";
+import { applyWatcherShim } from "./watcher-shim";
 import type { IdeServer } from "./types";
 
 // =============================================================================
@@ -572,6 +573,22 @@ export function createIdeServerModule(deps: IdeServerModuleDeps): IntentModule {
     } catch (error) {
       const message = getErrorMessage(error);
       throw new IdeServerError(`Failed to download code-server: ${message}`);
+    }
+
+    // Windows-only: patch the freshly extracted bundle's native file watcher so
+    // absolute backslash ignore globs don't crash it (see watcher-shim.ts). A
+    // re-download overwrites the shim, so it must run after every download.
+    // Best-effort — a shim failure must not fail an otherwise-good download.
+    if (deps.platform === "win32") {
+      try {
+        const applied = await applyWatcherShim(
+          { fileSystemLayer: deps.fileSystemLayer, logger },
+          request.destDir
+        );
+        logger.debug("Watcher shim pass complete", { applied });
+      } catch (error) {
+        logger.warn("Watcher shim pass failed", { error: getErrorMessage(error) });
+      }
     }
   }
 
